@@ -113,6 +113,19 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         raise HTTPException(status_code=401, detail="Sistem paneli oturumu bulunamadı; tekrar giriş yapın.")
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"active_company_id": company_id}})
     await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "user_id": admin.get("id") or admin.get("_id"), "user_name": admin.get("name"), "method": "IMPERSONATE", "path": f"/system/companies/{company_id}/impersonate", "module": "/settings", "status": 200, "target_user": target["email"], "created_at": _now()})
+    try:
+        import platform_store as _pstore
+        await _pstore.write_audit(
+            actor_type="superadmin",
+            actor_id=str(admin.get("id") or admin.get("_id") or admin.get("email") or ""),
+            ip=(request.client.host if request.client else "") or "",
+            action="impersonate.enter",
+            target_type="company",
+            target_id=company_id,
+            details={"as_user": target.get("email"), "session_id": session["_id"]},
+        )
+    except Exception:
+        pass
     import auth_handoff
     import public_url as pu
     # Bundle access + sa_return in one handoff payload (JSON in token field)
@@ -181,7 +194,9 @@ async def impersonate_exit(request: Request, response: Response):
     import support_access
     import auth_handoff
     import public_url as pu
+    import host_audience as _ha
     import json as _json
+    from auth_utils import decode_access_payload
     token = request.cookies.get("access_token")
     if token:
         try:
@@ -199,16 +214,40 @@ async def impersonate_exit(request: Request, response: Response):
     except HTTPException:
         response.delete_cookie("sa_return", path="/"); response.delete_cookie("access_token", path="/")
         raise HTTPException(status_code=401, detail="Panel oturumunuz süresi dolmuş; lütfen panele tekrar giriş yapın.")
-    # Clear app host cookies; handoff restores SA session on site
+    # Clear app host cookies; handoff restores SA session on ynt (or site when flag=0 legacy)
     response.delete_cookie("sa_return", path="/")
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/")
     handoff_blob = _json.dumps({"access_token": back, "sa_return": ""})
     code = await auth_handoff.create_handoff(_db, handoff_blob, purpose="sa_return")
-    site_base = await pu.public_base_url_for(_db, "site")
+    try:
+        sa_payload = decode_access_payload(back)
+        sa_aud = sa_payload.get("aud")
+        sa_sub = str(sa_payload.get("sub") or "")
+    except Exception:
+        sa_aud = None
+        sa_sub = ""
+    if sa_aud == _ha.AUD_YNT:
+        dest_base = await pu.public_base_url_for(_db, "ynt")
+    else:
+        # Bayrak 0: site'tan başlayan eski oturumlar site'a döner
+        dest_base = await pu.public_base_url_for(_db, "site")
+    try:
+        import platform_store as _pstore
+        await _pstore.write_audit(
+            actor_type="superadmin",
+            actor_id=sa_sub,
+            ip=(request.client.host if request.client else "") or "",
+            action="impersonate.exit",
+            target_type="session",
+            target_id="",
+            details={"return_aud": sa_aud},
+        )
+    except Exception:
+        pass
     return {
         "status": "success",
-        "redirect": f"{site_base}/sso?code={code}&next=/sistem/sirketler",
+        "redirect": f"{dest_base}/sso?code={code}&next=/sistem/sirketler",
         "code": code,
     }
 

@@ -20,12 +20,18 @@ class _Req:
 
 @pytest.fixture
 def token_users(monkeypatch):
-    async def from_token(token, db):
+    async def from_token(token, db, request=None, path=None, **kw):
         if token != "tok":
             raise HTTPException(status_code=401, detail="Geçersiz oturum anahtarı")
         return {"is_super_admin": True, "email": "platform@tamkobi.com"}
 
     monkeypatch.setattr(saas, "get_user_from_token", from_token)
+    import superadmin_2fa
+
+    async def _no_2fa(_db):
+        return False
+
+    monkeypatch.setattr(superadmin_2fa, "platform_requires_2fa", _no_2fa)
     saas.init(object(), None)
     return from_token
 
@@ -54,7 +60,7 @@ def test_gecerli_cerez(token_users):
 
 
 def test_sadece_super_admin(monkeypatch):
-    async def from_token(token, db):
+    async def from_token(token, db, request=None, path=None, **kw):
         return {"is_super_admin": False, "email": "user@firma.com"}
 
     monkeypatch.setattr(saas, "get_user_from_token", from_token)
@@ -68,7 +74,7 @@ def test_get_current_user_demo_yoluna_dusmez(monkeypatch):
     async def demo(_request):
         return {"is_super_admin": True, "email": "admin@nexus.com"}
 
-    async def from_token(token, db):
+    async def from_token(token, db, request=None, path=None, **kw):
         raise HTTPException(status_code=401, detail="Geçersiz oturum anahtarı")
 
     monkeypatch.setattr(saas, "get_user_from_token", from_token)
@@ -88,7 +94,7 @@ def test_tam_bos_bearer_demo_yoluna_dusmez(monkeypatch):
     async def demo(_request):
         return {"is_super_admin": True, "email": "admin@nexus.com"}
 
-    async def from_token(token, db):
+    async def from_token(token, db, request=None, path=None, **kw):
         raise HTTPException(status_code=401, detail="Geçersiz oturum anahtarı")
 
     monkeypatch.setattr(saas, "get_user_from_token", from_token)

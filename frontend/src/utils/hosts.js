@@ -1,11 +1,12 @@
 /**
- * Subdomain host kind helpers (site | app | b2b | ik).
- * Dev/test override: ?__host=app|b2b|ik|site on localhost only.
+ * Subdomain host kind helpers (site | app | b2b | ik | ynt).
+ * Dev/test override: ?__host=app|b2b|ik|site|ynt on localhost only.
  */
 
 export const ROOT_DOMAIN = (process.env.REACT_APP_ROOT_DOMAIN || "tamkobi.com").replace(/^\.+/, "");
+export const YNT_HOST = (process.env.REACT_APP_YNT_HOST || "ynt.taiyazilim.com").replace(/^\.+/, "").toLowerCase();
 
-const KINDS = new Set(["site", "app", "b2b", "ik"]);
+const KINDS = new Set(["site", "app", "b2b", "ik", "ynt"]);
 
 function stripPort(host) {
   if (!host) return "";
@@ -29,7 +30,19 @@ function isLocalHost(host) {
   return !host || host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost");
 }
 
-/** @returns {"site"|"app"|"b2b"|"ik"} */
+/** When true, /sistem* on non-ynt hosts hard-navigates to ynt (nginx is primary). */
+export function yntRedirectEnabled() {
+  const env = (process.env.REACT_APP_YNT_REDIRECT || "").trim().toLowerCase();
+  if (env === "1" || env === "true" || env === "yes") return true;
+  try {
+    if (typeof window !== "undefined" && window.__TAMKOBI_YNT_REDIRECT__) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** @returns {"site"|"app"|"b2b"|"ik"|"ynt"} */
 export function getHostKind(win = typeof window !== "undefined" ? window : undefined) {
   const host = hostnameOf(win);
   if (isLocalHost(host) && win?.location?.search) {
@@ -40,6 +53,7 @@ export function getHostKind(win = typeof window !== "undefined" ? window : undef
       /* ignore */
     }
   }
+  if (host && host === YNT_HOST) return "ynt";
   const root = ROOT_DOMAIN.toLowerCase();
   if (host === `app.${root}`) return "app";
   if (host === `b2b.${root}`) return "b2b";
@@ -61,6 +75,9 @@ export function hostUrl(kind, path = "/") {
       break;
     case "ik":
       host = `ik.${root}`;
+      break;
+    case "ynt":
+      host = YNT_HOST;
       break;
     default:
       host = root;
@@ -148,6 +165,12 @@ export const HOST_ROUTE_RULES = {
     /^\/sifre(\/|$)/,
     /^\/davet(\/|$)/,
   ],
+  ynt: [
+    /^\/$/,
+    /^\/sistem(\/|$)/,
+    /^\/sso(\/|$)/,
+    /^\/yasal(\/|$)/,
+  ],
 };
 
 export function pathAllowedOnHost(pathname, kind) {
@@ -158,8 +181,10 @@ export function pathAllowedOnHost(pathname, kind) {
 /** Which host should own this path (for redirects). */
 export function preferredHostForPath(pathname) {
   const p = pathname || "/";
+  if (p.startsWith("/sistem")) {
+    return yntRedirectEnabled() ? "ynt" : "site";
+  }
   if (
-    p.startsWith("/sistem") ||
     p.startsWith("/web") ||
     p.startsWith("/fiyatlar") ||
     p.startsWith("/kayit") ||
@@ -170,7 +195,7 @@ export function preferredHostForPath(pathname) {
   }
   if (p.startsWith("/b2b") || p.startsWith("/portal")) return "b2b";
   if (p.startsWith("/personelim") || p.startsWith("/mesai")) return "ik";
-  if (p === "/" ) return null; // host-specific home
+  if (p === "/") return null; // host-specific home
   // Default ERP paths → app
   for (const re of HOST_ROUTE_RULES.app) {
     if (re.test(p) && p !== "/") return "app";

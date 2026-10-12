@@ -264,6 +264,12 @@ async def startup_event():
             await seed_shopfloor_pins(db)
             await demo.tag_legacy_seed()
             await saas.seed()
+            try:
+                import platform_store as _pstore
+                _pstore.init(db)
+                await _pstore.ensure_seeded()
+            except Exception as _pe:
+                logger.warning("platform_products seed skipped: %s", _pe)
             await db.users.create_index("email", unique=True)
             await db.products.create_index("sku")
             await db.products.create_index("barcode")
@@ -314,6 +320,15 @@ async def startup_event():
         _start_leased_background("bg.applog_rotation", applog.rotation_loop)
         _start_leased_background("bg.perfmon", perfmon.loop)
         _start_leased_background("bg.edoc_backup", edoc_backup.reminder_loop)
+        try:
+            import platform_store as _pstore
+            _pstore.init(db)
+            _start_leased_background(
+                "bg.platform_ephemera",
+                lambda: _pstore.cleanup_loop(db),
+            )
+        except Exception as _pe:
+            logger.warning("platform ephemera cleanup loop skipped: %s", _pe)
     else:
         logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
 
@@ -343,6 +358,46 @@ async def get_current_user(request: Request) -> dict:
     except Exception:
         pass
     return user
+
+
+@app.middleware("http")
+async def _platform_admin_audit_middleware(request: Request, call_next):
+    """Log write ops on /api/system/* and /api/platform/admin/* (no secrets)."""
+    path = request.url.path or ""
+    method = (request.method or "").upper()
+    is_sa_write = (
+        method in ("POST", "PUT", "PATCH", "DELETE")
+        and (
+            path.startswith("/api/system")
+            or path.startswith("/api/platform/admin")
+        )
+    )
+    response = await call_next(request)
+    if not is_sa_write:
+        return response
+    try:
+        if 200 <= int(response.status_code) < 400:
+            import platform_store as _pstore
+            actor = ""
+            try:
+                tok = session_token(request)
+                if tok:
+                    from auth_utils import decode_access_payload
+                    actor = str(decode_access_payload(tok).get("sub") or "")
+            except Exception:
+                actor = ""
+            await _pstore.write_audit(
+                actor_type="superadmin",
+                actor_id=actor,
+                ip=(request.client.host if request.client else "") or "",
+                action=f"{method.lower()} {path}",
+                target_type="api",
+                target_id=path,
+                details={"status": response.status_code},
+            )
+    except Exception:
+        pass
+    return response
 
 
 @app.middleware("http")
@@ -408,6 +463,8 @@ async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response:
         raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
     if kind == _ha.KIND_IK and tok_aud != _ha.AUD_IK:
         raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    if kind == _ha.KIND_YNT and tok_aud != _ha.AUD_YNT:
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
     if kind == _ha.KIND_SITE and tok_aud not in (None, _ha.AUD_SITE):
         raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
     # Validate token is decodable + user exists (aud already checked against host)
@@ -428,6 +485,8 @@ async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response:
         next_path = "/panel"
     elif kind == _ha.KIND_IK:
         next_path = "/personelim"
+    elif kind == _ha.KIND_YNT:
+        next_path = "/sistem/sirketler"
     else:
         next_path = "/sistem/sirketler"
     return {
@@ -473,6 +532,12 @@ async def login(req: LoginRequest, request: Request, response: Response):
 
     user_id = str(user.get("_id", user.get("id")))
     is_sa = bool(user.get("is_super_admin"))
+
+    import host_audience as _ha
+    kind = _ha.host_kind(request)
+    # ynt: yalnızca süper admin
+    if kind == _ha.KIND_YNT and not is_sa:
+        raise HTTPException(status_code=403, detail="Yalnızca süper admin giriş yapabilir")
 
     # Süper admin + 2FA açık → henüz oturum çerezi yok; ikinci adım kod ister
     # Not: başarılı şifre, 2fa:{user_id} kilit sayacını SIFIRLAMAZ.
@@ -549,15 +614,18 @@ async def _issue_session_for_user(
             "license": None,
         }
 
-    aud = _ha.audience_for_request(request)
-    if kind == _ha.KIND_IK:
+    if kind == _ha.KIND_YNT:
+        if not is_sa:
+            raise HTTPException(status_code=403, detail="Yalnızca süper admin giriş yapabilir")
+        aud = _ha.AUD_YNT
+    elif kind == _ha.KIND_IK:
         aud = _ha.AUD_IK
     elif kind == _ha.KIND_APP:
         aud = _ha.AUD_APP
     elif is_sa:
         aud = _ha.AUD_SITE
     else:
-        aud = aud or _ha.AUD_APP
+        aud = _ha.audience_for_request(request) or _ha.AUD_APP
 
     # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
     token = create_access_token(
@@ -3013,7 +3081,7 @@ async def get_me(request: Request):
     if not token:
         return {"user": None, "authenticated": False, "companies": [], "license": None, "impersonation": None}
     try:
-        user = await get_user_from_token(token, db)
+        user = await get_user_from_token(token, db, request=request, path=request.url.path)
     except HTTPException:
         return {"user": None, "authenticated": False, "companies": [], "license": None, "impersonation": None}
     user_id = str(user.get("_id", user.get("id")))
@@ -3163,11 +3231,15 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
         "used_at": None,
         "created_at": now.isoformat(),
     })
-    # Personel davet/şifre → ik; diğerleri → app
-    _pw_ctx = "ik" if (next_kind in ("mesaim", "personelim", "login") and user.get("employee_id")) or (user.get("role") == "personel") else "app"
-    if next_kind in ("mesaim", "personelim"):
-        _pw_ctx = "ik"
-    base = await _public_base_url(request, req.get("base_url") or "", context=_pw_ctx)
+    # Süper admin → ynt (istemci base_url yok sayılır); personel → ik; diğerleri → app
+    if user.get("is_super_admin"):
+        _pw_ctx = "ynt"
+        base = await _public_base_url(request, "", context=_pw_ctx)
+    else:
+        _pw_ctx = "ik" if (next_kind in ("mesaim", "personelim", "login") and user.get("employee_id")) or (user.get("role") == "personel") else "app"
+        if next_kind in ("mesaim", "personelim"):
+            _pw_ctx = "ik"
+        base = await _public_base_url(request, req.get("base_url") or "", context=_pw_ctx)
     link = password_reset.reset_link(base, token, next_kind)
 
     if channel == "sms":
@@ -19691,6 +19763,10 @@ rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 import platform_notices
 platform_notices.init(db)
+import platform_admin
+import platform_v1
+platform_admin.init(db)
+platform_v1.init(db)
 import user_erase
 user_erase.init(db)
 import company_reset
@@ -19864,6 +19940,8 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(platform_notices.router)
+app.include_router(platform_admin.router)
+app.include_router(platform_v1.router)
 app.include_router(user_erase.router)
 app.include_router(company_reset.router)
 app.include_router(storage_manager.router)

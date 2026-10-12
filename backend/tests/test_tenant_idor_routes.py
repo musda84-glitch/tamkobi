@@ -61,6 +61,8 @@ def _has_tenant_guard(fn: ast.AST) -> bool:
 def _auto_skip(path: str) -> bool:
     if path.startswith("/public/") or path.startswith("/system/"):
         return True
+    if path.startswith("/platform/admin/") or path.startswith("/platform/v1/"):
+        return True
     if "webhook" in path:
         return True
     if path.endswith("/pdf") or path.endswith("/xml") or "share-link" in path:

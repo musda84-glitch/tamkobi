@@ -183,10 +183,10 @@ export const AuthProvider = ({ children }) => {
   const login = useCallback(async (email, password, remember = true) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password, remember: !!remember }, { withCredentials: true });
-      // Süper admin 2FA ikinci adımı — oturum açılmış sayma; /sistem/giris'e yönlendir
+      // Süper admin 2FA ikinci adımı — oturum açılmış sayma; ynt /sistem/giris
       if (res.data?.requires_2fa) {
         toast.message("İki adımlı doğrulama gerekli. Platform girişine yönlendiriliyorsunuz.");
-        window.location.href = hostUrl("site", "/sistem/giris");
+        window.location.href = hostUrl("ynt", "/sistem/giris");
         return { ok: false, data: res.data };
       }
       // Employee on app → backend returns redirect to ik (no cookies)

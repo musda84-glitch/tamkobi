@@ -1,0 +1,112 @@
+# Platform Yönetimi: ynt.taiyazilim.com
+# Kurulum: deploy/nginx/KURULUM.md → "Platform Yönetimi (ynt.taiyazilim.com)"
+#
+# Önkoşul:
+#   - /etc/nginx/conf.d/tamkobi-upstream.conf (tamkobi_api)
+#   - /etc/nginx/snippets/tamkobi-security-headers.conf
+#   - spa-routes.map.conf → $tamkobi_spa
+#   - Sertifika: certbot certonly --webroot -w /var/www/letsencrypt \
+#       --cert-name ynt.taiyazilim.com -d ynt.taiyazilim.com
+#
+# default_server KULLANMAYIN. Apex/app bloklarına dokunmayın.
+
+# ---------------------------------------------------------------------------
+# :80 — ACME + HTTPS yönlendirme
+# ---------------------------------------------------------------------------
+server {
+    listen 85.95.240.184:80;
+    server_name ynt.taiyazilim.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://ynt.taiyazilim.com$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------------
+# :443 — SPA + API proxy (tek SAN: ynt.taiyazilim.com)
+# ---------------------------------------------------------------------------
+server {
+    listen 85.95.240.184:443 ssl http2;
+    server_name ynt.taiyazilim.com;
+
+    ssl_certificate     /etc/letsencrypt/live/ynt.taiyazilim.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ynt.taiyazilim.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    server_tokens off;
+    client_max_body_size 25m;
+    root /var/www/tamkobi.com/frontend-current;
+    index index.html;
+
+    include /etc/nginx/snippets/tamkobi-security-headers.conf;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml image/svg+xml;
+
+    location = /robots.txt {
+        default_type text/plain;
+        return 200 "User-agent: *\nDisallow: /\n";
+        access_log off;
+    }
+
+    # Opsiyonel ofis IP kısıtı (bayrak sonrası):
+    # location ^~ /sistem {
+    #     allow 203.0.113.10;
+    #     deny all;
+    #     include /etc/nginx/snippets/tamkobi-security-headers.conf;
+    #     add_header X-Robots-Tag "noindex, nofollow" always;
+    #     try_files $uri $uri/ @spa_or_404;
+    # }
+
+    location /api {
+        include /etc/nginx/snippets/tamkobi-security-headers.conf;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        proxy_pass http://tamkobi_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 120s;
+    }
+
+    location = /index.html {
+        include /etc/nginx/snippets/tamkobi-security-headers.conf;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Cache-Control "no-cache";
+        try_files $uri =404;
+    }
+
+    location /static/ {
+        include /etc/nginx/snippets/tamkobi-security-headers.conf;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    location / {
+        include /etc/nginx/snippets/tamkobi-security-headers.conf;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        try_files $uri $uri/ @spa_or_404;
+    }
+
+    location @spa_or_404 {
+        include /etc/nginx/snippets/tamkobi-security-headers.conf;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        if ($tamkobi_spa = 0) { return 404; }
+        rewrite ^ /index.html last;
+    }
+}
