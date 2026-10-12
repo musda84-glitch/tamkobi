@@ -483,6 +483,18 @@ async def _issue_session_for_user(
     }
 
 
+# mysql_store update_one load→save olduğundan kullanıcı başına kilit (TOTP/recovery yarışı)
+_2fa_verify_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _2fa_verify_lock(uid: str) -> asyncio.Lock:
+    lock = _2fa_verify_locks.get(uid)
+    if lock is None:
+        lock = asyncio.Lock()
+        _2fa_verify_locks[uid] = lock
+    return lock
+
+
 async def _2fa_fail(user: dict, email: str, client_ip: str, *, detail: str = "Doğrulama kodu hatalı.") -> None:
     """Kullanıcı kilidi + pending token deneme sayacı; anahtar iptali. 429 kilidi verify girişinde kontrol edilir."""
     uid = str(user.get("_id", user.get("id")))
@@ -512,15 +524,11 @@ async def auth_2fa_verify(req: TwoFAVerifyRequest, request: Request, response: R
         payload = superadmin_2fa.decode_pending_2fa_token(req.pending_token)
     except Exception:
         raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz veya süresi dolmuş. Tekrar giriş yapın.")
-    user = await db.users.find_one({"_id": payload["sub"]})
-    if not user or not user.get("is_super_admin"):
+    uid = str(payload.get("sub") or "")
+    if not uid:
         raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz.")
-    if user.get("is_active") is False:
-        raise HTTPException(status_code=403, detail="Hesabınız pasif durumda.")
-    email = (user.get("email") or "").strip().lower()
-    uid = str(user.get("_id", user.get("id")))
 
-    # Kullanıcı başına kilit (şifre başarısı bunu sıfırlamaz)
+    # Kullanıcı başına kilit sayacı (şifre başarısı bunu sıfırlamaz) — kilit dışında da kontrol edilir
     lock_id = superadmin_2fa.twofa_lock_identifier(uid)
     lock = await db.login_attempts.find_one({"identifier": lock_id})
     if lock and int(lock.get("count") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
@@ -538,58 +546,66 @@ async def auth_2fa_verify(req: TwoFAVerifyRequest, request: Request, response: R
                 detail="Çok fazla hatalı kod. 15 dakika sonra tekrar deneyin.",
             )
 
-    stored_jti = (user.get("pending_2fa_jti") or "").strip()
-    if not stored_jti or stored_jti != str(payload.get("jti") or ""):
-        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
-    if int(user.get("pending_2fa_attempts") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
-        await db.users.update_one({"_id": user["_id"]}, {"$set": {"pending_2fa_jti": ""}})
-        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
-
     code = (req.code or "").strip()
-    ok = False
     used_recovery = False
-    if superadmin_2fa.user_totp_enabled(user):
-        try:
-            secret = superadmin_2fa.decrypt_totp_secret(user.get("totp_secret") or "")
-        except Exception:
-            secret = ""
-        counter = superadmin_2fa.matching_totp_counter(secret, code) if secret else None
-        if counter is not None:
-            # Replay koruması: aynı (veya daha eski) zaman adımı reddedilir
-            replay = await db.users.update_one(
-                {
-                    "_id": user["_id"],
-                    "$or": [
-                        {"totp_last_counter": {"$lt": counter}},
-                        {"totp_last_counter": {"$exists": False}},
-                        {"totp_last_counter": None},
-                    ],
-                },
-                {"$set": {"totp_last_counter": counter}},
-            )
-            if getattr(replay, "matched_count", 0) == 0:
-                await _2fa_fail(user, email, client_ip, detail="Doğrulama kodu hatalı.")
-            ok = True
-        else:
-            matched = superadmin_2fa.verify_recovery_code(code, user.get("totp_recovery_hashes") or [])
-            if matched:
-                pulled = await db.users.update_one(
-                    {"_id": user["_id"], "totp_recovery_hashes": matched},
-                    {"$pull": {"totp_recovery_hashes": matched}},
-                )
-                if getattr(pulled, "modified_count", 0) > 0:
+    remember = bool(payload.get("remember"))
+
+    async with _2fa_verify_lock(uid):
+        # Taze doküman — jti/attempts/TOTP/recovery yarışına karşı
+        user = await db.users.find_one({"_id": uid})
+        if not user or not user.get("is_super_admin"):
+            raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz.")
+        if user.get("is_active") is False:
+            raise HTTPException(status_code=403, detail="Hesabınız pasif durumda.")
+        email = (user.get("email") or "").strip().lower()
+
+        stored_jti = (user.get("pending_2fa_jti") or "").strip()
+        if not stored_jti or stored_jti != str(payload.get("jti") or ""):
+            raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+        if int(user.get("pending_2fa_attempts") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
+            await db.users.update_one({"_id": user["_id"]}, {"$set": {"pending_2fa_jti": ""}})
+            raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+
+        ok = False
+        if superadmin_2fa.user_totp_enabled(user):
+            try:
+                secret = superadmin_2fa.decrypt_totp_secret(user.get("totp_secret") or "")
+            except Exception:
+                secret = ""
+            counter = superadmin_2fa.matching_totp_counter(secret, code) if secret else None
+            if counter is not None:
+                # Replay: last_counter >= counter ise reddet (dizi-içerir SQL filtresi yok)
+                last = user.get("totp_last_counter")
+                try:
+                    last_i = int(last) if last is not None and last != "" else None
+                except (TypeError, ValueError):
+                    last_i = None
+                if last_i is not None and last_i >= counter:
+                    await _2fa_fail(user, email, client_ip, detail="Doğrulama kodu hatalı.")
+                await db.users.update_one({"_id": user["_id"]}, {"$set": {"totp_last_counter": counter}})
+                ok = True
+            else:
+                # Kurtarma: mysql_store SQL "dizi skaler eşitlik" desteklemez → find + $set remaining
+                hashes = list(user.get("totp_recovery_hashes") or [])
+                matched = superadmin_2fa.verify_recovery_code(code, hashes)
+                if matched:
+                    remaining = [h for h in hashes if h != matched]
+                    await db.users.update_one(
+                        {"_id": user["_id"]},
+                        {"$set": {"totp_recovery_hashes": remaining}},
+                    )
+                    user["totp_recovery_hashes"] = remaining
                     ok = True
                     used_recovery = True
-    if not ok:
-        await _2fa_fail(user, email, client_ip)
+        if not ok:
+            await _2fa_fail(user, email, client_ip)
 
-    # Başarı: pending jti + 2FA kilit sayacı temizlenir
-    await db.users.update_one(
-        {"_id": user["_id"]},
-        {"$set": {"pending_2fa_jti": "", "pending_2fa_attempts": 0}},
-    )
-    await db.login_attempts.delete_one({"identifier": lock_id})
-    remember = bool(payload.get("remember"))
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"pending_2fa_jti": "", "pending_2fa_attempts": 0}},
+        )
+        await db.login_attempts.delete_one({"identifier": lock_id})
+
     body = await _issue_session_for_user(user, request, response, remember=remember)
     applog.log_auth(
         "login_2fa_ok",

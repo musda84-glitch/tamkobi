@@ -295,7 +295,7 @@ def test_2fa_verify_success_and_recovery_consume(monkeypatch):
     payload = jwt.decode(out["token"], auth_utils.get_jwt_secret(), algorithms=["HS256"])
     assert payload.get("mfa") is True and "iat" in payload
 
-    # recovery atomic $pull
+    # recovery: find + $set remaining (dizi-içerir SQL filtresi yok)
     user["pending_2fa_jti"] = jti
     user["totp_recovery_hashes"] = list(hashes)
     tok2, jti2 = sa2fa.create_pending_2fa_token("sa1", "sa@tamkobi.com")
@@ -308,9 +308,20 @@ def test_2fa_verify_success_and_recovery_consume(monkeypatch):
             _FakeResponse(),
         )
     )
-    pull_calls = [c for c in mock_db.users.update_one.call_args_list if "$pull" in (c[0][1] if c[0] else {})]
-    assert pull_calls
-    assert pull_calls[0][0][1]["$pull"]["totp_recovery_hashes"] == hashes[0]
+    set_calls = [
+        c for c in mock_db.users.update_one.call_args_list
+        if isinstance(c[0][1], dict) and "totp_recovery_hashes" in (c[0][1].get("$set") or {})
+    ]
+    assert set_calls
+    remaining = set_calls[0][0][1]["$set"]["totp_recovery_hashes"]
+    assert hashes[0] not in remaining
+    assert hashes[1] in remaining
+    # Sorunlu desen kalmamalı
+    bad = [
+        c for c in mock_db.users.update_one.call_args_list
+        if isinstance(c[0][0], dict) and "totp_recovery_hashes" in c[0][0]
+    ]
+    assert not bad
 
 
 def test_setup_confirm_emits_recovery_once(monkeypatch):
@@ -429,14 +440,7 @@ def test_totp_replay_rejected(monkeypatch):
     user["totp_last_counter"] = counter  # already used
     tok, jti = sa2fa.create_pending_2fa_token("sa1", "sa@tamkobi.com")
     user["pending_2fa_jti"] = jti
-
-    def update_side_effect(query, update, upsert=False):
-        # replay filter won't match when last_counter == counter
-        if "$or" in (query or {}):
-            return _UpdateResult(matched=0, modified=0)
-        return _UpdateResult()
-
-    mock_db = _mock_db_for_session(user, monkeypatch, server, update_side_effect=update_side_effect)
+    mock_db = _mock_db_for_session(user, monkeypatch, server)
     mock_db.login_attempts.find_one = AsyncMock(return_value=None)
 
     with pytest.raises(HTTPException) as e:
@@ -606,3 +610,42 @@ def test_invite_cookie_secure_with_forwarded_proto(monkeypatch):
     assert captured
     assert all(c.get("secure") is True for c in captured)
     assert all(c.get("samesite") == "lax" for c in captured)
+
+
+def test_mysql_store_sql_list_scalar_filter_is_broken():
+    """MariaDB SQL pushdown dizi-içerir eşitliğini desteklemez — bu yüzden $pull+filtre kullanılmaz."""
+    from mysql_store import match_query, sql_pushdown
+
+    doc = {"_id": "u1", "totp_recovery_hashes": ["a", "b"]}
+    # Python eşleştirici doğru çalışır
+    assert match_query(doc, {"_id": "u1", "totp_recovery_hashes": "a"}) is True
+    # Ama SQL JSON_EXTRACT = skaler üretir (dizi içeremez)
+    sql, params = sql_pushdown("users", {"_id": "u1", "totp_recovery_hashes": "a"})
+    assert "totp_recovery_hashes" in sql
+    assert "=" in sql
+    assert "a" in params
+
+
+def test_recovery_consume_find_set_matches_mysql_store_semantics():
+    """Gerçek eşleştirme: find_one(_id) + Python remaining + $set (SQL dizi filtresi yok)."""
+    from mysql_store import match_query, apply_update
+
+    plain, hashes = sa2fa.generate_recovery_codes(3)
+    doc = {"_id": "sa1", "totp_recovery_hashes": list(hashes)}
+    matched = sa2fa.verify_recovery_code(plain[0], doc["totp_recovery_hashes"])
+    assert matched
+    # Sorunlu filtre SQL'te boş dönerdi; biz yalnızca _id ile yükleriz
+    assert match_query(doc, {"_id": "sa1"}) is True
+    remaining = [h for h in doc["totp_recovery_hashes"] if h != matched]
+    out = apply_update(doc, {"$set": {"totp_recovery_hashes": remaining}}, {"_id": "sa1"})
+    assert matched not in out["totp_recovery_hashes"]
+    assert len(out["totp_recovery_hashes"]) == 2
+    # İkinci tüketim yok
+    assert sa2fa.verify_recovery_code(plain[0], out["totp_recovery_hashes"]) is None
+
+
+def test_no_list_scalar_totp_filter_in_server_source():
+    text = Path(__file__).resolve().parents[1].joinpath("server.py").read_text()
+    assert '"totp_recovery_hashes": matched' not in text
+    assert '"$pull": {"totp_recovery_hashes"' not in text
+    assert "_2fa_verify_lock" in text
