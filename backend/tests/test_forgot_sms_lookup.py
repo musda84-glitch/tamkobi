@@ -1,14 +1,17 @@
 """Forgot-SMS phone lookup (normalize / phone_norm / employee→user) + neutral body."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+import inspect
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from phone_norm import find_user_by_phone, phone_norm_of, phone_update_fields
+from phone_norm import PHONE_SCAN_LIMIT, find_user_by_phone, phone_norm_of, phone_update_fields
 from password_reset import (
     ERP_FORGOT_SMS_MSG,
+    FORGOT_SMS_MIN_SECONDS,
     finalize_forgot_sms_result,
     generic_forgot_response,
+    pad_forgot_duration,
     PUBLIC_FORGOT_KEYS,
 )
 
@@ -151,3 +154,63 @@ def test_forgot_sms_public_body_identical_keys():
     assert "detail" not in known
     assert "reset_token" not in known
     assert known["message"] == ERP_FORGOT_SMS_MSG
+
+
+def test_phone_scan_limit_is_300():
+    """find_user_by_phone fallback uses PHONE_SCAN_LIMIT (300)."""
+    assert PHONE_SCAN_LIMIT == 300
+    src = inspect.getsource(find_user_by_phone)
+    assert "PHONE_SCAN_LIMIT" in src
+    assert "to_list(PHONE_SCAN_LIMIT)" in src
+
+
+def test_pad_forgot_duration_sleeps_remaining():
+    slept = []
+
+    async def _fake_sleep(sec):
+        slept.append(sec)
+
+    async def _run():
+        with patch("password_reset.asyncio.sleep", _fake_sleep), \
+             patch("password_reset.time.monotonic", return_value=100.3):
+            await pad_forgot_duration(100.0, min_seconds=1.2)
+
+    asyncio.run(_run())
+    assert len(slept) == 1
+    assert abs(slept[0] - 0.9) < 1e-6
+
+
+def test_pad_forgot_duration_skips_when_already_slow():
+    slept = []
+
+    async def _fake_sleep(sec):
+        slept.append(sec)
+
+    async def _run():
+        with patch("password_reset.asyncio.sleep", _fake_sleep), \
+             patch("password_reset.time.monotonic", return_value=102.0):
+            await pad_forgot_duration(100.0, min_seconds=1.2)
+
+    asyncio.run(_run())
+    assert slept == []
+
+
+def test_forgot_sms_min_seconds_constant():
+    assert 1.0 <= FORGOT_SMS_MIN_SECONDS <= 1.5
+
+
+def test_erp_forgot_password_sms_uses_background_and_pad():
+    """SMS path schedules send via create_task and pads duration (not await send first)."""
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1].joinpath("server.py").read_text(encoding="utf-8")
+    # Extract erp_forgot_password function body roughly
+    start = src.index("async def erp_forgot_password")
+    end = src.index("\nasync def _erp_reset_doc", start)
+    fn = src[start:end]
+    assert "asyncio.create_task" in fn
+    assert "pad_forgot_duration" in fn
+    assert "_forgot_sms_deliver" in fn
+    assert "await _platform_sms.send_platform_sms" not in fn
+    deliver_start = src.index("async def _forgot_sms_deliver")
+    deliver = src[deliver_start:start]
+    assert "send_platform_sms" in deliver

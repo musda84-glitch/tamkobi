@@ -8,6 +8,11 @@ import comm_service
 
 logger = logging.getLogger(__name__)
 
+# Global uniqueness on users.phone_norm (forgot-SMS lookup is also global).
+PHONE_TAKEN_MSG = "Bu telefon numarası başka bir kullanıcıya ait."
+# Cap for unindexed phone scan fallback (enumeration / load bound).
+PHONE_SCAN_LIMIT = 300
+
 
 def phone_norm_of(value: Any) -> Optional[str]:
     return comm_service.normalize_phone(str(value or "").strip())
@@ -24,6 +29,23 @@ def phone_update_fields(raw: Any, *, allow_empty: bool = True) -> Dict[str, Any]
     if not norm:
         raise ValueError("Geçerli bir cep telefonu girin (05XXXXXXXXX).")
     return {"phone": text, "phone_norm": norm}
+
+
+async def ensure_unique_phone_norm(
+    db,
+    phone_norm: Optional[str],
+    *,
+    exclude_user_id: Optional[str] = None,
+) -> None:
+    """Raise ValueError if phone_norm is already used by another user (global)."""
+    if not phone_norm:
+        return
+    other = await db.users.find_one({"phone_norm": phone_norm})
+    if not other:
+        return
+    if exclude_user_id and str(other.get("_id")) == str(exclude_user_id):
+        return
+    raise ValueError(PHONE_TAKEN_MSG)
 
 
 async def backfill_phone_norm(db) -> Dict[str, int]:
@@ -80,7 +102,7 @@ async def find_user_by_phone(db, phone_raw: Any) -> Optional[dict]:
     candidates = await db.users.find({
         **active_q,
         "phone": {"$exists": True, "$nin": [None, ""]},
-    }).to_list(300)
+    }).to_list(PHONE_SCAN_LIMIT)
     for u in candidates:
         if phone_norm_of(u.get("phone")) == phone:
             # heal phone_norm for next time
@@ -92,7 +114,7 @@ async def find_user_by_phone(db, phone_raw: Any) -> Optional[dict]:
     # Employee phone → user_id
     emp = await db.employees.find_one({"phone_norm": phone})
     if not emp:
-        emps = await db.employees.find({"phone": {"$exists": True, "$nin": [None, ""]}}).to_list(300)
+        emps = await db.employees.find({"phone": {"$exists": True, "$nin": [None, ""]}}).to_list(PHONE_SCAN_LIMIT)
         for e in emps:
             if phone_norm_of(e.get("phone")) == phone:
                 emp = e

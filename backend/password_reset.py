@@ -1,6 +1,8 @@
 """ERP / personel / panel şifre sıfırlama yardımcıları."""
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -11,6 +13,9 @@ MIN_PASSWORD = 6
 
 # Public forgot yanıtında yalnızca bu anahtarlar istemciye gider.
 PUBLIC_FORGOT_KEYS = ("status", "message", "channel")
+
+# Forgot-SMS: sabit duvar süresi (varlık sızıntısını zamanlama ile engeller).
+FORGOT_SMS_MIN_SECONDS = 1.2
 
 
 def normalize_email(value: Any) -> str:
@@ -124,6 +129,18 @@ def finalize_forgot_sms_result(out: dict, *, sms_status: str, sms_detail: str = 
     """Forgot SMS yanıtı: yalnızca status/message/channel; reset_url/token asla ekleme."""
     _ = sms_status, sms_detail  # logged by caller; never returned to client
     return public_forgot_payload(out, channel="sms")
+
+
+async def pad_forgot_duration(
+    started: float,
+    *,
+    min_seconds: float = FORGOT_SMS_MIN_SECONDS,
+) -> None:
+    """Sleep so wall-clock from `started` ≈ min_seconds (constant-time SMS forgot)."""
+    elapsed = time.monotonic() - float(started)
+    remaining = float(min_seconds) - elapsed
+    if remaining > 0:
+        await asyncio.sleep(remaining)
 
 
 def sms_reset_message(*, name: Any, link: str, brand: Any = "TamKobi") -> str:

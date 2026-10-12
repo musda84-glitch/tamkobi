@@ -1,8 +1,11 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from password_reset import (
     ERP_FORGOT_MSG,
     ERP_FORGOT_SMS_MSG,
+    FORGOT_SMS_MIN_SECONDS,
     finalize_forgot_mail_result,
     finalize_forgot_sms_result,
     forgot_channel,
@@ -11,6 +14,7 @@ from password_reset import (
     mask_email,
     mask_phone,
     normalize_email,
+    pad_forgot_duration,
     password_error,
     PUBLIC_FORGOT_KEYS,
     redirect_after_reset,
@@ -102,3 +106,20 @@ def test_forgot_sms_channel_helpers():
     assert "sms_status" not in failed
     assert "detail" not in failed
     assert failed == sms_out
+
+
+def test_pad_forgot_duration_helper():
+    assert 1.0 <= FORGOT_SMS_MIN_SECONDS <= 1.5
+    slept = []
+
+    async def _sleep(s):
+        slept.append(s)
+
+    async def _run():
+        with patch("password_reset.asyncio.sleep", _sleep), \
+             patch("password_reset.time.monotonic", return_value=10.5):
+            await pad_forgot_duration(10.0, min_seconds=1.2)
+
+    asyncio.run(_run())
+    assert len(slept) == 1
+    assert abs(slept[0] - 0.7) < 1e-9

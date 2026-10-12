@@ -346,7 +346,7 @@ async def platform_sms_logs(limit: int = 100, _: dict = Depends(saas.require_sup
 @router.get("/system/password-resets/failed")
 async def list_failed_password_resets(limit: int = 40, _: dict = Depends(saas.require_super_admin)):
     """Son başarısız şifre sıfırlama denemeleri (SMS/e-posta hata logu)."""
-    lim = min(max(int(limit or 40), 1), 100)
+    lim = min(max(int(limit or 40), 1), 300)
     rows = await _db.password_resets.find({
         "$or": [{"sms_failed": True}, {"mail_failed": True}],
     }).sort("created_at", -1).to_list(lim)

@@ -1476,9 +1476,17 @@ async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = De
         upd["email"] = email
     if "phone" in req:
         try:
-            upd.update(_phone_norm.phone_update_fields(req.get("phone"), allow_empty=True))
+            phone_fields = _phone_norm.phone_update_fields(req.get("phone"), allow_empty=True)
+            await _phone_norm.ensure_unique_phone_norm(
+                _db, phone_fields.get("phone_norm"), exclude_user_id=user_id,
+            )
+            upd.update(phone_fields)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+    email_changed = False
+    if "email" in req and upd.get("email") and upd["email"] != (u.get("email") or "").strip().lower():
+        email_changed = True
+        upd["sessions_revoked_at"] = _now()
     if "is_active" in req:
         active = bool(req["is_active"])
         if not active and await _super_admin_count() <= 1:
@@ -1493,6 +1501,14 @@ async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = De
     if not upd:
         return _user_row(u, comps)
     await _db.users.update_one({"_id": user_id}, {"$set": {**upd, "updated_at": _now()}})
+    if email_changed:
+        try:
+            await _db.password_resets.update_many(
+                {"user_id": user_id, "used_at": None},
+                {"$set": {"used_at": _now(), "revoked": True}},
+            )
+        except Exception:
+            pass
     return _user_row(await _db.users.find_one({"_id": user_id}), comps)
 
 
