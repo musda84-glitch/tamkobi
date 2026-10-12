@@ -11217,156 +11217,33 @@ async def sms_logs(company_id: Optional[str] = "comp_nexus_main_01", limit: int 
     logs = await db.sms_logs.find({"company_id": company_id}).sort("created_at", -1).to_list(limit)
     return clean_docs(logs)
 
-# ----------------- İLETİŞİM: E-POSTA (IMAP/SMTP) -----------------
-@api_router.get("/comm/mail/presets")
-async def mail_presets():
-    return [{"code": k, **v} for k, v in comm_service.MAIL_PRESETS.items()]
+# ----------------- İLETİŞİM: E-POSTA (IMAP/SMTP) — API: mail_accounts.router -----------------
+import mail_accounts as _mail_accounts_mod
+
 
 def _err_text(e: Exception) -> str:
-    args = getattr(e, "args", None)
-    raw = args[0] if args else str(e)
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", "replace")
-    return str(raw)[:160]
+    return _mail_accounts_mod._err_text(e)
+
 
 def _mask_mail_account(a: dict) -> dict:
-    a = clean_doc(dict(a))
-    a["has_password"] = bool(a.pop("password_enc", ""))
-    return a
+    return _mail_accounts_mod.mask_mail_account(a)
+
 
 async def _mail_account(company_id: str, user_id: Optional[str] = None) -> dict:
-    query = {"company_id": company_id}
-    if user_id:
-        query["user_id"] = user_id
-    a = await db.mail_accounts.find_one(query)
-    if not a:
-        raise HTTPException(status_code=404, detail="E-posta hesabı tanımlı değil. Önce hesabınızı bağlayın.")
-    a["password"] = comm_service.decrypt(a["password_enc"])
-    return a
+    """Internal helper — decrypt hatasında 409 (needs_reauth)."""
+    _ = user_id
+    return await _mail_accounts_mod.load_mail_account(company_id)
 
-@api_router.get("/comm/mail/account")
-async def get_mail_account(company_id: Optional[str] = "comp_nexus_main_01"):
-    a = await db.mail_accounts.find_one({"company_id": company_id})
-    return _mask_mail_account(a) if a else None
-
-@api_router.put("/comm/mail/account")
-async def save_mail_account(req: Dict[str, Any], request: Request):
-    user = await get_current_user(request)
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    preset = comm_service.MAIL_PRESETS.get(req.get("provider", "custom"), comm_service.MAIL_PRESETS["custom"])
-    existing = await db.mail_accounts.find_one({"company_id": company_id})
-    if not req.get("password") and not existing:
-        raise HTTPException(status_code=400, detail="Uygulama şifresi gerekli.")
-    data = {
-        "company_id": company_id, "user_id": user.get("id") or user.get("_id"), "email": (req.get("email") or "").strip(),
-        "display_name": req.get("display_name") or "", "provider": req.get("provider", "custom"),
-        "imap_host": req.get("imap_host") or preset["imap_host"], "imap_port": int(req.get("imap_port") or preset["imap_port"]),
-        "smtp_host": req.get("smtp_host") or preset["smtp_host"], "smtp_port": int(req.get("smtp_port") or preset["smtp_port"]),
-        "signature": req.get("signature") or "",
-    }
-    if not data["email"] or not data["imap_host"] or not data["smtp_host"]:
-        raise HTTPException(status_code=400, detail="E-posta, IMAP ve SMTP sunucu bilgileri zorunludur.")
-    if req.get("password"):
-        data["password_enc"] = comm_service.encrypt(req["password"])
-    if existing:
-        await db.mail_accounts.update_one({"_id": existing["_id"]}, {"$set": data})
-    else:
-        acc = MailAccount(**data)
-        await db.mail_accounts.insert_one(acc.to_mongo())
-    a = await _mail_account(company_id)
-    try:
-        await comm_service.run_blocking(comm_service.imap_test, a)
-        await db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "connected", "last_error": None}})
-        test = {"ok": True, "message": "IMAP bağlantısı doğrulandı."}
-    except Exception as e:
-        err = f"IMAP bağlantı hatası: {_err_text(e)}"
-        await db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
-        test = {"ok": False, "message": err}
-    saved = await db.mail_accounts.find_one({"_id": a["_id"]})
-    return {**_mask_mail_account(saved), "test_result": test}
-
-@api_router.delete("/comm/mail/account")
-async def delete_mail_account(company_id: Optional[str] = "comp_nexus_main_01"):
-    await db.mail_accounts.delete_one({"company_id": company_id})
-    return {"status": "success"}
-
-@api_router.post("/comm/mail/account/test")
-async def test_mail_account(company_id: Optional[str] = "comp_nexus_main_01"):
-    a = await _mail_account(company_id)
-    try:
-        res = await comm_service.run_blocking(comm_service.imap_test, a)
-        await db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "connected", "last_error": None}})
-        return {"ok": True, "message": f"Bağlantı başarılı. {res.get('folders', 0)} klasör bulundu."}
-    except Exception as e:
-        err = f"IMAP bağlantı hatası: {_err_text(e)}"
-        await db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
-        return {"ok": False, "message": err}
-
-def _mail_error(e: Exception) -> HTTPException:
-    return HTTPException(status_code=424, detail=f"Posta sunucusu hatası: {_err_text(e)}")
-
-@api_router.get("/comm/mail/folders")
-async def mail_folders(company_id: Optional[str] = "comp_nexus_main_01"):
-    a = await _mail_account(company_id)
-    try:
-        return await comm_service.run_blocking(comm_service.imap_folders, a)
-    except Exception as e:
-        raise _mail_error(e)
-
-@api_router.get("/comm/mail/messages")
-async def mail_messages(company_id: Optional[str] = "comp_nexus_main_01", folder: str = "INBOX", limit: int = 30, unread_only: bool = False):
-    a = await _mail_account(company_id)
-    try:
-        return await comm_service.run_blocking(comm_service.imap_list, a, folder, min(max(limit, 1), 100), unread_only)
-    except Exception as e:
-        raise _mail_error(e)
-
-@api_router.get("/comm/mail/messages/{uid}")
-async def mail_message(uid: str, company_id: Optional[str] = "comp_nexus_main_01", folder: str = "INBOX"):
-    a = await _mail_account(company_id)
-    try:
-        return await comm_service.run_blocking(comm_service.imap_fetch, a, folder, uid)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Mesaj bulunamadı.")
-    except Exception as e:
-        raise _mail_error(e)
-
-@api_router.post("/comm/mail/messages/{uid}/flag")
-async def mail_flag(uid: str, req: Dict[str, Any]):
-    a = await _mail_account(req.get("company_id", "comp_nexus_main_01"))
-    flag_map = {"read": "\\Seen", "flagged": "\\Flagged", "deleted": "\\Deleted"}
-    flag = flag_map.get(req.get("flag", "read"))
-    if not flag:
-        raise HTTPException(status_code=400, detail="Geçersiz bayrak.")
-    try:
-        await comm_service.run_blocking(comm_service.imap_set_flag, a, req.get("folder", "INBOX"), uid, flag, bool(req.get("add", True)))
-        return {"status": "success"}
-    except Exception as e:
-        raise _mail_error(e)
 
 async def _send_tracked_mail(*, company_id: str, to: List[str], subject: str, body: str, html: Optional[str] = None,
                             account: Optional[dict] = None, contact_id: Optional[str] = None, contact_name: Optional[str] = None,
                             context: str = "manual", ref_id: Optional[str] = None, base_url: str = "",
                             cc: Optional[List[str]] = None, attachments: Optional[List[Dict[str, Any]]] = None) -> dict:
-    """Send mail, store a delivery log, and embed an open-tracking pixel when a public base URL exists."""
-    a = account or await _mail_account(company_id)
-    log = MailLog(
-        company_id=company_id, from_email=a["email"], to=list(to), cc=list(cc or []), subject=subject or "", body=body or "",
-        attachments=[x.get("filename") for x in (attachments or []) if x.get("filename")],
-        contact_id=contact_id or None, contact_name=contact_name or None, context=context or "manual", ref_id=ref_id or None,
-        open_count=0,
+    return await _mail_accounts_mod.send_tracked_mail(
+        company_id=company_id, to=to, subject=subject, body=body, html=html, account=account,
+        contact_id=contact_id, contact_name=contact_name, context=context, ref_id=ref_id,
+        base_url=base_url, cc=cc, attachments=attachments,
     )
-    doc = log.to_mongo()
-    html_body = mail_tracking.append_pixel(html or mail_tracking.text_to_html(body or ""), base_url, doc["_id"])
-    try:
-        await comm_service.smtp_send(a, list(to), subject or "", body or "", html=html_body, cc=cc or None, attachments=attachments)
-    except Exception as e:
-        doc["status"] = "failed"
-        doc["error"] = f"SMTP hatası: {_err_text(e)}"
-        await db.mail_logs.insert_one(doc)
-        raise HTTPException(status_code=424, detail=doc["error"])
-    await db.mail_logs.insert_one(doc)
-    return doc
 
 
 @api_router.get("/public/mail/open/{log_id}.gif")
@@ -11381,40 +11258,6 @@ async def mail_open_pixel(log_id: str):
         media_type="image/gif",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
     )
-
-
-@api_router.post("/comm/mail/send")
-async def mail_send(request: Request, company_id: str = Form("comp_nexus_main_01"), to: str = Form(...), cc: str = Form(""),
-                    subject: str = Form(""), body: str = Form(""), context: str = Form("manual"), ref_id: str = Form(""),
-                    contact_id: str = Form(""), contact_name: str = Form(""), files: List[UploadFile] = File(default=[])):
-    a = await _mail_account(company_id)
-    to_list = [x.strip() for x in to.split(",") if x.strip()]
-    cc_list = [x.strip() for x in cc.split(",") if x.strip()]
-    if not to_list:
-        raise HTTPException(status_code=400, detail="Alıcı e-posta adresi gerekli.")
-    attachments, total = [], 0
-    for f in files:
-        data = await f.read()
-        total += len(data)
-        if total > 25 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Ekler toplam 25 MB'ı aşamaz.")
-        attachments.append({"filename": f.filename, "content_type": f.content_type, "data": data})
-    full_body = body + (f"\n\n--\n{a.get('signature')}" if a.get("signature") else "")
-    base = await _public_base_url(request)
-    try:
-        await _send_tracked_mail(
-            company_id=company_id, to=to_list, subject=subject, body=full_body, account=a,
-            contact_id=contact_id or None, contact_name=contact_name or None, context=context or "manual",
-            ref_id=ref_id or None, base_url=base, cc=cc_list, attachments=attachments,
-        )
-    except HTTPException:
-        raise
-    return {"status": "success", "message": f"E-posta {', '.join(to_list)} adresine gönderildi."}
-
-@api_router.get("/comm/mail/logs")
-async def mail_logs(company_id: Optional[str] = "comp_nexus_main_01", limit: int = 200):
-    logs = await db.mail_logs.find({"company_id": company_id}).sort("created_at", -1).to_list(limit)
-    return clean_docs(logs)
 
 @api_router.get("/comm/whatsapp/logs")
 async def whatsapp_logs(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None):
@@ -19785,6 +19628,8 @@ import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
 platform_sms.init(db)
+import mail_accounts
+mail_accounts.init(db, get_current_user, _public_base_url)
 einvoice_designs.init(db)
 addons.init(db)
 support_tickets.init(db, get_current_user)
@@ -19967,6 +19812,7 @@ app.include_router(trade.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
 app.include_router(platform_sms.router)
+app.include_router(mail_accounts.router)
 app.include_router(einvoice_designs.router)
 app.include_router(demo.router)
 app.include_router(data_export.router)
