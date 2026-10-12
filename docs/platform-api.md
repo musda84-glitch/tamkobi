@@ -14,7 +14,30 @@ Base path: `/api/platform/v1/` (her host üzerinden çağrılabilir).
 | `X-Platform-Nonce` | Rastgele (tekrar kullanılamaz, ~10 dk) |
 | `X-Platform-Signature` | `hex(HMAC-SHA256(secret, "{ts}\\n{nonce}\\n{METHOD}\\n{path}\\n{sha256_hex(body)}"))` |
 
-Timestamp kayması en fazla ±300 sn. Anahtar başına dakikada 120 istek.
+## Doğrulama sırası (401 / 429)
+
+1. Eksik başlıklar → **401**
+2. Timestamp kayması (±300 sn dışı) → **401**
+3. Anahtar yok / iptal / süresi dolmuş / grace geçmiş → **401**
+4. IP başına dakika limiti (300) → **429** *(imza öncesi)*
+5. İmza hatalı / hex değil / yanlış uzunluk → **401**
+6. Scope eksik → **403**
+7. Tekrarlanan nonce → **401**
+8. Anahtar başına dakika limiti (120) → **429** *(yalnızca geçerli imzadan sonra)*
+
+Geçersiz imzalı istekler anahtar kotasını yakmaz; IP kotası yine de artar.
+
+## Anahtar kapsamı
+
+Varsayılan scope’lar: `license:verify`, `heartbeat`, `usage:write`. Boş scope ile anahtar oluşturulamaz.
+
+| Anahtar | Erişim |
+|---------|--------|
+| `instance_id` dolu | Yalnızca o instance (TamKobi’de o `company_id`) |
+| `instance_id` boş | Çözülen hedefin `product_id`’si anahtarınkiyle eşleşmeli |
+| TamKobi + `instance_id` boş | Ek olarak `platform:all` scope’u gerekir; aksi halde **403** |
+
+Ürün A’nın anahtarı ürün B’nin lisansını okuyamaz. Instance’a bağlı anahtar başka instance’a heartbeat/usage yazamaz.
 
 ## Uçlar
 
@@ -30,7 +53,8 @@ Girdi: `{ "instance_ref", "version", "meta" }` — kapsam: `heartbeat`
 
 ### POST `/api/platform/v1/usage`
 
-Girdi: `{ "instance_ref", "metrics", "period" }` — kapsam: `usage:write`
+Girdi: `{ "instance_ref", "metrics", "period" }` — kapsam: `usage:write`  
+Kayıtta `key_id` ve `product_id` saklanır.
 
 ## Python
 

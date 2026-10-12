@@ -221,9 +221,12 @@ async def impersonate_exit(request: Request, response: Response):
     handoff_blob = _json.dumps({"access_token": back, "sa_return": ""})
     code = await auth_handoff.create_handoff(_db, handoff_blob, purpose="sa_return")
     try:
-        sa_aud = decode_access_payload(back).get("aud")
+        sa_payload = decode_access_payload(back)
+        sa_aud = sa_payload.get("aud")
+        sa_sub = str(sa_payload.get("sub") or "")
     except Exception:
         sa_aud = None
+        sa_sub = ""
     if sa_aud == _ha.AUD_YNT:
         dest_base = await pu.public_base_url_for(_db, "ynt")
     else:
@@ -233,7 +236,7 @@ async def impersonate_exit(request: Request, response: Response):
         import platform_store as _pstore
         await _pstore.write_audit(
             actor_type="superadmin",
-            actor_id="",
+            actor_id=sa_sub,
             ip=(request.client.host if request.client else "") or "",
             action="impersonate.exit",
             target_type="session",

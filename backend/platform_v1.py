@@ -19,12 +19,14 @@ SCOPE_USAGE = "usage:write"
 
 
 async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict, Dict[str, Any]]:
+    """Sıra: başlıklar → timestamp → anahtar → IP limiti → İMZA → scope → nonce → anahtar kotası."""
     key_id = (request.headers.get("X-Platform-Key") or "").strip()
     ts = (request.headers.get("X-Platform-Timestamp") or "").strip()
     nonce = (request.headers.get("X-Platform-Nonce") or "").strip()
     sig = (request.headers.get("X-Platform-Signature") or "").strip()
     if not key_id or not ts or not nonce or not sig:
         raise HTTPException(status_code=401, detail="Eksik imza başlıkları")
+
     try:
         ts_i = int(ts)
     except ValueError:
@@ -36,14 +38,9 @@ async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict,
     if not doc or not secret:
         raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş anahtar")
 
-    if required_scope not in (doc.get("scopes") or []):
-        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
-
-    if not await store.check_rate_limit(key_id):
-        raise HTTPException(status_code=429, detail="Dakika limiti aşıldı")
-
-    if not await store.check_and_store_nonce(key_id, nonce):
-        raise HTTPException(status_code=401, detail="Tekrarlanan nonce")
+    ip = (request.client.host if request.client else "") or ""
+    if not await store.check_ip_rate_limit(ip):
+        raise HTTPException(status_code=429, detail="IP dakika limiti aşıldı")
 
     body = await request.body()
     path = request.url.path
@@ -51,7 +48,15 @@ async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict,
     if not store.verify_signature(secret, ts, nonce, method, path, body, sig):
         raise HTTPException(status_code=401, detail="İmza doğrulanamadı")
 
-    ip = (request.client.host if request.client else "") or ""
+    if required_scope not in (doc.get("scopes") or []):
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+
+    if not await store.check_and_store_nonce(key_id, nonce):
+        raise HTTPException(status_code=401, detail="Tekrarlanan nonce")
+
+    if not await store.check_rate_limit(key_id):
+        raise HTTPException(status_code=429, detail="Dakika limiti aşıldı")
+
     await store.touch_last_used(key_id, ip)
     await store.write_audit(
         actor_type="api_key",
@@ -73,38 +78,50 @@ async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict,
 
 @router.post("/licenses/verify")
 async def v1_verify(request: Request):
-    _, payload = await _authenticate(request, required_scope=SCOPE_VERIFY)
-    return await store.verify_license(
-        instance_ref=payload.get("instance_ref"),
-        company_id=payload.get("company_id"),
-    )
+    key_doc, payload = await _authenticate(request, required_scope=SCOPE_VERIFY)
+    try:
+        return await store.verify_license(
+            key_doc=key_doc,
+            instance_ref=payload.get("instance_ref"),
+            company_id=payload.get("company_id"),
+        )
+    except store.KeyScopeError as e:
+        raise HTTPException(status_code=403, detail=str(e) or "Anahtar bu hedef için yetkili değil")
 
 
 @router.post("/heartbeat")
 async def v1_heartbeat(request: Request):
-    _, payload = await _authenticate(request, required_scope=SCOPE_HEARTBEAT)
+    key_doc, payload = await _authenticate(request, required_scope=SCOPE_HEARTBEAT)
     ref = (payload.get("instance_ref") or "").strip()
     if not ref:
         raise HTTPException(status_code=400, detail="instance_ref gerekli")
-    return await store.record_heartbeat(
-        instance_ref=ref,
-        version=str(payload.get("version") or ""),
-        meta=payload.get("meta") if isinstance(payload.get("meta"), dict) else {},
-    )
+    try:
+        return await store.record_heartbeat(
+            key_doc=key_doc,
+            instance_ref=ref,
+            version=str(payload.get("version") or ""),
+            meta=payload.get("meta") if isinstance(payload.get("meta"), dict) else {},
+        )
+    except store.KeyScopeError as e:
+        raise HTTPException(status_code=403, detail=str(e) or "Anahtar bu hedef için yetkili değil")
 
 
 @router.post("/usage")
 async def v1_usage(request: Request):
-    _, payload = await _authenticate(request, required_scope=SCOPE_USAGE)
+    key_doc, payload = await _authenticate(request, required_scope=SCOPE_USAGE)
     ref = (payload.get("instance_ref") or "").strip()
     if not ref:
         raise HTTPException(status_code=400, detail="instance_ref gerekli")
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
-    return await store.record_usage(
-        instance_ref=ref,
-        metrics=metrics,
-        period=str(payload.get("period") or ""),
-    )
+    try:
+        return await store.record_usage(
+            key_doc=key_doc,
+            instance_ref=ref,
+            metrics=metrics,
+            period=str(payload.get("period") or ""),
+        )
+    except store.KeyScopeError as e:
+        raise HTTPException(status_code=403, detail=str(e) or "Anahtar bu hedef için yetkili değil")
 
 
 def init(db):

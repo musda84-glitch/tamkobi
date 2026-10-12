@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
+import re
 import secrets
 import time
 import uuid
@@ -10,15 +12,23 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import comm_service
+from mysql_store import DuplicateKeyError
 
 _db = None
+logger = logging.getLogger("tamkobi.platform")
 
 PRODUCT_TAMKOBI = "tamkobi"
 DEFAULT_SCOPES = ("license:verify", "heartbeat", "usage:write")
-KEY_RATE_LIMIT = 120  # per minute
+SCOPE_PLATFORM_ALL = "platform:all"
+KEY_RATE_LIMIT = 120  # per key per minute
+IP_RATE_LIMIT = 300  # per IP per minute (before signature)
 NONCE_TTL_SEC = 600
+RATE_TTL_SEC = 600
 LAST_USED_MIN_INTERVAL = 60
 ROTATION_GRACE_HOURS = 24
+CLEANUP_INTERVAL_SEC = 300
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_SENSITIVE_KEY = re.compile(r"(secret|password|token|api_key|authorization|cookie)", re.I)
 
 
 def init(db) -> None:
@@ -68,7 +78,8 @@ def _public_product(doc: dict) -> dict:
     return out
 
 
-async def get_product(product_id: str) -> Optional[dict]:
+async def _get_product_doc(product_id: str) -> Optional[dict]:
+    """Internal product lookup (not the Depends route get_product)."""
     await ensure_seeded()
     doc = await _db.platform_products.find_one({"_id": product_id})
     if not doc:
@@ -105,7 +116,7 @@ async def create_product(data: dict, *, actor_id: str, ip: str = "") -> dict:
 
 
 async def update_product(product_id: str, data: dict, *, actor_id: str, ip: str = "") -> dict:
-    doc = await get_product(product_id)
+    doc = await _get_product_doc(product_id)
     if not doc:
         raise LookupError("Ürün bulunamadı")
     changes = {}
@@ -130,7 +141,7 @@ async def update_product(product_id: str, data: dict, *, actor_id: str, ip: str 
 
 
 async def delete_product(product_id: str, *, actor_id: str, ip: str = "") -> None:
-    doc = await get_product(product_id)
+    doc = await _get_product_doc(product_id)
     if not doc:
         raise LookupError("Ürün bulunamadı")
     if doc.get("code") == PRODUCT_TAMKOBI:
@@ -189,11 +200,10 @@ def _public_instance(doc: dict) -> dict:
 async def upsert_instance(data: dict, *, actor_id: str, ip: str = "") -> dict:
     await ensure_seeded()
     pid = data.get("product_id")
-    prod = await get_product(pid) if pid else None
+    prod = await _get_product_doc(pid) if pid else None
     if not prod:
         raise ValueError("product_id gerekli")
     if prod.get("code") == PRODUCT_TAMKOBI and data.get("company_id"):
-        # Do not copy TamKobi companies — return virtual view
         import saas
         cid = data["company_id"]
         c = await _db.companies.find_one({"_id": cid}) or {}
@@ -249,6 +259,15 @@ def _key_id() -> str:
     return "pk_" + secrets.token_hex(8)
 
 
+def _normalize_scopes(scopes: Optional[List[str]]) -> List[str]:
+    if scopes is None:
+        return list(DEFAULT_SCOPES)
+    sc = [str(s).strip() for s in scopes if str(s).strip()]
+    if not sc:
+        raise ValueError("En az bir kapsam gerekli")
+    return sc
+
+
 async def create_api_key(
     *,
     product_id: str,
@@ -261,12 +280,12 @@ async def create_api_key(
 ) -> Tuple[dict, str]:
     """Returns (public_row_without_secret, plaintext_secret once)."""
     await ensure_seeded()
-    prod = await get_product(product_id)
+    prod = await _get_product_doc(product_id)
     if not prod:
         raise ValueError("Ürün bulunamadı")
+    sc = _normalize_scopes(scopes)
     secret = _new_secret()
     kid = _key_id()
-    sc = list(scopes or DEFAULT_SCOPES)
     doc = {
         "_id": kid,
         "product_id": prod["_id"],
@@ -395,7 +414,6 @@ async def resolve_key_for_auth(key_id: str) -> Tuple[Optional[dict], Optional[st
     exp = _parse_iso(doc.get("expires_at"))
     if exp and exp < _now():
         return None, None
-    # grace_until set on OLD key after rotation — usable until grace ends, then 401
     grace = _parse_iso(doc.get("grace_until"))
     if grace is not None and grace < _now():
         return None, None
@@ -421,33 +439,150 @@ async def touch_last_used(key_id: str, ip: str = "") -> None:
     )
 
 
+# ---------- Target resolution + key scope ----------
+async def resolve_target(
+    *,
+    instance_ref: Optional[str] = None,
+    company_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Resolve instance_ref/company_id to {id, product_id, company_id, external_ref}."""
+    await ensure_seeded()
+    ref = (company_id or instance_ref or "").strip()
+    if not ref:
+        return None
+    raw = ref[5:] if ref.startswith("virt_") else ref
+
+    inst = await _db.platform_instances.find_one(
+        {"$or": [{"_id": ref}, {"_id": raw}, {"external_ref": ref}, {"external_ref": raw},
+                 {"company_id": ref}, {"company_id": raw}]}
+    )
+    if inst:
+        return {
+            "id": inst["_id"],
+            "product_id": inst.get("product_id"),
+            "company_id": inst.get("company_id"),
+            "external_ref": inst.get("external_ref") or "",
+            "virtual": False,
+        }
+
+    # Virtual TamKobi company
+    tam = await _db.platform_products.find_one({"code": PRODUCT_TAMKOBI})
+    if not tam:
+        return None
+    company = await _db.companies.find_one({"_id": raw})
+    if company:
+        return {
+            "id": f"virt_{raw}",
+            "product_id": tam["_id"],
+            "company_id": raw,
+            "external_ref": raw,
+            "virtual": True,
+        }
+    return {
+        "id": raw,
+        "product_id": tam["_id"],
+        "company_id": raw,
+        "external_ref": raw,
+        "virtual": True,
+    }
+
+
+class KeyScopeError(PermissionError):
+    """Key may not access the requested instance/company."""
+
+
+async def ensure_key_may_access(
+    key_doc: dict,
+    *,
+    instance_ref: Optional[str] = None,
+    company_id: Optional[str] = None,
+) -> dict:
+    """Raise KeyScopeError if key cannot access the target. Returns resolved target."""
+    target = await resolve_target(instance_ref=instance_ref, company_id=company_id)
+    if not target:
+        raise KeyScopeError("Hedef çözülemedi")
+
+    bound = (key_doc.get("instance_id") or "").strip()
+    scopes = key_doc.get("scopes") or []
+    key_pid = key_doc.get("product_id")
+
+    if bound:
+        # Bound key: only that instance / TamKobi company
+        allowed_ids = {bound, f"virt_{bound}"}
+        bound_inst = await _db.platform_instances.find_one({"_id": bound})
+        if bound_inst:
+            allowed_ids.add(bound_inst["_id"])
+            if bound_inst.get("external_ref"):
+                allowed_ids.add(bound_inst["external_ref"])
+            if bound_inst.get("company_id"):
+                allowed_ids.add(bound_inst["company_id"])
+                allowed_ids.add(f"virt_{bound_inst['company_id']}")
+        else:
+            # Bound id may be a TamKobi company_id
+            allowed_ids.add(bound)
+            allowed_ids.add(f"virt_{bound}")
+        cand = {
+            target.get("id"),
+            target.get("company_id"),
+            target.get("external_ref"),
+            f"virt_{target.get('company_id')}" if target.get("company_id") else None,
+        }
+        if not (cand & allowed_ids):
+            raise KeyScopeError("Anahtar bu instance için yetkili değil")
+        return target
+
+    # Unbound: product must match
+    if target.get("product_id") and key_pid and target["product_id"] != key_pid:
+        raise KeyScopeError("Anahtar bu ürün için yetkili değil")
+
+    prod = await _get_product_doc(key_pid) if key_pid else None
+    if prod and prod.get("code") == PRODUCT_TAMKOBI:
+        if SCOPE_PLATFORM_ALL not in scopes:
+            # TamKobi unbound without platform:all cannot query companies
+            raise KeyScopeError("TamKobi için platform:all veya instance bağlı anahtar gerekli")
+    return target
+
+
 # ---------- Nonces + rate limit ----------
 async def check_and_store_nonce(key_id: str, nonce: str) -> bool:
-    """Return True if nonce is new; False if replay."""
+    """Return True if nonce is new; False if replay (duplicate insert)."""
     nid = f"{key_id}:{nonce}"
-    existing = await _db.platform_nonces.find_one({"_id": nid})
-    if existing:
+    try:
+        await _db.platform_nonces.insert_one({
+            "_id": nid,
+            "key_id": key_id,
+            "nonce": nonce,
+            "created_at": _now_iso(),
+            "expires_at": (_now() + timedelta(seconds=NONCE_TTL_SEC)).isoformat(),
+        })
+        return True
+    except DuplicateKeyError:
         return False
-    await _db.platform_nonces.insert_one({
-        "_id": nid,
-        "key_id": key_id,
-        "nonce": nonce,
-        "created_at": _now_iso(),
-        "expires_at": (_now() + timedelta(seconds=NONCE_TTL_SEC)).isoformat(),
-    })
-    return True
 
 
 async def check_rate_limit(key_id: str) -> bool:
-    """Return True if under limit; False if exceeded (caller → 429)."""
-    bucket = f"rl:{key_id}:{int(time.time() // 60)}"
+    """Return True if under key limit; False if exceeded (caller → 429)."""
+    return await _bump_rate(f"rl:key:{key_id}:{int(time.time() // 60)}", KEY_RATE_LIMIT, key_id=key_id)
+
+
+async def check_ip_rate_limit(ip: str) -> bool:
+    """Pre-signature IP throttle. Return True if under limit."""
+    ip = (ip or "unknown").strip() or "unknown"
+    return await _bump_rate(f"rl:ip:{ip}:{int(time.time() // 60)}", IP_RATE_LIMIT, key_id=ip)
+
+
+async def _bump_rate(bucket: str, limit: int, *, key_id: str = "") -> bool:
     doc = await _db.platform_rate.find_one({"_id": bucket})
     count = int((doc or {}).get("count") or 0)
-    if count >= KEY_RATE_LIMIT:
+    if count >= limit:
         return False
     await _db.platform_rate.update_one(
         {"_id": bucket},
-        {"$inc": {"count": 1}, "$set": {"key_id": key_id, "updated_at": _now_iso()}},
+        {"$inc": {"count": 1}, "$set": {
+            "key_id": key_id,
+            "updated_at": _now_iso(),
+            "expires_at": (_now() + timedelta(seconds=RATE_TTL_SEC)).isoformat(),
+        }},
         upsert=True,
     )
     return True
@@ -460,13 +595,29 @@ def sign_payload(secret: str, ts: str, nonce: str, method: str, path: str, body:
 
 
 def verify_signature(secret: str, ts: str, nonce: str, method: str, path: str, body: bytes, signature: str) -> bool:
+    sig = (signature or "").strip().lower()
+    if not _HEX64.match(sig):
+        return False
     expected = sign_payload(secret, ts, nonce, method, path, body)
-    return hmac.compare_digest(expected, (signature or "").strip().lower()) or hmac.compare_digest(
-        expected, (signature or "").strip()
-    )
+    return hmac.compare_digest(expected, sig)
 
 
 # ---------- Audit ----------
+def scrub_details(obj: Any) -> Any:
+    """Recursively strip secret-like keys from audit details."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            kl = str(k).lower()
+            if kl.endswith("_enc") or _SENSITIVE_KEY.search(kl):
+                continue
+            out[k] = scrub_details(v)
+        return out
+    if isinstance(obj, list):
+        return [scrub_details(x) for x in obj]
+    return obj
+
+
 async def write_audit(
     *,
     actor_type: str,
@@ -479,13 +630,7 @@ async def write_audit(
 ) -> None:
     if _db is None:
         return
-    safe = dict(details or {})
-    for bad in ("secret", "secret_enc", "password", "token", "api_key"):
-        safe.pop(bad, None)
-    # Strip any nested secret-like values
-    for k in list(safe.keys()):
-        if "secret" in k.lower() or k.endswith("_enc"):
-            safe.pop(k, None)
+    safe = scrub_details(dict(details or {}))
     await _db.platform_audit_log.insert_one({
         "_id": f"pal_{uuid.uuid4().hex[:16]}",
         "at": _now_iso(),
@@ -518,25 +663,37 @@ async def list_audit(
 
 
 # ---------- License verify / heartbeat / usage ----------
-async def verify_license(*, instance_ref: Optional[str] = None, company_id: Optional[str] = None) -> dict:
+async def verify_license(
+    *,
+    key_doc: Optional[dict] = None,
+    instance_ref: Optional[str] = None,
+    company_id: Optional[str] = None,
+) -> dict:
     import saas
-    cid = company_id or instance_ref
+    if key_doc is not None:
+        target = await ensure_key_may_access(key_doc, instance_ref=instance_ref, company_id=company_id)
+        cid = target.get("company_id") or target.get("id")
+    else:
+        target = await resolve_target(instance_ref=instance_ref, company_id=company_id)
+        cid = (company_id or instance_ref or "").strip()
+        if target:
+            cid = target.get("company_id") or target.get("id") or cid
+
     if not cid:
         return {"valid": False, "plan": None, "status": "unknown", "valid_until": None, "modules": {}, "seats": None}
-    # Stored instance?
-    inst = await _db.platform_instances.find_one({"$or": [{"_id": cid}, {"external_ref": cid}, {"company_id": cid}]})
-    if inst and inst.get("company_id"):
-        cid = inst["company_id"]
-    elif inst and not inst.get("company_id"):
-        return {
-            "valid": (inst.get("status") or "") in ("active", "trial"),
-            "plan": inst.get("plan_code"),
-            "status": inst.get("status"),
-            "valid_until": inst.get("valid_until"),
-            "modules": inst.get("modules") or {},
-            "seats": inst.get("seats"),
-        }
-    # Strip virt_ prefix
+
+    if target and not target.get("virtual") and not target.get("company_id"):
+        inst = await _db.platform_instances.find_one({"_id": target["id"]})
+        if inst:
+            return {
+                "valid": (inst.get("status") or "") in ("active", "trial"),
+                "plan": inst.get("plan_code"),
+                "status": inst.get("status"),
+                "valid_until": inst.get("valid_until"),
+                "modules": inst.get("modules") or {},
+                "seats": inst.get("seats"),
+            }
+
     if str(cid).startswith("virt_"):
         cid = cid[5:]
     try:
@@ -555,7 +712,15 @@ async def verify_license(*, instance_ref: Optional[str] = None, company_id: Opti
     }
 
 
-async def record_heartbeat(*, instance_ref: str, version: str = "", meta: Optional[dict] = None) -> dict:
+async def record_heartbeat(
+    *,
+    key_doc: Optional[dict] = None,
+    instance_ref: str,
+    version: str = "",
+    meta: Optional[dict] = None,
+) -> dict:
+    if key_doc is not None:
+        await ensure_key_may_access(key_doc, instance_ref=instance_ref)
     now = _now_iso()
     q = {"$or": [{"_id": instance_ref}, {"external_ref": instance_ref}, {"company_id": instance_ref}]}
     inst = await _db.platform_instances.find_one(q)
@@ -565,7 +730,6 @@ async def record_heartbeat(*, instance_ref: str, version: str = "", meta: Option
             {"$set": {"last_heartbeat_at": now, "meta": {**(inst.get("meta") or {}), **(meta or {}), "version": version}}},
         )
     else:
-        # Virtual TamKobi: store heartbeat meta only
         await _db.platform_heartbeats.update_one(
             {"_id": instance_ref},
             {"$set": {"last_heartbeat_at": now, "version": version, "meta": meta or {}, "updated_at": now}},
@@ -574,13 +738,71 @@ async def record_heartbeat(*, instance_ref: str, version: str = "", meta: Option
     return {"ok": True, "at": now}
 
 
-async def record_usage(*, instance_ref: str, metrics: dict, period: str = "") -> dict:
+async def record_usage(
+    *,
+    key_doc: Optional[dict] = None,
+    instance_ref: str,
+    metrics: dict,
+    period: str = "",
+) -> dict:
+    if key_doc is not None:
+        await ensure_key_may_access(key_doc, instance_ref=instance_ref)
     doc = {
         "_id": f"pu_{uuid.uuid4().hex[:16]}",
         "instance_ref": instance_ref,
         "metrics": metrics or {},
         "period": period or "",
+        "key_id": (key_doc or {}).get("_id"),
+        "product_id": (key_doc or {}).get("product_id"),
         "created_at": _now_iso(),
     }
     await _db.platform_usage.insert_one(doc)
     return {"ok": True, "id": doc["_id"]}
+
+
+# ---------- Cleanup ----------
+async def cleanup_platform_ephemera(db=None) -> dict:
+    """Delete expired platform_nonces and platform_rate rows. Unit-test callable."""
+    database = db if db is not None else _db
+    if database is None:
+        return {"nonces": 0, "rates": 0}
+    now = _now_iso()
+    nonces = 0
+    rates = 0
+    # Scan and delete expired (docs store; no TTL index required)
+    try:
+        rows = await database.platform_nonces.find({}).to_list(5000)
+        for r in rows:
+            exp = _parse_iso(r.get("expires_at"))
+            if exp is not None and exp < _now():
+                await database.platform_nonces.delete_one({"_id": r["_id"]})
+                nonces += 1
+    except Exception as e:
+        logger.warning("platform_nonces cleanup: %s", e)
+    try:
+        rows = await database.platform_rate.find({}).to_list(5000)
+        for r in rows:
+            exp = _parse_iso(r.get("expires_at"))
+            # Legacy buckets without expires_at: drop if updated_at older than TTL
+            if exp is None:
+                upd = _parse_iso(r.get("updated_at"))
+                if upd is None or (_now() - upd).total_seconds() < RATE_TTL_SEC:
+                    continue
+            elif exp >= _now():
+                continue
+            await database.platform_rate.delete_one({"_id": r["_id"]})
+            rates += 1
+    except Exception as e:
+        logger.warning("platform_rate cleanup: %s", e)
+    return {"nonces": nonces, "rates": rates}
+
+
+async def cleanup_loop(db=None):
+    """Background loop: leased externally via platform_lease.run_exclusive."""
+    import asyncio
+    while True:
+        try:
+            await cleanup_platform_ephemera(db)
+        except Exception as e:
+            logger.warning("platform cleanup loop: %s", e)
+        await asyncio.sleep(CLEANUP_INTERVAL_SEC)

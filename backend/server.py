@@ -320,6 +320,15 @@ async def startup_event():
         _start_leased_background("bg.applog_rotation", applog.rotation_loop)
         _start_leased_background("bg.perfmon", perfmon.loop)
         _start_leased_background("bg.edoc_backup", edoc_backup.reminder_loop)
+        try:
+            import platform_store as _pstore
+            _pstore.init(db)
+            _start_leased_background(
+                "bg.platform_ephemera",
+                lambda: _pstore.cleanup_loop(db),
+            )
+        except Exception as _pe:
+            logger.warning("platform ephemera cleanup loop skipped: %s", _pe)
     else:
         logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
 
