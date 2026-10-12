@@ -35,7 +35,7 @@ export const SPAN_OPTIONS = [
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
 const BLOCK_HIDDEN_BY_DEFAULT = {
-  ettn: true, gib_seal_invoice: true, gib_seal_archive: true, balance: true, qr: true, spacer: true,
+  ettn: false, gib_seal_invoice: true, gib_seal_archive: true, balance: true, qr: true, spacer: true,
 };
 const BLOCK_SPAN_BY_DEFAULT = {
   ettn: 12,
@@ -758,7 +758,11 @@ const LINE_COL_XSLT = {
   },
   qty: { align: "right", td: `<td align="right"><xsl:value-of select="cbc:InvoicedQuantity"/></td>` },
   unit: { align: "left", td: `<td>${xsltUnitLabel()}</td>` },
-  net_price: { align: "right", td: `<td align="right">${xsltMoney("cbc:LineExtensionAmount")}</td>` },
+  // Birim net fiyat = PriceAmount; indirimde satır tutarı / miktar yedek.
+  net_price: {
+    align: "right",
+    td: `<td align="right"><xsl:choose><xsl:when test="cac:Price/cbc:PriceAmount">${xsltMoney("cac:Price/cbc:PriceAmount")}</xsl:when><xsl:when test="cbc:InvoicedQuantity!=0"><xsl:value-of select="format-number(cbc:LineExtensionAmount div cbc:InvoicedQuantity, '#.##0,00', 'tr')"/></xsl:when><xsl:otherwise>${xsltMoney("cbc:LineExtensionAmount")}</xsl:otherwise></xsl:choose></td>`,
+  },
   price: { align: "right", td: `<td align="right">${xsltMoney("cac:Price/cbc:PriceAmount")}</td>` },
   discount: {
     align: "right",
@@ -941,8 +945,37 @@ function xsltBlocks(L) {
           </xsl:if>
         </xsl:for-each>
       </div>`,
-    spacer: `<div class="inv-spacer">&nbsp;</div>`,
+    spacer: `<div class="inv-spacer">&#160;</div>`,
   };
+}
+
+/** Layout JSON'u XSLT başına göm (geri yüklemede görsel düzen korunur). */
+export function embedLayoutComment(xslt, layout) {
+  const text = String(xslt || "");
+  const stripped = text.replace(/<!--\s*TAMKOBI_LAYOUT[^>]*-->/g, "").trimStart();
+  let b64 = "";
+  try {
+    const json = JSON.stringify(layout || {});
+    b64 = typeof btoa === "function"
+      ? btoa(unescape(encodeURIComponent(json)))
+      : Buffer.from(json, "utf8").toString("base64");
+  } catch {
+    return stripped;
+  }
+  return `<!-- TAMKOBI_LAYOUT v1:${b64} -->\n${stripped}`;
+}
+
+export function extractLayoutComment(xslt) {
+  const m = String(xslt || "").match(/<!--\s*TAMKOBI_LAYOUT\s+v1:([A-Za-z0-9+/=]+)\s*-->/);
+  if (!m) return null;
+  try {
+    const json = typeof atob === "function"
+      ? decodeURIComponent(escape(atob(m[1])))
+      : Buffer.from(m[1], "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
 }
 
 /** Blok yazı tipi/punto CSS — her metin alanı kendi fontunu taşır. */
@@ -997,8 +1030,8 @@ export function layoutToXslt(layout, kind) {
   const fs = asFontSize(L.fontSize);
   const k = Math.max(7, fs - 2);
   const no = fs + 3;
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+  const raw = `<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
   xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
   xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
@@ -1055,4 +1088,9 @@ export function layoutToXslt(layout, kind) {
   </xsl:template>
 </xsl:stylesheet>
 `;
+  // HTML entity (&nbsp; vb.) XSLT parse'ı bozar — yalnız &#160; kullan.
+  if (/&nbsp;|&amp;nbsp;/i.test(raw)) {
+    throw new Error("XSLT içinde HTML entity (&nbsp;) olamaz; &#160; kullanın.");
+  }
+  return embedLayoutComment(raw, L);
 }

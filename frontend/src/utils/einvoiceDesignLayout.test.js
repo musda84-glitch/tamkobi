@@ -64,7 +64,7 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.metaFields.find((f) => f.id === "due_date").hidden).toBe(false);
   expect(L.metaFields.find((f) => f.id === "date").hidden).toBe(true);
   expect(L.metaFields.find((f) => f.id === "ettn")).toBeUndefined();
-  expect(L.blocks.find((b) => b.id === "ettn").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "ettn").hidden).toBe(false);
   expect(L.blocks.find((b) => b.id === "ettn").span).toBe(12);
   expect(L.metaFields.find((f) => f.id === "order_no").hidden).toBe(true);
   expect(L.headerFields.find((f) => f.id === "supplier_name").hidden).toBe(true);
@@ -211,6 +211,7 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("İskonto");
   expect(xslt).toContain("KDV");
   expect(xslt).toContain("KDV'siz fiyat");
+  expect(xslt).toContain("cac:Price/cbc:PriceAmount");
   expect(xslt).toContain("Güncel bakiye");
   expect(xslt).toContain("DocumentType='QR'");
   expect(xslt).toContain("width:160px;height:160px");
@@ -349,9 +350,13 @@ test("legacy visible meta ETTN becomes its own block", () => {
 });
 
 test("layoutToXslt writes ETTN as its own block", () => {
-  const hidden = layoutToXslt(defaultLayout("e_invoice"));
+  const shownDefault = layoutToXslt(defaultLayout("e_invoice"));
+  expect(shownDefault).toContain('class="inv-ettn"');
+  expect(shownDefault).toContain('<span class="inv-ettn-v">');
+  const hidden = layoutToXslt(normalizeLayout({
+    blocks: [{ id: "ettn", hidden: true }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
   expect(hidden).not.toContain('class="inv-ettn"');
-  expect(hidden).not.toContain('<span class="inv-ettn-v">');
   const shown = layoutToXslt(normalizeLayout({
     blocks: [{ id: "ettn" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
@@ -575,6 +580,10 @@ test("layoutToXslt emits empty spacer block when added", () => {
   }));
   expect(xslt).toContain('class="inv-spacer"');
   expect(xslt).toContain("width=\"33%\"");
+  expect(xslt).toContain("&#160;");
+  expect(xslt).not.toMatch(/&nbsp;/i);
+  expect(xslt).toMatch(/version="1\.0"/);
+  expect(xslt).toContain("TAMKOBI_LAYOUT v1:");
 });
 
 test("layoutToXslt uses paper font size and spaced invoice dates", () => {
