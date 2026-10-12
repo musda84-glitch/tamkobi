@@ -1,6 +1,7 @@
 """Platform e-Fatura / e-Arşiv XSLT tasarımları (Sistem paneli)."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import gzip
 import io
@@ -29,10 +30,20 @@ KIND_LABELS = {"e_invoice": "e-Fatura", "e_archive": "e-Arşiv"}
 SOURCES = ("visual", "xslt")
 MAX_XSLT_BYTES = 2 * 1024 * 1024
 MAX_LAYOUT_BYTES = 500 * 1024
+XSLT_TRANSFORM_TIMEOUT_S = 5.0
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "einvoice_xslt")
 SAMPLE_INVOICE = os.path.join(DATA_DIR, "sample_invoice.xml")
 LAYOUT_COMMENT_RE = re.compile(r"<!--\s*TAMKOBI_LAYOUT\s+v1:([A-Za-z0-9+/=]+)\s*-->")
 HTML_ENTITY_RE = re.compile(r"&(?:nbsp|amp|lt|gt|quot|#\d+|#x[0-9a-fA-F]+);", re.I)
+DOCTYPE_RE = re.compile(r"<!DOCTYPE\b", re.I)
+# Statik yasaklar: dosya/ağ yazma veya harici belge yükleme.
+BANNED_XSLT_PATTERNS = (
+    (re.compile(r"<\s*exsl:document\b", re.I), "exsl:document"),
+    (re.compile(r"<\s*xsl:result-document\b", re.I), "xsl:result-document"),
+    (re.compile(r"<\s*xsl:include\b", re.I), "xsl:include"),
+    (re.compile(r"<\s*xsl:import\b", re.I), "xsl:import"),
+    (re.compile(r"\bdocument\s*\(", re.I), "document()"),
+)
 BUILTIN = (
     {
         "id": "einvoice_xslt_default_e_invoice",
@@ -85,8 +96,19 @@ def extract_layout_from_xslt(text: str) -> Optional[dict]:
         return None
 
 
+def _reject_dangerous_xslt(raw: str) -> None:
+    if DOCTYPE_RE.search(raw):
+        raise HTTPException(status_code=400, detail="XSLT içinde DOCTYPE yasaktır.")
+    for pat, label in BANNED_XSLT_PATTERNS:
+        if pat.search(raw):
+            raise HTTPException(status_code=400, detail=f"XSLT içinde {label} yasaktır.")
+
+
 def compile_and_transform_xslt(text: str) -> str:
-    """lxml ile XSLT derle + sample_invoice.xml üzerinde dönüştür; hata → 400."""
+    """lxml ile XSLT derle + sample_invoice.xml üzerinde dönüştür; hata → 400.
+
+    Sync yol: güvenli XMLParser + DENY_ALL + statik yasaklar (validate_xslt / seçili tasarım).
+    """
     raw = str(text or "")
     if len(raw.encode("utf-8")) > MAX_XSLT_BYTES:
         raise HTTPException(status_code=400, detail="XSLT 2 MB sınırını aşıyor.")
@@ -95,22 +117,24 @@ def compile_and_transform_xslt(text: str) -> str:
         raise HTTPException(status_code=400, detail="XSLT içinde &nbsp; kullanılamaz; &#160; yazın.")
     if "<xsl:stylesheet" not in raw and "<xsl:transform" not in raw:
         raise HTTPException(status_code=400, detail="Geçerli bir XSLT dosyası değil (xsl:stylesheet yok).")
+    _reject_dangerous_xslt(raw)
     try:
         from lxml import etree
     except ImportError as e:
         raise HTTPException(status_code=500, detail="lxml yüklü değil; XSLT doğrulanamıyor.") from e
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
     # Yorumdaki layout base64 JSON'u XML olarak parse edilebilir kalsın.
     try:
-        xslt_doc = etree.fromstring(raw.encode("utf-8"))
+        xslt_doc = etree.fromstring(raw.encode("utf-8"), parser)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"XSLT XML parse hatası: {e}") from e
     try:
-        transform = etree.XSLT(xslt_doc)
+        transform = etree.XSLT(xslt_doc, access_control=etree.XSLTAccessControl.DENY_ALL)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"XSLT derleme hatası: {e}") from e
     try:
         with open(SAMPLE_INVOICE, "rb") as fh:
-            sample = etree.parse(fh)
+            sample = etree.parse(fh, parser)
         result = transform(sample)
         out = str(result) if result is not None else ""
     except Exception as e:
@@ -121,7 +145,19 @@ def compile_and_transform_xslt(text: str) -> str:
 
 
 def validate_xslt(text: str) -> str:
+    """Sync doğrulama (birim testleri + güvenli parser/DENY_ALL/statik yasaklar)."""
     return compile_and_transform_xslt(text)
+
+
+async def validate_xslt_async(text: str) -> str:
+    """Async rotalar: dönüşümü thread'de 5 sn zaman aşımı ile çalıştır."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(compile_and_transform_xslt, text),
+            timeout=XSLT_TRANSFORM_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError as e:
+        raise HTTPException(status_code=400, detail="XSLT doğrulama zaman aşımı (5 sn).") from e
 
 
 def validate_layout(value: Any) -> Optional[dict]:
@@ -227,7 +263,7 @@ async def selected_xslt(kind: str) -> Optional[str]:
         return _builtin_xslt_for_kind(k)
     raw = row.get("xslt") or ""
     try:
-        compile_and_transform_xslt(raw)
+        await validate_xslt_async(raw)
         return raw
     except HTTPException as e:
         logger.error(
@@ -349,7 +385,7 @@ async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_supe
     raw_xslt = xslt if xslt is not None else _read_builtin_xslt(builtin_file)
     # Builtin kopyada lxml katı doğrulama opsiyonel gevşek: yine de stylesheet şart.
     try:
-        xslt = validate_xslt(raw_xslt)
+        xslt = await validate_xslt_async(raw_xslt)
     except HTTPException:
         if src and src.get("is_builtin"):
             xslt = str(raw_xslt or "")
@@ -405,7 +441,7 @@ async def update_design(design_id: str, req: Dict[str, Any], _: dict = Depends(s
             raise HTTPException(status_code=400, detail="Tasarım adı boş olamaz.")
         patch["name"] = name[:120]
     if "xslt" in req:
-        patch["xslt"] = validate_xslt(req.get("xslt"))
+        patch["xslt"] = await validate_xslt_async(req.get("xslt"))
     if "kind" in req:
         patch["kind"] = _kind(req.get("kind"))
     if "source" in req:
@@ -429,7 +465,7 @@ async def select_design(design_id: str, _: dict = Depends(saas.require_super_adm
     await ensure_defaults()
     doc = await _get(design_id)
     try:
-        validate_xslt(doc.get("xslt") or "")
+        await validate_xslt_async(doc.get("xslt") or "")
     except HTTPException as e:
         raise HTTPException(status_code=400, detail=f"Bozuk tasarım seçilemez: {e.detail}") from e
     kind = doc.get("kind")
@@ -477,7 +513,7 @@ async def import_design(req: Dict[str, Any], _: dict = Depends(saas.require_supe
             payload = {"xslt": text, "source": "xslt", "name": payload.get("name") or "İçe aktarılan"}
     kind = _kind(payload.get("kind") or "e_invoice")
     name = str(payload.get("name") or "İçe aktarılan tasarım").strip()[:120]
-    xslt = validate_xslt(payload.get("xslt") or "")
+    xslt = await validate_xslt_async(payload.get("xslt") or "")
     source = _normalize_source(payload.get("source"), has_layout=isinstance(payload.get("layout"), dict))
     layout = None
     if source == "visual":

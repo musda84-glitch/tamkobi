@@ -89,6 +89,59 @@ def test_validate_xslt_requires_stylesheet():
     assert "xsl:stylesheet" in ok
 
 
+def test_validate_xslt_rejects_exsl_document_no_file(tmp_path, monkeypatch):
+    out_file = tmp_path / "evil.txt"
+    evil = (
+        '<?xml version="1.0"?>'
+        '<xsl:stylesheet version="1.0"'
+        ' xmlns:xsl="http://www.w3.org/1999/XSL/Transform"'
+        ' xmlns:exsl="http://exslt.org/common" extension-element-prefixes="exsl">'
+        '<xsl:template match="/">'
+        f'<exsl:document href="{out_file}" method="text">pwned</exsl:document>'
+        "<html><body>ok</body></html>"
+        "</xsl:template></xsl:stylesheet>"
+    )
+    with pytest.raises(HTTPException) as e:
+        ed.validate_xslt(evil)
+    assert e.value.status_code == 400
+    assert "exsl:document" in str(e.value.detail).lower()
+    assert not out_file.exists()
+
+
+def test_validate_xslt_rejects_doctype():
+    bad = (
+        '<?xml version="1.0"?>'
+        '<!DOCTYPE xslt [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+        '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">'
+        '<xsl:template match="/"><html><body>&xxe;</body></html></xsl:template>'
+        "</xsl:stylesheet>"
+    )
+    with pytest.raises(HTTPException) as e:
+        ed.validate_xslt(bad)
+    assert e.value.status_code == 400
+    assert "doctype" in str(e.value.detail).lower()
+
+
+def test_validate_xslt_rejects_document_function():
+    bad = (
+        '<?xml version="1.0"?>'
+        '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">'
+        '<xsl:template match="/">'
+        "<html><body><xsl:value-of select=\"document('/etc/passwd')\"/></body></html>"
+        "</xsl:template></xsl:stylesheet>"
+    )
+    with pytest.raises(HTTPException) as e:
+        ed.validate_xslt(bad)
+    assert e.value.status_code == 400
+    assert "document()" in str(e.value.detail).lower()
+
+
+def test_builtin_xslt_still_validates():
+    for spec in ed.BUILTIN:
+        text = ed._read_builtin_xslt(spec["file"])
+        assert ed.validate_xslt(text)
+
+
 def test_extract_layout_from_xslt_comment():
     import base64, json
     layout = {"version": 1, "primary": "#abc"}
