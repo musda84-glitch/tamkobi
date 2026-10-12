@@ -324,7 +324,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/public/",
     "/api/setup/",
     "/api/version",
-    "/api/health",
+    "/api/health/",
     "/api/mobile/manifest",
     "/api/platform/notices",
     "/api/webhook/",

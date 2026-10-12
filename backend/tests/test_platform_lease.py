@@ -67,3 +67,50 @@ def test_background_jobs_env_flag(monkeypatch):
     assert pl.background_jobs_enabled() is False
     monkeypatch.setenv("TAMKOBI_BACKGROUND_JOBS", "1")
     assert pl.background_jobs_enabled() is True
+
+
+def test_ensure_table_runs_once_per_process():
+    """ensure_table is gated by module-level flag — second call skips SQL."""
+    import platform_lease as pl
+    from unittest.mock import AsyncMock, MagicMock
+
+    pl._reset_table_ready_for_tests()
+    calls = {"n": 0}
+
+    class FakeCur:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, sql):
+            calls["n"] += 1
+
+    class FakeConn:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def cursor(self):
+            return FakeCur()
+
+    class FakePool:
+        def acquire(self):
+            return FakeConn()
+
+    db = MagicMock()
+    db._ensure = AsyncMock()
+    db._pool = FakePool()
+
+    async def _run():
+        await pl.ensure_table(db)
+        await pl.ensure_table(db)
+        await pl.ensure_table(db)
+
+    asyncio.run(_run())
+    assert calls["n"] == 1
+    assert pl._table_ready is True
+    pl._reset_table_ready_for_tests()

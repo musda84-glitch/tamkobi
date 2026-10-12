@@ -11,6 +11,7 @@ FRONTEND_RELEASES="${FRONTEND_RELEASES:-$ROOT/frontend-releases}"
 FRONTEND_CURRENT="${FRONTEND_CURRENT:-$ROOT/frontend-current}"
 BACKEND_RELEASES="${BACKEND_RELEASES:-$ROOT/backend-releases}"
 VENVS_DIR="${VENVS_DIR:-$ROOT/venvs}"
+RELEASE_HISTORY="${RELEASE_HISTORY:-$ROOT/deploy/.release-history}"
 KEEP_FRONTEND_RELEASES="${KEEP_FRONTEND_RELEASES:-5}"
 KEEP_VENVS="${KEEP_VENVS:-2}"
 
@@ -20,12 +21,24 @@ die() {
 }
 
 info() {
-  echo "--- $*"
+  echo "--- $*" >&2
 }
 
 require_root() {
   if [ "$(id -u)" -ne 0 ]; then
     die "root olarak çalıştırın (sudo sh …)"
+  fi
+}
+
+require_deploy_tools() {
+  _missing=""
+  for _t in git curl rsync; do
+    if ! command -v "$_t" >/dev/null 2>&1; then
+      _missing="$_missing $_t"
+    fi
+  done
+  if [ -n "$_missing" ]; then
+    die "Gerekli komut(lar) yok:$_missing — apt/yum ile kurun ve tekrar deneyin."
   fi
 }
 
@@ -120,7 +133,47 @@ require_zero_downtime_ready() {
   if [ ! -f "$MARKER" ]; then
     die "Kesintisiz dağıtım henüz kurulmadı (marker yok). Önce: sudo sh deploy/migrate-zero-downtime.sh"
   fi
-  if [ ! -f /etc/systemd/system/tamkobi-backend@.service ]; then
-    die "tamkobi-backend@.service yok. Önce: sudo sh deploy/migrate-zero-downtime.sh"
+  _unit="${SYSTEMD_UNIT_ROOT:-/etc/systemd/system}/tamkobi-backend@.service"
+  if [ ! -f "$_unit" ]; then
+    die "tamkobi-backend@.service yok ($_unit). Önce: sudo sh deploy/migrate-zero-downtime.sh"
   fi
+}
+
+release_history_append() {
+  _sha=$1
+  mkdir -p "$(dirname "$RELEASE_HISTORY")"
+  _last=""
+  if [ -f "$RELEASE_HISTORY" ]; then
+    _last=$(tail -n1 "$RELEASE_HISTORY" || true)
+  fi
+  if [ "$_last" != "$_sha" ]; then
+    echo "$_sha" >>"$RELEASE_HISTORY"
+  fi
+}
+
+release_history_prev() {
+  # stdout: previous sha (second-to-last). fail if missing.
+  if [ ! -f "$RELEASE_HISTORY" ]; then
+    return 1
+  fi
+  _n=$(wc -l <"$RELEASE_HISTORY" | tr -d ' ')
+  if [ "$_n" -lt 2 ]; then
+    return 1
+  fi
+  tail -n2 "$RELEASE_HISTORY" | head -n1
+}
+
+release_history_truncate_to() {
+  # Keep history up to and including sha (drop newer entries).
+  _sha=$1
+  [ -f "$RELEASE_HISTORY" ] || return 0
+  _tmp="${RELEASE_HISTORY}.tmp.$$"
+  : >"$_tmp"
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    echo "$_line" >>"$_tmp"
+    if [ "$_line" = "$_sha" ]; then
+      break
+    fi
+  done <"$RELEASE_HISTORY"
+  mv -f "$_tmp" "$RELEASE_HISTORY"
 }

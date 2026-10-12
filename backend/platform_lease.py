@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS platform_locks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
+# ensure_table runs at most once per process
+_table_ready = False
+
 
 def background_jobs_enabled() -> bool:
     raw = (os.environ.get("TAMKOBI_BACKGROUND_JOBS") or "1").strip().lower()
@@ -42,10 +45,20 @@ def _utc_now() -> datetime:
 
 
 async def ensure_table(db) -> None:
+    global _table_ready
+    if _table_ready:
+        return
     await db._ensure()
     async with db._pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(TABLE_SQL)
+    _table_ready = True
+
+
+def _reset_table_ready_for_tests() -> None:
+    """Test helper — do not use in production."""
+    global _table_ready
+    _table_ready = False
 
 
 async def try_acquire(db, name: str, owner: str, ttl_s: int = DEFAULT_TTL_S) -> bool:

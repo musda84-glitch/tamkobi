@@ -520,6 +520,29 @@ def test_old_token_before_totp_enabled_at_rejected(monkeypatch):
     assert e.value.status_code == 401
 
 
+def test_token_same_second_as_totp_enabled_at_accepted(monkeypatch):
+    """iat and totp_enabled_at in the same whole second must not reject the token."""
+    enabled_at = datetime.now(timezone.utc)
+    # Sub-second fractional part on enabled_at (ms) must not beat int(iat)
+    enabled_iso = enabled_at.replace(microsecond=999_000).isoformat()
+    user, _ = _sa_user(totp_enabled_at=enabled_iso)
+    tok = jwt.encode(
+        {
+            "sub": "sa1", "email": "sa@tamkobi.com", "role": "admin",
+            "type": "access", "sa": True, "mfa": True,
+            "iat": int(enabled_at.timestamp()),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        auth_utils.get_jwt_secret(),
+        algorithm="HS256",
+    )
+    mock_db = MagicMock()
+    mock_db.users = MagicMock()
+    mock_db.users.find_one = AsyncMock(return_value=user)
+    out = asyncio.run(auth_utils.get_user_from_token(tok, mock_db))
+    assert out["email"] == "sa@tamkobi.com"
+
+
 def test_impersonation_token_skips_mfa_check(monkeypatch):
     user, _ = _sa_user()
     # Impersonation target is not SA typically; simulate SA payload with imp_by

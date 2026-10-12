@@ -280,6 +280,9 @@ def mysqldump_available() -> bool:
 
 
 def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> Tuple[Path, dict]:
+    """Stream mysqldump of a single database (no --databases → no CREATE DATABASE/USE)."""
+    import threading
+
     cfg = settings or mysql_settings()
     dest_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -287,30 +290,42 @@ def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> 
     sql_path = dest_dir / f"{name}-{stamp}.sql.gz"
     defaults = _defaults_file(cfg)
     try:
+        # Do NOT use --databases: that emits CREATE DATABASE / USE and can overwrite
+        # the wrong schema on restore. Pass the DB name as a positional arg instead.
         cmd = [
             "mysqldump",
             f"--defaults-extra-file={defaults}",
             "--single-transaction",
             "--quick",
             "--routines",
-            "--databases",
             str(cfg["database"]),
         ]
+        err_chunks: List[bytes] = []
+
+        def _read_err(pipe):
+            try:
+                err_chunks.append(pipe.read() or b"")
+            except Exception:
+                err_chunks.append(b"")
+
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env={**os.environ},
         ) as proc:
-            assert proc.stdout is not None
+            assert proc.stdout is not None and proc.stderr is not None
+            err_t = threading.Thread(target=_read_err, args=(proc.stderr,), daemon=True)
+            err_t.start()
             with gzip.open(sql_path, "wb", compresslevel=6) as gz:
                 while True:
                     chunk = proc.stdout.read(1024 * 256)
                     if not chunk:
                         break
                     gz.write(chunk)
-            stderr = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", "replace")
             rc = proc.wait()
+            err_t.join(timeout=30)
+        stderr = b"".join(err_chunks).decode("utf-8", "replace")
         if rc != 0:
             sql_path.unlink(missing_ok=True)
             raise RuntimeError(f"mysqldump failed ({rc}): {stderr[:500]}")
@@ -319,6 +334,8 @@ def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> 
             defaults.unlink()
         except OSError:
             pass
+    # Reject dumps that still contain USE/CREATE DATABASE (misconfigured mysqldump)
+    assert_sql_gz_no_database_switch(sql_path)
     meta = {
         "sql": str(sql_path),
         "json": None,
@@ -329,6 +346,22 @@ def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> 
     }
     (dest_dir / f"{name}-{stamp}.meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return sql_path, meta
+
+
+def assert_sql_gz_no_database_switch(path: Path) -> None:
+    """Refuse dumps that switch databases (CREATE DATABASE / USE `…`)."""
+    opener = gzip.open if str(path).endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8", errors="replace") as f:  # type: ignore[arg-type]
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith("--") or s.startswith("/*"):
+                continue
+            up = s.upper()
+            if up.startswith("CREATE DATABASE") or up.startswith("USE ") or up.startswith("USE`"):
+                raise ValueError(
+                    f"SQL dump must target a single DB via mysql client argv; "
+                    f"found database switch: {s[:120]}"
+                )
 
 
 def backup_json_stream(
@@ -565,15 +598,27 @@ def _bind(v):
 
 
 def restore_sql_gz(path: Path, target_db: Optional[str] = None, yes: bool = False) -> dict:
-    """Restore a .sql.gz produced by mysqldump (or our SQL sibling) via mysql client."""
+    """Restore a .sql.gz into *only* target_db via mysql client (no USE/CREATE DATABASE in dump)."""
+    import threading
+
     if not yes:
         raise SystemExit("refusing to restore SQL without --yes")
     mysql_bin = shutil.which("mysql")
     if not mysql_bin:
         raise RuntimeError("mysql client not found; install mysql-client or use .json.gz restore")
+    assert_sql_gz_no_database_switch(path)
     cfg = mysql_settings(db=target_db)
     dest = target_db or cfg["database"]
-    defaults = _defaults_file(cfg)
+    defaults = _defaults_file({**cfg, "database": dest})
+    err_chunks: List[bytes] = []
+    out_chunks: List[bytes] = []
+
+    def _drain(pipe, bucket: List[bytes]):
+        try:
+            bucket.append(pipe.read() or b"")
+        except Exception:
+            bucket.append(b"")
+
     try:
         with gzip.open(path, "rb") as gz:
             proc = subprocess.Popen(
@@ -582,12 +627,23 @@ def restore_sql_gz(path: Path, target_db: Optional[str] = None, yes: bool = Fals
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            assert proc.stdin is not None
-            shutil.copyfileobj(gz, proc.stdin)
-            proc.stdin.close()
-            _out, err_b = proc.communicate()
-        if proc.returncode != 0:
-            err = (err_b or b"").decode("utf-8", "replace")[:500]
+            assert proc.stdin is not None and proc.stderr is not None and proc.stdout is not None
+            err_t = threading.Thread(target=_drain, args=(proc.stderr, err_chunks), daemon=True)
+            out_t = threading.Thread(target=_drain, args=(proc.stdout, out_chunks), daemon=True)
+            err_t.start()
+            out_t.start()
+            try:
+                shutil.copyfileobj(gz, proc.stdin)
+            finally:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            rc = proc.wait()
+            err_t.join(timeout=60)
+            out_t.join(timeout=60)
+        if rc != 0:
+            err = b"".join(err_chunks).decode("utf-8", "replace")[:500]
             raise RuntimeError(f"mysql restore failed: {err}")
     finally:
         try:
@@ -598,28 +654,58 @@ def restore_sql_gz(path: Path, target_db: Optional[str] = None, yes: bool = Fals
 
 
 def verify_snapshot_file(path: Path) -> dict:
-    if path.name.endswith(".sql.gz") or path.name.endswith(".sql"):
-        # Lightweight: ensure gzip opens and looks like SQL
-        opener = gzip.open if path.name.endswith(".gz") else open
-        with opener(path, "rt", encoding="utf-8", errors="replace") as f:
-            head = f.read(2000)
-        if "CREATE TABLE" not in head and "CREATE DATABASE" not in head and "INSERT INTO" not in head:
+    """Validate dump/snapshot without loading the whole JSON into RAM."""
+    p = Path(path)
+    if p.name.endswith(".sql.gz") or p.name.endswith(".sql"):
+        assert_sql_gz_no_database_switch(p)
+        opener = gzip.open if p.name.endswith(".gz") else open
+        saw_table = False
+        with opener(p, "rt", encoding="utf-8", errors="replace") as f:  # type: ignore[arg-type]
+            for line in f:
+                up = line.upper()
+                if "CREATE TABLE" in up or "INSERT INTO" in up:
+                    saw_table = True
+                    break
+        if not saw_table:
             raise AssertionError("sql dump does not look like MySQL SQL")
-        return {"database": None, "tables": {}, "path": str(path), "format": "sql"}
-    snap = load_snapshot_file(path)
-    tables = snap.get("tables") or {}
-    if "docs" not in tables:
+        return {"database": None, "tables": {}, "path": str(p), "format": "sql"}
+
+    # Stream-scan JSON.gz for required markers (no full json.loads)
+    opener = gzip.open if p.name.endswith(".gz") else open
+    found_format = False
+    found_docs = False
+    found_meta = False
+    found_collection = False
+    found_doc_col = False
+    with opener(p, "rb") as f:  # type: ignore[arg-type]
+        carry = b""
+        while True:
+            chunk = f.read(1024 * 256)
+            if not chunk:
+                break
+            buf = carry + chunk
+            if b"tamkobi-mysql-snapshot-v1" in buf:
+                found_format = True
+            if b'"docs"' in buf:
+                found_docs = True
+            if b'"meta_indexes"' in buf:
+                found_meta = True
+            if b'"collection"' in buf:
+                found_collection = True
+            if b'"doc"' in buf:
+                found_doc_col = True
+            carry = buf[-64:]
+            if found_format and found_docs and found_meta and found_collection and found_doc_col:
+                break
+    if not found_format:
+        raise AssertionError("unknown or missing snapshot format marker")
+    if not found_docs:
         raise AssertionError("snapshot missing docs table")
-    if "meta_indexes" not in tables:
+    if not found_meta:
         raise AssertionError("snapshot missing meta_indexes table")
-    docs = tables["docs"]
-    if "collection" not in docs.get("columns", []) or "doc" not in docs.get("columns", []):
+    if not found_collection or not found_doc_col:
         raise AssertionError("docs columns incomplete")
-    return {
-        "database": snap.get("database"),
-        "tables": {t: b.get("row_count") for t, b in tables.items()},
-        "path": str(path),
-    }
+    return {"database": None, "tables": {"docs": None, "meta_indexes": None}, "path": str(p), "format": "json-stream"}
 
 
 def backup(dest_dir: Optional[Path] = None, keep_days: Optional[int] = None) -> dict:
@@ -629,21 +715,17 @@ def backup(dest_dir: Optional[Path] = None, keep_days: Optional[int] = None) -> 
     cfg = mysql_settings()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     if mysqldump_available():
-        # Primary artifact: streamed mysqldump (avoids loading whole DB into RAM).
-        sql_path, _meta = backup_mysqldump_stream(dest, cfg)
-        # Companion JSON via fetchmany (CLI/tests still get .json.gz; memory-safe).
-        json_path, _, jmeta = backup_json_stream(dest, cfg, write_sql=False, stamp=stamp)
-        # Align names: rename mysqldump file to share stamp when possible
+        # mysqldump only — do NOT also build a full JSON snapshot (RAM).
+        sql_path, meta = backup_mysqldump_stream(dest, cfg)
         removed = rotate_backups(dest, keep_days=keep, prefix=cfg.get("database") or "tamkobi")
-        verify_snapshot_file(json_path)
         verify_snapshot_file(sql_path)
         return {
-            "json": str(json_path),
+            "json": None,
             "sql": str(sql_path),
             "database": cfg.get("database"),
-            "tables": jmeta.get("tables") or {},
+            "tables": meta.get("tables") or {},
             "rotated": [str(p) for p in removed],
-            "method": "mysqldump-stream+json",
+            "method": "mysqldump-stream",
         }
     json_path, sql_path, meta = backup_json_stream(dest, cfg, stamp=stamp)
     removed = rotate_backups(dest, keep_days=keep, prefix=cfg.get("database") or "tamkobi")

@@ -32,9 +32,12 @@ for arg in "$@"; do
 done
 
 require_root
+require_deploy_tools
 cd "$ROOT"
 require_zero_downtime_ready
 load_nvm_if_present
+backend_detect_service_user
+check_credential_key_readable
 
 info "Kod güncelleniyor ($ROOT)"
 if [ "$SKIP_GIT" -eq 0 ]; then
@@ -43,7 +46,7 @@ if [ "$SKIP_GIT" -eq 0 ]; then
     git checkout main
   fi
   if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "Uyarı: sunucuda yerel değişiklik var; dağıtımdan önce sıfırlanıyor:"
+    echo "Uyarı: sunucuda yerel değişiklik var; dağıtımdan önce sıfırlanıyor:" >&2
     git status --short || true
     git reset --hard HEAD
   fi
@@ -55,11 +58,11 @@ if [ "$SKIP_GIT" -eq 0 ]; then
     exit 1
   fi
 else
-  echo "git atlandı (--skip-git), HEAD=$(git rev-parse --short HEAD)"
+  echo "git atlandı (--skip-git), HEAD=$(git rev-parse --short HEAD)" >&2
 fi
 
 git_meta
-echo "Dağıtılan sürüm: $APP_VERSION ($GIT_SHA_SHORT · $GIT_BRANCH) — $GIT_MESSAGE"
+echo "Dağıtılan sürüm: $APP_VERSION ($GIT_SHA_SHORT · $GIT_BRANCH) — $GIT_MESSAGE" >&2
 
 if [ "$DO_BACKUP" -eq 1 ]; then
   info "MySQL yedeği (--backup)"
@@ -78,13 +81,13 @@ fi
 
 backend_jsencrypt_install
 
-# 1) Frontend FIRST (before new backend instance)
+# 1) Frontend build ONLY (activate after backend health + nginx reload)
 frontend_build_release "$GIT_SHA"
-frontend_activate "$GIT_SHA"
 
 # 2) Backend release + venv
 backend_prepare_release "$GIT_SHA"
 VENV_PATH=$(backend_ensure_venv)
+validate_venv_path "$VENV_PATH"
 
 ACTIVE=$(active_upstream_port)
 [ -n "$ACTIVE" ] || ACTIVE=8000
@@ -97,7 +100,7 @@ systemctl daemon-reload
 backend_start_instance "$NEW"
 
 if ! backend_health_sha "$NEW" "$GIT_SHA"; then
-  echo "HATA: yeni instance :$NEW /api/version git_sha eşleşmedi." >&2
+  echo "HATA: yeni instance :$NEW sağlık kontrolü başarısız (/api/version+/api/health/ready)." >&2
   journalctl -u "tamkobi-backend@${NEW}" -n 80 --no-pager || true
   backend_stop_instance "$NEW"
   exit 1
@@ -112,14 +115,17 @@ if ! nginx_test_reload; then
   exit 1
 fi
 
+# 3) Only now flip frontend-current
+frontend_activate "$GIT_SHA"
+release_history_append "$GIT_SHA"
+
 info "Eski instance $ACTIVE 20 sn sonra durdurulacak"
 sleep 20
 backend_stop_instance "$ACTIVE"
 
-# Frontend health via nginx (best-effort)
 if ! curl -fsS -o /dev/null --max-time 5 -H "Host: tamkobi.com" http://127.0.0.1/; then
   echo "Uyarı: nginx kök yanıt vermedi (Host: tamkobi.com); upstream yine de $NEW" >&2
 fi
 
-echo "Dağıtım tamam. aktif_port=$NEW sha=$GIT_SHA_SHORT"
+echo "Dağıtım tamam. aktif_port=$NEW sha=$GIT_SHA_SHORT" >&2
 "$HERE/status.sh" || true

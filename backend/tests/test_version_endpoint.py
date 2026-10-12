@@ -26,3 +26,14 @@ def test_version_does_not_leak_secrets():
     text = r.text.lower()
     for needle in ("password", "secret", "mysql", "token", "credential"):
         assert needle not in text
+
+
+def test_health_ready_touches_db():
+    """Blue/green readiness: /api/health/ready must report ready + db after SELECT 1."""
+    r = requests.get(f"{API}/health/ready", timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("ready") is True
+    assert body.get("db") is True
+    assert "installed" in body
+    assert r.headers.get("Cache-Control", "").startswith("no-store")

@@ -19776,6 +19776,37 @@ async def api_version():
     return JSONResponse(read_stamp(), headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 
+@app.get("/api/health/ready")
+async def api_health_ready():
+    """Public readiness: DB SELECT 1 + install detection (used by blue/green health checks)."""
+    try:
+        await db._ensure()
+        async with db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                row = await cur.fetchone()
+        if not row or row[0] != 1:
+            raise RuntimeError("SELECT 1 failed")
+        installed = await setup_install.detect_installed(db)
+        stamp = read_stamp()
+        return JSONResponse(
+            {
+                "ready": True,
+                "db": True,
+                "installed": bool(installed),
+                "git_sha": stamp.get("git_sha"),
+                "git_sha_short": stamp.get("git_sha_short"),
+            },
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"ready": False, "db": False, "error": str(exc)[:200]},
+            status_code=503,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+
+
 @app.get("/api/mobile/manifest")
 async def mobile_manifest():
     """Public. iOS/Android uygulamasının bağlandığı API sözleşmesi."""

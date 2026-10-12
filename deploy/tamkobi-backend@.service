@@ -5,10 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tamkobi
-Group=tamkobi
+# User/Group: migrate/update copies values from the legacy tamkobi-backend.service
+# (or root). Switching to a dedicated `tamkobi` user is an optional later step
+# (chown -R data tree + write test). Do NOT regenerate encryption keys.
+User=root
+Group=root
 # WorkingDirectory + ExecStart overridden per-instance by
 # /etc/systemd/system/tamkobi-backend@%i.service.d/release.conf
+# (release.conf MUST clear ExecStart= before setting the real one)
 WorkingDirectory=/var/www/tamkobi.com/backend
 EnvironmentFile=-/var/www/tamkobi.com/backend/.env
 EnvironmentFile=-/var/www/tamkobi.com/.env
@@ -25,7 +29,7 @@ ProtectSystem=strict
 ProtectHome=true
 RestrictSUIDSGID=true
 LockPersonality=true
-ReadWritePaths=/var/www/tamkobi.com/backend/data /var/www/tamkobi.com/logs /var/www/tamkobi.com/backups /var/log/tamkobi /var/www/tamkobi.com/backend-releases
+ReadWritePaths=/var/www/tamkobi.com/backend/data /var/www/tamkobi.com/logs /var/www/tamkobi.com/backups /var/log/tamkobi /var/www/tamkobi.com/backend-releases /var/www/tamkobi.com/venvs /data
 StandardOutput=journal
 StandardError=journal
 
