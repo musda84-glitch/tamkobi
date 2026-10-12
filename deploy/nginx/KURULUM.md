@@ -109,14 +109,13 @@ Kesintisiz dağıtım düzenine dokunulmaz (`update-native.sh`, `migrate-zero-do
 ### 1) Yedek
 
 ```bash
-sudo cp -a /var/named/db.tamkobi.com /root/db.tamkobi.com.bak.$(date +%Y%m%d)
-# veya zone dosyanızın gerçek yolu
+sudo cp -a /etc/bind/zones/db.tamkobi.com /root/db.tamkobi.com.bak.$(date +%Y%m%d)
 sudo cp -a /etc/nginx/sites-available/tamkobi.com /root/nginx-tamkobi.com.bak.$(date +%Y%m%d)
 ```
 
 ### 2) DNS
 
-`db.tamkobi.com` zone dosyasına (app zaten `.184` ise atlayın):
+`/etc/bind/zones/db.tamkobi.com` zone dosyasına (app zaten `.184` ise atlayın):
 
 ```
 b2b     IN A     85.95.240.184
@@ -126,7 +125,7 @@ ik      IN A     85.95.240.184
 Serial artırın, ardından:
 
 ```bash
-sudo named-checkzone tamkobi.com /var/named/db.tamkobi.com
+sudo named-checkzone tamkobi.com /etc/bind/zones/db.tamkobi.com
 sudo rndc reload tamkobi.com
 dig +short b2b.tamkobi.com A @127.0.0.1
 dig +short ik.tamkobi.com A @127.0.0.1
@@ -134,6 +133,8 @@ dig +short ik.tamkobi.com A @127.0.0.1
 ```
 
 ### 3) Sertifika
+
+Tek SAN (app + b2b + ik); nginx üç blok da `live/app.tamkobi.com` yolunu kullanır:
 
 ```bash
 sudo certbot certonly --nginx -d app.tamkobi.com -d b2b.tamkobi.com -d ik.tamkobi.com

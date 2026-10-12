@@ -82,32 +82,38 @@ def test_subdomain_templates_have_required_listen_and_noindex():
     assert SUBDOMAINS.count('X-Robots-Tag "noindex, nofollow"') >= 3
     assert "proxy_pass http://tamkobi_api;" in SUBDOMAINS
     assert "root /var/www/tamkobi.com/frontend-current;" in SUBDOMAINS
+    # Tek SAN: üç blok da app.tamkobi.com cert yolunu kullanır
+    assert SUBDOMAINS.count("/etc/letsencrypt/live/app.tamkobi.com/fullchain.pem") == 3
+    assert "live/b2b.tamkobi.com" not in SUBDOMAINS
+    assert "live/ik.tamkobi.com" not in SUBDOMAINS
+    assert SUBDOMAINS.count("proxy_set_header X-Forwarded-Host $host;") == 3
 
     ssl_ex = (NGINX_DIR / "tamkobi-ssl.conf.example").read_text(encoding="utf-8")
     assert ssl_ex.count("listen 85.95.240.184:443 ssl http2;") >= 2
     assert "tamkobi-site-redirects.conf" in ssl_ex
+    assert "proxy_set_header X-Forwarded-Host $host;" in ssl_ex
 
 
 def _redirect_target(path: str) -> str | None:
     """Approximate nginx location matching for tamkobi-site-redirects.conf."""
     # Exact then prefix then regex — mirror file order (regex locations are evaluated
     # among themselves by first-match in file for our ~ patterns).
+    path_only = path.split("?", 1)[0]
     exact = {
-        "/personelim": "https://ik.tamkobi.com",
-        "/mesai": "https://ik.tamkobi.com",
+        "/personelim": "https://ik.tamkobi.com" + path,
+        "/mesai": "https://ik.tamkobi.com" + path,
+        "/b2b": "https://b2b.tamkobi.com/b2b/giris",
+        "/portal": "https://b2b.tamkobi.com" + path,
     }
-    if path.split("?", 1)[0] in exact:
-        return exact[path.split("?", 1)[0]] + path
+    if path_only in exact:
+        return exact[path_only]
 
-    if path.startswith("/b2b/") or path == "/b2b" or path.startswith("/b2b?"):
-        # ^~ /b2b/ requires trailing path after /b2b/
-        if path.startswith("/b2b/"):
-            return "https://b2b.tamkobi.com" + path
+    if path.startswith("/b2b/"):
+        return "https://b2b.tamkobi.com" + path
     if path.startswith("/portal/"):
         return "https://b2b.tamkobi.com" + path
     if path.startswith("/personelim/") or path.startswith("/mesai/"):
-        host = "ik"
-        return f"https://{host}.tamkobi.com" + path
+        return "https://ik.tamkobi.com" + path
 
     app_res = [
         r"^/(panel|login|invoices|dis-ticaret|contacts|banking|stock|hizli-satis|ecommerce|cargo)(/|$)",
@@ -116,7 +122,6 @@ def _redirect_target(path: str) -> str | None:
         r"^/(expenses|loans|cheques|trash|edoc-inbox|b2b-yonetim|atolye|sayim|sevk)(/|$)",
         r"^/(teklif|proje|ekstre|davet|odeme|yenile|sifre)(/|$)",
     ]
-    path_only = path.split("?", 1)[0]
     for pat in app_res:
         if re.search(pat, path_only):
             return "https://app.tamkobi.com" + path
@@ -129,6 +134,8 @@ def _redirect_target(path: str) -> str | None:
         ("/panel?x=1", "https://app.tamkobi.com/panel?x=1"),
         ("/invoices/abc", "https://app.tamkobi.com/invoices/abc"),
         ("/portal/T", "https://b2b.tamkobi.com/portal/T"),
+        ("/portal", "https://b2b.tamkobi.com/portal"),
+        ("/b2b", "https://b2b.tamkobi.com/b2b/giris"),
         ("/b2b/giris", "https://b2b.tamkobi.com/b2b/giris"),
         ("/personelim", "https://ik.tamkobi.com/personelim"),
     ],
@@ -169,8 +176,8 @@ def test_nginx_t_subdomain_and_site_templates(tmp_path: Path, openssl_bin):
     for d in (conf_d, snippets, sites, certs, html):
         d.mkdir(parents=True)
 
-    # Self-signed certs for each name
-    for name in ("tamkobi.com", "app.tamkobi.com", "b2b.tamkobi.com", "ik.tamkobi.com"):
+    # Apex + tek SAN (app) — b2b/ik şablonu da app yolunu kullanır
+    for name in ("tamkobi.com", "app.tamkobi.com"):
         cdir = certs / name
         cdir.mkdir()
         subprocess.run(

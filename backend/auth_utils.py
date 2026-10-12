@@ -157,7 +157,6 @@ def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] =
         AUD_IK,
         host_kind,
         is_ik_self_service_path,
-        is_super_admin_api_path,
     )
 
     kind = host_kind(request)
@@ -177,10 +176,12 @@ def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] =
         return
 
     if kind == KIND_SITE:
-        # Legacy mobile tokens without aud are accepted on tamkobi.com/api.
-        # Süper admin API yalnızca site + aud site/None.
-        if is_super_admin_api_path(p) and aud not in (None, "site"):
-            raise HTTPException(status_code=401, detail="Süper admin uçları yalnızca site adresinde")
+        # Site: only legacy mobile (aud None) or aud=site. app/ik tokens → 401.
+        if aud not in (None, "site"):
+            raise HTTPException(
+                status_code=401,
+                detail="Bu oturum tamkobi.com için geçerli değil",
+            )
         return
 
 

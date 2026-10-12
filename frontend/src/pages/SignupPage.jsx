@@ -34,11 +34,14 @@ export default function SignupPage() {
   };
   const plan = d?.plans?.find((p) => p.id === f.plan_id);
   const customTotal = packQuote(d?.catalog || [], picked, false);
-  if (done) return (
+  if (done) {
+    const go = done.redirect || "/panel";
+    return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100 flex items-center justify-center p-6"><div className="bg-white/5 border border-white/10 rounded-3xl p-10 max-w-md text-center space-y-4" data-testid="signup-success">
       <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500 text-slate-900 flex items-center justify-center"><Rocket className="w-7 h-7" /></div>
       <h2 className="text-xl font-bold">Hesabınız hazır!</h2><p className="text-sm text-slate-300">{done.message} Paket: <b>{done.license?.plan_name}</b> · {done.license?.days_left} gün.</p>
-      <a href="/panel" className="inline-flex px-5 py-3 bg-emerald-500 text-slate-900 rounded-xl font-bold text-sm" data-testid="signup-go-app">Uygulamaya Git</a></div></div>);
+      <a href={go} className="inline-flex px-5 py-3 bg-emerald-500 text-slate-900 rounded-xl font-bold text-sm" data-testid="signup-go-app">Uygulamaya Git</a></div></div>);
+  }
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="signup-page">
       <Seo

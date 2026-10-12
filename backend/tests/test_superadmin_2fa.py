@@ -637,11 +637,13 @@ def test_invite_cookie_secure_with_forwarded_proto(monkeypatch):
     monkeypatch.setattr(rbac, "_db", mock_db)
     monkeypatch.setattr(rbac.user_numbers, "next_user_number", AsyncMock(return_value=9))
 
-    req = _fake_http_request("http://backend/api/public/invites/inv1/accept", proto="https")
+    req = _fake_http_request("https://app.tamkobi.com/api/public/invites/inv1/accept", proto="https")
+    req.headers = {"x-forwarded-proto": "https", "host": "app.tamkobi.com"}
     asyncio.run(rbac.accept_invite("inv1", {"password": "secret1", "name": "Y"}, req, Resp()))
     assert captured
     assert all(c.get("secure") is True for c in captured)
     assert all(c.get("samesite") == "lax" for c in captured)
+    assert all("domain" not in c for c in captured)
 
 
 def test_mysql_store_sql_list_scalar_filter_is_broken():

@@ -19,6 +19,8 @@ AUD_SITE = "site"
 AUD_APP = "app"
 AUD_IK = "ik"
 
+_PROXY_PEERS = frozenset({"127.0.0.1", "::1"})
+
 _IK_SELF_SERVICE_PREFIXES = (
     "/api/personnel/me",
     "/api/personnel/messages",
@@ -33,9 +35,11 @@ _IK_SELF_SERVICE_PREFIXES = (
     "/api/auth/login",
     "/api/auth/logout",
     "/api/auth/me",
+    "/api/auth/switch-company",
     "/api/auth/forgot-password",
     "/api/auth/reset/",
     "/api/auth/sso-exchange",
+    "/api/license/me",
     "/api/version",
     "/api/health",
 )
@@ -57,12 +61,22 @@ def _strip_port(host: str) -> str:
 
 
 def request_host(request: Any) -> str:
-    """Prefer X-Forwarded-Host (first), else Host. Port stripped."""
+    """Host for audience: trust nginx Host; X-Forwarded-Host only from local proxy.
+
+    Clients must not spoof aud by sending X-Forwarded-Host on a direct :8000 hit.
+    """
     if request is None:
         return ""
     headers = getattr(request, "headers", None) or {}
-    xf = (headers.get("x-forwarded-host") or headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
-    host = xf or (headers.get("host") or headers.get("Host") or "")
+    host = headers.get("host") or headers.get("Host") or ""
+    peer = ""
+    client = getattr(request, "client", None)
+    if client is not None:
+        peer = (getattr(client, "host", None) or "").strip()
+    if peer in _PROXY_PEERS:
+        xf = (headers.get("x-forwarded-host") or headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if xf:
+            host = xf
     return _strip_port(host)
 
 
@@ -130,10 +144,19 @@ def is_ik_self_service_path(path: str) -> bool:
                 return True
         elif p == pref or p.startswith(pref + "/"):
             return True
-    # Early-leave cancel etc. under attendance
+    # Attendance self-service actions (path contains attendance id)
     if p.startswith("/api/personnel/attendance/") and any(
-        p.endswith(s) for s in ("/confirm", "/dispute", "/early-leave-cancel")
+        p.endswith(s)
+        for s in (
+            "/confirm",
+            "/dispute",
+            "/early-leave-cancel",
+            "/time-edit-decision",
+        )
     ):
+        return True
+    # Project stage photo visibility (görev kartı / personelim)
+    if p.startswith("/api/projects/") and p.endswith("/stage-photos/visibility"):
         return True
     return False
 

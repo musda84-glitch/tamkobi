@@ -5,7 +5,8 @@
 #   - /etc/nginx/conf.d/tamkobi-upstream.conf (tamkobi_api)
 #   - snippets/tamkobi-security-headers.conf
 #   - spa-routes.map.conf → $tamkobi_spa
-#   - Sertifika: certbot certonly --nginx -d app.tamkobi.com -d b2b.tamkobi.com -d ik.tamkobi.com
+#   - Sertifika (tek SAN): certbot certonly --nginx -d app.tamkobi.com -d b2b.tamkobi.com -d ik.tamkobi.com
+#     (tüm bloklar /etc/letsencrypt/live/app.tamkobi.com/ kullanır)
 #
 # ZORUNLU: tamkobi.com / www bloklarına da listen 85.95.240.184:443 ssl http2; ekleyin
 # (aşağıdaki IP bind ile aynı egress IP).
@@ -60,6 +61,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_cache_bypass $http_upgrade;
         proxy_read_timeout 120s;
     }
@@ -106,8 +108,8 @@ server {
     server_name b2b.tamkobi.com;
 
     # managed by Certbot
-    ssl_certificate     /etc/letsencrypt/live/b2b.tamkobi.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/b2b.tamkobi.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/app.tamkobi.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/app.tamkobi.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -142,6 +144,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_cache_bypass $http_upgrade;
         proxy_read_timeout 120s;
     }
@@ -188,8 +191,8 @@ server {
     server_name ik.tamkobi.com;
 
     # managed by Certbot
-    ssl_certificate     /etc/letsencrypt/live/ik.tamkobi.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/ik.tamkobi.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/app.tamkobi.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/app.tamkobi.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -224,6 +227,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
         proxy_cache_bypass $http_upgrade;
         proxy_read_timeout 120s;
     }

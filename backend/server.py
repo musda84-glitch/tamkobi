@@ -386,7 +386,7 @@ async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response:
     import json as _json
     import auth_handoff
     import host_audience as _ha
-    from auth_utils import SUPERADMIN_ACCESS_SECONDS
+    from auth_utils import SUPERADMIN_ACCESS_SECONDS, decode_access_payload
 
     blob = await auth_handoff.consume_handoff(db, req.code)
     try:
@@ -398,9 +398,20 @@ async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response:
     sa_ret = data.get("sa_return") or ""
     if not access:
         raise HTTPException(status_code=401, detail="Geçersiz handoff")
-    # Validate token is decodable
-    user = await get_user_from_token(access, db)
     kind = _ha.host_kind(request)
+    try:
+        payload = decode_access_payload(access)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Geçersiz handoff token")
+    tok_aud = payload.get("aud")
+    if kind == _ha.KIND_APP and tok_aud != _ha.AUD_APP:
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    if kind == _ha.KIND_IK and tok_aud != _ha.AUD_IK:
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    if kind == _ha.KIND_SITE and tok_aud not in (None, _ha.AUD_SITE):
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    # Validate token is decodable + user exists (aud already checked against host)
+    user = await get_user_from_token(access, db)
     max_age = SUPERADMIN_ACCESS_SECONDS if user.get("is_super_admin") else 7200
     response.set_cookie(
         key="access_token",
@@ -413,7 +424,12 @@ async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response:
             value=sa_ret,
             **auth_cookie_kwargs(request, max_age=7200),
         )
-    next_path = "/panel" if kind == _ha.KIND_APP else "/sistem/sirketler"
+    if kind == _ha.KIND_APP:
+        next_path = "/panel"
+    elif kind == _ha.KIND_IK:
+        next_path = "/personelim"
+    else:
+        next_path = "/sistem/sirketler"
     return {
         "status": "success",
         "redirect": next_path,
@@ -2920,7 +2936,7 @@ async def convert_survey_to_quote(survey_id: str, user: dict = Depends(get_curre
     return {"status": "success", "quote": quote, "message": f"{s['survey_number']} → {quote['quote_number']} teklif oluşturuldu.", "advanced": True}
 
 @api_router.post("/auth/register")
-async def register(req: RegisterRequest, response: Response):
+async def register(req: RegisterRequest, request: Request, response: Response):
     email = req.email.strip().lower()
     existing = await db.users.find_one({"email": email})
     if existing:
@@ -2957,8 +2973,15 @@ async def register(req: RegisterRequest, response: Response):
     await db.users.insert_one(mongo_user)
     await saas.start_trial(company_id)
 
-    token = create_access_token(user_id, email, "admin")
-    return {
+    import auth_handoff
+    import host_audience as _ha
+    import public_url as pu
+    import json as _json
+
+    token = create_access_token(user_id, email, "admin", aud=_ha.AUD_APP)
+    # Site/kayıt host'unda app çerezi tutma — SSO handoff ile app'e geç
+    kind = _ha.host_kind(request)
+    out = {
         "token": token,
         "user": {
             "id": user_id,
@@ -2970,6 +2993,17 @@ async def register(req: RegisterRequest, response: Response):
             "active_company_id": company_id
         }
     }
+    if kind != _ha.KIND_APP:
+        blob = _json.dumps({"access_token": token, "sa_return": ""})
+        code = await auth_handoff.create_handoff(db, blob, purpose="register")
+        app_base = await pu.public_base_url_for(db, "app")
+        out["redirect"] = f"{app_base}/sso?code={code}"
+        out.pop("token", None)
+    else:
+        response.set_cookie(
+            key="access_token", value=token, **auth_cookie_kwargs(request, max_age=86400 * 7),
+        )
+    return out
 
 @api_router.get("/auth/me")
 async def get_me(request: Request):

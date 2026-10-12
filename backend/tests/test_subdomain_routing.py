@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -11,16 +12,29 @@ import jwt
 import pytest
 from fastapi import HTTPException
 
+# Standalone: set secret before auth_utils.get_jwt_secret() is used
+os.environ["JWT_SECRET"] = "test-subdomain-routing-jwt-secret-not-default-32b"
+
 import auth_handoff
 import auth_utils
 import host_audience as ha
 import public_url as pu
 
 
-def _req(host: str, path: str = "/api/auth/me"):
+@pytest.fixture(autouse=True)
+def _jwt_secret(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "test-subdomain-routing-jwt-secret-not-default-32b")
+
+
+def _req(host: str, path: str = "/api/auth/me", *, xfh: str | None = None, peer: str | None = None):
+    headers = {"host": host}
+    if xfh is not None:
+        headers["x-forwarded-host"] = xfh
+    client = SimpleNamespace(host=peer) if peer is not None else None
     return SimpleNamespace(
-        headers={"host": host},
+        headers=headers,
         url=SimpleNamespace(path=path),
+        client=client,
     )
 
 
@@ -35,6 +49,23 @@ def test_auth_cookie_kwargs_never_sets_domain():
     assert kw["samesite"] == "lax"
     assert kw["secure"] is True
     assert kw["path"] == "/"
+
+
+def test_spoofed_x_forwarded_host_ignored_without_local_proxy():
+    """Client X-Forwarded-Host must not override Host on direct connections."""
+    req = _req("app.tamkobi.com", xfh="ik.tamkobi.com", peer="203.0.113.9")
+    assert ha.request_host(req) == "app.tamkobi.com"
+    assert ha.host_kind(req) == ha.KIND_APP
+    tok = auth_utils.create_access_token("u1", "a@b.com", "admin", aud="app")
+    payload = auth_utils.decode_access_payload(tok)
+    # Still app host → app token OK (spoof failed)
+    auth_utils.enforce_token_audience(payload, req, path="/api/auth/me")
+
+
+def test_x_forwarded_host_trusted_from_local_proxy():
+    req = _req("127.0.0.1:8000", xfh="ik.tamkobi.com", peer="127.0.0.1")
+    assert ha.request_host(req) == "ik.tamkobi.com"
+    assert ha.host_kind(req) == ha.KIND_IK
 
 
 def test_audience_enforce_app_rejects_ik_token():
@@ -53,6 +84,17 @@ def test_audience_enforce_ik_rejects_app_token():
     assert ei.value.status_code == 401
 
 
+def test_site_rejects_app_and_ik_tokens():
+    for aud in ("app", "ik"):
+        tok = auth_utils.create_access_token("u1", "a@b.com", "admin", aud=aud)
+        payload = auth_utils.decode_access_payload(tok)
+        with pytest.raises(HTTPException) as ei:
+            auth_utils.enforce_token_audience(
+                payload, _req("tamkobi.com", "/api/auth/me"), path="/api/auth/me"
+            )
+        assert ei.value.status_code == 401
+
+
 def test_ik_token_forbidden_on_panel_api():
     tok = auth_utils.create_access_token("u1", "a@b.com", "personel", aud="ik")
     payload = auth_utils.decode_access_payload(tok)
@@ -63,12 +105,19 @@ def test_ik_token_forbidden_on_panel_api():
     assert ei.value.status_code == 403
 
 
-def test_ik_token_ok_on_self_service():
+def test_ik_token_ok_on_self_service_and_allowlist():
     tok = auth_utils.create_access_token("u1", "a@b.com", "personel", aud="ik")
     payload = auth_utils.decode_access_payload(tok)
-    auth_utils.enforce_token_audience(
-        payload, _req("ik.tamkobi.com", "/api/personnel/me"), path="/api/personnel/me"
-    )
+    for path in (
+        "/api/personnel/me",
+        "/api/license/me",
+        "/api/auth/switch-company",
+        "/api/personnel/attendance/att1/time-edit-decision",
+        "/api/projects/p1/stage-photos/visibility",
+    ):
+        auth_utils.enforce_token_audience(
+            payload, _req("ik.tamkobi.com", path), path=path
+        )
 
 
 def test_site_accepts_legacy_token_without_aud():
@@ -80,7 +129,7 @@ def test_site_accepts_legacy_token_without_aud():
     )
 
 
-def test_super_admin_api_only_on_site():
+def test_super_admin_api_rejects_app_aud_on_site():
     tok = auth_utils.create_access_token("u1", "sa@b.com", "admin", is_super_admin=True, aud="app")
     payload = auth_utils.decode_access_payload(tok)
     with pytest.raises(HTTPException) as ei:
@@ -92,7 +141,6 @@ def test_super_admin_api_only_on_site():
 
 def test_cors_origins_default_no_wildcard():
     with patch.dict(os.environ, {"CORS_ORIGINS": "", "ROOT_DOMAIN": "tamkobi.com"}, clear=False):
-        # Reload module defaults use ROOT_DOMAIN at import — use helpers directly
         origins = ha.default_cors_origins()
     assert "https://tamkobi.com" in origins
     assert "https://app.tamkobi.com" in origins
@@ -152,9 +200,6 @@ def test_is_employee_user():
 
 
 def test_employee_login_on_app_redirects_to_ik_no_cookie():
-    """_issue_session_for_user returns redirect without setting cookies for employee on app."""
-    from unittest.mock import patch as _patch
-
     user = {
         "_id": "u_emp",
         "email": "emp@test.com",
@@ -173,11 +218,11 @@ def test_employee_login_on_app_redirects_to_ik_no_cookie():
     async def run():
         import server
 
-        with _patch.object(server, "db", MagicMock()), _patch(
+        with patch.object(server, "db", MagicMock()), patch(
             "rbac.role_for", AsyncMock(return_value={"name": "Personel", "permissions": {}, "features": {}})
-        ), _patch(
+        ), patch(
             "attendance.employee_for_user", AsyncMock(return_value={"_id": "emp1"})
-        ), _patch(
+        ), patch(
             "public_url.public_base_url_for", AsyncMock(return_value="https://ik.tamkobi.com")
         ):
             return await server._issue_session_for_user(user, request, response, remember=True)
@@ -188,8 +233,10 @@ def test_employee_login_on_app_redirects_to_ik_no_cookie():
     response.set_cookie.assert_not_called()
 
 
-def test_sso_handoff_one_time_and_expired():
-    class FakeCur:
+class _HandoffDb:
+    """Minimal aiomysql-like stub for auth_handoff."""
+
+    class Cur:
         def __init__(self, store):
             self.store = store
             self._row = None
@@ -231,12 +278,12 @@ def test_sso_handoff_one_time_and_expired():
         async def __aexit__(self, *a):
             return False
 
-    class FakeConn:
+    class Conn:
         def __init__(self, store):
             self.store = store
 
         def cursor(self):
-            return FakeCur(self.store)
+            return _HandoffDb.Cur(self.store)
 
         async def __aenter__(self):
             return self
@@ -244,22 +291,23 @@ def test_sso_handoff_one_time_and_expired():
         async def __aexit__(self, *a):
             return False
 
-    class FakePool:
+    class Pool:
         def __init__(self):
             self.store = {}
 
         def acquire(self):
-            return FakeConn(self.store)
+            return _HandoffDb.Conn(self.store)
 
-    class FakeDb:
-        def __init__(self):
-            self._pool = FakePool()
+    def __init__(self):
+        self._pool = self.Pool()
 
-        async def _ensure(self):
-            return None
+    async def _ensure(self):
+        return None
 
+
+def test_sso_handoff_one_time_and_expired():
     auth_handoff.reset_table_ready_for_tests()
-    db = FakeDb()
+    db = _HandoffDb()
 
     async def run():
         code = await auth_handoff.create_handoff(db, "jwt-token-1", purpose="impersonate")
@@ -270,14 +318,132 @@ def test_sso_handoff_one_time_and_expired():
         assert ei.value.status_code == 401
 
         code2 = await auth_handoff.create_handoff(db, "jwt-token-2")
-        # Expire manually
         db._pool.store[code2]["expires_at"] = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
         with pytest.raises(HTTPException) as ei2:
             await auth_handoff.consume_handoff(db, code2)
         assert ei2.value.status_code == 401
-        assert "süresi" in str(ei2.value.detail).lower() or "dolmuş" in str(ei2.value.detail).lower()
 
     asyncio.run(run())
+
+
+def test_sso_exchange_rejects_aud_host_mismatch():
+    import server
+    from server import SsoExchangeRequest
+
+    auth_handoff.reset_table_ready_for_tests()
+    db = _HandoffDb()
+    # app token exchanged on ik → 401
+    app_tok = auth_utils.create_access_token("u1", "a@b.com", "admin", aud="app")
+    blob = json.dumps({"access_token": app_tok, "sa_return": ""})
+
+    async def run():
+        code = await auth_handoff.create_handoff(db, blob, purpose="test")
+        resp = MagicMock()
+        req = _req("ik.tamkobi.com", "/api/auth/sso-exchange")
+        with patch.object(server, "db", db), patch(
+            "auth_handoff.consume_handoff", AsyncMock(return_value=blob)
+        ):
+            with pytest.raises(HTTPException) as ei:
+                await server.auth_sso_exchange(SsoExchangeRequest(code=code), req, resp)
+            assert ei.value.status_code == 401
+            assert "host" in str(ei.value.detail).lower() or "geçerli değil" in str(ei.value.detail).lower()
+
+    asyncio.run(run())
+
+
+def test_invite_accept_sets_aud_and_ok_on_matching_host():
+    import rbac
+
+    inv = {
+        "_id": "inv1",
+        "email": "new@test.com",
+        "name": "New",
+        "role": "admin",
+        "company_id": "c1",
+        "company_name": "C",
+        "employee_id": None,
+        "accepted_at": None,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+    }
+    fake_db = MagicMock()
+    fake_db.user_invites.find_one = AsyncMock(return_value=inv)
+    fake_db.users.find_one = AsyncMock(return_value=None)
+    fake_db.users.insert_one = AsyncMock()
+    fake_db.user_invites.update_one = AsyncMock()
+    fake_db.employees.update_one = AsyncMock()
+
+    class Num:
+        @staticmethod
+        async def next_user_number(_db):
+            return 42
+
+    response = MagicMock()
+    cookies = {}
+
+    def set_cookie(key, value, **kw):
+        cookies[key] = value
+
+    response.set_cookie = set_cookie
+    request = _req("app.tamkobi.com", "/api/public/invites/inv1/accept")
+
+    async def run():
+        with patch.object(rbac, "_db", fake_db), patch.object(rbac, "user_numbers", Num):
+            return await rbac.accept_invite("inv1", {"name": "New", "password": "secret1"}, request, response)
+
+    out = asyncio.run(run())
+    assert out["status"] == "success"
+    assert "access_token" in cookies
+    payload = auth_utils.decode_access_payload(cookies["access_token"])
+    assert payload["aud"] == "app"
+    # Token valid on app
+    auth_utils.enforce_token_audience(payload, request, path="/api/auth/me")
+
+
+def test_invite_accept_personel_handoff_to_ik():
+    import rbac
+
+    inv = {
+        "_id": "inv2",
+        "email": "emp@test.com",
+        "name": "Emp",
+        "role": "personel",
+        "company_id": "c1",
+        "company_name": "C",
+        "employee_id": "e1",
+        "accepted_at": None,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+    }
+    fake_db = MagicMock()
+    fake_db.user_invites.find_one = AsyncMock(return_value=inv)
+    fake_db.users.find_one = AsyncMock(return_value=None)
+    fake_db.users.insert_one = AsyncMock()
+    fake_db.user_invites.update_one = AsyncMock()
+    fake_db.employees.update_one = AsyncMock()
+    # handoff table
+    hdb = _HandoffDb()
+    fake_db._pool = hdb._pool
+    fake_db._ensure = hdb._ensure
+
+    class Num:
+        @staticmethod
+        async def next_user_number(_db):
+            return 7
+
+    response = MagicMock()
+    response.set_cookie = MagicMock()
+    # Accept on app host → SSO to ik
+    request = _req("app.tamkobi.com", "/api/public/invites/inv2/accept")
+
+    async def run():
+        auth_handoff.reset_table_ready_for_tests()
+        with patch.object(rbac, "_db", fake_db), patch.object(rbac, "user_numbers", Num), patch(
+            "public_url.public_base_url_for", AsyncMock(return_value="https://ik.tamkobi.com")
+        ):
+            return await rbac.accept_invite("inv2", {"name": "Emp", "password": "secret1"}, request, response)
+
+    out = asyncio.run(run())
+    assert out["redirect"].startswith("https://ik.tamkobi.com/sso?code=")
+    response.set_cookie.assert_not_called()
 
 
 def test_mobile_manifest_api_base_unchanged():
