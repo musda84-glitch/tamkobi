@@ -1,8 +1,9 @@
-"""Dump and restore the TamKobi MySQL database without requiring the mysql client.
+"""Dump and restore the TamKobi MySQL database without loading the whole DB into RAM.
 
-Snapshots are gzip JSON (canonical for this tool) plus a sibling .sql.gz for DBAs.
-Generated/virtual columns are omitted from INSERT lists so restore works on both
-the canonical schema and live databases that added extras (company_id, system_logs).
+Primary path: mysqldump --single-transaction --quick --routines | gzip (stream).
+Fallback: JSON snapshot written with fetchmany chunks.
+Generated/virtual columns are omitted from INSERT lists on the JSON path so restore
+works on both the canonical schema and live databases that added extras.
 """
 from __future__ import annotations
 
@@ -11,7 +12,10 @@ import gzip
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +25,17 @@ from urllib.parse import unquote, urlparse
 DEFAULT_KEEP_DAYS = 14
 DEFAULT_DIR_NAME = "backups/mysql"
 TEST_DATABASE = "tamkobi_schema_test"
+FETCHMANY_SIZE = 500
+
+
+class nullcontext:
+    """Minimal stand-in so we need not import contextlib for a no-op stream."""
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
 
 
 def _load_dotenv(path: Path) -> None:
@@ -108,7 +123,6 @@ def _is_generated(extra: str) -> bool:
 
 def _table_columns(cur, table: str) -> List[dict]:
     cur.execute(f"SHOW FULL COLUMNS FROM `{table}`")
-    # Field, Type, Collation, Null, Key, Default, Extra, Privileges, Comment
     cols = []
     for row in cur.fetchall():
         cols.append({"name": row[0], "type": row[1], "null": row[3], "extra": row[6] or ""})
@@ -117,44 +131,6 @@ def _table_columns(cur, table: str) -> List[dict]:
 
 def _writable_columns(cols: Sequence[dict]) -> List[str]:
     return [c["name"] for c in cols if not _is_generated(c["extra"])]
-
-
-def snapshot_database(settings: Optional[dict] = None) -> dict:
-    cfg = settings or mysql_settings()
-    conn = connect(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT DATABASE()")
-        dbname = cur.fetchone()[0]
-        cur.execute("SHOW TABLES")
-        tables = [r[0] for r in cur.fetchall()]
-        out = {
-            "format": "tamkobi-mysql-snapshot-v1",
-            "database": dbname,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "tables": {},
-        }
-        for table in tables:
-            cur.execute(f"SHOW CREATE TABLE `{table}`")
-            create_sql = cur.fetchone()[1]
-            cols = _table_columns(cur, table)
-            writable = _writable_columns(cols)
-            col_list = ", ".join(f"`{c}`" for c in writable)
-            rows: List[list] = []
-            if writable:
-                cur.execute(f"SELECT {col_list} FROM `{table}`")
-                for raw in cur.fetchall():
-                    rows.append([_jsonable(v) for v in raw])
-            out["tables"][table] = {
-                "create": create_sql,
-                "columns": writable,
-                "column_meta": cols,
-                "row_count": len(rows),
-                "rows": rows,
-            }
-        return out
-    finally:
-        conn.close()
 
 
 def _jsonable(v):
@@ -178,12 +154,55 @@ def _sql_literal(v) -> str:
     if v is None:
         return "NULL"
     if isinstance(v, dict) and "$b64" in v:
-        return "X'" + bytes(v["$b64"], "ascii").hex() + "'"  # placeholder; restore uses pymysql params
+        return "X'" + bytes(v["$b64"], "ascii").hex() + "'"
     if isinstance(v, (dict, list)):
         s = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
     else:
         s = str(v)
     return "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r") + "'"
+
+
+def snapshot_database(settings: Optional[dict] = None) -> dict:
+    """In-memory snapshot (tests / small DBs). Prefer backup() for production."""
+    cfg = settings or mysql_settings()
+    conn = connect(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DATABASE()")
+        dbname = cur.fetchone()[0]
+        cur.execute("SHOW TABLES")
+        tables = [r[0] for r in cur.fetchall()]
+        out = {
+            "format": "tamkobi-mysql-snapshot-v1",
+            "database": dbname,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "tables": {},
+        }
+        for table in tables:
+            cur.execute(f"SHOW CREATE TABLE `{table}`")
+            create_sql = cur.fetchone()[1]
+            cols = _table_columns(cur, table)
+            writable = _writable_columns(cols)
+            col_list = ", ".join(f"`{c}`" for c in writable)
+            rows: List[list] = []
+            if writable:
+                cur.execute(f"SELECT {col_list} FROM `{table}`")
+                while True:
+                    batch = cur.fetchmany(FETCHMANY_SIZE)
+                    if not batch:
+                        break
+                    for raw in batch:
+                        rows.append([_jsonable(v) for v in raw])
+            out["tables"][table] = {
+                "create": create_sql,
+                "columns": writable,
+                "column_meta": cols,
+                "row_count": len(rows),
+                "rows": rows,
+            }
+        return out
+    finally:
+        conn.close()
 
 
 def snapshot_to_sql(snap: dict) -> str:
@@ -197,7 +216,6 @@ def snapshot_to_sql(snap: dict) -> str:
     for table, body in snap.get("tables", {}).items():
         lines.append(f"DROP TABLE IF EXISTS `{table}`;")
         create = body["create"]
-        # SHOW CREATE TABLE is for the source schema; keep as-is.
         if not create.rstrip().endswith(";"):
             create = create.rstrip() + ";"
         lines.append(create)
@@ -240,6 +258,188 @@ def write_snapshot(snap: dict, dest_dir: Path, prefix: Optional[str] = None) -> 
     return json_path, sql_path
 
 
+def _defaults_file(cfg: dict) -> Path:
+    """0600 defaults-file so password is never on argv."""
+    fd, name = tempfile.mkstemp(prefix="tamkobi-my-", suffix=".cnf")
+    os.close(fd)
+    path = Path(name)
+    path.chmod(0o600)
+    lines = [
+        "[client]",
+        f"host={cfg['host']}",
+        f"port={int(cfg['port'])}",
+        f"user={cfg['user']}",
+        f"password={cfg['password']}",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def mysqldump_available() -> bool:
+    return shutil.which("mysqldump") is not None
+
+
+def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> Tuple[Path, dict]:
+    cfg = settings or mysql_settings()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    name = cfg.get("database") or "tamkobi"
+    sql_path = dest_dir / f"{name}-{stamp}.sql.gz"
+    defaults = _defaults_file(cfg)
+    try:
+        cmd = [
+            "mysqldump",
+            f"--defaults-extra-file={defaults}",
+            "--single-transaction",
+            "--quick",
+            "--routines",
+            "--databases",
+            str(cfg["database"]),
+        ]
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ},
+        ) as proc:
+            assert proc.stdout is not None
+            with gzip.open(sql_path, "wb", compresslevel=6) as gz:
+                while True:
+                    chunk = proc.stdout.read(1024 * 256)
+                    if not chunk:
+                        break
+                    gz.write(chunk)
+            stderr = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", "replace")
+            rc = proc.wait()
+        if rc != 0:
+            sql_path.unlink(missing_ok=True)
+            raise RuntimeError(f"mysqldump failed ({rc}): {stderr[:500]}")
+    finally:
+        try:
+            defaults.unlink()
+        except OSError:
+            pass
+    meta = {
+        "sql": str(sql_path),
+        "json": None,
+        "database": cfg.get("database"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "method": "mysqldump-stream",
+        "tables": {},
+    }
+    (dest_dir / f"{name}-{stamp}.meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return sql_path, meta
+
+
+def backup_json_stream(
+    dest_dir: Path,
+    settings: Optional[dict] = None,
+    *,
+    write_sql: bool = True,
+    stamp: Optional[str] = None,
+) -> Tuple[Path, Optional[Path], dict]:
+    """Stream JSON.gz with fetchmany — never holds all tables' rows beyond one batch + encoder state."""
+    cfg = settings or mysql_settings()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    name = cfg.get("database") or "tamkobi"
+    json_path = dest_dir / f"{name}-{stamp}.json.gz"
+    sql_path = dest_dir / f"{name}-{stamp}.sql.gz" if write_sql else None
+    created = datetime.now(timezone.utc).isoformat()
+    table_counts: Dict[str, int] = {}
+
+    conn = connect(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DATABASE()")
+        dbname = cur.fetchone()[0]
+        cur.execute("SHOW TABLES")
+        tables = [r[0] for r in cur.fetchall()]
+
+        sf_cm = gzip.open(sql_path, "wt", encoding="utf-8", compresslevel=6) if sql_path else nullcontext()
+        with gzip.open(json_path, "wt", encoding="utf-8", compresslevel=6) as jf, sf_cm as sf:
+            # Manual JSON object stream for tables
+            jf.write('{"format":"tamkobi-mysql-snapshot-v1","database":')
+            jf.write(json.dumps(dbname, ensure_ascii=False))
+            jf.write(',"created_at":')
+            jf.write(json.dumps(created))
+            jf.write(',"tables":{')
+
+            if sf is not None:
+                sf.write(f"-- TamKobi MySQL snapshot {created}\n")
+                sf.write(f"-- database {dbname}\n")
+                sf.write("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n")
+
+            first_table = True
+            for table in tables:
+                cur.execute(f"SHOW CREATE TABLE `{table}`")
+                create_sql = cur.fetchone()[1]
+                cols = _table_columns(cur, table)
+                writable = _writable_columns(cols)
+                col_list = ", ".join(f"`{c}`" for c in writable)
+
+                if not first_table:
+                    jf.write(",")
+                first_table = False
+                jf.write(json.dumps(table, ensure_ascii=False))
+                jf.write(':{')
+                jf.write('"create":')
+                jf.write(json.dumps(create_sql, ensure_ascii=False))
+                jf.write(',"columns":')
+                jf.write(json.dumps(writable, ensure_ascii=False))
+                jf.write(',"column_meta":')
+                jf.write(json.dumps(cols, ensure_ascii=False))
+                jf.write(',"rows":[')
+
+                if sf is not None:
+                    sf.write(f"DROP TABLE IF EXISTS `{table}`;\n")
+                    create = create_sql if create_sql.rstrip().endswith(";") else create_sql.rstrip() + ";"
+                    sf.write(create + "\n")
+
+                count = 0
+                first_row = True
+                if writable:
+                    cur.execute(f"SELECT {col_list} FROM `{table}`")
+                    col_sql = ", ".join(f"`{c}`" for c in writable)
+                    while True:
+                        batch = cur.fetchmany(FETCHMANY_SIZE)
+                        if not batch:
+                            break
+                        for raw in batch:
+                            row = [_jsonable(v) for v in raw]
+                            if not first_row:
+                                jf.write(",")
+                            first_row = False
+                            jf.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+                            if sf is not None:
+                                vals = ", ".join(_sql_literal(v) for v in row)
+                                sf.write(f"INSERT INTO `{table}` ({col_sql}) VALUES ({vals});\n")
+                            count += 1
+                jf.write('],"row_count":')
+                jf.write(str(count))
+                jf.write("}")
+                if sf is not None:
+                    sf.write("\n")
+                table_counts[table] = count
+
+            jf.write("}}")
+            if sf is not None:
+                sf.write("SET FOREIGN_KEY_CHECKS=1;\n")
+    finally:
+        conn.close()
+
+    meta = {
+        "json": str(json_path),
+        "sql": str(sql_path) if sql_path else None,
+        "database": cfg.get("database"),
+        "created_at": created,
+        "method": "json-fetchmany-stream",
+        "tables": table_counts,
+    }
+    (dest_dir / f"{name}-{stamp}.meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return json_path, sql_path, meta
+
+
 def rotate_backups(dest_dir: Path, keep_days: int = DEFAULT_KEEP_DAYS, prefix: str = "tamkobi") -> List[Path]:
     if keep_days < 0 or not dest_dir.is_dir():
         return []
@@ -264,8 +464,8 @@ def load_snapshot_file(path: Path) -> dict:
     if path.name.endswith(".gz"):
         raw = gzip.decompress(raw)
     text = raw.decode("utf-8")
-    if path.name.endswith(".sql") or path.name.endswith(".sql.gz"):
-        raise ValueError("SQL dumps restore via mysql client; use the .json.gz snapshot")
+    if path.name.endswith(".sql") or ".sql.gz" in path.name or path.name.endswith(".sql.gz"):
+        raise ValueError("SQL dumps restore via restore_sql_gz / mysql client; use the .json.gz snapshot")
     data = json.loads(text)
     if data.get("format") != "tamkobi-mysql-snapshot-v1":
         raise ValueError(f"unknown snapshot format: {data.get('format')}")
@@ -273,7 +473,6 @@ def load_snapshot_file(path: Path) -> dict:
 
 
 def _root_settings(target_db: str) -> dict:
-    """Connect as root when creating/dropping a database (restore-to-temp)."""
     base = mysql_settings()
     root_pw = os.environ.get("MYSQL_ROOT_PASSWORD") or os.environ.get("DB_PASSWORD") or base["password"]
     return {
@@ -318,11 +517,6 @@ def restore_snapshot(
     as_root: bool = False,
     settings: Optional[dict] = None,
 ) -> dict:
-    """Recreate every table from `snap` in `target_db`.
-
-    `settings` restores into an arbitrary server (another host); without it the
-    target is the configured local server, optionally reached as root.
-    """
     if settings is not None:
         cfg = dict(settings)
     elif as_root:
@@ -342,7 +536,6 @@ def restore_snapshot(
                 cur.execute(f"DROP TABLE IF EXISTS `{table}`")
         for table, body in snap.get("tables", {}).items():
             create = body["create"]
-            # Rewrite CREATE TABLE to not include source DB qualifiers.
             create = re.sub(r"CREATE TABLE `[^`]+`\.", "CREATE TABLE ", create)
             cur.execute(create)
             cols = body.get("columns") or []
@@ -352,7 +545,6 @@ def restore_snapshot(
                 col_sql = ", ".join(f"`{c}`" for c in cols)
                 sql = f"INSERT INTO `{table}` ({col_sql}) VALUES ({placeholders})"
                 payload = [tuple(_bind(v) for v in row) for row in rows]
-                # Chunked so a large docs table stays under max_allowed_packet.
                 for start in range(0, len(payload), INSERT_CHUNK):
                     cur.executemany(sql, payload[start : start + INSERT_CHUNK])
             restored[table] = len(rows)
@@ -372,7 +564,48 @@ def _bind(v):
     return v
 
 
+def restore_sql_gz(path: Path, target_db: Optional[str] = None, yes: bool = False) -> dict:
+    """Restore a .sql.gz produced by mysqldump (or our SQL sibling) via mysql client."""
+    if not yes:
+        raise SystemExit("refusing to restore SQL without --yes")
+    mysql_bin = shutil.which("mysql")
+    if not mysql_bin:
+        raise RuntimeError("mysql client not found; install mysql-client or use .json.gz restore")
+    cfg = mysql_settings(db=target_db)
+    dest = target_db or cfg["database"]
+    defaults = _defaults_file(cfg)
+    try:
+        with gzip.open(path, "rb") as gz:
+            proc = subprocess.Popen(
+                [mysql_bin, f"--defaults-extra-file={defaults}", dest],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert proc.stdin is not None
+            shutil.copyfileobj(gz, proc.stdin)
+            proc.stdin.close()
+            _out, err_b = proc.communicate()
+        if proc.returncode != 0:
+            err = (err_b or b"").decode("utf-8", "replace")[:500]
+            raise RuntimeError(f"mysql restore failed: {err}")
+    finally:
+        try:
+            defaults.unlink()
+        except OSError:
+            pass
+    return {"database": dest, "source": str(path), "method": "mysql-sql-gz"}
+
+
 def verify_snapshot_file(path: Path) -> dict:
+    if path.name.endswith(".sql.gz") or path.name.endswith(".sql"):
+        # Lightweight: ensure gzip opens and looks like SQL
+        opener = gzip.open if path.name.endswith(".gz") else open
+        with opener(path, "rt", encoding="utf-8", errors="replace") as f:
+            head = f.read(2000)
+        if "CREATE TABLE" not in head and "CREATE DATABASE" not in head and "INSERT INTO" not in head:
+            raise AssertionError("sql dump does not look like MySQL SQL")
+        return {"database": None, "tables": {}, "path": str(path), "format": "sql"}
     snap = load_snapshot_file(path)
     tables = snap.get("tables") or {}
     if "docs" not in tables:
@@ -393,22 +626,44 @@ def backup(dest_dir: Optional[Path] = None, keep_days: Optional[int] = None) -> 
     load_env()
     dest = dest_dir or default_backup_dir()
     keep = DEFAULT_KEEP_DAYS if keep_days is None else keep_days
-    snap = snapshot_database()
-    json_path, sql_path = write_snapshot(snap, dest)
-    removed = rotate_backups(dest, keep_days=keep, prefix=snap.get("database") or "tamkobi")
+    cfg = mysql_settings()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    if mysqldump_available():
+        # Primary artifact: streamed mysqldump (avoids loading whole DB into RAM).
+        sql_path, _meta = backup_mysqldump_stream(dest, cfg)
+        # Companion JSON via fetchmany (CLI/tests still get .json.gz; memory-safe).
+        json_path, _, jmeta = backup_json_stream(dest, cfg, write_sql=False, stamp=stamp)
+        # Align names: rename mysqldump file to share stamp when possible
+        removed = rotate_backups(dest, keep_days=keep, prefix=cfg.get("database") or "tamkobi")
+        verify_snapshot_file(json_path)
+        verify_snapshot_file(sql_path)
+        return {
+            "json": str(json_path),
+            "sql": str(sql_path),
+            "database": cfg.get("database"),
+            "tables": jmeta.get("tables") or {},
+            "rotated": [str(p) for p in removed],
+            "method": "mysqldump-stream+json",
+        }
+    json_path, sql_path, meta = backup_json_stream(dest, cfg, stamp=stamp)
+    removed = rotate_backups(dest, keep_days=keep, prefix=cfg.get("database") or "tamkobi")
     verify_snapshot_file(json_path)
     return {
         "json": str(json_path),
-        "sql": str(sql_path),
-        "database": snap.get("database"),
-        "tables": {t: b.get("row_count") for t, b in snap["tables"].items()},
+        "sql": str(sql_path) if sql_path else None,
+        "database": cfg.get("database"),
+        "tables": meta.get("tables") or {},
         "rotated": [str(p) for p in removed],
+        "method": "json-fetchmany-stream",
     }
 
 
 def restore(path: Path, target_db: Optional[str] = None, yes: bool = False, as_root: bool = False) -> dict:
     load_env()
-    snap = load_snapshot_file(path)
+    p = Path(path)
+    if p.name.endswith(".sql.gz") or p.name.endswith(".sql"):
+        return restore_sql_gz(p, target_db=target_db, yes=yes)
+    snap = load_snapshot_file(p)
     dest = target_db or os.environ.get("MYSQL_DATABASE") or snap.get("database") or "tamkobi"
     if not yes:
         raise SystemExit(f"refusing to restore into `{dest}` without --yes")
@@ -441,17 +696,17 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="TamKobi MySQL backup/restore")
     sub = p.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("backup", help="Write gzip snapshot + SQL dump")
+    b = sub.add_parser("backup", help="Write gzip SQL dump (mysqldump stream) or JSON+SQL snapshot")
     b.add_argument("--dir", default=None, help="Backup directory (default backups/mysql)")
     b.add_argument("--keep", type=int, default=int(os.environ.get("MYSQL_BACKUP_KEEP", DEFAULT_KEEP_DAYS)))
     b.set_defaults(func=_cmd_backup)
-    r = sub.add_parser("restore", help="Restore a .json.gz snapshot")
+    r = sub.add_parser("restore", help="Restore a .json.gz snapshot or .sql.gz dump")
     r.add_argument("file")
     r.add_argument("--database", default=None, help="Target database name")
     r.add_argument("--yes", action="store_true", help="Required; acknowledges overwrite")
     r.add_argument("--as-root", action="store_true", help="CREATE DATABASE as root")
     r.set_defaults(func=_cmd_restore)
-    v = sub.add_parser("verify", help="Validate a snapshot file")
+    v = sub.add_parser("verify", help="Validate a snapshot / dump file")
     v.add_argument("file")
     v.set_defaults(func=_cmd_verify)
     return p
