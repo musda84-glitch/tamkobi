@@ -93,6 +93,11 @@ async def send_platform_sms(
     company_id: Optional[str] = None,
     contact_name: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Send via platform SMS provider. Provider responses never raise — always return a result dict.
+
+    Returns: {ok, provider, job_id, code, detail, status, phone}
+    Config / validation errors still raise HTTPException (400).
+    """
     creds = await resolve_platform_sms_creds()
     if not creds:
         raise HTTPException(status_code=400, detail="Platform SMS henüz yapılandırılmadı veya pasif.")
@@ -106,8 +111,25 @@ async def send_platform_sms(
         res = await comm_service.sms_send(creds, [{"no": no, "msg": msg}])
     except Exception as e:
         logger.warning("platform sms send failed: %s", e)
-        raise HTTPException(status_code=502, detail=f"SMS gönderilemedi: {str(e)[:160]}") from e
+        res = {
+            "ok": False,
+            "jobid": None,
+            "code": "",
+            "error": f"SMS gönderilemedi: {str(e)[:160]}",
+            "message": f"SMS gönderilemedi: {str(e)[:160]}",
+            "raw": None,
+        }
+    if not isinstance(res, dict):
+        res = {"ok": False, "error": "Geçersiz sağlayıcı cevabı", "raw": res}
     ok = bool(res.get("ok"))
+    detail = comm_service.sms_detail_text(
+        res.get("error") or res.get("message") or res.get("description") or res.get("raw") or ("" if ok else "SMS gönderilemedi."),
+        limit=300,
+    )
+    code = str(res.get("code") or "")
+    job_id = res.get("jobid")
+    if job_id is not None and not isinstance(job_id, str):
+        job_id = str(job_id)
     log = {
         "_id": f"sms_{uuid.uuid4().hex[:12]}",
         "company_id": company_id or "platform",
@@ -118,17 +140,25 @@ async def send_platform_sms(
         "contact_name": contact_name or "",
         "provider": creds.get("provider"),
         "status": "sent" if ok else "failed",
-        "detail": (res.get("message") or res.get("raw") or "")[:300],
+        "detail": detail,
+        "code": code,
+        "job_id": job_id,
         "source": "platform",
         "created_at": _now_iso(),
     }
     try:
         await _db.sms_logs.insert_one(log)
     except Exception:
-        pass
-    if not ok:
-        raise HTTPException(status_code=502, detail=log["detail"] or "SMS gönderilemedi.")
-    return {"status": "sent", "phone": no, "provider": creds.get("provider"), "detail": log["detail"]}
+        logger.exception("platform sms_logs insert failed")
+    return {
+        "ok": ok,
+        "provider": creds.get("provider"),
+        "job_id": job_id,
+        "code": code,
+        "detail": detail,
+        "status": "sent" if ok else "failed",
+        "phone": no,
+    }
 
 
 async def collect_admin_phones(company_ids: Optional[List[str]] = None, limit: int = 500) -> List[Dict[str, str]]:
@@ -165,11 +195,14 @@ async def notify_companies_sms(message: str, company_ids: Optional[List[str]] = 
     sent = failed = 0
     for r in recipients:
         try:
-            await send_platform_sms(
+            out = await send_platform_sms(
                 phone=r["phone"], message=msg, context=context, ref_id=ref_id,
                 company_id=r.get("company_id"), contact_name=r.get("name"),
             )
-            sent += 1
+            if out.get("ok"):
+                sent += 1
+            else:
+                failed += 1
         except Exception:
             failed += 1
     return {"status": "ok" if sent else "failed", "sent": sent, "failed": failed, "total": len(recipients)}
@@ -236,7 +269,10 @@ async def verify_platform_sms(_: dict = Depends(saas.require_super_admin)):
     patch = {
         "verified": ok,
         "verified_at": _now_iso() if ok else None,
-        "verify_message": (res.get("message") or res.get("raw") or ("OK" if ok else "Başarısız"))[:300],
+        "verify_message": comm_service.sms_detail_text(
+            res.get("message") or res.get("error") or res.get("raw") or ("OK" if ok else "Başarısız"),
+            limit=300,
+        ),
         "updated_at": _now_iso(),
     }
     await _db.platform_settings.update_one({"_id": SETTINGS_ID}, {"$set": patch}, upsert=True)
@@ -279,7 +315,11 @@ async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.req
         {"$set": {"last_test_at": _now_iso(), "updated_at": _now_iso()}},
         upsert=True,
     )
-    return {**result, "message": f"Test SMS gönderildi: {result.get('phone')}"}
+    if result.get("ok"):
+        msg = f"Test SMS gönderildi: {result.get('phone')}"
+    else:
+        msg = f"Test SMS başarısız: {result.get('detail') or 'bilinmeyen hata'}"
+    return {**result, "message": msg}
 
 
 @router.get("/system/sms/logs")
