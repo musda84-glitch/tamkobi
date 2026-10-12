@@ -243,6 +243,18 @@ async def get_user_from_token(token: str, db: Any, *, request: Any = None, path:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
         if user.get("is_active") is False:
             raise HTTPException(status_code=401, detail="Hesabınız pasifleştirilmiş.")
+        iat = payload.get("iat")
+        # E-posta değişimi / açık oturum iptali: sessions_revoked_at sonrası JWT reddedilir.
+        # (Refresh JWT sunucuda saklanmıyor; erişim JWT iat kontrolü ile düşer. Tenant access TTL: TENANT_ACCESS_SECONDS.)
+        revoked_raw = user.get("sessions_revoked_at")
+        if revoked_raw:
+            try:
+                from superadmin_2fa import parse_enabled_at
+                revoked_ts = parse_enabled_at(revoked_raw)
+            except Exception:
+                revoked_ts = None
+            if revoked_ts is not None and (iat is None or int(float(iat)) < int(float(revoked_ts))):
+                raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
         # Süper admin + TOTP açık: MFA onaylı oturum zorunlu (impersonation hariç)
         if user.get("is_super_admin") and user.get("totp_enabled") and user.get("totp_secret") and not payload.get("imp_by"):
             if not payload.get("mfa"):
@@ -252,7 +264,6 @@ async def get_user_from_token(token: str, db: Any, *, request: Any = None, path:
                 enabled_ts = parse_enabled_at(user.get("totp_enabled_at"))
             except Exception:
                 enabled_ts = None
-            iat = payload.get("iat")
             # Compare at whole-second resolution so a token minted in the same
             # second as totp_enabled_at is accepted (JWT iat is typically int seconds).
             if enabled_ts is not None and (iat is None or int(float(iat)) < int(float(enabled_ts))):

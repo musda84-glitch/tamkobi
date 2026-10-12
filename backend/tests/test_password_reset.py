@@ -1,10 +1,11 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from password_reset import (
     ERP_FORGOT_MSG,
     ERP_FORGOT_SMS_MSG,
-    MAIL_FAIL_PUBLIC_DETAIL,
-    SMS_FAIL_PUBLIC_DETAIL,
+    FORGOT_SMS_MIN_SECONDS,
     finalize_forgot_mail_result,
     finalize_forgot_sms_result,
     forgot_channel,
@@ -13,7 +14,9 @@ from password_reset import (
     mask_email,
     mask_phone,
     normalize_email,
+    pad_forgot_duration,
     password_error,
+    PUBLIC_FORGOT_KEYS,
     redirect_after_reset,
     reset_link,
     reset_path,
@@ -55,6 +58,7 @@ def test_password_and_token_errors():
     out = generic_forgot_response()
     assert out["message"] == ERP_FORGOT_MSG
     assert "reset_token" not in out
+    assert set(out.keys()) == set(PUBLIC_FORGOT_KEYS)
 
 
 def test_finalize_forgot_never_exposes_reset_link():
@@ -68,9 +72,11 @@ def test_finalize_forgot_never_exposes_reset_link():
     failed = finalize_forgot_mail_result(dirty, mail_status="failed", mail_detail="SMTP down")
     assert "reset_url" not in failed
     assert "reset_token" not in failed
-    assert failed["mail_status"] == "failed"
-    assert failed["detail"] == MAIL_FAIL_PUBLIC_DETAIL
-    assert "SMTP" not in failed["detail"]
+    assert "mail_status" not in failed
+    assert "detail" not in failed
+    assert failed["status"] == "ok"
+    assert failed["channel"] == "email"
+    assert failed["message"] == ERP_FORGOT_MSG
 
     sent = finalize_forgot_mail_result(
         {"status": "ok", "message": ERP_FORGOT_MSG, "reset_token": "x"},
@@ -78,8 +84,9 @@ def test_finalize_forgot_never_exposes_reset_link():
         mail_detail="a@b.com adresine gönderildi.",
     )
     assert "reset_token" not in sent
-    assert sent["mail_status"] == "sent"
-    assert "gönderildi" in sent["detail"]
+    assert "mail_status" not in sent
+    assert "detail" not in sent
+    assert sent == failed
 
 
 def test_forgot_sms_channel_helpers():
@@ -96,5 +103,23 @@ def test_forgot_sms_channel_helpers():
         sms_detail="netgsm err",
     )
     assert "reset_token" not in failed
-    assert failed["detail"] == SMS_FAIL_PUBLIC_DETAIL
-    assert failed["sms_status"] == "failed"
+    assert "sms_status" not in failed
+    assert "detail" not in failed
+    assert failed == sms_out
+
+
+def test_pad_forgot_duration_helper():
+    assert 1.0 <= FORGOT_SMS_MIN_SECONDS <= 1.5
+    slept = []
+
+    async def _sleep(s):
+        slept.append(s)
+
+    async def _run():
+        with patch("password_reset.asyncio.sleep", _sleep), \
+             patch("password_reset.time.monotonic", return_value=10.5):
+            await pad_forgot_duration(10.0, min_seconds=1.2)
+
+    asyncio.run(_run())
+    assert len(slept) == 1
+    assert abs(slept[0] - 0.7) < 1e-9

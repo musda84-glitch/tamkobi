@@ -294,6 +294,11 @@ async def startup_event():
             filled = await user_numbers.backfill_missing_user_numbers(db)
             if filled:
                 logger.info("Assigned user_number to %s existing users", filled)
+            try:
+                import phone_norm as _phone_norm
+                await _phone_norm.backfill_phone_norm(db)
+            except Exception as _pn_exc:
+                logger.warning("phone_norm backfill skipped: %s", _pn_exc)
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
@@ -886,6 +891,45 @@ async def auth_2fa_setup_confirm(req: TwoFASetupConfirmRequest, user: dict = Dep
         "totp_enabled": True,
         "recovery_codes": plain_codes,
         "message": "2FA etkin. Kurtarma kodlarını güvenli bir yere kaydedin; bir daha gösterilmez.",
+    }
+
+
+@api_router.put("/auth/me")
+async def update_my_profile(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    """Kullanıcı kendi Ad Soyad ve Telefonunu günceller."""
+    import phone_norm as _phone_norm
+    uid = str(user.get("_id") or user.get("id") or "")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    upd: Dict[str, Any] = {}
+    if "name" in req:
+        name = str(req.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Ad soyad boş olamaz.")
+        upd["name"] = name
+    if "phone" in req:
+        try:
+            phone_fields = _phone_norm.phone_update_fields(req.get("phone"), allow_empty=True)
+            await _phone_norm.ensure_unique_phone_norm(
+                db, phone_fields.get("phone_norm"), exclude_user_id=uid,
+            )
+            upd.update(phone_fields)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    if not upd:
+        return {"status": "ok", "user": {"id": uid, "name": user.get("name"), "phone": user.get("phone") or ""}}
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"_id": uid}, {"$set": upd})
+    row = await db.users.find_one({"_id": uid}) or {}
+    return {
+        "status": "ok",
+        "message": "Profil güncellendi.",
+        "user": {
+            "id": uid,
+            "name": row.get("name"),
+            "phone": row.get("phone") or "",
+            "email": row.get("email"),
+        },
     }
 
 
@@ -3121,6 +3165,7 @@ async def get_me(request: Request):
             "totp_enabled": superadmin_2fa.user_totp_enabled(user) if is_sa else False,
             "requires_2fa_setup": needs_setup,
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
+            "phone": user.get("phone") or "",
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },
         "authenticated": True,
@@ -3194,32 +3239,76 @@ async def change_password(req: ChangePasswordRequest, request: Request):
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
 
+async def _forgot_sms_deliver(
+    *,
+    token: str,
+    user: dict,
+    phone_raw: str,
+    dest_phone: str,
+    company_id: Any,
+    link: str,
+    email: str,
+    now: datetime,
+) -> None:
+    """Background SMS send for forgot-password (does not affect HTTP response timing)."""
+    sms_status, sms_detail = "skipped", "Platform SMS yapılandırılmamış."
+    try:
+        import platform_sms as _platform_sms
+        phone = comm_service.normalize_phone(user.get("phone") or phone_raw) or dest_phone
+        brand = "TamKobi"
+        if company_id:
+            company = await db.companies.find_one({"_id": company_id}) or {}
+            brand = company.get("name") or brand
+        msg = password_reset.sms_reset_message(name=user.get("name"), link=link, brand=brand)
+        sms_res = await _platform_sms.send_platform_sms(
+            phone=phone, message=msg, context="erp_reset", ref_id=token,
+            company_id=company_id or "platform", contact_name=user.get("name"),
+        )
+        if sms_res.get("ok"):
+            sms_status, sms_detail = "sent", f"{password_reset.mask_phone(phone)} numarasına gönderildi."
+        else:
+            sms_status = "failed"
+            sms_detail = str(sms_res.get("detail") or "SMS gönderilemedi.")[:140]
+    except HTTPException as e:
+        sms_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
+        sms_detail = str(e.detail)[:140]
+    except Exception as e:
+        sms_status, sms_detail = "failed", str(e)[:140]
+    if sms_status != "sent":
+        try:
+            await db.password_resets.update_one(
+                {"_id": token},
+                {"$set": {"used_at": now.isoformat(), "revoked": True, "sms_failed": True, "sms_error": sms_detail[:200]}},
+            )
+        except Exception:
+            pass
+        logger.warning("forgot-password sms %s user=%s: %s", sms_status, email or phone_raw, sms_detail)
+
+
 @api_router.post("/auth/forgot-password")
 async def erp_forgot_password(req: Dict[str, Any], request: Request):
+    import time as _time
     channel = password_reset.forgot_channel(req.get("channel") or "email")
     next_kind = password_reset.login_next(req.get("next") or "")
     out = password_reset.generic_forgot_response(channel)
     email = password_reset.normalize_email(req.get("email") or "")
     phone_raw = str(req.get("phone") or "").strip()
+    # SMS kanalı: sabit duvar süresi + arka plan gönderim (zamanlama ile varlık sızıntısı yok).
+    sms_started = _time.monotonic() if channel == "sms" else None
+
+    async def _sms_done(payload: dict) -> dict:
+        await password_reset.pad_forgot_duration(sms_started)
+        return payload
 
     user = None
     if channel == "sms":
-        phone = comm_service.normalize_phone(phone_raw)
+        import phone_norm as _phone_norm
+        phone = _phone_norm.phone_norm_of(phone_raw)
         if not phone:
-            return out
-        # Son 10 hane ile kayıtlı telefonu eşle (05xx / +90 / 5xx biçimleri).
-        phone_rx = {"$regex": f"{phone}\\D*$"}
-        candidates = await db.users.find({
-            "phone": phone_rx,
-            "is_active": {"$ne": False},
-            "password_hash": {"$exists": True, "$nin": [None, ""]},
-        }).to_list(20)
-        for u in candidates:
-            if comm_service.normalize_phone(u.get("phone") or "") == phone:
-                user = u
-                break
+            return await _sms_done(out)
+        user = await _phone_norm.find_user_by_phone(db, phone_raw)
         if not user:
-            return out
+            return await _sms_done(out)
         email = password_reset.normalize_email(user.get("email") or "") or email
     else:
         if not email or "@" not in email:
@@ -3235,11 +3324,12 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
         {"$set": {"used_at": now.isoformat(), "revoked": True}},
     )
     company_id = user.get("active_company_id") or ((user.get("company_ids") or [None])[0])
+    dest_phone = comm_service.normalize_phone(user.get("phone") or phone_raw) or phone_raw
     await db.password_resets.insert_one({
         "_id": token,
         "user_id": user["_id"],
         "email": email,
-        "phone": user.get("phone") or phone_raw or "",
+        "phone": dest_phone or phone_raw or "",
         "channel": channel,
         "company_id": company_id,
         "next": next_kind,
@@ -3259,36 +3349,18 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
     link = password_reset.reset_link(base, token, next_kind)
 
     if channel == "sms":
-        sms_status, sms_detail = "skipped", "Platform SMS yapılandırılmamış."
-        try:
-            import platform_sms as _platform_sms
-            phone = comm_service.normalize_phone(user.get("phone") or phone_raw)
-            brand = "TamKobi"
-            if company_id:
-                company = await db.companies.find_one({"_id": company_id}) or {}
-                brand = company.get("name") or brand
-            msg = password_reset.sms_reset_message(name=user.get("name"), link=link, brand=brand)
-            sms_res = await _platform_sms.send_platform_sms(
-                phone=phone, message=msg, context="erp_reset", ref_id=token,
-                company_id=company_id or "platform", contact_name=user.get("name"),
-            )
-            if sms_res.get("ok"):
-                sms_status, sms_detail = "sent", f"{password_reset.mask_phone(phone)} numarasına gönderildi."
-            else:
-                sms_status = "failed"
-                sms_detail = str(sms_res.get("detail") or "SMS gönderilemedi.")[:140]
-        except HTTPException as e:
-            sms_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
-            sms_detail = str(e.detail)[:140]
-        except Exception as e:
-            sms_status, sms_detail = "failed", str(e)[:140]
-        if sms_status != "sent":
-            await db.password_resets.update_one(
-                {"_id": token},
-                {"$set": {"used_at": now.isoformat(), "revoked": True, "sms_failed": True, "sms_error": sms_detail[:200]}},
-            )
-            logger.warning("forgot-password sms %s user=%s: %s", sms_status, email or phone_raw, sms_detail)
-        return password_reset.finalize_forgot_sms_result(out, sms_status=sms_status, sms_detail=sms_detail)
+        # Yanıt yolu hazır; SMS'i beklemeden arka planda gönder.
+        asyncio.create_task(_forgot_sms_deliver(
+            token=token,
+            user=user,
+            phone_raw=phone_raw,
+            dest_phone=dest_phone or phone_raw or "",
+            company_id=company_id,
+            link=link,
+            email=email,
+            now=now,
+        ))
+        return await _sms_done(password_reset.finalize_forgot_sms_result(out, sms_status="queued", sms_detail=""))
 
     mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
     try:

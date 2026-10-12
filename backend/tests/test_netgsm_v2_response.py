@@ -195,8 +195,10 @@ def test_send_test_endpoint_200_on_provider_failure():
     platform_sms._db.sms_logs.insert_one = AsyncMock()
     platform_sms._db.platform_settings = MagicMock()
     platform_sms._db.platform_settings.update_one = AsyncMock()
+    captured = {}
 
     async def _fake_send(**kwargs):
+        captured["message"] = kwargs.get("message")
         return {
             "ok": False,
             "provider": "netgsm",
@@ -216,6 +218,8 @@ def test_send_test_endpoint_200_on_provider_failure():
     assert "başarısız" in (out.get("message") or "").lower() or "fail" in (out.get("message") or "").lower()
     # endpoint itself must not raise → 200 at HTTP layer
     platform_sms._db.platform_settings.update_one.assert_awaited()
+    assert captured.get("message")
+    assert "#" in captured["message"]
 
 
 def test_company_sms_send_clips_dict_error():

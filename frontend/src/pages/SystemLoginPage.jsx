@@ -111,8 +111,6 @@ export default function SystemLoginPage() {
   };
 
   const smsMode = channel === "sms";
-  const deliveryOk = smsMode ? resetInfo?.sms_status === "sent" : resetInfo?.mail_status === "sent";
-  const deliveryFail = resetInfo && (smsMode ? resetInfo.sms_status !== "sent" : resetInfo.mail_status && resetInfo.mail_status !== "sent");
 
   return (
     <div className="min-h-screen bg-[#0b0f1a] flex items-center justify-center p-6 relative overflow-hidden">
@@ -129,7 +127,7 @@ export default function SystemLoginPage() {
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Şifre Sıfırlama</div>
             </div>
           </div>
-          <p className="text-xs text-slate-400">Platform yönetici hesabınız için sıfırlama bağlantısı alın. Eşleşen hesap varsa seçtiğiniz kanala gider.</p>
+          <p className="text-xs text-slate-400">Platform yönetici hesabınız için sıfırlama bağlantısı alın. Kayıtlı bir hesap varsa seçtiğiniz kanala gider.</p>
           <div className="flex gap-2" data-testid="sys-forgot-channel">
             <button type="button" onClick={() => { setChannel("email"); setResetInfo(null); setErr(""); }} className={`flex-1 py-2 rounded-xl border text-xs font-bold ${!smsMode ? "bg-amber-400 text-slate-900 border-amber-400" : "bg-white/5 text-slate-300 border-white/10"}`} data-testid="sys-forgot-channel-email">E-posta</button>
             <button type="button" onClick={() => { setChannel("sms"); setResetInfo(null); setErr(""); }} className={`flex-1 py-2 rounded-xl border text-xs font-bold ${smsMode ? "bg-amber-400 text-slate-900 border-amber-400" : "bg-white/5 text-slate-300 border-white/10"}`} data-testid="sys-forgot-channel-sms">SMS</button>
@@ -142,11 +140,7 @@ export default function SystemLoginPage() {
           {err && <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2" data-testid="sys-forgot-error">{err}</div>}
           {resetInfo && (
             <div className="text-xs text-emerald-200 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 space-y-1" data-testid="sys-forgot-result">
-              <div>{resetInfo.message}</div>
-              {deliveryOk && <div>{smsMode ? "Telefonunuzu kontrol edin (1 saat geçerli)." : "E-postanızı kontrol edin (1 saat geçerli)."}</div>}
-              {deliveryFail && (
-                <div className="text-amber-200" data-testid="sys-forgot-mail-fail">{resetInfo.detail || (smsMode ? "SMS gönderilemedi." : "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin.")}</div>
-              )}
+              <div>{resetInfo.message || (smsMode ? "Kayıtlı bir hesap varsa SMS gönderildi." : "Kayıtlı bir hesap varsa e-posta gönderildi.")}</div>
             </div>
           )}
           <button disabled={busy} className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="sys-forgot-submit"><KeyRound className="w-4 h-4" /> {busy ? "Gönderiliyor…" : (smsMode ? "SMS ile Bağlantı Gönder" : "Sıfırlama Bağlantısı Gönder")}</button>

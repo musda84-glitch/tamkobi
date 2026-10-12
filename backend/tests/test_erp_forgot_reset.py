@@ -44,6 +44,9 @@ def test_forgot_unknown_email_generic():
     assert d.get("status") == "ok"
     assert "reset_token" not in d
     assert "reset_url" not in d
+    assert "mail_status" not in d
+    assert "detail" not in d
+    assert set(d.keys()) <= {"status", "message", "channel"}
 
 
 def test_forgot_never_returns_reset_link_on_mail_fail():
@@ -56,6 +59,8 @@ def test_forgot_never_returns_reset_link_on_mail_fail():
     d = r.json()
     assert "reset_token" not in d
     assert "reset_url" not in d
+    assert "mail_status" not in d
+    assert "detail" not in d
     assert d.get("status") == "ok"
 
 

@@ -8,7 +8,6 @@ import requests
 
 from password_reset import (
     ERP_FORGOT_SMS_MSG,
-    SMS_FAIL_PUBLIC_DETAIL,
     finalize_forgot_sms_result,
     forgot_channel,
     generic_forgot_response,
@@ -27,6 +26,7 @@ def test_forgot_channel_and_sms_helpers():
     assert out["channel"] == "sms"
     assert out["message"] == ERP_FORGOT_SMS_MSG
     assert "reset_token" not in out
+    assert "sms_status" not in out
     msg = sms_reset_message(name="Ali", link="https://x/sifre/tok", brand="Demo")
     assert "Ali" in msg and "https://x/sifre/tok" in msg and len(msg) <= 400
 
@@ -36,11 +36,24 @@ def test_finalize_forgot_sms_never_exposes_link():
     failed = finalize_forgot_sms_result(dirty, sms_status="failed", sms_detail="provider down")
     assert "reset_url" not in failed
     assert "reset_token" not in failed
-    assert failed["sms_status"] == "failed"
-    assert failed["detail"] == SMS_FAIL_PUBLIC_DETAIL
+    assert "sms_status" not in failed
+    assert "detail" not in failed
+    assert failed["channel"] == "sms"
+    assert failed["message"] == ERP_FORGOT_SMS_MSG
     sent = finalize_forgot_sms_result({"status": "ok"}, sms_status="sent", sms_detail="•••4567")
-    assert sent["sms_status"] == "sent"
-    assert "4567" in sent["detail"]
+    assert "sms_status" not in sent
+    assert "detail" not in sent
+    assert sent == failed
+
+
+def test_unique_test_sms_body():
+    import platform_sms
+    a = platform_sms._unique_test_sms_body()
+    b = platform_sms._unique_test_sms_body()
+    assert "#" in a and "#" in b
+    assert a != b or ":" in a  # saat damgası; rastgele kod farklı olmalı
+    # iki çağrı aynı saniyede olsa bile rastgele kod ayırır
+    assert a.split("#")[-1] != b.split("#")[-1] or a != b
 
 
 def test_public_view_hides_password():
