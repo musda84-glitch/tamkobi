@@ -1,23 +1,34 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2, KeyRound, Mail, IdCard } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2, KeyRound, Mail, IdCard, HardDrive, Bot, MessageSquare, RefreshCw } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
-import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS, QuotaBar } from "./saasUi";
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
 import { AddonToggles } from "./AddonsPanel";
 import IsnetIntegrationPanel from "../IsnetIntegrationPanel";
+import { SmsCenter } from "../SmsCenter";
+
+const DRAWER_TABS = [
+  { id: "license", label: "Lisans" },
+  { id: "einvoice", label: "Entegratör" },
+  { id: "sms", label: "SMS" },
+  { id: "storage", label: "Depolama" },
+  { id: "ai", label: "Yapay zekâ" },
+];
+const TAB_IDS = new Set(DRAWER_TABS.map((t) => t.id));
 
 const cred = { withCredentials: true };
 
 const limLabel = (n) => (!n ? "∞" : String(n));
 const billingLabel = (p) => (p === "yearly" ? "Yıllık" : "Aylık");
 
-export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = [], onClose, onChanged }) => {
+export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = [], onClose, onChanged, initialTab = "license" }) => {
   const [d, setD] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState("");
+  const [tab, setTab] = useState(() => (TAB_IDS.has(initialTab) ? initialTab : "license"));
   const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
@@ -27,11 +38,27 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   const [eiProvider, setEiProvider] = useState("");
   const [parentPick, setParentPick] = useState("");
   const [parentQ, setParentQ] = useState("");
-  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); setParentPick(r.data.parent_company_id || ""); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); setEiProvider(r.data.einvoice?.provider || ""); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  const [storageDetail, setStorageDetail] = useState(null);
+  const [storageLimit, setStorageLimit] = useState("");
+  const [aiStatus, setAiStatus] = useState(null);
+  const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => {
+    setD(r.data);
+    setParentPick(r.data.parent_company_id || "");
+    const l = r.data.license;
+    setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" });
+    setEiProvider(r.data.einvoice?.provider || "");
+    const ov = l.quota_overrides?.storage_limit_mb;
+    setStorageLimit(ov === 0 || ov ? String(ov) : "");
+  }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
+  useEffect(() => {
+    setTab(TAB_IDS.has(initialTab) ? initialTab : "license");
+  }, [companyId, initialTab]);
   useEffect(() => {
     load();
     setProvidersLoaded(false);
     setProvidersError(false);
+    setStorageDetail(null);
+    setAiStatus(null);
     axios.get(`${API_URL}/einvoice/providers`)
       .then((r) => {
         setProviders(Array.isArray(r.data) ? r.data : []);
@@ -44,6 +71,22 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
       })
       .finally(() => setProvidersLoaded(true));
   }, [load]);
+  const loadStorage = useCallback(() => {
+    setBusy("storage-load");
+    return axios.get(`${API_URL}/system/storage/${companyId}`, cred)
+      .then((r) => setStorageDetail(r.data))
+      .catch((e) => toast.error(e.response?.data?.detail || "Depolama alınamadı."))
+      .finally(() => setBusy(""));
+  }, [companyId]);
+  useEffect(() => {
+    if (tab === "storage" && !storageDetail) loadStorage();
+  }, [tab, storageDetail, loadStorage]);
+  useEffect(() => {
+    if (tab !== "ai" || aiStatus) return;
+    axios.get(`${API_URL}/system/ai`, cred)
+      .then((r) => setAiStatus(r.data))
+      .catch(() => setAiStatus({ enabled: false, error: true }));
+  }, [tab, aiStatus]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
@@ -76,6 +119,28 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
       setD({ ...d, license: r.data });
       onChanged();
     } catch (e) { toast.error(e.response?.data?.detail || "Varsayılana dönülemedi."); } finally { setBusy(""); }
+  };
+  const saveStorageLimit = async () => {
+    setBusy("storage-save");
+    try {
+      const r = await axios.put(`${API_URL}/system/companies/${companyId}/license`, {
+        storage_limit_mb: storageLimit === "" ? null : Number(storageLimit),
+      }, cred);
+      setD((prev) => ({ ...prev, license: r.data }));
+      const ov = r.data.quota_overrides?.storage_limit_mb;
+      setStorageLimit(ov === 0 || ov ? String(ov) : "");
+      toast.success("Depolama kotası güncellendi.");
+      await loadStorage();
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Kota kaydedilemedi."); } finally { setBusy(""); }
+  };
+  const ensureStorage = async () => {
+    setBusy("storage-ensure");
+    try {
+      const r = await axios.post(`${API_URL}/system/storage/${companyId}/ensure`, {}, cred);
+      toast.success(`${r.data.folder_count || 0} klasör hazır.`);
+      await loadStorage();
+    } catch (e) { toast.error(e.response?.data?.detail || "Klasörler oluşturulamadı."); } finally { setBusy(""); }
   };
   const siblings = d.license_companies || [];
   const siblingTree = sortCompanyTree(siblings.map((c) => ({ ...c, created_at: c.created_at || "", is_primary: !!c.primary })));
@@ -150,7 +215,23 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
           </div>
         </div>
+        <div className="sticky top-[57px] bg-white border-b px-3 py-2 z-10 flex flex-wrap gap-1" data-testid="drawer-tabs" role="tablist">
+          {DRAWER_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${tab === t.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+              data-testid={`drawer-tab-${t.id}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="p-5 space-y-5">
+          {tab === "license" ? (<>
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-membership">
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><IdCard className="w-4 h-4 text-slate-400" /> Üyelik ve şirket bilgileri</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
@@ -230,46 +311,6 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             )}
           </section>
 
-          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-einvoice">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. İşNet SOAP için ortam, IP ve e-İrsaliye varsayılanları da burada; firma paneli VKN, GİB etiketi ve portal kullanıcı/şifresini girer.</p>
-              </div>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
-            </div>
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
-              <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider" disabled={!canSaveEinvoice}>
-                <option value="">Seçilmedi (GİB simüle)</option>
-                {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
-                {!providerInList && eiProvider ? (
-                  <option value={eiProvider} data-testid="drawer-einvoice-provider-orphan">(mevcut: {eiProvider})</option>
-                ) : null}
-              </select>
-              {providersError ? (
-                <p className="text-[11px] text-rose-700 mt-1" data-testid="drawer-einvoice-providers-error">Entegratör listesi yüklenemedi. Kaydetmek için listeyi yenileyin.</p>
-              ) : null}
-            </div>
-            {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
-            <div className="flex justify-end">
-              <button type="button" onClick={async () => {
-                setBusy("ei");
-                try {
-                  const r = await axios.put(`${API_URL}/system/companies/${companyId}/einvoice`, { provider: eiProvider }, cred);
-                  setD((prev) => ({ ...prev, einvoice: { provider: r.data.provider, status: r.data.status, mode: r.data.mode, username: r.data.username, has_password: r.data.has_password } }));
-                  setEiProvider(r.data.provider || "");
-                  toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
-                } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
-              }} disabled={busy === "ei" || !canSaveEinvoice} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
-            </div>
-            {eiProvider === "isnet" ? (
-              <div className="pt-1" data-testid="drawer-isnet-soap">
-                <IsnetIntegrationPanel companyId={companyId} variant="system" />
-              </div>
-            ) : null}
-          </section>
-
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
             <h3 className="font-bold text-slate-900 text-sm">Lisans</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -290,7 +331,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             {lic.days_left !== null && lic.days_left !== undefined && <div className={`rounded-lg px-3 py-2 ${lic.days_left <= 7 ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-600"}`}>Bitiş: {fmtDate(lic.trial_ends_at || lic.expires_at)} · <b>{lic.days_left} gün</b> kaldı</div>}
           </section>
 
-          <AddonToggles license={lic} busy={busy} onToggle={toggleAddon} onInherit={inheritAddon} />
+          <AddonToggles license={lic} busy={busy} onToggle={toggleAddon} onInherit={inheritAddon} groupsFilter={["support"]} title="Destek araçları" hint="Destek girişi ve talep araçları bu müşteri için." testId="drawer-addons-support" />
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-slate-900 text-sm">Modüller <span className="text-slate-400 font-normal">({lic.enabled_count}/{lic.total_count} aktif)</span></h3>{lic.locked && <span className="text-rose-600 font-semibold flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Lisans {lic.status_label.toLowerCase()} — tüm modüller kilitli</span>}</div>
@@ -362,6 +403,131 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             ))}</ul>
             {(d.requests || []).length > 0 && (<><h3 className="font-bold text-slate-900 text-sm mt-4 mb-2">Paket Talepleri</h3><ul className="divide-y">{d.requests.map((r) => <li key={r.id} className="py-1.5 flex items-center justify-between"><span>{r.plan_name} · {r.message}</span><span className={`text-[10px] font-semibold ${r.status === "pending" ? "text-amber-700" : r.status === "approved" ? "text-emerald-700" : "text-slate-400"}`}>{r.status} · {fmtDate(r.created_at)}</span></li>)}</ul></>)}
           </section>
+          </>) : null}
+
+          {tab === "einvoice" ? (
+            <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-einvoice">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. İşNet SOAP için ortam, IP ve e-İrsaliye varsayılanları da burada; firma paneli VKN, GİB etiketi ve portal kullanıcı/şifresini girer.</p>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
+                <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider" disabled={!canSaveEinvoice}>
+                  <option value="">Seçilmedi (GİB simüle)</option>
+                  {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+                  {!providerInList && eiProvider ? (
+                    <option value={eiProvider} data-testid="drawer-einvoice-provider-orphan">(mevcut: {eiProvider})</option>
+                  ) : null}
+                </select>
+                {providersError ? (
+                  <p className="text-[11px] text-rose-700 mt-1" data-testid="drawer-einvoice-providers-error">Entegratör listesi yüklenemedi. Kaydetmek için listeyi yenileyin.</p>
+                ) : null}
+              </div>
+              {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
+              <div className="flex justify-end">
+                <button type="button" onClick={async () => {
+                  setBusy("ei");
+                  try {
+                    const r = await axios.put(`${API_URL}/system/companies/${companyId}/einvoice`, { provider: eiProvider }, cred);
+                    setD((prev) => ({ ...prev, einvoice: { provider: r.data.provider, status: r.data.status, mode: r.data.mode, username: r.data.username, has_password: r.data.has_password } }));
+                    setEiProvider(r.data.provider || "");
+                    toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
+                  } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
+                }} disabled={busy === "ei" || !canSaveEinvoice} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
+              </div>
+              {eiProvider === "isnet" ? (
+                <div className="pt-1" data-testid="drawer-isnet-soap">
+                  <IsnetIntegrationPanel companyId={companyId} variant="system" />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          {tab === "sms" ? (
+            <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-sms">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-slate-400" /> Şirket SMS operatörü</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Bu firmanın kendi SMS operatör ayarları. Platform SMS (şifre sıfırlama vb.) ayrıdır: Sistem → SMS Modülü.</p>
+              </div>
+              <SmsCenter companyId={companyId} contacts={[]} />
+            </section>
+          ) : null}
+
+          {tab === "storage" ? (
+            <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4" data-testid="drawer-storage">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><HardDrive className="w-4 h-4 text-slate-400" /> Depolama</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Kota, kullanım ve klasörler. Boş limit paketten gelir; 0 = sınırsız.</p>
+                </div>
+                <button type="button" onClick={ensureStorage} disabled={!!busy} className="px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 bg-slate-900 text-white disabled:opacity-60" data-testid="drawer-storage-ensure">
+                  {busy === "storage-ensure" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Klasörleri doğrula
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Kullanım</div>
+                  <QuotaBar
+                    used={Number(((storageDetail?.total_bytes ?? mem.storage_bytes ?? d.usage?.storage_bytes ?? 0) / (1024 * 1024)).toFixed(1))}
+                    limit={storageDetail?.storage_limit_mb ?? lic.storage_limit_mb ?? 0}
+                    testId="drawer-storage-quota"
+                  />
+                  <div className="text-[11px] text-slate-600" data-testid="drawer-storage-usage">
+                    {fmtBytes(storageDetail?.total_bytes ?? mem.storage_bytes ?? d.usage?.storage_bytes ?? 0)}
+                    {(storageDetail?.storage_limit_mb ?? lic.storage_limit_mb) ? ` / ${storageDetail?.storage_limit_mb ?? lic.storage_limit_mb} MB` : " / sınırsız"}
+                    {storageDetail?.total_files != null ? ` · ${storageDetail.total_files} dosya` : ""}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2">
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Özel kota (MB)</label>
+                  <input type="number" min={0} value={storageLimit} onChange={(e) => setStorageLimit(e.target.value)} className={inputCls} placeholder={String(lic.plan_defaults?.storage_limit_mb || plan?.storage_limit_mb || "sınırsız")} data-testid="drawer-storage-limit" />
+                  <p className="text-[10px] text-slate-400">Paket: {lic.plan_defaults?.storage_limit_mb || plan?.storage_limit_mb || "∞"} MB</p>
+                  <button type="button" onClick={saveStorageLimit} disabled={busy === "storage-save"} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-bold inline-flex items-center gap-1 disabled:opacity-60" data-testid="drawer-storage-save">
+                    {busy === "storage-save" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Kotayı kaydet
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="drawer-storage-folders">
+                {(storageDetail?.folders || []).length === 0 && !busy ? (
+                  <p className="text-[11px] text-slate-400 sm:col-span-2">Klasör özeti yok. «Klasörleri doğrula» ile oluşturun.</p>
+                ) : (storageDetail?.folders || []).map((folder) => (
+                  <div key={folder.id || folder.area_key} className="border border-slate-100 rounded-xl p-3" data-testid={`drawer-storage-folder-${folder.area_key}`}>
+                    <div className="font-semibold text-slate-800">{folder.label}</div>
+                    <div className="text-[10px] text-slate-400 font-mono truncate">{folder.path}</div>
+                    <div className="text-[10px] text-slate-500 mt-1">{folder.file_count || 0} dosya · {fmtBytes(folder.bytes)}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {tab === "ai" ? (
+            <div className="space-y-4" data-testid="drawer-ai">
+              <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Bot className="w-4 h-4 text-slate-400" /> Platform AI durumu</h3>
+                <p className="text-[10px] text-slate-500">Sağlayıcı / model platform genelidir (Sistem → AI Entegrasyonu). Burada yalnızca bu şirketin araç açık/kapalı durumu yönetilir.</p>
+                {aiStatus?.error ? (
+                  <p className="text-[11px] text-rose-700" data-testid="drawer-ai-status-error">AI durumu alınamadı.</p>
+                ) : aiStatus ? (
+                  <div className="text-[11px] text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="drawer-ai-status">
+                    <div>Durum: <b>{aiStatus.enabled === false ? "Kapalı" : (aiStatus.ready ? "Hazır" : "Yapılandırıldı")}</b></div>
+                    <div>Sağlayıcı: <b>{aiStatus.provider || "—"}</b></div>
+                    <div>Danışman modeli: <b data-testid="drawer-ai-advisor-model">{aiStatus.advisor_model || "—"}</b></div>
+                    <div>Aktarım modeli: <b>{aiStatus.extract_model || "—"}</b></div>
+                  </div>
+                ) : <p className="text-[11px] text-slate-400">Yükleniyor…</p>}
+                <div className="text-[11px] text-slate-600" data-testid="drawer-ai-usage">
+                  Açık araç: {Object.values(lic.addon_details || {}).filter((row) => row.group === "ai" && row.enabled).length}
+                  /{Object.values(lic.addon_details || {}).filter((row) => row.group === "ai").length || 0}
+                </div>
+              </section>
+              <AddonToggles license={lic} busy={busy} onToggle={toggleAddon} onInherit={inheritAddon} groupsFilter={["ai"]} title="Yapay zekâ araçları" hint="Bu müşteri için AI araçlarını açın veya kapatın. “özel” = platform varsayılanından farklı." testId="drawer-addons-ai" />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

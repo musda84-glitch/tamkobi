@@ -58,7 +58,7 @@ export const SYSTEM_SECTIONS = [
   { key: "sms", label: "SMS Modülü", icon: MessageSquare, render: () => <PlatformSmsPanel /> },
   { key: "e-fatura-tasarim", label: "e-Fatura Tasarım", icon: FileCode2, render: () => <EinvoiceDesignsPanel /> },
   { key: "ai", label: "AI Entegrasyonu", icon: Sparkles, render: () => <AiProviderPanel /> },
-  { key: "araclar", label: "AI & Destek", icon: Bot, render: () => <AddonsPanel /> },
+  { key: "araclar", label: "AI & Destek", icon: Bot, render: (c) => <AddonsPanel onOpenCompany={c.openCompany} /> },
   { key: "veritabani", label: "Veritabanı", icon: Database, render: () => <DatabasePanel /> },
   { key: "ayarlar", label: "Platform Ayarları", icon: Settings, render: () => <PlatformSettingsPanel /> },
   { key: "urunler", label: "Ürünler", icon: Layers, render: () => <PlatformProductsPanel /> },

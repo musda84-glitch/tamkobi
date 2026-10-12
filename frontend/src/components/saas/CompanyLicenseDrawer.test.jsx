@@ -55,7 +55,7 @@ const companyPayload = {
     contact_count: 58,
     contact_limit: 0,
     storage_bytes: 1024,
-    storage_limit_mb: 0,
+    storage_limit_mb: 2048,
     invoice_count: 19,
     order_count: 3,
     notes: "",
@@ -73,8 +73,16 @@ const companyPayload = {
     locked: false,
     user_limit: 0,
     company_limit: 0,
+    storage_limit_mb: 2048,
+    plan_defaults: { storage_limit_mb: 0, user_limit: 0, company_limit: 0 },
+    quota_overrides: { storage_limit_mb: 2048 },
     billing_period: "monthly",
-    addons: {},
+    addons: { "ai.advisor": true, "ai.invoice": false },
+    addon_details: {
+      "ai.advisor": { enabled: true, source: "platform", group: "ai", label: "AI finans danışmanı" },
+      "ai.invoice": { enabled: false, source: "company", group: "ai", label: "AI fatura aktarımı" },
+      "support.tickets": { enabled: true, source: "platform", group: "support", label: "Destek talepleri" },
+    },
   },
   usage: { users: 1, invoices: 19, contacts: 58, products: 1894, orders: 3, storage_bytes: 1024 },
   users: [
@@ -94,16 +102,70 @@ const companyPayload = {
   protected: false,
 };
 
+const storagePayload = {
+  company_id: "comp_matek",
+  company_name: "MATEK DEKORASYON",
+  total_bytes: 1024,
+  total_files: 2,
+  storage_limit_mb: 2048,
+  folders: [
+    { id: "f1", area_key: "products", label: "Ürünler", path: "tamkobi/accounts/comp_matek/products", file_count: 2, bytes: 1024, is_system: true },
+  ],
+};
+
+const defaultPlans = [{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0, storage_limit_mb: 0 }];
+
 let host;
+
+const flush = async () => {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+};
+
+const renderDrawer = async (props = {}) => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <CompanyLicenseDrawer
+        companyId="comp_matek"
+        plans={defaultPlans}
+        catalog={[]}
+        companies={[]}
+        onClose={() => {}}
+        onChanged={() => {}}
+        {...props}
+      />
+    );
+  });
+  await flush();
+  return root;
+};
+
+const clickTab = async (id) => {
+  const btn = host.querySelector(`[data-testid="drawer-tab-${id}"]`);
+  expect(btn).not.toBeNull();
+  await act(async () => { btn.click(); });
+  await flush();
+};
 
 beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   axios.get.mockImplementation((url) => {
-    if (String(url).includes("/einvoice/providers")) return Promise.resolve({ data: [] });
+    const u = String(url);
+    if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [] });
+    if (u.includes("/system/storage/")) return Promise.resolve({ data: storagePayload });
+    if (u.includes("/system/ai")) return Promise.resolve({ data: { enabled: true, ready: true, provider: "openai", advisor_model: "gpt-4o-mini", extract_model: "gpt-4o-mini" } });
+    if (u.includes("/comm/sms/")) return Promise.resolve({ data: u.includes("/logs") ? [] : { provider: "netgsm", usercode: "", has_password: false, providers: [] } });
     return Promise.resolve({ data: companyPayload });
   });
-  axios.post.mockResolvedValue({ data: { message: "gönderildi", status: "success" } });
+  axios.post.mockResolvedValue({ data: { message: "gönderildi", status: "success", folder_count: 1 } });
+  axios.put.mockResolvedValue({
+    data: {
+      ...companyPayload.license,
+      storage_limit_mb: 4096,
+      quota_overrides: { storage_limit_mb: 4096 },
+    },
+  });
 });
 
 afterEach(() => {
@@ -111,20 +173,7 @@ afterEach(() => {
 });
 
 test("shows admin email, membership and sends password reset", async () => {
-  const root = createRoot(host);
-  await act(async () => {
-    root.render(
-      <CompanyLicenseDrawer
-        companyId="comp_matek"
-        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
-        catalog={[]}
-        companies={[]}
-        onClose={() => {}}
-        onChanged={() => {}}
-      />
-    );
-  });
-  await act(async () => { await Promise.resolve(); });
+  await renderDrawer();
   expect(host.querySelector('[data-testid="drawer-admin-email"]')?.textContent).toContain("admin@matek.test");
   expect(host.querySelector('[data-testid="drawer-admin-mail"]')?.textContent).toContain("admin@matek.test");
   expect(host.querySelector('[data-testid="drawer-co-email"]')?.textContent).toContain("info@matek.test");
@@ -132,10 +181,20 @@ test("shows admin email, membership and sends password reset", async () => {
   const resetBtn = host.querySelector('[data-testid="drawer-admin-reset"]');
   expect(resetBtn).not.toBeNull();
   await act(async () => { resetBtn.click(); });
-  await act(async () => { await Promise.resolve(); });
+  await flush();
   const call = axios.post.mock.calls.find((c) => String(c[0]).includes("send-password-reset"));
   expect(call).toBeTruthy();
   expect(call[1]).toMatchObject({ email: "admin@matek.test", user_id: "usr_1" });
+});
+
+test("renders management tabs including Depolama and Yapay zekâ", async () => {
+  await renderDrawer();
+  expect(host.querySelector('[data-testid="drawer-tabs"]')).not.toBeNull();
+  for (const id of ["license", "einvoice", "sms", "storage", "ai"]) {
+    expect(host.querySelector(`[data-testid="drawer-tab-${id}"]`)).not.toBeNull();
+  }
+  expect(host.querySelector('[data-testid="drawer-membership"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="drawer-storage"]')).toBeNull();
 });
 
 test("providers error disables einvoice save and toasts", async () => {
@@ -146,20 +205,8 @@ test("providers error disables einvoice save and toasts", async () => {
     }
     return Promise.resolve({ data: { ...companyPayload, einvoice: { provider: "isnet", status: "configured" } } });
   });
-  const root = createRoot(host);
-  await act(async () => {
-    root.render(
-      <CompanyLicenseDrawer
-        companyId="comp_matek"
-        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
-        catalog={[]}
-        companies={[]}
-        onClose={() => {}}
-        onChanged={() => {}}
-      />
-    );
-  });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await renderDrawer();
+  await clickTab("einvoice");
   const saveBtn = host.querySelector('[data-testid="drawer-einvoice-save"]');
   expect(saveBtn).not.toBeNull();
   expect(saveBtn.disabled).toBe(true);
@@ -173,20 +220,8 @@ test("orphan provider keeps current value in dropdown", async () => {
     if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [{ code: "foriba", name: "Foriba" }] });
     return Promise.resolve({ data: { ...companyPayload, einvoice: { provider: "isnet", status: "configured" } } });
   });
-  const root = createRoot(host);
-  await act(async () => {
-    root.render(
-      <CompanyLicenseDrawer
-        companyId="comp_matek"
-        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
-        catalog={[]}
-        companies={[]}
-        onClose={() => {}}
-        onChanged={() => {}}
-      />
-    );
-  });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await renderDrawer();
+  await clickTab("einvoice");
   const orphan = host.querySelector('[data-testid="drawer-einvoice-provider-orphan"]');
   expect(orphan).not.toBeNull();
   expect(orphan.textContent).toContain("mevcut: isnet");
@@ -201,24 +236,66 @@ test("system company drawer hosts İşNet SOAP panel when provider is isnet", as
     if (u.includes("/integrations/isnet/egress")) return Promise.resolve({ data: { egress_ips: ["1.1.1.1"], production_ips: ["1.1.1.1"], same_as_production: true } });
     return Promise.resolve({ data: { ...companyPayload, einvoice: { provider: "isnet", status: "configured" } } });
   });
-  const root = createRoot(host);
-  await act(async () => {
-    root.render(
-      <CompanyLicenseDrawer
-        companyId="comp_matek"
-        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
-        catalog={[]}
-        companies={[]}
-        onClose={() => {}}
-        onChanged={() => {}}
-      />
-    );
-  });
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await renderDrawer();
+  await clickTab("einvoice");
   expect(host.querySelector('[data-testid="drawer-isnet-soap"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="isnet-integration-panel"]')?.getAttribute("data-variant")).toBe("system");
   expect(host.querySelector('[data-testid="isnet-mode-live"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="isnet-despatch-section"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="isnet-company-tax-id"]')).toBeNull();
   expect(host.querySelector('[data-testid="isnet-quick-links"]')).toBeNull();
+});
+
+test("Depolama tab loads usage and saves storage limit via license API", async () => {
+  await renderDrawer();
+  await clickTab("storage");
+  expect(host.querySelector('[data-testid="drawer-storage"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="drawer-storage-usage"]')?.textContent).toMatch(/MB|KB|B/);
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/system/storage/comp_matek"))).toBe(true);
+  const input = host.querySelector('[data-testid="drawer-storage-limit"]');
+  expect(input).not.toBeNull();
+  expect(input.value).toBe("2048");
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "4096");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await flush();
+  expect(host.querySelector('[data-testid="drawer-storage-limit"]').value).toBe("4096");
+  const saveBtn = host.querySelector('[data-testid="drawer-storage-save"]');
+  await act(async () => { saveBtn.click(); });
+  await flush();
+  const put = axios.put.mock.calls.find((c) => String(c[0]).includes("/system/companies/comp_matek/license"));
+  expect(put).toBeTruthy();
+  expect(put[1]).toMatchObject({ storage_limit_mb: 4096 });
+});
+
+test("Yapay zekâ tab shows status and toggles addon API", async () => {
+  axios.post.mockImplementation((url, body) => {
+    if (String(url).includes("/addons/")) {
+      return Promise.resolve({
+        data: {
+          ...companyPayload.license,
+          addon_details: {
+            ...companyPayload.license.addon_details,
+            "ai.invoice": { enabled: !!body.enabled, source: "company", group: "ai", label: "AI fatura aktarımı" },
+          },
+        },
+      });
+    }
+    return Promise.resolve({ data: { message: "ok" } });
+  });
+  await renderDrawer();
+  await clickTab("ai");
+  expect(host.querySelector('[data-testid="drawer-ai"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="drawer-ai-status"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="drawer-ai-advisor-model"]')?.textContent).toContain("gpt-4o-mini");
+  expect(host.querySelector('[data-testid="drawer-addons-ai"]')).not.toBeNull();
+  const toggle = host.querySelector('[data-testid="addon-toggle-ai-invoice"]');
+  expect(toggle).not.toBeNull();
+  await act(async () => { toggle.click(); });
+  await flush();
+  const call = axios.post.mock.calls.find((c) => String(c[0]).includes("/addons/ai.invoice"));
+  expect(call).toBeTruthy();
+  expect(call[1]).toMatchObject({ enabled: true });
 });

@@ -58,6 +58,8 @@ _YNT_ALLOWED_PREFIXES = (
     "/api/einvoice/test",
     "/api/integrations/isnet/",
     "/api/integrations/isnet-portal/",
+    # Şirket çekmecesi SMS sekmesi (firma operatör ayarları)
+    "/api/comm/sms/",
     "/api/files/upload",
     "/api/public/plans",
     # ynt /yasal* sayfası
