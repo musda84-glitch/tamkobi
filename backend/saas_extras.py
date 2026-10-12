@@ -16,7 +16,10 @@ from fastapi.responses import PlainTextResponse
 import comm_service
 import saas
 import saas_billing
-from auth_utils import get_jwt_secret, JWT_ALGORITHM, get_user_from_token, session_token
+from auth_utils import (
+    get_jwt_secret, JWT_ALGORITHM, get_user_from_token, session_token,
+    auth_cookie_kwargs, SUPERADMIN_ACCESS_SECONDS,
+)
 from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
@@ -105,7 +108,7 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
     current = session_token(request) or ""
     if not current:
         raise HTTPException(status_code=401, detail="Sistem paneli oturumu bulunamadı; tekrar giriş yapın.")
-    cookie_kw = {"httponly": True, "samesite": "lax", "max_age": 7200, "path": "/"}
+    cookie_kw = auth_cookie_kwargs(request, max_age=7200)
     response.set_cookie(key="sa_return", value=current, **cookie_kw)
     response.set_cookie(key="access_token", value=token, **cookie_kw)
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"active_company_id": company_id}})
@@ -185,7 +188,11 @@ async def impersonate_exit(request: Request, response: Response):
     except HTTPException:
         response.delete_cookie("sa_return", path="/"); response.delete_cookie("access_token", path="/")
         raise HTTPException(status_code=401, detail="Panel oturumunuz süresi dolmuş; lütfen panele tekrar giriş yapın.")
-    response.set_cookie(key="access_token", value=back, httponly=True, samesite="lax", max_age=86400 * 7, path="/")
+    response.set_cookie(
+        key="access_token",
+        value=back,
+        **auth_cookie_kwargs(request, max_age=SUPERADMIN_ACCESS_SECONDS),
+    )
     response.delete_cookie("sa_return", path="/")
     return {"status": "success", "redirect": "/sistem/sirketler"}
 

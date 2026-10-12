@@ -37,23 +37,99 @@ def _require_api():
         pytest.fail(f"API ayakta değil: {API}/version (REACT_APP_BACKEND_URL={BASE})")
 
 
+def _clear_sa_2fa_for_login(email: str):
+    """Paralel 2FA HTTP testleri SA hesabında TOTP bırakırsa şifre girişini geri aç."""
+    import asyncio
+    from datetime import datetime, timezone
+    from pathlib import Path
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    except Exception:
+        pass
+    try:
+        from setup_state import apply_saved_secrets
+        apply_saved_secrets()
+    except Exception:
+        pass
+    from mysql_store import MySQLClient, mysql_settings_from_env
+
+    async def _run():
+        client = MySQLClient()
+        db = client[str(mysql_settings_from_env().get("db") or "tamkobi").strip()]
+        try:
+            await db._ensure()
+            u = await db.users.find_one({"email": email.strip().lower(), "is_super_admin": True})
+            if not u:
+                return
+            now = datetime.now(timezone.utc).isoformat()
+            await db.users.update_one(
+                {"_id": u["_id"]},
+                {
+                    "$set": {
+                        "totp_enabled": False,
+                        "totp_secret": "",
+                        "totp_recovery_hashes": [],
+                        "totp_last_counter": None,
+                        "pending_2fa_jti": "",
+                        "pending_2fa_attempts": 0,
+                        "totp_reset_at": now,
+                    },
+                    "$unset": {"totp_setup_started_at": "", "totp_enabled_at": ""},
+                },
+            )
+            await db.login_attempts.delete_one({"identifier": f"2fa:{u['_id']}"})
+        finally:
+            try:
+                await client.close_async()
+            except Exception:
+                client.close()
+
+    asyncio.run(_run())
+
+
 def _super_session():
+    import fcntl
+    from pathlib import Path
+
     _require_api()
-    email = (os.environ.get("SUPER_ADMIN_EMAIL") or "").strip().lower()
-    password = os.environ.get("SUPER_ADMIN_PASSWORD") or ""
-    candidates = []
-    if email and password:
-        candidates.append((email, password))
-    candidates.extend([
-        ("admin@tamkobi.local", "admin123"),
-        ("admin@nexus.com", "admin123"),
-    ])
-    for em, pw in candidates:
-        s = requests.Session()
-        r = s.post(f"{API}/auth/login", json={"email": em, "password": pw}, timeout=20)
-        if r.status_code == 200 and r.json().get("user", {}).get("is_super_admin"):
-            return s
-    pytest.fail("Süper admin girişi yok (SUPER_ADMIN_EMAIL/PASSWORD veya seed admin)")
+    # 2FA HTTP testleri aynı SA hesabını mutate eder — exclusive lock ile çakışma yok
+    lock_path = Path("/tmp/tamkobi-sa-2fa-http.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fh = open(lock_path, "a+", encoding="utf-8")
+    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    try:
+        email = (os.environ.get("SUPER_ADMIN_EMAIL") or "").strip().lower()
+        password = os.environ.get("SUPER_ADMIN_PASSWORD") or ""
+        candidates = []
+        if email and password:
+            candidates.append((email, password))
+        candidates.extend([
+            ("admin@tamkobi.local", "admin123"),
+            ("admin@nexus.com", "admin123"),
+        ])
+        for em, pw in candidates:
+            s = requests.Session()
+            r = s.post(f"{API}/auth/login", json={"email": em, "password": pw}, timeout=20)
+            if r.status_code != 200:
+                continue
+            body = r.json()
+            if body.get("requires_2fa"):
+                _clear_sa_2fa_for_login(em)
+                s = requests.Session()
+                r = s.post(f"{API}/auth/login", json={"email": em, "password": pw}, timeout=20)
+                if r.status_code != 200:
+                    continue
+                body = r.json()
+            if body.get("user", {}).get("is_super_admin") and not body.get("requires_2fa"):
+                return s
+        pytest.fail("Süper admin girişi yok (SUPER_ADMIN_EMAIL/PASSWORD veya seed admin)")
+    finally:
+        try:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        lock_fh.close()
 
 
 def _create_tenant(admin: requests.Session, tag: str):

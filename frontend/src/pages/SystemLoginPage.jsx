@@ -2,28 +2,37 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { LogIn, KeyRound, ArrowLeft } from "lucide-react";
+import { LogIn, KeyRound, ArrowLeft, ShieldCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
 import TamKobiMark from "../components/TamKobiMark";
 import { REMEMBER_SYS_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 
 export default function SystemLoginPage() {
-  const { user, authenticated, loading } = useAuth();
+  const { user, authenticated, loading, refreshLicense } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "", phone: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(false);
   const [mode, setMode] = useState("login");
   const [channel, setChannel] = useState("email");
   const [resetInfo, setResetInfo] = useState(null);
+  const [pendingToken, setPendingToken] = useState("");
+  const [totpCode, setTotpCode] = useState("");
 
-  useEffect(() => { if (!loading && authenticated && user?.is_super_admin) navigate("/sistem", { replace: true }); }, [loading, authenticated, user, navigate]);
+  useEffect(() => {
+    if (!loading && authenticated && user?.is_super_admin) {
+      if (user.requires_2fa_setup) navigate("/sistem/2fa-kurulum", { replace: true });
+      else navigate("/sistem", { replace: true });
+    }
+  }, [loading, authenticated, user, navigate]);
+
   useEffect(() => {
     const saved = loadRememberedEmail(REMEMBER_SYS_KEY);
     if (saved) {
       setForm((f) => ({ ...f, email: saved }));
+      // Kayıtlı e-posta varsa işaretle; varsayılan yine kapalı kalır (yalnızca kayıtlıysa)
       setRemember(true);
     }
   }, []);
@@ -35,16 +44,58 @@ export default function SystemLoginPage() {
     toast.message("Kayıtlı giriş bilgisi temizlendi.");
   };
 
+  const goAfterLogin = (data) => {
+    if (data?.requires_2fa_setup || data?.user?.requires_2fa_setup) {
+      window.location.href = "/sistem/2fa-kurulum";
+      return;
+    }
+    window.location.href = "/sistem";
+  };
+
   const submit = async (e) => {
     e.preventDefault(); setBusy(true); setErr("");
     try {
       const r = await axios.post(`${API_URL}/auth/login`, { ...form, remember }, { withCredentials: true });
-      if (!r.data.user?.is_super_admin) { await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {}); setErr("Bu hesap platform yöneticisi değil. Sistem paneline yalnızca süper admin girebilir."); return; }
+      if (r.data.requires_2fa) {
+        setPendingToken(r.data.pending_token || "");
+        setTotpCode("");
+        setMode("totp");
+        toast.message("Doğrulama kodunu girin.");
+        return;
+      }
+      if (!r.data.user?.is_super_admin) {
+        await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {});
+        setErr("Bu hesap platform yöneticisi değil. Sistem paneline yalnızca süper admin girebilir.");
+        return;
+      }
       if (remember) saveRememberedEmail(REMEMBER_SYS_KEY, form.email);
       else clearRememberedEmail(REMEMBER_SYS_KEY);
+      try { await refreshLicense?.(); } catch { /* ignore */ }
       toast.success(`Hoş geldiniz, ${r.data.user.name}`);
-      window.location.href = "/sistem";
+      goAfterLogin(r.data);
     } catch (e2) { setErr(e2.response?.data?.detail || "Giriş yapılamadı."); } finally { setBusy(false); }
+  };
+
+  const submitTotp = async (e) => {
+    e.preventDefault(); setBusy(true); setErr("");
+    try {
+      const r = await axios.post(
+        `${API_URL}/auth/2fa/verify`,
+        { pending_token: pendingToken, code: totpCode.trim() },
+        { withCredentials: true },
+      );
+      if (!r.data.user?.is_super_admin) {
+        await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {});
+        setErr("Bu hesap platform yöneticisi değil.");
+        setMode("login");
+        return;
+      }
+      if (remember) saveRememberedEmail(REMEMBER_SYS_KEY, form.email);
+      else clearRememberedEmail(REMEMBER_SYS_KEY);
+      try { await refreshLicense?.(); } catch { /* ignore */ }
+      toast.success(`Hoş geldiniz, ${r.data.user.name}`);
+      goAfterLogin(r.data);
+    } catch (e2) { setErr(e2.response?.data?.detail || "Kod doğrulanamadı."); } finally { setBusy(false); }
   };
 
   const forgot = async (e) => {
@@ -100,6 +151,35 @@ export default function SystemLoginPage() {
           )}
           <button disabled={busy} className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="sys-forgot-submit"><KeyRound className="w-4 h-4" /> {busy ? "Gönderiliyor…" : (smsMode ? "SMS ile Bağlantı Gönder" : "Sıfırlama Bağlantısı Gönder")}</button>
           <button type="button" onClick={() => { setMode("login"); setErr(""); setResetInfo(null); }} className="w-full text-[11px] text-slate-400 flex items-center justify-center gap-1" data-testid="sys-forgot-back"><ArrowLeft className="w-3 h-3" /> Girişe dön</button>
+          <BuildStamp tone="system" />
+        </form>
+      ) : mode === "totp" ? (
+        <form onSubmit={submitTotp} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="sys-2fa-form">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-400 flex items-center justify-center text-slate-900"><ShieldCheck className="w-5 h-5" /></div>
+            <div>
+              <div className="font-bold text-white text-sm">İki adımlı doğrulama</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Authenticator / kurtarma kodu</div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400">Google Authenticator (veya uyumlu uygulama) içindeki 6 haneli kodu girin. Telefon yoksa tek kullanımlık kurtarma kodlarından birini kullanın.</p>
+          <div>
+            <label className="block text-xs font-semibold mb-1 text-slate-300">Doğrulama kodu</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+              placeholder="000000"
+              data-testid="sys-2fa-code"
+            />
+          </div>
+          {err && <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2" data-testid="sys-2fa-error">{err}</div>}
+          <button disabled={busy} className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="sys-2fa-submit"><ShieldCheck className="w-4 h-4" /> {busy ? "Doğrulanıyor…" : "Doğrula ve Gir"}</button>
+          <button type="button" onClick={() => { setMode("login"); setErr(""); setPendingToken(""); setTotpCode(""); }} className="w-full text-[11px] text-slate-400 flex items-center justify-center gap-1" data-testid="sys-2fa-back"><ArrowLeft className="w-3 h-3" /> Girişe dön</button>
           <BuildStamp tone="system" />
         </form>
       ) : (

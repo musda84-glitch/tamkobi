@@ -61,7 +61,9 @@ from auth_utils import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
     require_secure_jwt_secret, session_token,
+    auth_cookie_kwargs, access_cookie_max_age, refresh_cookie_max_age,
 )
+import superadmin_2fa
 import tenant_access
 from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
@@ -388,31 +390,76 @@ async def login(req: LoginRequest, request: Request, response: Response):
     # Reset failed attempts on success
     await db.login_attempts.delete_one({"identifier": identifier})
     await db.users.update_one({"_id": user["_id"]}, {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}})
-    role_doc = await rbac.role_for(user)
 
     user_id = str(user.get("_id", user.get("id")))
-    token = create_access_token(user_id, email, user.get("role", "admin"))
-    refresh_tok = create_refresh_token(user_id)
+    is_sa = bool(user.get("is_super_admin"))
 
-    # remember=True → persistent cookies; remember=False → session cookies (browser close ends session)
-    if req.remember:
-        response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=86400 * 7, path="/")
-        response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", max_age=86400 * 30, path="/")
-    else:
-        response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", path="/")
-        response.set_cookie(key="refresh_token", value=refresh_tok, httponly=True, samesite="lax", path="/")
-
-    companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
-    emp = await attendance.employee_for_user(user)
+    # Süper admin + 2FA açık → henüz oturum çerezi yok; ikinci adım kod ister
+    # Not: başarılı şifre, 2fa:{user_id} kilit sayacını SIFIRLAMAZ.
+    if is_sa and superadmin_2fa.user_totp_enabled(user):
+        pending, jti = superadmin_2fa.create_pending_2fa_token(user_id, email, remember=req.remember)
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"pending_2fa_jti": jti, "pending_2fa_attempts": 0}},
+        )
+        applog.log_auth(
+            "login_2fa_pending", f"{email} password ok, awaiting TOTP",
+            email=email, user_email=email, user_id=user_id, ip=client_ip,
+        )
+        return {
+            "requires_2fa": True,
+            "pending_token": pending,
+            "user": {
+                "id": user_id,
+                "email": user["email"],
+                "name": user["name"],
+                "is_super_admin": True,
+                "totp_enabled": True,
+            },
+        }
 
     applog.log_auth(
         "login_success", f"{email} signed in",
         email=email, user_email=email, user_id=user_id, ip=client_ip,
         company_id=user.get("active_company_id"), role=user.get("role"),
     )
+    return await _issue_session_for_user(user, request, response, remember=req.remember)
 
+
+class TwoFAVerifyRequest(BaseModel):
+    pending_token: str
+    code: str
+
+
+async def _issue_session_for_user(
+    user: dict,
+    request: Request,
+    response: Response,
+    *,
+    remember: bool = False,
+) -> Dict[str, Any]:
+    """Ortak oturum çerezi + yanıt gövdesi (login / 2FA doğrulama)."""
+    email = (user.get("email") or "").strip().lower()
+    user_id = str(user.get("_id", user.get("id")))
+    is_sa = bool(user.get("is_super_admin"))
+    role_doc = await rbac.role_for(user)
+    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
+    token = create_access_token(
+        user_id, email, user.get("role", "admin"),
+        is_super_admin=is_sa, mfa=is_sa,
+    )
+    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa)
+    access_age = access_cookie_max_age(is_super_admin=is_sa, remember=remember)
+    refresh_age = refresh_cookie_max_age(is_super_admin=is_sa, remember=remember)
+    response.set_cookie(key="access_token", value=token, **auth_cookie_kwargs(request, max_age=access_age))
+    response.set_cookie(key="refresh_token", value=refresh_tok, **auth_cookie_kwargs(request, max_age=refresh_age))
+    companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
+    emp = await attendance.employee_for_user(user)
+    plat = await saas_billing.settings() if is_sa else {}
+    needs_setup = superadmin_2fa.needs_2fa_setup(user, plat)
     return {
         "token": token,
+        "requires_2fa_setup": needs_setup,
         "user": {
             "id": user_id,
             "email": user["email"],
@@ -422,14 +469,233 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "company_ids": user.get("company_ids", []),
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
-            "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
-            "is_super_admin": bool(user.get("is_super_admin")),
+            "role_name": role_doc.get("name"),
+            "permissions": role_doc.get("permissions", {}),
+            "features": rbac.role_features(role_doc),
+            "is_super_admin": is_sa,
+            "totp_enabled": superadmin_2fa.user_totp_enabled(user),
+            "requires_2fa_setup": needs_setup,
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
+
+
+# mysql_store update_one load→save olduğundan kullanıcı başına kilit (TOTP/recovery yarışı)
+_2fa_verify_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _2fa_verify_lock(uid: str) -> asyncio.Lock:
+    lock = _2fa_verify_locks.get(uid)
+    if lock is None:
+        lock = asyncio.Lock()
+        _2fa_verify_locks[uid] = lock
+    return lock
+
+
+async def _2fa_fail(user: dict, email: str, client_ip: str, *, detail: str = "Doğrulama kodu hatalı.") -> None:
+    """Kullanıcı kilidi + pending token deneme sayacı; anahtar iptali. 429 kilidi verify girişinde kontrol edilir."""
+    uid = str(user.get("_id", user.get("id")))
+    lock_id = superadmin_2fa.twofa_lock_identifier(uid)
+    await db.login_attempts.update_one(
+        {"identifier": lock_id},
+        {"$inc": {"count": 1}, "$set": {"last_attempt": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    attempts = int(user.get("pending_2fa_attempts") or 0) + 1
+    upd: Dict[str, Any] = {"pending_2fa_attempts": attempts}
+    invalidate = attempts >= superadmin_2fa.MAX_2FA_ATTEMPTS
+    if invalidate:
+        upd["pending_2fa_jti"] = ""
+    await db.users.update_one({"_id": user["_id"]}, {"$set": upd})
+    applog.log_auth("login_2fa_failed", f"{email} bad 2FA code", email=email, user_email=email, ip=client_ip, user_id=uid)
+    if invalidate:
+        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+    raise HTTPException(status_code=401, detail=detail)
+
+
+@api_router.post("/auth/2fa/verify")
+async def auth_2fa_verify(req: TwoFAVerifyRequest, request: Request, response: Response):
+    """Şifre adımından sonra TOTP veya kurtarma kodu ile oturumu tamamla."""
+    client_ip = request_ip(request)
+    try:
+        payload = superadmin_2fa.decode_pending_2fa_token(req.pending_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz veya süresi dolmuş. Tekrar giriş yapın.")
+    uid = str(payload.get("sub") or "")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz.")
+
+    # Kullanıcı başına kilit sayacı (şifre başarısı bunu sıfırlamaz) — kilit dışında da kontrol edilir
+    lock_id = superadmin_2fa.twofa_lock_identifier(uid)
+    lock = await db.login_attempts.find_one({"identifier": lock_id})
+    if lock and int(lock.get("count") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
+        last_attempt = lock.get("last_attempt", datetime.now(timezone.utc))
+        if isinstance(last_attempt, str):
+            try:
+                last_attempt = datetime.fromisoformat(last_attempt)
+            except Exception:
+                last_attempt = datetime.now(timezone.utc)
+        if getattr(last_attempt, "tzinfo", None) is None:
+            last_attempt = last_attempt.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - last_attempt < timedelta(minutes=superadmin_2fa.LOCKOUT_MINUTES):
+            raise HTTPException(
+                status_code=429,
+                detail="Çok fazla hatalı kod. 15 dakika sonra tekrar deneyin.",
+            )
+
+    code = (req.code or "").strip()
+    used_recovery = False
+    remember = bool(payload.get("remember"))
+
+    async with _2fa_verify_lock(uid):
+        # Taze doküman — jti/attempts/TOTP/recovery yarışına karşı
+        user = await db.users.find_one({"_id": uid})
+        if not user or not user.get("is_super_admin"):
+            raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz.")
+        if user.get("is_active") is False:
+            raise HTTPException(status_code=403, detail="Hesabınız pasif durumda.")
+        email = (user.get("email") or "").strip().lower()
+
+        stored_jti = (user.get("pending_2fa_jti") or "").strip()
+        if not stored_jti or stored_jti != str(payload.get("jti") or ""):
+            raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+        if int(user.get("pending_2fa_attempts") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
+            await db.users.update_one({"_id": user["_id"]}, {"$set": {"pending_2fa_jti": ""}})
+            raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+
+        ok = False
+        if superadmin_2fa.user_totp_enabled(user):
+            try:
+                secret = superadmin_2fa.decrypt_totp_secret(user.get("totp_secret") or "")
+            except Exception:
+                secret = ""
+            counter = superadmin_2fa.matching_totp_counter(secret, code) if secret else None
+            if counter is not None:
+                # Replay: last_counter >= counter ise reddet (dizi-içerir SQL filtresi yok)
+                last = user.get("totp_last_counter")
+                try:
+                    last_i = int(last) if last is not None and last != "" else None
+                except (TypeError, ValueError):
+                    last_i = None
+                if last_i is not None and last_i >= counter:
+                    await _2fa_fail(user, email, client_ip, detail="Doğrulama kodu hatalı.")
+                await db.users.update_one({"_id": user["_id"]}, {"$set": {"totp_last_counter": counter}})
+                ok = True
+            else:
+                # Kurtarma: mysql_store SQL "dizi skaler eşitlik" desteklemez → find + $set remaining
+                hashes = list(user.get("totp_recovery_hashes") or [])
+                matched = superadmin_2fa.verify_recovery_code(code, hashes)
+                if matched:
+                    remaining = [h for h in hashes if h != matched]
+                    await db.users.update_one(
+                        {"_id": user["_id"]},
+                        {"$set": {"totp_recovery_hashes": remaining}},
+                    )
+                    user["totp_recovery_hashes"] = remaining
+                    ok = True
+                    used_recovery = True
+        if not ok:
+            await _2fa_fail(user, email, client_ip)
+
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"pending_2fa_jti": "", "pending_2fa_attempts": 0}},
+        )
+        await db.login_attempts.delete_one({"identifier": lock_id})
+
+    body = await _issue_session_for_user(user, request, response, remember=remember)
+    applog.log_auth(
+        "login_2fa_ok",
+        f"{email} 2FA ok" + (" (recovery)" if used_recovery else ""),
+        email=email, user_email=email, user_id=uid, ip=client_ip,
+    )
+    return body
+
+
+@api_router.get("/auth/2fa/status")
+async def auth_2fa_status(user: dict = Depends(get_current_user)):
+    if not user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Yalnızca platform yöneticisi.")
+    plat = await saas_billing.settings()
+    enabled = superadmin_2fa.user_totp_enabled(user)
+    return {
+        "totp_enabled": enabled,
+        "require_superadmin_2fa": bool(plat.get("require_superadmin_2fa")),
+        "requires_2fa_setup": superadmin_2fa.needs_2fa_setup(user, plat),
+        "recovery_codes_remaining": len(user.get("totp_recovery_hashes") or []) if enabled else 0,
+    }
+
+
+@api_router.post("/auth/2fa/setup/start")
+async def auth_2fa_setup_start(user: dict = Depends(get_current_user)):
+    """QR + secret üretir; henüz etkinleştirmez (confirm gerekir)."""
+    if not user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Yalnızca platform yöneticisi.")
+    if superadmin_2fa.user_totp_enabled(user):
+        raise HTTPException(status_code=400, detail="2FA zaten etkin. Sıfırlamak için sunucu acil durum script'ini kullanın.")
+    secret = superadmin_2fa.generate_totp_secret()
+    enc = superadmin_2fa.encrypt_totp_secret(secret)
+    await db.users.update_one(
+        {"_id": user.get("_id", user.get("id"))},
+        {"$set": {
+            "totp_secret": enc,
+            "totp_enabled": False,
+            "totp_recovery_hashes": [],
+            "totp_setup_started_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    uri = superadmin_2fa.provisioning_uri(secret, user.get("email") or "")
+    return {
+        "secret": secret,
+        "otpauth_url": uri,
+        "qr_data_url": superadmin_2fa.qr_png_data_url(uri),
+        "issuer": superadmin_2fa.ISSUER,
+    }
+
+
+class TwoFASetupConfirmRequest(BaseModel):
+    code: str
+
+
+@api_router.post("/auth/2fa/setup/confirm")
+async def auth_2fa_setup_confirm(req: TwoFASetupConfirmRequest, user: dict = Depends(get_current_user)):
+    """İlk TOTP kodunu doğrular, 2FA'yı açar ve 10 kurtarma kodunu bir kez döner."""
+    if not user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Yalnızca platform yöneticisi.")
+    fresh = await db.users.find_one({"_id": user.get("_id", user.get("id"))}) or {}
+    if fresh.get("totp_enabled"):
+        raise HTTPException(status_code=400, detail="2FA zaten etkin.")
+    enc = fresh.get("totp_secret") or ""
+    if not enc:
+        raise HTTPException(status_code=400, detail="Önce kurulum başlatın.")
+    try:
+        secret = superadmin_2fa.decrypt_totp_secret(enc)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Kayıtlı secret okunamadı; kurulumu yeniden başlatın.")
+    counter = superadmin_2fa.matching_totp_counter(secret, req.code)
+    if counter is None:
+        raise HTTPException(status_code=400, detail="Doğrulama kodu hatalı. Uygulamadaki 6 haneli kodu girin.")
+    plain_codes, hashes = superadmin_2fa.generate_recovery_codes()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"_id": fresh["_id"]},
+        {"$set": {
+            "totp_enabled": True,
+            "totp_recovery_hashes": hashes,
+            "totp_enabled_at": now_iso,
+            "totp_last_counter": counter,
+        }},
+    )
+    return {
+        "status": "enabled",
+        "totp_enabled": True,
+        "recovery_codes": plain_codes,
+        "message": "2FA etkin. Kurtarma kodlarını güvenli bir yere kaydedin; bir daha gösterilmez.",
+    }
+
 
 @api_router.put("/auth/me/preferences")
 async def update_preferences(req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -2618,6 +2884,9 @@ async def get_me(request: Request):
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
     role_doc = await rbac.role_for(user)
     emp = await attendance.employee_for_user(user)
+    is_sa = bool(user.get("is_super_admin"))
+    plat = await saas_billing.settings() if is_sa else {}
+    needs_setup = superadmin_2fa.needs_2fa_setup(user, plat)
     return {
         "user": {
             "id": user_id,
@@ -2628,7 +2897,9 @@ async def get_me(request: Request):
             "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
-            "is_super_admin": bool(user.get("is_super_admin")),
+            "is_super_admin": is_sa,
+            "totp_enabled": superadmin_2fa.user_totp_enabled(user) if is_sa else False,
+            "requires_2fa_setup": needs_setup,
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },

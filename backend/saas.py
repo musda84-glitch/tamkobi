@@ -767,6 +767,12 @@ async def require_super_admin(request: Request) -> dict:
     user = await get_user_from_token(token, _db)
     if not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Bu alan yalnızca platform (sistem) yöneticisine açıktır.")
+    import superadmin_2fa
+    if await superadmin_2fa.platform_requires_2fa(_db) and not superadmin_2fa.user_totp_enabled(user):
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": "2FA kurulumu gerekli", "code": "2fa_setup_required"},
+        )
     return user
 
 

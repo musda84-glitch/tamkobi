@@ -166,6 +166,12 @@ export const AuthProvider = ({ children }) => {
   const login = useCallback(async (email, password, remember = true) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password, remember: !!remember }, { withCredentials: true });
+      // Süper admin 2FA ikinci adımı — oturum açılmış sayma; /sistem/giris'e yönlendir
+      if (res.data?.requires_2fa) {
+        toast.message("İki adımlı doğrulama gerekli. Platform girişine yönlendiriliyorsunuz.");
+        window.location.href = "/sistem/giris";
+        return false;
+      }
       setUser(res.data.user);
       setAuthenticated(true);
       setLicense(res.data.license || null);
@@ -180,7 +186,7 @@ export const AuthProvider = ({ children }) => {
       return true;
     } catch (err) {
       const msg = err.response?.data?.detail || "Giriş yapılamadı.";
-      toast.error(msg);
+      toast.error(typeof msg === "string" ? msg : (msg?.detail || "Giriş yapılamadı."));
       return false;
     }
   }, []);

@@ -55,6 +55,7 @@ const EdocInboxPage = page(() => import("./pages/EdocInboxPage"));
 const SupportPage = page(() => import("./pages/SupportPage"));
 const SystemAdminPage = page(() => import("./pages/SystemAdminPage"));
 const SystemLoginPage = page(() => import("./pages/SystemLoginPage"));
+const System2FASetupPage = page(() => import("./pages/System2FASetupPage"));
 const WebsiteAdminPage = page(() => import("./pages/WebsiteAdminPage"));
 const PricingPage = page(() => import("./pages/PricingPage"));
 const SignupPage = page(() => import("./pages/SignupPage"));
@@ -147,6 +148,7 @@ export default function App() {
                   <Route path="/trash" element={<TrashPage />} />
                   <Route path="/edoc-inbox" element={<EdocInboxPage />} />
                   <Route path="/sistem/giris" element={<SystemLoginPage />} />
+                  <Route path="/sistem/2fa-kurulum" element={<System2FASetupPage />} />
                   <Route path="/sistem/web" element={<WebsiteAdminPage />} />
                   <Route path="/sistem" element={<SystemAdminPage section="" />} />
                   <Route path="/sistem/sirketler" element={<SystemAdminPage section="sirketler" />} />

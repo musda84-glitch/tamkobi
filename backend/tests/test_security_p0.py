@@ -50,6 +50,7 @@ def test_get_current_user_demo_fallback_yok():
         ("/api/auth/forgot-password", "POST"),
         ("/api/auth/reset/abc", "GET"),
         ("/api/auth/me", "GET"),
+        ("/api/auth/2fa/verify", "POST"),
         ("/api/auth/impersonate/exit", "POST"),
         ("/api/public/plans", "GET"),
         ("/api/public/legal", "GET"),

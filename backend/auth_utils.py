@@ -61,23 +61,85 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception:
         return False
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+# Tenant: 7 gün access / 30 gün refresh. Süper admin: kısa oturum (4 saat).
+TENANT_ACCESS_SECONDS = 7 * 86400
+TENANT_REFRESH_SECONDS = 30 * 86400
+SUPERADMIN_ACCESS_SECONDS = 4 * 3600
+SUPERADMIN_REFRESH_SECONDS = 4 * 3600
+
+
+def create_access_token(
+    user_id: str,
+    email: str,
+    role: str,
+    *,
+    expires_delta: Optional[timedelta] = None,
+    is_super_admin: bool = False,
+    mfa: bool = False,
+) -> str:
+    if expires_delta is None:
+        seconds = SUPERADMIN_ACCESS_SECONDS if is_super_admin else TENANT_ACCESS_SECONDS
+        expires_delta = timedelta(seconds=seconds)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "email": email,
         "role": role,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
-        "type": "access"
+        "iat": int(now.timestamp()),
+        "exp": now + expires_delta,
+        "type": "access",
+    }
+    if is_super_admin:
+        payload["sa"] = True
+    if mfa:
+        payload["mfa"] = True
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def create_refresh_token(user_id: str, *, is_super_admin: bool = False) -> str:
+    seconds = SUPERADMIN_REFRESH_SECONDS if is_super_admin else TENANT_REFRESH_SECONDS
+    payload = {
+        "sub": user_id,
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds),
+        "type": "refresh",
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
-def create_refresh_token(user_id: str) -> str:
-    payload = {
-        "sub": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=30),
-        "type": "refresh"
-    }
-    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+def cookie_secure_flag(request: Any) -> bool:
+    """Üretim HTTPS (veya X-Forwarded-Proto=https) için Secure=True; yerel http'de False."""
+    try:
+        url = str(getattr(request, "url", "") or "")
+        if url.startswith("https://"):
+            return True
+    except Exception:
+        pass
+    headers = getattr(request, "headers", None) or {}
+    proto = (headers.get("x-forwarded-proto") or headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+    return proto == "https"
+
+
+def auth_cookie_kwargs(request: Any, *, max_age: Optional[int] = None) -> dict:
+    """access_token / refresh_token / sa_return ortak çerez bayrakları (SameSite=Lax)."""
+    kw: dict = {"httponly": True, "samesite": "lax", "path": "/"}
+    if cookie_secure_flag(request):
+        kw["secure"] = True
+    if max_age is not None:
+        kw["max_age"] = int(max_age)
+    return kw
+
+
+def access_cookie_max_age(*, is_super_admin: bool, remember: bool) -> Optional[int]:
+    """remember=False → oturum çerezi (max_age yok). SA remember → 4s; tenant → 7g."""
+    if not remember:
+        return None
+    return SUPERADMIN_ACCESS_SECONDS if is_super_admin else TENANT_ACCESS_SECONDS
+
+
+def refresh_cookie_max_age(*, is_super_admin: bool, remember: bool) -> Optional[int]:
+    if not remember:
+        return None
+    return SUPERADMIN_REFRESH_SECONDS if is_super_admin else TENANT_REFRESH_SECONDS
 
 async def get_user_from_token(token: str, db: Any) -> dict:
     try:
@@ -92,9 +154,23 @@ async def get_user_from_token(token: str, db: Any) -> dict:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
         if user.get("is_active") is False:
             raise HTTPException(status_code=401, detail="Hesabınız pasifleştirilmiş.")
+        # Süper admin + TOTP açık: MFA onaylı oturum zorunlu (impersonation hariç)
+        if user.get("is_super_admin") and user.get("totp_enabled") and user.get("totp_secret") and not payload.get("imp_by"):
+            if not payload.get("mfa"):
+                raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
+            try:
+                from superadmin_2fa import parse_enabled_at
+                enabled_ts = parse_enabled_at(user.get("totp_enabled_at"))
+            except Exception:
+                enabled_ts = None
+            iat = payload.get("iat")
+            if enabled_ts is not None and (iat is None or float(iat) < float(enabled_ts)):
+                raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
         user["id"] = str(user.get("_id", user.get("id")))
         user.pop("password_hash", None)
         return user
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Oturum süresi doldu")
     except jwt.InvalidTokenError:
