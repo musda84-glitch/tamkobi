@@ -5,9 +5,12 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 
-ERP_FORGOT_MSG = "Eşleşen bir hesap varsa şifre sıfırlama bağlantısı e-posta adresine gönderildi."
-ERP_FORGOT_SMS_MSG = "Eşleşen bir hesap varsa şifre sıfırlama bağlantısı kayıtlı telefonunuza SMS ile gönderildi."
+ERP_FORGOT_MSG = "Kayıtlı bir hesap varsa şifre sıfırlama bağlantısı e-posta adresine gönderildi."
+ERP_FORGOT_SMS_MSG = "Kayıtlı bir hesap varsa SMS gönderildi."
 MIN_PASSWORD = 6
+
+# Public forgot yanıtında yalnızca bu anahtarlar istemciye gider.
+PUBLIC_FORGOT_KEYS = ("status", "message", "channel")
 
 
 def normalize_email(value: Any) -> str:
@@ -87,7 +90,17 @@ def reset_row_error(row: Optional[dict], now: Optional[datetime] = None) -> Opti
 def generic_forgot_response(channel: Any = "email") -> dict:
     ch = forgot_channel(channel)
     msg = ERP_FORGOT_SMS_MSG if ch == "sms" else ERP_FORGOT_MSG
-    return {"status": "ok", "message": msg, "channel": ch, "mail_status": "skipped", "sms_status": "skipped"}
+    return {"status": "ok", "message": msg, "channel": ch}
+
+
+def public_forgot_payload(out: dict, *, channel: Any = None) -> dict:
+    """Strip delivery status / detail / tokens — enumeration-safe body."""
+    ch = forgot_channel(channel or (out or {}).get("channel") or "email")
+    base = generic_forgot_response(ch)
+    msg = str((out or {}).get("message") or "").strip()
+    if msg:
+        base["message"] = msg
+    return {k: base[k] for k in PUBLIC_FORGOT_KEYS}
 
 
 MAIL_FAIL_PUBLIC_DETAIL = (
@@ -102,33 +115,15 @@ SMS_FAIL_PUBLIC_DETAIL = (
 
 
 def finalize_forgot_mail_result(out: dict, *, mail_status: str, mail_detail: str = "") -> dict:
-    """Forgot yanıtına mail durumunu yaz; reset_url/token asla ekleme."""
-    result = dict(out or {})
-    result["channel"] = "email"
-    result["mail_status"] = mail_status
-    result["sms_status"] = "skipped"
-    if mail_status == "sent":
-        result["detail"] = mail_detail or "E-posta gönderildi."
-    else:
-        result["detail"] = MAIL_FAIL_PUBLIC_DETAIL
-    result.pop("reset_url", None)
-    result.pop("reset_token", None)
-    return result
+    """Forgot yanıtı: yalnızca status/message/channel; reset_url/token asla ekleme."""
+    _ = mail_status, mail_detail  # logged by caller; never returned to client
+    return public_forgot_payload(out, channel="email")
 
 
 def finalize_forgot_sms_result(out: dict, *, sms_status: str, sms_detail: str = "") -> dict:
-    """Forgot SMS yanıtı; reset_url/token asla ekleme."""
-    result = dict(out or {})
-    result["channel"] = "sms"
-    result["sms_status"] = sms_status
-    result["mail_status"] = "skipped"
-    if sms_status == "sent":
-        result["detail"] = sms_detail or "SMS gönderildi."
-    else:
-        result["detail"] = SMS_FAIL_PUBLIC_DETAIL
-    result.pop("reset_url", None)
-    result.pop("reset_token", None)
-    return result
+    """Forgot SMS yanıtı: yalnızca status/message/channel; reset_url/token asla ekleme."""
+    _ = sms_status, sms_detail  # logged by caller; never returned to client
+    return public_forgot_payload(out, channel="sms")
 
 
 def sms_reset_message(*, name: Any, link: str, brand: Any = "TamKobi") -> str:

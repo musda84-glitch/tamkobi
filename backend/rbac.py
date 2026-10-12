@@ -824,6 +824,7 @@ async def list_users(company_id: str = "comp_nexus_main_01"):
 
 @router.put("/users/{user_id}")
 async def update_user(user_id: str, req: Dict[str, Any], request: Request):
+    import phone_norm as _phone_norm
     actor = await _current_user(request) if _current_user else None
     if not actor:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
@@ -833,8 +834,30 @@ async def update_user(user_id: str, req: Dict[str, Any], request: Request):
     if u.get("is_super_admin"):
         raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden düzenlenemez.")
     if not tenant_access.users_share_company(actor, u):
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
-    upd = {k: req[k] for k in ("name", "role", "is_active", "phone", "employee_id") if k in req}
+        raise HTTPException(status_code=403, detail="Bu kullanıcıyı düzenleme yetkiniz yok.")
+    upd = {k: req[k] for k in ("name", "role", "is_active", "employee_id") if k in req}
+    if "name" in upd:
+        name = str(upd.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Ad soyad boş olamaz.")
+        upd["name"] = name
+    if "phone" in req:
+        try:
+            upd.update(_phone_norm.phone_update_fields(req.get("phone"), allow_empty=True))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    email_changed = False
+    old_email = (u.get("email") or "").strip().lower()
+    if "email" in req:
+        email = (req.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            raise HTTPException(status_code=400, detail="Geçerli bir e-posta girin.")
+        other = await _db.users.find_one({"email": email})
+        if other and other["_id"] != user_id:
+            raise HTTPException(status_code=400, detail="Bu e-posta başka bir kullanıcıya ait.")
+        if email != old_email:
+            upd["email"] = email
+            email_changed = True
     if "role" in upd:
         role_code = normalize_role_code(upd["role"])
         upd["role"] = role_code
@@ -866,11 +889,48 @@ async def update_user(user_id: str, req: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail="En az bir şirket seçilmeli (lisans grubundaki hesaplar).")
         upd["company_ids"] = chosen
         upd["active_company_id"] = uca.resolve_active_company_id(chosen, u.get("active_company_id"))
+    if "employee_id" in upd:
+        eid = upd.get("employee_id") or None
+        if eid in ("", None):
+            upd["employee_id"] = None
+        else:
+            emp = await _db.employees.find_one({"_id": eid})
+            if not emp:
+                raise HTTPException(status_code=400, detail="Personel bulunamadı.")
+            if not tenant_access.user_may_access_company(actor, emp.get("company_id")):
+                raise HTTPException(status_code=403, detail="Bu personele erişiminiz yok.")
+            upd["employee_id"] = eid
+    if not upd:
+        return _clean(await _db.users.find_one({"_id": user_id}))
     await _db.users.update_one({"_id": user_id}, {"$set": {**upd, "updated_at": _now()}})
+    if "employee_id" in upd:
+        old_eid = u.get("employee_id")
+        new_eid = upd.get("employee_id")
+        if old_eid and old_eid != new_eid:
+            await _db.employees.update_one({"_id": old_eid, "user_id": user_id}, {"$unset": {"user_id": ""}})
+        if new_eid:
+            await _db.employees.update_one({"_id": new_eid}, {"$set": {"user_id": user_id}})
+    if email_changed:
+        company_id = u.get("active_company_id") or ((u.get("company_ids") or [None])[0])
+        try:
+            await _db.activity_logs.insert_one({
+                "_id": str(uuid.uuid4()),
+                "company_id": company_id,
+                "user_id": actor.get("_id") or actor.get("id"),
+                "user_name": actor.get("name"),
+                "method": "PUT",
+                "path": f"/users/{user_id}",
+                "module": "/settings",
+                "status": 200,
+                "detail": f"email_change:{old_email}->{upd.get('email')}",
+                "created_at": _now(),
+            })
+        except Exception:
+            pass
     if "role" in upd and upd["role"] != u.get("role"):
         await _notify_role_assigned(u.get("active_company_id") or (u.get("company_ids") or [None])[0], {
             "full_name": upd.get("name") or u.get("name"),
-            "_id": u.get("employee_id"),
+            "_id": upd.get("employee_id") if "employee_id" in upd else u.get("employee_id"),
             "user_id": user_id,
         }, upd["role"], user_id)
     return _clean(await _db.users.find_one({"_id": user_id}))
@@ -898,10 +958,16 @@ async def create_company_user(req: Dict[str, Any], user: dict = Depends(_user_de
     role = normalize_role_code(role)
     if not await _db.roles.find_one({"company_id": company_id, "code": role}):
         raise HTTPException(status_code=400, detail="Geçersiz rol.")
+    import phone_norm as _phone_norm
+    try:
+        phone_fields = _phone_norm.phone_update_fields(req.get("phone") or "", allow_empty=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
     doc = {"_id": user_id, "email": email, "password_hash": hash_password(pwd), "name": name, "role": role,
            "company_ids": [company_id], "active_company_id": company_id, "is_active": True,
-           "employee_id": req.get("employee_id"), "phone": req.get("phone") or "", "preferences": {},
+           "employee_id": req.get("employee_id"), "phone": phone_fields.get("phone") or "",
+           "phone_norm": phone_fields.get("phone_norm"), "preferences": {},
            "user_number": await user_numbers.next_user_number(_db), "created_at": _now()}
     await _db.users.insert_one(doc)
     await _db.user_invites.delete_many({"company_id": company_id, "email": email, "accepted_at": None})

@@ -60,7 +60,7 @@ export default function AccountPage() {
           </button>
         ))}
       </div>
-      {tab === "profil" && <ProfileTab user={user} />}
+      {tab === "profil" && <ProfileTab user={user} reloadSession={reloadSession} />}
       {tab === "sirketler" && <CompaniesTab companyId={companyId} companies={companies} switchCompany={switchCompany} reloadSession={reloadSession} refreshLicense={refreshLicense} canAdd={personelCanManageCompany(user) && (!user?.role || user.role === "admin" || user?.is_super_admin)} />}
       {tab === "kontor" && personelCanManageCompany(user) && <GibCreditsPanel companyId={companyId} />}
       {tab === "paket" && personelCanManageCompany(user) && companyId && <MyPlanPanel companyId={companyId} />}
@@ -81,13 +81,19 @@ const ROLE_LABELS = {
   advisor: "Mali Müşavir",
 };
 
-const ProfileTab = ({ user }) => {
+const ProfileTab = ({ user, reloadSession }) => {
   const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });
+  const [profile, setProfile] = useState({ name: user?.name || "", phone: user?.phone || "" });
   const [busy, setBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
   const [consent, setConsent] = useState(null);
   const [consentBusy, setConsentBusy] = useState(false);
   const linkedEmployee = Boolean(user?.employee_id);
   const consentOk = locationConsentAccepted(consent);
+
+  useEffect(() => {
+    setProfile({ name: user?.name || "", phone: user?.phone || "" });
+  }, [user?.name, user?.phone]);
 
   const loadConsent = useCallback(async () => {
     if (!linkedEmployee) {
@@ -130,6 +136,19 @@ const ProfileTab = ({ user }) => {
       toast.error(err.response?.data?.detail || "Şifre değiştirilemedi.");
     } finally { setBusy(false); }
   };
+  const saveProfile = async (e) => {
+    e.preventDefault();
+    setProfileBusy(true);
+    try {
+      await axios.put(`${API_URL}/auth/me`, { name: profile.name, phone: profile.phone }, { withCredentials: true });
+      toast.success("Profil güncellendi.");
+      if (reloadSession) await reloadSession();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Profil güncellenemedi.");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
   return (
     <div className="space-y-4 text-xs max-w-2xl" data-testid="account-profile">
       <Link
@@ -157,6 +176,19 @@ const ProfileTab = ({ user }) => {
           <p className="text-[10px] text-slate-400 mt-1">Destek ve bildirimlerde bu kullanıcı ID’sini kullanabilirsiniz.</p>
         </div>
       </div>
+      <form onSubmit={saveProfile} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-profile-edit">
+        <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><UserRound className="w-4 h-4 text-emerald-600" /> Profil bilgileri</h3>
+        <p className="text-[11px] text-slate-500">Ad soyad ve telefonunuzu güncelleyin. E-posta şirket yöneticisi tarafından değiştirilir.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label className="block font-semibold text-slate-700 mb-1">Ad Soyad</label><input required value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="account-profile-edit-name" /></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Telefon</label><input value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} placeholder="05XX XXX XX XX" className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono" data-testid="account-profile-edit-phone" /></div>
+        </div>
+        <div className="flex justify-end">
+          <button type="submit" disabled={profileBusy} className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="account-profile-edit-save">
+            {profileBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Kaydet
+          </button>
+        </div>
+      </form>
       {linkedEmployee ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-location-consent">
           <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">

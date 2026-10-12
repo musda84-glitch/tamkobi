@@ -305,10 +305,20 @@ async def platform_sms_balance(_: dict = Depends(saas.require_super_admin)):
     return res
 
 
+def _unique_test_sms_body(custom: str = "") -> str:
+    """Netgsm mükerrer engeli için her testte saat + kısa rastgele kod."""
+    import secrets
+    from datetime import datetime
+    stamp = datetime.now().strftime("%H:%M:%S")
+    code = secrets.token_hex(2).upper()
+    base = str(custom or "").strip() or "TamKobi platform SMS test"
+    return f"{base} {stamp} #{code}"[:400]
+
+
 @router.post("/system/sms/send-test")
 async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
     phone = str(req.get("phone") or "").strip()
-    message = str(req.get("message") or "TamKobi platform SMS test mesajı.").strip()
+    message = _unique_test_sms_body(str(req.get("message") or ""))
     result = await send_platform_sms(phone=phone, message=message, context="platform_test")
     await _db.platform_settings.update_one(
         {"_id": SETTINGS_ID},
@@ -331,3 +341,38 @@ async def platform_sms_logs(limit: int = 100, _: dict = Depends(saas.require_sup
         d["id"] = d.pop("_id", None)
         out.append(d)
     return {"items": out, "total": len(out)}
+
+
+@router.get("/system/password-resets/failed")
+async def list_failed_password_resets(limit: int = 40, _: dict = Depends(saas.require_super_admin)):
+    """Son başarısız şifre sıfırlama denemeleri (SMS/e-posta hata logu)."""
+    lim = min(max(int(limit or 40), 1), 100)
+    rows = await _db.password_resets.find({
+        "$or": [{"sms_failed": True}, {"mail_failed": True}],
+    }).sort("created_at", -1).to_list(lim)
+    items = []
+    for r in rows:
+        phone = r.get("phone") or ""
+        email = r.get("email") or ""
+        items.append({
+            "id": (str(r.get("_id") or "")[:8] + "…") if r.get("_id") else None,
+            "channel": r.get("channel") or ("sms" if r.get("sms_failed") else "email"),
+            "phone_masked": password_reset_mask_phone(phone) if phone else "",
+            "email_masked": password_reset_mask_email(email) if email else "",
+            "error": (r.get("sms_error") or r.get("mail_error") or "")[:200],
+            "company_id": r.get("company_id"),
+            "created_at": r.get("created_at"),
+            "sms_failed": bool(r.get("sms_failed")),
+            "mail_failed": bool(r.get("mail_failed")),
+        })
+    return {"items": items, "total": len(items)}
+
+
+def password_reset_mask_phone(phone: str) -> str:
+    from password_reset import mask_phone
+    return mask_phone(phone)
+
+
+def password_reset_mask_email(email: str) -> str:
+    from password_reset import mask_email
+    return mask_email(email)

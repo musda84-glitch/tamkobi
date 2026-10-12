@@ -2,9 +2,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck, MessageSquare, Phone } from "lucide-react";
+import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck, MessageSquare, Phone, Pencil, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupMenuItems } from "../navGroups";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle", delete: "Sil" };
 const LEVEL_CLS = {
@@ -22,7 +23,50 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
   const [pwdFor, setPwdFor] = useState(null);
   const [pwd, setPwd] = useState("");
   const [companiesFor, setCompaniesFor] = useState(null);
+  const [editUser, setEditUser] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", role: "sales", employee_id: "" });
+  const [employees, setEmployees] = useState([]);
   const assignable = Array.isArray(data?.assignable_companies) ? data.assignable_companies : [];
+
+  useEffect(() => {
+    if (!companyId) return;
+    axios.get(`${API_URL}/personnel/employees`, { params: { company_id: companyId } })
+      .then((r) => setEmployees(Array.isArray(r.data) ? r.data : (r.data?.items || [])))
+      .catch(() => setEmployees([]));
+  }, [companyId]);
+
+  const openEdit = (u) => {
+    setEditUser(u);
+    setEditForm({
+      name: u.name || "",
+      email: u.email || "",
+      phone: u.phone || "",
+      role: u.role || "sales",
+      employee_id: u.employee_id || "",
+    });
+  };
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    if (!editUser) return;
+    setBusy(true);
+    try {
+      await axios.put(`${API_URL}/users/${editUser.id}`, {
+        name: editForm.name,
+        email: editForm.email,
+        phone: editForm.phone,
+        role: editForm.role,
+        employee_id: editForm.employee_id || null,
+        company_id: companyId,
+      });
+      toast.success("Kullanıcı güncellendi.");
+      setEditUser(null);
+      reload();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Güncellenemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
   const toggleChannel = (key) => setInv((s) => ({ ...s, channels: { ...s.channels, [key]: !s.channels[key] } }));
   const toggleUserCompany = async (u, cid, on) => {
     const cur = new Set((u.company_ids || []).map(String));
@@ -149,12 +193,13 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
         </p>
       ) : null}
       <table className="w-full text-xs" data-testid="users-table">
-        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Personel</th><th className="text-left">Rol</th><th className="text-left">Hesap erişimi</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
+        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Telefon</th><th className="text-left">Personel</th><th className="text-left">Rol</th><th className="text-left">Hesap erişimi</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
         <tbody className="divide-y">
           {data.users.map((u) => (
             <tr key={u.id} data-testid={`user-row-${u.email}`}>
               <td className="py-2 font-mono text-[11px] font-semibold text-slate-700" data-testid={`user-number-${u.email}`}>{u.user_number || "—"}</td>
               <td className="py-2"><div className="font-semibold text-slate-900">{u.name}</div><div className="text-slate-500">{u.email}</div></td>
+              <td className="py-2 font-mono text-[11px] text-slate-600" data-testid={`user-phone-${u.email}`}>{u.phone || "—"}</td>
               <td className="py-2" data-testid={`user-emp-${u.email}`}>
                 {u.employee_name
                   ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-semibold" title="Personel kartına bağlı"><UserCheck className="w-3 h-3" />{u.employee_name}</span>
@@ -193,6 +238,7 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
               <td><button onClick={() => patch(u, { is_active: !u.is_active }, u.is_active ? "Kullanıcı pasife alındı." : "Kullanıcı aktif.")} className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`} data-testid={`user-active-${u.email}`}>{u.is_active ? "Aktif" : "Pasif"}</button></td>
               <td className="text-slate-500">{u.last_login_at ? new Date(u.last_login_at).toLocaleString("tr-TR") : "-"}</td>
               <td className="text-right whitespace-nowrap">
+                <button onClick={() => openEdit(u)} className="p-1.5 rounded hover:bg-slate-100" title="Düzenle" data-testid={`user-edit-${u.email}`}><Pencil className="w-3.5 h-3.5" /></button>
                 {pwdFor === u.id ? (
                   <span className="inline-flex gap-1"><input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="Yeni şifre" className="border rounded-lg p-1 w-28" data-testid={`user-pwd-input-${u.email}`} /><button onClick={() => { patch(u, { password: pwd }, "Şifre değiştirildi."); setPwdFor(null); setPwd(""); }} className="px-2 bg-slate-900 text-white rounded-lg" data-testid={`user-pwd-save-${u.email}`}>Kaydet</button></span>
                 ) : <button onClick={() => setPwdFor(u.id)} className="p-1.5 rounded hover:bg-slate-100" title="Şifre belirle" data-testid={`user-pwd-${u.email}`}><KeyRound className="w-3.5 h-3.5" /></button>}
@@ -202,6 +248,35 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
           ))}
         </tbody>
       </table>
+      {editUser ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="user-edit-modal" {...backdropDismissProps(() => setEditUser(null))}>
+          <form onSubmit={saveEdit} className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3 text-xs" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Pencil className="w-4 h-4 text-emerald-600" /> Kullanıcıyı düzenle</h3>
+              <button type="button" onClick={() => setEditUser(null)} className="p-1 rounded hover:bg-slate-100" data-testid="user-edit-close"><X className="w-4 h-4" /></button>
+            </div>
+            <div><label className="block font-semibold mb-1">Ad Soyad</label><input required value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-full border rounded-lg p-2" data-testid="user-edit-name" /></div>
+            <div><label className="block font-semibold mb-1">E-posta</label><input type="email" required value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="w-full border rounded-lg p-2" data-testid="user-edit-email" /></div>
+            <div><label className="block font-semibold mb-1">Telefon</label><input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} placeholder="05XX XXX XX XX" className="w-full border rounded-lg p-2 font-mono" data-testid="user-edit-phone" /></div>
+            <div><label className="block font-semibold mb-1">Rol</label><select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="user-edit-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
+            <div>
+              <label className="block font-semibold mb-1">Personel eşlemesi</label>
+              <select value={editForm.employee_id} onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="user-edit-employee">
+                <option value="">— Bağlı değil —</option>
+                {employees.map((emp) => (
+                  <option key={emp.id || emp._id} value={emp.id || emp._id}>{emp.full_name || emp.name || emp.id}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setEditUser(null)} className="px-3 py-2 border rounded-lg font-semibold">İptal</button>
+              <button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="user-edit-save">
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />} Kaydet
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 };

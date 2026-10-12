@@ -19,12 +19,14 @@ export const PlatformSmsPanel = () => {
   const [testPhone, setTestPhone] = useState("");
   const [balance, setBalance] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [failedResets, setFailedResets] = useState([]);
 
   const load = useCallback(async () => {
     try {
-      const [s, l] = await Promise.all([
+      const [s, l, f] = await Promise.all([
         axios.get(`${API_URL}/system/sms`),
         axios.get(`${API_URL}/system/sms/logs`, { params: { limit: 40 } }),
+        axios.get(`${API_URL}/system/password-resets/failed`, { params: { limit: 30 } }).catch(() => ({ data: { items: [] } })),
       ]);
       setD(s.data);
       setForm({
@@ -35,6 +37,7 @@ export const PlatformSmsPanel = () => {
         is_active: !!s.data.is_active,
       });
       setLogs(l.data?.items || []);
+      setFailedResets(f.data?.items || []);
     } catch (e) {
       toast.error(errText(e, "SMS ayarları yüklenemedi."));
     }
@@ -215,6 +218,26 @@ export const PlatformSmsPanel = () => {
                   <td className="px-3"><span className={`px-1.5 rounded text-[10px] font-bold ${row.status === "sent" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{row.status}</span></td>
                   <td className="px-3 text-slate-600 truncate max-w-[14rem]">{row.context}</td>
                   <td className="px-3 text-slate-500 truncate max-w-[16rem]">{row.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+        <h4 className="font-bold text-slate-900 text-sm">Son başarısız sıfırlama denemeleri</h4>
+        <p className="text-[11px] text-slate-500">Gönderilemeyen şifre sıfırlama SMS/e-posta kayıtları (istemciye hata sızdırılmaz).</p>
+        <div className="max-h-56 overflow-auto border rounded-xl" data-testid="platform-failed-resets">
+          <table className="w-full text-left">
+            <tbody className="divide-y">
+              {!failedResets.length && <tr><td className="p-4 text-center text-slate-400">Kayıt yok.</td></tr>}
+              {failedResets.map((row, idx) => (
+                <tr key={row.id || idx} className="hover:bg-slate-50" data-testid={`failed-reset-row-${idx}`}>
+                  <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">{row.created_at ? new Date(row.created_at).toLocaleString("tr-TR") : "—"}</td>
+                  <td className="px-3"><span className="px-1.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">{row.channel || "—"}</span></td>
+                  <td className="px-3 font-mono text-[11px]">{row.phone_masked || row.email_masked || "—"}</td>
+                  <td className="px-3 text-slate-600 truncate max-w-[20rem]" title={row.error}>{row.error || "—"}</td>
                 </tr>
               ))}
             </tbody>
