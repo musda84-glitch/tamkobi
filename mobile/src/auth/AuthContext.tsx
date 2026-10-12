@@ -187,7 +187,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string, serverUrl?: string, remember = true) => {
     const baseUrl = serverUrl ? await saveApiBase(serverUrl) : state.baseUrl;
     if (serverUrl) setState((s) => ({ ...s, baseUrl }));
-    const res = await post<SessionPayload>({ baseUrl, token: null }, "/auth/login", { email, password, remember: remember !== false });
+    const res = await post<SessionPayload & { requires_2fa?: boolean }>(
+      { baseUrl, token: null },
+      "/auth/login",
+      { email, password, remember: remember !== false },
+    );
+    if (res?.requires_2fa) {
+      throw new Error("Platform yöneticisi web panelinden giriş yapmalı");
+    }
     if (!res?.token || !res.user) throw new Error("Giriş yanıtı geçersiz.");
     await clearB2bSession();
     await saveToken(res.token);

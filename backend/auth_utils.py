@@ -75,19 +75,24 @@ def create_access_token(
     *,
     expires_delta: Optional[timedelta] = None,
     is_super_admin: bool = False,
+    mfa: bool = False,
 ) -> str:
     if expires_delta is None:
         seconds = SUPERADMIN_ACCESS_SECONDS if is_super_admin else TENANT_ACCESS_SECONDS
         expires_delta = timedelta(seconds=seconds)
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "email": email,
         "role": role,
-        "exp": datetime.now(timezone.utc) + expires_delta,
+        "iat": int(now.timestamp()),
+        "exp": now + expires_delta,
         "type": "access",
     }
     if is_super_admin:
         payload["sa"] = True
+    if mfa:
+        payload["mfa"] = True
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -149,9 +154,23 @@ async def get_user_from_token(token: str, db: Any) -> dict:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
         if user.get("is_active") is False:
             raise HTTPException(status_code=401, detail="Hesabınız pasifleştirilmiş.")
+        # Süper admin + TOTP açık: MFA onaylı oturum zorunlu (impersonation hariç)
+        if user.get("is_super_admin") and user.get("totp_enabled") and user.get("totp_secret") and not payload.get("imp_by"):
+            if not payload.get("mfa"):
+                raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
+            try:
+                from superadmin_2fa import parse_enabled_at
+                enabled_ts = parse_enabled_at(user.get("totp_enabled_at"))
+            except Exception:
+                enabled_ts = None
+            iat = payload.get("iat")
+            if enabled_ts is not None and (iat is None or float(iat) < float(enabled_ts)):
+                raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
         user["id"] = str(user.get("_id", user.get("id")))
         user.pop("password_hash", None)
         return user
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Oturum süresi doldu")
     except jwt.InvalidTokenError:

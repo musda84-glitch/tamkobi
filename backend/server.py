@@ -395,8 +395,13 @@ async def login(req: LoginRequest, request: Request, response: Response):
     is_sa = bool(user.get("is_super_admin"))
 
     # Süper admin + 2FA açık → henüz oturum çerezi yok; ikinci adım kod ister
+    # Not: başarılı şifre, 2fa:{user_id} kilit sayacını SIFIRLAMAZ.
     if is_sa and superadmin_2fa.user_totp_enabled(user):
-        pending = superadmin_2fa.create_pending_2fa_token(user_id, email, remember=req.remember)
+        pending, jti = superadmin_2fa.create_pending_2fa_token(user_id, email, remember=req.remember)
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"pending_2fa_jti": jti, "pending_2fa_attempts": 0}},
+        )
         applog.log_auth(
             "login_2fa_pending", f"{email} password ok, awaiting TOTP",
             email=email, user_email=email, user_id=user_id, ip=client_ip,
@@ -438,7 +443,11 @@ async def _issue_session_for_user(
     user_id = str(user.get("_id", user.get("id")))
     is_sa = bool(user.get("is_super_admin"))
     role_doc = await rbac.role_for(user)
-    token = create_access_token(user_id, email, user.get("role", "admin"), is_super_admin=is_sa)
+    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
+    token = create_access_token(
+        user_id, email, user.get("role", "admin"),
+        is_super_admin=is_sa, mfa=is_sa,
+    )
     refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa)
     access_age = access_cookie_max_age(is_super_admin=is_sa, remember=remember)
     refresh_age = refresh_cookie_max_age(is_super_admin=is_sa, remember=remember)
@@ -474,6 +483,27 @@ async def _issue_session_for_user(
     }
 
 
+async def _2fa_fail(user: dict, email: str, client_ip: str, *, detail: str = "Doğrulama kodu hatalı.") -> None:
+    """Kullanıcı kilidi + pending token deneme sayacı; anahtar iptali. 429 kilidi verify girişinde kontrol edilir."""
+    uid = str(user.get("_id", user.get("id")))
+    lock_id = superadmin_2fa.twofa_lock_identifier(uid)
+    await db.login_attempts.update_one(
+        {"identifier": lock_id},
+        {"$inc": {"count": 1}, "$set": {"last_attempt": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    attempts = int(user.get("pending_2fa_attempts") or 0) + 1
+    upd: Dict[str, Any] = {"pending_2fa_attempts": attempts}
+    invalidate = attempts >= superadmin_2fa.MAX_2FA_ATTEMPTS
+    if invalidate:
+        upd["pending_2fa_jti"] = ""
+    await db.users.update_one({"_id": user["_id"]}, {"$set": upd})
+    applog.log_auth("login_2fa_failed", f"{email} bad 2FA code", email=email, user_email=email, ip=client_ip, user_id=uid)
+    if invalidate:
+        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+    raise HTTPException(status_code=401, detail=detail)
+
+
 @api_router.post("/auth/2fa/verify")
 async def auth_2fa_verify(req: TwoFAVerifyRequest, request: Request, response: Response):
     """Şifre adımından sonra TOTP veya kurtarma kodu ile oturumu tamamla."""
@@ -488,6 +518,33 @@ async def auth_2fa_verify(req: TwoFAVerifyRequest, request: Request, response: R
     if user.get("is_active") is False:
         raise HTTPException(status_code=403, detail="Hesabınız pasif durumda.")
     email = (user.get("email") or "").strip().lower()
+    uid = str(user.get("_id", user.get("id")))
+
+    # Kullanıcı başına kilit (şifre başarısı bunu sıfırlamaz)
+    lock_id = superadmin_2fa.twofa_lock_identifier(uid)
+    lock = await db.login_attempts.find_one({"identifier": lock_id})
+    if lock and int(lock.get("count") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
+        last_attempt = lock.get("last_attempt", datetime.now(timezone.utc))
+        if isinstance(last_attempt, str):
+            try:
+                last_attempt = datetime.fromisoformat(last_attempt)
+            except Exception:
+                last_attempt = datetime.now(timezone.utc)
+        if getattr(last_attempt, "tzinfo", None) is None:
+            last_attempt = last_attempt.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - last_attempt < timedelta(minutes=superadmin_2fa.LOCKOUT_MINUTES):
+            raise HTTPException(
+                status_code=429,
+                detail="Çok fazla hatalı kod. 15 dakika sonra tekrar deneyin.",
+            )
+
+    stored_jti = (user.get("pending_2fa_jti") or "").strip()
+    if not stored_jti or stored_jti != str(payload.get("jti") or ""):
+        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+    if int(user.get("pending_2fa_attempts") or 0) >= superadmin_2fa.MAX_2FA_ATTEMPTS:
+        await db.users.update_one({"_id": user["_id"]}, {"$set": {"pending_2fa_jti": ""}})
+        raise HTTPException(status_code=401, detail="Doğrulama oturumu geçersiz. Tekrar giriş yapın.")
+
     code = (req.code or "").strip()
     ok = False
     used_recovery = False
@@ -496,25 +553,48 @@ async def auth_2fa_verify(req: TwoFAVerifyRequest, request: Request, response: R
             secret = superadmin_2fa.decrypt_totp_secret(user.get("totp_secret") or "")
         except Exception:
             secret = ""
-        if secret and superadmin_2fa.verify_totp(secret, code):
+        counter = superadmin_2fa.matching_totp_counter(secret, code) if secret else None
+        if counter is not None:
+            # Replay koruması: aynı (veya daha eski) zaman adımı reddedilir
+            replay = await db.users.update_one(
+                {
+                    "_id": user["_id"],
+                    "$or": [
+                        {"totp_last_counter": {"$lt": counter}},
+                        {"totp_last_counter": {"$exists": False}},
+                        {"totp_last_counter": None},
+                    ],
+                },
+                {"$set": {"totp_last_counter": counter}},
+            )
+            if getattr(replay, "matched_count", 0) == 0:
+                await _2fa_fail(user, email, client_ip, detail="Doğrulama kodu hatalı.")
             ok = True
         else:
             matched = superadmin_2fa.verify_recovery_code(code, user.get("totp_recovery_hashes") or [])
             if matched:
-                remaining = [h for h in (user.get("totp_recovery_hashes") or []) if h != matched]
-                await db.users.update_one({"_id": user["_id"]}, {"$set": {"totp_recovery_hashes": remaining}})
-                user["totp_recovery_hashes"] = remaining
-                ok = True
-                used_recovery = True
+                pulled = await db.users.update_one(
+                    {"_id": user["_id"], "totp_recovery_hashes": matched},
+                    {"$pull": {"totp_recovery_hashes": matched}},
+                )
+                if getattr(pulled, "modified_count", 0) > 0:
+                    ok = True
+                    used_recovery = True
     if not ok:
-        applog.log_auth("login_2fa_failed", f"{email} bad 2FA code", email=email, user_email=email, ip=client_ip)
-        raise HTTPException(status_code=401, detail="Doğrulama kodu hatalı.")
+        await _2fa_fail(user, email, client_ip)
+
+    # Başarı: pending jti + 2FA kilit sayacı temizlenir
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"pending_2fa_jti": "", "pending_2fa_attempts": 0}},
+    )
+    await db.login_attempts.delete_one({"identifier": lock_id})
     remember = bool(payload.get("remember"))
     body = await _issue_session_for_user(user, request, response, remember=remember)
     applog.log_auth(
         "login_2fa_ok",
         f"{email} 2FA ok" + (" (recovery)" if used_recovery else ""),
-        email=email, user_email=email, user_id=str(user.get("_id")), ip=client_ip,
+        email=email, user_email=email, user_id=uid, ip=client_ip,
     )
     return body
 
@@ -579,15 +659,18 @@ async def auth_2fa_setup_confirm(req: TwoFASetupConfirmRequest, user: dict = Dep
         secret = superadmin_2fa.decrypt_totp_secret(enc)
     except Exception:
         raise HTTPException(status_code=400, detail="Kayıtlı secret okunamadı; kurulumu yeniden başlatın.")
-    if not superadmin_2fa.verify_totp(secret, req.code):
+    counter = superadmin_2fa.matching_totp_counter(secret, req.code)
+    if counter is None:
         raise HTTPException(status_code=400, detail="Doğrulama kodu hatalı. Uygulamadaki 6 haneli kodu girin.")
     plain_codes, hashes = superadmin_2fa.generate_recovery_codes()
+    now_iso = datetime.now(timezone.utc).isoformat()
     await db.users.update_one(
         {"_id": fresh["_id"]},
         {"$set": {
             "totp_enabled": True,
             "totp_recovery_hashes": hashes,
-            "totp_enabled_at": datetime.now(timezone.utc).isoformat(),
+            "totp_enabled_at": now_iso,
+            "totp_last_counter": counter,
         }},
     )
     return {

@@ -10,7 +10,10 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import comm_service
-from auth_utils import hash_password, create_access_token, create_refresh_token, get_user_from_token, session_token
+from auth_utils import (
+    hash_password, create_access_token, create_refresh_token, get_user_from_token,
+    session_token, auth_cookie_kwargs,
+)
 from client_ip import request_ip
 import tenant_access
 
@@ -1075,7 +1078,7 @@ async def get_invite(token: str):
 
 
 @router.post("/public/invites/{token}/accept")
-async def accept_invite(token: str, req: Dict[str, Any], response: Response):
+async def accept_invite(token: str, req: Dict[str, Any], request: Request, response: Response):
     inv = await _db.user_invites.find_one({"_id": token})
     if not inv or inv.get("accepted_at") or inv.get("expires_at") < _now():
         raise HTTPException(status_code=400, detail="Davet geçersiz, kullanılmış veya süresi dolmuş.")
@@ -1093,8 +1096,8 @@ async def accept_invite(token: str, req: Dict[str, Any], response: Response):
     if inv.get("employee_id"):
         await _db.employees.update_one({"_id": inv["employee_id"]}, {"$set": {"user_id": user_id}})
     access = create_access_token(user_id, doc["email"], doc["role"])
-    response.set_cookie(key="access_token", value=access, httponly=True, max_age=86400 * 7, path="/")
-    response.set_cookie(key="refresh_token", value=create_refresh_token(user_id), httponly=True, max_age=86400 * 30, path="/")
+    response.set_cookie(key="access_token", value=access, **auth_cookie_kwargs(request, max_age=86400 * 7))
+    response.set_cookie(key="refresh_token", value=create_refresh_token(user_id), **auth_cookie_kwargs(request, max_age=86400 * 30))
     return {"status": "success", "user": _clean(dict(doc)), "message": "Hesabınız oluşturuldu, giriş yapıldı."}
 
 
