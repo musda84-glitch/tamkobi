@@ -104,15 +104,22 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         "imp_started": session["started_at"],
         "exp": now + timedelta(hours=2),
     }
+    # aud=app so the handoff cookie is valid on app.tamkobi.com
+    payload["aud"] = "app"
+    payload["iat"] = int(now.timestamp())
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
     current = session_token(request) or ""
     if not current:
         raise HTTPException(status_code=401, detail="Sistem paneli oturumu bulunamadı; tekrar giriş yapın.")
-    cookie_kw = auth_cookie_kwargs(request, max_age=7200)
-    response.set_cookie(key="sa_return", value=current, **cookie_kw)
-    response.set_cookie(key="access_token", value=token, **cookie_kw)
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"active_company_id": company_id}})
     await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "user_id": admin.get("id") or admin.get("_id"), "user_name": admin.get("name"), "method": "IMPERSONATE", "path": f"/system/companies/{company_id}/impersonate", "module": "/settings", "status": 200, "target_user": target["email"], "created_at": _now()})
+    import auth_handoff
+    import public_url as pu
+    # Bundle access + sa_return in one handoff payload (JSON in token field)
+    import json as _json
+    handoff_blob = _json.dumps({"access_token": token, "sa_return": current})
+    code = await auth_handoff.create_handoff(_db, handoff_blob, purpose="impersonate")
+    app_base = await pu.public_base_url_for(_db, "app")
     return {
         "status": "success",
         "message": f"{company.get('name')} şirketine {target.get('name')} ({target['email']}) olarak giriş yapıldı. Destek modu 2 saat geçerlidir.",
@@ -121,7 +128,8 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         "session_id": session["_id"],
         "started_at": session["started_at"],
         "expires_at": session["expires_at"],
-        "redirect": "/panel",
+        "redirect": f"{app_base}/sso?code={code}",
+        "code": code,
     }
 
 
@@ -171,10 +179,13 @@ async def impersonation_info(request: Request) -> Optional[Dict[str, Any]]:
 @router.post("/auth/impersonate/exit")
 async def impersonate_exit(request: Request, response: Response):
     import support_access
+    import auth_handoff
+    import public_url as pu
+    import json as _json
     token = request.cookies.get("access_token")
     if token:
         try:
-            p = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+            p = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
             sid = p.get("imp_session")
             if sid:
                 await support_access.close_session(sid, ended_by=p.get("imp_by") or "support", reason="exited")
@@ -188,13 +199,18 @@ async def impersonate_exit(request: Request, response: Response):
     except HTTPException:
         response.delete_cookie("sa_return", path="/"); response.delete_cookie("access_token", path="/")
         raise HTTPException(status_code=401, detail="Panel oturumunuz süresi dolmuş; lütfen panele tekrar giriş yapın.")
-    response.set_cookie(
-        key="access_token",
-        value=back,
-        **auth_cookie_kwargs(request, max_age=SUPERADMIN_ACCESS_SECONDS),
-    )
+    # Clear app host cookies; handoff restores SA session on site
     response.delete_cookie("sa_return", path="/")
-    return {"status": "success", "redirect": "/sistem/sirketler"}
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/")
+    handoff_blob = _json.dumps({"access_token": back, "sa_return": ""})
+    code = await auth_handoff.create_handoff(_db, handoff_blob, purpose="sa_return")
+    site_base = await pu.public_base_url_for(_db, "site")
+    return {
+        "status": "success",
+        "redirect": f"{site_base}/sso?code={code}&next=/sistem/sirketler",
+        "code": code,
+    }
 
 
 # ---------------- Otomatik e-Arşiv fatura ----------------
@@ -289,7 +305,7 @@ async def test_paytr(request: Request, _: dict = Depends(saas.require_super_admi
     basket = base64.b64encode(json.dumps([["Bağlantı testi", "1.00", 1]], separators=(",", ":")).encode()).decode()
     token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + "0" + "0" + "TL" + "1" + c["merchant_salt"])
     import public_url as pu
-    origin = await pu.public_base_url(_db, request=request)
+    origin = await pu.public_base_url_for(_db, "app", request=request)
     form = {"merchant_id": c["merchant_id"], "user_ip": ip, "merchant_oid": oid, "email": email, "payment_amount": minor, "paytr_token": token, "user_basket": basket, "debug_on": "1", "test_mode": "1", "no_installment": "0", "max_installment": "0", "currency": "TL", "merchant_ok_url": f"{origin}/odeme/basarili", "merchant_fail_url": f"{origin}/odeme/iptal", "timeout_limit": "30", "lang": "tr", "user_name": "Test", "user_address": "-", "user_phone": "-"}
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -331,7 +347,7 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     no_inst, max_inst, cur = "0", c["max_installment"], "TL"
     token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + no_inst + max_inst + cur + c["test_mode"] + c["merchant_salt"])
     import public_url as pu
-    origin = await pu.public_base_url(_db, explicit=req.get("origin_url") or "", request=request)
+    origin = await pu.public_base_url_for(_db, "app", explicit=req.get("origin_url") or "", request=request)
     form = {"merchant_id": c["merchant_id"], "user_ip": ip, "merchant_oid": oid, "email": email, "payment_amount": minor, "paytr_token": token, "user_basket": basket, "debug_on": "1", "test_mode": c["test_mode"], "no_installment": no_inst, "max_installment": max_inst, "currency": cur,
             "merchant_ok_url": f"{origin}/odeme/basarili?merchant_oid={oid}", "merchant_fail_url": f"{origin}/odeme/iptal", "timeout_limit": "30", "lang": "tr", "user_name": (admin.get("name") or company.get("name") or "")[:60], "user_address": (company.get("address") or company.get("city") or "-")[:200], "user_phone": (company.get("phone") or admin.get("phone") or "-")[:20]}
     await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "provider": "paytr", "merchant_oid": oid, "session_id": oid, "company_id": cid, "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": amount, "currency": "try", "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})

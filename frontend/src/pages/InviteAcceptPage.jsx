@@ -5,6 +5,13 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { getHostKind, hostUrl } from "../utils/hosts";
+
+function isPersonnelInvite(inv) {
+  if (!inv) return false;
+  if (inv.employee_id) return true;
+  return String(inv.role || "").toLowerCase() === "personel";
+}
 
 export default function InviteAcceptPage() {
   const { token } = useParams();
@@ -13,15 +20,39 @@ export default function InviteAcceptPage() {
   const [err, setErr] = useState("");
   const [form, setForm] = useState({ name: "", password: "", password2: "" });
   const [busy, setBusy] = useState(false);
-  useEffect(() => { axios.get(`${API_URL}/public/invites/${token}`).then((r) => { setInv(r.data); setForm((f) => ({ ...f, name: r.data.name || "" })); }).catch((e) => setErr(e.response?.data?.detail || "Davet yüklenemedi.")); }, [token]);
+
+  useEffect(() => {
+    axios.get(`${API_URL}/public/invites/${token}`)
+      .then((r) => {
+        const data = r.data;
+        // Personel daveti app'te açıldıysa ik'ye taşı
+        if (isPersonnelInvite(data) && getHostKind() === "app") {
+          window.location.replace(hostUrl("ik", `/davet/${token}`));
+          return;
+        }
+        setInv(data);
+        setForm((f) => ({ ...f, name: data.name || "" }));
+      })
+      .catch((e) => setErr(e.response?.data?.detail || "Davet yüklenemedi."));
+  }, [token]);
+
   const submit = async (e) => {
     e.preventDefault();
     if (form.password !== form.password2) { toast.error("Şifreler eşleşmiyor."); return; }
     setBusy(true);
     try {
-      await axios.post(`${API_URL}/public/invites/${token}/accept`, { name: form.name, password: form.password }, { withCredentials: true });
+      const r = await axios.post(
+        `${API_URL}/public/invites/${token}/accept`,
+        { name: form.name, password: form.password },
+        { withCredentials: true },
+      );
       toast.success("Hesabınız oluşturuldu. Hoş geldiniz!");
-      window.location.href = "/";
+      const dest = r.data?.redirect;
+      if (dest && String(dest).startsWith("http")) {
+        window.location.href = dest;
+        return;
+      }
+      window.location.href = dest || (isPersonnelInvite(inv) ? "/personelim" : "/panel");
     } catch (e2) { toast.error(e2.response?.data?.detail || "Kayıt tamamlanamadı."); } finally { setBusy(false); }
   };
   return (

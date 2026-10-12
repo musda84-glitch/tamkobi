@@ -321,6 +321,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/auth/me",
     "/api/auth/2fa/verify",
     "/api/auth/impersonate/exit",
+    "/api/auth/sso-exchange",
     "/api/public/",
     "/api/setup/",
     "/api/version",
@@ -595,8 +596,11 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         user = None
         if token:
             try:
-                user = await get_user_from_token(token, _db)
-            except HTTPException:
+                user = await get_user_from_token(token, _db, request=request, path=path)
+            except HTTPException as exc:
+                # Audience / auth failures for cookie-bearing requests → surface status
+                if exc.status_code in (401, 403) and not is_public_api_path(path, request.method, request.query_params.get("t")):
+                    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
                 user = None
 
         query_t = request.query_params.get("t")
@@ -951,7 +955,10 @@ async def invite_user(req: Dict[str, Any], request: Request):
     company = await _db.companies.find_one({"_id": company_id}) or {}
     token = secrets.token_urlsafe(32)
     import public_url as pu
-    base = await pu.public_base_url(_db, explicit=req.get("base_url") or "", request=request)
+    _inv_ctx = "ik" if req.get("employee_id") or role == "personel" else "app"
+    base = await pu.public_base_url_for(
+        _db, _inv_ctx, explicit=req.get("base_url") or "", request=request,
+    )
     link = f"{base}/davet/{token}"
     doc = {
         "_id": token,
@@ -1074,11 +1081,23 @@ async def get_invite(token: str):
     if inv.get("expires_at") < _now():
         raise HTTPException(status_code=400, detail="Davetin süresi dolmuş; yöneticinizden yeni davet isteyin.")
     role = await _db.roles.find_one({"company_id": inv["company_id"], "code": inv["role"]}) or {}
-    return {"email": inv["email"], "name": inv.get("name"), "company_name": inv.get("company_name"), "role_name": role.get("name", inv["role"])}
+    return {
+        "email": inv["email"],
+        "name": inv.get("name"),
+        "company_name": inv.get("company_name"),
+        "role": inv.get("role"),
+        "role_name": role.get("name", inv["role"]),
+        "employee_id": inv.get("employee_id"),
+    }
 
 
 @router.post("/public/invites/{token}/accept")
 async def accept_invite(token: str, req: Dict[str, Any], request: Request, response: Response):
+    import json as _json
+    import auth_handoff
+    import host_audience as _ha
+    import public_url as pu
+
     inv = await _db.user_invites.find_one({"_id": token})
     if not inv or inv.get("accepted_at") or inv.get("expires_at") < _now():
         raise HTTPException(status_code=400, detail="Davet geçersiz, kullanılmış veya süresi dolmuş.")
@@ -1095,10 +1114,27 @@ async def accept_invite(token: str, req: Dict[str, Any], request: Request, respo
     await _db.user_invites.update_one({"_id": token}, {"$set": {"accepted_at": _now(), "user_id": user_id}})
     if inv.get("employee_id"):
         await _db.employees.update_one({"_id": inv["employee_id"]}, {"$set": {"user_id": user_id}})
-    access = create_access_token(user_id, doc["email"], doc["role"])
-    response.set_cookie(key="access_token", value=access, **auth_cookie_kwargs(request, max_age=86400 * 7))
-    response.set_cookie(key="refresh_token", value=create_refresh_token(user_id), **auth_cookie_kwargs(request, max_age=86400 * 30))
-    return {"status": "success", "user": _clean(dict(doc)), "message": "Hesabınız oluşturuldu, giriş yapıldı."}
+    # personel → ik; diğerleri → app
+    target_kind = _ha.KIND_IK if (inv.get("employee_id") or (inv.get("role") or "").strip().lower() == "personel") else _ha.KIND_APP
+    aud = _ha.AUD_IK if target_kind == _ha.KIND_IK else _ha.AUD_APP
+    access = create_access_token(user_id, doc["email"], doc["role"], aud=aud)
+    refresh = create_refresh_token(user_id)
+    kind = _ha.host_kind(request)
+    out = {
+        "status": "success",
+        "user": _clean(dict(doc)),
+        "message": "Hesabınız oluşturuldu, giriş yapıldı.",
+    }
+    if kind == target_kind:
+        response.set_cookie(key="access_token", value=access, **auth_cookie_kwargs(request, max_age=86400 * 7))
+        response.set_cookie(key="refresh_token", value=refresh, **auth_cookie_kwargs(request, max_age=86400 * 30))
+        out["redirect"] = "/personelim" if target_kind == _ha.KIND_IK else "/panel"
+    else:
+        blob = _json.dumps({"access_token": access, "sa_return": ""})
+        code = await auth_handoff.create_handoff(_db, blob, purpose="invite")
+        base = await pu.public_base_url_for(_db, target_kind)
+        out["redirect"] = f"{base}/sso?code={code}"
+    return out
 
 
 # ---------------- Activity log ----------------

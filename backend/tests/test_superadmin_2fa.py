@@ -52,8 +52,9 @@ def test_auth_cookie_kwargs_secure_only_on_https():
 def test_superadmin_access_token_shorter_than_tenant():
     sa = auth_utils.create_access_token("u1", "a@b.com", "admin", is_super_admin=True, mfa=True)
     tenant = auth_utils.create_access_token("u2", "t@b.com", "admin", is_super_admin=False)
-    psa = jwt.decode(sa, auth_utils.get_jwt_secret(), algorithms=["HS256"])
-    pt = jwt.decode(tenant, auth_utils.get_jwt_secret(), algorithms=["HS256"])
+    _jd = dict(algorithms=["HS256"], options={"verify_aud": False})
+    psa = jwt.decode(sa, auth_utils.get_jwt_secret(), **_jd)
+    pt = jwt.decode(tenant, auth_utils.get_jwt_secret(), **_jd)
     now = datetime.now(timezone.utc).timestamp()
     assert psa["exp"] - now <= auth_utils.SUPERADMIN_ACCESS_SECONDS + 30
     assert pt["exp"] - now >= auth_utils.TENANT_ACCESS_SECONDS - 60
@@ -292,8 +293,12 @@ def test_2fa_verify_success_and_recovery_consume(monkeypatch):
         )
     )
     assert out["user"]["is_super_admin"] is True
-    payload = jwt.decode(out["token"], auth_utils.get_jwt_secret(), algorithms=["HS256"])
+    payload = jwt.decode(
+        out["token"], auth_utils.get_jwt_secret(),
+        algorithms=["HS256"], options={"verify_aud": False},
+    )
     assert payload.get("mfa") is True and "iat" in payload
+    assert payload.get("aud") == "site"
 
     # recovery: find + $set remaining (dizi-içerir SQL filtresi yok)
     user["pending_2fa_jti"] = jti
@@ -379,8 +384,12 @@ def test_https_login_sets_secure_flag(monkeypatch):
     assert out["requires_2fa_setup"] is True
     access = next(c for c in resp.cookies if c.get("key") == "access_token")
     assert access.get("secure") is True
-    token_p = jwt.decode(out["token"], auth_utils.get_jwt_secret(), algorithms=["HS256"])
+    token_p = jwt.decode(
+        out["token"], auth_utils.get_jwt_secret(),
+        algorithms=["HS256"], options={"verify_aud": False},
+    )
     assert token_p.get("mfa") is True
+    assert token_p.get("aud") == "site"
 
 
 def test_sixth_bad_code_returns_429(monkeypatch):
@@ -628,11 +637,13 @@ def test_invite_cookie_secure_with_forwarded_proto(monkeypatch):
     monkeypatch.setattr(rbac, "_db", mock_db)
     monkeypatch.setattr(rbac.user_numbers, "next_user_number", AsyncMock(return_value=9))
 
-    req = _fake_http_request("http://backend/api/public/invites/inv1/accept", proto="https")
+    req = _fake_http_request("https://app.tamkobi.com/api/public/invites/inv1/accept", proto="https")
+    req.headers = {"x-forwarded-proto": "https", "host": "app.tamkobi.com"}
     asyncio.run(rbac.accept_invite("inv1", {"password": "secret1", "name": "Y"}, req, Resp()))
     assert captured
     assert all(c.get("secure") is True for c in captured)
     assert all(c.get("samesite") == "lax" for c in captured)
+    assert all("domain" not in c for c in captured)
 
 
 def test_mysql_store_sql_list_scalar_filter_is_broken():

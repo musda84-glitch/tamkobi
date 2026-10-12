@@ -420,15 +420,38 @@ async def public_signup(req: Dict[str, Any], request: Request, response: Respons
     await rbac.ensure_roles(cid)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)
     import demo as demo_pack
+    import json as _json
+    import auth_handoff
+    import host_audience as _ha
+    import public_url as pu
+
     await demo_pack.seed_for_new_company(cid)
-    response.set_cookie(
-        key="access_token",
-        value=create_access_token(uid, email, "admin"),
-        **auth_cookie_kwargs(request, max_age=86400 * 7),
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=create_refresh_token(uid),
-        **auth_cookie_kwargs(request, max_age=86400 * 30),
-    )
-    return {"status": "success", "company_id": cid, "user": {"id": uid, "email": email, "name": name, "role": "admin"}, "license": await saas.effective(cid), "message": f"Hoş geldiniz! {st['trial_days']} günlük {plan['name'] if plan else ''} denemeniz başladı."}
+    access = create_access_token(uid, email, "admin", aud=_ha.AUD_APP)
+    refresh = create_refresh_token(uid)
+    kind = _ha.host_kind(request)
+    out = {
+        "status": "success",
+        "company_id": cid,
+        "user": {"id": uid, "email": email, "name": name, "role": "admin"},
+        "license": await saas.effective(cid),
+        "message": f"Hoş geldiniz! {st['trial_days']} günlük {plan['name'] if plan else ''} denemeniz başladı.",
+    }
+    if kind == _ha.KIND_APP:
+        response.set_cookie(
+            key="access_token",
+            value=access,
+            **auth_cookie_kwargs(request, max_age=86400 * 7),
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh,
+            **auth_cookie_kwargs(request, max_age=86400 * 30),
+        )
+        out["redirect"] = "/panel"
+    else:
+        # Apex /kayit → SSO handoff to app (host-only cookies)
+        blob = _json.dumps({"access_token": access, "sa_return": ""})
+        code = await auth_handoff.create_handoff(_db, blob, purpose="signup")
+        app_base = await pu.public_base_url_for(_db, "app")
+        out["redirect"] = f"{app_base}/sso?code={code}"
+    return out

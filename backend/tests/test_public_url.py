@@ -105,7 +105,8 @@ def test_invoice_share_link_rejects_loopback_platform_url():
             return await saas_docs.invoice_share_link("inv1", fake_req, kind="pdf", ttl_hours=24)
 
     out = asyncio.run(run())
-    assert out["url"].startswith("https://tamkobi.com/api/invoices/inv1/pdf?t=")
+    # Fatura paylaşım linkleri app alt alan adına gider
+    assert out["url"].startswith("https://app.tamkobi.com/api/invoices/inv1/pdf?t=")
     assert "127.0.0.1" not in out["url"]
     assert signed_links.verify_doc_share_token("inv1", "invoices-pdf", out["token"])
 
@@ -128,7 +129,14 @@ def test_invoice_share_link_uses_env_when_platform_loopback():
             "auth_utils.get_user_from_token", AsyncMock(return_value=fake_user)
         ), patch(
             "tenant_access.get_tenant_doc", AsyncMock(return_value={"_id": "inv2", "company_id": "c1"})
-        ), patch.dict(os.environ, {"PUBLIC_APP_URL": "https://app.example.com"}, clear=False):
+        ), patch.dict(
+            os.environ,
+            {
+                "PUBLIC_APP_URL": "https://site.example.com",
+                "PUBLIC_APP_HOST_URL": "https://app.example.com",
+            },
+            clear=False,
+        ):
             return await saas_docs.invoice_share_link("inv2", fake_req, kind="pdf", ttl_hours=1)
 
     out = asyncio.run(run())
@@ -153,8 +161,12 @@ def test_invoice_share_link_uses_valid_platform_url():
             "auth_utils.get_user_from_token", AsyncMock(return_value=fake_user)
         ), patch(
             "tenant_access.get_tenant_doc", AsyncMock(return_value={"_id": "inv3", "company_id": "c1"})
-        ), patch.dict(os.environ, {"PUBLIC_APP_URL": "https://env.example.com"}, clear=False):
+        ), patch.dict(
+            os.environ,
+            {"PUBLIC_APP_URL": "https://env.example.com", "PUBLIC_APP_HOST_URL": ""},
+            clear=False,
+        ):
             return await saas_docs.invoice_share_link("inv3", fake_req, kind="pdf", ttl_hours=1)
 
     out = asyncio.run(run())
-    assert out["url"].startswith("https://firma.example/api/invoices/inv3/pdf?t=")
+    assert out["url"].startswith("https://app.firma.example/api/invoices/inv3/pdf?t=")

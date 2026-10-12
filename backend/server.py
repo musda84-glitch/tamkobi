@@ -170,9 +170,10 @@ db = client[DB_NAME]
 
 app = FastAPI(title="TamKobi Cloud ERP & CRM & Muhasebe API")
 
-# Setup CORS — localhost and 127.0.0.1 are different origins (cookies do not follow).
+# Setup CORS — production subdomain origins; localhost for dev.
 def _cors_origins():
-    listed = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+    import host_audience as _ha
+    listed = _ha.parse_cors_origins_env()
     for extra in (
         "http://localhost",
         "http://127.0.0.1",
@@ -322,7 +323,7 @@ async def get_current_user(request: Request) -> dict:
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Giriş yapmanız gerekiyor.")
 
-    user = await get_user_from_token(token, db)
+    user = await get_user_from_token(token, db, request=request, path=request.url.path)
     # Revoked support sessions must not keep acting as the company
     try:
         import jwt as _jwt
@@ -374,6 +375,67 @@ class RegisterRequest(BaseModel):
     password: str
     company_name: Optional[str] = "Yeni Şirketim A.Ş."
     tax_number: Optional[str] = "1234567890"
+
+class SsoExchangeRequest(BaseModel):
+    code: str
+
+
+@api_router.post("/auth/sso-exchange")
+async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response: Response):
+    """One-time handoff code → host-only access_token (+ optional sa_return)."""
+    import json as _json
+    import auth_handoff
+    import host_audience as _ha
+    from auth_utils import SUPERADMIN_ACCESS_SECONDS, decode_access_payload
+
+    blob = await auth_handoff.consume_handoff(db, req.code)
+    try:
+        data = _json.loads(blob)
+    except Exception:
+        # Legacy: raw JWT only
+        data = {"access_token": blob, "sa_return": ""}
+    access = data.get("access_token") or ""
+    sa_ret = data.get("sa_return") or ""
+    if not access:
+        raise HTTPException(status_code=401, detail="Geçersiz handoff")
+    kind = _ha.host_kind(request)
+    try:
+        payload = decode_access_payload(access)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Geçersiz handoff token")
+    tok_aud = payload.get("aud")
+    if kind == _ha.KIND_APP and tok_aud != _ha.AUD_APP:
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    if kind == _ha.KIND_IK and tok_aud != _ha.AUD_IK:
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    if kind == _ha.KIND_SITE and tok_aud not in (None, _ha.AUD_SITE):
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    # Validate token is decodable + user exists (aud already checked against host)
+    user = await get_user_from_token(access, db)
+    max_age = SUPERADMIN_ACCESS_SECONDS if user.get("is_super_admin") else 7200
+    response.set_cookie(
+        key="access_token",
+        value=access,
+        **auth_cookie_kwargs(request, max_age=max_age),
+    )
+    if sa_ret and kind == _ha.KIND_APP:
+        response.set_cookie(
+            key="sa_return",
+            value=sa_ret,
+            **auth_cookie_kwargs(request, max_age=7200),
+        )
+    if kind == _ha.KIND_APP:
+        next_path = "/panel"
+    elif kind == _ha.KIND_IK:
+        next_path = "/personelim"
+    else:
+        next_path = "/sistem/sirketler"
+    return {
+        "status": "success",
+        "redirect": next_path,
+        "user": {"id": user.get("id"), "email": user.get("email"), "is_super_admin": user.get("is_super_admin")},
+    }
+
 
 @api_router.post("/auth/login")
 async def login(req: LoginRequest, request: Request, response: Response):
@@ -457,14 +519,50 @@ async def _issue_session_for_user(
     remember: bool = False,
 ) -> Dict[str, Any]:
     """Ortak oturum çerezi + yanıt gövdesi (login / 2FA doğrulama)."""
+    import host_audience as _ha
+    import public_url as pu
+
     email = (user.get("email") or "").strip().lower()
     user_id = str(user.get("_id", user.get("id")))
     is_sa = bool(user.get("is_super_admin"))
     role_doc = await rbac.role_for(user)
+    emp = await attendance.employee_for_user(user)
+    emp_id = (emp or {}).get("_id") or user.get("employee_id")
+    # Enrich for employee detection
+    user_view = {**user, "employee_id": emp_id, "role": user.get("role", "admin")}
+
+    kind = _ha.host_kind(request)
+    # Employee logging in on app → redirect to ik (no cookies on app)
+    if kind == _ha.KIND_APP and _ha.is_employee_user(user_view) and not is_sa:
+        ik_base = await pu.public_base_url_for(db, "ik")
+        return {
+            "redirect": f"{ik_base}/personelim",
+            "user": {
+                "id": user_id,
+                "email": user["email"],
+                "name": user["name"],
+                "role": user.get("role", "admin"),
+                "employee_id": emp_id,
+                "is_super_admin": False,
+            },
+            "companies": [],
+            "license": None,
+        }
+
+    aud = _ha.audience_for_request(request)
+    if kind == _ha.KIND_IK:
+        aud = _ha.AUD_IK
+    elif kind == _ha.KIND_APP:
+        aud = _ha.AUD_APP
+    elif is_sa:
+        aud = _ha.AUD_SITE
+    else:
+        aud = aud or _ha.AUD_APP
+
     # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
     token = create_access_token(
         user_id, email, user.get("role", "admin"),
-        is_super_admin=is_sa, mfa=is_sa,
+        is_super_admin=is_sa, mfa=is_sa, aud=aud,
     )
     refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa)
     access_age = access_cookie_max_age(is_super_admin=is_sa, remember=remember)
@@ -472,10 +570,9 @@ async def _issue_session_for_user(
     response.set_cookie(key="access_token", value=token, **auth_cookie_kwargs(request, max_age=access_age))
     response.set_cookie(key="refresh_token", value=refresh_tok, **auth_cookie_kwargs(request, max_age=refresh_age))
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
-    emp = await attendance.employee_for_user(user)
     plat = await saas_billing.settings() if is_sa else {}
     needs_setup = superadmin_2fa.needs_2fa_setup(user, plat)
-    return {
+    out = {
         "token": token,
         "requires_2fa_setup": needs_setup,
         "user": {
@@ -493,12 +590,15 @@ async def _issue_session_for_user(
             "is_super_admin": is_sa,
             "totp_enabled": superadmin_2fa.user_totp_enabled(user),
             "requires_2fa_setup": needs_setup,
-            "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
+            "employee_id": emp_id,
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
+    if kind == _ha.KIND_IK:
+        out["redirect"] = "/personelim"
+    return out
 
 
 # mysql_store update_one load→save olduğundan kullanıcı başına kilit (TOTP/recovery yarışı)
@@ -1954,7 +2054,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Reque
     email = req.get("email") or (contact or {}).get("email")
     approval = q.get("approval") or {}
     token = approval.get("token") or uuid.uuid4().hex
-    base = await _public_base_url(request, req.get("base_url") or "")
+    base = await _public_base_url(request, req.get("base_url") or "", context="app")
     link = f"{base}/teklif/{token}"
     total = f"{q.get('grand_total', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ (KDV dahil) tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
@@ -2644,7 +2744,7 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any], request: R
     email = req.get("email") or (contact or {}).get("email")
     tracking = p.get("tracking") or {}
     token = tracking.get("token") or uuid.uuid4().hex
-    base = await _public_base_url(request, req.get("base_url") or "")
+    base = await _public_base_url(request, req.get("base_url") or "", context="app")
     link = f"{base}/proje/{token}"
     message = (req.get("message") or f"Sayın {p.get('contact_name') or 'müşterimiz'}, {company.get('name') or 'firmamız'} olarak {p.get('project_number')} — {p.get('name')} projenizin güncel durumunu bu linkten takip edebilirsiniz (giriş gerekmez): {link}").strip()
     if link not in message:
@@ -2836,7 +2936,7 @@ async def convert_survey_to_quote(survey_id: str, user: dict = Depends(get_curre
     return {"status": "success", "quote": quote, "message": f"{s['survey_number']} → {quote['quote_number']} teklif oluşturuldu.", "advanced": True}
 
 @api_router.post("/auth/register")
-async def register(req: RegisterRequest, response: Response):
+async def register(req: RegisterRequest, request: Request, response: Response):
     email = req.email.strip().lower()
     existing = await db.users.find_one({"email": email})
     if existing:
@@ -2873,8 +2973,15 @@ async def register(req: RegisterRequest, response: Response):
     await db.users.insert_one(mongo_user)
     await saas.start_trial(company_id)
 
-    token = create_access_token(user_id, email, "admin")
-    return {
+    import auth_handoff
+    import host_audience as _ha
+    import public_url as pu
+    import json as _json
+
+    token = create_access_token(user_id, email, "admin", aud=_ha.AUD_APP)
+    # Site/kayıt host'unda app çerezi tutma — SSO handoff ile app'e geç
+    kind = _ha.host_kind(request)
+    out = {
         "token": token,
         "user": {
             "id": user_id,
@@ -2886,6 +2993,17 @@ async def register(req: RegisterRequest, response: Response):
             "active_company_id": company_id
         }
     }
+    if kind != _ha.KIND_APP:
+        blob = _json.dumps({"access_token": token, "sa_return": ""})
+        code = await auth_handoff.create_handoff(db, blob, purpose="register")
+        app_base = await pu.public_base_url_for(db, "app")
+        out["redirect"] = f"{app_base}/sso?code={code}"
+        out.pop("token", None)
+    else:
+        response.set_cookie(
+            key="access_token", value=token, **auth_cookie_kwargs(request, max_age=86400 * 7),
+        )
+    return out
 
 @api_router.get("/auth/me")
 async def get_me(request: Request):
@@ -3045,7 +3163,11 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
         "used_at": None,
         "created_at": now.isoformat(),
     })
-    base = await _public_base_url(request, req.get("base_url") or "")
+    # Personel davet/şifre → ik; diğerleri → app
+    _pw_ctx = "ik" if (next_kind in ("mesaim", "personelim", "login") and user.get("employee_id")) or (user.get("role") == "personel") else "app"
+    if next_kind in ("mesaim", "personelim"):
+        _pw_ctx = "ik"
+    base = await _public_base_url(request, req.get("base_url") or "", context=_pw_ctx)
     link = password_reset.reset_link(base, token, next_kind)
 
     if channel == "sms":
@@ -3661,7 +3783,7 @@ async def create_statement_link(contact_id: str, req: Dict[str, Any], request: R
             {"_id": contact_id},
             {"$set": {"statement_share": {"token": token, "created_at": datetime.now(timezone.utc).isoformat()}}},
         )
-    base = await _public_base_url(request, req.get("base_url") or "")
+    base = await _public_base_url(request, req.get("base_url") or "", context="app")
     link = f"{base}/ekstre/{token}"
     return {
         "status": "success",
@@ -3884,10 +4006,12 @@ async def _b2b_find_contact(ident: str) -> Optional[dict]:
     return await db.contacts.find_one({"b2b_enabled": True, "$or": [{"b2b_login_email": ident}, {"email": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}}, {"tax_number_or_id": ident}]})
 
 
-async def _public_base_url(request: Request, explicit: str = "") -> str:
-    """Müşteri linkleri için kanonik site kökü — Host/base_url kullanılmaz."""
+async def _public_base_url(request: Request, explicit: str = "", *, context: str = "app") -> str:
+    """Müşteri linkleri için kanonik kök — context: site|app|b2b|ik."""
     import public_url as pu
-    return await pu.public_base_url(db, explicit=explicit or "", request=request)
+    return await pu.public_base_url_for(
+        db, context, explicit=explicit or "", request=request,
+    )
 
 
 @api_router.post("/public/b2b/login")
@@ -3941,7 +4065,7 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
         "_id": token, "contact_id": c["_id"], "company_id": c["company_id"], "email": to,
         "expires_at": (now + timedelta(hours=1)).isoformat(), "used_at": None, "created_at": now.isoformat(),
     })
-    base = await _public_base_url(request, req.get("base_url") or "")
+    base = await _public_base_url(request, context="b2b")
     link = f"{base}/b2b/sifre/{token}" if base else f"/b2b/sifre/{token}"
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
     mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
@@ -19832,6 +19956,7 @@ async def mobile_manifest():
             "platform": "mobile",
             "auth": "bearer",
             "api_prefix": "/api",
+            "api_base": "https://tamkobi.com/api",
             "min_app_version": "1.0.0",
             "features": [
                 "dashboard",

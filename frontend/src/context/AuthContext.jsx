@@ -7,6 +7,7 @@ import { loadRadialSlots, normalizeRadialSlots, saveRadialSlotsLocal } from "../
 import { personelMenuPathAllowed, selfPersonnelNavAllowed } from "../utils/selfPersonnelNav";
 import { authPermPath, canAccessPath, isAddonEnabled, isFeatureEnabled, isModuleEnabled } from "../utils/authAccess";
 import { setPriceDecimals } from "../utils/money";
+import { getHostKind, hostUrl } from "../utils/hosts";
 
 const AuthContext = createContext(null);
 
@@ -117,6 +118,11 @@ export const AuthProvider = ({ children }) => {
   const resetRadialSlots = useCallback(() => persistRadialSlots(normalizeRadialSlots(null)), [persistRadialSlots]);
 
   const checkAuth = useCallback(async () => {
+    // B2B portal uses URL token auth — do not call panel /auth/me
+    if (getHostKind() === "b2b") {
+      setLoading(false);
+      return;
+    }
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
       if (!res.data?.authenticated || !res.data.user) {
@@ -127,7 +133,18 @@ export const AuthProvider = ({ children }) => {
         setActiveCompany(null);
         return;
       }
-      setUser({ ...res.data.user, impersonation: res.data.impersonation || null });
+      const u = res.data.user;
+      // Yalnızca çalışan (personel) app'te oturum açtıysa → ik self-servis
+      if (
+        getHostKind() === "app"
+        && u?.employee_id
+        && String(u?.role || "").toLowerCase() === "personel"
+        && !u?.is_super_admin
+      ) {
+        window.location.replace(hostUrl("ik", "/personelim"));
+        return;
+      }
+      setUser({ ...u, impersonation: res.data.impersonation || null });
       setAuthenticated(true);
       setLicense(res.data.license || null);
       if (res.data.user?.preferences?.module_order?.length) { setModuleOrder(res.data.user.preferences.module_order); localStorage.setItem("module_order", JSON.stringify(res.data.user.preferences.module_order)); }
@@ -169,25 +186,32 @@ export const AuthProvider = ({ children }) => {
       // Süper admin 2FA ikinci adımı — oturum açılmış sayma; /sistem/giris'e yönlendir
       if (res.data?.requires_2fa) {
         toast.message("İki adımlı doğrulama gerekli. Platform girişine yönlendiriliyorsunuz.");
-        window.location.href = "/sistem/giris";
-        return false;
+        window.location.href = hostUrl("site", "/sistem/giris");
+        return { ok: false, data: res.data };
       }
-      setUser(res.data.user);
-      setAuthenticated(true);
-      setLicense(res.data.license || null);
-      setCompanies(res.data.companies || []);
-      if (res.data.companies && res.data.companies.length > 0) {
-        const found = res.data.companies.find(c => c.id === res.data.user.active_company_id || c._id === res.data.user.active_company_id);
-        const active = found || res.data.companies[0];
-        setActiveCompany(active);
-        setPriceDecimals(active?.price_decimals);
+      // Employee on app → backend returns redirect to ik (no cookies)
+      if (res.data?.redirect && !res.data?.token) {
+        window.location.href = res.data.redirect;
+        return { ok: false, data: res.data, redirect: res.data.redirect };
       }
-      toast.success(`Hoş geldiniz, ${res.data.user.name}`);
-      return true;
+      if (res.data?.user) {
+        setUser(res.data.user);
+        setAuthenticated(true);
+        setLicense(res.data.license || null);
+        setCompanies(res.data.companies || []);
+        if (res.data.companies && res.data.companies.length > 0) {
+          const found = res.data.companies.find(c => c.id === res.data.user.active_company_id || c._id === res.data.user.active_company_id);
+          const active = found || res.data.companies[0];
+          setActiveCompany(active);
+          setPriceDecimals(active?.price_decimals);
+        }
+        toast.success(`Hoş geldiniz, ${res.data.user.name}`);
+      }
+      return { ok: true, data: res.data, redirect: res.data?.redirect };
     } catch (err) {
       const msg = err.response?.data?.detail || "Giriş yapılamadı.";
       toast.error(typeof msg === "string" ? msg : (msg?.detail || "Giriş yapılamadı."));
-      return false;
+      return { ok: false };
     }
   }, []);
 
