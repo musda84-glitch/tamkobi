@@ -26,6 +26,12 @@ def token_users(monkeypatch):
         return {"is_super_admin": True, "email": "platform@tamkobi.com"}
 
     monkeypatch.setattr(saas, "get_user_from_token", from_token)
+    import superadmin_2fa
+
+    async def _no_2fa(_db):
+        return False
+
+    monkeypatch.setattr(superadmin_2fa, "platform_requires_2fa", _no_2fa)
     saas.init(object(), None)
     return from_token
 
