@@ -3252,11 +3252,15 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
                 company = await db.companies.find_one({"_id": company_id}) or {}
                 brand = company.get("name") or brand
             msg = password_reset.sms_reset_message(name=user.get("name"), link=link, brand=brand)
-            await _platform_sms.send_platform_sms(
+            sms_res = await _platform_sms.send_platform_sms(
                 phone=phone, message=msg, context="erp_reset", ref_id=token,
                 company_id=company_id or "platform", contact_name=user.get("name"),
             )
-            sms_status, sms_detail = "sent", f"{password_reset.mask_phone(phone)} numarasına gönderildi."
+            if sms_res.get("ok"):
+                sms_status, sms_detail = "sent", f"{password_reset.mask_phone(phone)} numarasına gönderildi."
+            else:
+                sms_status = "failed"
+                sms_detail = str(sms_res.get("detail") or "SMS gönderilemedi.")[:140]
         except HTTPException as e:
             sms_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
             sms_detail = str(e.detail)[:140]
@@ -11144,8 +11148,14 @@ async def _send_sms_to(company_id: str, recipients: List[Dict[str, Any]], messag
         if creds:
             try:
                 res = await comm_service.sms_send(creds, [{"no": v["no"], "msg": v.get("message") or message} for v in valid])
-                status_val = "sent" if res["ok"] else "failed"
-                jobid, error = res.get("jobid"), res.get("error")
+                if not isinstance(res, dict):
+                    res = {"ok": False, "error": "Geçersiz sağlayıcı cevabı", "raw": res}
+                status_val = "sent" if res.get("ok") else "failed"
+                jobid = res.get("jobid")
+                error = comm_service.sms_detail_text(
+                    res.get("error") or res.get("message") or res.get("raw") or (None if res.get("ok") else "SMS gönderilemedi."),
+                    limit=300,
+                ) or None
                 last_error = error
             except Exception as e:
                 status_val, jobid, error = "failed", None, f"{provider_name}'e erişilemedi: {str(e)[:120]}"

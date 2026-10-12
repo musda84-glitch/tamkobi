@@ -101,7 +101,11 @@ export const PlatformSmsPanel = () => {
     setBusy("test");
     try {
       const r = await axios.post(`${API_URL}/system/sms/send-test`, { phone: testPhone.trim() });
-      toast.success(r.data.message || "Test SMS gönderildi.");
+      if (r.data?.ok === false) {
+        toast.error(r.data.message || r.data.detail || "Test SMS gönderilemedi.");
+      } else {
+        toast.success(r.data.message || "Test SMS gönderildi.");
+      }
       load();
     } catch (err) {
       toast.error(errText(err, "Test SMS gönderilemedi."));

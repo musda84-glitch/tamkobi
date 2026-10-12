@@ -3,6 +3,7 @@ import asyncio
 import base64
 import email
 import imaplib
+import json
 import re
 from email.header import decode_header, make_header
 from email.message import EmailMessage
@@ -13,6 +14,24 @@ from typing import List, Dict, Any, Optional
 import httpx
 import aiosmtplib
 from cryptography.fernet import Fernet
+
+
+def sms_detail_text(value: Any, limit: int = 300) -> str:
+    """Provider detail/raw → always a string before truncation (dict raw must not KeyError on [:n])."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        s = value
+    elif isinstance(value, (dict, list, tuple)):
+        try:
+            s = json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            s = str(value)
+    else:
+        s = str(value)
+    if limit is None or limit < 0:
+        return s
+    return s[:limit]
 
 
 def _data_dirs() -> List[Path]:
@@ -135,11 +154,29 @@ NETGSM_ERRORS = {
     "41": "Gönderici başlığı (msgheader) onaylı değil.",
     "50": "İYS kontrollü gönderim ayarları eksik.",
     "51": "İYS marka ayarları eksik.",
+    "60": "Belirtilen JobID bulunamadı.",
     "70": "Eksik/hatalı parametre.",
     "80": "Gönderim limiti aşıldı.",
     "85": "Aynı numaraya kısa sürede çok fazla gönderim.",
     "100": "Netgsm sistem hatası — kısa süre sonra tekrar deneyin.",
+    "101": "Netgsm sistem hatası — kısa süre sonra tekrar deneyin.",
+    "5000": "Tanımsız Netgsm hatası.",
 }
+
+
+def netgsm_error_message(code: Any, description: Any = None) -> str:
+    c = str(code or "").strip()
+    mapped = NETGSM_ERRORS.get(c)
+    desc = sms_detail_text(description, limit=200).strip()
+    if mapped and desc and desc.lower() not in mapped.lower():
+        return f"{mapped} ({desc})"
+    if mapped:
+        return mapped
+    if desc:
+        return desc
+    if c:
+        return f"Netgsm hata kodu: {c}"
+    return "Netgsm gönderimi başarısız."
 
 def normalize_phone(phone: str) -> Optional[str]:
     digits = re.sub(r"\D", "", phone or "")
@@ -256,7 +293,36 @@ def _parse_netgsm_body(r: httpx.Response) -> Dict[str, Any]:
         data = r.json()
         return data if isinstance(data, dict) else {"raw": data}
     except Exception:
-        return {"raw": (r.text or "")[:300]}
+        return {"raw": sms_detail_text(r.text or "", limit=300)}
+
+
+def parse_netgsm_send_response(data: Any, *, http_status: int = 200) -> Dict[str, Any]:
+    """Normalize /sms/rest/v2/send JSON: code / jobid / description → ok + string fields."""
+    body = data if isinstance(data, dict) else {"raw": data}
+    code = str(body.get("code", "") or "").strip()
+    jobid = body.get("jobid")
+    if jobid is not None and not isinstance(jobid, str):
+        jobid = str(jobid)
+    description = body.get("description")
+    # Doküman: code "00" = başarılı (jobid genelde gelir)
+    ok = http_status == 200 and code == "00"
+    if ok:
+        err = None
+        msg = sms_detail_text(description or "queued", limit=300) or "queued"
+    else:
+        err = netgsm_error_message(code, description)
+        if not code and http_status and http_status >= 400:
+            err = f"HTTP {http_status}: {err}" if err else f"HTTP {http_status}"
+        msg = err
+    return {
+        "ok": ok,
+        "jobid": jobid if ok else (jobid or None),
+        "code": code,
+        "error": err,
+        "message": msg,
+        "description": sms_detail_text(description, limit=300) if description is not None else "",
+        "raw": body,
+    }
 
 def _netgsm_clean_messages(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """Sadece msg/no; numara 5XXXXXXXXX; boş mesaj/numara elenir (aksi halde Netgsm 70)."""
@@ -302,21 +368,26 @@ def build_netgsm_send_payload(
 async def netgsm_send(creds: dict, messages: List[Dict[str, str]], encoding: str = "TR") -> Dict[str, Any]:
     payload, herr = build_netgsm_send_payload(creds, messages, encoding)
     if herr:
-        return {"ok": False, "jobid": None, "code": "70", "error": herr, "raw": None}
+        return {"ok": False, "jobid": None, "code": "70", "error": herr, "message": herr, "raw": None}
     async with httpx.AsyncClient(base_url=NETGSM_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
         # Resmi REST v2: POST https://api.netgsm.com.tr/sms/rest/v2/send (Basic Auth)
         # Temel örnek: { msgheader, encoding, messages } — iysfilter/appname opsiyonel
         r = await client.post(NETGSM_SEND_PATH, auth=_netgsm_auth(creds), json=payload)
     data = _parse_netgsm_body(r)
-    code = str(data.get("code", "") or "")
-    # HTTP 200 + 00/01/02 = kuyruğa alındı; HTTP 406 = Netgsm hata kodu
-    ok = r.status_code == 200 and code in ("00", "01", "02")
-    err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or (data.get("raw") if isinstance(data.get("raw"), str) else None) or f"HTTP {r.status_code}"
-    if not ok and code == "70":
-        err = "Eksik/hatalı parametre — gönderici başlığı (3–11), numara (5XXXXXXXXX) ve mesajı kontrol edin."
-        if data.get("description"):
-            err = f"{err} ({data.get('description')})"
-    return {"ok": ok, "jobid": data.get("jobid"), "code": code, "error": err, "raw": data, "payload_preview": {"msgheader": payload.get("msgheader"), "encoding": payload.get("encoding"), "count": len(payload.get("messages") or [])}}
+    parsed = parse_netgsm_send_response(data, http_status=r.status_code)
+    if not parsed["ok"] and parsed.get("code") == "70":
+        tip = "Eksik/hatalı parametre — gönderici başlığı (3–11), numara (5XXXXXXXXX) ve mesajı kontrol edin."
+        desc = parsed.get("description") or ""
+        parsed["error"] = f"{tip} ({desc})" if desc else tip
+        parsed["message"] = parsed["error"]
+    return {
+        **parsed,
+        "payload_preview": {
+            "msgheader": payload.get("msgheader"),
+            "encoding": payload.get("encoding"),
+            "count": len(payload.get("messages") or []),
+        },
+    }
 
 
 def build_netgsm_balance_payload(creds: dict, stip: int = 3) -> dict:
@@ -339,9 +410,10 @@ async def netgsm_balance(creds: dict) -> Dict[str, Any]:
     ok = r.status_code < 400 and code in ("", "00") and "balance" in data
     if not ok and r.status_code < 400 and code in ("", "00") and data.get("raw") is None:
         ok = True
-    err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or f"HTTP {r.status_code}"
+    err = None if ok else netgsm_error_message(code, data.get("description")) or f"HTTP {r.status_code}"
     if not ok and code == "70":
         err = "Bakiye sorgusu parametre hatası — API kullanıcı adı/şifresini kontrol edin."
+    err = sms_detail_text(err, limit=300) if err else None
     return {"ok": ok, "code": code, "data": data, "error": err, "message": err}
 
 async def netgsm_headers(creds: dict) -> Dict[str, Any]:
@@ -354,7 +426,9 @@ async def netgsm_headers(creds: dict) -> Dict[str, Any]:
         headers = [headers]
     code = str(data.get("code", "") or "")
     ok = r.status_code < 400 and isinstance(headers, list) and (code in ("", "00") or bool(headers))
-    err = None if ok else NETGSM_ERRORS.get(code) or data.get("description") or f"HTTP {r.status_code}"
+    err = None if ok else sms_detail_text(
+        NETGSM_ERRORS.get(code) or data.get("description") or f"HTTP {r.status_code}", limit=300
+    )
     return {"ok": ok, "headers": [str(h).strip() for h in headers if h], "code": code, "error": err, "raw": data}
 
 async def netgsm_verify(creds: dict) -> Dict[str, Any]:
@@ -445,11 +519,13 @@ async def iletimerkezi_send(creds: dict, messages: List[Dict[str, str]], encodin
             code_i, msg, resp = _im_status(data)
             ok = r.status_code == 200 and code_i == 200
             order = resp.get("order") if isinstance(resp.get("order"), dict) else {}
+            err = None if ok else sms_detail_text(msg or f"HTTP {r.status_code}", limit=300)
             last = {
                 "ok": ok,
                 "jobid": str(order.get("id") or "") or None,
                 "code": str(code_i),
-                "error": None if ok else (msg or f"HTTP {r.status_code}"),
+                "error": err,
+                "message": err,
                 "raw": data,
             }
             if not ok:
@@ -538,8 +614,8 @@ async def verimor_send(creds: dict, messages: List[Dict[str, str]], encoding: st
     err = None
     if isinstance(data, dict):
         err = data.get("message") or data.get("error") or data.get("raw")
-    err = err or text[:200] or f"HTTP {r.status_code}"
-    return {"ok": False, "jobid": None, "code": str(r.status_code), "error": str(err), "raw": data}
+    err = sms_detail_text(err or text or f"HTTP {r.status_code}", limit=300)
+    return {"ok": False, "jobid": None, "code": str(r.status_code), "error": err, "message": err, "raw": data}
 
 async def verimor_balance(creds: dict) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=20) as client:
