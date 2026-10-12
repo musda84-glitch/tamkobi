@@ -19776,6 +19776,21 @@ async def api_version():
     return JSONResponse(read_stamp(), headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 
+@app.get("/api/health")
+async def api_health():
+    """Public liveness (process up). Readiness with DB is /api/health/ready."""
+    stamp = read_stamp()
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "service": "TamKobi API",
+            "version": stamp.get("version") or "2.0.0",
+            "git_sha": stamp.get("git_sha_short"),
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
 @app.get("/api/health/ready")
 async def api_health_ready():
     """Public readiness: DB SELECT 1 + install detection (used by blue/green health checks)."""
