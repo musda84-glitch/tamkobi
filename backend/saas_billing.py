@@ -13,7 +13,7 @@ import rbac
 import gib_credits
 import saas
 import user_numbers
-from auth_utils import hash_password, create_access_token, create_refresh_token
+from auth_utils import hash_password, create_access_token, create_refresh_token, auth_cookie_kwargs
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger("TamKobiERP")
@@ -48,6 +48,8 @@ DEFAULT_SETTINGS = {
     "legal_phone": "",
     "legal_email": "",
     "legal_website": "",
+    # Süper admin (/sistem) için TOTP 2FA zorunluluğu
+    "require_superadmin_2fa": False,
 }
 
 
@@ -246,6 +248,8 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
             upd[k] = upd[k].strip()[:500]
     if "gib_credits_sales" in req:
         upd["gib_credits_sales"] = bool(req["gib_credits_sales"])
+    if "require_superadmin_2fa" in req:
+        upd["require_superadmin_2fa"] = bool(req["require_superadmin_2fa"])
     if "reminder_days" in req:
         upd["reminder_days"] = sorted({int(x) for x in req["reminder_days"] if str(x).strip().isdigit() and 0 < int(x) <= 60}, reverse=True) or [7, 1]
     if "trial_days" in req:
@@ -384,7 +388,7 @@ async def public_plans():
 
 
 @router.post("/public/signup")
-async def public_signup(req: Dict[str, Any], response: Response):
+async def public_signup(req: Dict[str, Any], request: Request, response: Response):
     email = (req.get("email") or "").strip().lower(); pwd = req.get("password") or ""; cname = (req.get("company_name") or "").strip(); name = (req.get("name") or "").strip()
     if not cname or not name or "@" not in email:
         raise HTTPException(status_code=400, detail="Şirket adı, ad soyad ve geçerli e-posta gerekli.")
@@ -417,6 +421,14 @@ async def public_signup(req: Dict[str, Any], response: Response):
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)
     import demo as demo_pack
     await demo_pack.seed_for_new_company(cid)
-    response.set_cookie(key="access_token", value=create_access_token(uid, email, "admin"), httponly=True, max_age=86400 * 7, path="/")
-    response.set_cookie(key="refresh_token", value=create_refresh_token(uid), httponly=True, max_age=86400 * 30, path="/")
+    response.set_cookie(
+        key="access_token",
+        value=create_access_token(uid, email, "admin"),
+        **auth_cookie_kwargs(request, max_age=86400 * 7),
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=create_refresh_token(uid),
+        **auth_cookie_kwargs(request, max_age=86400 * 30),
+    )
     return {"status": "success", "company_id": cid, "user": {"id": uid, "email": email, "name": name, "role": "admin"}, "license": await saas.effective(cid), "message": f"Hoş geldiniz! {st['trial_days']} günlük {plan['name'] if plan else ''} denemeniz başladı."}

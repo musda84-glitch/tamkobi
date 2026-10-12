@@ -12,10 +12,21 @@ export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) =>
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
-    if (!loading && (!user || !user.is_super_admin || !authenticated)) navigate("/sistem/giris", { replace: true });
-  }, [loading, user, authenticated, navigate]);
+    if (loading) return;
+    if (!user || !user.is_super_admin || !authenticated) {
+      navigate("/sistem/giris", { replace: true });
+      return;
+    }
+    // 2FA zorunlu ve kurulum yoksa kendini kilitlemeden kurulum ekranına yönlendir
+    if (user.requires_2fa_setup && location.pathname !== "/sistem/2fa-kurulum") {
+      navigate("/sistem/2fa-kurulum", { replace: true });
+    }
+  }, [loading, user, authenticated, navigate, location.pathname]);
   if (loading || !user?.is_super_admin || !authenticated) {
     return <div className="min-h-screen bg-[#0b0f1a] text-slate-400 flex items-center justify-center text-xs" data-testid="system-loading">Yükleniyor…</div>;
+  }
+  if (user.requires_2fa_setup) {
+    return <div className="min-h-screen bg-[#0b0f1a] text-slate-400 flex items-center justify-center text-xs" data-testid="system-2fa-redirect">2FA kurulumu gerekli…</div>;
   }
   const here = location.pathname.replace(/\/+$/, "") || "/sistem";
   return (

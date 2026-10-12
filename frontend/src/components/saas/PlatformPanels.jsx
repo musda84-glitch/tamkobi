@@ -122,6 +122,18 @@ export const PlatformSettingsPanel = () => {
         </div>
       </div>
       <PaytrSettings />
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="sa-2fa-toggle-card">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900 text-sm">Süper admin için 2FA zorunlu</h3>
+            <p className="text-[11px] text-slate-500 mt-1">Açıkken platform yöneticileri (/sistem) TOTP kurmadan panele ilerleyemez; girişten sonra kurulum ekranına yönlendirilir. Telefon kaybında sunucuda <code className="bg-slate-100 px-1 rounded">CONFIRM=yes python scripts/reset_superadmin_2fa.py</code> kullanılır.</p>
+          </div>
+          <label className="flex items-center gap-2 shrink-0 pt-0.5">
+            <Toggle on={!!s.require_superadmin_2fa} onChange={(v) => setS({ ...s, require_superadmin_2fa: v })} testId="set-require-sa-2fa" />
+            <span className="font-semibold">{s.require_superadmin_2fa ? "Zorunlu" : "İsteğe bağlı"}</span>
+          </label>
+        </div>
+      </div>
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="gib-sales-toggle-card">
         <div className="flex items-start justify-between gap-3">
           <div>

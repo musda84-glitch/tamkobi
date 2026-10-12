@@ -316,6 +316,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/auth/reset/",
     "/api/auth/logout",
     "/api/auth/me",
+    "/api/auth/2fa/verify",
     "/api/auth/impersonate/exit",
     "/api/public/",
     "/api/setup/",
