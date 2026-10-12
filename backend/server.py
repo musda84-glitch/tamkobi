@@ -229,6 +229,16 @@ def clean_docs(docs: list) -> list:
     return [clean_doc(d) for d in docs]
 
 # Startup event
+def _start_leased_background(name: str, factory):
+    """Run a forever-loop under a DB lease so only one worker/instance owns it."""
+    import platform_lease
+
+    async def _runner():
+        await platform_lease.run_exclusive(db, name, factory)
+
+    asyncio.get_event_loop().create_task(_runner())
+
+
 @app.on_event("startup")
 async def startup_event():
     try:
@@ -236,12 +246,14 @@ async def startup_event():
     except RuntimeError as e:
         logger.error("%s", e)
         raise SystemExit(1) from e
-    asyncio.get_event_loop().create_task(pricing.scheduler_loop())
-    asyncio.get_event_loop().create_task(partner_pay.scheduler_loop(db))
-    asyncio.get_event_loop().create_task(employee_pay.scheduler_loop(db, generate_payroll))
     try:
         await db._ensure()
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
+        try:
+            import platform_lease as _pl
+            await _pl.ensure_table(db)
+        except Exception as lease_exc:
+            logger.warning("platform_locks ensure skipped: %s", lease_exc)
         installed = await setup_install.detect_installed(db)
         if not installed:
             logger.info("TamKobi is not installed. Open /kurulum to finish setup.")
@@ -286,17 +298,23 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
     attendance.init_notify(_mail_account, comm_service.smtp_send)
-    import asyncio as _asyncio
-    _asyncio.get_event_loop().create_task(attendance.watcher_loop())
-    _asyncio.get_event_loop().create_task(_marketplace_auto_sync_loop())
-    _asyncio.get_event_loop().create_task(_bank_auto_sync_loop())
-    _asyncio.get_event_loop().create_task(_einvoice_inbox_auto_loop())
-    _asyncio.get_event_loop().create_task(e_invoice.outbound_status_loop())
-    _asyncio.get_event_loop().create_task(saas_billing.reminder_loop())
-    _asyncio.get_event_loop().create_task(applog.rotation_loop())
-    import perfmon
-    _asyncio.get_event_loop().create_task(perfmon.loop())
-    _asyncio.get_event_loop().create_task(edoc_backup.reminder_loop())
+    import platform_lease
+    if platform_lease.background_jobs_enabled():
+        import perfmon
+        _start_leased_background("bg.pricing", pricing.scheduler_loop)
+        _start_leased_background("bg.partner_pay", lambda: partner_pay.scheduler_loop(db))
+        _start_leased_background("bg.employee_pay", lambda: employee_pay.scheduler_loop(db, generate_payroll))
+        _start_leased_background("bg.attendance", attendance.watcher_loop)
+        _start_leased_background("bg.marketplace_sync", _marketplace_auto_sync_loop)
+        _start_leased_background("bg.bank_sync", _bank_auto_sync_loop)
+        _start_leased_background("bg.einvoice_inbox", _einvoice_inbox_auto_loop)
+        _start_leased_background("bg.einvoice_outbound", e_invoice.outbound_status_loop)
+        _start_leased_background("bg.saas_billing", saas_billing.reminder_loop)
+        _start_leased_background("bg.applog_rotation", applog.rotation_loop)
+        _start_leased_background("bg.perfmon", perfmon.loop)
+        _start_leased_background("bg.edoc_backup", edoc_backup.reminder_loop)
+    else:
+        logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:
@@ -19756,6 +19774,52 @@ async def root():
 async def api_version():
     """Public. Names the commit this API process was built from so a stale image is visible."""
     return JSONResponse(read_stamp(), headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+
+@app.get("/api/health")
+async def api_health():
+    """Public liveness (process up). Readiness with DB is /api/health/ready."""
+    stamp = read_stamp()
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "service": "TamKobi API",
+            "version": stamp.get("version") or "2.0.0",
+            "git_sha": stamp.get("git_sha_short"),
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
+@app.get("/api/health/ready")
+async def api_health_ready():
+    """Public readiness: DB SELECT 1 + install detection (used by blue/green health checks)."""
+    try:
+        await db._ensure()
+        async with db._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                row = await cur.fetchone()
+        if not row or row[0] != 1:
+            raise RuntimeError("SELECT 1 failed")
+        installed = await setup_install.detect_installed(db)
+        stamp = read_stamp()
+        return JSONResponse(
+            {
+                "ready": True,
+                "db": True,
+                "installed": bool(installed),
+                "git_sha": stamp.get("git_sha"),
+                "git_sha_short": stamp.get("git_sha_short"),
+            },
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"ready": False, "db": False, "error": str(exc)[:200]},
+            status_code=503,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
 
 
 @app.get("/api/mobile/manifest")

@@ -1,0 +1,66 @@
+name: ShellCheck (deploy)
+
+on:
+  push:
+    paths:
+      - "deploy/**"
+      - ".github/workflows/shellcheck.yml"
+  pull_request:
+    paths:
+      - "deploy/**"
+      - ".github/workflows/shellcheck.yml"
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint deploy scripts
+        run: |
+          shellcheck -x -s sh \
+            deploy/update-native.sh \
+            deploy/migrate-zero-downtime.sh \
+            deploy/rollback.sh \
+            deploy/status.sh \
+            deploy/lib/common.sh \
+            deploy/lib/frontend.sh \
+            deploy/lib/backend.sh
+      - name: release.conf clears ExecStart before setting one
+        run: |
+          set -eu
+          ROOT=/tmp/zdd-ci-root
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/backend-releases/deadbeef" "$ROOT/venvs/deadbeef/bin"
+          printf '#!/bin/sh\n' >"$ROOT/venvs/deadbeef/bin/uvicorn"
+          chmod +x "$ROOT/venvs/deadbeef/bin/uvicorn"
+          DROP="$ROOT/systemd"
+          export ROOT BACKEND_RELEASES="$ROOT/backend-releases" VENVS_DIR="$ROOT/venvs"
+          export SYSTEMD_DROPIN_ROOT="$DROP" SYSTEMD_UNIT_ROOT="$DROP" SKIP_SYSTEMCTL=1
+          export GIT_SHA=deadbeef GIT_BRANCH=ci GIT_MESSAGE=ci BUILD_TIME=t APP_VERSION=1
+          # shellcheck source=/dev/null
+          . deploy/lib/common.sh
+          # shellcheck source=/dev/null
+          . deploy/lib/backend.sh
+          backend_write_instance_dropins 8001 deadbeef "$ROOT/venvs/deadbeef"
+          conf="$DROP/tamkobi-backend@8001.service.d/release.conf"
+          grep -q '^ExecStart=$' "$conf"
+          test "$(grep -c '^ExecStart=.' "$conf")" = "1"
+          awk '/^ExecStart=$/{c=1} /^ExecStart=./{if(!c) exit 1} END{if(!c) exit 1}' "$conf"
+          if command -v systemd-analyze >/dev/null 2>&1; then
+            cp deploy/tamkobi-backend@.service "$DROP/tamkobi-backend@.service"
+            unit="$DROP/tamkobi-backend@8001.service"
+            printf '%s\n' \
+              '[Unit]' \
+              'Description=CI verify' \
+              '[Service]' \
+              'Type=simple' \
+              'User=root' \
+              'ExecStart=/bin/false' >"$unit"
+            systemd-analyze verify "$unit" 2>&1 | tee /tmp/systemd-verify.out || true
+            if grep -Ei 'Refusing|more than one ExecStart' /tmp/systemd-verify.out; then
+              echo "systemd-analyze reported dual ExecStart" >&2
+              exit 1
+            fi
+          fi

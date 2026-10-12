@@ -164,7 +164,9 @@ async def get_user_from_token(token: str, db: Any) -> dict:
             except Exception:
                 enabled_ts = None
             iat = payload.get("iat")
-            if enabled_ts is not None and (iat is None or float(iat) < float(enabled_ts)):
+            # Compare at whole-second resolution so a token minted in the same
+            # second as totp_enabled_at is accepted (JWT iat is typically int seconds).
+            if enabled_ts is not None and (iat is None or int(float(iat)) < int(float(enabled_ts))):
                 raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
         user["id"] = str(user.get("_id", user.get("id")))
         user.pop("password_hash", None)

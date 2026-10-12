@@ -58,6 +58,7 @@ def test_get_current_user_demo_fallback_yok():
         ("/api/setup/status", "GET"),
         ("/api/version", "GET"),
         ("/api/health", "GET"),
+        ("/api/health/ready", "GET"),
         ("/api/mobile/manifest", "GET"),
         ("/api/platform/notices", "GET"),
         ("/api/webhook/stripe", "POST"),
