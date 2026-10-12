@@ -138,6 +138,61 @@ test("shows admin email, membership and sends password reset", async () => {
   expect(call[1]).toMatchObject({ email: "admin@matek.test", user_id: "usr_1" });
 });
 
+test("providers error disables einvoice save and toasts", async () => {
+  const { toast } = require("sonner");
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/einvoice/providers")) {
+      return Promise.reject({ response: { data: { detail: "Bu uç platform yönetimi oturumunda kullanılamaz" }, status: 403 } });
+    }
+    return Promise.resolve({ data: { ...companyPayload, einvoice: { provider: "isnet", status: "configured" } } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <CompanyLicenseDrawer
+        companyId="comp_matek"
+        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
+        catalog={[]}
+        companies={[]}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />
+    );
+  });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const saveBtn = host.querySelector('[data-testid="drawer-einvoice-save"]');
+  expect(saveBtn).not.toBeNull();
+  expect(saveBtn.disabled).toBe(true);
+  expect(toast.error).toHaveBeenCalled();
+  expect(host.querySelector('[data-testid="drawer-einvoice-providers-error"]')).not.toBeNull();
+});
+
+test("orphan provider keeps current value in dropdown", async () => {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [{ code: "foriba", name: "Foriba" }] });
+    return Promise.resolve({ data: { ...companyPayload, einvoice: { provider: "isnet", status: "configured" } } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <CompanyLicenseDrawer
+        companyId="comp_matek"
+        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
+        catalog={[]}
+        companies={[]}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />
+    );
+  });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const orphan = host.querySelector('[data-testid="drawer-einvoice-provider-orphan"]');
+  expect(orphan).not.toBeNull();
+  expect(orphan.textContent).toContain("mevcut: isnet");
+  expect(host.querySelector('[data-testid="drawer-einvoice-provider"]')?.value).toBe("isnet");
+});
+
 test("system company drawer hosts İşNet SOAP panel when provider is isnet", async () => {
   axios.get.mockImplementation((url) => {
     const u = String(url);

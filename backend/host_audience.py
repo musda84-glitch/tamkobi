@@ -52,6 +52,16 @@ _YNT_ALLOWED_PREFIXES = (
     "/api/system",
     "/api/platform/admin",
     "/api/saas",  # legacy SA saas routes if any
+    # Platform şirket çekmecesi: e-fatura entegratörü + İşNet SOAP/portal
+    "/api/einvoice/providers",
+    "/api/einvoice/settings",
+    "/api/einvoice/test",
+    "/api/integrations/isnet/",
+    "/api/integrations/isnet-portal/",
+    "/api/files/upload",
+    "/api/public/plans",
+    # ynt /yasal* sayfası
+    "/api/public/legal",
 )
 
 

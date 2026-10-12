@@ -38,9 +38,10 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
   const isSystem = variant === "system";
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [testMode, setTestMode] = useState(true);
   const [hasPassword, setHasPassword] = useState(false);
-  const [status, setStatus] = useState("simulated");
+  const [status, setStatus] = useState("");
   const [eDispatchEnabled, setEDispatchEnabled] = useState(true);
   const [despatch, setDespatch] = useState(emptyDespatch);
   const [formData, setFormData] = useState({
@@ -66,6 +67,7 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
   const load = useCallback(async () => {
     if (!companyId) return;
     setBooting(true);
+    setLoadError(false);
     try {
       const r = await axios.get(`${API_URL}/einvoice/settings`, { params: { company_id: companyId } });
       const d = r.data || {};
@@ -82,7 +84,10 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
       setStatus(d.status || "simulated");
       setEDispatchEnabled(d.e_dispatch_enabled !== false);
       setDespatch({ ...emptyDespatch, ...(d.despatch_defaults || {}) });
+      setLoadError(false);
     } catch (err) {
+      setLoadError(true);
+      setStatus("load_error");
       toast.error(err.response?.data?.detail || "İşNet ayarları alınamadı.");
     } finally {
       setBooting(false);
@@ -229,12 +234,24 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
           </p>
         </div>
         <span
-          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
+          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+            status === "configured"
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+              : status === "load_error"
+                ? "bg-rose-50 text-rose-700 border-rose-200"
+                : "bg-amber-50 text-amber-700 border-amber-200"
+          }`}
           data-testid="isnet-status"
         >
-          {status === "configured" ? "YAPILANDIRILDI" : "SİMÜLE"}
+          {status === "configured" ? "YAPILANDIRILDI" : status === "load_error" ? "YÜKLENEMEDİ" : "SİMÜLE"}
         </span>
       </div>
+
+      {loadError ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-800" data-testid="isnet-load-error">
+          Ayarlar yüklenemedi. Kaydet / Test kapalı — sayfayı yenileyip tekrar deneyin.
+        </div>
+      ) : null}
 
       {isSystem ? (
         <>
@@ -580,7 +597,7 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
               <button
                 type="button"
                 onClick={handleSupportPack}
-                disabled={loading}
+                disabled={loading || loadError}
                 className="px-4 py-2 border border-slate-200 rounded-xl font-semibold disabled:opacity-60 inline-flex items-center gap-1.5"
                 data-testid="isnet-support-pack-btn"
                 title="İşNet desteğe request.xml ve response.txt indir"
@@ -591,7 +608,7 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
               <button
                 type="button"
                 onClick={handleTestConnection}
-                disabled={loading}
+                disabled={loading || loadError}
                 className="px-4 py-2 border border-slate-200 rounded-xl font-semibold disabled:opacity-60 inline-flex items-center gap-1.5"
                 data-testid="isnet-test-btn"
               >
@@ -602,7 +619,7 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
           ) : null}
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || loadError}
             className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold disabled:opacity-60 inline-flex items-center gap-1.5"
             data-testid="isnet-save-btn"
           >
