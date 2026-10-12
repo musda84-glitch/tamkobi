@@ -321,6 +321,12 @@ async def startup_event():
         _start_leased_background("bg.perfmon", perfmon.loop)
         _start_leased_background("bg.edoc_backup", edoc_backup.reminder_loop)
         try:
+            import event_notify as _evn
+            _start_leased_background("bg.notify_digest", _evn.digest_loop)
+            _start_leased_background("bg.notify_overdue", _evn.overdue_loop)
+        except Exception as _ene:
+            logger.warning("event_notify background loops skipped: %s", _ene)
+        try:
             import platform_store as _pstore
             _pstore.init(db)
             _start_leased_background(
@@ -1742,6 +1748,12 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
             "last_inbox_sync_message": message[:500],
         }},
     )
+    if pulled:
+        try:
+            import event_notify
+            await event_notify.notify_einvoice_batch(company_id, pulled)
+        except Exception:
+            logger.exception("einvoice_incoming notify failed for %s", company_id)
     return result
 
 
@@ -4811,6 +4823,18 @@ async def _b2b_owned_order(token: str, order_id: str) -> tuple:
     return c, o
 
 async def _notify_company(company_id: str, typ: str, title: str, message: str, ref_id: str):
+    # Yeni sipariş / B2B → event_notify (e-posta/SMS tercihleri); diğer tipler yalnız in-app.
+    if typ in ("b2b_order", "order_new"):
+        try:
+            import event_notify
+            await event_notify.notify_event(
+                company_id, "order_new", title, message,
+                link="/orders", ref_type="order", ref_id=ref_id,
+                dedupe_key=f"order:b2b:{ref_id}",
+            )
+            return
+        except Exception:
+            logger.exception("order_new notify_event failed")
     import notify as _notify
     await _notify.insert_notification(db, _notify.notification_doc(
         company_id, typ, title, message, ref_type="order", ref_id=ref_id,
@@ -12808,6 +12832,7 @@ def _apply_stock_matches_to_order(order: dict, match_idx: dict) -> dict:
 
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
     inserted = updated = 0
+    inserted_orders: list = []
     channels = omp_media.marketplace_channels_from_orders(docs or [])
     mp_media_idx = await omp_media.load_marketplace_cache_media_index(db, company_id, channels) if channels else {}
     match_idx = await _load_marketplace_stock_match_index(company_id) if docs else {}
@@ -12851,6 +12876,13 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 except Exception:
                     logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", d.get("order_number"))
             inserted += 1
+            inserted_orders.append({
+                "_id": d["_id"],
+                "channel": channel,
+                "order_number": order_number,
+                "grand_total": d.get("grand_total") or d.get("total_amount"),
+                "customer_name": d.get("customer_name"),
+            })
         except DuplicateKeyError:
             # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
             existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
@@ -12864,7 +12896,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 if not existing.get("contact_id"):
                     await _ensure_order_contact({**existing, **payload})
                 updated += 1
-    return {"inserted": inserted, "updated": updated}
+    return {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
 
 CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": "Hepsiburada Müşterisi", "amazon": "Amazon Müşterisi", "n11": "n11 Müşterisi", "shopify": "Shopify Müşterisi",
                              "woocommerce": "WooCommerce Müşterisi", "ciceksepeti": "Çiçeksepeti Müşterisi", "shopphp": "ShopPHP Müşterisi", "b2b": "B2B Bayi", "manual": "Genel", "saha": "Saha Müşterisi"}
@@ -13534,6 +13566,7 @@ async def _sync_ecommerce_channel_core(
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
         await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        await _notify_marketplace_inserted(company_id, res)
         return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
     if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
         client = marketplace_providers.TrendyolClient(config)
@@ -13567,6 +13600,7 @@ async def _sync_ecommerce_channel_core(
         new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims]) if claims else 0
         new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions]) if questions else 0
         await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now, "last_sync_warnings": warnings[:5]}, "$inc": {"synced_orders": res["inserted"]}})
+        await _notify_marketplace_inserted(company_id, res)
         cancelled = sum(1 for p in pkgs if (p.get("shipmentPackageStatus") or p.get("status")) == "Cancelled")
         msg = f"Trendyol canlı senkron ({sync_days} gün): {len(pkgs)} paket ({res['inserted']} yeni, {res['updated']} güncellendi, {cancelled} iptal), {len(claims)} iade talebi, {len(questions)} müşteri sorusu çekildi."
         if warnings:
@@ -13576,7 +13610,19 @@ async def _sync_ecommerce_channel_core(
     docs = marketplace_providers.simulated_orders(company_id, channel)
     res = await _upsert_marketplace_orders(company_id, docs)
     await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"last_synced_at": now, "live": False}})
+    await _notify_marketplace_inserted(company_id, res)
     return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
+
+
+async def _notify_marketplace_inserted(company_id: str, res: dict) -> None:
+    orders = (res or {}).get("inserted_orders") or []
+    if not orders:
+        return
+    try:
+        import event_notify
+        await event_notify.notify_orders_batch(company_id, orders)
+    except Exception:
+        logger.exception("order_new notify failed for %s", company_id)
 
 @api_router.post("/integrations/ecommerce/{channel_id}/sync-now")
 async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None, user: dict = Depends(get_current_user)):
@@ -19628,6 +19674,8 @@ import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
 platform_sms.init(db)
+import event_notify
+event_notify.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send}, get_current_user)
 import mail_accounts
 mail_accounts.init(db, get_current_user, _public_base_url)
 einvoice_designs.init(db)
@@ -19812,6 +19860,7 @@ app.include_router(trade.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
 app.include_router(platform_sms.router)
+app.include_router(event_notify.router)
 app.include_router(mail_accounts.router)
 app.include_router(einvoice_designs.router)
 app.include_router(demo.router)

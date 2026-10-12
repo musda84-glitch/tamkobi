@@ -651,6 +651,30 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "type", "title", "is_read", "ref_id"),
         "refs": ("companies._id",),
     },
+    "company_notify_prefs": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket olay bildirimi tercihleri (e-posta/SMS/özet).",
+        "keys": ("_id", "company_id", "events", "extra_emails", "email_from"),
+        "refs": ("companies._id",),
+    },
+    "notify_outbox": {
+        "scope": SCOPE_TENANT,
+        "description": "Saatlik/günlük bildirim özet kuyruğu.",
+        "keys": ("_id", "company_id", "event", "due_at", "status"),
+        "refs": ("companies._id",),
+    },
+    "notify_event_dedupe": {
+        "scope": SCOPE_TENANT,
+        "description": "Olay bildirimi tekrar gönderim engeli.",
+        "keys": ("_id", "company_id", "dedupe_key"),
+        "refs": ("companies._id",),
+    },
+    "notify_sms_daily": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket başına günlük olay SMS sayacı.",
+        "keys": ("_id", "company_id", "day", "count"),
+        "refs": ("companies._id",),
+    },
     "push_tokens": {
         "scope": SCOPE_TENANT,
         "description": "Mobil Expo push tokenları.",
