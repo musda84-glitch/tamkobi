@@ -16,14 +16,17 @@ jest.mock("../utils/hosts", () => {
     ...actual,
     getHostKind: jest.fn(() => "site"),
     hostUrl: jest.fn((kind, path) => {
-      const host = kind === "site" ? "tamkobi.com" : `${kind}.tamkobi.com`;
+      let host = `${kind}.tamkobi.com`;
+      if (kind === "site") host = "tamkobi.com";
+      if (kind === "ynt") host = "ynt.taiyazilim.com";
       return `https://${host}${path}`;
     }),
+    yntRedirectEnabled: jest.fn(() => false),
   };
 });
 
 const HostRouteGuard = require("./HostRouteGuard").default;
-const { getHostKind, hostUrl } = require("../utils/hosts");
+const { getHostKind, hostUrl, yntRedirectEnabled } = require("../utils/hosts");
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,8 +66,11 @@ describe("HostRouteGuard", () => {
       },
     });
     getHostKind.mockReturnValue("site");
+    yntRedirectEnabled.mockReturnValue(false);
     hostUrl.mockImplementation((kind, path) => {
-      const h = kind === "site" ? "tamkobi.com" : `${kind}.tamkobi.com`;
+      let h = `${kind}.tamkobi.com`;
+      if (kind === "site") h = "tamkobi.com";
+      if (kind === "ynt") h = "ynt.taiyazilim.com";
       return `https://${h}${path}`;
     });
     mockLocation.pathname = "/";
@@ -99,6 +105,35 @@ describe("HostRouteGuard", () => {
     const m = await mount();
     const robots = document.querySelector('meta[name="robots"]');
     expect(robots?.getAttribute("content")).toBe("noindex,nofollow");
+    await m.cleanup();
+  });
+
+  test("ynt root redirects to /sistem", async () => {
+    getHostKind.mockReturnValue("ynt");
+    mockLocation.pathname = "/";
+    const m = await mount();
+    expect(replaceSpy).toHaveBeenCalledWith("/sistem");
+    await m.cleanup();
+  });
+
+  test("ynt allows /sistem paths", async () => {
+    getHostKind.mockReturnValue("ynt");
+    mockLocation.pathname = "/sistem/sirketler";
+    const m = await mount();
+    expect(replaceSpy).not.toHaveBeenCalled();
+    await m.cleanup();
+  });
+
+  test("site /sistem redirects to ynt when flag on", async () => {
+    getHostKind.mockReturnValue("site");
+    yntRedirectEnabled.mockReturnValue(true);
+    mockLocation.pathname = "/sistem/sirketler";
+    mockLocation.search = "?x=1";
+    const m = await mount();
+    expect(replaceSpy).toHaveBeenCalled();
+    const dest = replaceSpy.mock.calls[0][0];
+    expect(dest).toContain("ynt.taiyazilim.com");
+    expect(dest).toContain("/sistem/sirketler");
     await m.cleanup();
   });
 });

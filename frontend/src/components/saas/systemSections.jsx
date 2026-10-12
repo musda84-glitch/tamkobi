@@ -9,7 +9,7 @@
  * Grupların sırası ve etiketleri navGroups.js → SYSTEM_NAV_GROUPS'ta.
  */
 import React from "react";
-import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone, ScrollText, MessageSquare, FileCode2 } from "lucide-react";
+import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone, ScrollText, MessageSquare, FileCode2, KeyRound, Layers } from "lucide-react";
 import { SaasOverview } from "./SaasOverview";
 import { CompaniesTable } from "./CompaniesTable";
 import { PlansPanel } from "./PlansPanel";
@@ -30,6 +30,9 @@ import { SupportTicketsPanel } from "./SupportTicketsPanel";
 import { DatabasePanel } from "./DatabasePanel";
 import { MaintenanceAnnouncePanel } from "./MaintenanceAnnouncePanel";
 import { SystemLogsPanel } from "./SystemLogsPanel";
+import { PlatformProductsPanel } from "./PlatformProductsPanel";
+import { PlatformApiKeysPanel } from "./PlatformApiKeysPanel";
+import { PlatformAuditPanel } from "./PlatformAuditPanel";
 
 /** `key` yol sonudur: "" → /sistem, "kotalar" → /sistem/kotalar. */
 export const sectionPath = (key) => (key ? `/sistem/${key}` : "/sistem");
@@ -58,6 +61,9 @@ export const SYSTEM_SECTIONS = [
   { key: "araclar", label: "AI & Destek", icon: Bot, render: () => <AddonsPanel /> },
   { key: "veritabani", label: "Veritabanı", icon: Database, render: () => <DatabasePanel /> },
   { key: "ayarlar", label: "Platform Ayarları", icon: Settings, render: () => <PlatformSettingsPanel /> },
+  { key: "urunler", label: "Ürünler", icon: Layers, render: () => <PlatformProductsPanel /> },
+  { key: "api-anahtarlari", label: "API Anahtarları", icon: KeyRound, render: () => <PlatformApiKeysPanel /> },
+  { key: "denetim", label: "Denetim", icon: ScrollText, render: () => <PlatformAuditPanel /> },
 ].map((s) => ({ ...s, path: sectionPath(s.key) }));
 
 export const findSystemSection = (key) => SYSTEM_SECTIONS.find((s) => s.key === (key || ""));

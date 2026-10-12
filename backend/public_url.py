@@ -23,6 +23,7 @@ CONTEXT_SITE = "site"
 CONTEXT_APP = "app"
 CONTEXT_B2B = "b2b"
 CONTEXT_IK = "ik"
+CONTEXT_YNT = "ynt"
 
 
 def is_invalid_public_base(url: Optional[str]) -> bool:
@@ -87,7 +88,7 @@ def resolve_public_base_url_for(
     platform_public_url: Optional[str] = None,
     explicit: Optional[str] = None,
 ) -> str:
-    """context: site|app|b2b|ik. Env: PUBLIC_APP_HOST_URL, PUBLIC_B2B_URL, PUBLIC_IK_URL."""
+    """context: site|app|b2b|ik|ynt. Env: PUBLIC_APP_HOST_URL, PUBLIC_B2B_URL, PUBLIC_IK_URL, PUBLIC_YNT_URL."""
     ctx = (context or CONTEXT_SITE).strip().lower()
     site = resolve_public_base_url(
         platform_public_url=platform_public_url,
@@ -127,6 +128,18 @@ def resolve_public_base_url_for(
             if n:
                 return n
         return f"https://ik.{root}"
+
+    if ctx == CONTEXT_YNT:
+        # Client-supplied base_url ignored for ynt (security).
+        import host_audience as _ha
+        for candidate in (
+            os.environ.get("PUBLIC_YNT_URL"),
+            _ha.public_host_url(_ha.KIND_YNT),
+        ):
+            n = normalize_public_base(candidate)
+            if n:
+                return n
+        return _ha.public_host_url(_ha.KIND_YNT)
 
     # site
     return site

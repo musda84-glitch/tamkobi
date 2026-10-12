@@ -1,10 +1,8 @@
-"""Host → JWT audience mapping for subdomain split (site / app / b2b / ik)."""
+"""Host → JWT audience mapping (site / app / b2b / ik / ynt)."""
 from __future__ import annotations
 
 import os
-import re
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 ROOT_DOMAIN = (os.environ.get("ROOT_DOMAIN") or "tamkobi.com").strip().lower()
 
@@ -13,11 +11,13 @@ KIND_SITE = "site"
 KIND_APP = "app"
 KIND_B2B = "b2b"
 KIND_IK = "ik"
+KIND_YNT = "ynt"
 
 # JWT aud values (match kinds used for cookie-bearing hosts)
 AUD_SITE = "site"
 AUD_APP = "app"
 AUD_IK = "ik"
+AUD_YNT = "ynt"
 
 _PROXY_PEERS = frozenset({"127.0.0.1", "::1"})
 
@@ -44,16 +44,33 @@ _IK_SELF_SERVICE_PREFIXES = (
     "/api/health",
 )
 
+# Paths allowed for aud=ynt sessions on ynt host (beyond SA APIs checked separately)
+_YNT_ALLOWED_PREFIXES = (
+    "/api/auth/",
+    "/api/version",
+    "/api/health",
+    "/api/system",
+    "/api/platform/admin",
+    "/api/saas",  # legacy SA saas routes if any
+)
+
 
 def root_domain() -> str:
     return ROOT_DOMAIN or "tamkobi.com"
+
+
+def ynt_host() -> str:
+    return (os.environ.get("YNT_HOST") or "ynt.taiyazilim.com").strip().lower()
+
+
+def superadmin_ynt_only() -> bool:
+    return (os.environ.get("SUPERADMIN_YNT_ONLY") or "0").strip() == "1"
 
 
 def _strip_port(host: str) -> str:
     h = (host or "").strip().lower()
     if not h:
         return ""
-    # [IPv6]:port
     if h.startswith("["):
         end = h.find("]")
         return h[: end + 1] if end != -1 else h
@@ -61,10 +78,7 @@ def _strip_port(host: str) -> str:
 
 
 def request_host(request: Any) -> str:
-    """Host for audience: trust nginx Host; X-Forwarded-Host only from local proxy.
-
-    Clients must not spoof aud by sending X-Forwarded-Host on a direct :8000 hit.
-    """
+    """Host for audience: trust nginx Host; X-Forwarded-Host only from local proxy."""
     if request is None:
         return ""
     headers = getattr(request, "headers", None) or {}
@@ -81,8 +95,11 @@ def request_host(request: Any) -> str:
 
 
 def host_kind_from_hostname(hostname: str) -> str:
-    """Map hostname to site|app|b2b|ik."""
+    """Map hostname to site|app|b2b|ik|ynt. YNT_HOST checked before ROOT_DOMAIN."""
     h = _strip_port(hostname)
+    # Platform yönetimi — farklı alan adı (ynt.taiyazilim.com)
+    if h and h == ynt_host():
+        return KIND_YNT
     root = root_domain()
     if h in {root, f"www.{root}"}:
         return KIND_SITE
@@ -108,6 +125,8 @@ def audience_for_host_kind(kind: str) -> Optional[str]:
         return AUD_IK
     if kind == KIND_SITE:
         return AUD_SITE
+    if kind == KIND_YNT:
+        return AUD_YNT
     return None
 
 
@@ -117,6 +136,11 @@ def audience_for_request(request: Any) -> Optional[str]:
 
 def public_host_url(kind: str) -> str:
     """https://… base for kind (no trailing slash)."""
+    if kind == KIND_YNT:
+        env = (os.environ.get("PUBLIC_YNT_URL") or "").strip().rstrip("/")
+        if env:
+            return env if "://" in env else f"https://{env}"
+        return f"https://{ynt_host()}"
     root = root_domain()
     if kind == KIND_APP:
         return f"https://app.{root}"
@@ -144,7 +168,6 @@ def is_ik_self_service_path(path: str) -> bool:
                 return True
         elif p == pref or p.startswith(pref + "/"):
             return True
-    # Attendance self-service actions (path contains attendance id)
     if p.startswith("/api/personnel/attendance/") and any(
         p.endswith(s)
         for s in (
@@ -155,26 +178,65 @@ def is_ik_self_service_path(path: str) -> bool:
         )
     ):
         return True
-    # Project stage photo visibility (görev kartı / personelim)
     if p.startswith("/api/projects/") and p.endswith("/stage-photos/visibility"):
         return True
     return False
 
 
-def is_super_admin_api_path(path: str) -> bool:
+def is_ynt_allowed_path(path: str) -> bool:
+    """API paths allowed for ynt sessions (auth/health/version + SA APIs)."""
     p = (path or "").split("?", 1)[0]
-    return p.startswith("/api/system") or p.startswith("/api/saas") or "/system/" in p
+    if p in ("/api/version", "/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/me",
+             "/api/auth/sso-exchange", "/api/auth/2fa/verify", "/api/auth/2fa/status",
+             "/api/auth/2fa/setup/start", "/api/auth/2fa/setup/confirm",
+             "/api/auth/forgot-password"):
+        return True
+    if p.startswith("/api/auth/reset/"):
+        return True
+    if p.startswith("/api/health/"):
+        return True
+    for pref in _YNT_ALLOWED_PREFIXES:
+        if p == pref.rstrip("/") or p.startswith(pref if pref.endswith("/") else pref + "/") or p.startswith(pref):
+            return True
+    return False
+
+
+def is_super_admin_api_path(path: str) -> bool:
+    """Süper admin API — /api/system/* ve /api/platform/admin/*.
+
+    /api/license/* ve /api/auth/2fa/* bu sınıfa GİRMEZ (kiracı / ortak auth).
+    Eski genel '/system/' substring kuralı kaldırıldı (yanlış pozitif riski).
+    """
+    p = (path or "").split("?", 1)[0]
+    if p.startswith("/api/license"):
+        return False
+    if p.startswith("/api/auth/2fa"):
+        return False
+    return (
+        p.startswith("/api/system")
+        or p.startswith("/api/platform/admin")
+        or p.startswith("/api/saas")
+    )
 
 
 def default_cors_origins() -> list:
     root = root_domain()
-    return [
+    origins = [
         f"https://{root}",
         f"https://www.{root}",
         f"https://app.{root}",
         f"https://b2b.{root}",
         f"https://ik.{root}",
+        public_host_url(KIND_YNT),
     ]
+    # Deduplicate while preserving order
+    seen = set()
+    out = []
+    for o in origins:
+        if o not in seen:
+            seen.add(o)
+            out.append(o)
+    return out
 
 
 def parse_cors_origins_env() -> list:

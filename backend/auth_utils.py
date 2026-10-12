@@ -153,15 +153,34 @@ def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] =
         KIND_APP,
         KIND_IK,
         KIND_SITE,
+        KIND_YNT,
         AUD_APP,
         AUD_IK,
+        AUD_YNT,
         host_kind,
         is_ik_self_service_path,
+        is_ynt_allowed_path,
+        is_super_admin_api_path,
+        superadmin_ynt_only,
+        ynt_host,
     )
 
     kind = host_kind(request)
     aud = payload.get("aud")
     p = path or ""
+
+    # aud=ynt is never valid outside ynt
+    if aud == AUD_YNT and kind != KIND_YNT:
+        raise HTTPException(status_code=401, detail="Bu oturum yalnızca platform yönetimi için geçerli")
+
+    if kind == KIND_YNT:
+        if aud != AUD_YNT:
+            raise HTTPException(status_code=401, detail=f"Bu oturum {ynt_host()} için geçerli değil")
+        if not payload.get("sa"):
+            raise HTTPException(status_code=403, detail="Yalnızca süper admin giriş yapabilir")
+        if p.startswith("/api") and not is_ynt_allowed_path(p):
+            raise HTTPException(status_code=403, detail="Bu uç platform yönetimi oturumunda kullanılamaz")
+        return
 
     if kind == KIND_APP:
         if aud != AUD_APP:
@@ -176,11 +195,17 @@ def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] =
         return
 
     if kind == KIND_SITE:
-        # Site: only legacy mobile (aud None) or aud=site. app/ik tokens → 401.
+        # Site: only legacy mobile (aud None) or aud=site. app/ik/ynt tokens → 401.
         if aud not in (None, "site"):
             raise HTTPException(
                 status_code=401,
                 detail="Bu oturum tamkobi.com için geçerli değil",
+            )
+        # Bayrak 1: süper admin API yalnızca ynt'de
+        if is_super_admin_api_path(p) and superadmin_ynt_only():
+            raise HTTPException(
+                status_code=403,
+                detail=f"Yönetim paneli {ynt_host()} adresine taşındı",
             )
         return
 

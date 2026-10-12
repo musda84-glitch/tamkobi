@@ -764,7 +764,9 @@ async def require_super_admin(request: Request) -> dict:
     token = session_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Sistem paneli için giriş yapmanız gerekiyor.")
-    user = await get_user_from_token(token, _db)
+    user = await get_user_from_token(
+        token, _db, request=request, path=getattr(getattr(request, "url", None), "path", None),
+    )
     if not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Bu alan yalnızca platform (sistem) yöneticisine açıktır.")
     import superadmin_2fa

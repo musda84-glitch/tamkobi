@@ -576,7 +576,7 @@ def test_require_super_admin_blocks_without_2fa_setup(monkeypatch):
     import saas
     user = {"_id": "sa1", "email": "sa@tamkobi.com", "is_super_admin": True, "totp_enabled": False}
 
-    async def from_token(token, db):
+    async def from_token(token, db, **kwargs):
         return user
 
     monkeypatch.setattr(saas, "get_user_from_token", from_token)

@@ -92,6 +92,7 @@ export const SYSTEM_NAV_GROUPS = [
   { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar", "/sistem/duyurular", "/sistem/loglar"] },
   { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/sms", "/sistem/e-fatura-tasarim", "/sistem/ai", "/sistem/araclar"] },
   { id: "kurallar", label: "Kurallar", paths: ["/sistem/veritabani", "/sistem/ayarlar"] },
+  { id: "platform", label: "Platform", paths: ["/sistem/urunler", "/sistem/api-anahtarlari", "/sistem/denetim"] },
 ];
 
 /** Platform bölümlerini yukarıdaki klasörlere dağıtır.

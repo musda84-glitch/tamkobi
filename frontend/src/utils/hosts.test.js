@@ -8,6 +8,8 @@ import {
   preferredHostForPath,
   applyRobotsMeta,
   ROOT_DOMAIN,
+  YNT_HOST,
+  yntRedirectEnabled,
 } from "./hosts";
 
 function fakeWin(hostname, pathname = "/", search = "") {
@@ -29,12 +31,15 @@ describe("getHostKind", () => {
     expect(getHostKind(fakeWin("app.tamkobi.com"))).toBe("app");
     expect(getHostKind(fakeWin("b2b.tamkobi.com"))).toBe("b2b");
     expect(getHostKind(fakeWin("ik.tamkobi.com"))).toBe("ik");
+    expect(getHostKind(fakeWin("ynt.taiyazilim.com"))).toBe("ynt");
+    expect(getHostKind(fakeWin(YNT_HOST))).toBe("ynt");
   });
 
   test("localhost __host override", () => {
     expect(getHostKind(fakeWin("localhost", "/", "?__host=app"))).toBe("app");
     expect(getHostKind(fakeWin("127.0.0.1", "/", "?__host=ik"))).toBe("ik");
     expect(getHostKind(fakeWin("localhost", "/", "?__host=b2b"))).toBe("b2b");
+    expect(getHostKind(fakeWin("localhost", "/", "?__host=ynt"))).toBe("ynt");
   });
 
   test("ignores __host on production host", () => {
@@ -59,15 +64,18 @@ describe("hostUrl", () => {
     expect(hostUrl("b2b", "/b2b/giris")).toBe(`https://b2b.${ROOT_DOMAIN}/b2b/giris`);
     expect(hostUrl("ik", "/personelim")).toBe(`https://ik.${ROOT_DOMAIN}/personelim`);
     expect(hostUrl("site", "/sistem")).toBe(`https://${ROOT_DOMAIN}/sistem`);
+    expect(hostUrl("ynt", "/sistem")).toBe(`https://${YNT_HOST}/sistem`);
     Object.defineProperty(window, "location", { configurable: true, value: loc });
   });
 });
 
 describe("pathAllowedOnHost / preferredHostForPath", () => {
-  test("sistem only on site", () => {
+  test("sistem on site and ynt", () => {
     expect(pathAllowedOnHost("/sistem/giris", "site")).toBe(true);
+    expect(pathAllowedOnHost("/sistem/giris", "ynt")).toBe(true);
     expect(pathAllowedOnHost("/sistem/giris", "app")).toBe(false);
     expect(preferredHostForPath("/sistem/web")).toBe("site");
+    expect(yntRedirectEnabled()).toBe(false);
   });
 
   test("panel routes belong on app", () => {

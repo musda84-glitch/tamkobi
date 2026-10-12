@@ -16,6 +16,8 @@ NGINX_DIR = ROOT / "deploy" / "nginx"
 LIB = ROOT / "deploy" / "lib"
 REDIRECTS = (NGINX_DIR / "tamkobi-site-redirects.conf").read_text(encoding="utf-8")
 SUBDOMAINS = (NGINX_DIR / "tamkobi-subdomains.conf.example").read_text(encoding="utf-8")
+YNT_CONF = (NGINX_DIR / "ynt-taiyazilim.conf.example").read_text(encoding="utf-8")
+SISTEM_REDIRECT = (NGINX_DIR / "tamkobi-sistem-redirect.conf").read_text(encoding="utf-8")
 SITE_REWRITE = (LIB / "site_rewrite.py").read_text(encoding="utf-8")
 
 
@@ -268,6 +270,240 @@ def test_nginx_t_subdomain_and_site_templates(tmp_path: Path, openssl_bin):
         text=True,
     )
     assert r.returncode == 0, f"nginx -t failed:\n{r.stderr}\n{r.stdout}"
+
+
+def test_ynt_template_static_requirements():
+    assert "listen 85.95.240.184:443 ssl http2;" in YNT_CONF
+    assert "listen 85.95.240.184:80;" in YNT_CONF
+    assert "server_name ynt.taiyazilim.com;" in YNT_CONF
+    assert "/etc/letsencrypt/live/ynt.taiyazilim.com/fullchain.pem" in YNT_CONF
+    assert "include /etc/nginx/snippets/tamkobi-security-headers.conf;" in YNT_CONF
+    assert 'X-Robots-Tag "noindex, nofollow"' in YNT_CONF
+    assert "Disallow: /" in YNT_CONF
+    assert "proxy_pass http://tamkobi_api;" in YNT_CONF
+    assert "proxy_set_header X-Forwarded-Host $host;" in YNT_CONF
+    active = "\n".join(ln for ln in YNT_CONF.splitlines() if not ln.strip().startswith("#"))
+    assert "default_server" not in active
+    assert "root /var/www/tamkobi.com/frontend-current;" in YNT_CONF
+    # sistem redirect snippet
+    assert "location ^~ /sistem" in SISTEM_REDIRECT
+    assert "https://ynt.taiyazilim.com$request_uri" in SISTEM_REDIRECT
+    # Active location lines must not touch /api
+    loc_body = "\n".join(
+        ln for ln in SISTEM_REDIRECT.splitlines() if not ln.strip().startswith("#")
+    )
+    assert "location" in loc_body and "/api" not in loc_body
+
+
+@pytest.mark.skipif(not _have_nginx(), reason="nginx binary required")
+def test_nginx_t_ynt_template(tmp_path: Path, openssl_bin):
+    """ynt şablonu stub sertifikayla nginx -t geçer."""
+    conf_root = tmp_path / "nginx"
+    conf_d = conf_root / "conf.d"
+    snippets = conf_root / "snippets"
+    sites = conf_root / "sites"
+    certs = tmp_path / "certs"
+    html = tmp_path / "html"
+    for d in (conf_d, snippets, sites, certs, html):
+        d.mkdir(parents=True)
+    cdir = certs / "ynt.taiyazilim.com"
+    cdir.mkdir()
+    subprocess.run(
+        [
+            openssl_bin, "req", "-x509", "-nodes", "-newkey", "rsa:2048",
+            "-keyout", str(cdir / "privkey.pem"),
+            "-out", str(cdir / "fullchain.pem"),
+            "-days", "1",
+            "-subj", "/CN=ynt.taiyazilim.com",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    shutil.copy(NGINX_DIR / "security-headers.conf", snippets / "tamkobi-security-headers.conf")
+    shutil.copy(NGINX_DIR / "spa-routes.map.conf", conf_d / "tamkobi-spa-routes.map.conf")
+    (conf_d / "tamkobi-upstream.conf").write_text(
+        "upstream tamkobi_api { server 127.0.0.1:18000; keepalive 2; }\n",
+        encoding="utf-8",
+    )
+    options = tmp_path / "options-ssl-nginx.conf"
+    options.write_text("ssl_protocols TLSv1.2 TLSv1.3;\n", encoding="utf-8")
+
+    def _prep(text: str) -> str:
+        text = text.replace("/etc/nginx/snippets/", str(snippets) + "/")
+        text = text.replace("/etc/letsencrypt/live/", str(certs) + "/")
+        text = text.replace("/etc/letsencrypt/options-ssl-nginx.conf", str(options))
+        text = text.replace("ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;", "# ssl_dhparam stub;")
+        text = text.replace("/var/www/tamkobi.com/frontend-current", str(html))
+        text = text.replace("/var/www/letsencrypt", str(html))
+        text = re.sub(r"listen\s+85\.95\.240\.184:443\b", "listen 127.0.0.1:18443", text)
+        text = re.sub(r"listen\s+85\.95\.240\.184:80\b", "listen 127.0.0.1:18080", text)
+        return text
+
+    (sites / "ynt.conf").write_text(_prep(YNT_CONF), encoding="utf-8")
+    for sub in ("body", "proxy", "fastcgi", "uwsgi", "scgi"):
+        (conf_root / sub).mkdir(exist_ok=True)
+    main = conf_root / "nginx.conf"
+    main.write_text(
+        textwrap.dedent(
+            f"""
+            worker_processes 1;
+            error_log {tmp_path}/error.log;
+            pid {tmp_path}/nginx.pid;
+            events {{ worker_connections 64; }}
+            http {{
+                client_body_temp_path {conf_root}/body;
+                proxy_temp_path {conf_root}/proxy;
+                fastcgi_temp_path {conf_root}/fastcgi;
+                uwsgi_temp_path {conf_root}/uwsgi;
+                scgi_temp_path {conf_root}/scgi;
+                include {conf_d}/*.conf;
+                include {sites}/*.conf;
+                access_log {tmp_path}/access.log;
+            }}
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    r = subprocess.run(
+        ["nginx", "-t", "-c", str(main), "-p", str(conf_root)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, f"nginx -t ynt failed:\n{r.stderr}\n{r.stdout}"
+
+
+@pytest.mark.skipif(not _have_nginx(), reason="nginx binary required")
+def test_sistem_redirect_and_ynt_api_noindex(tmp_path: Path):
+    """tamkobi.com/sistem → ynt 301 (query korunur); /api/system yönlendirilmez; ynt /api noindex."""
+    port_site = _free_port()
+    port_ynt = _free_port()
+    port_app = _free_port()
+    conf_root = tmp_path / "ngx"
+    snippets = conf_root / "snippets"
+    html = tmp_path / "www"
+    for d in (snippets, html, conf_root):
+        d.mkdir(parents=True, exist_ok=True)
+    shutil.copy(NGINX_DIR / "security-headers.conf", snippets / "tamkobi-security-headers.conf")
+    (snippets / "tamkobi-sistem-redirect.conf").write_text(SISTEM_REDIRECT, encoding="utf-8")
+    (html / "index.html").write_text("<!doctype html><title>ok</title>", encoding="utf-8")
+    for sub in ("body", "proxy", "fastcgi", "uwsgi", "scgi"):
+        (conf_root / sub).mkdir(exist_ok=True)
+
+    # Fake upstream for ynt /api
+    api_port = _free_port()
+    api_proc = subprocess.Popen(
+        ["python3", "-c", textwrap.dedent(f"""
+            from http.server import BaseHTTPRequestHandler, HTTPServer
+            class H(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{{"ok":true}}')
+                def log_message(self, *a):
+                    pass
+            HTTPServer(("127.0.0.1", {api_port}), H).serve_forever()
+        """)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    conf = textwrap.dedent(
+        f"""
+        worker_processes 1;
+        error_log {tmp_path}/e.log;
+        pid {tmp_path}/n.pid;
+        events {{ worker_connections 32; }}
+        http {{
+            access_log {tmp_path}/access.log;
+            client_body_temp_path {conf_root}/body;
+            proxy_temp_path {conf_root}/proxy;
+            fastcgi_temp_path {conf_root}/fastcgi;
+            uwsgi_temp_path {conf_root}/uwsgi;
+            scgi_temp_path {conf_root}/scgi;
+            upstream tamkobi_api {{ server 127.0.0.1:{api_port}; }}
+            server {{
+                listen 127.0.0.1:{port_site};
+                server_name tamkobi.com;
+                include {snippets}/tamkobi-sistem-redirect.conf;
+                location /api/ {{ return 200 "api-ok"; add_header Content-Type text/plain; }}
+                location / {{ return 200 "site"; }}
+            }}
+            server {{
+                listen 127.0.0.1:{port_app};
+                server_name app.tamkobi.com;
+                location / {{ return 200 "app"; }}
+            }}
+            server {{
+                listen 127.0.0.1:{port_ynt};
+                server_name ynt.taiyazilim.com;
+                add_header X-Robots-Tag "noindex, nofollow" always;
+                location /api {{
+                    add_header X-Robots-Tag "noindex, nofollow" always;
+                    proxy_pass http://tamkobi_api;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Forwarded-Host $host;
+                }}
+                location / {{ return 200 "ynt"; add_header X-Robots-Tag "noindex, nofollow" always; }}
+            }}
+        }}
+        """
+    )
+    conf_path = conf_root / "nginx.conf"
+    conf_path.write_text(conf, encoding="utf-8")
+    proc = subprocess.Popen(
+        ["nginx", "-c", str(conf_path), "-p", str(conf_root), "-g", "daemon off;"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port_site), timeout=0.2):
+                    break
+            except OSError:
+                time.sleep(0.05)
+                if proc.poll() is not None:
+                    err = proc.stderr.read().decode() if proc.stderr else ""
+                    pytest.fail(f"nginx exited early: {err}")
+        else:
+            pytest.fail("nginx did not start")
+
+        def curl(url: str, host: str):
+            return subprocess.check_output(
+                ["curl", "-sS", "-D", "-", "-o", "/dev/null", "--max-redirs", "0", "-H", f"Host: {host}", url],
+                text=True,
+            )
+
+        h = curl(f"http://127.0.0.1:{port_site}/sistem/sirketler?x=1", "tamkobi.com")
+        assert "301" in h.splitlines()[0]
+        assert "Location: https://ynt.taiyazilim.com/sistem/sirketler?x=1" in h
+
+        # /api/system not redirected by ^~ /sistem
+        h = curl(f"http://127.0.0.1:{port_site}/api/system/companies", "tamkobi.com")
+        assert "301" not in h.splitlines()[0]
+        assert "Location:" not in h
+
+        # Host routing: app vs ynt vs site
+        h = curl(f"http://127.0.0.1:{port_app}/", "app.tamkobi.com")
+        assert "200" in h.splitlines()[0]
+        h = curl(f"http://127.0.0.1:{port_ynt}/api/version", "ynt.taiyazilim.com")
+        assert "200" in h.splitlines()[0]
+        assert "X-Robots-Tag: noindex, nofollow" in h
+        h = curl(f"http://127.0.0.1:{port_site}/", "tamkobi.com")
+        assert "200" in h.splitlines()[0]
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        api_proc.terminate()
+        try:
+            api_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            api_proc.kill()
 
 
 @pytest.mark.skipif(not _have_nginx(), reason="nginx binary required")

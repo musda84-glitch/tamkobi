@@ -10,6 +10,8 @@ Bu klasör canlı `tamkobi.com` için önerilen nginx şablonlarını içerir.
 | `tamkobi-ssl.conf.example` | Sertifika sonrası HTTPS + www→apex (tam location’lı); **listen 85.95.240.184:443** |
 | `tamkobi-subdomains.conf.example` | app / b2b / ik vhost’ları (IP bind + noindex) |
 | `tamkobi-site-redirects.conf` | Apex’te panel/b2b/ik → 301 (snippet) |
+| `ynt-taiyazilim.conf.example` | Platform Yönetimi vhost (ynt.taiyazilim.com) |
+| `tamkobi-sistem-redirect.conf` | `/sistem` → ynt 301 (bayrak sonrası snippet) |
 | `spa-routes.map.conf` | Bilinen SPA URI’leri (alt alan adları dahil) |
 | `../nginx-vps.conf` | Geriye dönük HTTP-only + XFF notları |
 
@@ -218,3 +220,80 @@ mobil giriş (`api_base` = `https://tamkobi.com/api`), SMS/e-posta linkleri.
 sudo rm -f /etc/nginx/sites-enabled/tamkobi-subdomains.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+---
+
+## Platform Yönetimi (ynt.taiyazilim.com)
+
+Aynı repo / aynı backend / aynı frontend build. Ayrı servis yok.
+
+**Uyarı:** Merge → Actions otomatik deploy eder. `SUPERADMIN_YNT_ONLY` varsayılan `0` olduğu için merge güvenlidir, ancak **sunucu hazırlığı (DNS, sertifika, nginx vhost, .env) merge’den ÖNCE** yapılmalıdır.
+
+### Bayrak stratejisi
+
+| `SUPERADMIN_YNT_ONLY` | Davranış |
+|-----------------------|----------|
+| `0` (varsayılan) | Süper admin uçları hem ynt (`aud=ynt`) hem site (`aud` None/site) üzerinde çalışır. |
+| `1` | Süper admin uçları yalnızca ynt + `aud=ynt`. Site’ta `/api/system/*` → 403. nginx `tamkobi-sistem-redirect.conf` include edilir. |
+
+### Sıra (canlı)
+
+1. **Yedek:** `/etc/nginx`, `/etc/letsencrypt`, `backend/.env`, `/etc/bind/zones/db.taiyazilim.com`. `git status --porcelain` boş ve branch `main` olmalı.
+2. **DNS:**
+   ```bash
+   named-checkzone taiyazilim.com /etc/bind/zones/db.taiyazilim.com
+   dig NS taiyazilim.com @8.8.8.8
+   dig ynt.taiyazilim.com @8.8.8.8 +short   # → 85.95.240.184
+   dig ynt.taiyazilim.com @1.1.1.1 +short
+   dig CAA taiyazilim.com @8.8.8.8
+   ```
+3. **Sertifika:**
+   ```bash
+   # Geçici ACME bloğu → reload → certbot → bloğu sil → dry-run
+   sudo certbot certonly --webroot -w /var/www/letsencrypt \
+     --cert-name ynt.taiyazilim.com -d ynt.taiyazilim.com
+   sudo certbot renew --dry-run
+   ```
+4. **nginx (merge öncesi):**
+   ```bash
+   git fetch origin cursor/platform-ynt
+   git show origin/cursor/platform-ynt:deploy/nginx/ynt-taiyazilim.conf.example \
+     | sudo tee /etc/nginx/sites-available/ynt-taiyazilim.conf >/dev/null
+   sudo ln -sf /etc/nginx/sites-available/ynt-taiyazilim.conf \
+     /etc/nginx/sites-enabled/ynt-taiyazilim.conf
+   sudo nginx -t && sudo systemctl reload nginx
+   # tamkobi.com / app.tamkobi.com değişmemiş olmalı
+   echo | openssl s_client -connect 85.95.240.184:443 -servername ynt.taiyazilim.com 2>/dev/null | openssl x509 -noout -subject -dates
+   ```
+5. **`.env`:**
+   ```bash
+   # CORS_ORIGINS listesine https://ynt.taiyazilim.com ekleyin
+   PUBLIC_YNT_URL=https://ynt.taiyazilim.com
+   YNT_HOST=ynt.taiyazilim.com
+   SUPERADMIN_YNT_ONLY=0
+   # CREDENTIAL_ENCRYPTION_KEY satırına DOKUNMAYIN
+   ```
+6. **Merge** (kullanıcı) → Actions izlenir → `/api/version` sha kontrolü.
+7. **ynt’de dene:** giriş + 2FA, şirkete gir/çık, ürünler, API anahtarı create/rotate/revoke, imzalı curl verify/heartbeat (`docs/platform-api.md`).
+8. **Bayrağı aç:**
+   ```bash
+   # SUPERADMIN_YNT_ONLY=1
+   # Apex, www, app, b2b, ik bloklarına:
+   #   include /etc/nginx/snippets/tamkobi-sistem-redirect.conf;
+   sudo cp deploy/nginx/tamkobi-sistem-redirect.conf \
+     /etc/nginx/snippets/tamkobi-sistem-redirect.conf
+   sudo nginx -t && sudo systemctl reload nginx
+   sudo sh deploy/update-native.sh
+   ```
+9. **Doğrulama:**
+   - `tamkobi.com/sistem` → 301 ynt (query korunur)
+   - site’tan `/api/system/*` → 403; ynt’den → 200
+   - mobil token ile `/api/license/me` → 200
+   - ynt’de `aud=app` token → 401
+10. **Geri alma:**
+    - `SUPERADMIN_YNT_ONLY=0`, sistem-redirect include’larını kaldır, `nginx -t && reload`, `update-native`
+    - ynt symlink’ini kaldır
+    - kod: `sh deploy/rollback.sh`
+    - yeni tablolar (`platform_*`) zararsız, kalabilir
+
+Dosyalar: `ynt-taiyazilim.conf.example`, `tamkobi-sistem-redirect.conf`, `docs/platform-api.md`.
