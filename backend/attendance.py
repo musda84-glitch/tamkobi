@@ -1,4 +1,5 @@
 """Mesai saatleri, personel self-servis puantaj (giriş/çıkış/onay) ve otomatik fazla mesai hesabı."""
+import logging
 import math
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -10,6 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 import location_consent
 import personnel_wage
 import tenant_access
+
+logger = logging.getLogger("TamKobiERP")
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -4421,6 +4424,8 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
             await _smtp_send_fn(a, to, f"[TamKobi] {title}", message, html=f"<p><b>{title}</b></p><p>{message}</p>")
             mail = {"status": "sent", "to": to}
         except HTTPException as e:
+            if getattr(e, "status_code", None) == 409:
+                logger.warning("mail needs_reauth company=%s context=attendance_notify: %s", company_id, e.detail)
             mail = {"status": "skipped", "detail": e.detail}
         except Exception as e:
             mail = {"status": "failed", "detail": str(e)[:120]}

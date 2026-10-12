@@ -138,7 +138,13 @@ async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str
         "_id": str(uuid.uuid4()), "wallet_id": w["_id"], "company_id": company_id, "type": "consume",
         "credits": -credits, "invoice_id": invoice_id, "note": note or "e-Belge gönderimi", "created_at": _now(),
     })
-    return bal - credits
+    remaining = bal - credits
+    try:
+        import event_notify
+        await event_notify.maybe_gib_credits_low(company_id, remaining)
+    except Exception:
+        logger.exception("gib_credits_low notify failed")
+    return remaining
 
 
 async def gift(company_id: str, credits: int, note: str = "Platform yüklemesi") -> int:

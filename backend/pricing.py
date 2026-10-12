@@ -201,6 +201,8 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
             await comm_service.smtp_send(acc, st["emails"], f"Sabah Özeti {s['date']} — {comp.get('name') or 'TamKobi'}", text, html)
             result["email"] = {"ok": True, "to": st["emails"]}
         except HTTPException as e:
+            if getattr(e, "status_code", None) == 409:
+                logger.warning("mail needs_reauth company=%s context=morning_summary: %s", company_id, e.detail)
             result["email"] = {"ok": False, "error": e.detail}
         except Exception as e:  # noqa: BLE001
             result["email"] = {"ok": False, "error": str(e)[:160]}

@@ -114,9 +114,13 @@ def test_is_ynt_allowed_integration_paths():
     assert ha.is_ynt_allowed_path("/api/files/upload")
     assert ha.is_ynt_allowed_path("/api/public/plans")
     assert ha.is_ynt_allowed_path("/api/public/legal/kvkk")
-    # DAR: genel tenant e-fatura inbox değil
+    assert ha.is_ynt_allowed_path("/api/comm/sms/settings")
+    assert ha.is_ynt_allowed_path("/api/comm/sms/logs")
+    assert ha.is_ynt_allowed_path("/api/comm/sms/verify")
+    # DAR: genel tenant e-fatura inbox / diğer comm değil
     assert not ha.is_ynt_allowed_path("/api/einvoice/incoming/sync")
     assert not ha.is_ynt_allowed_path("/api/orders")
+    assert not ha.is_ynt_allowed_path("/api/comm/mail/settings")
 
 
 def test_ynt_sa_integration_http_200(ynt_client, monkeypatch):

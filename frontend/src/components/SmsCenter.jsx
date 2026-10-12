@@ -20,7 +20,7 @@ const mergeSettings = (prev, next) => {
   return merged;
 };
 
-export const SmsCenter = ({ companyId, contacts }) => {
+export const SmsCenter = ({ companyId, contacts = [] }) => {
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState({ provider: "netgsm", usercode: "", password: "", msgheader: "", is_active: true });
   const [balance, setBalance] = useState(null);

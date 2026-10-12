@@ -1,0 +1,65 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { act } from "react-dom/test-utils";
+import axios from "axios";
+import { NotifyPrefsPanel } from "./NotifyPrefsPanel";
+
+jest.mock("axios");
+jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
+jest.mock("../context/AuthContext", () => ({
+  API_URL: "http://test/api",
+}));
+
+const SAMPLE = {
+  company_id: "comp1",
+  events: {
+    einvoice_incoming: { inapp: true, email: true, sms: false, digest: "instant" },
+    order_new: { inapp: true, email: true, sms: false, digest: "instant" },
+    gib_credits_low: { inapp: true, email: true, sms: false, digest: "instant" },
+    receivable_overdue: { inapp: true, email: true, sms: false, digest: "instant" },
+  },
+  extra_emails: [],
+  email_from: "platform",
+  gib_credits_threshold: 20,
+  event_labels: {
+    einvoice_incoming: "Gelen e-Fatura",
+    order_new: "Yeni sipariş",
+    gib_credits_low: "GİB kontör düşük",
+    receivable_overdue: "Vadesi geçmiş alacak",
+  },
+};
+
+test("Bildirimler paneli olayları ve kaydetmeyi gösterir", async () => {
+  axios.get.mockResolvedValue({ data: SAMPLE });
+  axios.put.mockResolvedValue({ data: { ...SAMPLE, extra_emails: ["a@b.com"] } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<NotifyPrefsPanel companyId="comp1" />);
+  });
+  await act(async () => {});
+  expect(host.querySelector('[data-testid="notify-prefs-panel"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="notify-event-einvoice_incoming"]')?.textContent).toMatch(/Gelen e-Fatura/);
+  expect(host.querySelector('[data-testid="notify-event-order_new"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="notify-email-from"]')).toBeTruthy();
+  const emailOff = host.querySelector('[data-testid="notify-order_new-email"]');
+  expect(emailOff).toBeTruthy();
+  await act(async () => {
+    emailOff.click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="notify-prefs-save"]').click();
+  });
+  expect(axios.put).toHaveBeenCalledWith(
+    "http://test/api/notify/prefs",
+    expect.objectContaining({
+      company_id: "comp1",
+      events: expect.objectContaining({
+        order_new: expect.objectContaining({ email: false }),
+      }),
+    }),
+  );
+  root.unmount();
+  host.remove();
+});

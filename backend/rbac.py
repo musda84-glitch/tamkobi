@@ -333,6 +333,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/payments/paytr/callback",
     "/api/payments/status/",
     "/api/comm/whatsapp/webhook",
+    "/api/mail/webhooks/ses",
 )
 
 # Yalnızca GET/HEAD ile tokensız (yükleme / silme oturum ister)

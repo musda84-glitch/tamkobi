@@ -20,6 +20,11 @@ export default function SystemAdminPage() {
   const [catalog, setCatalog] = useState([]);
   const [requests, setRequests] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [openTab, setOpenTab] = useState(null);
+  const openCompany = useCallback((id, tab) => {
+    setOpenId(id);
+    setOpenTab(tab || null);
+  }, []);
   const load = useCallback(async () => {
     const cred = { withCredentials: true };
     const grab = async (path, set) => {
@@ -47,11 +52,21 @@ export default function SystemAdminPage() {
         <div className="bg-slate-50 text-slate-900 rounded-3xl p-5 min-h-[60vh]">
           <PanelBoundary key={page} label={section?.label}>
             {section
-              ? section.render({ overview, companies, plans, catalog, requests, changed, openCompany: setOpenId, goRequests: () => navigate("/sistem/talepler") })
+              ? section.render({ overview, companies, plans, catalog, requests, changed, openCompany, goRequests: () => navigate("/sistem/talepler") })
               : <MissingSection page={page} />}
           </PanelBoundary>
         </div>
-        {openId && <CompanyLicenseDrawer companyId={openId} plans={plans} catalog={catalog} companies={companies} onClose={() => setOpenId(null)} onChanged={changed} />}
+        {openId && (
+          <CompanyLicenseDrawer
+            companyId={openId}
+            plans={plans}
+            catalog={catalog}
+            companies={companies}
+            initialTab={openTab || "license"}
+            onClose={() => { setOpenId(null); setOpenTab(null); }}
+            onChanged={changed}
+          />
+        )}
       </div>
     </SystemLayout>
   );

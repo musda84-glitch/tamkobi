@@ -134,7 +134,7 @@ export const StorageManagerPanel = ({ onOpenCompany }) => {
           <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
           <button
             type="button"
-            onClick={() => onOpenCompany && onOpenCompany(selectedId)}
+            onClick={() => onOpenCompany && onOpenCompany(selectedId, "storage")}
             className="font-bold text-slate-900 hover:underline"
             data-testid="storage-open-company"
           >
@@ -268,8 +268,8 @@ export const StorageManagerPanel = ({ onOpenCompany }) => {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-slate-600 max-w-3xl">
-            Her hesap için yüklenebilir alanlar ayrı klasörlerde tutulur (ürün, logo, gider, personel, e-belge…).
-            Yeni şirket açıldığında klasörler otomatik oluşur; buradan tüm hesapları yönetebilirsiniz.
+            Tüm şirketlerin depolama özeti. Kota değiştirme ve klasör yönetimi için hesabı açın veya
+            <b> Şirketler → Yönet → Depolama</b> sekmesini kullanın. Yeni şirkette klasörler otomatik oluşur.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -333,7 +333,7 @@ export const StorageManagerPanel = ({ onOpenCompany }) => {
                 <td className="px-3 py-3">
                   <button
                     type="button"
-                    onClick={() => openAccount(r.id)}
+                    onClick={() => (onOpenCompany ? onOpenCompany(r.id, "storage") : openAccount(r.id))}
                     className="text-left font-semibold text-slate-900 hover:underline"
                     data-testid={`storage-open-${r.id}`}
                   >
@@ -375,7 +375,7 @@ export const StorageManagerPanel = ({ onOpenCompany }) => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => openAccount(r.id)}
+                    onClick={() => (onOpenCompany ? onOpenCompany(r.id, "storage") : openAccount(r.id))}
                     className="px-2.5 py-1.5 bg-slate-900 text-white rounded-lg font-bold"
                     data-testid={`storage-manage-${r.id}`}
                   >

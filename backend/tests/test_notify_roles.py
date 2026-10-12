@@ -31,6 +31,10 @@ def test_roles_for_known_types():
     assert "manager" in roles_for_type("early_leave_request")
     assert "accountant" in roles_for_type("early_leave_request")
     assert roles_for_type("task_assigned") == []
+    assert roles_for_type("einvoice_incoming") == ["admin", "manager", "accountant"]
+    assert roles_for_type("order_new") == ["admin", "manager", "sales"]
+    assert roles_for_type("gib_credits_low") == ["admin"]
+    assert roles_for_type("receivable_overdue") == ["admin", "accountant"]
     assert roles_for_type("unknown_type") == ["admin"]
     assert role_label("warehouse") == "Depo"
     assert role_label("manager") == "Müdür"

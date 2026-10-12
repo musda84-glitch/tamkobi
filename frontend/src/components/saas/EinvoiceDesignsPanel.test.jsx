@@ -26,11 +26,27 @@ beforeEach(() => {
     const u = String(url);
     if (u.endsWith("/system/einvoice-designs")) return Promise.resolve({ data: LIST });
     if (u.includes("/download")) return Promise.resolve({ data: new Blob(["<xsl:stylesheet/>"]) });
-    if (u.includes("/einvoice-designs/")) return Promise.resolve({ data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null } });
+    if (u.includes("/export")) return Promise.resolve({ data: new Blob(['{"schema_version":1}']) });
+    if (u.includes("/einvoice-designs/")) {
+      return Promise.resolve({
+        data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null, source: "xslt" },
+      });
+    }
     return Promise.resolve({ data: LIST });
   });
-  axios.post.mockResolvedValue({ data: { id: "einvoice_xslt_copy", name: "Varsayılan e-Fatura kopya", kind: "e_invoice", xslt: "<xsl:stylesheet/>", items: LIST.items } });
-  axios.put.mockResolvedValue({ data: { ...LIST.items[0], name: "Güncel", xslt: "<xsl:stylesheet/>" } });
+  axios.post.mockResolvedValue({
+    data: {
+      id: "einvoice_xslt_copy",
+      name: "Varsayılan e-Fatura kopya",
+      kind: "e_invoice",
+      xslt: "<xsl:stylesheet/>",
+      source: "xslt",
+      items: LIST.items,
+    },
+  });
+  axios.put.mockResolvedValue({
+    data: { ...LIST.items[0], name: "Güncel", xslt: "<xsl:stylesheet/>", source: "xslt", layout: null },
+  });
 });
 
 afterEach(() => {
@@ -61,4 +77,31 @@ test("lists designs, opens editor and has download", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-xslt"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-save"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-editor-download"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-export-tkdesign"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-import-btn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-source-badge"]')?.textContent).toMatch(/XSLT/i);
+});
+
+test("save from xslt source omits layout payload", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<EinvoiceDesignsPanel />);
+  });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-edit-einvoice_xslt_default_e_invoice"]').click();
+  });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-tab-xslt"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-save"]').click();
+  });
+  await act(async () => { await Promise.resolve(); });
+  expect(axios.put).toHaveBeenCalled();
+  const body = axios.put.mock.calls[0][1];
+  expect(body.source).toBe("xslt");
+  expect(body.layout).toBeNull();
+  expect(body.xslt).toBeTruthy();
 });

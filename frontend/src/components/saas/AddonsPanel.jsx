@@ -9,7 +9,7 @@ import { Toggle } from "./saasUi";
 const cred = { withCredentials: true };
 const ICONS = { ai: Bot, support: Headset };
 
-export const AddonsPanel = () => {
+export const AddonsPanel = ({ onOpenCompany }) => {
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/system/addons`, cred).then((r) => setD(r.data)).catch(() => toast.error("Araç listesi alınamadı.")), []);
@@ -25,7 +25,7 @@ export const AddonsPanel = () => {
   };
   return (
     <div className="space-y-4 text-xs" data-testid="saas-addons">
-      <p className="text-slate-500">Yapay zeka ve destek araçları ERP paketinden bağımsızdır. Aşağıdaki anahtarlar tüm müşteriler için varsayılandır; şirket kartından müşteri özelinde açılıp kapatılabilir.</p>
+      <p className="text-slate-500">Tüm şirketler için yapay zekâ / destek varsayılanları. Şirket özel aç/kapa ve kullanım için <b>Şirketler &amp; Lisanslar → Yönet → Yapay zekâ</b> sekmesini kullanın.</p>
       {(d.groups || []).map((g) => {
         const Icon = ICONS[g.key] || Bot;
         const mods = (d.catalog || []).filter((m) => m.group === g.key);
@@ -52,23 +52,25 @@ export const AddonsPanel = () => {
           </section>
         );
       })}
-      <p className="text-[10px] text-slate-400 flex items-center gap-1"><Save className="w-3 h-3" /> Değişiklik anında kaydedilir. Şirketler &amp; Lisanslar → Yönet ile müşteri özelinde override edilir.</p>
+      <p className="text-[10px] text-slate-400 flex items-center gap-1"><Save className="w-3 h-3" /> Değişiklik anında kaydedilir. Müşteri özelinde override: Şirketler → Yönet → Yapay zekâ.</p>
     </div>
   );
 };
 
-export const AddonToggles = ({ license, busy, onToggle, onInherit }) => {
+export const AddonToggles = ({ license, busy, onToggle, onInherit, groupsFilter, title, hint, testId = "drawer-addons" }) => {
   const details = license?.addon_details || {};
   const groups = [
     ["ai", "Yapay zeka", Bot],
     ["support", "Destek araçları", Headset],
-  ];
+  ].filter(([g]) => !groupsFilter || groupsFilter.includes(g));
   const keys = Object.keys(details);
   if (!keys.length) return null;
+  const visible = keys.some((k) => !groupsFilter || groupsFilter.includes(details[k]?.group));
+  if (!visible) return null;
   return (
-    <section className="bg-white border border-slate-200 rounded-2xl p-4" data-testid="drawer-addons">
-      <h3 className="font-bold text-slate-900 text-sm mb-1">AI &amp; Destek araçları</h3>
-      <p className="text-[10px] text-slate-500 mb-3">ERP modüllerinden bağımsız. “özel” işaretli olanlar bu müşteri için platform varsayılanından farklıdır.</p>
+    <section className="bg-white border border-slate-200 rounded-2xl p-4" data-testid={testId}>
+      <h3 className="font-bold text-slate-900 text-sm mb-1">{title || "AI & Destek araçları"}</h3>
+      <p className="text-[10px] text-slate-500 mb-3">{hint || "ERP modüllerinden bağımsız. “özel” işaretli olanlar bu müşteri için platform varsayılanından farklıdır."}</p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {groups.map(([g, label, Icon]) => {
           const rows = keys.filter((k) => details[k]?.group === g);
