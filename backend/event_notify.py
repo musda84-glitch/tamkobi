@@ -13,8 +13,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+import mail_service
 import notify
-import platform_mail
 import public_url
 import tenant_access
 
@@ -241,34 +241,22 @@ async def _recipient_phones(company_id: str, event: str) -> List[str]:
     return phones
 
 
-async def _resolve_smtp(company_id: str, prefs: dict):
-    """Platform transactional SMTP; prefs.email_from==company ise önce şirket SMTP."""
-    platform_acc = None
-    try:
-        platform_acc = await platform_mail.resolve_smtp_account("transactional")
-    except Exception:
-        platform_acc = None
-
-    if str(prefs.get("email_from") or "platform") == "company":
-        load = _deps.get("mail_account")
-        if load:
-            try:
-                return await load(company_id), "company"
-            except Exception as e:
-                logger.info("company SMTP fallback to platform for %s: %s", company_id, e)
-        if platform_acc:
-            return platform_acc, "platform"
-        raise HTTPException(status_code=400, detail="Gönderen SMTP bulunamadı.")
-
-    if platform_acc:
-        return platform_acc, "platform"
+async def _company_reply_to(company_id: str, prefs: dict) -> Optional[str]:
+    """email_from=company ise Reply-To şirket adresi; gönderim yine SES/platform SMTP."""
+    if str(prefs.get("email_from") or "platform") != "company":
+        return None
     load = _deps.get("mail_account")
     if load:
         try:
-            return await load(company_id), "company"
-        except Exception:
-            pass
-    raise HTTPException(status_code=400, detail="Platform SMTP tanımlı değil.")
+            acc = await load(company_id)
+            em = str((acc or {}).get("email") or (acc or {}).get("reply_to") or "").strip()
+            if em and "@" in em:
+                return em
+        except Exception as e:
+            logger.info("company reply-to unavailable for %s: %s", company_id, e)
+    c = await _db.companies.find_one({"_id": company_id}, {"email": 1}) or {}
+    em = str(c.get("email") or "").strip()
+    return em if em and "@" in em else None
 
 
 async def _sms_sent_today(company_id: str) -> int:
@@ -341,31 +329,30 @@ async def _queue_outbox(
 async def _send_email_now(company_id: str, prefs: dict, emails: List[str], title: str, message: str, link: str) -> dict:
     if not emails:
         return {"status": "skipped", "reason": "no_recipients"}
-    smtp_send = _deps.get("smtp_send")
-    if not smtp_send:
-        return {"status": "skipped", "reason": "no_smtp_fn"}
     company_name = await _company_name(company_id)
     subject = f"[TamKobi] {company_name}: {title}"
     html = _email_html(company_name, title, message, link)
     body = f"{company_name}\n\n{title}\n\n{message}" + (f"\n\n{link}" if link else "")
-    try:
-        acc, source = await _resolve_smtp(company_id, prefs)
-    except Exception as e:
-        return {"status": "failed", "detail": str(getattr(e, "detail", e))[:160]}
-    try:
-        await smtp_send(acc, emails, subject, body, html=html)
-        return {"status": "sent", "to": emails, "via": source}
-    except Exception as e:
-        # Şirket SMTP gönderimi bozulursa platforma düş.
-        if source == "company":
-            try:
-                plat = await platform_mail.resolve_smtp_account("transactional")
-                if plat:
-                    await smtp_send(plat, emails, subject, body, html=html)
-                    return {"status": "sent", "to": emails, "via": "platform_fallback", "detail": str(getattr(e, "detail", e))[:120]}
-            except Exception as e2:
-                return {"status": "failed", "detail": str(getattr(e2, "detail", e2))[:160]}
-        return {"status": "failed", "detail": str(getattr(e, "detail", e))[:160]}
+    reply_to = await _company_reply_to(company_id, prefs)
+    result = await mail_service.send_mail(
+        emails,
+        subject,
+        body,
+        html=html,
+        purpose="transactional",
+        company_id=company_id,
+        reply_to=reply_to,
+        from_name=company_name,
+    )
+    status = result.get("status") or "failed"
+    via = result.get("driver") or "platform"
+    if status == "sent":
+        return {"status": "sent", "to": result.get("to") or emails, "via": via}
+    return {
+        "status": "failed",
+        "detail": str(result.get("error") or "Gönderilemedi.")[:160],
+        "via": via,
+    }
 
 
 async def _send_sms_now(company_id: str, phones: List[str], title: str, message: str) -> dict:

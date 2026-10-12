@@ -68,7 +68,7 @@ STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "
 PROTECTED_COMPANY_IDS = frozenset({"comp_nexus_main_01", "comp_nexus_b2b_02"})
 _SKIP_ON_COMPANY_DELETE = frozenset({
     "saas_plans", "platform_settings", "platform_announcements", "users", "companies", "company_licenses", "login_attempts",
-    "platform_mail_servers", "platform_mailboxes", "platform_mail_logs",
+    "platform_mail_servers", "platform_mailboxes", "platform_mail_logs", "mail_suppressions",
 })
 # Korunan hesaplar — sabit demo süper-admin e-postası yok (admin@nexus.com kaldırıldı).
 PROTECTED_USER_EMAILS = frozenset()
@@ -1075,8 +1075,6 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
     """Sistem paneli: şirket ana kullanıcısına şifre sıfırlama e-postası gönder."""
     import secrets
     import password_reset
-    import platform_mail
-    import comm_service
 
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
@@ -1142,11 +1140,18 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
     )
     mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
     try:
-        acc = await platform_mail.resolve_smtp_account("transactional") or await platform_mail.resolve_smtp_account("billing")
-        if not acc:
-            raise HTTPException(status_code=424, detail="Platform posta sunucusu yapılandırılmamış.")
-        await comm_service.smtp_send(acc, [to], subject, body, html=html)
-        mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
+        import mail_service
+        res = await mail_service.send_mail(
+            to, subject, body, html=html, purpose="transactional",
+            company_id=company_id, from_name=brand,
+        )
+        if res.get("status") == "sent":
+            mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
+        else:
+            err = str(res.get("error") or "E-posta gönderilemedi.")[:200]
+            if err in ("MAIL_SMTP_* eksik",) or "MAIL_DRIVER" in err or "Platform" in err:
+                raise HTTPException(status_code=424, detail=err)
+            mail_status, mail_detail = "failed", err
     except HTTPException as e:
         mail_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
         mail_detail = str(e.detail)[:200]

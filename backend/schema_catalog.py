@@ -197,6 +197,12 @@ COLLECTIONS = {
         "keys": ("_id", "server_id", "email", "display_name", "allowed_user_ids", "purposes"),
         "refs": ("platform_mail_servers._id",),
     },
+    "mail_suppressions": {
+        "scope": SCOPE_PLATFORM,
+        "description": "SES bounce/complaint sonrası bastırılan alıcı adresleri.",
+        "keys": ("_id", "email", "reason", "detail", "source", "active", "created_at", "updated_at"),
+        "refs": (),
+    },
     "einvoice_designs": {
         "scope": SCOPE_PLATFORM,
         "description": "GİB e-Fatura / e-Arşiv XSLT görsel tasarımları (Sistem paneli).",
@@ -617,8 +623,11 @@ COLLECTIONS = {
     },
     "mail_logs": {
         "scope": SCOPE_TENANT,
-        "description": "Giden e-posta logu ve okundu takibi (son 90 gün cari kartında).",
-        "keys": ("_id", "company_id", "to", "subject", "contact_id", "context", "ref_id", "status", "opened_at"),
+        "description": "Giden e-posta logu (merkezi send_mail + cari okundu takibi). Gövde/ek saklanmaz.",
+        "keys": (
+            "_id", "company_id", "to", "subject", "contact_id", "context", "ref_id",
+            "status", "opened_at", "driver", "purpose", "provider_message_id", "error", "from_email",
+        ),
         "refs": ("contacts._id",),
     },
     "whatsapp_settings": {

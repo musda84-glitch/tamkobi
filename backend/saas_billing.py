@@ -299,11 +299,17 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
     emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
     if st.get("email_enabled") and emails:
         try:
-            import platform_mail
-            acc = await platform_mail.resolve_smtp_account("transactional") or await _deps["mail_account"](st["sender_company_id"])
+            import mail_service
             btn = f"<p style='margin-top:16px'><a href='{link}' style='background:#10b981;color:#0f172a;padding:12px 20px;border-radius:12px;font-weight:bold;text-decoration:none'>Şimdi Yenile →</a></p>" if link else ""
-            await _deps["smtp_send"](acc, emails, title, body, html=f"<div style='font-family:Arial,sans-serif;max-width:600px'><h2 style='color:#0f172a'>{title}</h2><p>{body.replace(' Tek tıkla yenilemek için: ' + link, '') if link else body}</p>{btn}</div>")
-            res["email"] = emails
+            html = f"<div style='font-family:Arial,sans-serif;max-width:600px'><h2 style='color:#0f172a'>{title}</h2><p>{body.replace(' Tek tıkla yenilemek için: ' + link, '') if link else body}</p>{btn}</div>"
+            mail_res = await mail_service.send_mail(
+                emails, title, body, html=html, purpose="transactional",
+                company_id=company.get("_id"), from_name=company.get("name") or brand,
+            )
+            if mail_res.get("status") == "sent":
+                res["email"] = mail_res.get("to") or emails
+            else:
+                res["email_error"] = str(mail_res.get("error") or "Gönderilemedi.")[:160]
         except Exception as e:  # noqa: BLE001
             res["email_error"] = str(getattr(e, "detail", e))[:160]
     phones = list({p for p in ([a.get("phone") for a in admins] + [company.get("phone")]) if p})

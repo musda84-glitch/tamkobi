@@ -19674,6 +19674,8 @@ import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
 platform_sms.init(db)
+import mail_service
+mail_service.init(db)
 import event_notify
 event_notify.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send}, get_current_user)
 import mail_accounts
@@ -19860,6 +19862,7 @@ app.include_router(trade.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
 app.include_router(platform_sms.router)
+app.include_router(mail_service.router)
 app.include_router(event_notify.router)
 app.include_router(mail_accounts.router)
 app.include_router(einvoice_designs.router)

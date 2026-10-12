@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 import event_notify
+import mail_service
 import notify
 import public_url
 
@@ -87,7 +88,6 @@ class FakeColl:
                 if "$lte" in v and not (d.get(k) is not None and d.get(k) <= v["$lte"]):
                     return False
                 continue
-            # company_ids: value in list
             if k == "company_ids":
                 ids = d.get("company_ids") or []
                 if v not in ids and d.get("company_ids") != v:
@@ -128,7 +128,10 @@ def _db():
     db.notify_outbox = FakeColl([])
     db.notify_sms_daily = FakeColl([])
     db.notifications = FakeColl([])
-    db.companies = FakeColl([{"_id": "c1", "name": "Demo A.Ş."}, {"_id": "c2", "name": "Other"}])
+    db.companies = FakeColl([
+        {"_id": "c1", "name": "Demo A.Ş.", "email": "info@demo.com"},
+        {"_id": "c2", "name": "Other"},
+    ])
     db.users = FakeColl([
         {"_id": "u_admin", "email": "admin@demo.com", "phone": "05321111111", "role": "admin",
          "is_active": True, "active_company_id": "c1", "company_ids": ["c1"]},
@@ -141,19 +144,33 @@ def _db():
     ])
     db.invoices = FakeColl([])
     db.push_tokens = FakeColl([])
+    db.mail_logs = FakeColl([])
+    db.mail_suppressions = FakeColl([])
     return db
+
+
+async def _ok_send(*args, **kwargs):
+    to = args[0] if args else kwargs.get("to")
+    if isinstance(to, str):
+        to = [to]
+    return {"status": "sent", "to": list(to or []), "driver": "platform_smtp"}
 
 
 @pytest.fixture
 def setup_en():
     db = _db()
-    smtp = AsyncMock()
+    send = AsyncMock(side_effect=_ok_send)
     mail_acc = AsyncMock(return_value={
         "email": "firma@demo.com", "smtp_host": "smtp.firma.com", "smtp_port": 587,
         "smtp_user": "firma@demo.com", "password": "secret",
     })
-    event_notify.init(db, {"mail_account": mail_acc, "smtp_send": smtp}, get_current_user=AsyncMock())
-    return db, smtp, mail_acc
+    event_notify.init(db, {"mail_account": mail_acc}, get_current_user=AsyncMock())
+    mail_service.init(db)
+    return db, send, mail_acc
+
+
+def _mail_patch(send):
+    return patch.object(event_notify.mail_service, "send_mail", send)
 
 
 def test_type_roles_include_new_events():
@@ -164,12 +181,10 @@ def test_type_roles_include_new_events():
 
 
 def test_new_einvoice_notifies_once_and_emails(setup_en):
-    db, smtp, _ = setup_en
+    db, send, _ = setup_en
 
     async def _run():
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "smtp.platform", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             doc = {
                 "id": "ed1", "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -185,20 +200,19 @@ def test_new_einvoice_notifies_once_and_emails(setup_en):
     assert r2.get("last", r2).get("status") == "duplicate" or r2.get("status") == "duplicate"
     notes = [n for n in db.notifications.docs.values() if n.get("type") == "einvoice_incoming"]
     assert len(notes) == 1
-    assert smtp.await_count == 1
-    args = smtp.await_args
-    assert "admin@demo.com" in args.args[1] or "muhasebe@demo.com" in args.args[1]
+    assert send.await_count == 1
+    args = send.await_args
+    to = args.args[0]
+    assert "admin@demo.com" in to or "muhasebe@demo.com" in to
     body = " ".join(str(a) for a in args.args) + str(args.kwargs)
     assert "127.0.0.1" not in body and "localhost" not in body
 
 
 def test_orders_two_vs_summary(setup_en):
-    db, smtp, _ = setup_en
+    db, send, _ = setup_en
 
     async def _run():
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             two = [
                 {"_id": "o1", "channel": "trendyol", "order_number": "T1", "grand_total": 100},
@@ -213,21 +227,18 @@ def test_orders_two_vs_summary(setup_en):
 
     asyncio.run(_run())
     order_notes = [n for n in db.notifications.docs.values() if n.get("type") == "order_new"]
-    # 2 individual + 1 summary
     assert len(order_notes) == 3
     assert any("10 yeni sipariş" in (n.get("title") or "") for n in order_notes)
 
 
 def test_prefs_email_off_no_email(setup_en):
-    db, smtp, _ = setup_en
+    db, send, _ = setup_en
 
     async def _run():
         await event_notify.save_prefs("c1", {
             "events": {"order_new": {"inapp": True, "email": False, "sms": False, "digest": "instant"}},
         })
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             await event_notify.notify_event(
                 "c1", "order_new", "Sipariş", "msg", link="/orders",
@@ -235,19 +246,18 @@ def test_prefs_email_off_no_email(setup_en):
             )
 
     asyncio.run(_run())
-    assert smtp.await_count == 0
+    assert send.await_count == 0
     assert any(n.get("type") == "order_new" for n in db.notifications.docs.values())
 
 
-def test_company_smtp_decrypt_fail_falls_back_platform(setup_en):
-    db, smtp, mail_acc = setup_en
+def test_company_email_from_sets_reply_to(setup_en):
+    """email_from=company → Reply-To şirket; gönderim yine send_mail (SES/platform)."""
+    db, send, mail_acc = setup_en
     mail_acc.side_effect = HTTPException(status_code=409, detail="reauth")
 
     async def _run():
         await event_notify.save_prefs("c1", {"email_from": "company"})
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             res = await event_notify.notify_event(
                 "c1", "order_new", "Sipariş", "msg", link="/orders",
@@ -257,18 +267,17 @@ def test_company_smtp_decrypt_fail_falls_back_platform(setup_en):
 
     res = asyncio.run(_run())
     assert res.get("email", {}).get("status") == "sent"
-    assert res.get("email", {}).get("via") == "platform"
-    assert smtp.await_count == 1
-    assert smtp.await_args.args[0]["email"] == "sys@tamkobi.com"
+    assert send.await_count == 1
+    assert send.await_args.kwargs.get("reply_to") == "info@demo.com"
+    assert send.await_args.kwargs.get("from_name") == "Demo A.Ş."
+    assert send.await_args.kwargs.get("company_id") == "c1"
 
 
 def test_kontor_warning_once_per_day(setup_en):
-    db, smtp, _ = setup_en
+    db, send, _ = setup_en
 
     async def _run():
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             r1 = await event_notify.maybe_gib_credits_low("c1", 5, threshold=20)
             r2 = await event_notify.maybe_gib_credits_low("c1", 3, threshold=20)
@@ -281,7 +290,7 @@ def test_kontor_warning_once_per_day(setup_en):
 
 
 def test_overdue_summary_admin_accountant_roles(setup_en):
-    db, smtp, _ = setup_en
+    db, send, _ = setup_en
     today = date.today().isoformat()
     db.invoices.docs["inv1"] = {
         "_id": "inv1", "company_id": "c1", "invoice_type": "sales",
@@ -291,9 +300,7 @@ def test_overdue_summary_admin_accountant_roles(setup_en):
     }
 
     async def _run():
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             return await event_notify.run_receivable_overdue()
 
@@ -302,36 +309,32 @@ def test_overdue_summary_admin_accountant_roles(setup_en):
     notes = [n for n in db.notifications.docs.values() if n.get("type") == "receivable_overdue"]
     assert notes
     assert set(notes[0].get("roles") or []) == {"admin", "accountant"}
-    # sales role not in TYPE_ROLES for this event
     assert "sales" not in (notes[0].get("roles") or [])
-    assert smtp.await_count >= 1
-    emailed = smtp.await_args.args[1]
+    assert send.await_count >= 1
+    emailed = send.await_args.args[0]
     assert "admin@demo.com" in emailed
     assert "muhasebe@demo.com" in emailed
     assert "satis@demo.com" not in emailed
-    _ = today  # silence unused in some runners
+    _ = today
 
 
 def test_links_no_localhost(setup_en):
-    _, smtp, _ = setup_en
+    _, send, _ = setup_en
 
     async def _run():
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             await event_notify.notify_event(
                 "c1", "einvoice_incoming", "Belge", "msg", link="/edoc-inbox",
                 dedupe_key="einv:linktest",
             )
-            # Even if env is bad, absolute link must not be localhost
             link = await event_notify.app_link("/orders")
             assert "127.0.0.1" not in link
             assert "localhost" not in link
             assert link.startswith("https://")
 
     asyncio.run(_run())
-    body = str(smtp.await_args)
+    body = str(send.await_args)
     assert "127.0.0.1" not in body
     assert "localhost" not in body
     assert "app.tamkobi.com" in body
@@ -342,16 +345,13 @@ def test_prefs_api_tenant_isolation(setup_en):
 
     async def _run():
         user_c1 = {"_id": "u_admin", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin"}
-        # resolve_company_id raises 403 for foreign company
         with pytest.raises(HTTPException) as ei:
             from tenant_access import resolve_company_id
             resolve_company_id(user_c1, "c2")
         assert ei.value.status_code == 403
-        # save for own company ok
         saved = await event_notify.save_prefs("c1", {"extra_emails": ["extra@demo.com"]})
         assert saved["company_id"] == "c1"
         assert "extra@demo.com" in saved["extra_emails"]
-        # get prefs for c2 is empty defaults, not c1's
         other = await event_notify.get_prefs("c2")
         assert other["company_id"] == "c2"
         assert other.get("extra_emails") == []
@@ -359,19 +359,13 @@ def test_prefs_api_tenant_isolation(setup_en):
     asyncio.run(_run())
 
 
-def test_company_smtp_send_error_falls_back(setup_en):
-    db, smtp, mail_acc = setup_en
-    mail_acc.return_value = {
-        "email": "firma@demo.com", "smtp_host": "smtp.firma.com", "password": "x",
-    }
-    # first call (company) fails, second (platform) ok
-    smtp.side_effect = [Exception("smtp fail"), None]
+def test_send_mail_failure_reported(setup_en):
+    db, send, mail_acc = setup_en
+    send.side_effect = AsyncMock(return_value={"status": "failed", "error": "smtp fail", "driver": "platform_smtp"})
 
     async def _run():
         await event_notify.save_prefs("c1", {"email_from": "company"})
-        with patch.object(event_notify.platform_mail, "resolve_smtp_account", AsyncMock(return_value={
-            "email": "sys@tamkobi.com", "smtp_host": "s", "password": "p",
-        })), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
              patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
             return await event_notify.notify_event(
                 "c1", "order_new", "Sipariş", "msg", link="/orders",
@@ -379,6 +373,6 @@ def test_company_smtp_send_error_falls_back(setup_en):
             )
 
     res = asyncio.run(_run())
-    assert res.get("email", {}).get("status") == "sent"
-    assert res.get("email", {}).get("via") == "platform_fallback"
-    assert smtp.await_count == 2
+    assert res.get("email", {}).get("status") == "failed"
+    assert "smtp fail" in (res.get("email", {}).get("detail") or "")
+    assert send.await_count == 1
