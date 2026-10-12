@@ -22,16 +22,35 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
   const [providers, setProviders] = useState([]);
+  const [providersLoaded, setProvidersLoaded] = useState(false);
+  const [providersError, setProvidersError] = useState(false);
   const [eiProvider, setEiProvider] = useState("");
   const [parentPick, setParentPick] = useState("");
   const [parentQ, setParentQ] = useState("");
   const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => { setD(r.data); setParentPick(r.data.parent_company_id || ""); const l = r.data.license; setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" }); setEiProvider(r.data.einvoice?.provider || ""); }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
-  useEffect(() => { load(); axios.get(`${API_URL}/einvoice/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, [load]);
+  useEffect(() => {
+    load();
+    setProvidersLoaded(false);
+    setProvidersError(false);
+    axios.get(`${API_URL}/einvoice/providers`)
+      .then((r) => {
+        setProviders(Array.isArray(r.data) ? r.data : []);
+        setProvidersError(false);
+      })
+      .catch((e) => {
+        setProviders([]);
+        setProvidersError(true);
+        toast.error(e.response?.data?.detail || "Entegratör listesi alınamadı.");
+      })
+      .finally(() => setProvidersLoaded(true));
+  }, [load]);
   if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
   const groups = groupByCategory(catalog);
   const isLive = lic.status === "active" || lic.status === "trial";
+  const providerInList = !eiProvider || providers.some((p) => p.code === eiProvider);
+  const canSaveEinvoice = providersLoaded && !providersError;
   const applyLicense = (licRes) => {
     setD((prev) => ({ ...prev, license: licRes }));
     setF((prev) => ({ ...prev, status: licRes.status }));
@@ -221,10 +240,16 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             </div>
             <div>
               <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
-              <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider">
+              <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider" disabled={!canSaveEinvoice}>
                 <option value="">Seçilmedi (GİB simüle)</option>
                 {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+                {!providerInList && eiProvider ? (
+                  <option value={eiProvider} data-testid="drawer-einvoice-provider-orphan">(mevcut: {eiProvider})</option>
+                ) : null}
               </select>
+              {providersError ? (
+                <p className="text-[11px] text-rose-700 mt-1" data-testid="drawer-einvoice-providers-error">Entegratör listesi yüklenemedi. Kaydetmek için listeyi yenileyin.</p>
+              ) : null}
             </div>
             {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
             <div className="flex justify-end">
@@ -236,7 +261,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
                   setEiProvider(r.data.provider || "");
                   toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
                 } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
-              }} disabled={busy === "ei"} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
+              }} disabled={busy === "ei" || !canSaveEinvoice} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
             </div>
             {eiProvider === "isnet" ? (
               <div className="pt-1" data-testid="drawer-isnet-soap">

@@ -42,6 +42,17 @@ async function renderPanel(props) {
   return root;
 }
 
+test("settings load error shows yüklenemedi not SİMÜLE and disables actions", async () => {
+  axios.get.mockRejectedValue({ response: { data: { detail: "forbidden" }, status: 403 } });
+  await renderPanel({ variant: "system" });
+  const status = host.querySelector('[data-testid="isnet-status"]');
+  expect(status?.textContent).toContain("YÜKLENEMEDİ");
+  expect(status?.textContent).not.toContain("SİMÜLE");
+  expect(host.querySelector('[data-testid="isnet-load-error"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="isnet-save-btn"]')?.disabled).toBe(true);
+  expect(host.querySelector('[data-testid="isnet-test-btn"]')?.disabled).toBe(true);
+});
+
 test("company variant keeps VKN, GIB alias and portal credentials only", async () => {
   await renderPanel({ variant: "company" });
   const panel = host.querySelector('[data-testid="isnet-integration-panel"]');
