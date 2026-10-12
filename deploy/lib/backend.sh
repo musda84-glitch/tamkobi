@@ -146,11 +146,14 @@ backend_ensure_venv() {
   fi
 
   STUB="$ROOT/backend/docker/stubs/emergentintegrations"
-  SITE="$("$_venv/bin/python3" -c "import sysconfig; print(sysconfig.get_path('purelib'))")"
-  if [ -d "$STUB" ] && [ -n "$SITE" ]; then
-    rm -rf "$SITE/emergentintegrations"
-    cp -a "$STUB" "$SITE/emergentintegrations"
-    info "emergentintegrations stub → $SITE/emergentintegrations"
+  SITE="$("$_venv/bin/python3" -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null || true)"
+  if [ -d "$STUB" ] && [ -n "$SITE" ] && [ -d "$SITE" ]; then
+    if rm -rf "$SITE/emergentintegrations" 2>/dev/null \
+      && cp -a "$STUB" "$SITE/emergentintegrations" 2>/dev/null; then
+      info "emergentintegrations stub → $SITE/emergentintegrations"
+    else
+      echo "Uyarı: emergentintegrations stub kopyalanamadı ($SITE); devam" >&2
+    fi
   fi
 
   # shellcheck disable=SC2012

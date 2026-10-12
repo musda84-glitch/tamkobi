@@ -125,11 +125,13 @@ fi
 systemctl disable --now tamkobi-uvicorn 2>/dev/null || true
 systemctl daemon-reload
 
-echo "migrated_at=${STAMP}" >"$MARKER"
-echo "git_sha=${GIT_SHA}" >>"$MARKER"
-echo "site_backup=${SITE_BAK}" >>"$MARKER"
-echo "service_user=${SERVICE_USER}" >>"$MARKER"
-echo "service_group=${SERVICE_GROUP}" >>"$MARKER"
+{
+  echo "migrated_at=${STAMP}"
+  echo "git_sha=${GIT_SHA}"
+  echo "site_backup=${SITE_BAK}"
+  echo "service_user=${SERVICE_USER}"
+  echo "service_group=${SERVICE_GROUP}"
+} >"$MARKER"
 
 info "7) durum"
 "$HERE/status.sh" || true

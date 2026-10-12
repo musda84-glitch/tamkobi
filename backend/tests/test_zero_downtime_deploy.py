@@ -520,8 +520,8 @@ check_credential_key_readable
     r = _sh(script, check=False)
     assert r.returncode != 0
     assert "ASLA" in r.stderr or "okunamıyor" in r.stderr
-    assert key.read_bytes() == b"secret-key-material\n"
     key.chmod(0o600)
+    assert key.read_bytes() == b"secret-key-material\n"
 
 
 def test_validate_venv_rejects_multiline(tmp_path: Path):

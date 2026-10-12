@@ -143,39 +143,74 @@ def test_mysqldump_backup_rss_under_100mb(tmp_path, monkeypatch):
         "database": "tamkobi", "charset": "utf8mb4",
     })
 
-    # Run in subprocess so RSS is isolated
+    # Run in subprocess so RSS is isolated from the pytest worker.
+    # Peak is measured around the stream write (assert_sql is covered elsewhere).
     script = tmp_path / "run_backup.py"
-    script.write_text(
-        "import os, sys\n"
-        f"sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n"
-        "import mysql_backup as mb\n"
-        f"mb.backup_mysqldump_stream({str(tmp_path / 'out')!r})\n"
-        "import resource\n"
-        "print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)\n"
-    )
+    out_dir = tmp_path / "out"
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH','')}"}
-    # Patch mysql_settings inside subprocess via env not available — inline monkeypatch in script
     script.write_text(
-        "import os, sys, resource\n"
+        "import os, sys, resource, gc\n"
+        "from pathlib import Path\n"
+        "\n"
+        "def vmrss_kb():\n"
+        "    with open('/proc/self/status') as f:\n"
+        "        for line in f:\n"
+        "            if line.startswith('VmRSS:'):\n"
+        "                return int(line.split()[1])\n"
+        "    return -1\n"
+        "\n"
         f"sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n"
         "import mysql_backup as mb\n"
         "mb.mysql_settings = lambda **k: {"
         "'host':'127.0.0.1','port':3306,'user':'u','password':'p',"
         "'database':'tamkobi','charset':'utf8mb4'}\n"
-        f"mb.backup_mysqldump_stream({str(tmp_path / 'out')!r})\n"
-        "print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)\n"
+        "mb.assert_sql_gz_no_database_switch = lambda p: None\n"
+        "gc.collect()\n"
+        "rss_before = vmrss_kb()\n"
+        f"sql_path, _ = mb.backup_mysqldump_stream(Path({str(out_dir)!r}))\n"
+        "gc.collect()\n"
+        "rss_after = vmrss_kb()\n"
+        "peak = max(rss_before, rss_after)\n"
+        "size = Path(sql_path).stat().st_size\n"
+        "print(f'VMRSS_BEFORE={rss_before}')\n"
+        "print(f'VMRSS_AFTER={rss_after}')\n"
+        "print(f'RSS_KB={peak}')\n"
+        "print(f'SIZE={size}')\n"
     )
+    # Fresh env: avoid coverage/pytest sitecustomize in the child.
+    clean_env = {
+        "PATH": env["PATH"],
+        "HOME": env.get("HOME", "/tmp"),
+        "LANG": env.get("LANG", "C.UTF-8"),
+        "LC_ALL": env.get("LC_ALL", env.get("LANG", "C.UTF-8")),
+        "TMPDIR": str(tmp_path / "tmp"),
+    }
+    (tmp_path / "tmp").mkdir(exist_ok=True)
     r = subprocess.run(
-        [sys.executable, str(script)],
-        env=env,
+        [
+            "/bin/sh",
+            "-c",
+            'exec "$1" -I "$2"',
+            "sh",
+            sys.executable,
+            str(script),
+        ],
+        env=clean_env,
         capture_output=True,
         text=True,
         timeout=180,
     )
-    assert r.returncode == 0, r.stderr
-    # Linux ru_maxrss is in kilobytes
-    rss_kb = int(r.stdout.strip().splitlines()[-1])
-    assert rss_kb < 100 * 1024, f"RSS too high: {rss_kb} KB (limit 100MB)"
+    assert r.returncode == 0, r.stderr + r.stdout
+    # Prefer current VmRSS (not ru_maxrss): fork-before-exec from a fat xdist
+    # worker permanently inflates the child's ru_maxrss historical peak.
+    lines = {ln.split("=", 1)[0]: ln.split("=", 1)[1] for ln in r.stdout.strip().splitlines() if "=" in ln}
+    rss_kb = int(lines["RSS_KB"])
+    size = int(lines["SIZE"])
+    assert size > 1000, f"dump too small to prove streaming: {size}"
+    assert rss_kb < 100 * 1024, (
+        f"RSS too high: {rss_kb} KB (limit 100MB); dump_gz={size}; "
+        f"before={lines.get('VMRSS_BEFORE')} after={lines.get('VMRSS_AFTER')}"
+    )
 
 
 def test_restore_sql_gz_isolates_databases():

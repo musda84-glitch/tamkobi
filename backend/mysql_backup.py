@@ -284,6 +284,7 @@ def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> 
     import threading
 
     cfg = settings or mysql_settings()
+    dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     name = cfg.get("database") or "tamkobi"
@@ -313,16 +314,22 @@ def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> 
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env={**os.environ},
+            bufsize=0,
         ) as proc:
             assert proc.stdout is not None and proc.stderr is not None
             err_t = threading.Thread(target=_read_err, args=(proc.stderr,), daemon=True)
             err_t.start()
-            with gzip.open(sql_path, "wb", compresslevel=6) as gz:
+            # compresslevel=1 keeps RSS low on multi-hundred-MB streams
+            with gzip.open(sql_path, "wb", compresslevel=1) as gz:
+                n = 0
                 while True:
-                    chunk = proc.stdout.read(1024 * 256)
+                    chunk = proc.stdout.read(1024 * 64)
                     if not chunk:
                         break
                     gz.write(chunk)
+                    n += 1
+                    if n % 64 == 0:
+                        gz.flush()
             rc = proc.wait()
             err_t.join(timeout=30)
         stderr = b"".join(err_chunks).decode("utf-8", "replace")
@@ -349,19 +356,38 @@ def backup_mysqldump_stream(dest_dir: Path, settings: Optional[dict] = None) -> 
 
 
 def assert_sql_gz_no_database_switch(path: Path) -> None:
-    """Refuse dumps that switch databases (CREATE DATABASE / USE `…`)."""
-    opener = gzip.open if str(path).endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8", errors="replace") as f:  # type: ignore[arg-type]
-        for line in f:
-            s = line.strip()
-            if not s or s.startswith("--") or s.startswith("/*"):
-                continue
-            up = s.upper()
-            if up.startswith("CREATE DATABASE") or up.startswith("USE ") or up.startswith("USE`"):
-                raise ValueError(
-                    f"SQL dump must target a single DB via mysql client argv; "
-                    f"found database switch: {s[:120]}"
-                )
+    """Refuse dumps that switch databases (CREATE DATABASE / USE `…`).
+
+    Streams in binary to avoid holding the decompressed dump in RAM.
+    """
+    path = Path(path)
+    opener = gzip.open if path.name.endswith(".gz") else open
+    # Match at start of a SQL statement (after newline); ignore comments later.
+    bad = re.compile(
+        br"(?mi)^(?:\s*)(?:CREATE\s+DATABASE|USE\s+[`'\"]?\w)",
+    )
+    with opener(path, "rb") as f:  # type: ignore[arg-type]
+        carry = b""
+        while True:
+            chunk = f.read(1024 * 256)
+            if not chunk:
+                break
+            buf = carry + chunk
+            if bad.search(buf):
+                # Confirm it's not inside a comment line
+                for m in bad.finditer(buf):
+                    # Look back to line start
+                    start = buf.rfind(b"\n", 0, m.start()) + 1
+                    end = buf.find(b"\n", m.start())
+                    line = buf[start:end if end != -1 else None]
+                    s = line.strip()
+                    if not s or s.startswith(b"--") or s.startswith(b"/*"):
+                        continue
+                    raise ValueError(
+                        "SQL dump must target a single DB via mysql client argv; "
+                        f"found database switch: {s[:120].decode('utf-8', 'replace')}"
+                    )
+            carry = buf[-256:]
 
 
 def backup_json_stream(
