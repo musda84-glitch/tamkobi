@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Awaitable
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
@@ -19,6 +19,7 @@ _current_user: Optional[Callable[..., Awaitable[dict]]] = None
 _public_base_url: Optional[Callable[..., Awaitable[str]]] = None
 
 NEEDS_REAUTH_MSG = "Kayıtlı şifre çözülemedi — lütfen yeniden girin."
+MAIL_LOGS_LIMIT_MAX = 500
 
 
 def init(db, get_current_user=None, public_base_url_fn=None):
@@ -118,6 +119,7 @@ async def get_mail_account(
 @router.put("/comm/mail/account")
 async def save_mail_account(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     cid = resolve_mail_company(user, req.get("company_id"))
+    await tenant_access.require_company_admin(user, cid)
     preset = comm_service.MAIL_PRESETS.get(req.get("provider", "custom"), comm_service.MAIL_PRESETS["custom"])
     existing = await _db.mail_accounts.find_one({"company_id": cid})
     if not req.get("password") and not existing:
@@ -148,10 +150,11 @@ async def save_mail_account(req: Dict[str, Any], user: dict = Depends(_user_dep)
     a = await load_mail_account(cid)
     try:
         await comm_service.run_blocking(comm_service.imap_test, a)
+        await comm_service.smtp_login_test(a)
         await _db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "connected", "last_error": None}})
-        test = {"ok": True, "message": "IMAP bağlantısı doğrulandı."}
+        test = {"ok": True, "message": "IMAP ve SMTP bağlantısı doğrulandı."}
     except Exception as e:
-        err = f"IMAP bağlantı hatası: {_err_text(e)}"
+        err = f"Posta bağlantı hatası: {_err_text(e)}"
         await _db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
         test = {"ok": False, "message": err}
     saved = await _db.mail_accounts.find_one({"_id": a["_id"]})
@@ -167,6 +170,7 @@ async def delete_mail_account(
     user: dict = Depends(_user_dep),
 ):
     cid = resolve_mail_company(user, company_id or request.query_params.get("company_id"))
+    await tenant_access.require_company_admin(user, cid)
     await _db.mail_accounts.delete_one({"company_id": cid})
     return {"status": "success"}
 
@@ -370,5 +374,10 @@ async def mail_logs(
     user: dict = Depends(_user_dep),
 ):
     cid = resolve_mail_company(user, company_id or request.query_params.get("company_id"))
-    logs = await _db.mail_logs.find({"company_id": cid}).sort("created_at", -1).to_list(limit)
+    try:
+        lim = int(limit)
+    except (TypeError, ValueError):
+        lim = 200
+    lim = min(max(lim, 1), MAIL_LOGS_LIMIT_MAX)
+    logs = await _db.mail_logs.find({"company_id": cid}).sort("created_at", -1).to_list(lim)
     return [_clean_doc(x) for x in logs]

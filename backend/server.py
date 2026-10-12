@@ -2161,6 +2161,8 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Reque
                 await _send_tracked_mail(company_id=q["company_id"], to=[email], subject=subject, body=message, html=html, account=a, contact_id=q.get("contact_id"), contact_name=q.get("contact_name"), context="quote_approval", ref_id=quote_id, base_url=base)
                 results["email"] = {"status": "sent", "detail": f"{email} adresine gönderildi."}
             except HTTPException as e:
+                if getattr(e, "status_code", None) == 409:
+                    _log_mail_reauth(q["company_id"], "quote_approval", e.detail)
                 results["email"] = {"status": "failed", "detail": e.detail}
             except Exception as e:
                 results["email"] = {"status": "failed", "detail": f"SMTP hatası: {_err_text(e)}"}
@@ -2799,6 +2801,8 @@ async def _send_customer_link(company_id: str, channels: List[str], phone: Optio
                 await _send_tracked_mail(company_id=company_id, to=[email], subject=subject, body=message, html=html, account=a, contact_id=contact_id, contact_name=contact_name, context=context, ref_id=ref_id, base_url=base_url)
                 results["email"] = {"status": "sent", "detail": f"{email} adresine gönderildi."}
             except HTTPException as e:
+                if getattr(e, "status_code", None) == 409:
+                    _log_mail_reauth(company_id, context or "customer_link", e.detail)
                 results["email"] = {"status": "failed", "detail": e.detail}
             except Exception as e:
                 results["email"] = {"status": "failed", "detail": f"SMTP hatası: {_err_text(e)}"}
@@ -4165,7 +4169,10 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
         await _send_tracked_mail(company_id=c["company_id"], to=[to], subject=subject, body=body, html=html, account=a, contact_id=c.get("_id"), contact_name=c.get("name"), context="b2b_reset", ref_id=token, base_url=base)
         mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
     except HTTPException as e:
-        if getattr(e, "status_code", None) == 424:
+        if getattr(e, "status_code", None) == 409:
+            _log_mail_reauth(c["company_id"], "b2b_reset", e.detail)
+            mail_status, mail_detail = "skipped", str(e.detail)[:140]
+        elif getattr(e, "status_code", None) == 424:
             mail_status, mail_detail = "failed", str(e.detail)[:140]
         else:
             mail_status, mail_detail = "skipped", str(e.detail)
@@ -11242,32 +11249,36 @@ async def sms_logs(company_id: Optional[str] = "comp_nexus_main_01", limit: int 
     return clean_docs(logs)
 
 # ----------------- İLETİŞİM: E-POSTA (IMAP/SMTP) — API: mail_accounts.router -----------------
-import mail_accounts as _mail_accounts_mod
+import mail_accounts
 
 
 def _err_text(e: Exception) -> str:
-    return _mail_accounts_mod._err_text(e)
+    return mail_accounts._err_text(e)
 
 
 def _mask_mail_account(a: dict) -> dict:
-    return _mail_accounts_mod.mask_mail_account(a)
+    return mail_accounts.mask_mail_account(a)
 
 
 async def _mail_account(company_id: str, user_id: Optional[str] = None) -> dict:
     """Internal helper — decrypt hatasında 409 (needs_reauth)."""
     _ = user_id
-    return await _mail_accounts_mod.load_mail_account(company_id)
+    return await mail_accounts.load_mail_account(company_id)
 
 
 async def _send_tracked_mail(*, company_id: str, to: List[str], subject: str, body: str, html: Optional[str] = None,
                             account: Optional[dict] = None, contact_id: Optional[str] = None, contact_name: Optional[str] = None,
                             context: str = "manual", ref_id: Optional[str] = None, base_url: str = "",
                             cc: Optional[List[str]] = None, attachments: Optional[List[Dict[str, Any]]] = None) -> dict:
-    return await _mail_accounts_mod.send_tracked_mail(
+    return await mail_accounts.send_tracked_mail(
         company_id=company_id, to=to, subject=subject, body=body, html=html, account=account,
         contact_id=contact_id, contact_name=contact_name, context=context, ref_id=ref_id,
         base_url=base_url, cc=cc, attachments=attachments,
     )
+
+
+def _log_mail_reauth(company_id: str, context: str, detail: Any) -> None:
+    logger.warning("mail needs_reauth company=%s context=%s: %s", company_id, context, detail)
 
 
 @api_router.get("/public/mail/open/{log_id}.gif")
@@ -19678,7 +19689,6 @@ import mail_service
 mail_service.init(db)
 import event_notify
 event_notify.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send}, get_current_user)
-import mail_accounts
 mail_accounts.init(db, get_current_user, _public_base_url)
 einvoice_designs.init(db)
 addons.init(db)

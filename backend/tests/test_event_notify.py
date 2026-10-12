@@ -359,6 +359,23 @@ def test_prefs_api_tenant_isolation(setup_en):
     asyncio.run(_run())
 
 
+def test_put_notify_prefs_requires_company_admin(setup_en):
+    async def _run():
+        sales = {"_id": "u_sales", "company_ids": ["c1"], "active_company_id": "c1", "role": "sales"}
+        with pytest.raises(HTTPException) as ei:
+            await event_notify.put_notify_prefs_route(
+                {"company_id": "c1", "extra_emails": ["x@y.com"]}, user=sales,
+            )
+        assert ei.value.status_code == 403
+        admin = {"_id": "u_admin", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin"}
+        out = await event_notify.put_notify_prefs_route(
+            {"company_id": "c1", "extra_emails": ["ok@demo.com"]}, user=admin,
+        )
+        assert "ok@demo.com" in out.get("extra_emails", [])
+
+    asyncio.run(_run())
+
+
 def test_send_mail_failure_reported(setup_en):
     db, send, mail_acc = setup_en
     send.side_effect = AsyncMock(return_value={"status": "failed", "error": "smtp fail", "driver": "platform_smtp"})

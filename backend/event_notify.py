@@ -252,6 +252,11 @@ async def _company_reply_to(company_id: str, prefs: dict) -> Optional[str]:
             em = str((acc or {}).get("email") or (acc or {}).get("reply_to") or "").strip()
             if em and "@" in em:
                 return em
+        except HTTPException as e:
+            if getattr(e, "status_code", None) == 409:
+                logger.warning("mail needs_reauth company=%s context=event_notify: %s", company_id, e.detail)
+            else:
+                logger.info("company reply-to unavailable for %s: %s", company_id, e.detail)
         except Exception as e:
             logger.info("company reply-to unavailable for %s: %s", company_id, e)
     c = await _db.companies.find_one({"_id": company_id}, {"email": 1}) or {}
@@ -655,4 +660,5 @@ async def get_notify_prefs_route(
 @router.put("/notify/prefs")
 async def put_notify_prefs_route(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     cid = tenant_access.resolve_company_id(user, (req or {}).get("company_id"))
+    await tenant_access.require_company_admin(user, cid)
     return await save_prefs(cid, req or {})

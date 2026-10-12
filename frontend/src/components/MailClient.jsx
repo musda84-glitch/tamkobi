@@ -101,7 +101,7 @@ export const MailClient = ({ companyId }) => {
   }, [companyId]);
   const loadSent = useCallback(async () => { const r = await axios.get(`${API_URL}/comm/mail/logs?company_id=${companyId}`); setSentLogs(r.data); }, [companyId]);
 
-  useEffect(() => { (async () => { const a = await loadAccount(); if (a && a.status !== "error") { loadFolders(); loadMessages("INBOX"); } loadSent(); })(); }, [loadAccount, loadFolders, loadMessages, loadSent]);
+  useEffect(() => { (async () => { const a = await loadAccount(); if (a && a.status !== "error" && a.status !== "needs_reauth") { loadFolders(); loadMessages("INBOX"); } loadSent(); })(); }, [loadAccount, loadFolders, loadMessages, loadSent]);
 
   const openMessage = async (m) => {
     try {
@@ -134,7 +134,7 @@ export const MailClient = ({ companyId }) => {
         <div className="flex items-center gap-2 text-xs">
           <span className="font-semibold text-slate-900">{account.display_name || account.email}</span>
           <span className="text-slate-400">{account.email}</span>
-          {account.status === "connected" ? <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md px-2 py-0.5"><CheckCircle2 className="w-3 h-3" /> BAĞLI</span> : <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 rounded-md px-2 py-0.5" title={account.last_error}><AlertCircle className="w-3 h-3" /> HATA</span>}
+          {account.status === "connected" ? <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md px-2 py-0.5"><CheckCircle2 className="w-3 h-3" /> BAĞLI</span> : account.status === "needs_reauth" ? <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md px-2 py-0.5" title={account.last_error}><AlertCircle className="w-3 h-3" /> YENİDEN GİRİŞ</span> : <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 rounded-md px-2 py-0.5" title={account.last_error}><AlertCircle className="w-3 h-3" /> HATA</span>}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setCompose({})} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="mail-compose-btn"><PenSquare className="w-4 h-4" /> Yeni E-posta</button>
@@ -142,6 +142,7 @@ export const MailClient = ({ companyId }) => {
           <button onClick={() => setShowSetup(true)} className="p-2 border rounded-xl hover:bg-slate-50" title="Hesap Ayarları" data-testid="mail-settings-btn"><Settings className="w-4 h-4" /></button>
         </div>
       </div>
+      {account.status === "needs_reauth" && <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="mail-reauth-banner">Şifreyi yeniden girin{account.last_error ? ` — ${account.last_error}` : "."}</div>}
       {account.last_error && account.status === "error" && <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2" data-testid="mail-error-banner">{account.last_error} — Ayarlardan uygulama şifresini kontrol edin.</div>}
 
       <div className="grid grid-cols-12 gap-3 min-h-[560px]">

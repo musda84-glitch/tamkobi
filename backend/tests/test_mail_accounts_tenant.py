@@ -92,7 +92,7 @@ def setup_mail():
 
 
 def test_other_company_put_403(setup_mail):
-    user = {"_id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}
+    user = {"_id": "u1", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin"}
 
     async def _run():
         with pytest.raises(HTTPException) as ei:
@@ -103,6 +103,56 @@ def test_other_company_put_403(setup_mail):
         assert ei.value.status_code == 403
 
     asyncio.run(_run())
+
+
+def test_non_admin_put_delete_403(setup_mail):
+    user = {"_id": "u1", "company_ids": ["c1"], "active_company_id": "c1", "role": "sales"}
+
+    async def _put():
+        with pytest.raises(HTTPException) as ei:
+            await mail_accounts.save_mail_account(
+                {"company_id": "c1", "email": "a@firma.com", "password": "x", "provider": "custom"},
+                user=user,
+            )
+        assert ei.value.status_code == 403
+
+    async def _del():
+        req = MagicMock()
+        req.query_params = {"company_id": "c1"}
+        with pytest.raises(HTTPException) as ei:
+            await mail_accounts.delete_mail_account(req, company_id="c1", user=user)
+        assert ei.value.status_code == 403
+
+    asyncio.run(_put())
+    asyncio.run(_del())
+
+
+def test_mail_logs_limit_capped_at_500(setup_mail):
+    user = {"_id": "u1", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin"}
+    seen = {}
+    coll = setup_mail.mail_logs
+    orig_find = coll.find
+
+    def find_wrap(q):
+        c = orig_find(q)
+        orig_to_list = c.to_list
+
+        async def to_list(n):
+            seen["n"] = n
+            return await orig_to_list(n)
+
+        c.to_list = to_list
+        return c
+
+    coll.find = find_wrap
+
+    async def _run():
+        req = MagicMock()
+        req.query_params = {}
+        await mail_accounts.mail_logs(req, company_id="c1", limit=9999, user=user)
+
+    asyncio.run(_run())
+    assert seen["n"] == 500
 
 
 def test_other_company_flag_messages_send_403(setup_mail):

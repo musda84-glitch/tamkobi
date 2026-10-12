@@ -244,8 +244,13 @@ def test_send_mail_does_not_raise(db, monkeypatch):
     assert res["status"] == "failed"
 
 
+TOPIC = "arn:aws:sns:eu-central-1:123456789012:tamkobi-ses"
+
+
 def test_sns_bounce_webhook_suppresses(db, monkeypatch):
     monkeypatch.setenv("MAIL_SNS_SKIP_VERIFY", "1")
+    monkeypatch.setenv("TAMKOBI_ENV", "test")
+    monkeypatch.setenv("MAIL_SNS_TOPIC_ARN", TOPIC)
     message = json.dumps({
         "notificationType": "Bounce",
         "bounce": {
@@ -253,7 +258,7 @@ def test_sns_bounce_webhook_suppresses(db, monkeypatch):
             "bouncedRecipients": [{"emailAddress": "bounce@me.com", "diagnosticCode": "550"}],
         },
     })
-    payload = {"Type": "Notification", "Message": message}
+    payload = {"Type": "Notification", "Message": message, "TopicArn": TOPIC}
 
     class FakeReq:
         async def body(self):
@@ -272,6 +277,8 @@ def test_sns_bounce_webhook_suppresses(db, monkeypatch):
 
 def test_sns_complaint_webhook(db, monkeypatch):
     monkeypatch.setenv("MAIL_SNS_SKIP_VERIFY", "1")
+    monkeypatch.setenv("TAMKOBI_ENV", "test")
+    monkeypatch.setenv("MAIL_SNS_TOPIC_ARN", TOPIC)
     message = json.dumps({
         "notificationType": "Complaint",
         "complaint": {
@@ -279,7 +286,7 @@ def test_sns_complaint_webhook(db, monkeypatch):
             "complaintFeedbackType": "abuse",
         },
     })
-    payload = {"Type": "Notification", "Message": message}
+    payload = {"Type": "Notification", "Message": message, "TopicArn": TOPIC}
 
     class FakeReq:
         async def body(self):
@@ -292,7 +299,15 @@ def test_sns_complaint_webhook(db, monkeypatch):
 
 def test_sns_bad_signature_rejected(db, monkeypatch):
     monkeypatch.delenv("MAIL_SNS_SKIP_VERIFY", raising=False)
-    payload = {"Type": "Notification", "Message": "{}", "Signature": "x", "SigningCertURL": "https://evil.example/cert.pem"}
+    monkeypatch.setenv("MAIL_SNS_TOPIC_ARN", TOPIC)
+    monkeypatch.setenv("TAMKOBI_ENV", "production")
+    payload = {
+        "Type": "Notification",
+        "Message": "{}",
+        "TopicArn": TOPIC,
+        "Signature": "x",
+        "SigningCertURL": "https://evil.example/cert.pem",
+    }
 
     class FakeReq:
         async def body(self):
@@ -303,6 +318,69 @@ def test_sns_bad_signature_rejected(db, monkeypatch):
         with pytest.raises(HTTPException) as ei:
             await mail_service.ses_sns_webhook(FakeReq())
         assert ei.value.status_code == 403
+
+    asyncio.run(_run())
+
+
+def test_sns_s3_cert_host_rejected(db, monkeypatch):
+    monkeypatch.delenv("MAIL_SNS_SKIP_VERIFY", raising=False)
+    monkeypatch.setenv("MAIL_SNS_TOPIC_ARN", TOPIC)
+    monkeypatch.setenv("TAMKOBI_ENV", "production")
+    payload = {
+        "Type": "Notification",
+        "Message": "{}",
+        "TopicArn": TOPIC,
+        "Signature": "x",
+        "SigningCertURL": "https://s3.amazonaws.com/sns-cert/cert.pem",
+    }
+
+    class FakeReq:
+        async def body(self):
+            return json.dumps(payload).encode()
+
+    async def _run():
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as ei:
+            await mail_service.ses_sns_webhook(FakeReq())
+        assert ei.value.status_code == 403
+
+    asyncio.run(_run())
+
+
+def test_sns_wrong_topic_arn_rejected(db, monkeypatch):
+    monkeypatch.setenv("MAIL_SNS_SKIP_VERIFY", "1")
+    monkeypatch.setenv("TAMKOBI_ENV", "test")
+    monkeypatch.setenv("MAIL_SNS_TOPIC_ARN", TOPIC)
+    payload = {"Type": "Notification", "Message": "{}", "TopicArn": TOPIC + "-other"}
+
+    class FakeReq:
+        async def body(self):
+            return json.dumps(payload).encode()
+
+    async def _run():
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as ei:
+            await mail_service.ses_sns_webhook(FakeReq())
+        assert ei.value.status_code == 403
+
+    asyncio.run(_run())
+
+
+def test_sns_missing_topic_env_503(db, monkeypatch):
+    monkeypatch.setenv("MAIL_SNS_SKIP_VERIFY", "1")
+    monkeypatch.setenv("TAMKOBI_ENV", "test")
+    monkeypatch.delenv("MAIL_SNS_TOPIC_ARN", raising=False)
+    payload = {"Type": "Notification", "Message": "{}", "TopicArn": TOPIC}
+
+    class FakeReq:
+        async def body(self):
+            return json.dumps(payload).encode()
+
+    async def _run():
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as ei:
+            await mail_service.ses_sns_webhook(FakeReq())
+        assert ei.value.status_code == 503
 
     asyncio.run(_run())
 

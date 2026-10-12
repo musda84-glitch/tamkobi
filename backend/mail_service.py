@@ -17,8 +17,8 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 from urllib.parse import urlparse
-from urllib.request import urlopen
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 logger = logging.getLogger("TamKobiERP")
@@ -28,7 +28,8 @@ _db = None
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_ATTEMPTS = 2
-SNS_CERT_HOST_SUFFIX = ".amazonaws.com"
+SNS_CERT_HOST_RE = re.compile(r"^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$")
+_sns_cert_cache: Dict[str, bytes] = {}
 
 
 def init(db) -> None:
@@ -480,11 +481,31 @@ def _sns_cert_url_ok(url: str) -> bool:
     if p.scheme != "https":
         return False
     host = (p.hostname or "").lower()
-    return host.endswith(SNS_CERT_HOST_SUFFIX)
+    if not SNS_CERT_HOST_RE.match(host):
+        return False
+    path = p.path or ""
+    return path.endswith(".pem")
 
 
-def verify_sns_signature(payload: dict) -> bool:
-    """SNS mesaj imzasını doğrula (SigningCertURL + Signature)."""
+def _sns_skip_verify_allowed() -> bool:
+    """MAIL_SNS_SKIP_VERIFY yalnızca TAMKOBI_ENV=test iken geçerli; prod'da yok sayılır."""
+    return _env("MAIL_SNS_SKIP_VERIFY") == "1" and _env("TAMKOBI_ENV").lower() == "test"
+
+
+async def _fetch_sns_cert(url: str) -> bytes:
+    cached = _sns_cert_cache.get(url)
+    if cached is not None:
+        return cached
+    async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        pem = resp.content
+    _sns_cert_cache[url] = pem
+    return pem
+
+
+async def verify_sns_signature(payload: dict) -> bool:
+    """SNS mesaj imzasını doğrula (SigningCertURL + Signature; v1=SHA1, v2=SHA256)."""
     try:
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes
@@ -514,13 +535,14 @@ def verify_sns_signature(payload: dict) -> bool:
             parts.append(f)
             parts.append(str(payload[f]))
     canonical = "\n".join(parts) + "\n"
+    sig_ver = str(payload.get("SignatureVersion") or "1").strip()
+    hash_alg = hashes.SHA256() if sig_ver == "2" else hashes.SHA1()
     try:
-        with urlopen(cert_url, timeout=10) as resp:  # noqa: S310 — host checked
-            cert_pem = resp.read()
+        cert_pem = await _fetch_sns_cert(cert_url)
         cert = x509.load_pem_x509_certificate(cert_pem)
         public_key = cert.public_key()
         signature = base64.b64decode(sig_b64)
-        public_key.verify(signature, canonical.encode("utf-8"), PKCS1v15(), hashes.SHA1())  # noqa: S303 — SNS uses SHA1
+        public_key.verify(signature, canonical.encode("utf-8"), PKCS1v15(), hash_alg)
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("SNS signature verify failed: %s", e)
@@ -586,19 +608,26 @@ async def ses_sns_webhook(request: Request):
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Geçersiz gövde.")
 
-    # Allow test bypass only when explicitly set (unit tests)
-    skip_verify = _env("MAIL_SNS_SKIP_VERIFY") == "1"
-    if not skip_verify and not verify_sns_signature(payload):
+    topic_expected = _env("MAIL_SNS_TOPIC_ARN")
+    if not topic_expected:
+        raise HTTPException(status_code=503, detail="MAIL_SNS_TOPIC_ARN yapılandırılmadı.")
+    if (payload.get("TopicArn") or "") != topic_expected:
+        raise HTTPException(status_code=403, detail="SNS TopicArn eşleşmiyor.")
+
+    skip_verify = _sns_skip_verify_allowed()
+    if not skip_verify and not await verify_sns_signature(payload):
         raise HTTPException(status_code=403, detail="SNS imza doğrulanamadı.")
 
     msg_type = payload.get("Type") or ""
     if msg_type == "SubscriptionConfirmation":
         url = payload.get("SubscribeURL") or payload.get("SubscribeUrl") or ""
         parsed = urlparse(url)
-        if parsed.scheme == "https" and (parsed.hostname or "").endswith(SNS_CERT_HOST_SUFFIX):
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme == "https" and SNS_CERT_HOST_RE.match(host):
             try:
-                with urlopen(url, timeout=10) as resp:  # noqa: S310
-                    resp.read()
+                async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
             except Exception as e:  # noqa: BLE001
                 logger.warning("SNS subscribe confirm fetch failed: %s", e)
                 raise HTTPException(status_code=502, detail="SubscribeURL alınamadı.")
