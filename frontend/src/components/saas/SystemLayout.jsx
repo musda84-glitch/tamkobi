@@ -41,9 +41,10 @@ export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) =>
         </div>
         <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto" data-testid="sys-sidebar-nav">
           {groupSystemSections(SYSTEM_SECTIONS).map((g) => {
-            const groupActive = g.items.some((s) => here === s.path);
+            const pathActive = (path) => here === path || (path !== "/sistem" && here.startsWith(`${path}/`));
+            const groupActive = g.items.some((s) => pathActive(s.path));
             const links = g.items.map(({ key, path, label, icon: Icon, badge }) => {
-              const active = here === path;
+              const active = pathActive(path);
               const count = badge === "pending_requests" ? pendingCount : badge === "open_tickets" ? openTickets : 0;
               return (
                 <Link key={path} to={path} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${active ? "bg-amber-400 text-slate-900" : "text-slate-400 hover:bg-white/5 hover:text-white"}`} data-testid={`sys-nav-${key || "overview"}`}>

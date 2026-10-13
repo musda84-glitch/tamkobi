@@ -42,7 +42,14 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
           <tbody className="divide-y divide-slate-100">
             {list.length === 0 && <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">Şirket bulunamadı.</td></tr>}
             {list.map((r) => (
-              <tr key={r.id} className={`hover:bg-amber-50/40 ${r.tree_depth ? "bg-slate-50/60" : ""}`} data-testid={`company-row-${r.id}`} data-parent={r.parent_company_id || ""} data-depth={r.tree_depth || 0}>
+              <tr
+                key={r.id}
+                className={`hover:bg-amber-50/40 cursor-pointer ${r.tree_depth ? "bg-slate-50/60" : ""}`}
+                data-testid={`company-row-${r.id}`}
+                data-parent={r.parent_company_id || ""}
+                data-depth={r.tree_depth || 0}
+                onClick={() => onOpen(r.id)}
+              >
                 <td className="px-3 py-2.5" style={{ paddingLeft: 12 + (r.tree_depth || 0) * 18 }}>
                   <div className="flex items-center gap-1.5 min-w-0">
                     {r.tree_depth > 0 && <span className="text-slate-300 font-mono shrink-0" aria-hidden>└</span>}
@@ -62,7 +69,7 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
                 <td className="px-3 py-2.5 text-center"><span className="inline-flex items-center gap-1"><FileText className="w-3 h-3 text-slate-400" />{r.usage.invoices}</span></td>
                 <td className="px-3 py-2.5 text-slate-600">{r.license.days_left !== null && r.license.days_left !== undefined ? <span className={r.license.days_left <= 7 ? "text-amber-700 font-bold" : ""}>{fmtDate(r.license.trial_ends_at || r.license.expires_at)} ({r.license.days_left} gün)</span> : "Süresiz"}</td>
                 <td className="px-3 py-2.5 text-slate-500">{r.usage.last_activity ? fmtDate(r.usage.last_activity) : "—"}</td>
-                <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                <td className="px-3 py-2.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                   {r.allow_platform_access === false ? (
                     <span className="px-3 py-1.5 border border-slate-200 text-slate-500 bg-slate-50 rounded-lg font-semibold inline-flex items-center gap-1 mr-1.5" title="Şirket gizlilik ayarından yönetim paneli erişimini kapatmış" data-testid={`company-impersonate-blocked-${r.id}`}><ShieldOff className="w-3.5 h-3.5" /> Gizlilik kapalı</span>
                   ) : r.license?.addons?.["support.impersonate"] !== false && (

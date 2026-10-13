@@ -4,9 +4,9 @@ import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SystemLayout } from "../components/saas/SystemLayout";
-import { CompanyLicenseDrawer } from "../components/saas/CompanyLicenseDrawer";
 import { findSystemSection } from "../components/saas/systemSections";
 import { PanelBoundary } from "../components/saas/PanelBoundary";
+import { companyDetailPath } from "../utils/companyDetailTabs";
 
 export default function SystemAdminPage() {
   const { user, authenticated, refreshLicense } = useAuth();
@@ -19,12 +19,10 @@ export default function SystemAdminPage() {
   const [plans, setPlans] = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [requests, setRequests] = useState([]);
-  const [openId, setOpenId] = useState(null);
-  const [openTab, setOpenTab] = useState(null);
   const openCompany = useCallback((id, tab) => {
-    setOpenId(id);
-    setOpenTab(tab || null);
-  }, []);
+    if (!id) return;
+    navigate(companyDetailPath(id, tab || "license"));
+  }, [navigate]);
   const load = useCallback(async () => {
     const cred = { withCredentials: true };
     const grab = async (path, set) => {
@@ -56,17 +54,6 @@ export default function SystemAdminPage() {
               : <MissingSection page={page} />}
           </PanelBoundary>
         </div>
-        {openId && (
-          <CompanyLicenseDrawer
-            companyId={openId}
-            plans={plans}
-            catalog={catalog}
-            companies={companies}
-            initialTab={openTab || "license"}
-            onClose={() => { setOpenId(null); setOpenTab(null); }}
-            onChanged={changed}
-          />
-        )}
       </div>
     </SystemLayout>
   );

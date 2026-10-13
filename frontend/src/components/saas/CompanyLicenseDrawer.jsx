@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2, KeyRound, Mail, IdCard, HardDrive, Bot, MessageSquare, RefreshCw } from "lucide-react";
@@ -6,29 +6,61 @@ import { API_URL } from "../../context/AuthContext";
 import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS, QuotaBar } from "./saasUi";
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
+import { COMPANY_DETAIL_TABS, COMPANY_DETAIL_TAB_IDS } from "../../utils/companyDetailTabs";
 import { AddonToggles } from "./AddonsPanel";
 import IsnetIntegrationPanel from "../IsnetIntegrationPanel";
 import { SmsCenter } from "../SmsCenter";
 
-const DRAWER_TABS = [
-  { id: "license", label: "Lisans" },
-  { id: "einvoice", label: "Entegratör" },
-  { id: "sms", label: "SMS" },
-  { id: "storage", label: "Depolama" },
-  { id: "ai", label: "Yapay zekâ" },
-];
-const TAB_IDS = new Set(DRAWER_TABS.map((t) => t.id));
+/** @deprecated use COMPANY_DETAIL_TABS — testler drawer-tab-* id’lerini bekler */
+const DRAWER_TABS = COMPANY_DETAIL_TABS;
+const TAB_IDS = COMPANY_DETAIL_TAB_IDS;
 
 const cred = { withCredentials: true };
 
 const limLabel = (n) => (!n ? "∞" : String(n));
 const billingLabel = (p) => (p === "yearly" ? "Yıllık" : "Aylık");
+const ROOT_TESTID = "company-license-drawer";
+const EI_SAVE_TESTID = "drawer-einvoice-save";
 
-export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = [], onClose, onChanged, initialTab = "license" }) => {
+const snapLicense = (f) => JSON.stringify({
+  plan_id: f?.plan_id || "",
+  status: f?.status || "",
+  trial_ends_at: f?.trial_ends_at || "",
+  expires_at: f?.expires_at || "",
+  user_limit: f?.user_limit === "" || f?.user_limit == null ? "" : String(f.user_limit),
+  company_limit: f?.company_limit === "" || f?.company_limit == null ? "" : String(f.company_limit),
+  notes: f?.notes || "",
+  billing_period: f?.billing_period || "monthly",
+});
+
+/**
+ * Şirket detay paneli — layout="drawer" (eski) veya layout="page" (tam sayfa).
+ * API çağrıları ve sekme iş mantığı aynıdır.
+ */
+export const CompanyLicenseDrawer = ({
+  companyId,
+  plans,
+  catalog,
+  companies = [],
+  onClose,
+  onChanged,
+  initialTab = "license",
+  layout = "drawer",
+  controlledTab,
+  onTabChange,
+  onDirtyChange,
+}) => {
+  const isPage = layout === "page";
   const [d, setD] = useState(null);
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState("");
-  const [tab, setTab] = useState(() => (TAB_IDS.has(initialTab) ? initialTab : "license"));
+  const [tabState, setTabState] = useState(() => (TAB_IDS.has(initialTab) ? initialTab : "license"));
+  const tab = controlledTab != null && TAB_IDS.has(controlledTab) ? controlledTab : tabState;
+  const setTab = (id) => {
+    const next = TAB_IDS.has(id) ? id : "license";
+    if (onTabChange) onTabChange(next);
+    else setTabState(next);
+  };
   const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteName, setDeleteName] = useState("");
@@ -41,18 +73,31 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   const [storageDetail, setStorageDetail] = useState(null);
   const [storageLimit, setStorageLimit] = useState("");
   const [aiStatus, setAiStatus] = useState(null);
+  const cleanRef = useRef({ license: "", ei: "", storage: "" });
   const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => {
     setD(r.data);
     setParentPick(r.data.parent_company_id || "");
     const l = r.data.license;
-    setF({ plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" });
-    setEiProvider(r.data.einvoice?.provider || "");
+    const nextF = { plan_id: l.plan_id || "", status: l.status, trial_ends_at: (l.trial_ends_at || "").slice(0, 10), expires_at: (l.expires_at || "").slice(0, 10), user_limit: l.user_limit ?? "", company_limit: l.company_limit ?? "", notes: l.notes || "", billing_period: l.billing_period || "monthly" };
+    setF(nextF);
+    const nextEi = r.data.einvoice?.provider || "";
+    setEiProvider(nextEi);
     const ov = l.quota_overrides?.storage_limit_mb;
-    setStorageLimit(ov === 0 || ov ? String(ov) : "");
+    const nextStorage = ov === 0 || ov ? String(ov) : "";
+    setStorageLimit(nextStorage);
+    cleanRef.current = { license: snapLicense(nextF), ei: nextEi, storage: nextStorage };
   }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => {
-    setTab(TAB_IDS.has(initialTab) ? initialTab : "license");
-  }, [companyId, initialTab]);
+    if (controlledTab != null) return;
+    setTabState(TAB_IDS.has(initialTab) ? initialTab : "license");
+  }, [companyId, initialTab, controlledTab]);
+  const dirty = useMemo(() => {
+    if (!f) return false;
+    return snapLicense(f) !== cleanRef.current.license
+      || String(eiProvider || "") !== String(cleanRef.current.ei || "")
+      || String(storageLimit || "") !== String(cleanRef.current.storage || "");
+  }, [f, eiProvider, storageLimit]);
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
     load();
     setProvidersLoaded(false);
@@ -87,7 +132,21 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
       .then((r) => setAiStatus(r.data))
       .catch(() => setAiStatus({ enabled: false, error: true }));
   }, [tab, aiStatus]);
-  if (!d || !f) return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
+  const saveEinvoice = async () => {
+    setBusy("ei");
+    try {
+      const r = await axios.put(`${API_URL}/system/companies/${companyId}/einvoice`, { provider: eiProvider }, cred);
+      setD((prev) => ({ ...prev, einvoice: { provider: r.data.provider, status: r.data.status, mode: r.data.mode, username: r.data.username, has_password: r.data.has_password } }));
+      setEiProvider(r.data.provider || "");
+      cleanRef.current = { ...cleanRef.current, ei: r.data.provider || "" };
+      toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
+  };
+  if (!d || !f) {
+    if (isPage) return <div className="p-8 text-xs text-slate-500" data-testid="company-detail-loading">Yükleniyor…</div>;
+    return <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center text-white text-xs">Yükleniyor…</div>;
+  }
   const lic = d.license;
   const plan = plans.find((p) => p.id === (f.plan_id || lic.plan_id));
   const groups = groupByCategory(catalog);
@@ -100,7 +159,12 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   };
   const save = async () => {
     setBusy("save");
-    try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred); toast.success("Lisans güncellendi."); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
+    try {
+      await axios.put(`${API_URL}/system/companies/${companyId}/license`, { ...f, trial_ends_at: f.trial_ends_at ? new Date(f.trial_ends_at + "T23:59:59").toISOString() : null, expires_at: f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null, user_limit: f.user_limit === "" ? null : Number(f.user_limit), company_limit: f.company_limit === "" ? null : Number(f.company_limit) }, cred);
+      toast.success("Lisans güncellendi.");
+      await load();
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(""); }
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
@@ -128,7 +192,9 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
       }, cred);
       setD((prev) => ({ ...prev, license: r.data }));
       const ov = r.data.quota_overrides?.storage_limit_mb;
-      setStorageLimit(ov === 0 || ov ? String(ov) : "");
+      const nextStorage = ov === 0 || ov ? String(ov) : "";
+      setStorageLimit(nextStorage);
+      cleanRef.current = { ...cleanRef.current, storage: nextStorage };
       toast.success("Depolama kotası güncellendi.");
       await loadStorage();
       onChanged();
@@ -206,31 +272,75 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   const mem = d.membership || {};
   const admin = d.admin;
   const users = d.users || [];
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" {...backdropDismissProps(onClose)}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
-        <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
-          <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · <span data-testid="drawer-admin-email">{admin?.email || "yönetici yok"}</span> · {d.usage?.users ?? users.length} kullanıcı · {d.usage?.invoices ?? 0} fatura · {d.usage?.contacts ?? 0} cari · {d.usage?.products ?? 0} ürün</div></div>
+  const usageUsers = d.usage?.users ?? users.length;
+  const usageInvoices = d.usage?.invoices ?? 0;
+  const usageContacts = d.usage?.contacts ?? 0;
+  const usageProducts = d.usage?.products ?? 0;
+
+  const headerCard = (
+    <div className={`bg-white border-b ${isPage ? "px-5 py-4" : "px-5 py-3"}`} data-testid={isPage ? "company-detail-header" : "company-license-drawer-header"}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className={`font-bold text-slate-900 ${isPage ? "text-lg" : "text-sm"}`} data-testid="company-detail-name">{d.name}</div>
+          <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-1 flex-wrap">
+            <PlanChip name={lic.plan_name} color={lic.plan_color} />
+            <StatusBadge status={lic.status} testId="drawer-status" />
+            <span className="text-slate-400">·</span>
+            <span data-testid="drawer-admin-email">{admin?.email || d.email || "yönetici yok"}</span>
+          </div>
+          {isPage ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px]" data-testid="company-detail-stats">
+              {[
+                ["Kullanıcı", usageUsers],
+                ["Fatura", usageInvoices],
+                ["Cari", usageContacts],
+                ["Ürün", usageProducts],
+              ].map(([l, v]) => (
+                <div key={l} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-1.5">
+                  <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{l}</div>
+                  <div className="font-bold text-slate-900">{v}</div>
+                </div>
+              ))}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-1.5">
+                <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">E-posta</div>
+                <div className="font-semibold text-slate-800 break-all" data-testid="company-detail-email">{d.email || admin?.email || "—"}</div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              {usageUsers} kullanıcı · {usageInvoices} fatura · {usageContacts} cari · {usageProducts} ürün
+            </div>
+          )}
+        </div>
+        {!isPage ? (
           <div className="flex items-center gap-1.5 shrink-0">
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
           </div>
-        </div>
-        <div className="sticky top-[57px] bg-white border-b px-3 py-2 z-10 flex flex-wrap gap-1" data-testid="drawer-tabs" role="tablist">
-          {DRAWER_TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${tab === t.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-              data-testid={`drawer-tab-${t.id}`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <div className="p-5 space-y-5">
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const tabsBar = (
+    <div className={`sticky ${isPage ? "top-0" : "top-[57px]"} bg-white border-b px-3 py-2 z-10 flex flex-wrap gap-1`} data-testid="drawer-tabs" role="tablist">
+      {DRAWER_TABS.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={tab === t.id}
+          onClick={() => setTab(t.id)}
+          className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${tab === t.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+          data-testid={`drawer-tab-${t.id}`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const body = (
+        <div className={`p-5 space-y-5 ${isPage && tab === "einvoice" ? "pb-24" : ""}`}>
           {tab === "license" ? (<>
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-membership">
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><IdCard className="w-4 h-4 text-slate-400" /> Üyelik ve şirket bilgileri</h3>
@@ -406,44 +516,59 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
           </>) : null}
 
           {tab === "einvoice" ? (
-            <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-einvoice">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. İşNet SOAP için ortam, IP ve e-İrsaliye varsayılanları da burada; firma paneli VKN, GİB etiketi ve portal kullanıcı/şifresini girer.</p>
-                </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
-              </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
-                <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider" disabled={!canSaveEinvoice}>
-                  <option value="">Seçilmedi (GİB simüle)</option>
-                  {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
-                  {!providerInList && eiProvider ? (
-                    <option value={eiProvider} data-testid="drawer-einvoice-provider-orphan">(mevcut: {eiProvider})</option>
+            <section className="space-y-3" data-testid="drawer-einvoice">
+              <div className={`grid grid-cols-1 ${isPage ? "lg:grid-cols-2" : ""} gap-4`}>
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-einvoice-forms">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. İşNet SOAP için ortam, IP ve e-İrsaliye varsayılanları da burada; firma paneli VKN, GİB etiketi ve portal kullanıcı/şifresini girer.</p>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border shrink-0 ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Entegratör</label>
+                    <select value={eiProvider} onChange={(e) => setEiProvider(e.target.value)} className={inputCls} data-testid="drawer-einvoice-provider" disabled={!canSaveEinvoice}>
+                      <option value="">Seçilmedi (GİB simüle)</option>
+                      {providers.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+                      {!providerInList && eiProvider ? (
+                        <option value={eiProvider} data-testid="drawer-einvoice-provider-orphan">(mevcut: {eiProvider})</option>
+                      ) : null}
+                    </select>
+                    {providersError ? (
+                      <p className="text-[11px] text-rose-700 mt-1" data-testid="drawer-einvoice-providers-error">Entegratör listesi yüklenemedi. Kaydetmek için listeyi yenileyin.</p>
+                    ) : null}
+                  </div>
+                  {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
+                  {!isPage ? (
+                    <div className="flex justify-end">
+                      <button type="button" onClick={saveEinvoice} disabled={busy === "ei" || !canSaveEinvoice} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid={EI_SAVE_TESTID}>{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
+                    </div>
                   ) : null}
-                </select>
-                {providersError ? (
-                  <p className="text-[11px] text-rose-700 mt-1" data-testid="drawer-einvoice-providers-error">Entegratör listesi yüklenemedi. Kaydetmek için listeyi yenileyin.</p>
+                  {eiProvider === "isnet" ? (
+                    <div className="pt-1" data-testid="drawer-isnet-soap">
+                      <IsnetIntegrationPanel companyId={companyId} variant="system" />
+                    </div>
+                  ) : null}
+                </div>
+                {isPage ? (
+                  <aside className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 text-[11px] text-slate-700" data-testid="drawer-einvoice-info">
+                    <h3 className="font-bold text-slate-900 text-sm">Bilgi</h3>
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-1">
+                      <div className="font-semibold text-indigo-950">Kapsam</div>
+                      <p className="text-indigo-900/90">Seçilen entegratör e-Fatura, e-Arşiv ve (destekliyorsa) e-İrsaliye gönderimini kapsar. Firma paneli kimlik bilgilerini Ayarlar → E-Fatura’dan girer.</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-1">
+                      <div className="font-semibold text-amber-950">Test / canlı</div>
+                      <p className="text-amber-900/90">İşNet seçiliyse soldaki panelde test ve canlı SOAP adresleri ile çıkış IP’si görünür. Canlıya geçmeden önce İşNet allow-list kaydını tamamlayın.</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-1">
+                      <div className="font-semibold text-slate-800">Çıkış IP</div>
+                      <p className="text-slate-600">Canlı SOAP çağrıları sunucu çıkış IP’si + şirket VKN ile doğrulanır. IP listesi İşNet panelinden (canlı mod) okunur.</p>
+                    </div>
+                  </aside>
                 ) : null}
               </div>
-              {d.einvoice?.username ? <div className="text-[11px] text-slate-500">Panelde kayıtlı kullanıcı: <b className="font-mono text-slate-800">{d.einvoice.username}</b>{d.einvoice.has_password ? " · şifre kayıtlı" : ""}</div> : null}
-              <div className="flex justify-end">
-                <button type="button" onClick={async () => {
-                  setBusy("ei");
-                  try {
-                    const r = await axios.put(`${API_URL}/system/companies/${companyId}/einvoice`, { provider: eiProvider }, cred);
-                    setD((prev) => ({ ...prev, einvoice: { provider: r.data.provider, status: r.data.status, mode: r.data.mode, username: r.data.username, has_password: r.data.has_password } }));
-                    setEiProvider(r.data.provider || "");
-                    toast.success(r.data.provider ? `${r.data.provider_name} atandı. Firma paneli bağlantı bilgilerini girebilir.` : "Entegratör kaldırıldı — GİB simüle.");
-                  } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
-                }} disabled={busy === "ei" || !canSaveEinvoice} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
-              </div>
-              {eiProvider === "isnet" ? (
-                <div className="pt-1" data-testid="drawer-isnet-soap">
-                  <IsnetIntegrationPanel companyId={companyId} variant="system" />
-                </div>
-              ) : null}
             </section>
           ) : null}
 
@@ -529,6 +654,42 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             </div>
           ) : null}
         </div>
+  );
+
+  const stickySave = isPage && tab === "einvoice" ? (
+    <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white/95 backdrop-blur px-5 py-3 flex flex-wrap items-center justify-between gap-2" data-testid="drawer-einvoice-sticky-save">
+      <div className="text-[11px] text-slate-500">
+        {dirty ? <span className="text-amber-700 font-semibold">Kaydedilmemiş değişiklik var</span> : <span>Entegratör seçimini kaydedin</span>}
+      </div>
+      <button
+        type="button"
+        onClick={saveEinvoice}
+        disabled={busy === "ei" || !canSaveEinvoice}
+        className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60"
+        data-testid={EI_SAVE_TESTID}
+      >
+        {busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet
+      </button>
+    </div>
+  ) : null;
+
+  if (isPage) {
+    return (
+      <div className="relative text-xs bg-slate-50" data-testid={ROOT_TESTID} data-layout="page">
+        {headerCard}
+        {tabsBar}
+        {body}
+        {stickySave}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" {...backdropDismissProps(onClose)}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid={ROOT_TESTID} data-layout="drawer">
+        <div className="sticky top-0 z-10">{headerCard}</div>
+        {tabsBar}
+        {body}
       </div>
     </div>
   );
