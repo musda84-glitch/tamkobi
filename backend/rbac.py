@@ -402,6 +402,8 @@ def _clean(d: dict) -> dict:
     if d and "_id" in d:
         d["id"] = str(d.pop("_id"))
     d.pop("password_hash", None)
+    if "cashier_pin_hash" in d:
+        d["has_cashier_pin"] = bool(d.pop("cashier_pin_hash"))
     return d
 
 

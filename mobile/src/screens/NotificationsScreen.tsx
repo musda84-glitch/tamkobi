@@ -133,7 +133,34 @@ export function NotificationsScreen() {
           />
         );
         if (!notificationCanDelete(n)) {
-          return <React.Fragment key={key}>{row}</React.Fragment>;
+          const posPending = n.ref_type === "pos_approval" && n.ref_id && !n.is_read;
+          return (
+            <React.Fragment key={key}>
+              {row}
+              {posPending ? (
+                <View style={{ flexDirection: "row", gap: 8, marginTop: -4, marginBottom: 8, paddingHorizontal: 4 }}>
+                  <Pressable
+                    testID={`pos-notify-approve-${n.ref_id}`}
+                    onPress={() => {
+                      void post(client, `/pos/approvals/${n.ref_id}/approve`, {}).then(() => load()).catch(() => {});
+                    }}
+                    style={{ backgroundColor: colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 11, fontWeight: "800" }}>Onayla</Text>
+                  </Pressable>
+                  <Pressable
+                    testID={`pos-notify-reject-${n.ref_id}`}
+                    onPress={() => {
+                      void post(client, `/pos/approvals/${n.ref_id}/reject`, {}).then(() => load()).catch(() => {});
+                    }}
+                    style={{ backgroundColor: colors.danger, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 11, fontWeight: "800" }}>Reddet</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </React.Fragment>
+          );
         }
         return (
           <SwipeRevealRow

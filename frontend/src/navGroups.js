@@ -119,6 +119,6 @@ export const SETTINGS_TAB_GROUPS = [
   { id: "paketler", label: "Paketler", tabs: ["plan", "modules"] },
   { id: "belgeler", label: "Belgeler", tabs: ["print", "einvoice"] },
   { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "fx", "channels", "whatsapp", "extension"] },
-  { id: "kurallar", label: "Kurallar", tabs: ["units", "project_stages", "work_parks", "workshop_zones", "users"] },
+  { id: "kurallar", label: "Kurallar", tabs: ["units", "project_stages", "work_parks", "workshop_zones", "users", "pos_rules"] },
   { id: "veri", label: "Veri", tabs: ["migration", "storage", "integrity", "summary"] },
 ];

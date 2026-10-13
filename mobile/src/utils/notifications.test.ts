@@ -118,6 +118,7 @@ describe("notificationLook", () => {
   it("falls back to the notification type", () => {
     expect(notificationLook({ type: "b2b_order", title: "Yeni B2B siparişi" }).icon).toBe("cart");
     expect(notificationLook({ type: "cash_approval", title: "Kasa işlemi bekliyor" }).icon).toBe("wallet");
+    expect(notificationLook({ type: "pos_approval", title: "POS onay bekliyor" }).icon).toBe("wallet");
     expect(notificationLook({ type: "other", title: "Duyuru" }).icon).toBe("information-circle");
     expect(notificationLook({ type: "role_assigned", title: "Rol atandı: Depo" }).tone).toBe("violet");
     expect(notificationLook({ type: "overtime_assigned" }).icon).toBe("time");
@@ -169,6 +170,7 @@ describe("notificationRoute", () => {
     expect(notificationRoute({ ref_type: "work_order" })).toBe("/atolye");
     expect(notificationRoute({ ref_type: "production" })).toBe("/production");
     expect(notificationRoute({ ref_type: "cash_approval" })).toBe("/banking");
+    expect(notificationRoute({ ref_type: "pos_approval" })).toBe("/notifications");
     expect(notificationRoute({ link: "/edoc-inbox", ref_type: "edoc" })).toBe("/edoc-inbox");
     expect(notificationRoute({ type: "announcement" })).toBeNull();
   });

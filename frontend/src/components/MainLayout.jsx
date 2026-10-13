@@ -4,6 +4,7 @@ import { Helmet } from "react-helmet-async";
 import axios from "axios";
 import { toast } from "sonner";
 import { useAuth, API_URL } from "../context/AuthContext";
+import { usePosSession } from "../context/PosSessionContext";
 import { useMesaimGate } from "../context/MesaimGateContext";
 import { NotificationBell } from "./NotificationBell";
 import { HelpButton } from "./help/HelpButton";
@@ -147,6 +148,7 @@ const SupportConnectionChip = ({ companyId, impersonation, isAdmin, onExitImpers
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, authenticated, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
+  const pos = usePosSession();
   const { locked: mesaimLocked, ready: mesaimReady } = useMesaimGate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -239,6 +241,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     return <>{panelTitle}{children}</>;
   }
 
+  const posExitLocked = !!(pos?.session?.cashier_user_id && pos.session.exit_blocked);
   const routeKey = (permPath || ((p) => p))(location.pathname);
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
   const lockedModule = !moduleOn(location.pathname);
@@ -283,7 +286,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           onClick={() => setMobileMenuOpen(false)}
         />
       ) : null}
-      <aside className={`fixed inset-y-0 left-0 z-40 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-[width,transform] duration-300 lg:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"} ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`} data-testid="app-sidebar" data-collapsed={sidebarCollapsed ? "1" : "0"}>
+      <aside className={`fixed inset-y-0 left-0 z-40 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-[width,transform] duration-300 lg:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"} ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"} ${posExitLocked ? "pointer-events-none opacity-40" : ""}`} data-testid="app-sidebar" data-collapsed={sidebarCollapsed ? "1" : "0"} data-pos-locked={posExitLocked ? "1" : "0"}>
         <div className={`h-16 border-b border-slate-800/80 flex items-center ${sidebarCollapsed ? "px-2 justify-center gap-1" : "px-5 justify-between"}`}>
           <Link
             to={homePath}
