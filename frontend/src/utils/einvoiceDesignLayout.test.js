@@ -1,7 +1,9 @@
 import {
   BLOCK_IDS,
+  CLASSIC_ISNET_NAME,
   blockFontFamily,
   blockFontSize,
+  classicIsnetLayout,
   defaultLayout,
   filledMetaFields,
   gibSafeLogoSrc,
@@ -182,7 +184,7 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).not.toContain("IBAN / ödeme");
   expect(xslt).not.toContain(">Notlar<");
   expect(xslt).not.toContain("GİB karekod");
-  expect(xslt).not.toContain("Stok kodu");
+  expect(xslt).not.toContain("Stok Kodu");
   expect(xslt).not.toContain('class="inv-gib-seal"');
   expect(xslt).toContain("@unitCode='C62'");
   expect(xslt).toContain("<xsl:text>Adet</xsl:text>");
@@ -205,7 +207,7 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
     ],
   });
   const xslt = layoutToXslt(layout);
-  expect(xslt).toContain("Stok kodu");
+  expect(xslt).toContain("Stok Kodu");
   expect(xslt).toContain("SellersItemIdentification");
   expect(xslt).toContain("Barkod");
   expect(xslt).toContain("İskonto");
@@ -213,8 +215,8 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("KDV'siz fiyat");
   expect(xslt).toContain("cac:Price/cbc:PriceAmount");
   expect(xslt).toContain("Güncel bakiye");
-  expect(xslt).toContain("DocumentType='QR'");
-  expect(xslt).toContain("width:160px;height:160px");
+  expect(xslt).toContain("qrCodeImageString");
+  expect(xslt).toContain("height:160px;width:160px");
   expect(xslt).not.toMatch(/inv-k">GİB karekod/);
 });
 
@@ -641,4 +643,44 @@ test("per-block fontSize/font persist and drive XSLT independently", () => {
   expect(xslt).toMatch(/\.inv-blk-totals \{[^}]*font-family:"Times New Roman"/);
   expect(xslt).toContain('class="inv-blk-meta"');
   expect(xslt).toContain('class="inv-blk-customer"');
+});
+
+test("classic İşNet layout places logo and QR and hides an empty description column", () => {
+  for (const kind of ["e_invoice", "e_archive", "e_dispatch"]) {
+    const layout = classicIsnetLayout(kind);
+    expect(layout.preset).toBe("classic_isnet");
+    expect(layout.kind).toBe(kind);
+    expect(layout.notesTitle).toBe("AÇIKLAMALAR");
+    expect(layout.ibanTitle).toBe("BANKA HESAP BİLGİLERİMİZ");
+    expect(layout.lineCols.find((c) => c.id === "sku").hidden).toBe(false);
+    expect(layout.lineCols.find((c) => c.id === "desc").hidden).toBe(false);
+    expect(layout.lineCols.find((c) => c.id === "unit").hidden).toBe(false);
+    expect(layout.lineCols.find((c) => c.id === "vat_amount").hidden).toBe(false);
+    expect(layout.blocks.find((b) => b.id === "qr").hidden).toBe(true);
+    const xslt = layoutToXslt(layout, kind);
+    expect(CLASSIC_ISNET_NAME).toBe("Klasik (İşNet örneği)");
+    expect(xslt.trimStart().startsWith("<?xml")).toBe(true);
+    expect(xslt.indexOf("<?xml")).toBeLessThan(xslt.indexOf("TAMKOBI_LAYOUT"));
+    expect(xslt).toContain("qrCodeImageString");
+    expect(xslt).toContain("firmaLogoImageString");
+    expect(xslt).toContain("firmaImzaImageString");
+    expect(xslt).toContain("IsLogoExistsValue");
+    expect(xslt).toContain("IsEimzaLogoExistsValue");
+    expect(xslt).toContain("Stok Kodu");
+    expect(xslt).toContain("AÇIKLAMALAR");
+    expect(xslt).toContain("BANKA HESAP BİLGİLERİMİZ");
+    expect(xslt).toContain("KDV Tutarı");
+    expect(xslt).toContain("white-space:nowrap");
+    expect(xslt).toContain("<xsl:text>Adet</xsl:text>");
+    expect(xslt).toContain("name=\"partyAddress\"");
+    expect(xslt).not.toContain("Adet(Unit)");
+    expect(xslt).toContain(`xsl:if test="${kind === "e_dispatch" ? "/n1:DespatchAdvice" : "/n1:Invoice"}`);
+    if (kind === "e_dispatch") {
+      expect(xslt).toContain("DespatchAdvice");
+      expect(xslt).toContain("DeliveredQuantity");
+    } else {
+      expect(xslt).toContain("n1:Invoice");
+      expect(xslt).toContain("InvoicedQuantity");
+    }
+  }
 });

@@ -138,7 +138,7 @@ def test_validate_xslt_rejects_document_function():
 
 def test_builtin_xslt_still_validates():
     for spec in ed.BUILTIN:
-        text = ed._read_builtin_xslt(spec["file"])
+        text = ed._builtin_xslt_for_kind(spec["kind"])
         assert ed.validate_xslt(text)
 
 
@@ -186,21 +186,28 @@ def test_selected_xslt_falls_back_on_broken():
 
 def test_builtin_files_exist():
     for spec in ed.BUILTIN:
-        text = ed._read_builtin_xslt(spec["file"])
+        text = ed._builtin_xslt_for_kind(spec["kind"])
         assert "<xsl:stylesheet" in text
-        assert "n1:Invoice" in text
+        if spec["kind"] == "e_dispatch":
+            assert "DespatchAdvice" in text
+            assert "qrCodeImageString" in text
+        else:
+            assert "n1:Invoice" in text
 
 
 def test_ensure_defaults_seeds_and_selects():
     col = _boot()
     _run(ed.ensure_defaults())
-    assert len(col.rows) == 2
+    assert len(col.rows) == 3
     inv = col.rows["einvoice_xslt_default_e_invoice"]
     arc = col.rows["einvoice_xslt_default_e_archive"]
+    disp = col.rows["einvoice_xslt_default_e_dispatch"]
     assert inv["is_selected"] and inv["kind"] == "e_invoice"
     assert arc["is_selected"] and arc["kind"] == "e_archive"
+    assert disp["is_selected"] and disp["kind"] == "e_dispatch"
+    assert "Klasik" in disp["name"]
     _run(ed.ensure_defaults())
-    assert len(col.rows) == 2
+    assert len(col.rows) == 3
 
 
 def test_copy_select_and_block_delete_selected():
@@ -258,13 +265,48 @@ def test_gzip_xslt_roundtrip():
 
 def test_prepare_xslt_converts_png_data_uri_to_jpeg():
     b64 = _tiny_png_b64()
-    xslt = f'<img src="data:image/png;base64,{b64}"/>'
+    xslt = (
+        f'<img src="data:image/png;base64,{b64}"/>'
+        '<img src="data:image/jpeg;base64,firmaLogoImageString"/>'
+        '<img src="data:image/jpeg;base64,firmaImzaImageString"/>'
+        '<img src="data:image/jpeg;base64,qrCodeImageString"/>'
+    )
     out = ed.prepare_xslt_for_gib(xslt)
     assert "data:image/jpeg;base64," in out
     assert "data:image/png" not in out
+    assert "firmaLogoImageString" in out
+    assert "firmaImzaImageString" in out
+    assert "qrCodeImageString" in out
 
 
-def test_build_invoice_ubl_embeds_gzip_xslt():
+def test_validate_xslt_accepts_version_2():
+    xslt = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">'
+        '<xsl:character-map name="a">'
+        '<xsl:output-character character="&#133;" string=""/>'
+        "</xsl:character-map>"
+        '<xsl:template match="/"><html><body>isnet</body></html></xsl:template>'
+        "</xsl:stylesheet>"
+    )
+    out = ed.validate_xslt(xslt)
+    assert 'version="2.0"' in out
+    assert "xsl:character-map" in out
+
+
+def test_plain_xslt_b64_is_not_gzip_and_rejects_oversize(monkeypatch):
+    xslt = '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"/>'
+    blob = ed.plain_xslt_b64(xslt)
+    raw = base64.b64decode(blob)
+    assert raw.decode("utf-8") == xslt
+    with pytest.raises(Exception):
+        gzip.decompress(raw)
+    monkeypatch.setattr(ed, "MAX_XSLT_BYTES", 16)
+    with pytest.raises(ValueError):
+        ed.plain_xslt_b64(xslt + "<!-- too big -->")
+
+
+def test_build_invoice_ubl_embeds_plain_base64_xslt():
     inv = {
         "_id": "inv_xslt",
         "invoice_number": "ABC2026000000001",
@@ -294,5 +336,8 @@ def test_build_invoice_ubl_embeds_gzip_xslt():
         if (adr.findtext("cbc:DocumentType", default="", namespaces=ns) or "") == "XSLT":
             payload = adr.findtext("cac:Attachment/cbc:EmbeddedDocumentBinaryObject", default="", namespaces=ns)
     assert payload
-    decoded = gzip.decompress(base64.b64decode(payload)).decode("utf-8")
+    raw = base64.b64decode(payload)
+    with pytest.raises(Exception):
+        gzip.decompress(raw)
+    decoded = raw.decode("utf-8")
     assert "<xsl:stylesheet" in decoded

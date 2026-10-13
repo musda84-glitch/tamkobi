@@ -5,7 +5,7 @@ import { FileCode2, Download, Loader2, Plus, Save, Trash2, Upload } from "lucide
 import { API_URL } from "../../context/AuthContext";
 import { inputCls } from "./saasUi";
 import { EinvoiceDesignCanvas } from "./EinvoiceDesignCanvas";
-import { defaultLayout, layoutToXslt, normalizeLayout } from "../../utils/einvoiceDesignLayout";
+import { CLASSIC_ISNET_NAME, classicIsnetLayout, defaultLayout, layoutToXslt, normalizeLayout } from "../../utils/einvoiceDesignLayout";
 import { buildXsltPreview, layoutFromXslt } from "../../utils/einvoiceXsltPreview";
 
 const cred = { withCredentials: true };
@@ -295,7 +295,7 @@ export const EinvoiceDesignsPanel = () => {
             <FileCode2 className="w-4 h-4 text-slate-400" /> e-Fatura / e-Arşiv tasarımları
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5 max-w-2xl">
-            Fatura görünümünü sürükle-bırak ile düzenleyin: logo, renk, yazı tipi, bölüm sırası,
+            Fatura, e-Arşiv ve e-İrsaliye görünümünü sürükle-bırak ile düzenleyin: logo, renk, yazı tipi, bölüm sırası,
             kalem alanları (stok kodu, barkod, iskonto, KDV, KDV’siz fiyat), güncel bakiye, GİB mührü ve GİB karekod.
             Kaydedince XSLT üretilir. Ham XSLT sekmesi gelişmiş kullanım içindir.
             .tkdesign.json ile dışa/içe aktarın. Varsayılan GİB şablonları yüklüdür — görsel kaydetmek onları bu düzene çevirir; orijinali korumak için kopyalayın.
@@ -374,6 +374,18 @@ export const EinvoiceDesignsPanel = () => {
                 <div className="text-[10px] text-slate-500 px-2 py-1 border rounded-lg" data-testid="einvoice-design-source-badge">
                   Kaynak: {source === "xslt" ? "XSLT" : "görsel"}{dirty ? " · kaydedilmedi" : ""}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const layout = classicIsnetLayout(kind);
+                    setForm((f) => ({ ...f, layout, name: f.name || CLASSIC_ISNET_NAME }));
+                    setSource("visual");
+                  }}
+                  className="px-3 py-1.5 border rounded-lg font-semibold"
+                  data-testid="einvoice-design-classic-preset"
+                >
+                  {CLASSIC_ISNET_NAME}
+                </button>
                 <div className="flex gap-1 bg-slate-100 rounded-xl p-1" data-testid="einvoice-design-editor-tabs">
                   <button type="button" onClick={() => setTab("visual")} className={`px-3 py-1.5 rounded-lg font-semibold ${tab === "visual" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-tab-visual">Görsel</button>
                   <button type="button" onClick={() => setTab("xslt")} className={`px-3 py-1.5 rounded-lg font-semibold ${tab === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-tab-xslt">XSLT</button>

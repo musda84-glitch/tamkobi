@@ -232,7 +232,7 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(lines).toContain("Birim");
   expect(lines).toContain("Adet");
   expect(lines).not.toContain("C62");
-  expect(lines).toContain("Stok kodu");
+  expect(lines).toContain("Stok Kodu");
   expect(lines).toContain("YZL-001");
   expect(lines).toContain("Barkod");
   expect(lines).toContain("İskonto");

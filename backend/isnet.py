@@ -1860,6 +1860,7 @@ def build_despatch_ubl(
     company: dict,
     contact: Optional[dict],
     ettn: Optional[str] = None,
+    xslt: Optional[str] = None,
 ) -> tuple:
     """İşNet SendDespatchAdviceXml UBL — (xml_str, ettn, despatch_id)."""
     import ubl_export
@@ -1878,7 +1879,7 @@ def build_despatch_ubl(
         "email": (company or {}).get("email"),
     }
     buyer = ubl_export._buyer_from(inv, contact)
-    xml_bytes = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
+    xml_bytes = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True, xslt=xslt)
     root = ET.fromstring(xml_bytes)
     cbc = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
     inv_id = ""
@@ -1945,13 +1946,25 @@ async def send_despatch_document(
         logger.info("isnet GetDespatchTaxPayer failed tax=%s: %s", buyer_tax, e.detail)
 
     company_for_ubl = {**(company or {}), "tax_number": seller_vkn}
+    xslt = None
+    try:
+        import einvoice_designs as _ed
+        xslt = await _ed.selected_xslt_for_e_type("e_dispatch")
+    except Exception:
+        logger.exception("isnet despatch selected xslt load failed")
+    if not xslt:
+        try:
+            from einvoice_classic_xslt import classic_isnet_xslt
+            xslt = classic_isnet_xslt("e_dispatch")
+        except Exception:
+            logger.exception("isnet classic despatch xslt failed")
     inv_for_ubl = dict(invoice or {})
     defaults = merged.get("despatch_defaults") if isinstance(merged.get("despatch_defaults"), dict) else {}
     if defaults:
         nested = inv_for_ubl.get("despatch_defaults") if isinstance(inv_for_ubl.get("despatch_defaults"), dict) else {}
         inv_for_ubl["despatch_defaults"] = {**defaults, **nested}
     try:
-        xml, _local_ettn, inv_id = build_despatch_ubl(inv_for_ubl, company_for_ubl, contact)
+        xml, _local_ettn, inv_id = build_despatch_ubl(inv_for_ubl, company_for_ubl, contact, xslt=xslt)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

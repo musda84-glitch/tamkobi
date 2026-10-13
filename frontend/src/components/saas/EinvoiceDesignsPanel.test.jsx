@@ -8,12 +8,21 @@ jest.mock("axios");
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 
 const LIST = {
-  kinds: [{ id: "e_invoice", label: "e-Fatura" }, { id: "e_archive", label: "e-Arşiv" }],
-  selected: { e_invoice: "einvoice_xslt_default_e_invoice", e_archive: "einvoice_xslt_default_e_archive" },
+  kinds: [
+    { id: "e_invoice", label: "e-Fatura" },
+    { id: "e_archive", label: "e-Arşiv" },
+    { id: "e_dispatch", label: "e-İrsaliye" },
+  ],
+  selected: {
+    e_invoice: "einvoice_xslt_default_e_invoice",
+    e_archive: "einvoice_xslt_default_e_archive",
+    e_dispatch: "einvoice_xslt_default_e_dispatch",
+  },
   items: [
     { id: "einvoice_xslt_default_e_invoice", name: "Varsayılan e-Fatura", kind: "e_invoice", is_builtin: true, is_selected: true, xslt_bytes: 170000 },
     { id: "einvoice_xslt_custom", name: "Özel e-Fatura", kind: "e_invoice", is_builtin: false, is_selected: false, xslt_bytes: 1200 },
     { id: "einvoice_xslt_default_e_archive", name: "Varsayılan e-Arşiv", kind: "e_archive", is_builtin: true, is_selected: true, xslt_bytes: 100000 },
+    { id: "einvoice_xslt_default_e_dispatch", name: "Klasik (İşNet örneği)", kind: "e_dispatch", is_builtin: true, is_selected: true, xslt_bytes: 12000 },
   ],
 };
 

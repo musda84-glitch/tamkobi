@@ -124,6 +124,8 @@ const PartyCard = ({ title, p, kCls, vCls }) => (
 
 const lineCell = (ln, colId) => {
   if (colId === "unit") return unitLabel(ln.unit);
+  if (colId === "desc") return ln.desc || ln.description || "";
+  if (colId === "vat_amount") return ln.vat_amount || "";
   if (colId === "qty" && !ln._showUnit) {
     const u = unitLabel(ln.unit);
     return `${ln.qty}${u ? ` ${u}` : ""}`;
@@ -198,13 +200,18 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
       if (fid === "supplier_vkn") return `VKN/TCKN: ${s.supplier.vkn}`;
       return "";
     };
+    const classic = layout.preset === "classic_isnet";
+    const logoNode = layout.logo ? (
+      <img src={layout.logo} alt="logo" className="object-contain" style={{ height: logoSize, width: "auto", maxWidth: "100%" }} />
+    ) : (
+      <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-2 py-3 inline-block">Logo</div>
+    );
     return (
-      <div className="pb-2 space-y-1.5" data-testid="einvoice-design-logo" style={{ borderBottom: `3px solid ${layout.accent}` }}>
-        {layout.logo ? (
-          <img src={layout.logo} alt="logo" className="object-contain" style={{ height: logoSize, width: "auto", maxWidth: "100%" }} />
-        ) : (
-          <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-2 py-3 inline-block">Logo</div>
-        )}
+      <div className={`pb-2 space-y-1.5 ${classic ? "text-right" : ""}`} data-testid="einvoice-design-logo" style={{ borderBottom: `3px solid ${layout.accent}` }}>
+        <div className={classic ? "inline-flex items-start justify-end gap-3" : ""}>
+          {logoNode}
+          {classic ? <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-2 py-3" data-testid="einvoice-design-qr-mark">QR</div> : null}
+        </div>
         {headerFields.map((f) => (
           <div
             key={f.id}
@@ -310,7 +317,8 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
     );
   }
   if (id === "lines") {
-    const cols = visibleLineCols(layout);
+    const anyDesc = (s.lines || []).some((ln) => String(ln.desc || ln.description || "").trim());
+    const cols = visibleLineCols(layout).filter((c) => c.id !== "desc" || anyDesc);
     const unitOn = cols.some((c) => c.id === "unit");
     return (
       <div>
@@ -383,7 +391,7 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
     const notes = previewNotes(layout, s);
     return (
       <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
-        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>Notlar</div>
+        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>{layout.notesTitle || "Notlar"}</div>
         {notes.map((n) => <div key={n}>{n}</div>)}
         <textarea
           value={layout.noteText || ""}
@@ -405,7 +413,7 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
     const pay = previewIban(layout, s);
     return (
       <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
-        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>IBAN / ödeme</div>
+        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>{layout.ibanTitle || "IBAN / ödeme"}</div>
         <div className="font-mono">{pay.iban}</div>
         {pay.name ? <div>{pay.name}</div> : null}
         <input
