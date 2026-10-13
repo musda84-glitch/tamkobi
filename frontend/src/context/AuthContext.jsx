@@ -180,6 +180,20 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
+  const applySession = useCallback((data) => {
+    if (!data?.user) return;
+    setUser(data.user);
+    setAuthenticated(true);
+    setLicense(data.license || null);
+    setCompanies(data.companies || []);
+    if (data.companies && data.companies.length > 0) {
+      const found = data.companies.find((c) => c.id === data.user.active_company_id || c._id === data.user.active_company_id);
+      const active = found || data.companies[0];
+      setActiveCompany(active);
+      setPriceDecimals(active?.price_decimals);
+    }
+  }, []);
+
   const login = useCallback(async (email, password, remember = true) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password, remember: !!remember }, { withCredentials: true });
@@ -195,16 +209,7 @@ export const AuthProvider = ({ children }) => {
         return { ok: false, data: res.data, redirect: res.data.redirect };
       }
       if (res.data?.user) {
-        setUser(res.data.user);
-        setAuthenticated(true);
-        setLicense(res.data.license || null);
-        setCompanies(res.data.companies || []);
-        if (res.data.companies && res.data.companies.length > 0) {
-          const found = res.data.companies.find(c => c.id === res.data.user.active_company_id || c._id === res.data.user.active_company_id);
-          const active = found || res.data.companies[0];
-          setActiveCompany(active);
-          setPriceDecimals(active?.price_decimals);
-        }
+        applySession(res.data);
         toast.success(`Hoş geldiniz, ${res.data.user.name}`);
       }
       return { ok: true, data: res.data, redirect: res.data?.redirect };
@@ -213,7 +218,7 @@ export const AuthProvider = ({ children }) => {
       toast.error(typeof msg === "string" ? msg : (msg?.detail || "Giriş yapılamadı."));
       return { ok: false };
     }
-  }, []);
+  }, [applySession]);
 
   const switchCompany = useCallback(async (companyId) => {
     try {
@@ -276,6 +281,7 @@ export const AuthProvider = ({ children }) => {
     activeCompany,
     switchCompany,
     login,
+    applySession,
     logout,
     loading,
     menuItems,
@@ -300,6 +306,7 @@ export const AuthProvider = ({ children }) => {
     activeCompany,
     switchCompany,
     login,
+    applySession,
     logout,
     loading,
     menuItems,

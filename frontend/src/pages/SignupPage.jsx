@@ -11,6 +11,7 @@ import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { parseModuleKeys, packQuote } from "../utils/modulePack";
 import { LegalConsent, LegalFooterLinks, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
 import { Seo } from "../components/Seo";
+import { GoogleContinueButton, GOOGLE_CLIENT_ID } from "../components/GoogleContinueButton";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-600";
 
@@ -74,6 +75,28 @@ export default function SignupPage() {
           )}
           <LegalConsent value={consent} onChange={setConsent} prefix="signup-" className="bg-white/5 border border-white/10 rounded-xl p-3 text-slate-300 [&_a]:text-emerald-300" />
           <button disabled={busy || (customMode && !picked.length)} className="w-full sm:w-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60" data-testid="signup-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />} Denemeyi Başlat</button>
+          {GOOGLE_CLIENT_ID ? (
+            <div className="space-y-2 pt-2" data-testid="signup-google-wrap">
+              <div className="relative py-1">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10" /></div>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-wide"><span className="bg-[#0b0f1a] px-2 text-slate-500">veya Google ile</span></div>
+              </div>
+              <GoogleContinueButton
+                mode="signup"
+                testId="signup-google"
+                remember
+                onSuccess={(data) => {
+                  if (data?.needs_profile) return;
+                  if (data?.redirect && String(data.redirect).startsWith("http") && !data?.user) {
+                    window.location.href = data.redirect;
+                    return;
+                  }
+                  setDone(data);
+                }}
+              />
+              <p className="text-[10px] text-slate-500">Google ile kayıtta şirket adı ve telefon sorulur; şifre gerekmez.</p>
+            </div>
+          ) : null}
           <LegalFooterLinks className="text-slate-500 justify-start" prefix="signup-footer" />
         </form>
         {customMode ? (

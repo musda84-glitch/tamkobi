@@ -8,7 +8,8 @@ import { BuildStamp } from "../components/BuildStamp";
 import TamKobiMark from "../components/TamKobiMark";
 import { LOGIN } from "../constants/testIds/auth";
 import { REMEMBER_ERP_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
-import { getHostKind } from "../utils/hosts";
+import { getHostKind, hostUrl } from "../utils/hosts";
+import { GoogleContinueButton, GOOGLE_CLIENT_ID } from "../components/GoogleContinueButton";
 
 function LoginBrand({ subtitle }) {
   return (
@@ -26,7 +27,7 @@ function LoginBrand({ subtitle }) {
 }
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, applySession } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "", phone: "" });
   const [remember, setRemember] = useState(true);
@@ -36,6 +37,30 @@ export default function LoginPage() {
   const [channel, setChannel] = useState("email");
   const [err, setErr] = useState("");
   const [resetInfo, setResetInfo] = useState(null);
+
+  const finishAuth = (data) => {
+    if (data?.requires_2fa) {
+      window.location.href = hostUrl("ynt", "/sistem/giris");
+      return;
+    }
+    if (data?.redirect && String(data.redirect).startsWith("http") && !data?.token && !data?.user) {
+      window.location.href = data.redirect;
+      return;
+    }
+    if (data?.user && typeof applySession === "function") {
+      applySession(data);
+    }
+    if (data?.redirect) {
+      if (String(data.redirect).startsWith("http")) {
+        window.location.href = data.redirect;
+        return;
+      }
+      navigate(data.redirect);
+      return;
+    }
+    const kind = getHostKind();
+    navigate(kind === "ik" ? "/personelim" : "/panel");
+  };
 
   useEffect(() => {
     const saved = loadRememberedEmail(REMEMBER_ERP_KEY);
@@ -187,6 +212,20 @@ export default function LoginPage() {
           <button disabled={busy} className="w-full py-2.5 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2" data-testid="login-submit">
             <LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Giriş Yap"}
           </button>
+          {GOOGLE_CLIENT_ID ? (
+            <>
+              <div className="relative py-1">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-wide"><span className="bg-white px-2 text-slate-400">veya</span></div>
+              </div>
+              <GoogleContinueButton
+                remember={remember}
+                mode="login"
+                testId="login-google"
+                onSuccess={finishAuth}
+              />
+            </>
+          ) : null}
           <button type="button" onClick={() => { setMode("forgot"); setErr(""); }} className="w-full text-[11px] text-emerald-700 font-semibold" data-testid={LOGIN.forgotPasswordLink}>
             Şifremi unuttum
           </button>

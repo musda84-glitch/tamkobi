@@ -64,6 +64,7 @@ from auth_utils import (
     auth_cookie_kwargs, access_cookie_max_age, refresh_cookie_max_age,
 )
 import superadmin_2fa
+import google_auth
 import tenant_access
 from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
@@ -3133,6 +3134,282 @@ async def register(req: RegisterRequest, request: Request, response: Response):
             key="access_token", value=token, **auth_cookie_kwargs(request, max_age=86400 * 7),
         )
     return out
+
+async def _google_login_existing_user(
+    user: dict,
+    request: Request,
+    response: Response,
+    *,
+    remember: bool,
+    google_sub: str,
+    client_ip: str,
+) -> Dict[str, Any]:
+    """Kayıtlı kullanıcı — Google ile oturum (SA yasak; 2FA varsa pending)."""
+    email = (user.get("email") or "").strip().lower()
+    user_id = str(user.get("_id", user.get("id")))
+    if user.get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Hesabınız pasif durumda. Yöneticinizle iletişime geçin.")
+    if user.get("is_super_admin"):
+        applog.log_auth(
+            "google_login_sa_denied", f"{email} super admin blocked",
+            email=email, user_email=email, user_id=user_id, ip=client_ip,
+        )
+        raise HTTPException(status_code=403, detail="Süper admin Google ile giriş yapamaz. Platform girişini kullanın.")
+
+    import host_audience as _ha
+    kind = _ha.host_kind(request)
+    if kind == _ha.KIND_YNT:
+        raise HTTPException(status_code=403, detail="Yalnızca süper admin giriş yapabilir")
+
+    upd: Dict[str, Any] = {
+        "last_login_at": datetime.now(timezone.utc).isoformat(),
+        "auth_provider": user.get("auth_provider") or "google",
+    }
+    if google_sub and not user.get("google_sub"):
+        upd["google_sub"] = google_sub
+    await db.users.update_one({"_id": user["_id"]}, {"$set": upd})
+
+    # 2FA (nadir: kiracı kullanıcıda TOTP açıksa login ile aynı pending akış)
+    if superadmin_2fa.user_totp_enabled(user):
+        pending, jti = superadmin_2fa.create_pending_2fa_token(user_id, email, remember=remember)
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"pending_2fa_jti": jti, "pending_2fa_attempts": 0}},
+        )
+        applog.log_auth(
+            "google_login_2fa_pending", f"{email} google ok, awaiting TOTP",
+            email=email, user_email=email, user_id=user_id, ip=client_ip,
+        )
+        return {
+            "requires_2fa": True,
+            "pending_token": pending,
+            "user": {
+                "id": user_id,
+                "email": user["email"],
+                "name": user.get("name"),
+                "is_super_admin": False,
+                "totp_enabled": True,
+            },
+        }
+
+    applog.log_auth(
+        "google_login_success", f"{email} signed in via google",
+        email=email, user_email=email, user_id=user_id, ip=client_ip,
+        company_id=user.get("active_company_id"), role=user.get("role"),
+    )
+    return await _issue_session_for_user(user, request, response, remember=remember)
+
+
+async def _google_create_company_user(
+    *,
+    email: str,
+    name: str,
+    google_sub: str,
+    company_name: str,
+    phone: str,
+    req: Dict[str, Any],
+    request: Request,
+    response: Response,
+) -> Dict[str, Any]:
+    """public_signup ile aynı deneme kaydı; şifresiz, auth_provider=google."""
+    import legal_docs
+    import demo as demo_pack
+    import json as _json
+    import auth_handoff
+    import host_audience as _ha
+    import public_url as pu
+
+    legal_docs.require_acceptance(req)
+    st = await saas_billing.settings()
+    wanted = saas.normalize_module_keys(req.get("modules"))
+    extra = None
+    overrides = None
+    if wanted:
+        plan = await saas.ensure_custom_plan()
+        prices = await saas.module_prices()
+        quote = saas.quote_modules(wanted, prices)
+        overrides = saas.overrides_for(wanted)
+        extra = {
+            "custom_price_monthly": quote["price_monthly"],
+            "custom_price_yearly": quote["price_yearly"],
+            "notes": f"{st['trial_days']} gün deneme · {len(wanted)} modül",
+        }
+    elif req.get("plan_id"):
+        plan = await db.saas_plans.find_one({"_id": req["plan_id"], "is_public": True})
+        if not plan:
+            raise HTTPException(status_code=400, detail="Seçilen paket bulunamadı.")
+    else:
+        plan = await db.saas_plans.find_one({"_id": st["trial_plan_id"]})
+
+    cid = f"comp_{uuid.uuid4().hex[:8]}"
+    uid = f"usr_{uuid.uuid4().hex[:8]}"
+    # Şifresiz hesap: rastgele hash; parola ile giriş yapılamaz
+    pwd_hash = hash_password(secrets.token_urlsafe(32))
+    await db.companies.insert_one({
+        "_id": cid,
+        "name": company_name.strip(),
+        "tax_number": (req.get("tax_number") or "").strip(),
+        "tax_office": "",
+        "address": "",
+        "city": (req.get("city") or "").strip(),
+        "phone": phone.strip(),
+        "email": email,
+        "currency": "TRY",
+        "source": "google_signup",
+        "license_id": cid,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "allow_platform_access": False,
+    })
+    await db.users.insert_one({
+        "_id": uid,
+        "email": email,
+        "password_hash": pwd_hash,
+        "name": name.strip(),
+        "phone": phone.strip(),
+        "role": "admin",
+        "company_ids": [cid],
+        "active_company_id": cid,
+        "is_active": True,
+        "preferences": {},
+        "legal_accept": legal_docs.acceptance_record(req),
+        "auth_provider": "google",
+        "google_sub": google_sub,
+        "user_number": await user_numbers.next_user_number(db),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await rbac.ensure_roles(cid)
+    await saas.start_trial(
+        cid,
+        plan_id=plan["_id"] if plan else st["trial_plan_id"],
+        days=st["trial_days"],
+        module_overrides=overrides,
+        extra=extra,
+    )
+    await demo_pack.seed_for_new_company(cid)
+
+    user = await db.users.find_one({"_id": uid})
+    kind = _ha.host_kind(request)
+    msg = f"Hoş geldiniz! {st['trial_days']} günlük denemeniz Google hesabınızla başladı."
+    lic = await saas.effective(cid)
+    applog.log_auth(
+        "google_signup_success", f"{email} registered via google",
+        email=email, user_email=email, user_id=uid, company_id=cid,
+    )
+    if kind == _ha.KIND_APP:
+        session = await _issue_session_for_user(user, request, response, remember=bool(req.get("remember", True)))
+        session["status"] = "success"
+        session["company_id"] = cid
+        session["message"] = msg
+        session["license"] = lic
+        return session
+
+    access = create_access_token(uid, email, "admin", aud=_ha.AUD_APP)
+    blob = _json.dumps({"access_token": access, "sa_return": ""})
+    code = await auth_handoff.create_handoff(db, blob, purpose="signup")
+    app_base = await pu.public_base_url_for(db, "app")
+    return {
+        "status": "success",
+        "company_id": cid,
+        "user": {"id": uid, "email": email, "name": name.strip(), "role": "admin"},
+        "license": lic,
+        "message": msg,
+        "redirect": f"{app_base}/sso?code={code}",
+    }
+
+
+@api_router.post("/auth/google")
+async def auth_google(req: Dict[str, Any], request: Request, response: Response):
+    """Google ID token ile giriş veya yeni şirket + yönetici kaydı.
+
+    GOOGLE_CLIENT_ID yoksa 404. Süper admin Google ile giremez.
+    Yeni kullanıcıda şirket adı / telefon yoksa needs_profile döner.
+    IP: 20 istek/dk; yeni kayıt 5/saat.
+    """
+    if not google_auth.google_auth_configured():
+        raise HTTPException(status_code=404, detail="Google girişi yapılandırılmamış.")
+
+    client_ip = request_ip(request)
+    await google_auth.enforce_google_ip_rate(db, client_ip)
+
+    remember = bool(req.get("remember", True))
+    company_name = (req.get("company_name") or "").strip()
+    phone = (req.get("phone") or "").strip()
+    pending = (req.get("pending_token") or "").strip()
+    credential = (req.get("credential") or "").strip()
+
+    identity: Optional[Dict[str, Any]] = None
+    if pending:
+        payload = google_auth.decode_pending_google_token(pending)
+        identity = {
+            "email": payload["email"],
+            "google_sub": payload["google_sub"],
+            "name": (req.get("name") or payload.get("name") or "").strip(),
+            "picture": payload.get("picture") or "",
+        }
+    elif credential:
+        identity = await asyncio.to_thread(google_auth.verify_google_id_token, credential)
+        if req.get("name"):
+            identity["name"] = str(req.get("name")).strip() or identity["name"]
+    else:
+        raise HTTPException(status_code=400, detail="credential veya pending_token gerekli.")
+
+    email = identity["email"]
+    google_sub = identity["google_sub"]
+    name = (identity.get("name") or email.split("@")[0]).strip()
+
+    user = await db.users.find_one({"email": email})
+    if not user and google_sub:
+        user = await db.users.find_one({"google_sub": google_sub})
+
+    if user:
+        stored_sub = str(user.get("google_sub") or "").strip()
+        if stored_sub and google_sub and stored_sub != google_sub:
+            applog.log_auth(
+                "google_sub_mismatch", f"{email} google_sub mismatch",
+                email=email, user_email=email, user_id=str(user.get("_id") or ""), ip=client_ip,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Bu e-posta başka bir Google hesabına bağlı. Destek ile iletişime geçin.",
+            )
+        return await _google_login_existing_user(
+            user, request, response,
+            remember=remember, google_sub=google_sub, client_ip=client_ip,
+        )
+
+    # Yeni kayıt
+    if not google_auth.profile_complete(company_name, phone):
+        pending_token = google_auth.create_pending_google_token(
+            google_sub=google_sub,
+            email=email,
+            name=name,
+            picture=identity.get("picture") or "",
+        )
+        return {
+            "needs_profile": True,
+            "pending_token": pending_token,
+            "email": email,
+            "name": name,
+            "picture": identity.get("picture") or "",
+            "missing": [k for k, v in (("company_name", company_name), ("phone", phone)) if not v],
+        }
+
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı bir hesap zaten var. Giriş yapın.")
+
+    await google_auth.enforce_google_signup_rate(db, client_ip)
+    return await _google_create_company_user(
+        email=email,
+        name=name,
+        google_sub=google_sub,
+        company_name=company_name,
+        phone=phone,
+        req=req,
+        request=request,
+        response=response,
+    )
+
 
 @api_router.get("/auth/me")
 async def get_me(request: Request):

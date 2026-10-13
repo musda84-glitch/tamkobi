@@ -315,6 +315,7 @@ SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute", "/early-leave-cancel")
 PUBLIC_API_ALLOWLIST = (
     "/api/auth/login",
     "/api/auth/register",
+    "/api/auth/google",
     "/api/auth/forgot-password",
     "/api/auth/reset/",
     "/api/auth/logout",
