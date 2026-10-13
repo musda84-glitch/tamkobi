@@ -389,6 +389,8 @@ async def delete_loan(loan_id: str, user: dict = Depends(_user_dep)):
         related=related,
         note=f"{loan.get('bank_name') or loan.get('bank') or ''} · {float(loan.get('principal') or loan.get('amount') or 0):,.2f} ₺",
     )
+    if related:
+        await linked_moves.recalc_after_trash(_db, related)
     return {"status": "success", "message": "Kredi çöp kutusuna taşındı; bağlı hareketler geri alındı."}
 
 

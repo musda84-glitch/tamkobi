@@ -12204,6 +12204,8 @@ async def delete_bonus(bonus_id: str, user: dict = Depends(get_current_user)):
         related=related,
         note=b.get("status") or "",
     )
+    if related:
+        await linked_moves.recalc_after_trash(db, related)
     return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
 
 
@@ -19077,6 +19079,8 @@ async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)
         related = await linked_moves.prepare_source_trash(db, "payroll", payroll_id)
     label = f"{payroll.get('employee_name')} · {payroll.get('period')} · {amount:,.2f} ₺"
     await trash.soft_delete("payrolls", payroll, "payroll", label, related=related, note=payroll.get("status") or "")
+    if related:
+        await linked_moves.recalc_after_trash(db, related)
     return {"status": "success", "message": "Maaş kaydı çöp kutusuna taşındı."}
 
 # ----------------- AI FİNANSAL DANIŞMAN -----------------

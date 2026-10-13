@@ -452,12 +452,14 @@ async def collect_related_for_trash(db, source_type: str, source_id: str) -> Lis
 
 
 async def undo_effects_keep_docs(db, related: List[dict]) -> None:
-    """Bakiyeleri geri al; dokümanları silme (soft_delete related= ile taşınacak)."""
-    bank_docs: List[dict] = []
+    """Bakiyeleri geri al; dokümanları silme (soft_delete related= ile taşınacak).
+
+    Not: kasa sync burada YAPILMAZ — hareketler hâlâ koleksiyonda; soft_delete sonrası
+    `recalc_after_trash(related)` çağırın.
+    """
     for block in related or []:
         if block.get("collection") == "bank_transactions":
             for tx in block.get("docs") or []:
-                bank_docs.append(tx)
                 if _reverse_tx_effects:
                     await _reverse_tx_effects(tx, -1)
         elif block.get("collection") == "partner_transactions":
@@ -472,12 +474,20 @@ async def undo_effects_keep_docs(db, related: List[dict]) -> None:
                         {"_id": ptx["partner_id"]},
                         {"$inc": partner_pay.profit_share_inc(amount, bool(ptx.get("is_paid")), applying=False)},
                     )
+
+
+async def recalc_after_trash(db, related: List[dict]) -> None:
+    """soft_delete sonrası kasa/cari bakiyelerini hareket toplamına kilitle."""
+    bank_docs = [t for b in (related or []) if b.get("collection") == "bank_transactions" for t in (b.get("docs") or [])]
     if bank_docs:
         await _recalc_touched_accounts(db, bank_docs)
 
 
 async def prepare_source_trash(db, source_type: str, source_id: str) -> List[dict]:
-    """Kaynak silmeden önce: bakiyeleri geri al + related listesi (soft_delete'e ver)."""
+    """Kaynak silmeden önce: bakiyeleri geri al + related listesi (soft_delete'e ver).
+
+    Caller: soft_delete(..., related=...) sonrası `recalc_after_trash(db, related)` çağırmalı.
+    """
     related = await collect_related_for_trash(db, source_type, source_id)
     if related:
         await undo_effects_keep_docs(db, related)

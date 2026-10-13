@@ -170,6 +170,10 @@ def test_bonus_pay_delete_clears_move_and_balance(db):
         "account_id": "acc1", "employee_name": "Ali", "type": "bonus",
     })
     db.bank_transactions.docs.append({
+        "_id": "open1", "company_id": "c1", "account_id": "acc1", "type": "inflow",
+        "amount": 1000, "source": "opening", "description": "Açılış",
+    })
+    db.bank_transactions.docs.append({
         "_id": "tx1", "company_id": "c1", "account_id": "acc1", "type": "outflow",
         "amount": 100, "description": "Ali prim", **link,
     })
@@ -177,16 +181,15 @@ def test_bonus_pay_delete_clears_move_and_balance(db):
 
     related = _run(linked_moves.prepare_source_trash(db, "personnel_bonus", bid))
     assert related and related[0]["collection"] == "bank_transactions"
-    # soft_delete simulation
+    # soft_delete simulation then recalc (production order)
     for block in related:
         for d in block["docs"]:
             _run(db[block["collection"]].delete_one({"_id": d["_id"]}))
-    assert not db.bank_transactions.docs
+    _run(linked_moves.recalc_after_trash(db, related))
+    assert not any(t.get("bonus_id") == bid for t in db.bank_transactions.docs)
     assert db.bank_accounts.docs[0]["current_balance"] == pytest.approx(1000.0, abs=0.01)
 
-    # restore related → balance back down
-    _run(linked_moves.restore_linked_from_related(db, related))
-    # restore re-applies effects; docs must be re-inserted by trash first
+    # restore: re-insert related then apply effects
     for block in related:
         for d in block["docs"]:
             _run(db[block["collection"]].insert_one(d))
@@ -199,6 +202,10 @@ def test_payroll_same_pattern(db):
     link = linked_moves.link_fields("payroll", pid)
     db.payrolls.docs.append({"_id": pid, "company_id": "c1", "status": "paid", "final_payable": 50, "account_id": "acc1"})
     db.bank_transactions.docs.append({
+        "_id": "open1", "company_id": "c1", "account_id": "acc1", "type": "inflow",
+        "amount": 1000, "source": "opening", "description": "Açılış",
+    })
+    db.bank_transactions.docs.append({
         "_id": "txp", "company_id": "c1", "account_id": "acc1", "type": "outflow", "amount": 50, **link,
     })
     db.bank_accounts.docs[0]["current_balance"] = 950.0
@@ -206,6 +213,7 @@ def test_payroll_same_pattern(db):
     for block in related:
         for d in block["docs"]:
             _run(db[block["collection"]].delete_one({"_id": d["_id"]}))
+    _run(linked_moves.recalc_after_trash(db, related))
     assert db.bank_accounts.docs[0]["current_balance"] == pytest.approx(1000.0, abs=0.01)
 
 
@@ -242,6 +250,11 @@ def test_installment_unpay_via_reverse_linked(db):
         "_id": iid, "company_id": "c1", "status": "paid", "paid_amount": 75,
         "amount": 75, "contact_id": "cnt1", "direction": "receivable",
     })
+    # Açılış hareketi — kasa sync hareket toplamına kilitler
+    db.bank_transactions.docs.append({
+        "_id": "open1", "company_id": "c1", "account_id": "acc1", "type": "inflow",
+        "amount": 1000, "source": "opening", "description": "Açılış",
+    })
     db.bank_transactions.docs.append({
         "_id": "txi", "company_id": "c1", "account_id": "acc1", "type": "inflow",
         "amount": 75, "contact_id": "cnt1", **link,
@@ -257,6 +270,7 @@ def test_installment_unpay_via_reverse_linked(db):
         rev = _run(linked_moves.reverse_linked(db, "installment", iid, mode="delete", reason="unpay"))
     assert rev["bank"] == 1
     assert db.bank_accounts.docs[0]["current_balance"] == pytest.approx(1000.0, abs=0.01)
+    assert not any(t.get("installment_id") == iid for t in db.bank_transactions.docs)
 
 
 def test_reverse_linked_idempotent(db):
@@ -297,12 +311,16 @@ def test_integrity_orphans_and_dry_run(db):
     assert len(db.bank_transactions.docs) == before_tx
     assert db.bank_accounts.docs[0]["current_balance"] == before_bal
 
-    with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=lambda coll, doc, *a, **k: _run(db[coll].delete_one({"_id": doc["_id"]})) or "t")):
+    async def _sd(coll, doc, *a, **k):
+        await db[coll].delete_one({"_id": doc["_id"]})
+        return "t"
+
+    with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
         applied = _run(linked_moves.cleanup_orphans(db, "c1", dry_run=False, actor={"name": "test"}))
     assert applied["dry_run"] is False
-    assert any(a.get("detail", "").startswith("integrity") or True for a in db.activity_logs.docs) or db.activity_logs.docs
-    # drift synced to movement sum
-    assert abs(db.bank_accounts.docs[0]["current_balance"] - 9999.0) > 0.01 or True  # sync may change
+    assert db.activity_logs.docs, "cleanup should write activity_logs audit"
+    # cash drift synced to movement sum
+    assert db.bank_accounts.docs[0]["current_balance"] != pytest.approx(9999.0)
 
 
 def test_integrity_other_company_403(db):
