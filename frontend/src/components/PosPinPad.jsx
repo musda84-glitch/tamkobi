@@ -24,9 +24,11 @@ export function PosPinPad({
     if (!d) return;
     setPin((p) => normalizePin(p + d));
   };
+  const needUser = Array.isArray(cashiers) && cashiers.length > 0;
+  const canSubmit = pinIsValid(pin) && !busy && (!needUser || !!selectedId);
   const submit = (e) => {
     e?.preventDefault?.();
-    if (!pinIsValid(pin) || busy) return;
+    if (!canSubmit) return;
     onSubmit?.(pin);
   };
   return (
@@ -77,7 +79,7 @@ export function PosPinPad({
               Vazgeç
             </button>
           ) : null}
-          <button type="submit" disabled={busy || !pinIsValid(pin)} className="flex-1 rounded-xl bg-emerald-600 text-white font-bold py-3 disabled:opacity-50 inline-flex items-center justify-center gap-2" data-testid="pos-pin-submit">
+          <button type="submit" disabled={!canSubmit} className="flex-1 rounded-xl bg-emerald-600 text-white font-bold py-3 disabled:opacity-50 inline-flex items-center justify-center gap-2" data-testid="pos-pin-submit">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
             Giriş
           </button>

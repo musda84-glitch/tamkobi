@@ -23,9 +23,10 @@ PIN_RE = re.compile(r"^\d{4,6}$")
 PIN_ATTEMPT_LIMIT = 5
 PIN_LOCK_MINUTES = 15
 PIN_FAIL_MESSAGE = "PIN hatalı."
-PIN_TAKEN_MESSAGE = "PIN kaydedilemedi. Farklı bir PIN seçin."
+PIN_USER_REQUIRED = "Kullanıcı seçin."
 PIN_LOCK_MESSAGE = "Çok fazla hatalı PIN denemesi. Lütfen 15 dakika sonra tekrar deneyin."
 SELF_APPROVE_MESSAGE = "Talebi açan kasiyer bu talebi onaylayamaz."
+PIN_SAVED = {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
 DEFAULT_IDLE_SEC = 120
 KIND_LABELS = {
     "delete_line": "Satır silme",
@@ -440,84 +441,104 @@ def _client_ip(request: Optional[Request]) -> str:
         return "unknown"
 
 
-def _pin_attempt_id(company_id: str, terminal_id: str, ip: str) -> str:
-    tid = (terminal_id or "").strip() or "-"
-    return f"pospin:{company_id}:{tid}:{ip or 'unknown'}"
+def _req_user_id(*sources: Any) -> str:
+    """İstemcinin seçtiği kasiyer / onaylayan. PIN taraması yok."""
+    keys = ("cashier_user_id", "user_id", "approver_user_id", "supervisor_user_id")
+    for src in sources:
+        if isinstance(src, dict):
+            for key in keys:
+                val = str(src.get(key) or "").strip()
+                if val:
+                    return val
+        elif src:
+            val = str(src).strip()
+            if val:
+                return val
+    return ""
 
 
-async def _guard_pin_attempts(company_id: str, terminal_id: str, request: Optional[Request]) -> str:
-    """Şirket + terminal + IP. 5 hatalı denemeden sonra 15 dk 429."""
-    ident = _pin_attempt_id(company_id, terminal_id, _client_ip(request))
+def _pin_attempt_id(company_id: str, ip: str = "", user_id: Optional[str] = None) -> str:
+    """İstemci terminal_id kullanılmaz. company+IP veya company+hedef kullanıcı."""
+    uid = str(user_id or "").strip()
+    if uid:
+        return f"pospin:{company_id}:user:{uid}"
+    return f"pospin:{company_id}:ip:{ip or 'unknown'}"
+
+
+def _pin_attempt_ids(company_id: str, ip: str, user_id: Optional[str] = None) -> List[str]:
+    idents = [_pin_attempt_id(company_id, ip)]
+    uid = str(user_id or "").strip()
+    if uid:
+        idents.append(_pin_attempt_id(company_id, ip, uid))
+    return idents
+
+
+async def _ident_locked(ident: str) -> bool:
     row = await _db.login_attempts.find_one({"identifier": ident})
-    if row and int(row.get("count") or 0) >= PIN_ATTEMPT_LIMIT:
-        last = _parse_dt(row.get("last_attempt"))
-        if last and datetime.now(timezone.utc) - last < timedelta(minutes=PIN_LOCK_MINUTES):
-            raise HTTPException(status_code=429, detail=PIN_LOCK_MESSAGE)
-        await _db.login_attempts.delete_one({"identifier": ident})
-    return ident
-
-
-async def _fail_pin_attempt(ident: str):
-    row = await _db.login_attempts.find_one({"identifier": ident})
-    now = _now()
-    if not row:
-        await _db.login_attempts.insert_one({
-            "_id": ident,
-            "identifier": ident,
-            "count": 1,
-            "last_attempt": now,
-        })
-        return
-    await _db.login_attempts.update_one(
-        {"identifier": ident},
-        {"$inc": {"count": 1}, "$set": {"last_attempt": now}},
-    )
-
-
-async def _clear_pin_attempt(ident: str):
+    if not row or int(row.get("count") or 0) < PIN_ATTEMPT_LIMIT:
+        return False
+    last = _parse_dt(row.get("last_attempt"))
+    if last and datetime.now(timezone.utc) - last < timedelta(minutes=PIN_LOCK_MINUTES):
+        return True
     await _db.login_attempts.delete_one({"identifier": ident})
+    return False
 
 
-async def _company_pin_users(company_id: str) -> List[dict]:
-    return await _db.users.find({
+async def _guard_pin_attempts(
+    company_id: str,
+    request: Optional[Request],
+    user_id: Optional[str] = None,
+) -> List[str]:
+    """company+IP ve (varsa) company+hedef user. 5 hatalı denemeden sonra 15 dk 429."""
+    idents = _pin_attempt_ids(company_id, _client_ip(request), user_id)
+    for ident in idents:
+        if await _ident_locked(ident):
+            raise HTTPException(status_code=429, detail=PIN_LOCK_MESSAGE)
+    return idents
+
+
+async def _fail_pin_attempt(idents: Any):
+    if isinstance(idents, str):
+        idents = [idents]
+    now = _now()
+    for ident in idents or []:
+        row = await _db.login_attempts.find_one({"identifier": ident})
+        if not row:
+            await _db.login_attempts.insert_one({
+                "_id": ident,
+                "identifier": ident,
+                "count": 1,
+                "last_attempt": now,
+            })
+            continue
+        await _db.login_attempts.update_one(
+            {"identifier": ident},
+            {"$inc": {"count": 1}, "$set": {"last_attempt": now}},
+        )
+
+
+async def _clear_pin_attempt(idents: Any):
+    if isinstance(idents, str):
+        idents = [idents]
+    for ident in idents or []:
+        await _db.login_attempts.delete_one({"identifier": ident})
+
+
+async def _find_user_by_pin(company_id: str, pin: str, *, user_id: str) -> dict:
+    """Yalnızca seçilen kullanıcı + PIN. Şirket genelinde PIN taraması yok."""
+    uid = str(user_id or "").strip()
+    if not uid:
+        raise HTTPException(status_code=400, detail=PIN_USER_REQUIRED)
+    pin = normalize_pin(pin)
+    target = await _db.users.find_one({
+        "_id": uid,
         "is_active": {"$ne": False},
         "is_super_admin": {"$ne": True},
-        "cashier_pin_hash": {"$exists": True, "$nin": [None, ""]},
         "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
-    }).to_list(400)
-
-
-async def _find_user_by_pin(
-    company_id: str,
-    pin: str,
-    *,
-    user_id: Optional[str] = None,
-    include_approvers: bool = True,
-) -> dict:
-    """PIN doğrulama. user_id verilirse yalnızca o kullanıcıyla eşleşir; başka hesaba düşmez.
-    user_id yoksa ve include_approvers False ise onay yetkilisi PIN taramasıyla açılmaz.
-    """
-    pin = normalize_pin(pin)
-    if user_id:
-        target = await _db.users.find_one({
-            "_id": str(user_id),
-            "is_active": {"$ne": False},
-            "is_super_admin": {"$ne": True},
-            "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
-        })
-        if not target or not verify_password(pin, target.get("cashier_pin_hash") or ""):
-            raise HTTPException(status_code=401, detail=PIN_FAIL_MESSAGE)
-        return target
-    matched = []
-    for u in await _company_pin_users(company_id):
-        if not verify_password(pin, u.get("cashier_pin_hash") or ""):
-            continue
-        if not include_approvers and await _can_approve(u, company_id):
-            continue
-        matched.append(u)
-    if len(matched) != 1:
+    })
+    if not target or not verify_password(pin, target.get("cashier_pin_hash") or ""):
         raise HTTPException(status_code=401, detail=PIN_FAIL_MESSAGE)
-    return matched[0]
+    return target
 
 
 async def _notify_approval(company_id: str, req_doc: dict):
@@ -687,16 +708,19 @@ async def decide_approval(
     pin: Optional[str] = None,
     request: Optional[Request] = None,
     terminal_id: Optional[str] = None,
+    approver_user_id: Optional[str] = None,
 ) -> dict:
     doc = await tenant_access.get_tenant_doc(_db, "pos_approvals", req_id, user, not_found="Onay talebi bulunamadı.")
     company_id = doc["company_id"]
     if doc.get("status") != "pending":
         raise HTTPException(status_code=409, detail="Bu talep zaten sonuçlandı.")
     if pin:
-        tid = str(terminal_id or doc.get("terminal_id") or _terminal_of({}, request) or "")
-        ident = await _guard_pin_attempts(company_id, tid, request)
+        supervisor_id = _req_user_id(approver_user_id)
+        ident = await _guard_pin_attempts(company_id, request, user_id=supervisor_id)
         try:
-            supervisor = await _find_user_by_pin(company_id, pin)
+            if not supervisor_id:
+                raise HTTPException(status_code=400, detail=PIN_USER_REQUIRED)
+            supervisor = await _find_user_by_pin(company_id, pin, user_id=supervisor_id)
             if str(supervisor.get("_id") or "") == str(doc.get("requested_by") or ""):
                 raise HTTPException(status_code=403, detail=SELF_APPROVE_MESSAGE)
             if not await _can_approve(supervisor, company_id):
@@ -785,6 +809,7 @@ async def maybe_gate(kind: str, *, company_id: str, session: dict, user: dict, p
         return await decide_approval(
             queued["request_id"], user, approve=True, pin=pin,
             request=request, terminal_id=session.get("terminal_id"),
+            approver_user_id=_req_user_id(payload),
         )
     return await queue_approval(
         company_id=company_id, session=session, kind=kind, payload=payload,
@@ -1108,34 +1133,20 @@ async def list_cashiers(company_id: Optional[str] = None, user: dict = Depends(_
 
 
 @router.post("/pos/cashiers/{user_id}/pin")
-async def set_cashier_pin(user_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def set_cashier_pin(user_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     target = await tenant_access.get_tenant_doc(_db, "users", user_id, user, not_found="Kullanıcı bulunamadı.")
     if not _can_manage_rules(user) and _uid(user) != str(user_id):
         raise HTTPException(status_code=403, detail="PIN yalnızca yönetici veya kasiyerin kendisi tanımlayabilir.")
-    pin = normalize_pin(req.get("pin") or req.get("password"))
-    others = await _db.users.find({
-        "_id": {"$ne": target["_id"]},
-        "cashier_pin_hash": {"$exists": True, "$nin": [None, ""]},
-        "$or": [{"active_company_id": cid}, {"company_ids": cid}],
-    }).to_list(400)
-    privileged = False
-    other_hit = False
-    for o in others:
-        if not verify_password(pin, o.get("cashier_pin_hash") or ""):
-            continue
-        if await _can_approve(o, cid):
-            privileged = True
-        else:
-            other_hit = True
-    if privileged or other_hit:
-        # Çakışma 409 ve "başka kasiyerde kayıtlı" diye dönmez.
-        # Kasiyer kendi PIN'ini yazarken onay yetkilisinin PIN'ini bu yanıttan ayırt edemez.
-        if privileged and not _can_manage_rules(user):
-            return {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
-        raise HTTPException(status_code=400, detail=PIN_TAKEN_MESSAGE)
+    ident = await _guard_pin_attempts(cid, request, user_id=str(target.get("_id") or user_id))
+    try:
+        pin = normalize_pin(req.get("pin") or req.get("password"))
+    except HTTPException:
+        await _fail_pin_attempt(ident)
+        raise
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"cashier_pin_hash": hash_password(pin), "updated_at": _now()}})
-    return {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
+    await _clear_pin_attempt(ident)
+    return dict(PIN_SAVED)
 
 
 @router.get("/pos/session")
@@ -1176,14 +1187,12 @@ async def _open_cashier_session(req: Dict[str, Any], user: dict, request: Option
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     tid = _terminal_of(req, request)
     pin = req.get("pin") or req.get("password")
-    ident = await _guard_pin_attempts(cid, tid, request)
-    specified = str(req.get("cashier_user_id") or req.get("user_id") or "").strip()
+    specified = _req_user_id(req)
+    ident = await _guard_pin_attempts(cid, request, user_id=specified)
     try:
-        cashier = await _find_user_by_pin(
-            cid, pin,
-            user_id=specified or None,
-            include_approvers=bool(specified),
-        )
+        if not specified:
+            raise HTTPException(status_code=400, detail=PIN_USER_REQUIRED)
+        cashier = await _find_user_by_pin(cid, pin, user_id=specified)
     except HTTPException as exc:
         if exc.status_code != 429:
             await _fail_pin_attempt(ident)
@@ -1259,7 +1268,7 @@ async def session_unlock(req: Dict[str, Any], user: dict = Depends(_user_dep), r
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     tid = _terminal_of(req, request)
     sess = await require_session(cid, tid, allow_locked=True)
-    ident = await _guard_pin_attempts(cid, tid, request)
+    ident = await _guard_pin_attempts(cid, request, user_id=str(sess.get("cashier_user_id") or ""))
     try:
         cashier = await _find_user_by_pin(
             cid, req.get("pin") or req.get("password"),
@@ -1312,7 +1321,7 @@ async def session_exit(req: Dict[str, Any], user: dict = Depends(_user_dep), req
     if exit_is_blocked(sess, rules):
         gated = await maybe_gate(
             "exit", company_id=cid, session=sess, user=user, request=request,
-            payload={"supervisor_pin": req.get("pin") or req.get("supervisor_pin"), "approval_id": req.get("approval_id")},
+            payload={"supervisor_pin": req.get("pin") or req.get("supervisor_pin"), "supervisor_user_id": _req_user_id(req), "approval_id": req.get("approval_id")},
             summary="Hızlı Satış ekranından çıkış",
         )
         if gated and gated.get("status") == "rejected":
@@ -1341,11 +1350,12 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
     rules = sess.get("rules") or {}
     pin = req.get("supervisor_pin") or req.get("pin")
     approval_id = req.get("approval_id")
+    supervisor_user_id = _req_user_id(req)
 
     if not incoming["items"] and current["items"]:
         gated = await maybe_gate(
             "cancel_cart", company_id=cid, session=sess, user=user, request=request,
-            payload={"supervisor_pin": pin, "approval_id": approval_id},
+            payload={"supervisor_pin": pin, "supervisor_user_id": supervisor_user_id, "approval_id": approval_id},
             summary=f"Sepet iptali ({len(current['items'])} satır)",
         )
         if gated:
@@ -1359,7 +1369,7 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
     if removed:
         gated = await maybe_gate(
             "delete_line", company_id=cid, session=sess, user=user, request=request,
-            payload={"line_id": removed[0].get("id"), "supervisor_pin": pin, "approval_id": approval_id},
+            payload={"line_id": removed[0].get("id"), "supervisor_pin": pin, "supervisor_user_id": supervisor_user_id, "approval_id": approval_id},
             summary=f"Satır silindi: {removed[0].get('name') or removed[0].get('id')}",
         )
         if gated:
@@ -1376,7 +1386,7 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
             kind = "discount" if float(nit.get("unit_price") or 0) < cat else "price_change"
             gated = await maybe_gate(
                 kind, company_id=cid, session=sess, user=user, request=request,
-                payload={"line_id": nid, "unit_price": nit.get("unit_price"), "catalog_price": cat, "supervisor_pin": pin, "approval_id": approval_id},
+                payload={"line_id": nid, "unit_price": nit.get("unit_price"), "catalog_price": cat, "supervisor_pin": pin, "supervisor_user_id": supervisor_user_id, "approval_id": approval_id},
                 summary=f"Fiyat {old.get('unit_price')} → {nit.get('unit_price')} ({nit.get('name')})",
                 extra=extra,
             )
@@ -1446,7 +1456,12 @@ async def create_approval(req: Dict[str, Any], user: dict = Depends(_user_dep), 
     extra = req.get("extra") or {}
     return await maybe_gate(
         kind, company_id=cid, session=sess, user=user, request=request,
-        payload={**(req.get("payload") or {}), "supervisor_pin": req.get("pin"), "approval_id": req.get("approval_id")},
+        payload={
+            **(req.get("payload") or {}),
+            "supervisor_pin": req.get("pin"),
+            "supervisor_user_id": _req_user_id(req, req.get("payload") or {}),
+            "approval_id": req.get("approval_id"),
+        },
         summary=req.get("summary") or KIND_LABELS[kind],
         extra=extra,
     ) or {"status": "allowed", "kind": kind}
@@ -1483,6 +1498,7 @@ async def approve_pos_request(req_id: str, request: Request, req: Optional[Dict[
     return await decide_approval(
         req_id, user, approve=True, pin=body.get("pin") or body.get("supervisor_pin"),
         request=request, terminal_id=_terminal_of(body, request),
+        approver_user_id=_req_user_id(body),
     )
 
 
@@ -1493,6 +1509,7 @@ async def reject_pos_request(req_id: str, request: Request, req: Optional[Dict[s
     return await decide_approval(
         req_id, user, approve=False, pin=body.get("pin") or body.get("supervisor_pin"),
         request=request, terminal_id=_terminal_of(body, request),
+        approver_user_id=_req_user_id(body),
     )
 
 
@@ -1503,7 +1520,7 @@ async def open_drawer(req: Dict[str, Any], user: dict = Depends(_user_dep), requ
     sess = await require_session(cid, tid)
     gated = await maybe_gate(
         "open_drawer", company_id=cid, session=sess, user=user, request=request,
-        payload={"supervisor_pin": req.get("pin"), "approval_id": req.get("approval_id")},
+        payload={"supervisor_pin": req.get("pin"), "supervisor_user_id": _req_user_id(req), "approval_id": req.get("approval_id")},
         summary="Satışsız çekmece açma",
     )
     if gated and gated.get("status") != "approved" and gated.get("status") != "allowed":
@@ -1612,6 +1629,7 @@ async def cancel_sale(req: Dict[str, Any], user: dict = Depends(_user_dep), requ
         "invoice_id": req.get("invoice_id"),
         "invoice_number": req.get("invoice_number"),
         "supervisor_pin": req.get("pin"),
+        "supervisor_user_id": _req_user_id(req),
         "approval_id": req.get("approval_id"),
     }
     gated = await maybe_gate(

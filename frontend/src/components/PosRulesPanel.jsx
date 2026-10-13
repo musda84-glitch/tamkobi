@@ -143,7 +143,7 @@ export function PosRulesPanel({ companyId }) {
 
       <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
         <h3 className="font-bold text-slate-900 flex items-center gap-2"><KeyRound className="w-4 h-4" /> Kasiyer PIN</h3>
-        <p className="text-xs text-slate-500">Her kasiyer 4-6 haneli benzersiz PIN ile hızlı giriş yapar.</p>
+        <p className="text-xs text-slate-500">Her kasiyer 4-6 haneli PIN tanımlar. Giriş ve onayda kullanıcı seçimi + PIN zorunludur.</p>
         <div className="divide-y border rounded-xl">
           {cashiers.map((c) => (
             <div key={c.id} className="flex items-center gap-2 px-3 py-2 text-xs" data-testid={`pos-cashier-row-${c.id}`}>

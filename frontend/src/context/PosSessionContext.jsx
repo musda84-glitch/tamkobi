@@ -130,8 +130,7 @@ export function PosSessionProvider({ children }) {
     setBusy(true);
     setPinErr("");
     try {
-      const body = { company_id: companyId, terminal_id: terminalId, pin };
-      if (cashierUserId) body.cashier_user_id = cashierUserId;
+      const body = { company_id: companyId, terminal_id: terminalId, pin, cashier_user_id: cashierUserId };
       const { data } = await axios.post(`${API_URL}/pos/session/login`, body, { headers });
       applyPayload({ session: data.session, ...data });
       setGate(null);
@@ -173,8 +172,12 @@ export function PosSessionProvider({ children }) {
     await lockNow();
   }, [lockNow]);
 
-  const decide = useCallback(async (id, action, pin) => {
-    const { data } = await axios.post(`${API_URL}/pos/approvals/${id}/${action}`, { pin, company_id: companyId, terminal_id: terminalId }, { headers });
+  const decide = useCallback(async (id, action, pin, approverUserId) => {
+    const { data } = await axios.post(
+      `${API_URL}/pos/approvals/${id}/${action}`,
+      { pin, company_id: companyId, terminal_id: terminalId, user_id: approverUserId },
+      { headers },
+    );
     await reload();
     return data;
   }, [companyId, headers, reload, terminalId]);
@@ -186,6 +189,7 @@ export function PosSessionProvider({ children }) {
       { headers },
     );
     if (isPendingApproval(data)) {
+      setPickedId("");
       setGate({ mode: "approve", kind, requestId: data.request_id, message: data.message });
     }
     await reload();
@@ -199,6 +203,7 @@ export function PosSessionProvider({ children }) {
       { headers },
     );
     if (isPendingApproval(data)) {
+      setPickedId("");
       setGate({ mode: "exit", requestId: data.request_id, message: data.message });
       return data;
     }
@@ -242,23 +247,22 @@ export function PosSessionProvider({ children }) {
         <PosPinPad
           title={needsLogin ? "Kasiyer girişi" : switching ? "Kasiyer değişimi" : "Ekran kilitli"}
           hint={needsLogin || switching
-            ? "4-6 haneli PIN ile giriş yapın. Listedeki kasiyere dokunup PIN yazın."
-            : `${session?.cashier_name || "Kasiyer"} PIN'i ile açın veya başka kasiyer PIN'i ile değiştirin.`}
+            ? "Önce kasiyeri seçin, sonra 4-6 haneli PIN yazın."
+            : `${session?.cashier_name || "Kasiyer"} PIN'i ile kilidi açın.`}
           cashiers={(needsLogin || switching) ? cashiers.filter((c) => c.has_cashier_pin) : undefined}
           selectedId={pickedId}
           onSelect={(c) => setPickedId(c?.id || "")}
           onSubmit={async (pin) => {
             try {
               if (needsLogin || switching) {
-                await login(pin, pickedId || undefined);
+                if (!pickedId) {
+                  setPinErr("Kullanıcı seçin.");
+                  return;
+                }
+                await login(pin, pickedId);
                 return;
               }
-              try {
-                await unlock(pin);
-              } catch (err) {
-                if (err?.response?.status === 429) return;
-                await login(pin);
-              }
+              await unlock(pin);
             } catch {
               /* pinErr already set */
             }
@@ -272,11 +276,18 @@ export function PosSessionProvider({ children }) {
       {gate && (
         <PosPinPad
           title="Yönetici onayı"
-          hint={gate.message || "İşlem yönetici PIN'i veya uzaktan onay bekliyor."}
+          hint={gate.message || "Onaylayanı seçin ve PIN yazın, ya da bildirimden uzaktan onaylayın."}
+          cashiers={cashiers.filter((c) => c.has_cashier_pin && c.pos_rules?.can_approve)}
+          selectedId={pickedId}
+          onSelect={(c) => setPickedId(c?.id || "")}
           onSubmit={async (pin) => {
             if (!pinIsValid(pin) || !gate.requestId) return;
+            if (!pickedId) {
+              setPinErr("Kullanıcı seçin.");
+              return;
+            }
             try {
-              const data = await decide(gate.requestId, "approve", pin);
+              const data = await decide(gate.requestId, "approve", pin, pickedId);
               if (data.status === "approved") setGate(null);
             } catch (err) {
               setPinErr(err.response?.data?.detail || "Onay başarısız.");

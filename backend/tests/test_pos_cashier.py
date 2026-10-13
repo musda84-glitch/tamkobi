@@ -210,7 +210,7 @@ def test_cashier_login_and_price_blocked_via_session():
         with patch.object(pc, "_db", db), patch.object(pc.rbac, "ensure_roles", AsyncMock()):
             user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
             with patch.object(pc.tenant_access, "resolve_company_id", return_value=CID):
-                data = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, None)
+                data = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234", "cashier_user_id": "u_sales"}, user, None)
             sess = data["session"]
             assert sess["cashier_name"] == "Kasiyer Ayşe"
             assert sess["rules"]["can_change_price"] is False
@@ -229,7 +229,7 @@ def test_cancel_without_approval_queues_and_reject_restores_cart():
              patch.object(pc.notify, "insert_notification", AsyncMock()):
             user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
             with patch.object(pc.tenant_access, "resolve_company_id", return_value=CID):
-                login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, None)
+                login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234", "cashier_user_id": "u_sales"}, user, None)
             sid = login["session"]["id"]
             cart = {"items": [{"id": "ln1", "name": "Çay", "unit_price": 100, "product_id": "p1"}], "customer_name": "P"}
             await db.pos_sessions.update_one({"_id": sid}, {"$set": {"cart": cart}})
@@ -243,7 +243,7 @@ def test_cancel_without_approval_queues_and_reject_restores_cart():
             assert len(sess_after["cart"]["items"]) == 1
             req_id = queued["request_id"]
             with patch.object(pc.tenant_access, "get_tenant_doc", AsyncMock(return_value=await db.pos_approvals.find_one({"_id": req_id}))):
-                rejected = await pc.decide_approval(req_id, user, approve=False, pin="9999")
+                rejected = await pc.decide_approval(req_id, user, approve=False, pin="9999", approver_user_id="u_mgr")
             assert rejected["status"] == "rejected"
             assert rejected["cart"]["items"][0]["name"] == "Çay"
             sess_final = await db.pos_sessions.find_one({"_id": sid})
@@ -263,7 +263,7 @@ def test_exit_without_permission_pending():
              patch.object(pc.notify, "insert_notification", AsyncMock()), \
              patch.object(pc.tenant_access, "resolve_company_id", return_value=CID):
             user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
-            await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, None)
+            await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234", "cashier_user_id": "u_sales"}, user, None)
             out = await pc.session_exit({"company_id": CID, "terminal_id": "t1"}, user, None)
             assert out["status"] == "pending_approval"
             sess = await db.pos_sessions.find_one({"terminal_id": "t1"})
@@ -307,11 +307,11 @@ def test_switch_cashier_holds_previous_cart():
              patch.object(pc.notify, "insert_notification", AsyncMock()), \
              patch.object(pc.tenant_access, "resolve_company_id", return_value=CID):
             user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
-            login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, None)
+            login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234", "cashier_user_id": "u_sales"}, user, None)
             sid = login["session"]["id"]
             cart = {"items": [{"id": "ln1", "name": "Çay", "unit_price": 100, "product_id": "p1"}], "customer_name": "P"}
             await db.pos_sessions.update_one({"_id": sid}, {"$set": {"cart": cart}})
-            switched = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "4321"}, user, None)
+            switched = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "4321", "cashier_user_id": "u_sales2"}, user, None)
             assert switched["session"]["cashier_user_id"] == "u_sales2"
             holds = list(db.pos_held_carts.docs.values())
             assert any(h.get("cashier_user_id") == "u_sales" for h in holds)
@@ -329,7 +329,7 @@ def test_reject_restores_mutated_session_cart():
              patch.object(pc.notify, "insert_notification", AsyncMock()), \
              patch.object(pc.tenant_access, "resolve_company_id", return_value=CID):
             user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
-            login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, None)
+            login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234", "cashier_user_id": "u_sales"}, user, None)
             sid = login["session"]["id"]
             cart = {"items": [{"id": "ln1", "name": "Çay", "unit_price": 100}], "customer_name": "P"}
             await db.pos_sessions.update_one({"_id": sid}, {"$set": {"cart": cart}})
@@ -341,7 +341,7 @@ def test_reject_restores_mutated_session_cart():
             await db.pos_sessions.update_one({"_id": sid}, {"$set": {"cart": pc.empty_cart()}})
             req_id = queued["request_id"]
             with patch.object(pc.tenant_access, "get_tenant_doc", AsyncMock(return_value=await db.pos_approvals.find_one({"_id": req_id}))):
-                rejected = await pc.decide_approval(req_id, user, approve=False, pin="9999")
+                rejected = await pc.decide_approval(req_id, user, approve=False, pin="9999", approver_user_id="u_mgr")
             assert rejected["status"] == "rejected"
             sess_final = await db.pos_sessions.find_one({"_id": sid})
             assert sess_final["cart"]["items"][0]["name"] == "Çay"
@@ -358,7 +358,7 @@ def test_approve_applies_delete_line():
              patch.object(pc.notify, "insert_notification", AsyncMock()), \
              patch.object(pc.tenant_access, "resolve_company_id", return_value=CID):
             user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
-            login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, None)
+            login = await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234", "cashier_user_id": "u_sales"}, user, None)
             sid = login["session"]["id"]
             cart = {"items": [{"id": "ln1", "name": "Çay"}, {"id": "ln2", "name": "Kahve"}], "customer_name": "P"}
             await db.pos_sessions.update_one({"_id": sid}, {"$set": {"cart": cart}})
@@ -368,7 +368,7 @@ def test_approve_applies_delete_line():
                 payload={"line_id": "ln1"}, summary="Satır silme",
             )
             with patch.object(pc.tenant_access, "get_tenant_doc", AsyncMock(return_value=await db.pos_approvals.find_one({"_id": queued["request_id"]}))):
-                approved = await pc.decide_approval(queued["request_id"], user, approve=True, pin="9999")
+                approved = await pc.decide_approval(queued["request_id"], user, approve=True, pin="9999", approver_user_id="u_mgr")
             assert approved["status"] == "approved"
             sess_final = await db.pos_sessions.find_one({"_id": sid})
             assert [x["id"] for x in sess_final["cart"]["items"]] == ["ln2"]
@@ -453,124 +453,113 @@ async def _call(coro):
         return exc.status_code, exc.detail
 
 
-def test_set_pin_hides_collision_and_approver_pin():
+def test_set_pin_cannot_distinguish_manager_pin():
     db = _init(_seed())
     db.users.docs["u_sales2"] = {
         "_id": "u_sales2", "name": "Kasiyer Ali", "email": "ali@test", "role": "sales",
         "company_ids": [CID], "active_company_id": CID, "cashier_pin_hash": hash_password("4321"),
         "is_active": True,
     }
-    db.users.docs["u_admin"] = {
-        "_id": "u_admin", "name": "Admin", "email": "admin@test", "role": "admin",
-        "company_ids": [CID], "active_company_id": CID, "is_active": True,
-    }
     sales = {"_id": "u_sales", "role": "sales", "name": "Kasiyer Ayşe", "company_ids": [CID], "active_company_id": CID}
-    admin = {"_id": "u_admin", "role": "admin", "name": "Admin", "company_ids": [CID], "active_company_id": CID}
+    admin = {"_id": "u_mgr", "role": "admin", "name": "Admin", "company_ids": [CID], "active_company_id": CID}
 
     async def go():
         ctx = _patches(db)
         with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
-            sales_before = db.users.docs["u_sales"]["cashier_pin_hash"]
             mgr_before = db.users.docs["u_mgr"]["cashier_pin_hash"]
-            silent = await pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "9999"}, sales)
-            assert silent == {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
-            assert db.users.docs["u_sales"]["cashier_pin_hash"] == sales_before
-            assert db.users.docs["u_mgr"]["cashier_pin_hash"] == mgr_before
-            blob = str(silent).lower()
-            assert "başka" not in blob and "kayıtlı" not in blob and "müdür" not in blob and "9999" not in blob
-
-            code, detail = await _call(pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "4321"}, sales))
-            assert code == 400
-            assert code != 409
-            assert detail == pc.PIN_TAKEN_MESSAGE
-            low = str(detail).lower()
-            assert "başka" not in low and "kayıtlı" not in low and "ali" not in low
-            assert db.users.docs["u_sales"]["cashier_pin_hash"] == sales_before
-
-            code, detail = await _call(pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "9999"}, admin))
-            assert code == 400
-            assert detail == pc.PIN_TAKEN_MESSAGE
-            assert db.users.docs["u_sales"]["cashier_pin_hash"] == sales_before
-
-            saved = await pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "2468"}, sales)
-            assert saved["message"] == silent["message"]
+            same_as_mgr = await pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "9999"}, sales)
+            assert same_as_mgr == pc.PIN_SAVED
+            assert verify_password("9999", db.users.docs["u_sales"]["cashier_pin_hash"])
+            unique = await pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "2468"}, sales)
+            assert same_as_mgr == unique == pc.PIN_SAVED
+            blob = (str(same_as_mgr) + str(unique)).lower()
+            assert "başka" not in blob and "kayıtlı" not in blob and "müdür" not in blob
+            assert "409" not in blob and "çakış" not in blob
             assert verify_password("2468", db.users.docs["u_sales"]["cashier_pin_hash"])
+            assert db.users.docs["u_mgr"]["cashier_pin_hash"] == mgr_before
 
             req = _Req("203.0.113.50")
-            code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t-pin", "pin": "9999", "cashier_user_id": "u_sales"},
-                sales, req,
+            code, detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-blind", "pin": "9999"}, sales, req,
             ))
-            assert code == 401
-            code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t-blind", "pin": "9999"},
-                sales, req,
-            ))
-            assert code == 401
+            assert code == 400
+            assert detail == pc.PIN_USER_REQUIRED
             assert all(s.get("cashier_user_id") != "u_mgr" for s in db.pos_sessions.docs.values())
+
             opened = await pc.session_login(
                 {"company_id": CID, "terminal_id": "t-mgr", "pin": "9999", "cashier_user_id": "u_mgr"},
                 admin, req,
             )
             assert opened["session"]["cashier_user_id"] == "u_mgr"
 
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-pin", "pin": "9999", "cashier_user_id": "u_sales"},
+                sales, req,
+            ))
+            assert code == 401
+
     _run(go())
 
 
-def test_pin_lockout_company_terminal_ip():
+def test_pin_lockout_ignores_terminal_id():
     db = _init(_seed())
     user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
+    sales = {"_id": "u_sales", "role": "sales", "company_ids": [CID], "active_company_id": CID, "name": "Ayşe"}
 
     async def go():
         ctx = _patches(db)
         with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
             ip_a = _Req("203.0.113.10")
             ip_b = _Req("203.0.113.11")
-            await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, ip_a)
-            sess = await db.pos_sessions.find_one({"terminal_id": "t1"})
-            queued = await pc.maybe_gate(
-                "cancel_cart", company_id=CID, session=sess, user=user,
-                payload={}, summary="Sepet iptali",
-            )
             codes = []
-            for _ in range(5):
+            for i in range(5):
                 code, _detail = await _call(pc.session_login(
-                    {"company_id": CID, "terminal_id": "t1", "pin": "0000"}, user, ip_a,
+                    {"company_id": CID, "terminal_id": f"term-{i}", "pin": "0000", "cashier_user_id": "u_sales"},
+                    user, ip_a,
                 ))
                 codes.append(code)
-            assert codes == [401, 401, 401, 401, 401]
+            assert codes == [401] * 5
             code, detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, ip_a,
+                {"company_id": CID, "terminal_id": "term-other", "pin": "1234", "cashier_user_id": "u_sales"},
+                user, ip_a,
             ))
             assert code == 429
             assert detail == pc.PIN_LOCK_MESSAGE
-            code, _detail = await _call(pc.session_unlock(
-                {"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, ip_a,
+            assert any(d.get("identifier") == f"pospin:{CID}:ip:203.0.113.10" for d in db.login_attempts.docs.values())
+            assert any(d.get("identifier") == f"pospin:{CID}:user:u_sales" for d in db.login_attempts.docs.values())
+            assert not any(":term-" in str(d.get("identifier") or "") for d in db.login_attempts.docs.values())
+
+            code, _detail = await _call(pc.set_cashier_pin(
+                "u_sales", {"company_id": CID, "pin": "1357"}, sales, request=ip_a,
             ))
             assert code == 429
-            code, _detail = await _call(pc.decide_approval(
-                queued["request_id"], user, approve=True, pin="9999", request=ip_a, terminal_id="t1",
+
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-b", "pin": "1234", "cashier_user_id": "u_sales"},
+                user, ip_b,
             ))
             assert code == 429
-            still = await db.pos_approvals.find_one({"_id": queued["request_id"]})
-            assert still["status"] == "pending"
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-mgr", "pin": "0000", "cashier_user_id": "u_mgr"},
+                user, ip_a,
+            ))
+            assert code == 429
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-ok", "pin": "0000", "cashier_user_id": "u_mgr"},
+                user, ip_b,
+            ))
+            assert code == 401
+            code, _detail = await _call(pc.session_login(
+                {"company_id": "other-co", "terminal_id": "t1", "pin": "0000", "cashier_user_id": "u_sales"},
+                user, ip_a,
+            ))
+            assert code == 401
 
-            code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t1", "pin": "0000"}, user, ip_b,
-            ))
-            assert code == 401
-            code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t2", "pin": "0000"}, user, ip_a,
-            ))
-            assert code == 401
-            code, _detail = await _call(pc.session_login(
-                {"company_id": "other-co", "terminal_id": "t1", "pin": "0000"}, user, ip_a,
-            ))
-            assert code == 401
-            ident = f"pospin:{CID}:t1:203.0.113.10"
-            assert any(d.get("identifier") == ident for d in db.login_attempts.docs.values())
-
-            await pc.session_login({"company_id": CID, "terminal_id": "t-un", "pin": "1234"}, user, ip_b)
+            db.login_attempts.docs.clear()
+            await pc.session_login(
+                {"company_id": CID, "terminal_id": "t-un", "pin": "1234", "cashier_user_id": "u_sales"},
+                user, ip_b,
+            )
             await pc.session_lock({"company_id": CID, "terminal_id": "t-un"}, user, ip_b)
             unlock_codes = []
             for _ in range(5):
@@ -580,14 +569,18 @@ def test_pin_lockout_company_terminal_ip():
                 unlock_codes.append(code)
                 assert "değiştir" not in str(detail)
             assert unlock_codes == [401] * 5
-            code, detail = await _call(pc.session_unlock(
+            code, _detail = await _call(pc.session_unlock(
                 {"company_id": CID, "terminal_id": "t-un", "pin": "1234"}, user, ip_b,
             ))
             assert code == 429
             locked = await db.pos_sessions.find_one({"terminal_id": "t-un"})
             assert locked.get("locked") is True
 
-            await pc.session_login({"company_id": CID, "terminal_id": "t-ap", "pin": "1234"}, user, _Req("203.0.113.12"))
+            db.login_attempts.docs.clear()
+            await pc.session_login(
+                {"company_id": CID, "terminal_id": "t-ap", "pin": "1234", "cashier_user_id": "u_sales"},
+                user, _Req("203.0.113.12"),
+            )
             ap_sess = await db.pos_sessions.find_one({"terminal_id": "t-ap"})
             ap = await pc.maybe_gate(
                 "delete_line", company_id=CID, session=ap_sess, user=user,
@@ -595,64 +588,88 @@ def test_pin_lockout_company_terminal_ip():
             )
             ap_req = _Req("203.0.113.12")
             ap_codes = []
-            for _ in range(5):
+            for i in range(5):
                 code, _detail = await _call(pc.decide_approval(
-                    ap["request_id"], user, approve=True, pin="0000", request=ap_req, terminal_id="t-ap",
+                    ap["request_id"], user, approve=True, pin="0000",
+                    request=ap_req, terminal_id=f"spoof-{i}", approver_user_id="u_mgr",
                 ))
                 ap_codes.append(code)
             assert ap_codes == [401] * 5
             code, _detail = await _call(pc.decide_approval(
-                ap["request_id"], user, approve=True, pin="9999", request=ap_req, terminal_id="t-ap",
+                ap["request_id"], user, approve=True, pin="9999",
+                request=ap_req, terminal_id="t-ap-other", approver_user_id="u_mgr",
             ))
             assert code == 429
             assert (await db.pos_approvals.find_one({"_id": ap["request_id"]}))["status"] == "pending"
 
+            db.login_attempts.docs.clear()
             ok_req = _Req("198.51.100.20")
             for _ in range(4):
                 code, _detail = await _call(pc.session_login(
-                    {"company_id": CID, "terminal_id": "t-ok", "pin": "0000"}, user, ok_req,
+                    {"company_id": CID, "terminal_id": "t-ok", "pin": "0000", "cashier_user_id": "u_sales"},
+                    user, ok_req,
                 ))
                 assert code == 401
             code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t-ok", "pin": "1234"}, user, ok_req,
+                {"company_id": CID, "terminal_id": "t-ok", "pin": "1234", "cashier_user_id": "u_sales"},
+                user, ok_req,
             ))
             assert code == 200
             for _ in range(5):
                 code, _detail = await _call(pc.session_login(
-                    {"company_id": CID, "terminal_id": "t-ok", "pin": "0000"}, user, ok_req,
+                    {"company_id": CID, "terminal_id": "t-ok", "pin": "0000", "cashier_user_id": "u_sales"},
+                    user, ok_req,
                 ))
                 assert code == 401
             code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t-ok", "pin": "0000"}, user, ok_req,
+                {"company_id": CID, "terminal_id": "t-ok", "pin": "0000", "cashier_user_id": "u_sales"},
+                user, ok_req,
             ))
             assert code == 429
 
+            db.login_attempts.docs.clear()
             exp = _Req("198.51.100.30")
-            for _ in range(5):
+            for i in range(5):
                 await _call(pc.session_login(
-                    {"company_id": CID, "terminal_id": "t-exp", "pin": "0000"}, user, exp,
+                    {"company_id": CID, "terminal_id": f"t-exp-{i}", "pin": "0000", "cashier_user_id": "u_sales"},
+                    user, exp,
                 ))
+            stale = datetime.now(timezone.utc) - timedelta(minutes=16)
             for d in db.login_attempts.docs.values():
-                if d.get("identifier") == f"pospin:{CID}:t-exp:198.51.100.30":
-                    d["last_attempt"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+                d["last_attempt"] = stale.isoformat()
             code, _detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t-exp", "pin": "0000"}, user, exp,
+                {"company_id": CID, "terminal_id": "t-exp-new", "pin": "0000", "cashier_user_id": "u_sales"},
+                user, exp,
             ))
             assert code == 401
+
+            db.login_attempts.docs.clear()
+            pin_ip = _Req("198.51.100.40")
+            for _ in range(5):
+                code, _detail = await _call(pc.set_cashier_pin(
+                    "u_sales", {"company_id": CID, "pin": "12"}, sales, request=pin_ip,
+                ))
+                assert code == 400
+            code, _detail = await _call(pc.set_cashier_pin(
+                "u_sales", {"company_id": CID, "pin": "2468"}, sales, request=pin_ip,
+            ))
+            assert code == 429
 
     _run(go())
 
 
-def test_requester_cannot_approve_with_own_pin():
+def test_manager_pin_approve_and_requester_cannot_self_approve():
     db = _init(_seed())
     user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
+    sales = {"_id": "u_sales", "role": "sales", "company_ids": [CID], "active_company_id": CID, "name": "Ayşe"}
 
     async def go():
         ctx = _patches(db)
         with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
             req = _Req("203.0.113.40")
             await pc.session_login(
-                {"company_id": CID, "terminal_id": "t-self", "pin": "1234"}, user, req,
+                {"company_id": CID, "terminal_id": "t-self", "pin": "1234", "cashier_user_id": "u_sales"},
+                user, req,
             )
             sess = await db.pos_sessions.find_one({"terminal_id": "t-self"})
             queued = await pc.maybe_gate(
@@ -660,11 +677,24 @@ def test_requester_cannot_approve_with_own_pin():
                 payload={}, summary="Sepet iptali",
             )
             code, detail = await _call(pc.decide_approval(
-                queued["request_id"], user, approve=True, pin="1234", request=req, terminal_id="t-self",
+                queued["request_id"], sales, approve=True, pin="1234",
+                request=req, approver_user_id="u_sales",
             ))
             assert code == 403
             assert detail == pc.SELF_APPROVE_MESSAGE
             assert (await db.pos_approvals.find_one({"_id": queued["request_id"]}))["status"] == "pending"
+
+            code, detail = await _call(pc.decide_approval(
+                queued["request_id"], sales, approve=True, request=req,
+            ))
+            assert code == 403
+            assert detail == pc.SELF_APPROVE_MESSAGE
+
+            approved = await pc.decide_approval(
+                queued["request_id"], user, approve=True, pin="9999",
+                request=req, approver_user_id="u_mgr",
+            )
+            assert approved["status"] == "approved"
 
             await pc.session_login(
                 {"company_id": CID, "terminal_id": "t-mgrself", "pin": "9999", "cashier_user_id": "u_mgr"},
@@ -677,7 +707,8 @@ def test_requester_cannot_approve_with_own_pin():
                 summary="Kendi talebi", user=user,
             )
             code, detail = await _call(pc.decide_approval(
-                mgr_q["request_id"], user, approve=True, pin="9999", request=req, terminal_id="t-mgrself",
+                mgr_q["request_id"], user, approve=True, pin="9999",
+                request=req, approver_user_id="u_mgr",
             ))
             assert code == 403
             assert detail == pc.SELF_APPROVE_MESSAGE
@@ -689,11 +720,16 @@ def test_requester_cannot_approve_with_own_pin():
                 "company_ids": [CID], "active_company_id": CID, "cashier_pin_hash": sales_hash,
                 "is_active": True,
             }
+            dup_req = _Req("203.0.113.41")
             code, detail = await _call(pc.session_login(
-                {"company_id": CID, "terminal_id": "t-dup", "pin": "1234"}, user, _Req("203.0.113.41"),
+                {"company_id": CID, "terminal_id": "t-dup", "pin": "1234"}, user, dup_req,
             ))
-            assert code == 401
-            assert detail == pc.PIN_FAIL_MESSAGE
-            assert "birden fazla" not in str(detail)
+            assert code == 400
+            assert detail == pc.PIN_USER_REQUIRED
+            opened = await pc.session_login(
+                {"company_id": CID, "terminal_id": "t-dup", "pin": "1234", "cashier_user_id": "u_sales2"},
+                user, dup_req,
+            )
+            assert opened["session"]["cashier_user_id"] == "u_sales2"
 
     _run(go())
