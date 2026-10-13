@@ -1,4 +1,5 @@
 """Çöp kutusu: silinen kayıtlar 30 gün saklanır, geri getirilebilir veya kalıcı silinebilir."""
+import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -118,7 +119,7 @@ async def _clear_sync_tombstones(collection: str, doc_ids: List[Any]) -> None:
     try:
         await _db.sync_tombstones.delete_many({"collection": collection, "doc_id": {"$in": ids}})
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("Beklenmeyen hata (trash.py)")
 
 
 @router.post("/trash/{trash_id}/restore")
