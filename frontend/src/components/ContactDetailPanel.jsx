@@ -19,6 +19,7 @@ import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu"
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
+import { formatOrderDateTime } from "../utils/orderTermin";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
@@ -1393,7 +1394,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {orderDetail && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setOrderDetail(null))}>
             <div className="bg-white rounded-2xl max-w-5xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
-              <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{orderStatusLabel(orderDetail, statusTr(orderDetail.order_status))}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{formatOrderDateTime(orderDetail.order_date)} • {channelTr(orderDetail.channel)} • <b>{orderStatusLabel(orderDetail, statusTr(orderDetail.order_status))}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="text-slate-600"><b>Teslimat:</b> {orderDetail.shipping_address}, {orderDetail.city} {orderDetail.customer_phone && `• ${orderDetail.customer_phone}`}</div>
               {(orderDetail.payment_method || orderDetail.bank_name) && (
                 <div className="text-slate-600" data-testid="order-detail-payment">

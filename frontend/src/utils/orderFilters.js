@@ -3,6 +3,7 @@
 import { orderGross } from "./orderMoney";
 import { orderHasEInvoiceIssued } from "./orderMoreMenu";
 import { ORDER_DOC_STATUS_ALL, orderMatchesDocStatus } from "./orderDocStatus";
+import { orderCalendarDay } from "./orderTermin";
 
 /** GET /orders varsayılanı: B2B aktif sepet satırları listede yok. */
 export function isActiveCartOrder(o) {
@@ -122,7 +123,7 @@ export const applyOrderFilters = (orders, f) => {
     if (f.cargo === "yes" && !o.cargo_tracking_number) return false;
     if (f.cargo === "no" && o.cargo_tracking_number) return false;
     if (!orderMatchesDocStatus(o, f.docStatus)) return false;
-    const d = (o.order_date || "").slice(0, 10);
+    const d = orderCalendarDay(o.order_date);
     if (f.from && d < f.from) return false;
     if (f.to && d > f.to) return false;
     return true;

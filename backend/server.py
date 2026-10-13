@@ -19,6 +19,7 @@ from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from mysql_store import MySQLClient, chunk_list, DuplicateKeyError
+from order_time import ensure_utc_iso
 from client_ip import request_ip
 import partner_pay
 import employee_pay
@@ -228,6 +229,10 @@ def clean_doc(doc: dict) -> dict:
     if "shopfloor_pin_hash" in doc:
         doc["has_shopfloor_pin"] = bool(doc.pop("shopfloor_pin_hash"))
     doc.pop("password_hash", None)
+    if doc.get("order_date"):
+        normalized = ensure_utc_iso(doc.get("order_date"))
+        if normalized:
+            doc["order_date"] = normalized
     return doc
 
 def clean_docs(docs: list) -> list:

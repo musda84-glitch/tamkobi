@@ -1,9 +1,20 @@
-import { formatOrderDateTime, orderTerminRemaining, parseOrderInstant } from "./orderTermin";
+import { formatOrderDateTime, orderCalendarDay, orderDisplayTimeZone, orderTerminRemaining, parseOrderInstant } from "./orderTermin";
 
 describe("orderTermin", () => {
-  it("parses and formats order date", () => {
+  it("parses and formats order date in Europe/Istanbul", () => {
     expect(parseOrderInstant(null)).toBeNull();
-    expect(formatOrderDateTime("2026-10-08T12:30:00.000Z")).toMatch(/2026/);
+    expect(orderDisplayTimeZone()).toBe("Europe/Istanbul");
+    expect(orderDisplayTimeZone({ timezone: "Europe/Berlin" })).toBe("Europe/Berlin");
+    expect(orderDisplayTimeZone({ settings: { timezone: "Europe/Athens" } })).toBe("Europe/Athens");
+    // 12:30 UTC = 15:30 İstanbul
+    expect(formatOrderDateTime("2026-10-08T12:30:00.000Z")).toBe("08.10.2026 15:30");
+    // 23:30 İstanbul aynı takvim gününde kalır (20:30 UTC)
+    expect(formatOrderDateTime("2026-10-13T20:30:00+00:00")).toBe("13.10.2026 23:30");
+    expect(orderCalendarDay("2026-10-13T20:30:00+00:00")).toBe("2026-10-13");
+    // 21:30 UTC = ertesi gün 00:30 İstanbul
+    expect(orderCalendarDay("2026-10-13T21:30:00+00:00")).toBe("2026-10-14");
+    expect(formatOrderDateTime("2026-10-13")).toBe("13.10.2026");
+    expect(orderCalendarDay("2026-10-13")).toBe("2026-10-13");
   });
 
   it("shows remaining and overdue termin labels", () => {
