@@ -19,7 +19,8 @@ describe("orderPick", () => {
     expect(pickStatusTr("picking")).toBe("Toplanıyor");
     expect(pickStatusTr("shipped")).toBe("Sevk edildi");
     expect(pickStatusTr(undefined)).toBe("Bekliyor");
-    expect(pickStatusTone("shipped")).toBe("green");
+    expect(pickStatusTone("shipped")).toBe("indigo");
+    expect(pickStatusTone("delivered")).toBe("green");
     expect(pickStatusTone("partial")).toBe("amber");
     expect(pickStatusTone("idle")).toBe("slate");
   });
@@ -71,11 +72,12 @@ describe("orderPick", () => {
   });
 
   it("counts waiting picks for the home Depo Sevkiyat badge", () => {
+    // manual channel + shipped → teslim bekleyen (canMarkDelivered) sayılır
     expect(pendingPickCount([
       { pick_status: "idle", order_status: "approved" },
       { pick_status: "picking", order_status: "preparing" },
       { pick_status: "shipped", order_status: "shipped" },
-    ])).toBe(2);
+    ])).toBe(3);
     expect(pendingSevkCount({
       picks: [{ pick_status: "idle" }],
       tasks: [{ key: "pick_missing", path: "/sevk", count: 4 }],

@@ -13,6 +13,7 @@ from card_match import match_statement_contact, sanitize_card_fields
 import expenses as expenses_mod
 import partner_pay
 import tenant_access
+import linked_moves
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -317,14 +318,17 @@ async def create_loan(req: Dict[str, Any], user: dict = Depends(_user_dep)):
            "account_id": account_id, "partner_id": partner_id, "installments": [{**i, "amount": float(i.get("amount") or 0), "paid": bool(i.get("paid"))} for i in ins], "notes": req.get("notes") or "", "created_at": _now()}
     await _db.loans.insert_one(doc)
     if req.get("credit_to_account"):
+        link = linked_moves.link_fields("loan", doc["_id"])
         if partner_id:
-            await partner_pay.move(_db, company_id, partner_id, doc["principal"], "capital_in", f"{doc['name']} anapara girişi", doc["start_date"], extra={"loan_id": doc["_id"]})
+            await partner_pay.move(_db, company_id, partner_id, doc["principal"], "capital_in", f"{doc['name']} anapara girişi", doc["start_date"], extra=link)
         elif account_id:
             acc = await _db.bank_accounts.find_one({"_id": account_id})
             if acc:
                 await assert_manual_allowed(_db, acc["_id"])
                 await _db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": doc["principal"]}})
-                await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "source": "loan", "loan_id": doc["_id"], "date": doc["start_date"], "created_at": _now()})
+                tx_doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "date": doc["start_date"], "created_at": _now()}
+                tx_doc.update(link)
+                await _db.bank_transactions.insert_one(tx_doc)
     return _clean(doc)
 
 
@@ -349,8 +353,9 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
         raise HTTPException(status_code=400, detail="Ödeme yapılacak kasa/banka veya ortak seçin.")
     pay_date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     paid_name = None
+    link = {**linked_moves.link_fields("loan", loan_id), "installment_no": no}
     if partner_id:
-        paid_name = await partner_pay.withdraw(_db, loan["company_id"], partner_id, ins["amount"], f"{loan['name']} {no}. taksit", pay_date, extra={"loan_id": loan_id, "installment_no": no})
+        paid_name = await partner_pay.withdraw(_db, loan["company_id"], partner_id, ins["amount"], f"{loan['name']} {no}. taksit", pay_date, extra=link)
         paid_name = f"{paid_name} (Ortak)"
         account_id = None
     else:
@@ -359,7 +364,9 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
             raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
         await assert_manual_allowed(_db, account_id)
         await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -ins["amount"]}})
-        await _db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "source": "loan", "loan_id": loan_id, "date": pay_date, "created_at": _now()})
+        tx_doc = {"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "date": pay_date, "created_at": _now()}
+        tx_doc.update(link)
+        await _db.bank_transactions.insert_one(tx_doc)
         paid_name = acc.get("account_name")
     await _db.loans.update_one({"_id": loan_id, "installments.no": ins["no"]}, {"$set": {"installments.$.paid": True, "installments.$.paid_date": pay_date, "installments.$.account_name": paid_name, "installments.$.partner_id": partner_id}})
     if ins.get("interest") or ins.get("kkdf_bsmv"):
@@ -373,8 +380,20 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
 async def delete_loan(loan_id: str, user: dict = Depends(_user_dep)):
     loan = await tenant_access.get_tenant_doc(_db, "loans", loan_id, user, not_found="Kredi bulunamadı.")
     import trash
-    await trash.soft_delete("loans", loan, "loan", loan.get("name") or loan_id, note=f"{loan.get('bank_name') or ''} · {float(loan.get('principal') or loan.get('amount') or 0):,.2f} ₺")
-    return {"status": "success", "message": "Kredi çöp kutusuna taşındı."}
+    related = await linked_moves.prepare_source_trash(
+        _db, "loan", loan_id, company_id=loan.get("company_id"),
+    )
+    await trash.soft_delete(
+        "loans",
+        loan,
+        "loan",
+        loan.get("name") or loan_id,
+        related=related,
+        note=f"{loan.get('bank_name') or loan.get('bank') or ''} · {float(loan.get('principal') or loan.get('amount') or 0):,.2f} ₺",
+    )
+    if related:
+        await linked_moves.recalc_after_trash(_db, related)
+    return {"status": "success", "message": "Kredi çöp kutusuna taşındı; bağlı hareketler geri alındı."}
 
 
 # ---------------- Credit card / bank statement import ----------------

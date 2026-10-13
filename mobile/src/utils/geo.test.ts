@@ -12,7 +12,7 @@ describe("geo", () => {
     expect(mapsLink({ latitude: null, longitude: null })).toBeNull();
     expect(mapsSearchUrl("Kadıköy")).toContain("Kad");
     expect(locationPickerSummary({ url: "", lat: "41", lng: "29", radius_m: 500 })).toContain("500 m");
-    expect(locationPickerSummary({ url: "https://maps.google.com/?q=1,2", lat: "", lng: "" })).toBe("Konum linki var");
+    expect(locationPickerSummary({ url: "https://maps.google.com/?q=1,2", lat: "", lng: "" })).toBe("Konum linki var · 300 m");
     expect(normalizeRadiusM(50)).toBe(50);
     expect(normalizeRadiusM("750")).toBe(750);
     expect(normalizeRadiusM(10)).toBe(300);
@@ -45,7 +45,7 @@ describe("geo", () => {
 
   it("summarizes a collapsed location picker", () => {
     expect(locationPickerSummary({ url: "", lat: "", lng: "" })).toBe("Kapalı");
-    expect(locationPickerSummary({ url: "https://maps.google.com/?q=1,2", lat: "", lng: "" })).toBe("Konum linki var");
-    expect(locationPickerSummary({ url: "", lat: "41.01", lng: "28.97" })).toBe("41.01, 28.97");
+    expect(locationPickerSummary({ url: "https://maps.google.com/?q=1,2", lat: "", lng: "" })).toBe("Konum linki var · 300 m");
+    expect(locationPickerSummary({ url: "", lat: "41.01", lng: "28.97" })).toBe("41.01, 28.97 · 300 m");
   });
 });

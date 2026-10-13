@@ -113,6 +113,7 @@ import shopfloor_pause as sfp
 import location_consent
 import personnel_wage
 import trash
+import linked_moves
 import migration
 import pricing
 from report_helpers import issue_q as _issue_q, report_insights as _report_insights
@@ -8474,6 +8475,9 @@ async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], use
         pdoc["contact_id"] = inv.get("contact_id")
         pdoc["contact_name"] = inv.get("contact_name")
         pdoc["related_invoice_id"] = invoice_id
+        for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
+            if req.get(k) is not None:
+                pdoc[k] = req[k]
         await db.partner_transactions.insert_one(pdoc)
         await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": -try_amt if is_sales else try_amt}})
         return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status, "via": "partner"}
@@ -8511,6 +8515,9 @@ async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], use
             "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "created_at": datetime.now(timezone.utc).isoformat()
         }
+        for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
+            if req.get(k) is not None:
+                tx_doc[k] = req[k]
         if not is_sales:
             owner_meta = await bank_guard.apply_customer_card_owner_effect(
                 db, acc, "outflow", try_amt, inv.get("contact_id"), sign=1,
@@ -8677,8 +8684,9 @@ async def pay_installment(inst_id: str, req: Dict[str, Any], user: dict = Depend
     amount = round(float(req.get("amount") or remaining), 2)
     if amount <= 0 or amount > remaining + 0.01:
         raise HTTPException(status_code=400, detail=f"Tutar 0 ile {remaining} arasında olmalı.")
+    link = linked_moves.link_fields("installment", inst_id)
     if inst.get("invoice_id"):
-        result = await _record_invoice_payment_core(inst["invoice_id"], {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id")}, user)
+        result = await _record_invoice_payment_core(inst["invoice_id"], {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id"), **link}, user)
     else:
         is_recv = inst.get("direction") == "receivable"
         if req.get("partner_id"):
@@ -8689,7 +8697,9 @@ async def pay_installment(inst_id: str, req: Dict[str, Any], user: dict = Depend
             await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
             ptx = PartnerTransaction(company_id=inst["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type="withdrawal" if is_recv else "capital_in", amount=amount, account_id=None, account_name="Ortaklar Hesabı",
                                      description=f"{inst.get('contact_name')} bakiye {inst['label']} ortak tarafından {'tahsil edildi' if is_recv else 'ödendi'}", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-            await db.partner_transactions.insert_one(ptx.to_mongo())
+            pdoc = ptx.to_mongo()
+            pdoc.update(link)
+            await db.partner_transactions.insert_one(pdoc)
         else:
             acc = await db.bank_accounts.find_one({"_id": req.get("account_id")})
             if not acc:
@@ -8699,7 +8709,9 @@ async def pay_installment(inst_id: str, req: Dict[str, Any], user: dict = Depend
                 await bank_guard.assert_collection_allowed(db, acc["_id"])
             tx = BankTransaction(company_id=inst["company_id"], account_id=acc["_id"], account_name=acc.get("account_name", "Banka"), type="inflow" if is_recv else "outflow", category="Taksit Tahsilatı" if is_recv else "Taksit Ödemesi",
                                  amount=amount, description=f"{inst.get('contact_name')} • Açık bakiye {inst['label']}", contact_id=inst["contact_id"], contact_name=inst.get("contact_name"))
-            await db.bank_transactions.insert_one(tx.to_mongo())
+            tdoc = tx.to_mongo()
+            tdoc.update(link)
+            await db.bank_transactions.insert_one(tdoc)
             await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": amount if is_recv else -amount}})
         await db.contacts.update_one({"_id": inst["contact_id"]}, {"$inc": {"balance": -amount if is_recv else amount}})
         result = {"status": "success", "kind": "balance"}
@@ -8710,6 +8722,30 @@ async def pay_installment(inst_id: str, req: Dict[str, Any], user: dict = Depend
         paid_count = await db.installments.count_documents({"invoice_id": inst["invoice_id"], "status": "paid"})
         await db.invoices.update_one({"_id": inst["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
     return {"status": "success", "installment_status": status, "invoice_payment": result, "message": f"{inst['label']} için {amount:,.2f} ₺ {'tahsil edildi' if inst.get('direction') == 'receivable' else 'ödendi'}."}
+
+
+@api_router.post("/installments/{inst_id}/unpay")
+async def unpay_installment(inst_id: str, user: dict = Depends(get_current_user)):
+    """Taksit ödemesini geri al — bağlı kasa/banka/ortak/cari hareketlerini reverse_linked ile temizler."""
+    inst = await tenant_access.get_tenant_doc(db, "installments", inst_id, user, not_found="Taksit bulunamadı.")
+    if float(inst.get("paid_amount") or 0) <= 0 and inst.get("status") not in ("paid", "partial"):
+        raise HTTPException(status_code=400, detail="Bu taksit henüz ödenmemiş.")
+    rev = await linked_moves.reverse_linked(
+        db, "installment", inst_id, mode="delete", actor=user, reason="installment_unpay",
+        company_id=inst.get("company_id"),
+    )
+    await db.installments.update_one(
+        {"_id": inst_id},
+        {"$set": {"paid_amount": 0, "status": "pending", "paid_at": None, "account_id": None}},
+    )
+    if inst.get("invoice_id"):
+        paid_count = await db.installments.count_documents({"invoice_id": inst["invoice_id"], "status": "paid"})
+        await db.invoices.update_one({"_id": inst["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
+    return {
+        "status": "success",
+        "message": "Taksit ödemesi geri alındı; bağlı hareketler temizlendi.",
+        "reversed": rev,
+    }
 
 @api_router.post("/quotes/{quote_id}/payment-plan")
 async def set_quote_payment_plan(quote_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -9093,6 +9129,7 @@ async def delete_simulated_bank_transactions(company_id: Optional[str] = Query("
 @api_router.put("/banking/transactions/{tx_id}")
 async def update_bank_transaction(tx_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     tx = await tenant_access.get_tenant_doc(db, "bank_transactions", tx_id, user, not_found="Hareket bulunamadı.")
+    linked_moves.assert_not_source_linked(tx)
     _assert_editable_tx(tx)
     allowed = {k: v for k, v in req.items() if k in {"amount", "date", "description", "category", "account_id", "type"}}
     if "amount" in allowed:
@@ -9128,6 +9165,7 @@ async def _linked_expense_related(tx: Dict[str, Any]) -> list:
 @api_router.delete("/banking/transactions/{tx_id}")
 async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_user)):
     tx = await tenant_access.get_tenant_doc(db, "bank_transactions", tx_id, user, not_found="Hareket bulunamadı.")
+    linked_moves.assert_not_source_linked(tx)
     _assert_editable_tx(tx)
     related = await _linked_expense_related(tx)
     pair = None
@@ -11506,8 +11544,12 @@ async def complete_stock_count(count_id: str, req: Dict[str, Any], user: dict = 
 @api_router.delete("/warehouses/stock-counts/{count_id}")
 async def delete_stock_count(count_id: str, user: dict = Depends(get_current_user)):
     sc = await tenant_access.get_tenant_doc(db, "stock_counts", count_id, user, not_found="Sayım bulunamadı.")
-    await trash.soft_delete("stock_counts", sc, "stock_count", sc.get("name") or sc.get("title") or count_id, note=sc.get("status") or "")
-    return {"status": "success", "message": "Sayım çöp kutusuna taşındı."}
+    reversed_n = await linked_moves.reverse_applied_stock_count(db, sc)
+    note = sc.get("status") or ""
+    if reversed_n:
+        note = f"{note} · {reversed_n} stok düzeltmesi geri alındı".strip(" ·")
+    await trash.soft_delete("stock_counts", sc, "stock_count", sc.get("name") or sc.get("title") or count_id, note=note)
+    return {"status": "success", "message": "Sayım çöp kutusuna taşındı." + (f" ({reversed_n} stok etkisi geri alındı)" if reversed_n else "")}
 
 # ----------------- PERSONEL: İZİN, MAAŞ HESABI, PRİM -----------------
 _LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid": "Ücretsiz izin", "other": "Diğer izin"}
@@ -12038,7 +12080,7 @@ async def create_bonus(req: Dict[str, Any]):
     today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     bonus_id = str(uuid.uuid4())
     if partner_id:
-        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {labels[b_type]}", today, extra={"bonus_id": bonus_id})
+        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {labels[b_type]}", today, extra=linked_moves.link_fields("personnel_bonus", bonus_id))
         account_name, status_val = f"{pname} (Ortak)", "paid"
     elif account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
@@ -12046,10 +12088,12 @@ async def create_bonus(req: Dict[str, Any]):
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
         await bank_guard.assert_manual_allowed(db, account_id)
         await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
-        await db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
-                                               "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
-                                               "description": f"{emp['full_name']} - {period} {labels[b_type]}", "source": "manual",
-                                               "date": today, "created_at": datetime.now(timezone.utc).isoformat()})
+        tx_doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
+                  "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
+                  "description": f"{emp['full_name']} - {period} {labels[b_type]}",
+                  "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
+        tx_doc.update(linked_moves.link_fields("personnel_bonus", bonus_id))
+        await db.bank_transactions.insert_one(tx_doc)
         account_name, status_val = acc.get("account_name"), "paid"
     doc = {"_id": bonus_id, "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
            "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "partner_id": partner_id, "account_name": account_name,
@@ -12110,7 +12154,7 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
     label = rec.get("type_label") or rec.get("type") or "Ödeme"
     period = upd.get("period") or rec.get("period")
     if partner_id:
-        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {label}", today, extra={"bonus_id": bonus_id})
+        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {label}", today, extra=linked_moves.link_fields("personnel_bonus", bonus_id))
         upd.update({"partner_id": partner_id, "account_id": None, "account_name": f"{pname} (Ortak)", "status": "paid", "date": today, "paid_at": today})
     elif account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
@@ -12118,10 +12162,12 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
         await bank_guard.assert_manual_allowed(db, account_id)
         await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
-        await db.bank_transactions.insert_one({"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
-                                               "type": "outflow", "category": f"Personel {label} (Gayri Resmi)", "amount": amount, "currency": "TRY",
-                                               "description": f"{emp['full_name']} - {period} {label}", "source": "manual",
-                                               "date": today, "created_at": datetime.now(timezone.utc).isoformat()})
+        tx_doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
+                  "type": "outflow", "category": f"Personel {label} (Gayri Resmi)", "amount": amount, "currency": "TRY",
+                  "description": f"{emp['full_name']} - {period} {label}",
+                  "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
+        tx_doc.update(linked_moves.link_fields("personnel_bonus", bonus_id))
+        await db.bank_transactions.insert_one(tx_doc)
         upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid", "date": today, "paid_at": today})
     await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
     return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
@@ -12148,12 +12194,21 @@ async def decide_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(
 @api_router.delete("/personnel/bonuses/{bonus_id}")
 async def delete_bonus(bonus_id: str, user: dict = Depends(get_current_user)):
     b = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
+    related = []
     if b.get("status") == "paid":
-        if b.get("partner_id"):
-            await partner_pay.reverse_one(db, {"bonus_id": bonus_id})
-        elif b.get("account_id"):
-            await db.bank_accounts.update_one({"_id": b["account_id"]}, {"$inc": {"current_balance": b["amount"]}})
-    await trash.soft_delete("bonus_payments", b, "bonus", f"{b.get('employee_name')} · {b.get('type')} · {float(b.get('amount') or 0):,.2f} ₺", note=b.get("status") or "")
+        related = await linked_moves.prepare_source_trash(
+            db, "personnel_bonus", bonus_id, company_id=b.get("company_id"),
+        )
+    await trash.soft_delete(
+        "bonus_payments",
+        b,
+        "bonus",
+        f"{b.get('employee_name')} · {b.get('type')} · {float(b.get('amount') or 0):,.2f} ₺",
+        related=related,
+        note=b.get("status") or "",
+    )
+    if related:
+        await linked_moves.recalc_after_trash(db, related)
     return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
 
 
@@ -18977,8 +19032,9 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
     today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     paid_from = None
 
+    link = linked_moves.link_fields("payroll", payroll_id)
     if partner_id:
-        pname = await partner_pay.withdraw(db, payroll.get("company_id"), partner_id, amount, f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi", today, extra={"payroll_id": payroll_id})
+        pname = await partner_pay.withdraw(db, payroll.get("company_id"), partner_id, amount, f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi", today, extra=link)
         paid_from = f"{pname} (Ortak)"
     elif account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
@@ -18989,7 +19045,7 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
         emp_iban = _norm_iban(emp.get("iban"))
         if emp_iban:
             desc = f"{desc} · IBAN {emp.get('iban')}"
-        await db.bank_transactions.insert_one({
+        tx_doc = {
             "_id": str(uuid.uuid4()),
             "company_id": payroll.get("company_id"),
             "account_id": account_id,
@@ -19000,9 +19056,10 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
             "currency": "TRY",
             "description": desc,
             "date": today,
-            "payroll_id": payroll_id,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tx_doc.update(link)
+        await db.bank_transactions.insert_one(tx_doc)
         paid_from = acc_name
 
     await db.payrolls.update_one(
@@ -19020,13 +19077,15 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any], user: dict = Depends
 async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)):
     payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
     amount = float(payroll.get("final_payable") or payroll.get("net_salary") or 0)
+    related = []
     if payroll.get("status") == "paid":
-        if payroll.get("partner_id"):
-            await partner_pay.reverse_one(db, {"payroll_id": payroll_id})
-        elif payroll.get("account_id"):
-            await db.bank_accounts.update_one({"_id": payroll["account_id"]}, {"$inc": {"current_balance": amount}})
+        related = await linked_moves.prepare_source_trash(
+            db, "payroll", payroll_id, company_id=payroll.get("company_id"),
+        )
     label = f"{payroll.get('employee_name')} · {payroll.get('period')} · {amount:,.2f} ₺"
-    await trash.soft_delete("payrolls", payroll, "payroll", label, note=payroll.get("status") or "")
+    await trash.soft_delete("payrolls", payroll, "payroll", label, related=related, note=payroll.get("status") or "")
+    if related:
+        await linked_moves.recalc_after_trash(db, related)
     return {"status": "success", "message": "Maaş kaydı çöp kutusuna taşındı."}
 
 # ----------------- AI FİNANSAL DANIŞMAN -----------------
@@ -19787,6 +19846,7 @@ tax_obligations.init(db, get_current_user)
 vehicles.init(db, get_current_user)
 fx.init(db)
 finance.init(db, get_current_user)
+linked_moves.init(db, reverse_tx_fn=_reverse_tx_effects, get_current_user=get_current_user)
 cheques.init(db, get_current_user)
 attendance.init(db, get_current_user)
 trash.init(db, get_current_user)
@@ -19830,22 +19890,85 @@ async def _restore_leave(doc, _related):
         await db.employees.update_one({"_id": doc["employee_id"]}, {"$inc": {"used_leave_days": float(doc.get("days") or 0)}})
 
 async def _restore_bonus(doc, _related):
+    """Çöpten geri: related hareketler yeniden yazıldıysa bakiyeyi uygula; yoksa (eski silme) yeniden öde."""
     if doc.get("status") != "paid":
         return
+    related = _related or []
+    has_moves = any(
+        (b.get("collection") in ("bank_transactions", "partner_transactions") and b.get("docs"))
+        for b in related
+    )
+    if has_moves:
+        await linked_moves.restore_linked_from_related(db, related)
+        return
     amount = float(doc.get("amount") or 0)
+    link = linked_moves.link_fields("personnel_bonus", doc["_id"])
     if doc.get("partner_id"):
-        await partner_pay.withdraw(db, doc.get("company_id"), doc["partner_id"], amount, f"{doc.get('employee_name')} - {doc.get('period')} {doc.get('type_label') or 'Prim'}", extra={"bonus_id": doc["_id"]})
+        await partner_pay.withdraw(db, doc.get("company_id"), doc["partner_id"], amount, f"{doc.get('employee_name')} - {doc.get('period')} {doc.get('type_label') or 'Prim'}", extra=link)
     elif doc.get("account_id"):
+        acc = await db.bank_accounts.find_one({"_id": doc["account_id"]})
         await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -amount}})
+        if acc:
+            tx_doc = {
+                "_id": str(uuid.uuid4()),
+                "company_id": doc.get("company_id"),
+                "account_id": doc["account_id"],
+                "account_name": acc.get("account_name"),
+                "type": "outflow",
+                "category": f"Personel {doc.get('type_label') or 'Prim'} (Gayri Resmi)",
+                "amount": amount,
+                "currency": "TRY",
+                "description": f"{doc.get('employee_name')} - {doc.get('period')} {doc.get('type_label') or 'Prim'}",
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tx_doc.update(link)
+            await db.bank_transactions.insert_one(tx_doc)
+            if str(acc.get("type") or "") == "cash_box":
+                await account_balance.sync_cash_box_balances(db, [acc])
 
 async def _restore_payroll(doc, _related):
     if doc.get("status") != "paid":
         return
+    related = _related or []
+    has_moves = any(
+        (b.get("collection") in ("bank_transactions", "partner_transactions") and b.get("docs"))
+        for b in related
+    )
+    if has_moves:
+        await linked_moves.restore_linked_from_related(db, related)
+        return
     amount = float(doc.get("final_payable") or doc.get("net_salary") or 0)
+    link = linked_moves.link_fields("payroll", doc["_id"])
     if doc.get("partner_id"):
-        await partner_pay.withdraw(db, doc.get("company_id"), doc["partner_id"], amount, f"{doc.get('employee_name')} - {doc.get('period')} Maaş Ödemesi", extra={"payroll_id": doc["_id"]})
+        await partner_pay.withdraw(db, doc.get("company_id"), doc["partner_id"], amount, f"{doc.get('employee_name')} - {doc.get('period')} Maaş Ödemesi", extra=link)
     elif doc.get("account_id"):
+        acc = await db.bank_accounts.find_one({"_id": doc["account_id"]})
         await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -amount}})
+        if acc:
+            tx_doc = {
+                "_id": str(uuid.uuid4()),
+                "company_id": doc.get("company_id"),
+                "account_id": doc["account_id"],
+                "account_name": acc.get("account_name"),
+                "type": "outflow",
+                "category": "Personel Maaş Ödemesi",
+                "amount": amount,
+                "currency": "TRY",
+                "description": f"{doc.get('employee_name')} - {doc.get('period')} Maaş Ödemesi",
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tx_doc.update(link)
+            await db.bank_transactions.insert_one(tx_doc)
+            if str(acc.get("type") or "") == "cash_box":
+                await account_balance.sync_cash_box_balances(db, [acc])
+
+
+async def _restore_loan(doc, _related):
+    related = _related or []
+    if related:
+        await linked_moves.restore_linked_from_related(db, related)
 
 async def _restore_expense(doc, _related):
     if doc.get("payment_status") == "paid" and not doc.get("netted_in_settlement") and (doc.get("account_id") or doc.get("partner_id")):
@@ -19905,7 +20028,7 @@ async def _restore_assigned_task(doc, _related):
     await db.assigned_tasks.delete_one({"_id": doc.get("_id")})
 
 
-for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("payroll", _restore_payroll), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice), ("assigned_task", _restore_assigned_task)):
+for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("payroll", _restore_payroll), ("loan", _restore_loan), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice), ("assigned_task", _restore_assigned_task)):
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)
@@ -19917,6 +20040,7 @@ app.include_router(tax_obligations.router)
 app.include_router(vehicles.router)
 app.include_router(fx.router)
 app.include_router(finance.router)
+app.include_router(linked_moves.router)
 app.include_router(cheques.router)
 app.include_router(attendance.router)
 app.include_router(trash.router)

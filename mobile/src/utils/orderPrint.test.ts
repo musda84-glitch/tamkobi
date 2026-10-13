@@ -109,7 +109,7 @@ describe("orderPrint", () => {
 
   it("shows the web current-balance sentence on compact forms", () => {
     const html = orderFormHtml(order, { name: "Matek" }, { contactBalance: 1240 });
-    expect(html).toContain("Güncel bakiyeniz: 1.240,00 TL");
+    expect(html).toContain("Güncel bakiyeniz: 1.240,00 ₺");
     expect(html).toContain("data-print-balance");
   });
 
