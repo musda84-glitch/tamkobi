@@ -14,6 +14,7 @@ import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { LocationSignal } from "../components/LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
+import { browserDeviceId, promptWebPunchPin, readWebDeviceToken, saveWebDeviceToken } from "../utils/punchDevice";
 import { useMesaimGate } from "../context/MesaimGateContext";
 
 const DAY_LEAVE_TYPES = { annual: "Yıllık İzin", sick: "Hastalık", unpaid: "Ücretsiz", other: "Diğer" };
@@ -146,7 +147,21 @@ export default function MyAttendancePage() {
           if (geoMode === "required") throw geoErr;
         }
       }
-      const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...(time ? { time } : {}), ...coords }, { withCredentials: true });
+      const auth = promptWebPunchPin(data?.punch_security?.require_punch_auth || data?.schedule?.require_punch_auth);
+      if (!auth.ok) { toast.error(auth.error || "Doğrulama gerekli."); return; }
+      const r = await axios.post(`${API_URL}/personnel/attendance/self`, {
+        action,
+        ...(time ? { time } : {}),
+        ...coords,
+        device_id: browserDeviceId(),
+        device_token: readWebDeviceToken(),
+        platform: "web",
+        punch_pin: auth.punch_pin || undefined,
+        punch_auth: false,
+        is_mock: false,
+        is_rooted: false,
+      }, { withCredentials: true });
+      if (r.data?.device_token) saveWebDeviceToken(r.data.device_token);
       toast.success(r.data.message, { duration: 6000 });
       load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }

@@ -150,7 +150,7 @@ def test_checkout_without_geo_allowed(client, company_loc):
     assert bad.status_code == 400
     assert "Konum" in bad.json()["detail"] or "konum" in bad.json()["detail"].lower()
 
-    cin = client.post(f"{API}/personnel/attendance/self", json={"action": "check_in", **payload})
+    cin = client.post(f"{API}/personnel/attendance/self", json={"action": "check_in", "device_id": "pytest-attendance-device", **payload})
     if cin.status_code == 400 and "giriş" in cin.json().get("detail", "").lower():
         pass
     else:

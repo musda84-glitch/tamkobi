@@ -106,6 +106,7 @@ export const ScheduleFields = ({ s, set, allowEmpty }) => (
     <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Giriş toleransı (dk)</label><input type="number" min="0" value={s.late_tolerance_minutes ?? ""} onChange={(e) => set("late_tolerance_minutes", e.target.value === "" ? (allowEmpty ? null : 0) : Number(e.target.value))} className={`${inp} w-20`} data-testid="ws-late-tol" title="Geç giriş sayılmadan önce izin verilen dakika" /></div>
     <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Çıkış toleransı (dk)</label><input type="number" min="0" value={s.exit_tolerance_minutes ?? ""} onChange={(e) => set("exit_tolerance_minutes", e.target.value === "" ? (allowEmpty ? null : 0) : Number(e.target.value))} className={`${inp} w-20`} data-testid="ws-exit-tol" title="Erken çıkış sayılmadan / mesai onayı öncesi izin verilen dakika" /></div>
     <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Mesai tolerans (dk)</label><input type="number" min="0" value={s.overtime_tolerance_minutes ?? ""} onChange={(e) => set("overtime_tolerance_minutes", e.target.value === "" ? (allowEmpty ? null : 0) : Number(e.target.value))} className={`${inp} w-20`} data-testid="ws-ot-tol" title="Fazla mesai sayılmadan önce bitiş sonrası dakika" /></div>
+    {!allowEmpty && <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Saat dilimi</label><input value={s.timezone || "Europe/Istanbul"} onChange={(e) => set("timezone", e.target.value)} className={`${inp} w-40`} data-testid="ws-timezone" placeholder="Europe/Istanbul" /></div>}
   </div>
 );
 
@@ -142,7 +143,18 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
             <div className="font-bold text-slate-800 flex items-center gap-1.5"><Bell className="w-3.5 h-3.5 text-amber-500" /> Yönetici Bildirimleri</div>
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.notify_missing_checkin !== false} onChange={(e) => set("notify_missing_checkin", e.target.checked)} data-testid="ws-notify-missing" /> Mesai başlangıcı + tolerans geçince giriş yapmayanları bildir (günde 1 kez)</label>
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.notify_late_checkin !== false} onChange={(e) => set("notify_late_checkin", e.target.checked)} data-testid="ws-notify-late" /> Geç giriş yapan personeli anında bildir</label>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.notify_checkin_reminder !== false} onChange={(e) => set("notify_checkin_reminder", e.target.checked)} data-testid="ws-notify-checkin-reminder" /> Personele mesai başlangıcından 5 dk önce “Giriş yapmayı unutma” bildirimi (giriş yoksa 15 dk sonra tekrar)</label>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!s.notify_checkout_reminder} onChange={(e) => set("notify_checkout_reminder", e.target.checked)} data-testid="ws-notify-checkout-reminder" /> Mesai bitişinde çıkış hatırlatması (isteğe bağlı)</label>
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!s.count_early_as_overtime} onChange={(e) => set("count_early_as_overtime", e.target.checked)} data-testid="ws-early-ot" /> Erken gelişi de mesai say</label>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!s.require_registered_device} onChange={(e) => set("require_registered_device", e.target.checked)} data-testid="ws-require-device" /> Giriş yalnız personelin kayıtlı telefonundan (bir cihaz bir personel; değişiklik yönetici onayı)</label>
+            <label className="flex items-center gap-2">Giriş doğrulama
+              <select value={s.require_punch_auth || "off"} onChange={(e) => set("require_punch_auth", e.target.value)} className={inp} data-testid="ws-punch-auth">
+                <option value="off">Kapalı</option>
+                <option value="either">Biyometrik veya PIN</option>
+                <option value="biometric">Biyometrik</option>
+                <option value="pin">PIN</option>
+              </select>
+            </label>
             <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.require_geo !== false} onChange={(e) => set("require_geo", e.target.checked)} data-testid="ws-require-geo" /> Firma konumu tanımlıysa giriş için konum zorunlu (çıkış her yerden). Açık dış görev varken giriş: firma <b>veya</b> görev yeri (ikisinden biri yeter).</label>
             <p className="text-[10px] text-slate-500">Bildirimler uygulama içi zile düşer; İletişim Merkezi'nde SMTP hesabı tanımlıysa yöneticilere e-posta da gider.</p>
           </div>
@@ -156,7 +168,8 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 /* Personel: ücretler + kişiye özel mesai (Personel Kartı ve Puantaj'dan ortak kullanılır) */
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
-  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0, pay_start_date: employee.pay_start_date || "", pay_recurring: employee.pay_recurring !== false, skip_check_in: !!employee.skip_check_in });
+  const tri = (v) => (v === true ? "1" : v === false ? "0" : "");
+  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0, pay_start_date: employee.pay_start_date || "", pay_recurring: employee.pay_recurring !== false, skip_check_in: !!employee.skip_check_in, notify_checkin_reminder: tri(employee.notify_checkin_reminder), notify_checkout_reminder: tri(employee.notify_checkout_reminder) });
   const [s, setS] = useState({
     start: ws.start || "",
     end: ws.end || "",
@@ -193,6 +206,8 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         pay_start_date: pay.pay_start_date || null,
         pay_recurring: pay.pay_recurring !== false,
         skip_check_in: !!pay.skip_check_in,
+        notify_checkin_reminder: pay.notify_checkin_reminder === "" ? null : pay.notify_checkin_reminder === "1",
+        notify_checkout_reminder: pay.notify_checkout_reminder === "" ? null : pay.notify_checkout_reminder === "1",
         overtime_method: pay.overtime_method || null,
         overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
@@ -248,6 +263,24 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         <div className="font-bold text-slate-800 flex items-center gap-1.5"><Timer className="w-3.5 h-3.5 text-indigo-600" /> Kişiye Özel Mesai Saatleri <span className="font-normal text-slate-400">— boş bırakılan alanlar firma ayarından alınır ({companySchedule?.start}–{companySchedule?.end})</span></div>
         <ScheduleFields s={s} set={set} allowEmpty />
         <DaySchedule s={s} onChange={setS} fallback={companySchedule} />
+      </div>
+      <div className="border border-slate-200 rounded-xl p-3 space-y-2 text-xs" data-testid="emp-reminder-prefs">
+        <div className="font-bold text-slate-800 flex items-center gap-1.5"><Bell className="w-3.5 h-3.5 text-amber-500" /> Hatırlatma</div>
+        <label className="block text-[10px] font-semibold text-slate-500">Giriş hatırlatması
+          <select value={pay.notify_checkin_reminder} onChange={(e) => setPay({ ...pay, notify_checkin_reminder: e.target.value })} className={`${inp} w-full mt-0.5`} data-testid="emp-checkin-reminder">
+            <option value="">Firma ayarı</option>
+            <option value="1">Açık</option>
+            <option value="0">Kapalı</option>
+          </select>
+        </label>
+        <label className="block text-[10px] font-semibold text-slate-500">Çıkış hatırlatması
+          <select value={pay.notify_checkout_reminder} onChange={(e) => setPay({ ...pay, notify_checkout_reminder: e.target.value })} className={`${inp} w-full mt-0.5`} data-testid="emp-checkout-reminder">
+            <option value="">Firma ayarı</option>
+            <option value="1">Açık</option>
+            <option value="0">Kapalı</option>
+          </select>
+        </label>
+        <p className="text-[10px] text-slate-500">Firma kapalıysa personele bildirim gitmez. İzin, rapor, tatil ve vardiyasız günde gönderilmez.</p>
       </div>
       <div className="border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs" data-testid="emp-skip-checkin">
         <label className="flex items-start gap-2 text-slate-800 cursor-pointer">

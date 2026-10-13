@@ -65,7 +65,7 @@ class TestLateCheckinNotification:
     def test_late_checkin_creates_notification(self, api):
         loc = api.get(f"{API}/companies/{CID}", timeout=30).json()["location"]
         r = api.post(f"{API}/personnel/attendance/self", json={
-            "action": "check_in", "latitude": loc["latitude"], "longitude": loc["longitude"], "accuracy_m": 10}, timeout=30)
+            "action": "check_in", "device_id": "pytest-attendance-device", "latitude": loc["latitude"], "longitude": loc["longitude"], "accuracy_m": 10}, timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["record"]["late_minutes"] > 0, body["record"]
@@ -87,7 +87,8 @@ class TestLateCheckinNotification:
         assert r.status_code == 200, r.text
         assert r.json()["schedule"]["notify_late_checkin"] is False
         s = api.post(f"{API}/personnel/attendance/self", json={
-            "action": "check_in", "latitude": api.get(f"{API}/companies/{CID}").json()["location"]["latitude"],
+            "action": "check_in", "device_id": "pytest-attendance-device",
+            "latitude": api.get(f"{API}/companies/{CID}").json()["location"]["latitude"],
             "longitude": api.get(f"{API}/companies/{CID}").json()["location"]["longitude"]}, timeout=30)
         assert s.status_code == 200, s.text
         assert s.json()["record"]["late_minutes"] > 0

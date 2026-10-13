@@ -30,6 +30,7 @@ import { locationConsentAccepted, locationConsentPayload, locationUnavailablePay
 import { syncLocationBackground } from "../utils/locationBackgroundSync";
 import { selfLeavePayload, validateSelfLeave } from "../utils/personnel";
 import { mesaimGeoHeaderLine, checkInHasGeoTarget, type Workplace } from "../utils/workplace";
+import { detectRooted, getStableDeviceId, punchSecurityFields, readDeviceToken, resolvePunchAuth, saveDeviceToken, savePunchPin } from "../utils/punchAuth";
 
 type LocationTracking = {
   enabled?: boolean;
@@ -71,7 +72,7 @@ type AttendancePayload = {
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
-  schedule?: { require_geo?: boolean; start?: string; end?: string; break_minutes?: number; work_days?: number[]; location_tracking?: LocationTracking };
+  schedule?: { require_geo?: boolean; start?: string; end?: string; break_minutes?: number; work_days?: number[]; location_tracking?: LocationTracking; require_punch_auth?: string; timezone?: string };
   today_window?: {
     start?: string;
     end?: string;
@@ -110,13 +111,15 @@ type AttendancePayload = {
   location_consent?: LocationConsent | null;
   location_signal?: LocationSignal | null;
   location_last_inside?: boolean | null;
+  punch_security?: { require_punch_auth?: string; notify_checkin_reminder?: boolean; notify_checkout_reminder?: boolean };
 };
 
 async function coords() {
   const perm = await Location.requestForegroundPermissionsAsync();
   if (perm.status !== "granted") throw new Error("Konum izni verilmedi.");
   const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-  return { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy_m: pos.coords.accuracy };
+  const mocked = Boolean((pos as { mocked?: boolean }).mocked);
+  return { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy_m: pos.coords.accuracy, mocked };
 }
 
 export function AttendanceScreen() {
@@ -147,6 +150,8 @@ export function AttendanceScreen() {
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState<LocationSignal | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinAsk, setPinAsk] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -226,7 +231,7 @@ export function AttendanceScreen() {
     setBusy(action);
     setError(null);
     try {
-      let extra: { latitude?: number; longitude?: number; accuracy_m?: number; time?: string } = {};
+      let extra: { latitude?: number; longitude?: number; accuracy_m?: number; time?: string; mocked?: boolean } = {};
       if (time) extra.time = time;
       const hasTarget = checkInHasGeoTarget({
         workplace: data?.workplace,
@@ -241,13 +246,41 @@ export function AttendanceScreen() {
         setMessage("Konum alınıyor…");
         try {
           const c = await coords();
-          extra = { ...extra, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
+          extra = { ...extra, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined, mocked: Boolean(c.mocked) };
         } catch (err) {
           await reportLocationUnavailable(apiErrorMessage(err, geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
           if (geoMode === "required") throw err;
         }
       }
-      const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
+      if (extra.mocked == null) {
+        try {
+          const probe = await coords();
+          extra = { ...extra, mocked: probe.mocked };
+        } catch {
+          extra = { ...extra, mocked: false };
+        }
+      }
+      const authMode = data?.punch_security?.require_punch_auth || data?.schedule?.require_punch_auth;
+      const auth = await resolvePunchAuth(authMode, pin);
+      if (!auth.ok) {
+        setPinAsk(auth.needPin);
+        throw new Error(auth.error || "Doğrulama gerekli.");
+      }
+      setPinAsk(false);
+      const security = punchSecurityFields({
+        deviceId: await getStableDeviceId(),
+        deviceToken: await readDeviceToken(),
+        platform: Platform.OS,
+        isMock: Boolean(extra.mocked),
+        isRooted: await detectRooted(),
+        punchAuth: auth.punchAuth,
+        punchPin: auth.punchPin,
+      });
+      const { mocked: _dropMock, ...coordsExtra } = extra;
+      void _dropMock;
+      const r = await post<{ message?: string; device_token?: string }>(client, "/personnel/attendance/self", { action, ...coordsExtra, ...security });
+      if (r.device_token) await saveDeviceToken(r.device_token);
+      if (auth.punchPin) await savePunchPin(auth.punchPin);
       setMessage(r.message || "Kaydedildi.");
       await load();
       // Mesai girişi sonrası ana ekran: Özet
@@ -537,6 +570,13 @@ export function AttendanceScreen() {
       {!consentOk && data?.employee ? (
         <Card testID="mesai-consent-lock">
           <Muted>KVKK (K) ve konum paylaşımı (KK) sözleşmelerini kabul edince giriş / çıkış paneli açılır.</Muted>
+        </Card>
+      ) : null}
+      {pinAsk ? (
+        <Card testID="mesai-punch-pin">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Mesai doğrulama</Text>
+          <Muted>Girişten önce PIN girin. İlk kayıt bu PIN’i telefona kaydeder. Firma biyometrik istiyorsa önce parmak izi / yüz denenir.</Muted>
+          <Field label="PIN" testID="mesai-punch-pin-input" value={pin} onChangeText={setPin} keyboardType="number-pad" secureTextEntry />
         </Card>
       ) : null}
       {(consentOk || !data?.employee) ? (

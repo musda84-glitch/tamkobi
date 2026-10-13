@@ -779,6 +779,8 @@ function xsltIbanBlock(L, R) {
   const iban = String(L.ibanText || "").trim();
   const name = String(L.ibanName || "").trim();
   const title = blockTitle(L.ibanTitle, "IBAN / ödeme");
+  const payeeId = `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID`;
+  const payeeName = `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:Name`;
   if (iban) {
     return `
       <div class="inv-iban">

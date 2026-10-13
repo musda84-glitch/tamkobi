@@ -236,7 +236,7 @@ class TestSelfService:
         assert company_loc, "company location missing"
         payload = {"latitude": company_loc["latitude"], "longitude": company_loc["longitude"], "accuracy_m": 10}
         today = c.get(f"{API}/personnel/attendance/me").json()["today_date"]
-        r = c.post(f"{API}/personnel/attendance/self", json={"action": "check_in", **payload})
+        r = c.post(f"{API}/personnel/attendance/self", json={"action": "check_in", "device_id": "pytest-attendance-device", **payload})
         if r.status_code == 400 and "giriş yapılmış" in r.json().get("detail", ""):
             pytest.skip("Already checked in today (rerun)")
         assert r.status_code == 200, r.text

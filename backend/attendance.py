@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+import attendance_security
 import location_consent
 import personnel_wage
 import tenant_access
@@ -25,7 +26,8 @@ async def _user_dep(request: Request) -> dict:
     return await _current_user(request)
 
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "exit_tolerance_minutes": 0, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
-                    "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
+                    "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True,
+                    "notify_checkin_reminder": True, "notify_checkout_reminder": False, "require_registered_device": False, "require_punch_auth": "off"}
 # Personel kartı: konum izleme (iş yeri + dış görev ayrı).
 DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15, "exit_tolerance_hours": 0}
 DEFAULT_LOCATION_TRACKING = {**DEFAULT_LOCATION_MODE, "field": dict(DEFAULT_LOCATION_MODE)}
@@ -2428,9 +2430,11 @@ async def put_work_schedule(company_id: str, req: Dict[str, Any], user: dict = D
             if v <= 0:
                 raise HTTPException(status_code=400, detail=f"{k} sıfırdan büyük olmalı.")
             s[k] = v
-    for k in ("notify_missing_checkin", "notify_late_checkin"):
+    for k in ("notify_missing_checkin", "notify_late_checkin", "notify_checkin_reminder", "notify_checkout_reminder", "require_registered_device"):
         if k in req:
             s[k] = bool(req[k])
+    if "require_punch_auth" in req:
+        s["require_punch_auth"] = attendance_security.normalize_punch_auth(req.get("require_punch_auth"))
     tz = (req.get("timezone") or s["timezone"]).strip()
     try:
         ZoneInfo(tz)
@@ -2603,7 +2607,8 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
             "habit_label": habit_label(habit),
             "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
             "location_signal": location_consent.location_signal_view(emp),
-            "location_last_inside": emp.get("location_last_inside") if emp.get("location_last_inside") in (True, False) else None}
+            "location_last_inside": emp.get("location_last_inside") if emp.get("location_last_inside") in (True, False) else None,
+            "punch_security": attendance_security.prefs_view(schedule, emp)}
 
 
 @router.post("/personnel/attendance/self")
@@ -2676,8 +2681,24 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     block = check_in_geo_block_detail(verdict)
     if block:
         raise HTTPException(status_code=400, detail=block)
+    gate = await attendance_security.gate_self_punch(
+        _db, company_id=emp["company_id"], employee=emp, schedule=schedule, req=req or {},
+        notify=notify_managers, today=date,
+    )
+    if not gate["allow"]:
+        raise HTTPException(status_code=403, detail=gate["detail"])
+    bound = await attendance_security.commit_device_bind(_db, gate)
+    if not bound.get("ok", True):
+        raise HTTPException(status_code=403, detail=bound.get("detail") or "Cihaz kaydı tamamlanamadı.")
     patch = {"status": "present", action: clock}
-    rec = await apply_day(emp, date, patch, source="self", confirmed=True)
+    try:
+        rec = await apply_day(emp, date, patch, source="self", confirmed=True)
+    except Exception:
+        try:
+            await attendance_security.release_new_bind(_db, bound)
+        except Exception:
+            logger.exception("device bind rollback")
+        raise
     extra = {}
     if workplace:
         extra["workplace"] = workplace
@@ -2740,7 +2761,10 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             msg += " Yöneticiye alışkanlık sapması bildirildi."
     except Exception:
         pass
-    return {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+    payload = {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+    if bound.get("device_token"):
+        payload["device_token"] = bound["device_token"]
+    return payload
 
 
 async def open_geo_confirm_request(
@@ -4534,11 +4558,33 @@ async def run_auto_checkout_ot_check(company_id: Optional[str] = None) -> list:
     return results
 
 
+async def run_checkin_reminders(company_id: Optional[str] = None, now_utc: Optional[datetime] = None) -> list:
+    """Personelin telefonuna giriş (ve isteğe bağlı çıkış) hatırlatması. Yönetici eksik-giriş uyarısının yerine geçmez."""
+    import notify as _notify
+
+    async def send(emp, kind, title, message, link):
+        ntype = "attendance_checkout_reminder" if kind == "checkout" else "attendance_checkin_reminder"
+        if not emp.get("user_id") and not emp.get("_id"):
+            return
+        await _notify.insert_notification(_db, _notify.notification_doc(
+            emp["company_id"], ntype, title, message,
+            link=link or "/mesai", user_id=emp.get("user_id"), employee_id=emp.get("_id"), roles=(),
+        ))
+
+    return await attendance_security.run_reminders(
+        _db, merge_schedule, send, company_id=company_id, now_utc=now_utc,
+    )
+
+
 async def watcher_loop(interval_s: int = 60):
     import asyncio
     while True:
         try:
             await run_missing_checkin_check()
+        except Exception:
+            pass
+        try:
+            await run_checkin_reminders()
         except Exception:
             pass
         try:
@@ -4561,13 +4607,80 @@ async def run_alerts_now(request: Request, company_id: Optional[str] = "comp_nex
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     missing = await run_missing_checkin_check(company_id, force=force)
+    reminders = await run_checkin_reminders(company_id)
     auto_ot = await run_auto_checkout_ot_check(company_id)
     try:
         import shopfloor_pause as sfp
         auto_pause = await sfp.run_auto_pause_work_orders(company_id)
     except Exception:
         auto_pause = []
-    return {"status": "success", "results": missing, "auto_checkout": auto_ot, "auto_pause": auto_pause}
+    return {"status": "success", "results": missing, "reminders": reminders, "auto_checkout": auto_ot, "auto_pause": auto_pause}
+
+
+@router.get("/personnel/attendance/reminder-prefs")
+async def get_reminder_prefs(request: Request):
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    return attendance_security.prefs_view(merge_schedule(company, emp), emp)
+
+
+@router.put("/personnel/attendance/reminder-prefs")
+async def put_reminder_prefs(req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
+    upd = {}
+    for key in ("notify_checkin_reminder", "notify_checkout_reminder"):
+        if key in (req or {}):
+            upd[key] = attendance_security.optional_bool(req.get(key))
+    if upd:
+        await _db.employees.update_one({"_id": emp["_id"]}, {"$set": upd})
+        emp = {**emp, **upd}
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    return {"status": "success", **attendance_security.prefs_view(merge_schedule(company, emp), emp)}
+
+
+@router.get("/personnel/attendance/devices")
+async def get_attendance_devices(request: Request, company_id: Optional[str] = None):
+    user = await _current_user(request)
+    if not attendance_security.manager_user(user):
+        raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    return await attendance_security.list_devices(_db, company_id)
+
+
+@router.post("/personnel/attendance/devices/{row_id}/approve")
+async def approve_attendance_device(row_id: str, request: Request):
+    user = await _current_user(request)
+    if not attendance_security.manager_user(user):
+        raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
+    row = await _db.attendance_devices.find_one({"_id": row_id}) or {}
+    company_id = tenant_access.resolve_company_id(user, row.get("company_id"))
+    if row and row.get("company_id") != company_id:
+        raise HTTPException(status_code=404, detail="Cihaz kaydı bulunamadı.")
+    result = await attendance_security.approve_device(_db, company_id, row_id, user.get("_id") or user.get("id") or "")
+    if not result["ok"]:
+        raise HTTPException(status_code=result["status"], detail=result["detail"])
+    return {"status": "success", "message": result["detail"]}
+
+
+@router.post("/personnel/attendance/devices/{row_id}/revoke")
+async def revoke_attendance_device(row_id: str, request: Request):
+    user = await _current_user(request)
+    if not attendance_security.manager_user(user):
+        raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
+    row = await _db.attendance_devices.find_one({"_id": row_id}) or {}
+    company_id = tenant_access.resolve_company_id(user, row.get("company_id"))
+    if row and row.get("company_id") != company_id:
+        raise HTTPException(status_code=404, detail="Cihaz kaydı bulunamadı.")
+    result = await attendance_security.revoke_device(_db, company_id, row_id, user.get("_id") or user.get("id") or "")
+    if not result["ok"]:
+        raise HTTPException(status_code=result["status"], detail=result["detail"])
+    return {"status": "success", "message": result["detail"]}
 
 
 @router.get("/personnel/overtime-preview")

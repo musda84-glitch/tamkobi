@@ -242,6 +242,7 @@ def clean_doc(doc: dict) -> dict:
         doc["has_b2b_password"] = bool(doc.pop("b2b_password_hash"))
     if "shopfloor_pin_hash" in doc:
         doc["has_shopfloor_pin"] = bool(doc.pop("shopfloor_pin_hash"))
+    doc.pop("punch_pin_hash", None)
     doc.pop("password_hash", None)
     if doc.get("order_date"):
         normalized = ensure_utc_iso(doc.get("order_date"))
@@ -18847,7 +18848,7 @@ EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "location_tracking", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "marital_status", "blood_type", "illnesses", "safety_info",
                       "meal_allowance", "transport_allowance", "sgk_number",
-                      "pay_start_date", "pay_day", "pay_recurring", "skip_check_in"}
+                      "pay_start_date", "pay_day", "pay_recurring", "skip_check_in", "notify_checkin_reminder", "notify_checkout_reminder"}
 EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
 TRANSPORT_CAT = "Yol / Ulaşım"
@@ -19048,6 +19049,8 @@ async def update_employee(emp_id: str, data: Dict[str, Any], user: dict = Depend
             v = bool(v) if v not in (None, "") else True
         if k == "skip_check_in":
             v = bool(v) if v not in (None, "") else False
+        if k in ("notify_checkin_reminder", "notify_checkout_reminder"):
+            v = None if v in (None, "") else bool(v)
         if k == "pay_day" and v not in (None, ""):
             try:
                 v = min(31, max(1, int(v)))
