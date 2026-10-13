@@ -32,6 +32,9 @@ class FakeCollection:
         if not q:
             return True
         if "$or" in q:
+            rest = {k: v for k, v in q.items() if k != "$or"}
+            if rest and not self._match(d, rest):
+                return False
             return any(self._match(d, clause) for clause in q["$or"])
         if "$and" in q:
             return all(self._match(d, clause) for clause in q["$and"])
@@ -43,6 +46,10 @@ class FakeCollection:
                     if exists != want:
                         return False
                     if "$nin" in v and d.get(k) in v["$nin"]:
+                        return False
+                    continue
+                if "$in" in v:
+                    if d.get(k) not in v["$in"]:
                         return False
                     continue
                 if "$nin" in v and d.get(k) in v["$nin"]:
@@ -330,6 +337,130 @@ def test_integrity_other_company_403(db):
     assert ei.value.status_code in (403, 404)
     sa = {"is_super_admin": True}
     linked_moves._require_integrity_access(sa, "other_co")  # ok
+
+
+def test_require_integrity_access_normalize_role(db):
+    base = {"company_ids": ["c1"], "active_company_id": "c1"}
+    linked_moves._require_integrity_access({**base, "role": "Yönetici"}, "c1")
+    linked_moves._require_integrity_access({**base, "role": "owner"}, "c1")
+    linked_moves._require_integrity_access({**base, "role": "admin"}, "c1")
+    with pytest.raises(Exception) as ei:
+        linked_moves._require_integrity_access({**base, "role": "sales"}, "c1")
+    assert ei.value.status_code == 403
+
+
+def test_cleanup_foreign_company_payroll_skipped(db):
+    """A şirketi admini B'nin payroll_id'siyle cleanup → B hareketleri değişmez."""
+    db.companies.docs.append({"_id": "c2", "name": "Other Co"})
+    db.bank_accounts.docs.append({
+        "_id": "acc2", "company_id": "c2", "account_name": "Kasa B",
+        "type": "cash_box", "current_balance": 500.0,
+    })
+    db.payrolls.docs.append({
+        "_id": "pay_b", "company_id": "c2", "status": "paid",
+        "final_payable": 80, "account_id": "acc2", "employee_name": "Bora",
+    })
+    db.bank_transactions.docs.append({
+        "_id": "tx_b", "company_id": "c2", "account_id": "acc2", "type": "outflow",
+        "amount": 80, "payroll_id": "pay_b", "description": "Bora maaş",
+        **linked_moves.link_fields("payroll", "pay_b"),
+    })
+    before = [dict(t) for t in db.bank_transactions.docs if t.get("_id") == "tx_b"]
+    assert before
+
+    async def _sd(coll, doc, *a, **k):
+        await db[coll].delete_one({"_id": doc["_id"]})
+        return "t"
+
+    with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
+        result = _run(linked_moves.cleanup_orphans(
+            db, "c1", dry_run=False,
+            items=[{"source_type": "payroll", "source_id": "pay_b"}],
+            actor={"name": "admin-a"},
+        ))
+    assert result["actions"]
+    assert result["actions"][0]["result"]["status"] == "skip"
+    assert result["actions"][0]["result"]["reason"] == "foreign_company"
+    assert any(t.get("_id") == "tx_b" for t in db.bank_transactions.docs)
+    assert db.bank_accounts.docs[1]["current_balance"] == pytest.approx(500.0)
+
+
+def test_link_query_scopes_company_id(db):
+    db.bank_transactions.docs.append({
+        "_id": "tx_a", "company_id": "c1", "account_id": "acc1", "type": "outflow",
+        "amount": 10, **linked_moves.link_fields("payroll", "pay_shared"),
+    })
+    db.bank_transactions.docs.append({
+        "_id": "tx_b2", "company_id": "c2", "account_id": "accX", "type": "outflow",
+        "amount": 10, **linked_moves.link_fields("payroll", "pay_shared"),
+    })
+    found = _run(linked_moves.find_linked(db, "payroll", "pay_shared", company_id="c1"))
+    ids = {t["_id"] for t in found["bank_transactions"]}
+    assert ids == {"tx_a"}
+
+
+def test_legacy_bonus_orphans_scan_and_cleanup(db):
+    """Eski formatta bonus öde → bonus sil → tarama gösterir → dry_run no-op → cleanup kaldırır."""
+    bid = "legacy_bonus_1"
+    db.bank_transactions.docs.append({
+        "_id": "open1", "company_id": "c1", "account_id": "acc1", "type": "inflow",
+        "amount": 1000, "source": "opening", "description": "Açılış",
+    })
+    # Eski format: Gayri Resmi kategori, bonus_id yok
+    db.bank_transactions.docs.append({
+        "_id": "legacy_tx", "company_id": "c1", "account_id": "acc1", "type": "outflow",
+        "amount": 120, "description": "Ayşe - 2026-02 Prim",
+        "category": "Personel Prim (Gayri Resmi)",
+    })
+    db.bonus_payments.docs.append({
+        "_id": bid, "company_id": "c1", "status": "paid", "amount": 120,
+        "account_id": "acc1", "employee_name": "Ayşe", "period": "2026-02",
+        "type": "bonus", "type_label": "Prim",
+    })
+    db.bank_accounts.docs[0]["current_balance"] = 880.0
+
+    # Bonus'u çöpe taşı (eski silme: hareket bağlantısız kaldı)
+    bonus_doc = next(b for b in db.bonus_payments.docs if b["_id"] == bid)
+    db.bonus_payments.docs[:] = [b for b in db.bonus_payments.docs if b["_id"] != bid]
+    db.trash.docs.append({
+        "_id": "trash_bonus_1",
+        "collection": "bonus_payments",
+        "entity_type": "bonus",
+        "company_id": "c1",
+        "doc": bonus_doc,
+    })
+
+    report = _run(linked_moves.scan_orphans(db, "c1"))
+    assert report["legacy_bonus_orphans"]
+    leg = report["legacy_bonus_orphans"][0]
+    assert leg["tx_id"] == "legacy_tx"
+    assert leg["trash_id"] == "trash_bonus_1"
+    assert report["summary"]["legacy_bonus_orphans"] >= 1
+
+    before_n = len(db.bank_transactions.docs)
+    before_bal = db.bank_accounts.docs[0]["current_balance"]
+    dry = _run(linked_moves.cleanup_orphans(
+        db, "c1", dry_run=True,
+        items=[{"tx_id": "legacy_tx"}],
+    ))
+    assert dry["dry_run"] is True
+    assert dry["actions"][0]["result"]["status"] == "would_reverse"
+    assert len(db.bank_transactions.docs) == before_n
+    assert db.bank_accounts.docs[0]["current_balance"] == before_bal
+
+    async def _sd(coll, doc, *a, **k):
+        await db[coll].delete_one({"_id": doc["_id"]})
+        return "t"
+
+    with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
+        applied = _run(linked_moves.cleanup_orphans(
+            db, "c1", dry_run=False,
+            items=[{"tx_id": "legacy_tx"}],
+            actor={"name": "admin"},
+        ))
+    assert applied["actions"][0]["result"]["status"] == "reversed"
+    assert not any(t.get("_id") == "legacy_tx" for t in db.bank_transactions.docs)
+    assert db.bank_accounts.docs[0]["current_balance"] == pytest.approx(1000.0, abs=0.01)
 
 
 def test_stock_count_reverse(db):

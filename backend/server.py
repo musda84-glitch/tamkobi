@@ -8732,6 +8732,7 @@ async def unpay_installment(inst_id: str, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Bu taksit henüz ödenmemiş.")
     rev = await linked_moves.reverse_linked(
         db, "installment", inst_id, mode="delete", actor=user, reason="installment_unpay",
+        company_id=inst.get("company_id"),
     )
     await db.installments.update_one(
         {"_id": inst_id},
@@ -12195,7 +12196,9 @@ async def delete_bonus(bonus_id: str, user: dict = Depends(get_current_user)):
     b = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
     related = []
     if b.get("status") == "paid":
-        related = await linked_moves.prepare_source_trash(db, "personnel_bonus", bonus_id)
+        related = await linked_moves.prepare_source_trash(
+            db, "personnel_bonus", bonus_id, company_id=b.get("company_id"),
+        )
     await trash.soft_delete(
         "bonus_payments",
         b,
@@ -19076,7 +19079,9 @@ async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)
     amount = float(payroll.get("final_payable") or payroll.get("net_salary") or 0)
     related = []
     if payroll.get("status") == "paid":
-        related = await linked_moves.prepare_source_trash(db, "payroll", payroll_id)
+        related = await linked_moves.prepare_source_trash(
+            db, "payroll", payroll_id, company_id=payroll.get("company_id"),
+        )
     label = f"{payroll.get('employee_name')} · {payroll.get('period')} · {amount:,.2f} ₺"
     await trash.soft_delete("payrolls", payroll, "payroll", label, related=related, note=payroll.get("status") or "")
     if related:

@@ -132,6 +132,7 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
         <div className="grid sm:grid-cols-4 gap-3" data-testid="integrity-summary">
           {[
             ["Orphan hareket", s.orphan_moves],
+            ["Eski prim yetim", s.legacy_bonus_orphans],
             ["Eksik bağ (ödenmiş)", s.paid_missing_moves],
             ["Kasa kayması", s.drift_accounts],
             ["Heuristik eşleşme", s.heuristic_links],
@@ -164,6 +165,7 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
           <OrphanList title="Orphan prim hareketleri" rows={scan.orphan_bonus_moves} />
           <OrphanList title="Orphan bordro hareketleri" rows={scan.orphan_payroll_moves} />
           <OrphanList title="Orphan kredi hareketleri" rows={scan.orphan_loan_moves} />
+          <OrphanList title="Eski format prim yetimleri (Gayri Resmi)" rows={scan.legacy_bonus_orphans} />
           <MissingList title="Ödenmiş prim / hareketsiz" rows={scan.paid_bonus_without_moves} />
           <MissingList title="Ödenmiş bordro / hareketsiz" rows={scan.paid_payroll_without_moves} />
         </div>
