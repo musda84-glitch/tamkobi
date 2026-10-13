@@ -528,7 +528,10 @@ async def issue_invoice(
         issue_time=issue_time,
     )
 
-    contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    contact_filt = None
+    if inv.get("contact_id") and inv.get("company_id"):
+        contact_filt = {"_id": inv.get("contact_id"), "company_id": inv.get("company_id")}
+    contact = await _db.contacts.find_one(contact_filt) if contact_filt else None
     if inv.get("invoice_type") == "sales" and contact:
         from contact_tax import contact_tax_patch
         tax_patch = contact_tax_patch(
@@ -537,7 +540,7 @@ async def issue_invoice(
             inv.get("contact_tax_office"),
         )
         if tax_patch:
-            await _db.contacts.update_one({"_id": contact["_id"]}, {"$set": tax_patch})
+            await _db.contacts.update_one(contact_filt, {"$set": tax_patch})
             contact = {**contact, **tax_patch}
     requested = e_type if e_type is not None else inv.get("e_type")
     gib_meta: Optional[Dict[str, Any]] = None
