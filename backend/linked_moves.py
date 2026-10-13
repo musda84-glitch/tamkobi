@@ -35,6 +35,7 @@ SPECIALTY: Dict[str, str] = {
     "payroll": "payroll_id",
     "loan": "loan_id",
     "installment": "installment_id",
+    "personnel_payment": "personnel_movement_id",
 }
 
 SOURCE_LABELS = {
@@ -43,6 +44,7 @@ SOURCE_LABELS = {
     "payroll": "Bordro / maaş",
     "loan": "Kredi",
     "installment": "Taksit",
+    "personnel_payment": "Personel ödeme",
 }
 
 SOURCE_COLLECTION = {
@@ -51,6 +53,7 @@ SOURCE_COLLECTION = {
     "payroll": "payrolls",
     "loan": "loans",
     "installment": "installments",
+    "personnel_payment": "personnel_movements",
 }
 
 # Eski format: Personel Prim/Avans/... (Gayri Resmi)
@@ -86,6 +89,8 @@ def _norm_source_type(source_type: str) -> str:
         return "loan"
     if st in ("installment", "taksit"):
         return "installment"
+    if st in ("personnel_payment", "personnel_movement", "personel_odeme", "personel_ödeme"):
+        return "personnel_payment"
     return st
 
 
@@ -110,6 +115,8 @@ def link_fields(source_type: str, source_id: str) -> Dict[str, Any]:
         out.setdefault("source", "loan")
     elif st == "installment":
         out.setdefault("source", "installment")
+    elif st == "personnel_payment":
+        out.setdefault("source", "personnel_payment")
     return out
 
 
@@ -158,6 +165,14 @@ async def find_linked(
         if cid:
             eq["company_id"] = cid
         expenses = await db.expenses.find(eq).to_list(50)
+    elif st == "personnel_payment":
+        eq = {"$or": [
+            {"source_type": "personnel_payment", "source_id": str(source_id)},
+            {"personnel_movement_id": str(source_id)},
+        ]}
+        if cid:
+            eq = {"$and": [eq, {"company_id": cid}]}
+        expenses = await db.expenses.find(eq).to_list(200)
     return {
         "bank_transactions": bank,
         "partner_transactions": partner,
@@ -548,6 +563,7 @@ def source_guard_detail(tx: dict) -> Optional[str]:
         ("payroll_id", "bordro/maaş", "/personnel"),
         ("loan_id", "kredi", "/loans"),
         ("installment_id", "taksit", "/installments"),
+        ("personnel_movement_id", "personel ödeme", "/personnel"),
     ):
         sid = tx.get(field)
         if sid:
@@ -639,6 +655,7 @@ async def scan_orphans(db, company_id: str) -> Dict[str, Any]:
     orphan_bonus_moves: List[dict] = []
     orphan_payroll_moves: List[dict] = []
     orphan_loan_moves: List[dict] = []
+    orphan_personnel_payment_moves: List[dict] = []
     legacy_bonus_orphans: List[dict] = []
     paid_bonus_missing: List[dict] = []
     paid_payroll_missing: List[dict] = []
@@ -650,6 +667,7 @@ async def scan_orphans(db, company_id: str) -> Dict[str, Any]:
     bonuses = await db.bonus_payments.find({"company_id": cid}).to_list(5000)
     payrolls = await db.payrolls.find({"company_id": cid}).to_list(5000)
     loans = await db.loans.find({"company_id": cid}).to_list(5000)
+    personnel_moves = await db.personnel_movements.find({"company_id": cid}).to_list(5000)
     trash_bonus = await db.trash.find({
         "company_id": cid,
         "$or": [
@@ -661,6 +679,10 @@ async def scan_orphans(db, company_id: str) -> Dict[str, Any]:
     bonus_ids = {str(b["_id"]) for b in bonuses}
     payroll_ids = {str(p["_id"]) for p in payrolls}
     loan_ids = {str(l["_id"]) for l in loans}
+    live_pp_ids = {
+        str(m["_id"]) for m in personnel_moves
+        if str(m.get("status") or "") not in ("reversed", "cancelled")
+    }
 
     def _orphan_row(doc: dict, field: str, sid: str, kind: str) -> dict:
         return {
@@ -677,13 +699,22 @@ async def scan_orphans(db, company_id: str) -> Dict[str, Any]:
         ("bonus_id", bonus_ids, orphan_bonus_moves),
         ("payroll_id", payroll_ids, orphan_payroll_moves),
         ("loan_id", loan_ids, orphan_loan_moves),
+        ("personnel_movement_id", live_pp_ids, orphan_personnel_payment_moves),
     ):
         for tx in bank_txs:
             sid = tx.get(field)
+            if not sid and field == "personnel_movement_id":
+                st = _norm_source_type(tx.get("source_type") or tx.get("source") or "")
+                if st == "personnel_payment":
+                    sid = tx.get("source_id")
             if sid and str(sid) not in id_set:
                 bucket.append(_orphan_row(tx, field, sid, "bank"))
         for ptx in partner_txs:
             sid = ptx.get(field)
+            if not sid and field == "personnel_movement_id":
+                st = _norm_source_type(ptx.get("source_type") or ptx.get("source") or "")
+                if st == "personnel_payment":
+                    sid = ptx.get("source_id")
             if sid and str(sid) not in id_set:
                 bucket.append(_orphan_row(ptx, field, sid, "partner"))
 
@@ -777,12 +808,16 @@ async def scan_orphans(db, company_id: str) -> Dict[str, Any]:
                 "drift": round(moved - stored, 2),
             })
 
-    orphan_specialty = len(orphan_bonus_moves) + len(orphan_payroll_moves) + len(orphan_loan_moves)
+    orphan_specialty = (
+        len(orphan_bonus_moves) + len(orphan_payroll_moves) + len(orphan_loan_moves)
+        + len(orphan_personnel_payment_moves)
+    )
     return {
         "company_id": cid,
         "orphan_bonus_moves": orphan_bonus_moves,
         "orphan_payroll_moves": orphan_payroll_moves,
         "orphan_loan_moves": orphan_loan_moves,
+        "orphan_personnel_payment_moves": orphan_personnel_payment_moves,
         "legacy_bonus_orphans": legacy_bonus_orphans,
         "paid_bonus_without_moves": paid_bonus_missing,
         "paid_payroll_without_moves": paid_payroll_missing,
@@ -852,6 +887,8 @@ async def cleanup_orphans(
             out.append({"source_type": "payroll", "source_id": row["source_id"], "via": "orphan_move"})
         for row in report["orphan_loan_moves"]:
             out.append({"source_type": "loan", "source_id": row["source_id"], "via": "orphan_move"})
+        for row in report.get("orphan_personnel_payment_moves") or []:
+            out.append({"source_type": "personnel_payment", "source_id": row["source_id"], "via": "orphan_move"})
         for row in report.get("legacy_bonus_orphans") or []:
             out.append({"tx_id": row["tx_id"], "via": "legacy_bonus_orphan"})
         return out
