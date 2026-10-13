@@ -84,4 +84,72 @@ describe("request", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(saveApiBase).toHaveBeenCalledWith("https://app.tamkobi.com");
   });
+  it("does not persist or follow foreign Location host", async () => {
+    const { saveApiBase } = await import("../auth/storage");
+    (saveApiBase as jest.Mock).mockClear();
+    const fetchMock = jest.fn(async () => ({
+      ok: false,
+      status: 301,
+      headers: { get: (h: string) => (h.toLowerCase() === "location" ? "https://evil.com/steal" : null) },
+      text: async () => "",
+      url: "https://tamkobi.com/api/auth/me",
+      redirected: false,
+    }));
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    await expect(request(client, "GET", "/auth/me")).rejects.toMatchObject({ status: 301 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(saveApiBase).not.toHaveBeenCalled();
+  });
+
+  it("rejects http Location downgrade", async () => {
+    const { saveApiBase } = await import("../auth/storage");
+    (saveApiBase as jest.Mock).mockClear();
+    const fetchMock = jest.fn(async () => ({
+      ok: false,
+      status: 308,
+      headers: { get: (h: string) => (h.toLowerCase() === "location" ? "http://tamkobi.com/api/auth/me" : null) },
+      text: async () => "",
+      url: "https://tamkobi.com/api/auth/me",
+      redirected: false,
+    }));
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    await expect(request(client, "GET", "/auth/me")).rejects.toMatchObject({ status: 308 });
+    expect(saveApiBase).not.toHaveBeenCalled();
+  });
+
+  it("retries when RN auto-follows to allowed host via res.url", async () => {
+    const { saveApiBase } = await import("../auth/storage");
+    (saveApiBase as jest.Mock).mockClear();
+    let n = 0;
+    const fetchMock = jest.fn(async (url: string) => {
+      n += 1;
+      if (n === 1) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          text: async () => JSON.stringify({ stale: true }),
+          url: "https://app.tamkobi.com/api/auth/me",
+          redirected: true,
+        };
+      }
+      expect(url).toBe("https://app.tamkobi.com/api/auth/me");
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ authenticated: true }),
+        url: "https://app.tamkobi.com/api/auth/me",
+        redirected: false,
+      };
+    });
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    const data = await request<{ authenticated?: boolean; stale?: boolean }>(client, "GET", "/auth/me");
+    expect(data.authenticated).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(saveApiBase).toHaveBeenCalledWith("https://app.tamkobi.com");
+  });
 });

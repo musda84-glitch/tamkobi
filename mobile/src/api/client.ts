@@ -6,8 +6,10 @@ import {
   applyRedirectedApiBase,
   displayFileUrl,
   fileUrl,
+  isAllowedApiRedirectUrl,
   isPermanentRedirect,
   normalizeApiBase,
+  redirectBaseFromFinalUrl,
   redirectBaseFromLocation,
   requestTarget,
 } from "./url";
@@ -62,6 +64,7 @@ async function fetchApi(
     if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
     else delete headers[API_BASE_HEADER];
 
+    // RN redirect:"manual" desteklemeyebilir — yine de dene; final url ile de kontrol edilir.
     const res = await fetch(url, {
       method: init.method,
       headers,
@@ -75,12 +78,17 @@ async function fetchApi(
         base = await persistRedirectBase(next);
         continue;
       }
+      // http / yabancı host → kaydetme, token ile takip etme
     }
 
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("Location");
       if (loc) {
         const abs = /^https?:\/\//i.test(loc) ? loc : new URL(loc, url).href;
+        if (!isAllowedApiRedirectUrl(abs)) {
+          // Token gönderme / kaydetme yok — yönlendirme yanıtını olduğu gibi bırak
+          return res;
+        }
         return fetch(abs, {
           method: init.method,
           headers,
@@ -88,7 +96,22 @@ async function fetchApi(
           redirect: "follow",
         });
       }
+      return res;
     }
+
+    // Manuel redirect yoksa (RN otomatik takip): host değiştiyse izinliyse kaydet + bir kez tekrarla
+    if (attempt === 0) {
+      const next = redirectBaseFromFinalUrl(
+        typeof res.url === "string" ? res.url : null,
+        base,
+        Boolean((res as { redirected?: boolean }).redirected),
+      );
+      if (next) {
+        base = await persistRedirectBase(next);
+        continue;
+      }
+    }
+
     return res;
   }
   throw new ApiHttpError(0, null, "Yönlendirme sonrası istek tamamlanamadı.");

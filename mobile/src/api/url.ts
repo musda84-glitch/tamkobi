@@ -92,13 +92,38 @@ export function displayFileUrl(base: string, url?: string | null, sameOrigin = f
   return absolute;
 }
 
+/** Kalıcı yönlendirmede kabul edilen üretim hostları (yalnızca https). */
+export const ALLOWED_API_REDIRECT_HOSTS = new Set([
+  "tamkobi.com",
+  "app.tamkobi.com",
+  "b2b.tamkobi.com",
+  "ik.tamkobi.com",
+]);
+
+export function isAllowedApiRedirectHost(host: string | null | undefined): boolean {
+  const h = String(host || "").trim().toLowerCase();
+  return ALLOWED_API_REDIRECT_HOSTS.has(h);
+}
+
+/** https + izinli host; http düşüşü ve yabancı host reddedilir. */
+export function isAllowedApiRedirectUrl(absoluteUrl: string | null | undefined): boolean {
+  try {
+    const u = new URL(String(absoluteUrl || "").trim());
+    if (u.protocol !== "https:") return false;
+    return isAllowedApiRedirectHost(u.host);
+  } catch {
+    return false;
+  }
+}
+
 export function isPermanentRedirect(status: number): boolean {
   return status === 301 || status === 308;
 }
 
 /**
- * 301/308 Location → yeni API origin (host değiştiyse). Aynı host’ta null.
- * Relative Location currentBase’e göre çözülür.
+ * 301/308 Location → yeni API origin (host değiştiyse).
+ * Yalnızca https + izinli host; aksi halde null (kaydetme / token gönderme).
+ * Relative Location aynı host’ta kalır → null.
  */
 export function redirectBaseFromLocation(
   location: string | null | undefined,
@@ -110,8 +135,36 @@ export function redirectBaseFromLocation(
   try {
     const abs = /^https?:\/\//i.test(raw) ? raw : new URL(raw, `${current}/`).href;
     const parsed = new URL(abs);
+    if (parsed.protocol !== "https:") return null;
+    if (!isAllowedApiRedirectHost(parsed.host)) return null;
     const next = normalizeApiBase(`${parsed.protocol}//${parsed.host}`);
     if (!next || next === current) return null;
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RN fetch redirect:"manual" desteklemeyebilir — final res.url host değiştiyse
+ * (izinliyse) yeni base döner.
+ */
+export function redirectBaseFromFinalUrl(
+  finalUrl: string | null | undefined,
+  currentBase: string,
+  redirected?: boolean,
+): string | null {
+  const raw = String(finalUrl || "").trim();
+  if (!raw) return null;
+  const current = normalizeApiBase(currentBase);
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (!isAllowedApiRedirectHost(parsed.host)) return null;
+    const next = normalizeApiBase(`${parsed.protocol}//${parsed.host}`);
+    if (!next || next === current) return null;
+    // redirected bayrağı yoksa bile host farkı yeterli
+    if (redirected === false && next === current) return null;
     return next;
   } catch {
     return null;
