@@ -8,6 +8,7 @@ import { statusTr } from "../utils/labels";
 import { orderStatusLabel } from "../utils/warehouseShip";
 import { lineFromProduct } from "../utils/documentLines";
 import { ScanButton } from "../components/CameraScanner";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 import { formatTrAmount } from "../utils/money";
@@ -24,10 +25,8 @@ export default function FieldSalesPage() {
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const canEdit = can("/saha", "edit");
 
-  const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [custQ, setCustQ] = useState("");
   const [prodQ, setProdQ] = useState("");
   const [barcode, setBarcode] = useState("");
   const [scanQty, setScanQty] = useState("1");
@@ -42,12 +41,10 @@ export default function FieldSalesPage() {
 
   const load = useCallback(async () => {
     try {
-      const [c, p, o] = await Promise.all([
-        axios.get(`${API_URL}/contacts?company_id=${companyId}`),
+      const [p, o] = await Promise.all([
         axios.get(`${API_URL}/products?company_id=${companyId}`),
         axios.get(`${API_URL}/orders?company_id=${companyId}`),
       ]);
-      setContacts((c.data || []).filter((x) => !x.type || ["customer", "both"].includes(x.type)));
       setProducts((p.data || []).filter((x) => x.is_active !== false && x.type !== "raw_material"));
       setOrders(o.data || []);
     } catch {
@@ -55,14 +52,6 @@ export default function FieldSalesPage() {
     }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
-
-  const custHits = useMemo(() => {
-    const q = custQ.trim().toLowerCase();
-    if (q.length < 2) return [];
-    return contacts.filter((c) =>
-      [c.name, c.phone, c.tax_number_or_id, c.city, c.email].some((v) => String(v || "").toLowerCase().includes(q))
-    ).slice(0, 12);
-  }, [contacts, custQ]);
 
   const prodHits = useMemo(() => {
     const q = prodQ.trim().toLowerCase();
@@ -161,7 +150,6 @@ export default function FieldSalesPage() {
 
   const pickContact = (c) => {
     setCustomer(c);
-    setCustQ("");
     setNewCust(null);
   };
 
@@ -175,7 +163,6 @@ export default function FieldSalesPage() {
         city: newCust.city || "", address: newCust.address || "", tax_number_or_id: "11111111111",
         category: "Saha Müşterisi",
       });
-      setContacts((list) => [r.data, ...list]);
       pickContact(r.data);
       toast.success("Cari açıldı.");
     } catch (e) {
@@ -269,22 +256,14 @@ export default function FieldSalesPage() {
             </div>
           </div>
         ) : (
-          <div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input value={custQ} onChange={(e) => setCustQ(e.target.value)} placeholder="Cari adı, telefon veya VKN ara…" className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-3 text-base min-h-12" data-testid="saha-customer-search" />
-            </div>
-            {custHits.length > 0 && (
-              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {custHits.map((c) => (
-                  <button key={pid(c)} type="button" onClick={() => pickContact(c)} className="text-left bg-slate-50 hover:bg-emerald-50 border border-slate-200 rounded-xl p-3 min-h-14" data-testid={`saha-customer-${pid(c)}`}>
-                    <div className="font-semibold text-slate-900 truncate">{c.name}</div>
-                    <div className="text-xs text-slate-500 truncate">{[c.phone, c.city].filter(Boolean).join(" · ")}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <ContactSearchSelect
+            companyId={companyId}
+            value=""
+            placeholder="Cari adı, telefon veya VKN ara…"
+            onChange={(id, c) => { if (id && c) pickContact(c); }}
+            testId="saha-customer-search"
+            className="w-full"
+          />
         )}
       </div>
 

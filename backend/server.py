@@ -4183,17 +4183,24 @@ async def search_contacts_api(
     }
 
 
-async def _sync_contact_tax_from_sales_invoice(invoice_type, contact_id, tax_id, tax_office, contact=None):
-    """Satış faturasında girilen VKN/vergi dairesini, kartta boşsa yaz."""
-    if str(invoice_type or "") != "sales" or not contact_id:
+async def _sync_contact_tax_from_sales_invoice(invoice_type, contact_id, tax_id, tax_office, contact=None, company_id=None):
+    """Satış faturasında girilen VKN/vergi dairesini, kartta boşsa yaz.
+
+    Yalnızca faturanın şirketindeki cari güncellenir; başka şirketin contact_id'si
+    ile VKN/vergi dairesi yazılmaz.
+    """
+    if str(invoice_type or "") != "sales" or not contact_id or not company_id:
         return
-    row = contact if contact is not None else await db.contacts.find_one({"_id": contact_id})
+    filt = {"_id": contact_id, "company_id": company_id}
+    row = contact if contact is not None else await db.contacts.find_one(filt)
     if not row:
+        return
+    if str(row.get("company_id") or "") != str(company_id):
         return
     patch = contact_tax_patch(row, tax_id, tax_office)
     if not patch:
         return
-    await db.contacts.update_one({"_id": contact_id}, {"$set": patch})
+    await db.contacts.update_one(filt, {"$set": patch})
 
 
 async def _contact_open_amounts(company_id: Optional[str]) -> dict:
@@ -8106,7 +8113,7 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
 
     _contact_row = None
     if invoice.contact_id:
-        _contact_row = await db.contacts.find_one({"_id": invoice.contact_id})
+        _contact_row = await db.contacts.find_one({"_id": invoice.contact_id, "company_id": invoice.company_id})
     if _contact_row and invoice.invoice_type == "sales":
         await _sync_contact_tax_from_sales_invoice(
             invoice.invoice_type,
@@ -8114,6 +8121,7 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
             invoice.contact_tax_id,
             invoice.contact_tax_office,
             contact=_contact_row,
+            company_id=invoice.company_id,
         )
     if not invoice.due_date and _contact_row and _contact_row.get("payment_term_days"):
         invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_contact_row["payment_term_days"]))).isoformat()
@@ -8424,6 +8432,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             tax_contact_id,
             allowed.get("contact_tax_id", inv.get("contact_tax_id")),
             allowed.get("contact_tax_office", inv.get("contact_tax_office")),
+            company_id=inv["company_id"],
         )
     if "issue_time" in allowed and allowed["issue_time"] is not None:
         t = str(allowed["issue_time"] or "").strip()
