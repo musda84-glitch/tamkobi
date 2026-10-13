@@ -55,6 +55,7 @@ const TrashPage = page(() => import("./pages/TrashPage"));
 const EdocInboxPage = page(() => import("./pages/EdocInboxPage"));
 const SupportPage = page(() => import("./pages/SupportPage"));
 const SystemAdminPage = page(() => import("./pages/SystemAdminPage"));
+const CompanyDetailPage = page(() => import("./pages/CompanyDetailPage"));
 const SystemLoginPage = page(() => import("./pages/SystemLoginPage"));
 const System2FASetupPage = page(() => import("./pages/System2FASetupPage"));
 const WebsiteAdminPage = page(() => import("./pages/WebsiteAdminPage"));
@@ -154,6 +155,7 @@ export default function App() {
                   <Route path="/sistem/2fa-kurulum" element={<System2FASetupPage />} />
                   <Route path="/sistem/web" element={<WebsiteAdminPage />} />
                   <Route path="/sistem" element={<SystemAdminPage section="" />} />
+                  <Route path="/sistem/sirketler/:companyId" element={<CompanyDetailPage />} />
                   <Route path="/sistem/sirketler" element={<SystemAdminPage section="sirketler" />} />
                   <Route path="/sistem/kullanicilar" element={<SystemAdminPage section="kullanicilar" />} />
                   <Route path="/sistem/paketler" element={<SystemAdminPage section="paketler" />} />
