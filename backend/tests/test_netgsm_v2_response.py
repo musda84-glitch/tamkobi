@@ -125,7 +125,9 @@ def test_netgsm_send_error_json(monkeypatch):
     res = asyncio.run(comm_service.netgsm_send(creds, [{"no": "5321234567", "msg": "Merhaba"}]))
     assert res["ok"] is False
     assert res["code"] == "30"
-    assert "şifre" in (res["error"] or "").lower() or "API" in (res["error"] or "")
+    err = res["error"] or ""
+    assert "şifre" in err.lower() or "API" in err
+    assert "invalid auth" not in err
 def test_send_platform_sms_raw_dict_no_500():
     """Reproduce KeyError: slice — provider returns raw dict; must log + return ok=False."""
     platform_sms._db = MagicMock()
@@ -155,6 +157,9 @@ def test_send_platform_sms_raw_dict_no_500():
     assert out["ok"] is False
     assert isinstance(out["detail"], str)
     assert out["detail"]
+    assert "30" in out["detail"]
+    assert "auth" not in out["detail"]
+    assert "https://" not in out["detail"]
     assert out["provider"] == "netgsm"
     platform_sms._db.sms_logs.insert_one.assert_awaited()
 
@@ -215,7 +220,11 @@ def test_send_test_endpoint_200_on_provider_failure():
 
     out = asyncio.run(_run())
     assert out["ok"] is False
-    assert "başarısız" in (out.get("message") or "").lower() or "fail" in (out.get("message") or "").lower()
+    msg = (out.get("message") or "").lower()
+    assert "gönderilemedi" in msg or "başarısız" in msg
+    assert "30" in (out.get("message") or "")
+    assert "auth fail" not in (out.get("message") or "")
+    assert "auth fail" not in (out.get("detail") or "")
     # endpoint itself must not raise → 200 at HTTP layer
     platform_sms._db.platform_settings.update_one.assert_awaited()
     assert captured.get("message")

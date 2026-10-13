@@ -33,22 +33,24 @@ from xml.sax.saxutils import escape as xml_esc
 import httpx
 from fastapi import HTTPException
 
+from safe_error import as_text, mask_sensitive_text, public_provider_detail, provider_error_code
+
 logger = logging.getLogger(__name__)
 
 
 def _as_text(value: Any) -> str:
     """Response gövdesini metne çevir. dict/response [:n] KeyError('slice(...)') üretir."""
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
-    if isinstance(value, str):
-        return value
-    try:
-        import json
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        return str(value)
+    return as_text(value)
+
+
+def _provider_http_exc(status: int, public_msg: str, raw: Any, *, log: str) -> HTTPException:
+    """Ham gövdeyi maskeleyip logla; kullanıcıya kısa Türkçe + kod döndür."""
+    text = _as_text(raw)
+    logger.warning("%s: %s", log, mask_sensitive_text(text)[:2000])
+    return HTTPException(
+        status_code=status,
+        detail=public_provider_detail(public_msg, text),
+    )
 
 # --- Endpoints: İşNet resmi SOAP + NetteFatura portal ---
 LIVE_API = "https://einvoiceapi.isnet.net.tr"
@@ -256,7 +258,13 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
                 last_detail = "İşNet kullanıcı adı veya şifre hatalı."
                 continue
             if r.status_code >= 400:
-                last_detail = f"İşNet Login HTTP {r.status_code}: {(r.text or '')[:180]}"
+                body = _as_text(getattr(r, "text", "") or "")
+                logger.warning(
+                    "İşNet Login HTTP %s: %s",
+                    r.status_code,
+                    mask_sensitive_text(body)[:2000],
+                )
+                last_detail = public_provider_detail("İşNet girişi başarısız.", body)
                 continue
             try:
                 data = r.json() if r.content else {}
@@ -1093,26 +1101,43 @@ async def _soap_call(
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
     except httpx.RequestError as e:
+        logger.warning(
+            "İşNet SOAP unreachable (%s): %s",
+            action,
+            mask_sensitive_text(_soap_unreachable_hint(e) or str(e))[:2000],
+        )
         raise HTTPException(
             status_code=502,
-            detail=f"İşNet SOAP'a ulaşılamadı ({action}): {_soap_unreachable_hint(e)}",
+            detail="Entegratör SOAP'a ulaşılamadı.",
         ) from e
     text = _as_text(getattr(resp, "text", "") or "")
     if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=502, detail=f"İşNet SOAP HTTP {resp.status_code} ({action}): {text[:300]}"
+        raise _provider_http_exc(
+            502,
+            "Entegratör SOAP yanıtı alınamadı.",
+            text,
+            log=f"İşNet SOAP HTTP {resp.status_code} ({action})",
         )
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
-        raise HTTPException(status_code=502, detail=f"İşNet SOAP XML parse ({action}): {e}") from e
+        logger.warning(
+            "İşNet SOAP XML parse (%s): %s body=%s",
+            action,
+            e,
+            mask_sensitive_text(text)[:2000],
+        )
+        raise HTTPException(status_code=502, detail="Entegratör SOAP yanıtı okunamadı.") from e
     body = root.find(".//{http://schemas.xmlsoap.org/soap/envelope/}Body")
     if body is None:
         body = root
     fault = _find_text(body, "faultstring", "FaultString", "Message")
     if body is not None and any(_local(c.tag).lower() == "fault" for c in list(body)):
-        raise HTTPException(
-            status_code=502, detail=f"İşNet SOAP Fault ({action}): {fault or 'bilinmeyen'}"
+        raise _provider_http_exc(
+            502,
+            "Entegratör SOAP hatası.",
+            fault or text,
+            log=f"İşNet SOAP Fault ({action})",
         )
     _assert_soap_execution_ok(body, action)
     return body
@@ -2741,10 +2766,16 @@ async def get_document_viewer_link(
     pdf = _find_text(body, "PdfUrl") or ""
     url = html or pdf
     if not url:
+        raw = _find_text(body, "Message", "ErrorMessage")
+        if raw:
+            logger.info(
+                "isnet viewer link empty ettn=%s: %s",
+                ettn,
+                mask_sensitive_text(raw)[:2000],
+            )
         raise HTTPException(
             status_code=404,
-            detail=_find_text(body, "Message", "ErrorMessage")
-            or "İşNet görüntüleme linki dönmedi.",
+            detail=public_provider_detail("İşNet görüntüleme linki dönmedi.", raw),
         )
     return {"html_url": html, "pdf_url": pdf, "url": url}
 
@@ -2825,22 +2856,26 @@ async def _http_get_invoice_pdf(settings: dict, key: str) -> bytes:
                 },
             )
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"İşNet PDF indirilemedi: {e}") from e
+        logger.warning("İşNet PDF indirilemedi: %s", mask_sensitive_text(str(e))[:2000])
+        raise HTTPException(status_code=502, detail="Entegratör PDF alınamadı.") from e
     if r.status_code >= 400 or not r.content:
         body = _as_text(getattr(r, "text", "") or "")
         snippet = _isnet_error_snippet(r.content, body)
-        raise HTTPException(
-            status_code=502,
-            detail=snippet or f"İşNet PDF HTTP {r.status_code}: {body[:200]}",
+        raise _provider_http_exc(
+            502,
+            "Entegratör PDF alınamadı.",
+            body or snippet,
+            log=f"İşNet PDF HTTP {r.status_code}",
         )
     ctype = (r.headers.get("content-type") or "").lower()
     if "pdf" not in ctype and not r.content.startswith(b"%PDF"):
         body = _as_text(getattr(r, "text", "") or "")
         snippet = _isnet_error_snippet(r.content, body)
-        raise HTTPException(
-            status_code=502,
-            detail=snippet
-            or "İşNet PDF yanıtı geçersiz (PDF değil). Fatura NetteFatura'da henüz hazır olmayabilir.",
+        raise _provider_http_exc(
+            502,
+            "Entegratör PDF alınamadı.",
+            body or snippet,
+            log="İşNet PDF yanıtı geçersiz",
         )
     return bytes(r.content)
 
@@ -3053,7 +3088,12 @@ async def download_invoice_pdf(
             return await _http_get_invoice_pdf(settings, key)
         except HTTPException as e:
             errors.append(f"{label}: {e.detail}")
-            logger.info("isnet pdf miss %s ettn=%s: %s", label, ettn, e.detail)
+            logger.info(
+                "isnet pdf miss %s ettn=%s: %s",
+                label,
+                ettn,
+                mask_sensitive_text(str(e.detail))[:2000],
+            )
             return None
 
     stored = (viewer_url or "").strip()
@@ -3084,6 +3124,11 @@ async def download_invoice_pdf(
                 )
             except HTTPException as e:
                 errors.append(f"viewer({et}{',no' if try_no else ''}): {e.detail}")
+                logger.info(
+                    "isnet pdf viewer miss ettn=%s: %s",
+                    ettn,
+                    mask_sensitive_text(str(e.detail))[:2000],
+                )
                 continue
             candidates = [
                 (link.get("pdf_url") or "", "PdfUrl"),
@@ -3116,12 +3161,23 @@ async def download_invoice_pdf(
                 return out
         except HTTPException as e:
             errors.append(f"search-doc({et}): {e.detail}")
-            logger.info("isnet pdf search-doc miss ettn=%s: %s", ettn, e.detail)
+            logger.info(
+                "isnet pdf search-doc miss ettn=%s: %s",
+                ettn,
+                mask_sensitive_text(str(e.detail))[:2000],
+            )
 
-    detail = errors[-1] if errors else "İşNet PDF anahtarı (key) bulunamadı."
-    if len(errors) > 1:
-        detail = f"{detail} ({len(errors)} deneme)"
-    raise HTTPException(status_code=502, detail=detail)
+    joined = "; ".join(errors) if errors else "İşNet PDF anahtarı (key) bulunamadı."
+    logger.warning("isnet pdf failed ettn=%s: %s", ettn, mask_sensitive_text(joined)[:2000])
+    code = ""
+    for err in reversed(errors):
+        code = provider_error_code(err)
+        if code:
+            break
+    raise HTTPException(
+        status_code=502,
+        detail=public_provider_detail("Entegratör PDF alınamadı.", joined, code=code),
+    )
 
 
 async def download_invoice_xml(
@@ -3195,6 +3251,11 @@ async def download_invoice_xml(
                 )
             except HTTPException as e:
                 errors.append(f"viewer({et}): {e.detail}")
+                logger.info(
+                    "isnet xml viewer miss ettn=%s: %s",
+                    ettn,
+                    mask_sensitive_text(str(e.detail))[:2000],
+                )
                 continue
             candidates = [
                 (link.get("url") or "", "viewer"),
@@ -3213,10 +3274,17 @@ async def download_invoice_xml(
                 if out:
                     return out
 
-    detail = errors[-1] if errors else "İşNet XML anahtarı (key) bulunamadı."
-    if len(errors) > 1:
-        detail = f"{detail} ({len(errors)} deneme)"
-    raise HTTPException(status_code=502, detail=detail)
+    joined = "; ".join(errors) if errors else "İşNet XML anahtarı (key) bulunamadı."
+    logger.warning("isnet xml failed ettn=%s: %s", ettn, mask_sensitive_text(joined)[:2000])
+    code = ""
+    for err in reversed(errors):
+        code = provider_error_code(err)
+        if code:
+            break
+    raise HTTPException(
+        status_code=502,
+        detail=public_provider_detail("Entegratör XML alınamadı.", joined, code=code),
+    )
 
 
 def _decode_xml_payload(payload: str) -> Optional[bytes]:

@@ -22,6 +22,7 @@ import isnet
 import isnet_portal
 import ubl_export
 from invoice_edit_lock import invoice_gib_locked
+from safe_error import mask_sensitive_text, public_provider_detail
 
 _TR_TZ = ZoneInfo("Europe/Istanbul")
 
@@ -176,7 +177,12 @@ async def resolve_buyer_mukellef(
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"{src_label} GİB sorgusu başarısız: {e}")
+            logger.warning(
+                "GIB lookup failed provider=%s: %s",
+                provider,
+                mask_sensitive_text(str(e))[:2000],
+            )
+            raise HTTPException(status_code=502, detail=f"{src_label} GİB sorgusu başarısız.") from e
         is_efatura = bool(remote.get("is_e_invoice_user"))
         alias = remote.get("alias") or (f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None)
         msg = (
@@ -715,7 +721,12 @@ async def issue_invoice(
                 {"_id": invoice_id},
                 {"$set": {"einvoice_state": "error", "gib_status": f"Hata: {e}", "gib_error": str(e)[:500], "error_at": _now()}},
             )
-            raise HTTPException(status_code=502, detail=f"Entegratör gönderimi başarısız: {e}") from e
+            logger.warning(
+                "integrator send failed invoice=%s: %s",
+                invoice_id,
+                mask_sensitive_text(str(e))[:2000],
+            )
+            raise HTTPException(status_code=502, detail="Entegratör gönderimi başarısız.") from e
 
         tracking = (sent.get("ettn") or "").strip()
         # İşNet: yalnızca UUID ETTN — yerel fatura no ile sahte «iletildi» yok
@@ -977,9 +988,17 @@ async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
                 "message": "n11 Faturam kontör sorgusu bu uçtan desteklenmiyor.",
             }
     except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=f"{label} kontör sorgusu: {e.detail}") from e
+        logger.warning(
+            "integrator credit query: %s",
+            mask_sensitive_text(str(getattr(e, "detail", e)))[:2000],
+        )
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=public_provider_detail(f"{label} kontör sorgusu başarısız.", e.detail),
+        ) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Entegratör kontör sorgusu başarısız: {e}") from e
+        logger.warning("integrator credit query failed: %s", mask_sensitive_text(str(e))[:2000])
+        raise HTTPException(status_code=502, detail="Entegratör kontör sorgusu başarısız.") from e
 
     raw = bal.get("remaining_credit") or bal.get("balance") or bal.get("total_credit") or ""
     digits = re.sub(r"[^\d.]", "", str(raw))
@@ -1436,11 +1455,19 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
         )
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-        logger.warning("fetch_integrator_pdf: %s → %s", invoice_id, detail)
-        raise HTTPException(status_code=exc.status_code or 502, detail=detail) from exc
+        logger.warning(
+            "fetch_integrator_pdf: %s → %s",
+            invoice_id,
+            mask_sensitive_text(detail)[:2000],
+        )
+        status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
+        raise HTTPException(
+            status_code=status,
+            detail=public_provider_detail("Entegratör belgesi alınamadı.", detail),
+        ) from exc
     except Exception as exc:
         logger.exception("fetch_integrator_pdf failed for %s", invoice_id)
-        raise HTTPException(status_code=502, detail=f"Entegratör PDF hatası: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Entegratör belgesi alınamadı.") from exc
 
 
 async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:

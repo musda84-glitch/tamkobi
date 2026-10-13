@@ -272,18 +272,27 @@ async def invoice_pdf(
                     ),
                 )
         except HTTPException as exc:
+            from safe_error import mask_sensitive_text, public_provider_detail
+
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-            logger.warning("invoice pdf integrator %s: %s", invoice_id, detail)
+            logger.warning(
+                "invoice pdf integrator %s: %s",
+                invoice_id,
+                mask_sensitive_text(detail)[:2000],
+            )
             if require_integrator:
                 status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
-                raise HTTPException(status_code=status, detail=detail) from exc
+                raise HTTPException(
+                    status_code=status,
+                    detail=public_provider_detail("Entegratör belgesi alınamadı.", detail),
+                ) from exc
             # wants_integrator ama require yok → yerel şablona düş
         except Exception as e:
             logger.exception("invoice pdf integrator failed for %s", invoice_id)
             if require_integrator:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Entegratör PDF hatası: {e}",
+                    detail="Entegratör belgesi alınamadı.",
                 ) from e
     seller = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
