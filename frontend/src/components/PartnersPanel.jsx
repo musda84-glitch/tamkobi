@@ -463,7 +463,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         {partners.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-6 bg-white border border-dashed rounded-2xl">Henüz ortak tanımlanmadı.</div>}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="partner-tx-section">
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-hidden min-w-0" data-testid="partner-tx-section">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
           <div className="text-sm font-bold text-slate-900">
             Ortak Hareketleri

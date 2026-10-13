@@ -18,6 +18,7 @@ import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
 import { archivedAssignedDuties, dutyFromCurrent, openAssignedDuties, pendingDutyPhotoCount } from "../utils/assignedDuty";
 import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
@@ -543,10 +544,53 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                     </span>
                   ) : null}
                 </div>
-                <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
-                  <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id} data-testid={`emp-salary-row-${p.id}`}><td className="py-1.5 font-semibold">{p.period}{isDailyWage(p) ? <div className="text-[10px] font-medium text-amber-700">{payrollWageLine(p)}</div> : null}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><div className="flex items-center justify-end gap-1.5"><Badge s={p.status} />{payMoveCanDelete({ id: p.id, kind: "payroll", status: p.status }) ? <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-salary-del-${p.id}`} onClick={() => deletePayroll(p)}>sil</button> : null}</div></td></tr>)}</tbody></table>
+                <TxResponsiveList
+                  cardsTestId="emp-salary-cards"
+                  tableWrapTestId="emp-salary-table-wrap"
+                  cards={card.payrolls.length === 0 ? <div className="text-center text-slate-400 py-4">Bordro kaydı yok.</div> : card.payrolls.map((p) => (
+                    <TxMobileCard
+                      key={`card-${p.id}`}
+                      testId={`emp-salary-card-${p.id}`}
+                      date={p.period}
+                      party={isDailyWage(p) ? "Yevmiye" : "Maaş"}
+                      badge={<TxTypeBadge label={p.status === "paid" ? "Giriş" : "Bekliyor"} kind={p.status === "paid" ? "giriş" : "other"} />}
+                      amount={`${fmt(p.net_salary)} ₺`}
+                      description={[isDailyWage(p) ? payrollWageLine(p) : "", `Brüt ${fmt(p.gross_salary)} ₺`, p.bonus ? `Prim ${fmt(p.bonus)} ₺` : ""].filter(Boolean).join(" · ")}
+                      actions={payMoveCanDelete({ id: p.id, kind: "payroll", status: p.status }) ? <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-salary-card-del-${p.id}`} onClick={() => deletePayroll(p)}>sil</button> : null}
+                    />
+                  ))}
+                  table={(
+                    <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
+                      <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id} data-testid={`emp-salary-row-${p.id}`}><td className={`py-1.5 font-semibold ${TX_WRAP_CLASS}`}>{p.period}{isDailyWage(p) ? <div className="text-[10px] font-medium text-amber-700">{payrollWageLine(p)}</div> : null}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><div className="flex items-center justify-end gap-1.5"><Badge s={p.status} />{payMoveCanDelete({ id: p.id, kind: "payroll", status: p.status }) ? <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-salary-del-${p.id}`} onClick={() => deletePayroll(p)}>sil</button> : null}</div></td></tr>)}</tbody></table>
+                  )}
+                />
                 <div>
                   <div className="text-[10px] uppercase font-semibold text-slate-400 mb-1">Avans / prim / masraf</div>
+                  <TxResponsiveList
+                    cardsTestId="emp-bonus-cards"
+                    tableWrapTestId="emp-bonus-table-wrap"
+                    cards={!(card.bonuses || []).length ? <div className="text-center text-slate-400 py-4">Avans veya prim yok.</div> : (card.bonuses || []).map((b) => {
+                      const paidOn = bonusPaidDate(b);
+                      const yevmiyeLine = b.type === "yevmiye" && b.worked_days ? `${b.worked_days} gün${b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}` : "";
+                      return (
+                        <TxMobileCard
+                          key={`card-${b.id}`}
+                          testId={`emp-bonus-card-${b.id}`}
+                          date={b.period || paidOn || ""}
+                          party={b.type_label || b.type}
+                          badge={<TxTypeBadge label={String(b.type) === "advance" ? "Çıkış" : "Giriş"} kind={String(b.type) === "advance" ? "çıkış" : "giriş"} />}
+                          amount={`${fmt(b.amount)} ₺`}
+                          description={[yevmiyeLine, b.account_name, b.note, paidOn ? `Ödeme ${formatTrDate(paidOn)}` : ""].filter(Boolean).join(" · ")}
+                          actions={b.type === "yevmiye" && b.status !== "paid" ? (
+                            <>
+                              <button type="button" className="text-[10px] text-indigo-700 font-semibold" onClick={() => setYevmiyeOpen({ editId: b.id, haveDays: 0, initialDays: String(b.worked_days || ""), initialWage: String(b.daily_wage || e.daily_wage || ""), initialNote: b.note || "" })}>düzenle</button>
+                              <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-yevmiye-card-del-${b.id}`} onClick={async () => { if (!window.confirm("Bu yevmiye kaydı silinsin mi?")) return; try { await axios.delete(`${API_URL}/personnel/bonuses/${b.id}`); toast.success("Yevmiye kaydı silindi."); afterMoney(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }}>sil</button>
+                            </>
+                          ) : null}
+                        />
+                      );
+                    })}
+                    table={(
                   <table className="w-full" data-testid="emp-bonus-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Dönem</th><th className="text-left">Hesap</th><th className="text-right">Tutar</th><th className="text-right">Ödeme</th><th className="text-right">Durum</th></tr></thead>
                     <tbody className="divide-y">
                       {!(card.bonuses || []).length && <tr><td colSpan={6} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}
@@ -554,14 +598,14 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                         const paidOn = bonusPaidDate(b);
                         return (
                           <tr key={b.id} data-testid={`emp-bonus-row-${b.id}`}>
-                            <td className="py-1.5 font-semibold">
+                            <td className={`py-1.5 font-semibold ${TX_WRAP_CLASS}`}>
                               {b.type_label || b.type}
                               {b.type === "yevmiye" && b.worked_days ? (
                                 <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div>
                               ) : null}
                             </td>
                             <td>{b.period || "—"}</td>
-                            <td className="text-slate-500">{b.account_name || b.note || "—"}</td>
+                            <td className={`text-slate-500 ${TX_WRAP_CLASS}`}>{b.account_name || b.note || "—"}</td>
                             <td className="text-right font-bold">{fmt(b.amount)} ₺</td>
                             <td className="text-right text-slate-600 font-medium whitespace-nowrap" data-testid={`emp-bonus-paid-on-${b.id}`}>{paidOn ? formatTrDate(paidOn) : "—"}</td>
                             <td className="text-right">
@@ -578,6 +622,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                       })}
                     </tbody>
                   </table>
+                    )}
+                  />
                 </div>
               </div>
             )}

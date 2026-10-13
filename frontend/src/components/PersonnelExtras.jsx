@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
 import { LEAVE_TYPES, leaveRowActions, leaveStatusView } from "../utils/leaveRequests";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -122,13 +123,31 @@ export const BonusPanel = ({ companyId, employees, accounts, onChanged }) => {
         <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Not" className={inputCls} />
         <button type="submit" className="w-full py-2 bg-amber-500 text-white rounded-lg font-semibold" data-testid="save-bonus-btn">Kaydet</button>
       </form>
-      <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl overflow-x-hidden min-w-0">
         <div className="px-4 py-2.5 border-b text-xs font-bold text-slate-900 flex justify-between"><span>Prim / İkinci Maaş Kayıtları</span><span className="text-slate-500 font-medium">{form.period} toplamı: <b className="text-amber-700">{fmt(total)} ₺</b></span></div>
-        <table className="w-full text-left text-xs"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Dönem</th><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Tür</th><th className="px-4 py-2">Kaynak</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2"></th></tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {bonuses.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">Kayıt yok.</td></tr>}
-            {bonuses.map((b) => <tr key={b.id} data-testid={`bonus-row-${b.id}`}><td className="px-4 py-2 font-mono text-slate-500">{b.period}</td><td className="px-4 py-2 font-semibold text-slate-900">{b.employee_name}</td><td className="px-4 py-2"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-bold">{b.type_label}</span></td><td className="px-4 py-2 text-slate-500">{b.account_name || "Ödenmedi"}</td><td className="px-4 py-2 text-right font-bold">{fmt(b.amount)} ₺</td><td className="px-4 py-2 text-right"><button onClick={() => remove(b.id)} className="text-slate-300 hover:text-rose-600" data-testid={`delete-bonus-${b.id}`}><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
-          </tbody></table>
+        <TxResponsiveList
+          cardsTestId="bonus-tx-cards"
+          tableWrapTestId="bonus-tx-table-wrap"
+          cards={bonuses.length === 0 ? <div className="text-center text-slate-400 py-6">Kayıt yok.</div> : bonuses.map((b) => (
+            <TxMobileCard
+              key={`card-${b.id}`}
+              testId={`bonus-card-${b.id}`}
+              date={b.period}
+              party={b.employee_name}
+              badge={<TxTypeBadge label={b.type_label || b.type} kind={String(b.type) === "advance" ? "çıkış" : "giriş"} />}
+              amount={`${fmt(b.amount)} ₺`}
+              description={b.account_name || "Ödenmedi"}
+              actions={<button onClick={() => remove(b.id)} className="text-slate-400 hover:text-rose-600 p-1.5" data-testid={`card-delete-bonus-${b.id}`}><Trash2 className="w-3.5 h-3.5" /></button>}
+            />
+          ))}
+          table={(
+            <table className="w-full text-left text-xs"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Dönem</th><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Tür</th><th className="px-4 py-2">Kaynak</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2"></th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {bonuses.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">Kayıt yok.</td></tr>}
+                {bonuses.map((b) => <tr key={b.id} data-testid={`bonus-row-${b.id}`}><td className="px-4 py-2 font-mono text-slate-500">{b.period}</td><td className={`px-4 py-2 font-semibold text-slate-900 ${TX_WRAP_CLASS}`}>{b.employee_name}</td><td className="px-4 py-2"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-bold">{b.type_label}</span></td><td className={`px-4 py-2 text-slate-500 ${TX_WRAP_CLASS}`}>{b.account_name || "Ödenmedi"}</td><td className="px-4 py-2 text-right font-bold">{fmt(b.amount)} ₺</td><td className="px-4 py-2 text-right"><button onClick={() => remove(b.id)} className="text-slate-300 hover:text-rose-600" data-testid={`delete-bonus-${b.id}`}><Trash2 className="w-3.5 h-3.5" /></button></td></tr>)}
+              </tbody></table>
+          )}
+        />
       </div>
     </div>
   );

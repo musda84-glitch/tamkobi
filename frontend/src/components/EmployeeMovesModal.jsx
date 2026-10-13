@@ -8,6 +8,7 @@ import { empIdOf } from "../utils/personnelIds";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { TxMobileCard, TxTypeBadge } from "./TxMobileCard";
 import {
   employeePayMoves,
   filterPayMoves,
@@ -554,13 +555,16 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
               {busy ? <div className="text-slate-400">Yükleniyor…</div> : null}
               {!busy && !shownPay.length ? <div className="text-slate-400">Bu dönemde ödeme hareketi yok.</div> : null}
               {shownPay.map((row) => (
-                <div key={row.id} data-testid={`emp-pay-move-${row.id}`} className="flex items-start gap-2 py-2.5 border-b border-slate-100">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-extrabold text-slate-900">{row.title}</div>
-                    <div className="text-slate-500">{row.subtitle}</div>
-                    <div className={`font-extrabold ${row.title === "Avans" ? "text-amber-700" : "text-slate-900"}`}>{fmtPayMoveAmount(row.amount)}</div>
-                  </div>
-                  {payMoveCanDelete(row, canEdit) ? (
+                <TxMobileCard
+                  key={row.id}
+                  testId={`emp-pay-move-${row.id}`}
+                  date={row.date}
+                  party={row.title}
+                  badge={<TxTypeBadge label={row.title === "Avans" ? "Çıkış" : "Giriş"} kind={row.title === "Avans" ? "çıkış" : "giriş"} />}
+                  amount={fmtPayMoveAmount(row.amount)}
+                  amountClassName={row.title === "Avans" ? "text-amber-700" : "text-slate-900"}
+                  description={row.subtitle}
+                  actions={payMoveCanDelete(row, canEdit) ? (
                     <button
                       type="button"
                       data-testid={`emp-pay-move-del-${row.id}`}
@@ -573,7 +577,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
                       <Trash2 className="w-3 h-3" /> Sil
                     </button>
                   ) : null}
-                </div>
+                />
               ))}
             </>
           )}

@@ -5,6 +5,7 @@ import { Loader2, Building2, AlertTriangle, FileDown } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmtDate, fmtMoney } from "../utils/money";
+import { StatementTxList } from "../components/StatementTxList";
 
 export default function StatementPublicPage() {
   const { token } = useParams();
@@ -51,25 +52,13 @@ export default function StatementPublicPage() {
               <div className={`text-lg font-black ${bal > 0 ? "text-rose-700" : bal < 0 ? "text-emerald-700" : "text-slate-800"}`}>{money(Math.abs(bal))} <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs" data-testid="public-statement-table">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold">
-                <tr><th className="py-2 px-2">Tarih</th><th className="py-2 px-2">Belge</th><th className="py-2 px-2 text-right">Borç</th><th className="py-2 px-2 text-right">Alacak</th><th className="py-2 px-2 text-right">Bakiye</th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
-                {rows.map((r, i) => (
-                  <tr key={`${r.date}-${i}`} data-testid={`public-statement-row-${i}`}>
-                    <td className="py-2 px-2 font-mono text-slate-500">{fmtDate(r.date)}</td>
-                    <td className="py-2 px-2 font-semibold text-slate-800">{r.doc}</td>
-                    <td className="py-2 px-2 text-right text-rose-700">{r.debit ? money(r.debit) : "—"}</td>
-                    <td className="py-2 px-2 text-right text-emerald-700">{r.credit ? money(r.credit) : "—"}</td>
-                    <td className="py-2 px-2 text-right font-bold">{money(r.balance)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <StatementTxList
+            rows={rows}
+            currency={ccy}
+            tableTestId="public-statement-table"
+            rowTestId={(_r, i) => `public-statement-row-${i}`}
+            cellPad="py-2 px-2"
+          />
           {data.issued_at && <p className="text-[11px] text-slate-400">Oluşturulma: {fmtDate(data.issued_at)}. Bu sayfa yalnızca görüntülemedir.</p>}
         </div>
       </div>

@@ -27,6 +27,8 @@ import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { ContactPayMenu } from "./ContactPayMenu";
 import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
+import { StatementTxList } from "./StatementTxList";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
 import { shareStatementLink } from "../utils/statementShare";
 import {
   buildContactPayForm,
@@ -813,7 +815,40 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               </tbody>
             </table>
           )}
-          {tab === "payments" && (
+          {tab === "payments" && (() => {
+            const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : p.account_name);
+            const payDesc = (p) => (isContactLedgerPay(p) ? (p.description || p.category) : `${p.category || ""} • ${p.description || ""}`.replace(/^ • | • $/g, ""));
+            const payActions = (p, prefix) => (
+              <div className="flex flex-wrap justify-end gap-1">
+                <button type="button" onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`${prefix}receipt-btn-${p.id}`}>Makbuz</button>
+                <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`${prefix}pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`${prefix}pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
+              </div>
+            );
+            const cards = data.payments.length === 0 ? (
+              <div className="text-center text-xs text-slate-400 py-6">Ödeme hareketi yok.</div>
+            ) : (
+              data.payments.map((p) => (
+                <TxMobileCard
+                  key={`card-${p.id}`}
+                  testId={`detail-pay-card-${p.id}`}
+                  date={p.date}
+                  party={payParty(p)}
+                  badge={(
+                    <>
+                      <TxTypeBadge label={p.type === "inflow" ? "Giriş" : "Çıkış"} kind={p.type} />
+                      {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}
+                      {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}
+                    </>
+                  )}
+                  amount={`${p.type === "inflow" ? "+" : "-"}${fmt(p.amount)}`}
+                  amountClassName={p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}
+                  description={payDesc(p)}
+                  actions={payActions(p, "card-")}
+                />
+              ))
+            );
+            const table = (
             <table className="w-full text-left">
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Tarih</th><th className="py-2">Hesap</th><th className="py-2">Açıklama</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
@@ -821,21 +856,26 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {data.payments.map((p) => (
                   <tr key={p.id} data-testid={`detail-pay-${p.id}`}>
                     <td className="py-2 font-mono text-slate-500">{p.date}</td>
-                    <td className="py-2 font-semibold">{isContactLedgerPay(p) ? contactPaymentDocLabel(p) : p.account_name} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
-                    <td className="py-2 text-slate-600">{isContactLedgerPay(p) ? (p.description || p.category) : `${p.category} • ${p.description}`}</td>
+                    <td className={`py-2 font-semibold ${TX_WRAP_CLASS}`}>{payParty(p)} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
+                    <td className={`py-2 text-slate-600 ${TX_WRAP_CLASS}`}>{payDesc(p)}</td>
                     <td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)}</td>
                     <td className="py-2 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button type="button" onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`receipt-btn-${p.id}`}>Makbuz</button>
-                        <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
-                        <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
-                      </div>
+                      {payActions(p, "")}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
+            );
+            return (
+              <TxResponsiveList
+                cards={cards}
+                table={table}
+                cardsTestId="detail-pay-cards"
+                tableWrapTestId="detail-pay-table-wrap"
+              />
+            );
+          })()}
           {tab === "b2b" && (
             <ContactB2BPortalPanel
               contactId={c.id || c._id || contactId}
@@ -1062,7 +1102,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         )}
         {statementView && statementView.mode !== "reconciliation" && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setStatementView(null))} data-testid="detail-statement-modal">
-            <div className="bg-white rounded-2xl max-w-[min(960px,calc(100vw-2rem))] w-full p-5 space-y-3 text-xs shadow-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl max-w-[min(960px,calc(100vw-2rem))] w-full p-5 space-y-3 text-xs shadow-2xl max-h-[85vh] overflow-y-auto overflow-x-hidden min-w-0" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between border-b pb-2 gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">{c.name} — {statementView.mode === "detailed" ? "Detaylı Ekstre" : "Cari Ekstre"}</h3>
@@ -1071,29 +1111,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <button type="button" onClick={() => setStatementView(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
               </div>
               <StatementShareBar contact={c} rows={statementView.rows} companyId={c.company_id} />
-              <table className="w-full text-left" data-testid="detail-statement-table">
-                <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold text-[10px]">
-                  <tr>
-                    <th className="py-2 px-2">Tarih</th>
-                    <th className="py-2 px-2">Belge / Açıklama</th>
-                    <th className="py-2 px-2 text-right">Borç</th>
-                    <th className="py-2 px-2 text-right">Alacak</th>
-                    <th className="py-2 px-2 text-right">Bakiye</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {statementView.rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
-                  {statementView.rows.map((r, idx) => (
-                    <tr key={`${r.kind}-${idx}`} className={r.kind === "payment" ? "bg-emerald-50/40" : r.kind === "cheque" ? "bg-indigo-50/40" : ""}>
-                      <td className="py-1.5 px-2 font-mono text-slate-500">{fmtDate(r.date)}</td>
-                      <td className="py-1.5 px-2 font-semibold text-slate-800">{r.doc}</td>
-                      <td className="py-1.5 px-2 text-right text-rose-700">{r.debit ? fmt(r.debit) : "—"}</td>
-                      <td className="py-1.5 px-2 text-right text-emerald-700">{r.credit ? fmt(r.credit) : "—"}</td>
-                      <td className={`py-1.5 px-2 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmt(r.balance)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <StatementTxList
+                rows={statementView.rows}
+                currency={c.currency || "TRY"}
+                tableTestId="detail-statement-table"
+              />
             </div>
           </div>
         )}
