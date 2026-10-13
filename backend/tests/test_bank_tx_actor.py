@@ -106,6 +106,22 @@ def test_stamp_bank_sync_clears_platform_crm_actor():
         bank_tx.reset_current_actor(tok)
 
 
+def test_stamp_bank_sync_never_uses_session_user():
+    """Otomatik banka aktarımında oturumdaki şirket kullanıcısı created_by olmasın."""
+    tok = bank_tx.set_current_actor({"id": "u9", "name": "Mehmet", "email": "m@firma.com"})
+    try:
+        doc = {"source": "bank_sync", "amount": 50, "description": "EFT"}
+        bank_tx.stamp(doc)
+        assert not doc.get("created_by_name")
+        assert not doc.get("created_by_id")
+        # Önceden yazılmış ad da temizlenir
+        doc2 = {"source": "bank_sync", "created_by_name": "Mehmet", "created_by_id": "u9"}
+        bank_tx.stamp(doc2)
+        assert not doc2.get("created_by_name")
+    finally:
+        bank_tx.reset_current_actor(tok)
+
+
 def test_stamp_explicit_user_name_on_doc():
     doc = {"user_name": "Ali Veli", "amount": 5}
     bank_tx.stamp(doc)

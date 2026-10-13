@@ -17,6 +17,10 @@ _BRAND_ALIASES = frozenset({"tamkobi", "tamkobi.com", "nexus", "nexus.com"})
 _PLATFORM_EMAIL_DOMAINS = frozenset({"tamkobi.com", "tamkobi.com.tr"})
 _PLATFORM_EMAIL_LOCAL = re.compile(r"^tamkobi([.+_-]|$)", re.I)
 
+# Banka entegrasyonu / ekstre içe aktarma — oturum kullanıcısı created_by olmasın.
+AUTO_IMPORT_SOURCES = frozenset({"bank_sync", "card_statement", "bank_statement"})
+SYSTEM_BANK_IMPORT_LABEL = "Sistem (Banka aktarımı)"
+
 
 def _looks_like_site_brand(value: str) -> bool:
     s = (value or "").strip()
@@ -96,48 +100,43 @@ def current_actor() -> Optional[Dict[str, Any]]:
 
 
 def stamp(doc: Optional[Dict[str, Any]], user: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """created_by_* yoksa veya yasaklı (marka/platform e-posta) ise mevcut aktör ile doldur."""
+    """created_by_* yoksa veya yasaklı (marka/platform e-posta) ise mevcut aktör ile doldur.
+
+    Banka senkron / ekstre içe aktarmada oturum kullanıcısı yazılmaz (boş kalır).
+    """
     if not isinstance(doc, dict):
         return doc
     existing = (doc.get("created_by_name") or "").strip()
-    if existing and not _is_forbidden_actor_label(existing):
-        return doc
-    # Banka senkron hareketinde platform personeli «oluşturan» olmasın → UI «Banka» gösterir.
     src = str(doc.get("source") or "")
-    actor = user if user is not None else _actor.get()
-    if src == "bank_sync" and actor and (
-        actor.get("is_super_admin") or actor.get("is_platform_staff")
-        or _is_platform_actor_email(str(actor.get("email") or ""))
-    ):
-        doc.pop("user_name", None)
-        doc.pop("actor_name", None)
-        if existing and _is_forbidden_actor_label(existing):
+    explicit = (doc.get("user_name") or doc.get("actor_name") or "").strip()
+    explicit_id = doc.get("user_id") or doc.get("actor_id")
+    doc.pop("user_name", None)
+    doc.pop("actor_name", None)
+
+    # Otomatik banka/ekstre: created_by her zaman boş (UI: Sistem (Banka aktarımı)).
+    if src in AUTO_IMPORT_SOURCES:
+        if existing or doc.get("created_by_id"):
             doc["created_by_name"] = None
             doc["created_by_id"] = None
         return doc
-    # İstek gövdesinden gelen açık alanlar
-    explicit = (doc.get("user_name") or doc.get("actor_name") or "").strip()
+
+    if existing and not _is_forbidden_actor_label(existing):
+        return doc
+
     if explicit and not _is_forbidden_actor_label(explicit):
         doc["created_by_name"] = explicit[:120]
-        if doc.get("user_id") or doc.get("actor_id"):
-            doc["created_by_id"] = str(doc.get("user_id") or doc.get("actor_id"))
-        doc.pop("user_name", None)
-        doc.pop("actor_name", None)
+        if explicit_id:
+            doc["created_by_id"] = str(explicit_id)
         return doc
-    doc.pop("user_name", None)
-    doc.pop("actor_name", None)
+
+    actor = user if user is not None else _actor.get()
     fields = actor_fields(actor)
     if fields.get("created_by_name"):
         doc["created_by_name"] = fields["created_by_name"]
         doc["created_by_id"] = fields.get("created_by_id")
     elif existing and _is_forbidden_actor_label(existing):
-        # Yasaklı değeri temizle — bank_sync'te boş kalsın (UI: Banka).
-        if src == "bank_sync":
-            doc["created_by_name"] = None
-            doc["created_by_id"] = None
-        else:
-            doc["created_by_name"] = "Kullanıcı"
-            doc["created_by_id"] = None
+        doc["created_by_name"] = "Kullanıcı"
+        doc["created_by_id"] = None
     return doc
 
 

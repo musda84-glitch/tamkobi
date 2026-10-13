@@ -7,7 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount, fmtDate } from "../utils/money";
-import { matchActorName, matchActorTitle, txDescriptionLabel } from "../utils/bankMatchLabel";
+import { matchActorTitle, txCreatedByLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { sortBankTransactions } from "../utils/bankAccountTx";
@@ -590,7 +590,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                     <td className="px-4 py-1.5 font-medium text-slate-800" data-testid={`matched-desc-${t.id}`}>{txDescriptionLabel(t)}</td>
                     <td className="px-4 py-1.5 font-semibold text-slate-800">{t.contact_name || t.target_account_name || t.category}{t.related_invoice_number ? <span className="text-slate-400 font-normal"> · {t.related_invoice_number}</span> : ""}{t.target_account_name ? <span className="text-indigo-600 font-normal"> (virman)</span> : ""}</td>
                     <td className="px-4 py-1.5"><span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.matched_via === "auto" ? "bg-violet-100 text-violet-700" : t.matched_via === "rule" ? "bg-indigo-100 text-indigo-700" : t.matched_via === "suggestion" ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-600"}`}>{t.matched_via === "auto" ? "OTOMATİK" : t.matched_via === "rule" ? "KURAL" : t.matched_via === "suggestion" ? "ÖNERİ" : "MANUEL"}</span></td>
-                    <td className="px-4 py-1.5 text-slate-700" title={matchActorTitle(t)} data-testid={`matched-by-${t.id}`}>{matchActorName(t) || "—"}</td>
+                    <td className="px-4 py-1.5 text-slate-700" title={matchActorTitle(t)} data-testid={`matched-by-${t.id}`}>{txCreatedByLabel({ ...t, match_status: "matched" }) || "—"}</td>
                     <td className={`px-4 py-1.5 text-right font-bold ${t.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{t.type === "inflow" ? "+" : "-"}{fmt(t.amount)} ₺</td>
                     <td className="px-4 py-1.5"><button onClick={() => unmatch(t)} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-rose-600" data-testid={`unmatch-btn-${t.id}`}><Undo2 className="w-3 h-3" /> Geri al</button></td>
                   </tr>
