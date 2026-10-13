@@ -7350,7 +7350,7 @@ async def _pos_do_cancel_sale(payload: Dict[str, Any]):
         "_id": payload.get("cashier_user_id") or "pos",
         "name": payload.get("cashier_name") or "POS",
     }
-    result = await cancel_invoice(inv["_id"], {"reason": "POS satış iptali"}, actor)
+    result = await _cancel_invoice_core(inv["_id"], {"reason": "POS satış iptali"}, actor)
     for tx in await db.bank_transactions.find({"invoice_id": inv["_id"], "source": "pos_quick"}).to_list(20):
         amt = float(tx.get("amount") or 0)
         aid = tx.get("account_id")
@@ -8778,8 +8778,7 @@ def _invoice_cancel_block_reason(inv: dict) -> Optional[str]:
     return None
 
 
-@api_router.post("/invoices/{invoice_id}/cancel")
-async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user: dict = None):
     """Onaylı e-faturayı iptal et: cari/stok etkilerini geri al, sipariş bağını kopar, kaydı cancelled bırak (listede gizlenir)."""
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
@@ -8857,6 +8856,12 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict
         if pay_rows:
             msg += " Tahsilat/ödeme kasa kayıtları durur; cari bakiyesinden düşüldü."
     return {"status": "success", "message": msg}
+
+
+@api_router.post("/invoices/{invoice_id}/cancel")
+async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+    return await _cancel_invoice_core(invoice_id, req, user)
+
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):

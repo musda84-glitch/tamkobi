@@ -52,6 +52,7 @@ export function PosSessionProvider({ children }) {
   const [pinErr, setPinErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [pickedId, setPickedId] = useState("");
   const idleRef = useRef(null);
 
   const headers = useMemo(() => ({ "X-Pos-Terminal": terminalId }), [terminalId]);
@@ -125,11 +126,13 @@ export function PosSessionProvider({ children }) {
     }
   }, [location.pathname, navigate, session]);
 
-  const login = useCallback(async (pin) => {
+  const login = useCallback(async (pin, cashierUserId) => {
     setBusy(true);
     setPinErr("");
     try {
-      const { data } = await axios.post(`${API_URL}/pos/session/login`, { company_id: companyId, terminal_id: terminalId, pin }, { headers });
+      const body = { company_id: companyId, terminal_id: terminalId, pin };
+      if (cashierUserId) body.cashier_user_id = cashierUserId;
+      const { data } = await axios.post(`${API_URL}/pos/session/login`, body, { headers });
       applyPayload({ session: data.session, ...data });
       setGate(null);
       setSwitching(false);
@@ -242,15 +245,18 @@ export function PosSessionProvider({ children }) {
             ? "4-6 haneli PIN ile giriş yapın. Listedeki kasiyere dokunup PIN yazın."
             : `${session?.cashier_name || "Kasiyer"} PIN'i ile açın veya başka kasiyer PIN'i ile değiştirin.`}
           cashiers={(needsLogin || switching) ? cashiers.filter((c) => c.has_cashier_pin) : undefined}
+          selectedId={pickedId}
+          onSelect={(c) => setPickedId(c?.id || "")}
           onSubmit={async (pin) => {
             try {
               if (needsLogin || switching) {
-                await login(pin);
+                await login(pin, pickedId || undefined);
                 return;
               }
               try {
                 await unlock(pin);
-              } catch {
+              } catch (err) {
+                if (err?.response?.status === 429) return;
                 await login(pin);
               }
             } catch {

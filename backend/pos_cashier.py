@@ -12,6 +12,7 @@ import notify
 import rbac
 import tenant_access
 from auth_utils import hash_password, verify_password
+from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -19,6 +20,12 @@ _current_user = None
 _checkout_hooks: Dict[str, Any] = {}
 
 PIN_RE = re.compile(r"^\d{4,6}$")
+PIN_ATTEMPT_LIMIT = 5
+PIN_LOCK_MINUTES = 15
+PIN_FAIL_MESSAGE = "PIN hatalı."
+PIN_TAKEN_MESSAGE = "PIN kaydedilemedi. Farklı bir PIN seçin."
+PIN_LOCK_MESSAGE = "Çok fazla hatalı PIN denemesi. Lütfen 15 dakika sonra tekrar deneyin."
+SELF_APPROVE_MESSAGE = "Talebi açan kasiyer bu talebi onaylayamaz."
 DEFAULT_IDLE_SEC = 120
 KIND_LABELS = {
     "delete_line": "Satır silme",
@@ -411,19 +418,105 @@ async def require_session(company_id: str, terminal_id: str, *, allow_locked: bo
     return sess
 
 
-async def _find_user_by_pin(company_id: str, pin: str) -> dict:
-    pin = normalize_pin(pin)
-    users = await _db.users.find({
+def _parse_dt(raw: Any) -> Optional[datetime]:
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        try:
+            dt = datetime.fromisoformat(str(raw or "").replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _client_ip(request: Optional[Request]) -> str:
+    if request is None:
+        return "unknown"
+    try:
+        return request_ip(request) or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _pin_attempt_id(company_id: str, terminal_id: str, ip: str) -> str:
+    tid = (terminal_id or "").strip() or "-"
+    return f"pospin:{company_id}:{tid}:{ip or 'unknown'}"
+
+
+async def _guard_pin_attempts(company_id: str, terminal_id: str, request: Optional[Request]) -> str:
+    """Şirket + terminal + IP. 5 hatalı denemeden sonra 15 dk 429."""
+    ident = _pin_attempt_id(company_id, terminal_id, _client_ip(request))
+    row = await _db.login_attempts.find_one({"identifier": ident})
+    if row and int(row.get("count") or 0) >= PIN_ATTEMPT_LIMIT:
+        last = _parse_dt(row.get("last_attempt"))
+        if last and datetime.now(timezone.utc) - last < timedelta(minutes=PIN_LOCK_MINUTES):
+            raise HTTPException(status_code=429, detail=PIN_LOCK_MESSAGE)
+        await _db.login_attempts.delete_one({"identifier": ident})
+    return ident
+
+
+async def _fail_pin_attempt(ident: str):
+    row = await _db.login_attempts.find_one({"identifier": ident})
+    now = _now()
+    if not row:
+        await _db.login_attempts.insert_one({
+            "_id": ident,
+            "identifier": ident,
+            "count": 1,
+            "last_attempt": now,
+        })
+        return
+    await _db.login_attempts.update_one(
+        {"identifier": ident},
+        {"$inc": {"count": 1}, "$set": {"last_attempt": now}},
+    )
+
+
+async def _clear_pin_attempt(ident: str):
+    await _db.login_attempts.delete_one({"identifier": ident})
+
+
+async def _company_pin_users(company_id: str) -> List[dict]:
+    return await _db.users.find({
         "is_active": {"$ne": False},
         "is_super_admin": {"$ne": True},
         "cashier_pin_hash": {"$exists": True, "$nin": [None, ""]},
         "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
     }).to_list(400)
-    matched = [u for u in users if verify_password(pin, u.get("cashier_pin_hash") or "")]
-    if not matched:
-        raise HTTPException(status_code=401, detail="PIN hatalı.")
-    if len(matched) > 1:
-        raise HTTPException(status_code=409, detail="Bu PIN birden fazla kasiyerde kayıtlı. PIN'i değiştirin.")
+
+
+async def _find_user_by_pin(
+    company_id: str,
+    pin: str,
+    *,
+    user_id: Optional[str] = None,
+    include_approvers: bool = True,
+) -> dict:
+    """PIN doğrulama. user_id verilirse yalnızca o kullanıcıyla eşleşir; başka hesaba düşmez.
+    user_id yoksa ve include_approvers False ise onay yetkilisi PIN taramasıyla açılmaz.
+    """
+    pin = normalize_pin(pin)
+    if user_id:
+        target = await _db.users.find_one({
+            "_id": str(user_id),
+            "is_active": {"$ne": False},
+            "is_super_admin": {"$ne": True},
+            "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
+        })
+        if not target or not verify_password(pin, target.get("cashier_pin_hash") or ""):
+            raise HTTPException(status_code=401, detail=PIN_FAIL_MESSAGE)
+        return target
+    matched = []
+    for u in await _company_pin_users(company_id):
+        if not verify_password(pin, u.get("cashier_pin_hash") or ""):
+            continue
+        if not include_approvers and await _can_approve(u, company_id):
+            continue
+        matched.append(u)
+    if len(matched) != 1:
+        raise HTTPException(status_code=401, detail=PIN_FAIL_MESSAGE)
     return matched[0]
 
 
@@ -586,18 +679,38 @@ async def _restore_snapshot(sess: dict, snapshot: Optional[dict]):
     return cart
 
 
-async def decide_approval(req_id: str, user: dict, *, approve: bool, pin: Optional[str] = None) -> dict:
+async def decide_approval(
+    req_id: str,
+    user: dict,
+    *,
+    approve: bool,
+    pin: Optional[str] = None,
+    request: Optional[Request] = None,
+    terminal_id: Optional[str] = None,
+) -> dict:
     doc = await tenant_access.get_tenant_doc(_db, "pos_approvals", req_id, user, not_found="Onay talebi bulunamadı.")
     company_id = doc["company_id"]
     if doc.get("status") != "pending":
         raise HTTPException(status_code=409, detail="Bu talep zaten sonuçlandı.")
     if pin:
-        supervisor = await _find_user_by_pin(company_id, pin)
-        if not await _can_approve(supervisor, company_id):
-            raise HTTPException(status_code=403, detail="Bu PIN yönetici onayı veremez.")
+        tid = str(terminal_id or doc.get("terminal_id") or _terminal_of({}, request) or "")
+        ident = await _guard_pin_attempts(company_id, tid, request)
+        try:
+            supervisor = await _find_user_by_pin(company_id, pin)
+            if str(supervisor.get("_id") or "") == str(doc.get("requested_by") or ""):
+                raise HTTPException(status_code=403, detail=SELF_APPROVE_MESSAGE)
+            if not await _can_approve(supervisor, company_id):
+                raise HTTPException(status_code=403, detail="Bu PIN yönetici onayı veremez.")
+        except HTTPException as exc:
+            if exc.status_code != 429:
+                await _fail_pin_attempt(ident)
+            raise
+        await _clear_pin_attempt(ident)
         actor = supervisor
         via = "pin"
     else:
+        if str(_uid(user)) == str(doc.get("requested_by") or ""):
+            raise HTTPException(status_code=403, detail=SELF_APPROVE_MESSAGE)
         if not await _can_approve(user, company_id):
             raise HTTPException(status_code=403, detail="POS onayı için yetkiniz yok.")
         actor = user
@@ -651,7 +764,7 @@ async def decide_approval(req_id: str, user: dict, *, approve: bool, pin: Option
     }
 
 
-async def maybe_gate(kind: str, *, company_id: str, session: dict, user: dict, payload: dict, summary: str, extra: Optional[dict] = None):
+async def maybe_gate(kind: str, *, company_id: str, session: dict, user: dict, payload: dict, summary: str, extra: Optional[dict] = None, request: Optional[Request] = None):
     rules = session.get("rules") or await rules_for_user(
         {"role": session.get("cashier_role"), "id": session.get("cashier_user_id")},
         company_id,
@@ -669,7 +782,10 @@ async def maybe_gate(kind: str, *, company_id: str, session: dict, user: dict, p
             company_id=company_id, session=session, kind=kind, payload=payload,
             summary=summary, user=user, snapshot=cart_snapshot(session.get("cart")),
         )
-        return await decide_approval(queued["request_id"], user, approve=True, pin=pin)
+        return await decide_approval(
+            queued["request_id"], user, approve=True, pin=pin,
+            request=request, terminal_id=session.get("terminal_id"),
+        )
     return await queue_approval(
         company_id=company_id, session=session, kind=kind, payload=payload,
         summary=summary, user=user, snapshot=cart_snapshot(session.get("cart")),
@@ -1003,9 +1119,21 @@ async def set_cashier_pin(user_id: str, req: Dict[str, Any], user: dict = Depend
         "cashier_pin_hash": {"$exists": True, "$nin": [None, ""]},
         "$or": [{"active_company_id": cid}, {"company_ids": cid}],
     }).to_list(400)
+    privileged = False
+    other_hit = False
     for o in others:
-        if verify_password(pin, o.get("cashier_pin_hash") or ""):
-            raise HTTPException(status_code=409, detail="Bu PIN başka bir kasiyerde kayıtlı.")
+        if not verify_password(pin, o.get("cashier_pin_hash") or ""):
+            continue
+        if await _can_approve(o, cid):
+            privileged = True
+        else:
+            other_hit = True
+    if privileged or other_hit:
+        # Çakışma 409 ve "başka kasiyerde kayıtlı" diye dönmez.
+        # Kasiyer kendi PIN'ini yazarken onay yetkilisinin PIN'ini bu yanıttan ayırt edemez.
+        if privileged and not _can_manage_rules(user):
+            return {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
+        raise HTTPException(status_code=400, detail=PIN_TAKEN_MESSAGE)
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"cashier_pin_hash": hash_password(pin), "updated_at": _now()}})
     return {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
 
@@ -1044,12 +1172,25 @@ async def get_session(company_id: Optional[str] = None, terminal_id: Optional[st
     }
 
 
-@router.post("/pos/session/login")
-async def session_login(req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
+async def _open_cashier_session(req: Dict[str, Any], user: dict, request: Optional[Request] = None):
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
-    tid = _terminal_of(req, request) or str(uuid.uuid4())
+    tid = _terminal_of(req, request)
     pin = req.get("pin") or req.get("password")
-    cashier = await _find_user_by_pin(cid, pin)
+    ident = await _guard_pin_attempts(cid, tid, request)
+    specified = str(req.get("cashier_user_id") or req.get("user_id") or "").strip()
+    try:
+        cashier = await _find_user_by_pin(
+            cid, pin,
+            user_id=specified or None,
+            include_approvers=bool(specified),
+        )
+    except HTTPException as exc:
+        if exc.status_code != 429:
+            await _fail_pin_attempt(ident)
+        raise
+    await _clear_pin_attempt(ident)
+    if not tid:
+        tid = str(uuid.uuid4())
     rules = await rules_for_user(cashier, cid)
     now = _now()
     existing = await _session_by_terminal(cid, tid)
@@ -1118,9 +1259,19 @@ async def session_unlock(req: Dict[str, Any], user: dict = Depends(_user_dep), r
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     tid = _terminal_of(req, request)
     sess = await require_session(cid, tid, allow_locked=True)
-    cashier = await _find_user_by_pin(cid, req.get("pin") or req.get("password"))
-    if str(cashier.get("_id")) != str(sess.get("cashier_user_id")):
-        raise HTTPException(status_code=403, detail="Bu kilit yalnızca giriş yapan kasiyerin PIN'i ile açılır. Kasiyer değiştirin.")
+    ident = await _guard_pin_attempts(cid, tid, request)
+    try:
+        cashier = await _find_user_by_pin(
+            cid, req.get("pin") or req.get("password"),
+            user_id=str(sess.get("cashier_user_id") or ""),
+        )
+        if str(cashier.get("_id") or "") != str(sess.get("cashier_user_id") or ""):
+            raise HTTPException(status_code=401, detail=PIN_FAIL_MESSAGE)
+    except HTTPException as exc:
+        if exc.status_code != 429:
+            await _fail_pin_attempt(ident)
+        raise
+    await _clear_pin_attempt(ident)
     now = _now()
     await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"locked": False, "last_activity": now, "updated_at": now}})
     sess["locked"] = False
@@ -1141,10 +1292,15 @@ async def session_ping(req: Dict[str, Any], user: dict = Depends(_user_dep), req
     return {"status": "ok", "session": public_session(sess, company=await _company(cid))}
 
 
+@router.post("/pos/session/login")
+async def session_login(req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
+    return await _open_cashier_session(req, user, request)
+
+
 @router.post("/pos/session/switch")
 async def session_switch(req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
     """Tek tıkla kasiyer değişimi: mevcut sepet kasiyere bağlanır, yeni PIN ile giriş."""
-    return await session_login(req, user, request)
+    return await _open_cashier_session(req, user, request)
 
 
 @router.post("/pos/session/exit")
@@ -1155,7 +1311,7 @@ async def session_exit(req: Dict[str, Any], user: dict = Depends(_user_dep), req
     rules = sess.get("rules") or {}
     if exit_is_blocked(sess, rules):
         gated = await maybe_gate(
-            "exit", company_id=cid, session=sess, user=user,
+            "exit", company_id=cid, session=sess, user=user, request=request,
             payload={"supervisor_pin": req.get("pin") or req.get("supervisor_pin"), "approval_id": req.get("approval_id")},
             summary="Hızlı Satış ekranından çıkış",
         )
@@ -1188,7 +1344,7 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
 
     if not incoming["items"] and current["items"]:
         gated = await maybe_gate(
-            "cancel_cart", company_id=cid, session=sess, user=user,
+            "cancel_cart", company_id=cid, session=sess, user=user, request=request,
             payload={"supervisor_pin": pin, "approval_id": approval_id},
             summary=f"Sepet iptali ({len(current['items'])} satır)",
         )
@@ -1202,7 +1358,7 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
 
     if removed:
         gated = await maybe_gate(
-            "delete_line", company_id=cid, session=sess, user=user,
+            "delete_line", company_id=cid, session=sess, user=user, request=request,
             payload={"line_id": removed[0].get("id"), "supervisor_pin": pin, "approval_id": approval_id},
             summary=f"Satır silindi: {removed[0].get('name') or removed[0].get('id')}",
         )
@@ -1219,7 +1375,7 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
             extra = {"catalog_price": cat, "unit_price": float(nit.get("unit_price") or 0)}
             kind = "discount" if float(nit.get("unit_price") or 0) < cat else "price_change"
             gated = await maybe_gate(
-                kind, company_id=cid, session=sess, user=user,
+                kind, company_id=cid, session=sess, user=user, request=request,
                 payload={"line_id": nid, "unit_price": nit.get("unit_price"), "catalog_price": cat, "supervisor_pin": pin, "approval_id": approval_id},
                 summary=f"Fiyat {old.get('unit_price')} → {nit.get('unit_price')} ({nit.get('name')})",
                 extra=extra,
@@ -1289,7 +1445,7 @@ async def create_approval(req: Dict[str, Any], user: dict = Depends(_user_dep), 
         raise HTTPException(status_code=400, detail="Geçersiz onay türü.")
     extra = req.get("extra") or {}
     return await maybe_gate(
-        kind, company_id=cid, session=sess, user=user,
+        kind, company_id=cid, session=sess, user=user, request=request,
         payload={**(req.get("payload") or {}), "supervisor_pin": req.get("pin"), "approval_id": req.get("approval_id")},
         summary=req.get("summary") or KIND_LABELS[kind],
         extra=extra,
@@ -1321,17 +1477,23 @@ async def get_approval(req_id: str, user: dict = Depends(_user_dep)):
 
 
 @router.post("/pos/approvals/{req_id}/approve")
-async def approve_pos_request(req_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
+async def approve_pos_request(req_id: str, request: Request, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
     await tenant_access.get_tenant_doc(_db, "pos_approvals", req_id, user, not_found="Onay talebi bulunamadı.")
     body = req or {}
-    return await decide_approval(req_id, user, approve=True, pin=body.get("pin") or body.get("supervisor_pin"))
+    return await decide_approval(
+        req_id, user, approve=True, pin=body.get("pin") or body.get("supervisor_pin"),
+        request=request, terminal_id=_terminal_of(body, request),
+    )
 
 
 @router.post("/pos/approvals/{req_id}/reject")
-async def reject_pos_request(req_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
+async def reject_pos_request(req_id: str, request: Request, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
     await tenant_access.get_tenant_doc(_db, "pos_approvals", req_id, user, not_found="Onay talebi bulunamadı.")
     body = req or {}
-    return await decide_approval(req_id, user, approve=False, pin=body.get("pin") or body.get("supervisor_pin"))
+    return await decide_approval(
+        req_id, user, approve=False, pin=body.get("pin") or body.get("supervisor_pin"),
+        request=request, terminal_id=_terminal_of(body, request),
+    )
 
 
 @router.post("/pos/drawer/open")
@@ -1340,7 +1502,7 @@ async def open_drawer(req: Dict[str, Any], user: dict = Depends(_user_dep), requ
     tid = _terminal_of(req, request)
     sess = await require_session(cid, tid)
     gated = await maybe_gate(
-        "open_drawer", company_id=cid, session=sess, user=user,
+        "open_drawer", company_id=cid, session=sess, user=user, request=request,
         payload={"supervisor_pin": req.get("pin"), "approval_id": req.get("approval_id")},
         summary="Satışsız çekmece açma",
     )
@@ -1453,7 +1615,7 @@ async def cancel_sale(req: Dict[str, Any], user: dict = Depends(_user_dep), requ
         "approval_id": req.get("approval_id"),
     }
     gated = await maybe_gate(
-        "cancel_sale", company_id=cid, session=sess, user=user, payload=payload,
+        "cancel_sale", company_id=cid, session=sess, user=user, request=request, payload=payload,
         summary=f"Satış iptali {req.get('invoice_number') or req.get('invoice_id') or ''}",
     )
     if gated and gated.get("status") == "pending_approval":

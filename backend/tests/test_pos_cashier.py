@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 import pos_cashier as pc
-from auth_utils import hash_password
+from auth_utils import hash_password, verify_password
 
 
 class FakeCursor:
@@ -113,6 +113,7 @@ class FakeDB:
         self.products = FakeCol()
         self.notifications = FakeCol()
         self.push_tokens = FakeCol()
+        self.login_attempts = FakeCol()
 
 
 def _run(coro):
@@ -415,5 +416,284 @@ def test_credit_sale_blocked_without_rule():
                 await pc.preflight_checkout(user, req)
             assert ei.value.status_code == 403
             assert "Veresiye" in str(ei.value.detail)
+
+    _run(go())
+
+
+class _Req:
+    def __init__(self, ip="203.0.113.10"):
+        self.client = type("C", (), {"host": ip})()
+        self.headers = {}
+
+
+def _patches(db, company_id=CID):
+    async def get_doc(_db, coll, oid, user, not_found=""):
+        found = await getattr(_db, coll).find_one({"_id": oid})
+        if not found:
+            raise HTTPException(status_code=404, detail=not_found)
+        return found
+
+    def resolve(user, company_id=None):
+        return company_id or CID
+
+    return (
+        patch.object(pc, "_db", db),
+        patch.object(pc.rbac, "ensure_roles", AsyncMock()),
+        patch.object(pc.notify, "insert_notification", AsyncMock()),
+        patch.object(pc.tenant_access, "resolve_company_id", side_effect=resolve),
+        patch.object(pc.tenant_access, "get_tenant_doc", side_effect=get_doc),
+    )
+
+
+async def _call(coro):
+    try:
+        data = await coro
+        return 200, data
+    except HTTPException as exc:
+        return exc.status_code, exc.detail
+
+
+def test_set_pin_hides_collision_and_approver_pin():
+    db = _init(_seed())
+    db.users.docs["u_sales2"] = {
+        "_id": "u_sales2", "name": "Kasiyer Ali", "email": "ali@test", "role": "sales",
+        "company_ids": [CID], "active_company_id": CID, "cashier_pin_hash": hash_password("4321"),
+        "is_active": True,
+    }
+    db.users.docs["u_admin"] = {
+        "_id": "u_admin", "name": "Admin", "email": "admin@test", "role": "admin",
+        "company_ids": [CID], "active_company_id": CID, "is_active": True,
+    }
+    sales = {"_id": "u_sales", "role": "sales", "name": "Kasiyer Ayşe", "company_ids": [CID], "active_company_id": CID}
+    admin = {"_id": "u_admin", "role": "admin", "name": "Admin", "company_ids": [CID], "active_company_id": CID}
+
+    async def go():
+        ctx = _patches(db)
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
+            sales_before = db.users.docs["u_sales"]["cashier_pin_hash"]
+            mgr_before = db.users.docs["u_mgr"]["cashier_pin_hash"]
+            silent = await pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "9999"}, sales)
+            assert silent == {"status": "success", "has_cashier_pin": True, "message": "Kasiyer PIN kaydedildi."}
+            assert db.users.docs["u_sales"]["cashier_pin_hash"] == sales_before
+            assert db.users.docs["u_mgr"]["cashier_pin_hash"] == mgr_before
+            blob = str(silent).lower()
+            assert "başka" not in blob and "kayıtlı" not in blob and "müdür" not in blob and "9999" not in blob
+
+            code, detail = await _call(pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "4321"}, sales))
+            assert code == 400
+            assert code != 409
+            assert detail == pc.PIN_TAKEN_MESSAGE
+            low = str(detail).lower()
+            assert "başka" not in low and "kayıtlı" not in low and "ali" not in low
+            assert db.users.docs["u_sales"]["cashier_pin_hash"] == sales_before
+
+            code, detail = await _call(pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "9999"}, admin))
+            assert code == 400
+            assert detail == pc.PIN_TAKEN_MESSAGE
+            assert db.users.docs["u_sales"]["cashier_pin_hash"] == sales_before
+
+            saved = await pc.set_cashier_pin("u_sales", {"company_id": CID, "pin": "2468"}, sales)
+            assert saved["message"] == silent["message"]
+            assert verify_password("2468", db.users.docs["u_sales"]["cashier_pin_hash"])
+
+            req = _Req("203.0.113.50")
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-pin", "pin": "9999", "cashier_user_id": "u_sales"},
+                sales, req,
+            ))
+            assert code == 401
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-blind", "pin": "9999"},
+                sales, req,
+            ))
+            assert code == 401
+            assert all(s.get("cashier_user_id") != "u_mgr" for s in db.pos_sessions.docs.values())
+            opened = await pc.session_login(
+                {"company_id": CID, "terminal_id": "t-mgr", "pin": "9999", "cashier_user_id": "u_mgr"},
+                admin, req,
+            )
+            assert opened["session"]["cashier_user_id"] == "u_mgr"
+
+    _run(go())
+
+
+def test_pin_lockout_company_terminal_ip():
+    db = _init(_seed())
+    user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
+
+    async def go():
+        ctx = _patches(db)
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
+            ip_a = _Req("203.0.113.10")
+            ip_b = _Req("203.0.113.11")
+            await pc.session_login({"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, ip_a)
+            sess = await db.pos_sessions.find_one({"terminal_id": "t1"})
+            queued = await pc.maybe_gate(
+                "cancel_cart", company_id=CID, session=sess, user=user,
+                payload={}, summary="Sepet iptali",
+            )
+            codes = []
+            for _ in range(5):
+                code, _detail = await _call(pc.session_login(
+                    {"company_id": CID, "terminal_id": "t1", "pin": "0000"}, user, ip_a,
+                ))
+                codes.append(code)
+            assert codes == [401, 401, 401, 401, 401]
+            code, detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, ip_a,
+            ))
+            assert code == 429
+            assert detail == pc.PIN_LOCK_MESSAGE
+            code, _detail = await _call(pc.session_unlock(
+                {"company_id": CID, "terminal_id": "t1", "pin": "1234"}, user, ip_a,
+            ))
+            assert code == 429
+            code, _detail = await _call(pc.decide_approval(
+                queued["request_id"], user, approve=True, pin="9999", request=ip_a, terminal_id="t1",
+            ))
+            assert code == 429
+            still = await db.pos_approvals.find_one({"_id": queued["request_id"]})
+            assert still["status"] == "pending"
+
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t1", "pin": "0000"}, user, ip_b,
+            ))
+            assert code == 401
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t2", "pin": "0000"}, user, ip_a,
+            ))
+            assert code == 401
+            code, _detail = await _call(pc.session_login(
+                {"company_id": "other-co", "terminal_id": "t1", "pin": "0000"}, user, ip_a,
+            ))
+            assert code == 401
+            ident = f"pospin:{CID}:t1:203.0.113.10"
+            assert any(d.get("identifier") == ident for d in db.login_attempts.docs.values())
+
+            await pc.session_login({"company_id": CID, "terminal_id": "t-un", "pin": "1234"}, user, ip_b)
+            await pc.session_lock({"company_id": CID, "terminal_id": "t-un"}, user, ip_b)
+            unlock_codes = []
+            for _ in range(5):
+                code, detail = await _call(pc.session_unlock(
+                    {"company_id": CID, "terminal_id": "t-un", "pin": "9999"}, user, ip_b,
+                ))
+                unlock_codes.append(code)
+                assert "değiştir" not in str(detail)
+            assert unlock_codes == [401] * 5
+            code, detail = await _call(pc.session_unlock(
+                {"company_id": CID, "terminal_id": "t-un", "pin": "1234"}, user, ip_b,
+            ))
+            assert code == 429
+            locked = await db.pos_sessions.find_one({"terminal_id": "t-un"})
+            assert locked.get("locked") is True
+
+            await pc.session_login({"company_id": CID, "terminal_id": "t-ap", "pin": "1234"}, user, _Req("203.0.113.12"))
+            ap_sess = await db.pos_sessions.find_one({"terminal_id": "t-ap"})
+            ap = await pc.maybe_gate(
+                "delete_line", company_id=CID, session=ap_sess, user=user,
+                payload={"line_id": "x"}, summary="Satır",
+            )
+            ap_req = _Req("203.0.113.12")
+            ap_codes = []
+            for _ in range(5):
+                code, _detail = await _call(pc.decide_approval(
+                    ap["request_id"], user, approve=True, pin="0000", request=ap_req, terminal_id="t-ap",
+                ))
+                ap_codes.append(code)
+            assert ap_codes == [401] * 5
+            code, _detail = await _call(pc.decide_approval(
+                ap["request_id"], user, approve=True, pin="9999", request=ap_req, terminal_id="t-ap",
+            ))
+            assert code == 429
+            assert (await db.pos_approvals.find_one({"_id": ap["request_id"]}))["status"] == "pending"
+
+            ok_req = _Req("198.51.100.20")
+            for _ in range(4):
+                code, _detail = await _call(pc.session_login(
+                    {"company_id": CID, "terminal_id": "t-ok", "pin": "0000"}, user, ok_req,
+                ))
+                assert code == 401
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-ok", "pin": "1234"}, user, ok_req,
+            ))
+            assert code == 200
+            for _ in range(5):
+                code, _detail = await _call(pc.session_login(
+                    {"company_id": CID, "terminal_id": "t-ok", "pin": "0000"}, user, ok_req,
+                ))
+                assert code == 401
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-ok", "pin": "0000"}, user, ok_req,
+            ))
+            assert code == 429
+
+            exp = _Req("198.51.100.30")
+            for _ in range(5):
+                await _call(pc.session_login(
+                    {"company_id": CID, "terminal_id": "t-exp", "pin": "0000"}, user, exp,
+                ))
+            for d in db.login_attempts.docs.values():
+                if d.get("identifier") == f"pospin:{CID}:t-exp:198.51.100.30":
+                    d["last_attempt"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+            code, _detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-exp", "pin": "0000"}, user, exp,
+            ))
+            assert code == 401
+
+    _run(go())
+
+
+def test_requester_cannot_approve_with_own_pin():
+    db = _init(_seed())
+    user = {"_id": "u_mgr", "role": "admin", "company_ids": [CID], "active_company_id": CID, "name": "Admin"}
+
+    async def go():
+        ctx = _patches(db)
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
+            req = _Req("203.0.113.40")
+            await pc.session_login(
+                {"company_id": CID, "terminal_id": "t-self", "pin": "1234"}, user, req,
+            )
+            sess = await db.pos_sessions.find_one({"terminal_id": "t-self"})
+            queued = await pc.maybe_gate(
+                "cancel_cart", company_id=CID, session=sess, user=user,
+                payload={}, summary="Sepet iptali",
+            )
+            code, detail = await _call(pc.decide_approval(
+                queued["request_id"], user, approve=True, pin="1234", request=req, terminal_id="t-self",
+            ))
+            assert code == 403
+            assert detail == pc.SELF_APPROVE_MESSAGE
+            assert (await db.pos_approvals.find_one({"_id": queued["request_id"]}))["status"] == "pending"
+
+            await pc.session_login(
+                {"company_id": CID, "terminal_id": "t-mgrself", "pin": "9999", "cashier_user_id": "u_mgr"},
+                user, req,
+            )
+            mgr_sess = await db.pos_sessions.find_one({"terminal_id": "t-mgrself"})
+            assert mgr_sess["cashier_user_id"] == "u_mgr"
+            mgr_q = await pc.queue_approval(
+                company_id=CID, session=mgr_sess, kind="cancel_cart", payload={},
+                summary="Kendi talebi", user=user,
+            )
+            code, detail = await _call(pc.decide_approval(
+                mgr_q["request_id"], user, approve=True, pin="9999", request=req, terminal_id="t-mgrself",
+            ))
+            assert code == 403
+            assert detail == pc.SELF_APPROVE_MESSAGE
+            assert (await db.pos_approvals.find_one({"_id": mgr_q["request_id"]}))["status"] == "pending"
+
+            sales_hash = db.users.docs["u_sales"]["cashier_pin_hash"]
+            db.users.docs["u_sales2"] = {
+                "_id": "u_sales2", "name": "Ali", "email": "ali@test", "role": "sales",
+                "company_ids": [CID], "active_company_id": CID, "cashier_pin_hash": sales_hash,
+                "is_active": True,
+            }
+            code, detail = await _call(pc.session_login(
+                {"company_id": CID, "terminal_id": "t-dup", "pin": "1234"}, user, _Req("203.0.113.41"),
+            ))
+            assert code == 401
+            assert detail == pc.PIN_FAIL_MESSAGE
+            assert "birden fazla" not in str(detail)
 
     _run(go())
