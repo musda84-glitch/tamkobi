@@ -3323,11 +3323,14 @@ async def auth_google(req: Dict[str, Any], request: Request, response: Response)
 
     GOOGLE_CLIENT_ID yoksa 404. Süper admin Google ile giremez.
     Yeni kullanıcıda şirket adı / telefon yoksa needs_profile döner.
+    IP: 20 istek/dk; yeni kayıt 5/saat.
     """
     if not google_auth.google_auth_configured():
         raise HTTPException(status_code=404, detail="Google girişi yapılandırılmamış.")
 
     client_ip = request_ip(request)
+    await google_auth.enforce_google_ip_rate(db, client_ip)
+
     remember = bool(req.get("remember", True))
     company_name = (req.get("company_name") or "").strip()
     phone = (req.get("phone") or "").strip()
@@ -3344,7 +3347,7 @@ async def auth_google(req: Dict[str, Any], request: Request, response: Response)
             "picture": payload.get("picture") or "",
         }
     elif credential:
-        identity = google_auth.verify_google_id_token(credential)
+        identity = await asyncio.to_thread(google_auth.verify_google_id_token, credential)
         if req.get("name"):
             identity["name"] = str(req.get("name")).strip() or identity["name"]
     else:
@@ -3359,6 +3362,16 @@ async def auth_google(req: Dict[str, Any], request: Request, response: Response)
         user = await db.users.find_one({"google_sub": google_sub})
 
     if user:
+        stored_sub = str(user.get("google_sub") or "").strip()
+        if stored_sub and google_sub and stored_sub != google_sub:
+            applog.log_auth(
+                "google_sub_mismatch", f"{email} google_sub mismatch",
+                email=email, user_email=email, user_id=str(user.get("_id") or ""), ip=client_ip,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Bu e-posta başka bir Google hesabına bağlı. Destek ile iletişime geçin.",
+            )
         return await _google_login_existing_user(
             user, request, response,
             remember=remember, google_sub=google_sub, client_ip=client_ip,
@@ -3384,6 +3397,7 @@ async def auth_google(req: Dict[str, Any], request: Request, response: Response)
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı bir hesap zaten var. Giriş yapın.")
 
+    await google_auth.enforce_google_signup_rate(db, client_ip)
     return await _google_create_company_user(
         email=email,
         name=name,

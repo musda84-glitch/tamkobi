@@ -125,6 +125,7 @@ def _mock_db_empty():
     db.saas_plans.find_one = AsyncMock(return_value={"_id": "plan_trial", "name": "Deneme", "is_public": True})
     db.login_attempts = MagicMock()
     db.login_attempts.find_one = AsyncMock(return_value=None)
+    db.login_attempts.update_one = AsyncMock()
     db.login_attempts.delete_one = AsyncMock()
     return db
 
@@ -276,3 +277,104 @@ def test_public_allowlist_includes_google():
     import rbac
     assert "/api/auth/google" in rbac.PUBLIC_API_ALLOWLIST
     assert rbac.is_public_api_path("/api/auth/google", "POST") is True
+
+
+def test_google_sub_mismatch_403(monkeypatch):
+    """Kullanıcıda kayıtlı google_sub farklıysa 403."""
+    import server
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", os.environ["GOOGLE_CLIENT_ID"])
+    user = {
+        "_id": "usr1",
+        "email": "var@example.com",
+        "name": "Var Olan",
+        "role": "admin",
+        "company_ids": ["c1"],
+        "active_company_id": "c1",
+        "is_active": True,
+        "is_super_admin": False,
+        "google_sub": "stored-sub-aaa",
+    }
+    db = _mock_db_empty()
+    db.users.find_one = AsyncMock(return_value=user)
+    monkeypatch.setattr(server, "db", db)
+    info = _idinfo(email="var@example.com", sub="different-sub-bbb")
+    with patch.object(google_auth.google_id_token, "verify_oauth2_token", return_value=info):
+        with pytest.raises(HTTPException) as ei:
+            asyncio.run(server.auth_google({"credential": "tok"}, _fake_request(), _FakeResponse()))
+    assert ei.value.status_code == 403
+    assert "Google hesabına" in str(ei.value.detail)
+
+
+def test_google_ip_rate_limit_429(monkeypatch):
+    import server
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", os.environ["GOOGLE_CLIENT_ID"])
+    db = _mock_db_empty()
+    db.login_attempts.find_one = AsyncMock(return_value={"identifier": "x", "count": 20})
+    monkeypatch.setattr(server, "db", db)
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(server.auth_google({"credential": "tok"}, _fake_request(), _FakeResponse()))
+    assert ei.value.status_code == 429
+
+
+def test_google_signup_rate_limit_429(monkeypatch):
+    import server
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", os.environ["GOOGLE_CLIENT_ID"])
+    db = _mock_db_empty()
+    # Dakikalık limit geçilsin, saatlik signup limitinde takılsın
+    calls = {"n": 0}
+
+    async def find_one(q):
+        ident = (q or {}).get("identifier") or ""
+        if ident.startswith("google_signup:"):
+            return {"identifier": ident, "count": 5}
+        return None
+
+    db.login_attempts.find_one = AsyncMock(side_effect=find_one)
+    monkeypatch.setattr(server, "db", db)
+    pending = google_auth.create_pending_google_token(
+        google_sub="google-sub-123", email="yeni@example.com", name="Yeni Kullanıcı",
+    )
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(server.auth_google({
+            "pending_token": pending,
+            "company_name": "Yeni AŞ",
+            "phone": "05551234567",
+            "accept_mss": True,
+            "accept_obf": True,
+            "accept_kvkk": True,
+        }, _fake_request(), _FakeResponse()))
+    assert ei.value.status_code == 429
+
+
+def test_verify_google_id_token_via_to_thread(monkeypatch):
+    """credential doğrulaması event loop dışında (to_thread) çalışır."""
+    import server
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", os.environ["GOOGLE_CLIENT_ID"])
+    db = _mock_db_empty()
+    monkeypatch.setattr(server, "db", db)
+    info = _idinfo(email="yeni@example.com")
+    seen = {"threaded": False}
+
+    real_to_thread = asyncio.to_thread
+
+    async def spy_to_thread(fn, *a, **k):
+        seen["threaded"] = True
+        return await real_to_thread(fn, *a, **k)
+
+    with patch.object(google_auth.google_id_token, "verify_oauth2_token", return_value=info):
+        with patch.object(asyncio, "to_thread", side_effect=spy_to_thread):
+            out = asyncio.run(server.auth_google({"credential": "tok"}, _fake_request(), _FakeResponse()))
+    assert seen["threaded"] is True
+    assert out["needs_profile"] is True
+
+
+def test_enforce_google_ip_rate_unit():
+    db = MagicMock()
+    db.login_attempts.find_one = AsyncMock(return_value={"count": 19})
+    db.login_attempts.update_one = AsyncMock()
+    asyncio.run(google_auth.enforce_google_ip_rate(db, "1.2.3.4"))
+    db.login_attempts.update_one.assert_awaited()
+    db.login_attempts.find_one = AsyncMock(return_value={"count": 20})
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(google_auth.enforce_google_ip_rate(db, "1.2.3.4"))
+    assert ei.value.status_code == 429

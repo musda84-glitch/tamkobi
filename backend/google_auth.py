@@ -98,3 +98,55 @@ def decode_pending_google_token(token: str) -> Dict[str, Any]:
 
 def profile_complete(company_name: Optional[str], phone: Optional[str]) -> bool:
     return bool((company_name or "").strip() and (phone or "").strip())
+
+
+# /auth/google IP limitleri
+GOOGLE_IP_PER_MINUTE = 20
+GOOGLE_SIGNUP_PER_HOUR = 5
+
+
+def _minute_bucket(now: Optional[datetime] = None) -> str:
+    n = now or datetime.now(timezone.utc)
+    return n.strftime("%Y%m%d%H%M")
+
+
+def _hour_bucket(now: Optional[datetime] = None) -> str:
+    n = now or datetime.now(timezone.utc)
+    return n.strftime("%Y%m%d%H")
+
+
+async def enforce_google_ip_rate(db, client_ip: str) -> None:
+    """Tüm /auth/google istekleri: 20/dk/IP → 429."""
+    ip = (client_ip or "unknown").strip() or "unknown"
+    identifier = f"google_rl:{ip}:{_minute_bucket()}"
+    attempt = await db.login_attempts.find_one({"identifier": identifier})
+    count = int((attempt or {}).get("count") or 0)
+    if count >= GOOGLE_IP_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail="Çok fazla Google giriş denemesi. Lütfen bir dakika sonra tekrar deneyin.",
+        )
+    await db.login_attempts.update_one(
+        {"identifier": identifier},
+        {"$inc": {"count": 1}, "$set": {"last_attempt": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
+
+async def enforce_google_signup_rate(db, client_ip: str) -> None:
+    """Yeni Google kayıt: 5/saat/IP → 429."""
+    ip = (client_ip or "unknown").strip() or "unknown"
+    identifier = f"google_signup:{ip}:{_hour_bucket()}"
+    attempt = await db.login_attempts.find_one({"identifier": identifier})
+    count = int((attempt or {}).get("count") or 0)
+    if count >= GOOGLE_SIGNUP_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Bu IP üzerinden çok fazla Google kaydı denendi. Lütfen daha sonra tekrar deneyin.",
+        )
+    await db.login_attempts.update_one(
+        {"identifier": identifier},
+        {"$inc": {"count": 1}, "$set": {"last_attempt": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
