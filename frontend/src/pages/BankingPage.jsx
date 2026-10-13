@@ -14,6 +14,7 @@ import { filterAccountTransactions } from "../utils/bankAccountTx";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "../components/TxMobileCard";
 import { SearchSelect } from "../components/SearchSelect";
 import { VirmanPartySelect } from "../components/VirmanPartySelect";
 
@@ -644,7 +645,7 @@ export default function BankingPage() {
       )}
 
       {/* Transactions History */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5" data-testid="transactions-panel">
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-hidden min-w-0 space-y-3 p-5" data-testid="transactions-panel">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <History className="w-4 h-4 text-slate-500" />
@@ -686,7 +687,50 @@ export default function BankingPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {(() => {
+          const emptyTxLabel = selectedAccount ? "Bu hesaba ait hareket bulunmuyor." : "Henüz finansal hareket kaydı bulunmuyor.";
+          const bankKind = (tx) => (tx.type === "inflow" ? "Giriş" : tx.type === "outflow" ? "Çıkış" : "Virman");
+          const bankAmount = (tx) => (tx.type === "inflow" ? `+${tx.amount?.toLocaleString("tr-TR")} ₺` : tx.type === "outflow" ? `-${tx.amount?.toLocaleString("tr-TR")} ₺` : `${tx.amount?.toLocaleString("tr-TR")} ₺`);
+          const bankAmountCls = (tx) => (tx.type === "inflow" ? "text-emerald-600" : tx.type === "outflow" ? "text-rose-600" : "text-indigo-600");
+          const bankDesc = (tx) => {
+            const bits = [txDescriptionLabel(tx)];
+            if (tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name) bits.push(`kart sahibi ${tx.owner_contact_name}`);
+            if (tx.category) bits.push(tx.category);
+            const actor = txUserColumnLabel(tx);
+            if (actor) bits.push(actor);
+            return bits.filter(Boolean).join(" · ");
+          };
+          const bankExtra = (tx, prefix) => (
+            <div className="flex flex-wrap gap-1">
+              {tx.customer_card && <span className="text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`${prefix}tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
+              {tx.source === "bank_sync" && <span className={`text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
+              {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`${prefix}tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
+              {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
+              {tx.source === "bank_match" && <span className="text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
+            </div>
+          );
+          const cards = visibleTx.length === 0 ? (
+            <div className="text-center text-slate-400 py-6">{emptyTxLabel}</div>
+          ) : (
+            pagedTx.map((tx) => {
+              const id = tx.id || tx._id;
+              return (
+                <TxMobileCard
+                  key={`card-${id}`}
+                  testId={`tx-card-${id}`}
+                  date={fmtDate(tx.date)}
+                  party={txAccountLabel(tx)}
+                  badge={<TxTypeBadge label={bankKind(tx)} kind={tx.type} />}
+                  amount={bankAmount(tx)}
+                  amountClassName={bankAmountCls(tx)}
+                  description={bankDesc(tx)}
+                  extra={bankExtra(tx, "card-")}
+                  actions={<TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />}
+                />
+              );
+            })
+          );
+          const table = (
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
@@ -702,7 +746,7 @@ export default function BankingPage() {
             <tbody className="divide-y divide-slate-100">
               {visibleTx.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-slate-400">{selectedAccount ? 'Bu hesaba ait hareket bulunmuyor.' : 'Henüz finansal hareket kaydı bulunmuyor.'}</td>
+                  <td colSpan={7} className="px-4 py-6 text-center text-slate-400">{emptyTxLabel}</td>
                 </tr>
               ) : (
                 pagedTx.map((tx) => (
@@ -717,7 +761,7 @@ export default function BankingPage() {
                         {tx.category || tx.type}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-700" data-testid={`tx-desc-${tx.id || tx._id}`}>
+                    <td className={`px-4 py-2.5 text-slate-700 ${TX_WRAP_CLASS}`} data-testid={`tx-desc-${tx.id || tx._id}`}>
                       <span className="font-medium text-slate-800">{txDescriptionLabel(tx)}</span>
                       {tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? ` · kart sahibi ${tx.owner_contact_name}` : ""}
                       {" "}
@@ -730,10 +774,8 @@ export default function BankingPage() {
                     <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap" data-testid={`tx-actor-${tx.id || tx._id}`} title={txUserColumnLabel(tx) || undefined}>
                       {txUserColumnLabel(tx) || <span className="text-slate-300">—</span>}
                     </td>
-                    <td className={`px-4 py-2.5 text-right font-bold ${
-                      tx.type === 'inflow' ? 'text-emerald-600' : tx.type === 'outflow' ? 'text-rose-600' : 'text-indigo-600'
-                    }`}>
-                      {tx.type === 'inflow' ? `+${tx.amount?.toLocaleString('tr-TR')} ₺` : tx.type === 'outflow' ? `-${tx.amount?.toLocaleString('tr-TR')} ₺` : `${tx.amount?.toLocaleString('tr-TR')} ₺`}
+                    <td className={`px-4 py-2.5 text-right font-bold ${bankAmountCls(tx)}`}>
+                      {bankAmount(tx)}
                     </td>
                     <td className="px-2 py-1.5 text-right">
                       <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />
@@ -743,7 +785,16 @@ export default function BankingPage() {
               )}
             </tbody>
           </table>
-        </div>
+          );
+          return (
+            <TxResponsiveList
+              cards={cards}
+              table={table}
+              cardsTestId="bank-tx-cards"
+              tableWrapTestId="bank-tx-table-wrap"
+            />
+          );
+        })()}
         {txHasMore && (
           <div ref={txSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
             Daha fazla hareket yükleniyor…

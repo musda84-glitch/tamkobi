@@ -9,6 +9,7 @@ import { ContactRow } from "../components/ContactRow";
 import { ContactForm } from "../components/ContactForm";
 import { ExportButtons } from "../components/ExportButtons";
 import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
+import { StatementTxList } from "../components/StatementTxList";
 import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
 import { cachedList, contactTypeFilter } from "../utils/dataSync";
@@ -34,7 +35,7 @@ import {
   Filter
 } from "lucide-react";
 import { useDataRefresh } from "../utils/dataRefresh";
-import { fmtDate, fmtMoney } from "../utils/money";
+import { fmtMoney } from "../utils/money";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { label: "Durum", value: (r) => r.is_active === false ? "Pasif" : "Aktif" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
@@ -226,7 +227,7 @@ export default function ContactsPage() {
       {/* CARİ EKSTRESİ MODAL */}
       {selectedContactStatement && statementData && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-[min(1680px,calc(100vw-2rem))] w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto" data-testid="statement-modal">
+          <div className="bg-white rounded-2xl max-w-[min(1680px,calc(100vw-2rem))] w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto overflow-x-hidden min-w-0" data-testid="statement-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <div>
                 <h3 className="text-base font-bold text-slate-900">{selectedContactStatement.name} - Cari Ekstresi</h3>
@@ -241,29 +242,15 @@ export default function ContactsPage() {
 
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between"><h4 className="font-bold text-slate-800">Hesap Hareketleri (Fatura & Ödeme)</h4><div className="flex items-center gap-2 text-[10px] font-semibold"><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" /> Fatura (Borç)</span><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" /> Tahsilat / Ödeme</span></div></div>
-              <table className="w-full text-left" data-testid="statement-table">
-                <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold">
-                  <tr>
-                    <th className="py-2 px-3">Tarih</th>
-                    <th className="py-2 px-3">Belge / Açıklama</th>
-                    <th className="py-2 px-3 text-right">Borç</th>
-                    <th className="py-2 px-3 text-right">Alacak</th>
-                    <th className="py-2 px-3 text-right">Bakiye</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {buildStatementRows(statementData).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
-                  {buildStatementRows(statementData).map((r, idx) => (
-                    <tr key={idx} className={r.kind === "payment" ? "bg-emerald-50/50" : ""} data-testid={`statement-row-${r.kind}-${idx}`}>
-                      <td className="py-2 px-3 text-slate-500 font-mono">{fmtDate(r.date)}</td>
-                      <td className="py-2 px-3 font-semibold text-slate-800"><span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${r.kind === "payment" ? "bg-emerald-500" : "bg-rose-500"}`} />{r.doc}</td>
-                      <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? fmtMoney(r.debit, selectedContactStatement.currency || "TRY") : '-'}</td>
-                      <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? fmtMoney(r.credit, selectedContactStatement.currency || "TRY") : '-'}</td>
-                      <td className={`py-2 px-3 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmtMoney(r.balance, selectedContactStatement.currency || "TRY")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <StatementTxList
+                rows={buildStatementRows(statementData)}
+                currency={selectedContactStatement.currency || "TRY"}
+                tableTestId="statement-table"
+                rowTestId={(r, idx) => `statement-row-${r.kind}-${idx}`}
+                showKindDot
+                emptyAmount="-"
+                cellPad="py-2 px-3"
+              />
             </div>
 
             <div className="flex justify-end pt-2 border-t">

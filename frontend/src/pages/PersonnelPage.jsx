@@ -28,6 +28,7 @@ import { BLOOD_TYPE_OPTIONS, hasExtraEmployeeDetails, MARITAL_STATUS_OPTIONS } f
 import { annualLeaveDaysError, parseAnnualLeaveDays } from "../utils/employeeCardSummary";
 import { workplaceShort } from "../utils/workplace";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "../components/TxMobileCard";
 
 import {
   UserCheck,
@@ -980,7 +981,7 @@ export default function PersonnelPage() {
       )}
 
       {/* Payrolls Table */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5">
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-hidden min-w-0 space-y-3 p-5">
         <div className="flex items-center justify-between border-b pb-3">
           <div className="flex items-center gap-2">
             <DollarSign className="w-4 h-4 text-emerald-600" />
@@ -988,7 +989,49 @@ export default function PersonnelPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {(() => {
+          const payrollActions = (p, prefix) => {
+            const pid = p.id || p._id;
+            return (
+              <>
+                <button onClick={() => openQuickPay(p, "advance")} className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold" title="Avans ver (maaştan mahsup edilir)" data-testid={`${prefix}advance-btn-${p.employee_name}`}>Avans</button>
+                <button onClick={() => openQuickPay(p, "expense")} className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg text-xs font-semibold" title="Masraf ödemesi (yol, yemek, harcama)" data-testid={`${prefix}expense-btn-${p.employee_name}`}>Masraf</button>
+                <button onClick={() => printPayslip(p, activeCompany)} className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold" title="Maaş bordrosu PDF (yazdır / kaydet)" data-testid={`${prefix}payslip-btn-${pid}`}>Bordro PDF</button>
+                {p.status !== "paid" ? (
+                  <button onClick={() => openSalaryPayModal(p)} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm" data-testid={`${prefix}pay-salary-btn-${p.employee_name}`}>Maaşı Öde</button>
+                ) : (
+                  <span className="text-emerald-700 font-semibold text-[11px]">Tamamlandı</span>
+                )}
+                {payMoveCanDelete({ id: pid, kind: "payroll", status: p.status }) ? (
+                  <button type="button" onClick={() => handleDeletePayroll(p)} className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold" title="Maaş kaydını sil (çöp kutusu)" data-testid={`${prefix}payroll-delete-btn-${pid}`}>Sil</button>
+                ) : null}
+              </>
+            );
+          };
+          const payrollDesc = (p) => [
+            `Net ${p.net_salary?.toLocaleString("tr-TR")} ₺`,
+            `Brüt ${p.gross_salary?.toLocaleString("tr-TR")} ₺`,
+            isDailyWage(p) ? payrollWageLine(p) : "",
+            p.overtime_pay > 0 ? `+${p.overtime_pay.toLocaleString("tr-TR")} ₺ mesai (${p.overtime_hours} sa)` : "",
+            p.second_salary > 0 ? `+${p.second_salary.toLocaleString("tr-TR")} ₺ 2. maaş` : "",
+          ].filter(Boolean).join(" · ");
+          const cards = pagedPayrolls.map((p) => {
+            const pid = p.id || p._id;
+            return (
+              <TxMobileCard
+                key={`card-${pid}`}
+                testId={`payroll-card-${pid}`}
+                date={`${p.period} Dönemi`}
+                party={p.employee_name}
+                badge={<TxTypeBadge label={p.status === "paid" ? "Giriş" : "Bekliyor"} kind={p.status === "paid" ? "giriş" : "other"} />}
+                amount={`${p.final_payable?.toLocaleString("tr-TR")} ₺`}
+                amountClassName="text-slate-900"
+                description={payrollDesc(p)}
+                actions={payrollActions(p, "card-")}
+              />
+            );
+          });
+          const table = (
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
@@ -1003,13 +1046,13 @@ export default function PersonnelPage() {
             <tbody className="divide-y divide-slate-100">
               {pagedPayrolls.map((p) => (
                 <tr key={p.id || p._id} className="hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_48px]">
-                  <td className="px-4 py-2.5">
+                  <td className={`px-4 py-2.5 ${TX_WRAP_CLASS}`}>
                     <div className="font-bold text-slate-900">{p.employee_name}{isDailyWage(p) ? <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Yevmiye</span> : null}</div>
                     <div className="text-slate-400 text-[11px] font-mono">{p.period} Dönemi</div>
                   </td>
                   <td className="px-4 py-2.5 text-right text-slate-700 font-medium">
                     {p.net_salary?.toLocaleString('tr-TR')} ₺
-                    {(isDailyWage(p) || p.overtime_pay > 0 || p.second_salary > 0) && <div className="text-[10px] font-normal text-slate-500" data-testid={`payroll-breakdown-${p.id || p._id}`}>{isDailyWage(p) ? <span className="text-amber-700">{payrollWageLine(p)}</span> : null}{isDailyWage(p) && (p.overtime_pay > 0 || p.second_salary > 0) ? " · " : null}{p.overtime_pay > 0 && <span className="text-indigo-700">+{p.overtime_pay.toLocaleString('tr-TR')} ₺ mesai ({p.overtime_hours} sa)</span>}{p.overtime_pay > 0 && p.second_salary > 0 && " · "}{p.second_salary > 0 && <span className="text-amber-700">+{p.second_salary.toLocaleString('tr-TR')} ₺ 2. maaş</span>}</div>}
+                    {(isDailyWage(p) || p.overtime_pay > 0 || p.second_salary > 0) && <div className={`text-[10px] font-normal text-slate-500 ${TX_WRAP_CLASS}`} data-testid={`payroll-breakdown-${p.id || p._id}`}>{isDailyWage(p) ? <span className="text-amber-700">{payrollWageLine(p)}</span> : null}{isDailyWage(p) && (p.overtime_pay > 0 || p.second_salary > 0) ? " · " : null}{p.overtime_pay > 0 && <span className="text-indigo-700">+{p.overtime_pay.toLocaleString('tr-TR')} ₺ mesai ({p.overtime_hours} sa)</span>}{p.overtime_pay > 0 && p.second_salary > 0 && " · "}{p.second_salary > 0 && <span className="text-amber-700">+{p.second_salary.toLocaleString('tr-TR')} ₺ 2. maaş</span>}</div>}
                   </td>
                   <td className="px-4 py-2.5 text-right text-slate-500 font-mono">
                     {p.gross_salary?.toLocaleString('tr-TR')} ₺
@@ -1026,37 +1069,22 @@ export default function PersonnelPage() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-center whitespace-nowrap">
-                    <button onClick={() => openQuickPay(p, "advance")} className="px-2.5 py-1 mr-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold" title="Avans ver (maaştan mahsup edilir)" data-testid={`advance-btn-${p.employee_name}`}>Avans</button>
-                    <button onClick={() => openQuickPay(p, "expense")} className="px-2.5 py-1 mr-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg text-xs font-semibold" title="Masraf ödemesi (yol, yemek, harcama)" data-testid={`expense-btn-${p.employee_name}`}>Masraf</button>
-                    <button onClick={() => printPayslip(p, activeCompany)} className="px-2.5 py-1 mr-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold" title="Maaş bordrosu PDF (yazdır / kaydet)" data-testid={`payslip-btn-${p.id || p._id}`}>Bordro PDF</button>
-                    {p.status !== 'paid' ? (
-                      <button
-                        onClick={() => openSalaryPayModal(p)}
-                        className="px-3 py-1 mr-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm"
-                        data-testid={`pay-salary-btn-${p.employee_name}`}
-                      >
-                        Maaşı Öde
-                      </button>
-                    ) : (
-                      <span className="text-emerald-700 font-semibold text-[11px] mr-1">Tamamlandı</span>
-                    )}
-                    {payMoveCanDelete({ id: p.id || p._id, kind: "payroll", status: p.status }) ? (
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePayroll(p)}
-                        className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold"
-                        title="Maaş kaydını sil (çöp kutusu)"
-                        data-testid={`payroll-delete-btn-${p.id || p._id}`}
-                      >
-                        Sil
-                      </button>
-                    ) : null}
+                    {payrollActions(p, "")}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+          );
+          return (
+            <TxResponsiveList
+              cards={cards}
+              table={table}
+              cardsTestId="payroll-tx-cards"
+              tableWrapTestId="payroll-tx-table-wrap"
+            />
+          );
+        })()}
         {payrollsHasMore && (
           <div ref={payrollsSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="payrolls-load-more">
             Daha fazla bordro yükleniyor…

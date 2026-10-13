@@ -184,3 +184,13 @@ code {
     animation: none;
   }
 }
+
+/* Movement cards (<768px): long descriptions wrap; page never scrolls sideways. */
+[data-tx-mobile-list],
+[data-tx-mobile-card],
+[data-tx-wrap] {
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

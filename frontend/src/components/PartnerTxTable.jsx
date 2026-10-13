@@ -8,6 +8,7 @@ import { API_URL } from "../context/AuthContext";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { dateSortKey } from "../utils/dateFormat";
 import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIsCashInflow, partnerTxSign } from "../utils/partnerTx";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const COLS = [["date", "Tarih"], ["partner_name", "Ortak"], ["type", "İşlem"], ["account_name", "Hesap / Açıklama"], ["amount", "Tutar", "text-right"]];
@@ -15,6 +16,11 @@ const inputCls = "bg-white border border-slate-200 rounded-md p-1 text-xs";
 const typeBadge = (t) => {
   if (partnerTxIsCashInflow(t)) return "bg-emerald-50 text-emerald-700";
   return "bg-rose-50 text-rose-700";
+};
+
+const descText = (t) => {
+  const acc = t.account_name ? `${t.account_name} • ` : "";
+  return `${acc}${t.description || ""}`.trim();
 };
 
 export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
@@ -63,7 +69,56 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
     try { const r = await axios.delete(`${API_URL}/banking/partners/transactions/${t.id}`); toast.success(r.data.message); onChanged?.(); }
     catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
-  return (
+  const startEdit = (t) => setEdit({ id: t.id, date: t.date, amount: t.amount, description: t.description, account_id: t.account_id });
+  const canEdit = (t) => t.type !== "profit_share" && !isPartnerExpenseTx(t);
+  const amountText = (t) => `${partnerTxSign(t.type, t)}${fmt(t.amount)} ₺`;
+  const amountCls = (t) => partnerTxIsCashInflow(t) ? "text-emerald-600" : "text-rose-600";
+  const rowActions = (t, idPrefix = "partner-tx") => (
+    <>
+      {canEdit(t) && <button onClick={() => startEdit(t)} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50" title="Düzenle" data-testid={`${idPrefix}-edit-${t.id}`}><Pencil className="w-3.5 h-3.5" /></button>}
+      <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title={delTitle(t)} data-testid={`${idPrefix}-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+    </>
+  );
+  const editFields = (t) => (
+    <div className="space-y-2" data-testid={`partner-tx-card-edit-${t.id}`}>
+      <div className="grid grid-cols-2 gap-2">
+        <input type="date" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} className={inputCls} data-testid="partner-tx-card-edit-date" />
+        <input type="number" step="0.01" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} className={`${inputCls} text-right font-bold`} data-testid="partner-tx-card-edit-amount" />
+      </div>
+      <div className="font-semibold text-slate-900">{t.partner_name}</div>
+      <TxTypeBadge label={partnerTxLabel(t)} kind={partnerTxIsCashInflow(t) ? "giriş" : "çıkış"} />
+      <div className="flex flex-col gap-1">
+        {!isPartnerLedgerType(t.type) && <PaymentTargetSelect companyId={companyId} accounts={accounts} value={edit.account_id || ""} onChange={(v) => setEdit({ ...edit, account_id: v })} testId="partner-tx-card-edit-account" includePartners={false} className={inputCls} />}
+        <input value={edit.description || ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} className={`${inputCls} w-full ${TX_WRAP_CLASS}`} placeholder="Açıklama" data-testid="partner-tx-card-edit-desc" />
+      </div>
+      <div className="flex justify-end gap-1">
+        <button onClick={save} disabled={busy} className="p-1.5 rounded-md bg-emerald-600 text-white" title="Kaydet" data-testid="partner-tx-card-edit-save"><Check className="w-3.5 h-3.5" /></button>
+        <button onClick={() => setEdit(null)} className="p-1.5 rounded-md border" title="İptal" data-testid="partner-tx-card-edit-cancel"><X className="w-3.5 h-3.5" /></button>
+      </div>
+    </div>
+  );
+
+  const cards = rows.length === 0 ? (
+    <div className="text-center text-slate-400 py-5">Hareket yok.</div>
+  ) : (
+    rows.map((t) => (
+      <TxMobileCard
+        key={`card-${t.id}`}
+        testId={`partner-tx-card-${t.id}`}
+        date={fmtDate(t.date)}
+        party={t.partner_name}
+        badge={<TxTypeBadge label={partnerTxLabel(t)} kind={partnerTxIsCashInflow(t) ? "giriş" : "çıkış"} />}
+        amount={amountText(t)}
+        amountClassName={amountCls(t)}
+        description={descText(t)}
+        actions={rowActions(t, "partner-tx-card")}
+      >
+        {edit?.id === t.id ? editFields(t) : null}
+      </TxMobileCard>
+    ))
+  );
+
+  const table = (
     <table className="w-full text-left text-xs text-slate-600" data-testid="partner-tx-table">
       <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold select-none">
         <tr>
@@ -92,15 +147,23 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
             <td className="px-4 py-2 font-mono text-slate-500">{fmtDate(t.date)}</td>
             <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
             <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t)}`}>{partnerTxLabel(t)}</span></td>
-            <td className="px-4 py-2 text-slate-600">{t.account_name ? <span className="font-semibold text-slate-700">{t.account_name} • </span> : ""}{t.description}</td>
-            <td className={`px-4 py-2 text-right font-bold ${partnerTxIsCashInflow(t) ? "text-emerald-600" : "text-rose-600"}`}>{partnerTxSign(t.type, t)}{fmt(t.amount)} ₺</td>
+            <td className={`px-4 py-2 text-slate-600 ${TX_WRAP_CLASS}`}>{t.account_name ? <span className="font-semibold text-slate-700">{t.account_name} • </span> : ""}{t.description}</td>
+            <td className={`px-4 py-2 text-right font-bold ${amountCls(t)}`}>{amountText(t)}</td>
             <td className="px-4 py-2 text-right whitespace-nowrap">
-              {t.type !== "profit_share" && !isPartnerExpenseTx(t) && <button onClick={() => setEdit({ id: t.id, date: t.date, amount: t.amount, description: t.description, account_id: t.account_id })} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50" title="Düzenle" data-testid={`partner-tx-edit-${t.id}`}><Pencil className="w-3.5 h-3.5" /></button>}
-              <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title={delTitle(t)} data-testid={`partner-tx-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+              {rowActions(t, "partner-tx")}
             </td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+
+  return (
+    <TxResponsiveList
+      cards={cards}
+      table={table}
+      cardsTestId="partner-tx-cards"
+      tableWrapTestId="partner-tx-table-wrap"
+    />
   );
 };
