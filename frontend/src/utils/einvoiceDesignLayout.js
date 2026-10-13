@@ -789,8 +789,6 @@ function xsltIbanBlock(L, R) {
         ${name ? `<div>${xmlEscape(name)}</div>` : ""}
       </div>`;
   }
-  const payeeId = `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID`;
-  const payeeName = `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:Name`;
   return `
       <div class="inv-iban">
         <div class="inv-k">${title}</div>
