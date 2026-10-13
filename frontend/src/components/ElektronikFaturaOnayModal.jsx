@@ -35,6 +35,7 @@ import {
   invoiceNeedsExemptionPrompt,
 } from "../utils/invoiceExemption";
 import { formatIssueStamp, nowIssueDateTime, showEfaturaStampNow } from "../utils/invoiceIssueNow";
+import { docDocumentDate, docHasOldDocumentDate } from "../utils/orderBulkActions";
 
 function digitsTax(raw) {
   return String(raw || "").replace(/\D/g, "");
@@ -239,7 +240,8 @@ export function ElektronikFaturaOnayModal({
     if (Array.isArray(invoices) && invoices.length) return invoices;
     return [];
   }, [invoices]);
-  const isBulk = bulkDocs.length > 1 || (bulkDocs.length === 1 && !invoice && !order);
+  // Tek belge (invoices.length === 1 veya invoice/order) → tekil; yalnız 2+ toplu.
+  const isBulk = bulkDocs.length > 1;
   const doc = order || invoice || bulkDocs[0] || null;
 
   const [credits, setCredits] = useState(null);
@@ -257,6 +259,8 @@ export function ElektronikFaturaOnayModal({
   const offerStampNow = showEfaturaStampNow({ isBulk, isPrint, mode });
   const [stampNow, setStampNow] = useState(true);
   const stampPreview = nowIssueDateTime();
+  const docDateYmd = docDocumentDate(doc);
+  const docDateIsOld = !isBulk && !isPrint && docHasOldDocumentDate(doc);
   const isReturnInvoice = !isPrint && !isBulk && isReturnInvoiceDoc(doc);
   const prefilled = prefillReturnBillingRef(doc);
   const [returnInvoiceNo, setReturnInvoiceNo] = useState(prefilled.number);
@@ -673,29 +677,39 @@ export function ElektronikFaturaOnayModal({
                 </div>
               )}
               {offerStampNow && (
-                <label
-                  className="flex items-start gap-2.5 rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2.5 cursor-pointer"
-                  data-testid="efatura-onay-stamp-now"
-                >
-                  <input
-                    type="checkbox"
-                    checked={stampNow}
-                    onChange={(e) => setStampNow(e.target.checked)}
-                    className="mt-0.5 accent-sky-700"
-                    data-testid="efatura-onay-stamp-now-check"
-                  />
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-1.5 text-sm font-semibold text-sky-950">
-                      <CalendarClock className="w-4 h-4 shrink-0" />
-                      Tarih ve saati şimdi ile değiştir
+                <div className="space-y-2" data-testid="efatura-onay-stamp-block">
+                  {docDateIsOld ? (
+                    <div
+                      className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 leading-snug"
+                      data-testid="efatura-onay-old-date-warn"
+                    >
+                      Belge tarihi {formatIssueStamp(docDateYmd, "")} — GİB&apos;e eski tarihle gidecek
+                    </div>
+                  ) : null}
+                  <label
+                    className="flex items-start gap-2.5 rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2.5 cursor-pointer"
+                    data-testid="efatura-onay-stamp-now"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={stampNow}
+                      onChange={(e) => setStampNow(e.target.checked)}
+                      className="mt-0.5 accent-sky-700"
+                      data-testid="efatura-onay-stamp-now-check"
+                    />
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-1.5 text-sm font-semibold text-sky-950">
+                        <CalendarClock className="w-4 h-4 shrink-0" />
+                        Tarih ve saati şimdi ile değiştir
+                      </span>
+                      <span className="block text-[11px] text-sky-800/90 mt-0.5 leading-snug">
+                        {stampNow
+                          ? `GİB’e ${formatIssueStamp(stampPreview.issue_date, stampPreview.issue_time)} yazılır.`
+                          : `Belgedeki tarih kalır: ${formatIssueStamp(doc?.issue_date || docDateYmd, doc?.issue_time)}.`}
+                      </span>
                     </span>
-                    <span className="block text-[11px] text-sky-800/90 mt-0.5 leading-snug">
-                      {stampNow
-                        ? `GİB’e ${formatIssueStamp(stampPreview.issue_date, stampPreview.issue_time)} yazılır.`
-                        : `Belgedeki tarih kalır: ${formatIssueStamp(doc?.issue_date, doc?.issue_time)}.`}
-                    </span>
-                  </span>
-                </label>
+                  </label>
+                </div>
               )}
               {(isBulk || bulkDocs.length > 1) && (
                 <div
