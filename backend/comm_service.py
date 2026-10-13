@@ -16,12 +16,14 @@ import aiosmtplib
 from cryptography.fernet import Fernet
 
 
-def sms_detail_text(value: Any, limit: int = 300) -> str:
+def sms_detail_text(value: Any, limit: Optional[int] = 300) -> str:
     """Provider detail/raw → always a string before truncation (dict raw must not KeyError on [:n])."""
     if value is None:
         return ""
     if isinstance(value, str):
         s = value
+    elif isinstance(value, bytes):
+        s = value.decode("utf-8", "replace")
     elif isinstance(value, (dict, list, tuple)):
         try:
             s = json.dumps(value, ensure_ascii=False, default=str)
@@ -32,6 +34,26 @@ def sms_detail_text(value: Any, limit: int = 300) -> str:
     if limit is None or limit < 0:
         return s
     return s[:limit]
+
+
+def clip_any(value: Any, limit: Optional[int] = 300) -> str:
+    """str() before [:n]. Slicing a dict or response raises KeyError('slice(None, n, None)')."""
+    raw = value
+    if value is not None and not isinstance(value, (str, bytes, dict, list, tuple, int, float, bool)):
+        text = getattr(value, "text", None)
+        raw = value if text is None else text
+    return sms_detail_text(raw, limit=limit)
+
+
+def _read_provider_payload(r: Any) -> Any:
+    """JSON body, or the response text when it is already a dict/list. Never slice a non-str."""
+    text = getattr(r, "text", None)
+    if isinstance(text, (dict, list)):
+        return text
+    try:
+        return r.json()
+    except Exception:
+        return {"raw": clip_any(text if text is not None else r, 300)}
 
 
 def _data_dirs() -> List[Path]:
@@ -289,11 +311,8 @@ def _netgsm_auth(creds: dict):
     return (creds["usercode"], creds["password"])
 
 def _parse_netgsm_body(r: httpx.Response) -> Dict[str, Any]:
-    try:
-        data = r.json()
-        return data if isinstance(data, dict) else {"raw": data}
-    except Exception:
-        return {"raw": sms_detail_text(r.text or "", limit=300)}
+    data = _read_provider_payload(r)
+    return data if isinstance(data, dict) else {"raw": data}
 
 
 def parse_netgsm_send_response(data: Any, *, http_status: int = 200) -> Dict[str, Any]:
@@ -475,11 +494,8 @@ def _im_auth(creds: dict) -> dict:
     return {"key": creds["usercode"], "hash": creds["password"]}
 
 def _im_parse(r: httpx.Response) -> Dict[str, Any]:
-    try:
-        data = r.json()
-        return data if isinstance(data, dict) else {"raw": data}
-    except Exception:
-        return {"raw": (r.text or "")[:300]}
+    data = _read_provider_payload(r)
+    return data if isinstance(data, dict) else {"raw": clip_any(data, 300)}
 
 def _im_status(data: dict) -> tuple:
     resp = data.get("response") if isinstance(data.get("response"), dict) else {}
@@ -596,10 +612,9 @@ async def verimor_send(creds: dict, messages: List[Dict[str, str]], encoding: st
     }
     async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=httpx.Timeout(30.0, connect=10.0)) as client:
         r = await client.post("/v2/send.json", json=payload)
-    try:
-        data = r.json()
-    except Exception:
-        data = {"raw": (r.text or "")[:300]}
+    data = _read_provider_payload(r)
+    if not isinstance(data, (dict, list, str, int, float)) and data is not None:
+        data = {"raw": clip_any(data, 300)}
     # Başarıda kampanya id (string/int); hatalarda JSON message
     if r.status_code == 200 and not isinstance(data, dict):
         return {"ok": True, "jobid": str(data), "code": "00", "error": None, "raw": data}
@@ -608,7 +623,7 @@ async def verimor_send(creds: dict, messages: List[Dict[str, str]], encoding: st
     if r.status_code == 200 and isinstance(data, dict) and data.get("campaign_id"):
         return {"ok": True, "jobid": str(data.get("campaign_id")), "code": "00", "error": None, "raw": data}
     # Bazı yanıtlarda düz metin kampanya id
-    text = (r.text or "").strip()
+    text = clip_any(getattr(r, "text", "") or "", None).strip()
     if r.status_code == 200 and text and text.isdigit():
         return {"ok": True, "jobid": text, "code": "00", "error": None, "raw": text}
     err = None
@@ -620,11 +635,8 @@ async def verimor_send(creds: dict, messages: List[Dict[str, str]], encoding: st
 async def verimor_balance(creds: dict) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=20) as client:
         r = await client.get("/v2/balance", params={"username": creds["usercode"], "password": creds["password"]})
-    text = (r.text or "").strip()
-    try:
-        data = r.json()
-    except Exception:
-        data = text
+    text = clip_any(getattr(r, "text", "") or "", None).strip()
+    data = _read_provider_payload(r)
     if r.status_code == 200:
         # düz sayı veya JSON
         if isinstance(data, (int, float)) or (isinstance(data, str) and data.replace(".", "", 1).isdigit()):
@@ -633,16 +645,16 @@ async def verimor_balance(creds: dict) -> Dict[str, Any]:
             return {"ok": True, "code": "00", "data": data, "error": None, "message": None}
         if text.isdigit():
             return {"ok": True, "code": "00", "data": {"balance": int(text)}, "error": None, "message": None}
-    err = data.get("message") if isinstance(data, dict) else (text[:160] or f"HTTP {r.status_code}")
-    return {"ok": False, "code": str(r.status_code), "data": data, "error": str(err), "message": str(err)}
+    err = data.get("message") if isinstance(data, dict) else (clip_any(text, 160) or f"HTTP {r.status_code}")
+    err = clip_any(err, 300)
+    return {"ok": False, "code": str(r.status_code), "data": data, "error": err, "message": err}
 
 async def verimor_headers(creds: dict) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=VERIMOR_BASE, timeout=20) as client:
         r = await client.get("/v2/headers", params={"username": creds["usercode"], "password": creds["password"]}, headers={"accept": "application/json"})
-    try:
-        data = r.json()
-    except Exception:
-        data = {"raw": (r.text or "")[:300]}
+    data = _read_provider_payload(r)
+    if not isinstance(data, (dict, list)):
+        data = {"raw": clip_any(data, 300)}
     headers = data if isinstance(data, list) else (data.get("headers") if isinstance(data, dict) else [])
     if isinstance(headers, str):
         headers = [headers]

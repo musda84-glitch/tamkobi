@@ -91,7 +91,22 @@ export const MailClient = ({ companyId }) => {
   const [sentLogs, setSentLogs] = useState([]);
   const [error, setError] = useState(null);
 
-  const loadAccount = useCallback(async () => { const r = await axios.get(`${API_URL}/comm/mail/account?company_id=${companyId}`); setAccount(r.data); return r.data; }, [companyId]);
+  const loadAccount = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API_URL}/comm/mail/account?company_id=${companyId}`);
+      setAccount(r.data);
+      return r.data;
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail || "Mail şifresi yeniden girilmeli";
+      if (status === 400 || status === 409) {
+        const stub = { status: "needs_reauth", last_error: detail, email: "", has_password: true };
+        setAccount(stub);
+        return stub;
+      }
+      throw err;
+    }
+  }, [companyId]);
   const loadFolders = useCallback(async () => { try { const r = await axios.get(`${API_URL}/comm/mail/folders?company_id=${companyId}`); setFolders(r.data); } catch { setFolders([{ name: "INBOX" }]); } }, [companyId]);
   const loadMessages = useCallback(async (f) => {
     setLoading(true); setError(null);

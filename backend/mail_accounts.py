@@ -18,7 +18,7 @@ _db = None
 _current_user: Optional[Callable[..., Awaitable[dict]]] = None
 _public_base_url: Optional[Callable[..., Awaitable[str]]] = None
 
-NEEDS_REAUTH_MSG = "Kayıtlı şifre çözülemedi — lütfen yeniden girin."
+NEEDS_REAUTH_MSG = "Mail şifresi yeniden girilmeli"
 MAIL_LOGS_LIMIT_MAX = 500
 
 
@@ -70,6 +70,8 @@ def mask_mail_account(a: dict) -> dict:
 
 
 async def mark_needs_reauth(account_id: str, detail: str = NEEDS_REAUTH_MSG) -> None:
+    if not account_id:
+        return
     try:
         await _db.mail_accounts.update_one(
             {"_id": account_id},
@@ -77,6 +79,20 @@ async def mark_needs_reauth(account_id: str, detail: str = NEEDS_REAUTH_MSG) -> 
         )
     except Exception:
         pass
+
+
+async def ensure_mail_password(a: dict) -> str:
+    """Kayıtlı şifreyi çöz. Olmazsa 409 — anahtar üretilmez, değiştirilmez."""
+    try:
+        return comm_service.decrypt((a or {}).get("password_enc") or "")
+    except Exception as exc:
+        logger.warning(
+            "mail password decrypt failed account=%s: %s",
+            (a or {}).get("_id") or (a or {}).get("id"),
+            exc,
+        )
+        await mark_needs_reauth(str((a or {}).get("_id") or (a or {}).get("id") or ""))
+        raise HTTPException(status_code=409, detail=NEEDS_REAUTH_MSG) from exc
 
 
 async def load_mail_account(company_id: str, *, with_password: bool = True) -> dict:
@@ -88,11 +104,7 @@ async def load_mail_account(company_id: str, *, with_password: bool = True) -> d
     if not a:
         raise HTTPException(status_code=404, detail="E-posta hesabı tanımlı değil. Önce hesabınızı bağlayın.")
     if with_password:
-        try:
-            a["password"] = comm_service.decrypt(a.get("password_enc") or "")
-        except Exception:
-            await mark_needs_reauth(a["_id"])
-            raise HTTPException(status_code=409, detail=NEEDS_REAUTH_MSG)
+        a["password"] = await ensure_mail_password(a)
     return a
 
 
@@ -113,7 +125,11 @@ async def get_mail_account(
 ):
     cid = resolve_mail_company(user, company_id or request.query_params.get("company_id"))
     a = await _db.mail_accounts.find_one({"company_id": cid})
-    return mask_mail_account(a) if a else None
+    if not a:
+        return None
+    if a.get("password_enc"):
+        await ensure_mail_password(a)
+    return mask_mail_account(a)
 
 
 @router.put("/comm/mail/account")

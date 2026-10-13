@@ -209,8 +209,11 @@ def _hm(s: str) -> int:
 
 
 def _clean(d: dict) -> dict:
-    d = dict(d)
-    d["id"] = d.pop("_id")
+    d = dict(d or {})
+    if "_id" in d:
+        d["id"] = d.pop("_id")
+    else:
+        d.setdefault("id", None)
     return d
 
 
@@ -2451,9 +2454,12 @@ def enrich_attendance_row(rec: Optional[dict], schedule: dict, plan: Optional[di
 
 async def rehome_early_checkout(emp: dict, today: str, schedule: Optional[dict] = None, proposed_in: Optional[str] = None) -> bool:
     """00:00 sonrası yanlışlıkla bugüne yazılan gece çıkışını düne taşı; bugünü boşalt."""
+    emp_id = (emp or {}).get("_id")
+    if not emp_id:
+        return False
     ydate = previous_ymd(today)
-    today_rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
-    yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+    today_rec = await _db.attendance.find_one({"employee_id": emp_id, "date": today}) or {}
+    yest = await _db.attendance.find_one({"employee_id": emp_id, "date": ydate}) or {}
     out = str(today_rec.get("check_out") or "")[:5]
     inn = today_rec.get("check_in")
     gcr = _pending_overnight_checkout(today_rec, schedule, today)
@@ -2539,9 +2545,12 @@ async def punch_date_for_action(emp: dict, schedule: dict, action: str, clock: s
 async def my_attendance(request: Request, company_id: Optional[str] = None, month: Optional[str] = None):
     user = await _current_user(request)
     emp = await employee_for_user(user)
-    if not emp:
-        return {"employee": None, "records": [], "summary": summarize([]), "today": None, "schedule": None, "location": None, "workplace": None, "company_location": None}
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    if not emp or not emp.get("_id"):
+        raise HTTPException(
+            status_code=404,
+            detail="Personel kartınız bu kullanıcıya bağlı değil. Personel kartından sistem kullanıcısını eşleştirin.",
+        )
+    company = await _db.companies.find_one({"_id": emp.get("company_id")}) or {}
     schedule = merge_schedule(company, emp)
     month = month or _today(schedule)[:7]
     today_s = _today(schedule)
@@ -2575,7 +2584,7 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
         today_wd = local_now(schedule).weekday()
     today_win = day_window(schedule, today_wd)
     habit = attendance_habit(enriched)
-    return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position"), "photo_url": emp.get("photo_url")},
+    return {"employee": {"id": emp.get("_id"), "full_name": emp.get("full_name"), "department": emp.get("department"), "position": emp.get("position"), "photo_url": emp.get("photo_url")},
             "month": month, "records": enriched, "summary": summarize(enriched), "today": _clean(today_e) if today_e else None,
             "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
             "company_location": company.get("location"), "location_tracking": lt,

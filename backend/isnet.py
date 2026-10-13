@@ -35,6 +35,21 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+
+def _as_text(value: Any) -> str:
+    """Response gövdesini metne çevir. dict/response [:n] KeyError('slice(...)') üretir."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    if isinstance(value, str):
+        return value
+    try:
+        import json
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return str(value)
+
 # --- Endpoints: İşNet resmi SOAP + NetteFatura portal ---
 LIVE_API = "https://einvoiceapi.isnet.net.tr"
 TEST_API = "https://einvoiceapitest.isnet.net.tr"
@@ -1082,7 +1097,7 @@ async def _soap_call(
             status_code=502,
             detail=f"İşNet SOAP'a ulaşılamadı ({action}): {_soap_unreachable_hint(e)}",
         ) from e
-    text = resp.text or ""
+    text = _as_text(getattr(resp, "text", "") or "")
     if resp.status_code >= 400:
         raise HTTPException(
             status_code=502, detail=f"İşNet SOAP HTTP {resp.status_code} ({action}): {text[:300]}"
@@ -2812,14 +2827,16 @@ async def _http_get_invoice_pdf(settings: dict, key: str) -> bytes:
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"İşNet PDF indirilemedi: {e}") from e
     if r.status_code >= 400 or not r.content:
-        snippet = _isnet_error_snippet(r.content, getattr(r, "text", "") or "")
+        body = _as_text(getattr(r, "text", "") or "")
+        snippet = _isnet_error_snippet(r.content, body)
         raise HTTPException(
             status_code=502,
-            detail=snippet or f"İşNet PDF HTTP {r.status_code}: {(getattr(r, 'text', '') or '')[:200]}",
+            detail=snippet or f"İşNet PDF HTTP {r.status_code}: {body[:200]}",
         )
     ctype = (r.headers.get("content-type") or "").lower()
     if "pdf" not in ctype and not r.content.startswith(b"%PDF"):
-        snippet = _isnet_error_snippet(r.content, getattr(r, "text", "") or "")
+        body = _as_text(getattr(r, "text", "") or "")
+        snippet = _isnet_error_snippet(r.content, body)
         raise HTTPException(
             status_code=502,
             detail=snippet

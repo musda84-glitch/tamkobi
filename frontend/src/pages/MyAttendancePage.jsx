@@ -93,7 +93,7 @@ export default function MyAttendancePage() {
     setData(r.data);
     setSignal(r.data.location_signal || null);
     await refreshMesaimGate();
-  }).catch(() => toast.error("Puantaj yüklenemedi.")), [month, refreshMesaimGate]);
+  }).catch((err) => toast.error(err.response?.data?.detail || "Puantaj yüklenemedi.")), [month, refreshMesaimGate]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const id = setInterval(() => {

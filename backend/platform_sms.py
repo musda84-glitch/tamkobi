@@ -111,12 +111,15 @@ async def send_platform_sms(
         res = await comm_service.sms_send(creds, [{"no": no, "msg": msg}])
     except Exception as e:
         logger.warning("platform sms send failed: %s", e)
+        provider_err = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=300)
+        if not provider_err or provider_err.startswith("slice("):
+            provider_err = "SMS sağlayıcısı hata döndürdü."
         res = {
             "ok": False,
             "jobid": None,
             "code": "",
-            "error": f"SMS gönderilemedi: {str(e)[:160]}",
-            "message": f"SMS gönderilemedi: {str(e)[:160]}",
+            "error": provider_err,
+            "message": provider_err,
             "raw": None,
         }
     if not isinstance(res, dict):
@@ -319,7 +322,16 @@ def _unique_test_sms_body(custom: str = "") -> str:
 async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
     phone = str(req.get("phone") or "").strip()
     message = _unique_test_sms_body(str(req.get("message") or ""))
-    result = await send_platform_sms(phone=phone, message=message, context="platform_test")
+    try:
+        result = await send_platform_sms(phone=phone, message=message, context="platform_test")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("platform sms send-test failed")
+        detail = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=300)
+        if not detail or detail.startswith("slice("):
+            detail = "SMS sağlayıcısı hata döndürdü."
+        raise HTTPException(status_code=502, detail=f"Test SMS başarısız: {detail}") from e
     await _db.platform_settings.update_one(
         {"_id": SETTINGS_ID},
         {"$set": {"last_test_at": _now_iso(), "updated_at": _now_iso()}},
@@ -328,7 +340,8 @@ async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.req
     if result.get("ok"):
         msg = f"Test SMS gönderildi: {result.get('phone')}"
     else:
-        msg = f"Test SMS başarısız: {result.get('detail') or 'bilinmeyen hata'}"
+        detail = result.get("detail") or "bilinmeyen hata"
+        msg = f"Test SMS başarısız: {detail}"
     return {**result, "message": msg}
 
 

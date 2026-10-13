@@ -1,5 +1,6 @@
 """Abonelik e-Arşiv fatura PDF'i (reportlab) ve tek tıkla yenileme linki."""
 import io
+import logging
 import re
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -19,6 +20,7 @@ from reportlab.pdfgen import canvas
 
 router = APIRouter(prefix="/api")
 _db = None
+logger = logging.getLogger("TamKobiERP")
 
 # Helvetica/WinAnsi has no Ğ/İ/Ş/ı — Turkish glyphs need a bundled TTF.
 _FONT_PAIRS = (
@@ -269,11 +271,15 @@ async def invoice_pdf(
                         "ETTN/İşNet kaydı yok veya NetteFatura'da belge görünmüyor."
                     ),
                 )
-        except HTTPException:
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            logger.warning("invoice pdf integrator %s: %s", invoice_id, detail)
             if require_integrator:
-                raise
+                status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
+                raise HTTPException(status_code=status, detail=detail) from exc
             # wants_integrator ama require yok → yerel şablona düş
         except Exception as e:
+            logger.exception("invoice pdf integrator failed for %s", invoice_id)
             if require_integrator:
                 raise HTTPException(
                     status_code=502,
