@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { formatTrAmount } from "../utils/money";
@@ -27,12 +27,25 @@ export const exportPdf = (rows, columns, filename, title, company) => {
   w.document.write(html); w.document.close();
 };
 
-export const ExportButtons = ({ rows, columns, filename, title, company, size = "sm" }) => {
+export const ExportButtons = ({ rows, columns, filename, title, company, size = "sm", loadRows }) => {
   const cls = size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3 py-2 text-sm";
+  const [busy, setBusy] = useState(false);
+  const resolveRows = async () => {
+    if (!loadRows) return rows || [];
+    setBusy(true);
+    try {
+      return (await loadRows()) || [];
+    } catch {
+      toast.error("Dışa aktarma için liste alınamadı.");
+      return [];
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="flex items-center gap-1" data-testid="export-buttons">
-      <button type="button" onClick={() => exportExcel(rows, columns, filename)} disabled={!rows?.length} className={`${cls} flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg font-semibold disabled:opacity-40`} title="Excel (CSV) indir" data-testid="export-excel-btn"><FileSpreadsheet className="w-3.5 h-3.5" /> Excel</button>
-      <button type="button" onClick={() => exportPdf(rows, columns, filename, title, company)} disabled={!rows?.length} className={`${cls} flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-semibold disabled:opacity-40`} title="PDF olarak yazdır / kaydet" data-testid="export-pdf-btn"><FileText className="w-3.5 h-3.5" /> PDF</button>
+      <button type="button" onClick={async () => { const data = await resolveRows(); if (data.length) exportExcel(data, columns, filename); }} disabled={busy || (!loadRows && !rows?.length)} className={`${cls} flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg font-semibold disabled:opacity-40`} title="Excel (CSV) indir" data-testid="export-excel-btn"><FileSpreadsheet className="w-3.5 h-3.5" /> Excel</button>
+      <button type="button" onClick={async () => { const data = await resolveRows(); if (data.length) exportPdf(data, columns, filename, title, company); }} disabled={busy || (!loadRows && !rows?.length)} className={`${cls} flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-semibold disabled:opacity-40`} title="PDF olarak yazdır / kaydet" data-testid="export-pdf-btn"><FileText className="w-3.5 h-3.5" /> PDF</button>
     </div>
   );
 };

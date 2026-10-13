@@ -44,7 +44,7 @@ import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
-import { OrdersToolbar, ORDER_PAGE_SIZES, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
+import { OrdersToolbar, ORDER_PAGE_SIZES } from "../components/OrdersToolbar";
 import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
 import { formatOrderDateTime, orderTerminRemaining } from "../utils/orderTermin";
@@ -62,9 +62,17 @@ import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
 import { OrderLineStockModal } from "../components/OrderLineStockModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
-import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { cachedList, contactTypeFilter, dropCached } from "../utils/dataSync";
-import { orderPanelFilter, prepareOrdersForPanel } from "../utils/orderFilters";
+import {
+  ORDER_CHANNELS,
+  buildOrderListParams,
+  columnSortFromOrderSort,
+  decorateB2bHeldOrder,
+  orderFiltersFromSearch,
+  orderFiltersRestChanged,
+  toggleColumnSort,
+  writeOrderFiltersToParams,
+} from "../utils/orderFilters";
 import { useDataRefresh } from "../utils/dataRefresh";
 import {
   DropdownMenu,
@@ -639,21 +647,43 @@ export default function OrdersB2BPage() {
     if (next) setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
   const customerFilter = searchParams.get("customer") || "";
-  const [ordF, setOrdF] = useState(() => orderFiltersFromSearch(searchParams));
+  const ordF = useMemo(() => orderFiltersFromSearch(searchParams), [searchParams]);
+  const [qDraft, setQDraft] = useState(() => searchParams.get("q") || "");
+  const qDirty = useRef(false);
+  const commitFilters = useCallback((next) => {
+    setSearchParams((prev) => writeOrderFiltersToParams(prev, next), { replace: true });
+  }, [setSearchParams]);
+  useEffect(() => { setQDraft(ordF.q || ""); }, [ordF.q]);
   useEffect(() => {
-    const next = orderFiltersFromSearch(searchParams);
-    setOrdF((prev) => {
-      if (prev.status === next.status && (!next.q || prev.q === next.q)) return prev;
-      return { ...prev, status: next.status, ...(next.q ? { q: next.q } : {}) };
-    });
-  }, [searchParams]);
-  const [sort, setSort] = useState({ key: "order_date", dir: "desc" });
-  const toggleSort = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
-  const visibleOrders = useMemo(() => {
-    const list = applyOrderFilters(orders.filter((o) => !customerFilter || o.customer_name === customerFilter), ordF);
-    const val = (o) => ({ order_number: o.order_number || "", channel: o.channel || "", customer_name: (o.customer_name || "").toLowerCase(), total_amount: Number(o.total_amount) || 0, order_status: o.order_status || "", order_date: o.order_date || o.created_at || "", items: (o.items || []).length })[sort.key];
-    return [...list].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * (sort.dir === "asc" ? 1 : -1); });
-  }, [orders, customerFilter, ordF, sort]);
+    if (!qDirty.current) return undefined;
+    if ((qDraft || "") === (ordF.q || "")) {
+      qDirty.current = false;
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      qDirty.current = false;
+      commitFilters({ ...ordF, q: qDraft });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [qDraft, ordF, commitFilters]);
+  const setOrdF = useCallback((updater) => {
+    const base = { ...ordF, q: qDraft };
+    const next = typeof updater === "function" ? updater(base) : updater;
+    setQDraft(next.q || "");
+    if (orderFiltersRestChanged(base, next) || !(next.q || "")) {
+      qDirty.current = false;
+      commitFilters(next);
+      return;
+    }
+    qDirty.current = true;
+  }, [ordF, qDraft, commitFilters]);
+  const columnSort = columnSortFromOrderSort(ordF.sort);
+  const toggleSort = (key) => {
+    qDirty.current = false;
+    commitFilters({ ...ordF, q: qDraft, sort: toggleColumnSort(ordF.sort, key) });
+  };
+  const visibleOrders = orders;
+  const pagedOrders = orders;
   const { widths: colW, onResizeStart } = usePersistedColumnWidths("orders-fit", ORDER_COL_DEFAULTS, ORDER_COL_LIMITS);
   const tableWidth = orderTableMinWidth(colW);
   const ColResize = ({ k }) => (
@@ -669,11 +699,10 @@ export default function OrdersB2BPage() {
   );
   const SortTh = ({ k, children, className = "" }) => (
     <th className={`group/th relative px-4 py-3 cursor-pointer select-none hover:text-slate-800 ${className}`} style={{ width: colW[k] }} onClick={() => toggleSort(k)} data-testid={`ord-sort-${k}`}>
-      {children} <span className={`text-[9px] ${sort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
+      {children} <span className={`text-[9px] ${columnSort.key === k ? "text-indigo-600" : "text-slate-300"}`}>{columnSort.key === k ? (columnSort.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
       <ColResize k={k} />
     </th>
   );
-  const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
   const [pageSize, setPageSize] = useState(() => {
     try {
       const n = Number(localStorage.getItem("orders-page-size") || 50);
@@ -687,29 +716,47 @@ export default function OrdersB2BPage() {
     setPageSize(v);
     try { localStorage.setItem("orders-page-size", String(v)); } catch { /* ignore */ }
   }, []);
-  const ordersListResetKey = useMemo(
-    () => `${customerFilter || ""}|${JSON.stringify(ordF)}|${sort.key}|${sort.dir}|${pageSize}`,
-    [customerFilter, ordF, sort.key, sort.dir, pageSize],
-  );
-  const { visible: pagedOrders, hasMore: ordersHasMore, sentinelRef: ordersSentinelRef } = useInfiniteRows(visibleOrders, {
-    initial: pageSize,
-    step: pageSize,
-    resetKey: ordersListResetKey,
+  const [listMeta, setListMeta] = useState({
+    total: 0, total_amount: 0, open_count: 0, closed_count: 0, missing_contact: 0, counts: {}, channels: [], truncated: false,
   });
+  const [hasMore, setHasMore] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+  const pageRef = useRef(1);
+  const listReq = useRef(0);
+  const silentRef = useRef(false);
+  const loadingMore = useRef(false);
+  const ordersSentinelRef = useRef(null);
+  const ordersHasMore = hasMore;
+  const filterKey = [
+    companyId,
+    pageSize,
+    customerFilter,
+    ordF.q,
+    ordF.status,
+    ordF.channel,
+    ordF.invoiced,
+    ordF.cargo,
+    (ordF.docStatus || []).join(","),
+    ordF.from,
+    ordF.to,
+    ordF.sort,
+  ].join("|");
+  const [filterEpoch, setFilterEpoch] = useState(filterKey);
+  const [loading, setLoading] = useState(true);
+  if (filterEpoch !== filterKey) {
+    setFilterEpoch(filterKey);
+    setHasMore(false);
+    setOrders([]);
+    setLoading(true);
+    pageRef.current = 1;
+  }
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   // B2B Cart State
   const [cart, setCart] = useState({});
   const [b2bCustomer, setB2bCustomer] = useState("");
-
-  // IndexedDB + artımlı /api/sync — pazaryeri sync-now YOK (nav tık / F5 / mount).
-  // Önce önbellekten boya; ürün/cari kataloğu tabloyu bloklamasın.
-  const paintOrders = useCallback((rows) => {
-    setOrders(prepareOrdersForPanel(rows));
-  }, []);
 
   const loadCatalog = useCallback(async (cid) => {
     try {
@@ -734,28 +781,91 @@ export default function OrdersB2BPage() {
     }
   }, []);
 
-  const loadData = useCallback(async ({ silent = false } = {}) => {
-    const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const loadData = useCallback(({ silent = false } = {}) => {
+    silentRef.current = !!silent;
+    pageRef.current = 1;
+    setHasMore(false);
+    setReloadToken((n) => n + 1);
+    void loadCatalog(companyId);
+  }, [companyId, loadCatalog]);
+
+  const runFetch = useCallback(async (pageToFetch, silent) => {
+    const req = ++listReq.current;
+    loadingMore.current = true;
+    if (pageToFetch === 1 && !silent) setLoading(true);
     try {
-      if (!silent) setLoading(true);
-      // Aktif B2B sepet varsayılan listede yok (orderPanelFilter)
-      const rows = await cachedList("orders", cid, {
-        filter: orderPanelFilter,
-        onCached: (cached) => {
-          paintOrders(cached);
-          if (!silent) setLoading(false);
-        },
+      const params = buildOrderListParams(ordF, {
+        companyId, page: pageToFetch, pageSize, customer: customerFilter,
       });
-      paintOrders(rows);
-      if (!silent) setLoading(false);
-      // Ürün + cari: tablo boyandıktan sonra (Üretim / e-belge menüsü)
-      void loadCatalog(cid);
-    } catch (err) {
-      toast.error("Sipariş verileri yüklenemedi.");
-      if (!silent) setLoading(false);
+      const r = await axios.get(`${API_URL}/orders`, { params });
+      if (req !== listReq.current) return;
+      const data = r.data || {};
+      const items = (data.items || []).map(decorateB2bHeldOrder);
+      setOrders((prev) => {
+        if (pageToFetch === 1) return items;
+        const seen = new Set(prev.map((o) => o.id || o._id || o.order_number));
+        return prev.concat(items.filter((o) => !seen.has(o.id || o._id || o.order_number)));
+      });
+      setHasMore(!!data.has_more);
+      setListMeta({
+        total: Number(data.total) || 0,
+        total_amount: Number(data.total_amount) || 0,
+        open_count: Number(data.open_count) || 0,
+        closed_count: Number(data.closed_count) || 0,
+        missing_contact: Number(data.missing_contact) || 0,
+        counts: data.counts || {},
+        channels: Array.isArray(data.channels) ? data.channels : [],
+        truncated: !!data.truncated,
+      });
+    } catch {
+      if (req === listReq.current) {
+        if (pageToFetch > 1) pageRef.current = pageToFetch - 1;
+        toast.error("Sipariş verileri yüklenemedi.");
+      }
+    } finally {
+      if (req === listReq.current) {
+        loadingMore.current = false;
+        setLoading(false);
+      }
     }
-  }, [activeCompany, loadCatalog, paintOrders]);
-  useEffect(() => { loadData(); }, [loadData]);
+  }, [ordF, companyId, pageSize, customerFilter]);
+
+  useEffect(() => {
+    const silent = silentRef.current;
+    silentRef.current = false;
+    void runFetch(pageRef.current, silent);
+  }, [filterKey, reloadToken, runFetch]);
+
+  useEffect(() => { void loadCatalog(companyId); }, [loadCatalog, companyId]);
+
+  useEffect(() => {
+    const el = ordersSentinelRef.current;
+    if (!el || !hasMore || loading) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      if (loadingMore.current) return;
+      loadingMore.current = true;
+      pageRef.current += 1;
+      setReloadToken((n) => n + 1);
+    }, { root: null, rootMargin: "240px 0px", threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loading, orders.length]);
+
+  const loadExportRows = useCallback(async () => {
+    const params = buildOrderListParams(ordF, { companyId, exportAll: true, customer: customerFilter });
+    const r = await axios.get(`${API_URL}/orders`, { params });
+    const items = r.data?.items || [];
+    const total = Number(r.data?.total) || items.length;
+    if (total > items.length) toast.warning(`Excel ilk ${items.length} siparişi içeriyor (toplam ${total}).`);
+    return items.map(decorateB2bHeldOrder);
+  }, [ordF, companyId, customerFilter]);
+
+  const channelOptions = useMemo(
+    () => [...new Set([...ORDER_CHANNELS, ...(listMeta.channels || [])])],
+    [listMeta.channels],
+  );
+
   const refreshOrdersSilent = useCallback(() => loadData({ silent: true }), [loadData]);
   useDataRefresh(refreshOrdersSilent, { companyId, scopes: ["orders", "invoices"] });
 
@@ -1589,9 +1699,9 @@ export default function OrdersB2BPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Sipariş Modülü</h1>
           <p className="text-xs sm:text-sm text-slate-500">Pazaryeri & B2B siparişleri, iade/iptal/soru yönetimi, termal kargo etiketi ve tek tıkla faturalama</p>
-          {orders.some((o) => !o.contact_id) && (
+          {listMeta.missing_contact > 0 && (
             <button onClick={autoContacts} disabled={autoBusy} className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="orders-auto-contacts-btn">
-              <UserPlus className="w-3.5 h-3.5" /> Carileri Eşle ({orders.filter((o) => !o.contact_id).length} carisiz sipariş)
+              <UserPlus className="w-3.5 h-3.5" /> Carileri Eşle ({listMeta.missing_contact} carisiz sipariş)
             </button>
           )}
         </div>
@@ -1609,16 +1719,16 @@ export default function OrdersB2BPage() {
             }`}
             data-testid="tab-orders"
           >
-            Gelen Siparişler ({orders.length})
+            Gelen Siparişler ({listMeta.open_count})
           </button>
-          {[["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${orders.filter((o) => ["cancelled", "returned"].includes(o.order_status)).length})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["pricing", "Fiyat Merkezi", Tag], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
+          {[["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${listMeta.closed_count})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["pricing", "Fiyat Merkezi", Tag], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
             <button key={k} onClick={() => setActiveTab(k)} className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${activeTab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`} data-testid={`tab-${k}`}><Icon className="w-3.5 h-3.5" /><span>{l}</span></button>
           ))}
         </div>
         </div>
       </div>
       {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
-      {activeTab === "cancelled" && <CancelledPanel orders={orders} />}
+      {activeTab === "cancelled" && <CancelledPanel companyId={companyId} closedCount={listMeta.closed_count} />}
       {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "pricing" && <PricingCenter companyId={activeCompany?.id || "comp_nexus_main_01"} />}
@@ -1671,13 +1781,18 @@ export default function OrdersB2BPage() {
       )}
 
       {activeTab === "orders" ? (<>
+        {listMeta.truncated && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800" data-testid="orders-truncated-warning">
+            Sipariş taraması kesildi (üst sınır). Toplam adet ve tutar eksik olabilir; tarih aralığını daraltın.
+          </div>
+        )}
         <OrdersToolbar
-          f={ordF}
+          f={{ ...ordF, q: qDraft }}
           setF={setOrdF}
           orders={orders}
-          count={visibleOrders.length}
-          total={visibleTotal}
-          rows={visibleOrders}
+          count={listMeta.total}
+          total={listMeta.total_amount}
+          rows={orders}
           selectedCount={selected.length}
           bulkBusy={bulkBusy}
           onBulkAction={bulk}
@@ -1685,11 +1800,19 @@ export default function OrdersB2BPage() {
           onPageSizeChange={setPageSizePersist}
           onRefresh={refreshOrders}
           refreshBusy={mpSyncing}
+          channelOptions={channelOptions}
+          statusCounts={listMeta.counts}
+          loadExportRows={loadExportRows}
         />
 
         {/* Mobil: sade kart + aynı Diğer işlemler menüsü */}
         <div className="md:hidden space-y-2" data-testid="orders-mobile-list">
-          {visibleOrders.length === 0 && (
+          {loading && visibleOrders.length === 0 && (
+            <div className="bg-white border border-dashed rounded-2xl px-4 py-8 text-center text-xs text-slate-400" data-testid="ord-loading-mobile">
+              Yükleniyor…
+            </div>
+          )}
+          {!loading && visibleOrders.length === 0 && (
             <div className="bg-white border border-dashed rounded-2xl px-4 py-8 text-center text-xs text-slate-400" data-testid="ord-empty-mobile">
               Filtreye uyan sipariş yok.
             </div>
@@ -1851,7 +1974,8 @@ export default function OrdersB2BPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
+                {loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-loading">Yükleniyor…</td></tr>}
+                {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {pagedOrders.map((ord) => (
                   <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(orderRowId(ord))} onChange={() => toggleSel(orderRowId(ord))} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>

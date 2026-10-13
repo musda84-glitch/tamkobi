@@ -27,11 +27,18 @@ describe("orderListBucket", () => {
     expect(orderListBucket({ order_status: "approved", marketplace_status: "Returned" })).toBe("returned");
   });
 
-  it("puts shipped / cargo tracking into Kargolandı", () => {
+  it("puts shipped / marketplace cargo status into Kargolandı, not tracking alone", () => {
     expect(orderListBucket({ order_status: "shipped" })).toBe("shipped");
     expect(orderListBucket({ order_status: "delivered" })).toBe("shipped");
-    expect(orderListBucket({ order_status: "approved", cargo_tracking_number: "123" })).toBe("shipped");
-    expect(orderListBucket({ order_status: "approved", tracking: { tracking_number: "XYZ" } })).toBe("shipped");
+    expect(orderListBucket({
+      order_status: "pending",
+      marketplace_status: "Created",
+      cargo_tracking_number: "123",
+    })).toBe("new");
+    expect(orderListBucket({ order_status: "approved", cargo_tracking_number: "123" })).toBe("new");
+    expect(orderListBucket({ order_status: "approved", tracking: { tracking_number: "XYZ" } })).toBe("new");
+    expect(orderListBucket({ order_status: "approved", marketplace_status: "InTransit" })).toBe("shipped");
+    expect(orderListBucket({ order_status: "approved", marketplace_status: "AtCollectionPoint" })).toBe("shipped");
     expect(orderListBucket({ order_status: "approved", marketplace_status: "ReadyToShip" })).toBe("new");
   });
 });
