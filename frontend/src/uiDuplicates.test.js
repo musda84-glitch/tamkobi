@@ -30,14 +30,52 @@ const SRC = __dirname;
 
 /** Aynı testid'nin birden çok kez geçmesi doğru olan yerler ve sebepleri. */
 const ALLOWED_DUPLICATE_TESTIDS = {
-  "components/AppSidebarNav.jsx": ["{`nav-group-${g.id}`}"], // başlıklı ve başlıksız grup dalları
-  "components/ContactForm.jsx": ["{`cf-${k}`}"], // input / select / checkbox yardımcıları
-  "components/LabelDesigner.jsx": ['"label-print-tpl"', '"label-print-close"', '"label-page-mode"', '"label-page-cols"', '"label-print-btn"'], // toplu ve hızlı yazdırma panelleri
-  "components/PrintDocument.jsx": ["{`tpl-${k}`}"], // iki ayrı ayar grubu, anahtar bazlı
-  "components/saas/AiProviderPanel.jsx": ['"ai-advisor-model"', '"ai-extract-model"'], // özel sağlayıcıda serbest metin, aksi halde liste
-  "components/SupportContactBar.jsx": ['"support-contact-link"'], // Link / <a> dalları
-  "pages/PaymentResultPage.jsx": ['"payment-success-title"'], // kontör ve abonelik başarı dalları
-  "pages/SupportPage.jsx": ["{`support-att-${i}`}"], // görsel ve dosya eki dalları
+  "components/AppSidebarNav.jsx": [
+    "{`nav-group-${g.id}`}", // başlıklı ve başlıksız grup dalları
+    "{`nav-count-${item.path.replace(\"/\", \"\") || \"dashboard\"}`}",
+  ],
+  "components/AssignedDutyCard.jsx": ["{`${tid}-maps`}"],
+  "components/BankConnectionsPanel.jsx": [
+    "{`conn-field-${f}`}",
+    '"edit-conn-access-token"', '"edit-conn-refresh-token"',
+    '"edit-conn-client-id"', '"edit-conn-client-secret"', '"edit-conn-api-key"',
+  ],
+  "components/BuildStamp.jsx": ['"build-stamp"'],
+  "components/ContactDetailPanel.jsx": ["{`detail-order-print-${o.order_number}`}"],
+  "components/ContactForm.jsx": ["{`cf-${k}`}"],
+  "components/EmployeeAssignTaskModal.jsx": ['"emp-task-title"', '"emp-task-field-hint"'],
+  "components/EmployeeCardModal.jsx": ['"emp-data-reset-btn"'],
+  "components/InvoiceContextMenu.jsx": ['"ctx-edit"', '"ctx-cancel"'],
+  "components/IsnetIntegrationPanel.jsx": ['"isnet-egress-ips"'],
+  "components/LabelDesigner.jsx": ['"label-print-tpl"', '"label-print-close"', '"label-page-mode"', '"label-page-cols"', '"label-print-btn"'],
+  "components/PrintDocument.jsx": [
+    "{`tpl-${k}`}",
+    '"print-now-btn"', '"print-close-btn"', '"print-items-table"',
+    "{`print-item-row-${i}`}", "{`print-item-name-${i}`}", "{`print-item-image-${i}`}",
+    "{`print-item-note-${i}`}", "{`print-item-barcode-${i}`}",
+  ],
+  "components/RecipeModal.jsx": [
+    "{`recipe-mat-${i}-step-name-${si}`}", "{`recipe-mat-${i}-step-station-${si}`}",
+    "{`recipe-step-name-${i}`}", "{`recipe-step-station-${i}`}",
+  ],
+  "components/saas/AiProviderPanel.jsx": ['"ai-advisor-model"', '"ai-extract-model"'],
+  "components/saas/EinvoiceDesignCanvas.jsx": ['"einvoice-design-preview"'],
+  "components/saas/PlatformMailPanel.jsx": ['"mail-server-form"', '"mail-box-form"'],
+  "components/SupportContactBar.jsx": ['"support-contact-link"'],
+  "pages/InvoicesPage.jsx": ["{`inv-actions-${inv.invoice_number}`}", "{`preview-inv-btn-${inv.invoice_number}`}"],
+  "pages/OrdersB2BPage.jsx": [
+    "{`print-order-mobile-${ord.order_number}`}", "{`order-status-badge-${ord.order_number}`}",
+    "{`print-order-btn-${ord.order_number}`}", "{`invoiced-badge-${ord.order_number}`}",
+    "{`convert-inv-btn-${ord.order_number}`}", "{`inv-save-dispatch-${ord.order_number}`}",
+  ],
+  "pages/PaymentResultPage.jsx": ['"payment-success-title"'],
+  "pages/ProjectsPage.jsx": [
+    "{`quote-project-link-${q.quote_number}`}",
+    "{`survey-done-${s.survey_number}`}", "{`survey-to-quote-${s.survey_number}`}",
+    "{`project-print-quote-${p.project_number}`}",
+  ],
+  "pages/SettingsPage.jsx": ['"einvoice-assigned-provider"'],
+  "pages/SupportPage.jsx": ["{`support-att-${i}`}"],
 };
 
 function sourceFiles(dir = SRC, out = []) {

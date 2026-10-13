@@ -51,8 +51,9 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("TR1.2");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("SF-414808");
   expect(host.querySelector('[data-testid="einvoice-design-palette-meta-date"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]')).toBeNull();
+  // ETTN varsayılan açık (ayrı blok); palette yalnızca gizlenince görünür
+  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");
   expect(host.querySelector('[data-testid="einvoice-design-block-invoice_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')).toBeNull();
@@ -289,9 +290,15 @@ test("ETTN is a separate palette block, not a fatura bilgileri field", async () 
   await act(async () => {
     root.render(<Harness />);
   });
-  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("ETTN");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-hide-ettn"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]')).toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-ettn"]').click();
   });

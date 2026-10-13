@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@jest/globals";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "./b2bCatalogWindow";
 
 describe("b2bCatalogWindow", () => {
