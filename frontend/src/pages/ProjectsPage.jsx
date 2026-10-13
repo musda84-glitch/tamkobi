@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send, Eye, EyeOff, Factory, ListOrdered } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -1027,7 +1028,7 @@ export default function ProjectsPage({ section } = {}) {
             <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? (form.id ? "Projeyi Düzenle" : "Yeni Proje") : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             {form.kind === "quote" && form.project_number && <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-1.5" data-testid="pf-project-link">Bu teklif {form.project_number} projesine bağlanacak. Cari ve adres projeden geldi.</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
+              <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><ContactSearchSelect companyId={companyId} value={form.contact_id} valueLabel={form.contact_name || ""} placeholder="Cari ara..." onChange={setContact} testId="pf-contact" /></div>
               {form.kind === "quote" && <div><label className="block font-semibold mb-1">Başlık</label><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Fiyat Teklifi" data-testid="pf-title" /></div>}
               {form.kind === "project" && <div><label className="block font-semibold mb-1">Proje Adı</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} required data-testid="pf-name" /></div>}
               {form.kind === "survey" && <div><label className="block font-semibold mb-1">Keşif Tarihi</label><input type="date" value={form.survey_date} onChange={(e) => setForm({ ...form, survey_date: e.target.value })} className={inputCls} /></div>}

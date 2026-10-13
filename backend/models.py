@@ -244,6 +244,7 @@ class Invoice(BaseDocument):
     contact_id: str
     contact_name: str
     contact_tax_id: Optional[str] = None
+    contact_tax_office: Optional[str] = None
     shipping_address: Optional[str] = None
     city: Optional[str] = None
     customer_phone: Optional[str] = None

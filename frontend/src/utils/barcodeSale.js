@@ -107,6 +107,7 @@ export function invoiceFormPatchForRetail(contact, formData = {}) {
     contact_id: id,
     contact_name: contact?.name || RETAIL_CONTACT_NAME,
     contact_tax_id: contact?.tax_number_or_id || contact?.tax_id || RETAIL_CONTACT_TAX,
+    contact_tax_office: contact?.tax_office || "Perakende",
     e_type: eType,
   };
 }

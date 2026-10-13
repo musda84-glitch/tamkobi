@@ -23,6 +23,20 @@ beforeEach(() => {
     if (String(url).includes("/banking/partners")) {
       return Promise.resolve({ data: [{ id: "p1", name: "Ortak A", share_percent: 50, balance: 0, is_active: true }] });
     }
+    if (String(url).includes("/contacts/search")) {
+      return Promise.resolve({
+        data: {
+          items: [
+            { id: "cnt-1", name: "Acme Ltd", type: "customer", balance: 1200, tax_number_or_id: "1234567890", phone: "05320000000" },
+            { id: "cnt-2", name: "Beta Tedarik", type: "supplier", balance: -400, tax_number_or_id: "9876543210" },
+          ],
+          total: 2,
+          page: 1,
+          limit: 20,
+          has_more: false,
+        },
+      });
+    }
     if (String(url).includes("/contacts")) {
       return Promise.resolve({
         data: [
@@ -88,8 +102,9 @@ test("cari mode shows searchable contact select", async () => {
   expect(host.querySelector('[data-testid="virman-source-account"]')).toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="virman-source-contact-trigger"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
   });
-  // SearchSelect menüsü portal ile document.body'de açılır.
   const search = document.querySelector('[data-testid="virman-source-contact-search"]');
   expect(search).not.toBeNull();
   expect(search?.getAttribute("placeholder") || "").toMatch(/Cari/i);

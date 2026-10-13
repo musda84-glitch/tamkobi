@@ -28,7 +28,7 @@ export const GibContactLookup = ({ companyId, onSelect, onApply, className = "" 
         return;
       }
       if (r.data.local_contact) {
-        onSelect?.(r.data.local_contact, r.data.suggested_e_type);
+        onSelect?.(r.data.local_contact, r.data.suggested_e_type, r.data);
         toast.success(`${r.data.local_contact.name} seçildi.`);
       }
     } catch (err) {

@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { SearchSelect } from "./SearchSelect";
+import { ContactSearchSelect } from "./ContactSearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "./DocumentLineEditor";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { orderLinesLocked } from "../utils/orderEdit";
@@ -17,12 +17,22 @@ const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const CHANNELS = [["manual", "Manuel / Telefon"], ["b2b", "B2B Bayi"], ["trendyol", "Trendyol"], ["hepsiburada", "Hepsiburada"], ["amazon", "Amazon"], ["n11", "n11"], ["shopify", "Shopify"], ["woocommerce", "WooCommerce"]];
 
-export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved }) => {
+export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
   useEscape(onClose);
   const [f, setF] = useState({ contact_id: "", customer_name: "", customer_phone: "", customer_email: "", shipping_address: "", city: "", channel: "manual", notes: "" });
   const [items, setItems] = useState([computeLine(emptyLine())]);
   const [busy, setBusy] = useState(false);
-  const pickContact = (id) => { const c = contacts.find((x) => (x.id || x._id) === id); setF({ ...f, contact_id: id, customer_name: c?.name || f.customer_name, customer_phone: c?.phone || f.customer_phone, customer_email: c?.email || f.customer_email, shipping_address: c?.address || f.shipping_address, city: c?.city || f.city }); };
+  const pickContact = (id, c) => {
+    setF({
+      ...f,
+      contact_id: id || "",
+      customer_name: c?.name || (id ? f.customer_name : ""),
+      customer_phone: c?.phone || (id ? f.customer_phone : ""),
+      customer_email: c?.email || (id ? f.customer_email : ""),
+      shipping_address: c?.address || (id ? f.shipping_address : ""),
+      city: c?.city || (id ? f.city : ""),
+    });
+  };
   const totals = documentLineTotals(items);
   const save = async () => {
     if (!f.customer_name.trim()) { toast.error("Müşteri adı gerekli."); return; }
@@ -60,7 +70,7 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
       <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="new-order-modal">
         <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">Yeni Sipariş Oluştur</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="new-order-close"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="md:col-span-2"><label className="block font-semibold mb-1">Cari (seçince bilgiler dolar)</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.phone || c.tax_number_or_id} placeholder="Cari ara…" onChange={pickContact} testId="new-order-contact" /></div>
+          <div className="md:col-span-2"><label className="block font-semibold mb-1">Cari (seçince bilgiler dolar)</label><ContactSearchSelect companyId={companyId} value={f.contact_id} valueLabel={f.customer_name} placeholder="Cari ara…" onChange={pickContact} testId="new-order-contact" /></div>
           <div><label className="block font-semibold mb-1">Kanal</label><select value={f.channel} onChange={(e) => setF({ ...f, channel: e.target.value })} className={inp} data-testid="new-order-channel">{CHANNELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
           <div><label className="block font-semibold mb-1">Müşteri Adı *</label><input value={f.customer_name} onChange={(e) => setF({ ...f, customer_name: e.target.value })} className={inp} data-testid="new-order-customer" /></div>
           <div><label className="block font-semibold mb-1">Telefon</label><input value={f.customer_phone} onChange={(e) => setF({ ...f, customer_phone: e.target.value })} className={inp} data-testid="new-order-phone" /></div>

@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { INBOX_STATUS_FILTERS, inboxItemsOfKind, inboxKindFromQuery, inboxStatusKey, processStockChoice } from "../utils/edocInbox";
 import { EINVOICE_INBOX_BACKFILL_DAYS, einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
@@ -54,7 +55,6 @@ export default function EdocInboxPage() {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("pending");
   const [sel, setSel] = useState(null);
-  const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState([]);
   const [busy, setBusy] = useState("");
   const [createStockCards, setCreateStockCards] = useState(false);
@@ -79,9 +79,6 @@ export default function EdocInboxPage() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    axios.get(`${API_URL}/contacts`, { params: { company_id: companyId } })
-      .then((r) => setContacts(Array.isArray(r.data) ? r.data : r.data?.items || []))
-      .catch(() => {});
     axios.get(`${API_URL}/products`, { params: { company_id: companyId } })
       .then((r) => setProducts(Array.isArray(r.data) ? r.data : r.data?.items || []))
       .catch(() => {});
@@ -458,13 +455,11 @@ export default function EdocInboxPage() {
                 ) : sel.status === "pending" ? (
                   <>
                     <div className="w-56">
-                      <SearchSelect
+                      <ContactSearchSelect
+                        companyId={companyId}
                         value=""
-                        options={contacts}
-                        getLabel={(c) => c.name}
-                        getSub={(c) => c.tax_number_or_id || c.tax_id || ""}
                         placeholder="Mevcut cari seç…"
-                        onChange={(id) => act(() => axios.put(`${API_URL}/edocs/inbox/${sel.id}/supplier`, { contact_id: id }), "Tedarikçi eşleştirildi.")}
+                        onChange={(id) => id && act(() => axios.put(`${API_URL}/edocs/inbox/${sel.id}/supplier`, { contact_id: id }), "Tedarikçi eşleştirildi.")}
                         testId="edoc-supplier-select"
                       />
                     </div>

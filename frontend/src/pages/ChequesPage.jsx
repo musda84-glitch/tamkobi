@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ScrollText, Plus, Trash2, X, Landmark, ArrowDownLeft, ArrowUpRight, Printer, Camera, ImagePlus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
@@ -37,10 +38,10 @@ const Stat = ({ label, value, cls = "", testid }) => (
   </div>
 );
 
-const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
+const ChequeModal = ({ companyId, onClose, onSaved }) => {
   useEscape(onClose);
   const [d, setD] = useState({
-    direction: "received", instrument: "cheque", contact_id: "", amount: "",
+    direction: "received", instrument: "cheque", contact_id: "", contact_name: "", amount: "",
     issue_date: todayISO(), due_date: todayISO(), serial_no: "", bank_name: "", bank_branch: "", account_no: "", drawer_name: "", notes: "",
   });
   const [busy, setBusy] = useState(false);
@@ -65,7 +66,12 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
         toast.error("Çekten tutar okunamadı. Daha net bir fotoğraf deneyin.");
         return;
       }
-      setD((cur) => applyChequeScan(cur, draft, r.data?.matched_contact));
+      setD((cur) => {
+        const next = applyChequeScan(cur, draft, r.data?.matched_contact);
+        const match = r.data?.matched_contact;
+        if (match) next.contact_name = match.name || match.company_title || next.contact_name || "";
+        return next;
+      });
       toast.success(chequeScanHint(draft));
     } catch (err) {
       toast.error(err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı." : "Çek okunamadı."));
@@ -77,9 +83,15 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
   };
   const save = async (e) => {
     e.preventDefault();
+    if (!d.contact_id) {
+      toast.error("Cari seçin.");
+      return;
+    }
     setBusy(true);
     try {
-      await axios.post(`${API_URL}/cheques`, { ...d, company_id: companyId, amount: Number(d.amount) });
+      const payload = { ...d };
+      delete payload.contact_name;
+      await axios.post(`${API_URL}/cheques`, { ...payload, company_id: companyId, amount: Number(d.amount) });
       toast.success("Çek/senet kaydedildi; cari bakiyesi güncellendi.");
       onSaved();
       onClose();
@@ -126,10 +138,14 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
           </div>
           <div className="col-span-2">
             <label className="block font-semibold mb-1">Cari</label>
-            <select required value={d.contact_id} onChange={(e) => setD({ ...d, contact_id: e.target.value })} className={inputCls} data-testid="cheque-contact">
-              <option value="">Seçin…</option>
-              {contacts.map((c) => <option key={c.id || c._id} value={c.id || c._id}>{c.name}</option>)}
-            </select>
+            <ContactSearchSelect
+              companyId={companyId}
+              value={d.contact_id}
+              valueLabel={d.contact_name || ""}
+              placeholder="Cari ara…"
+              onChange={(id, c) => setD({ ...d, contact_id: id || "", contact_name: c?.name || "" })}
+              testId="cheque-contact"
+            />
           </div>
           <div>
             <label className="block font-semibold mb-1">Tutar (₺)</label>
@@ -178,15 +194,20 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
   );
 };
 
-const ActionModal = ({ kind, row, accounts, contacts, companyId, onClose, onDone }) => {
+const ActionModal = ({ kind, row, accounts, companyId, onClose, onDone }) => {
   useEscape(onClose);
   const [accountId, setAccountId] = useState(accounts[0]?.id || accounts[0]?._id || "");
   const [contactId, setContactId] = useState("");
+  const [contactName, setContactName] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const titles = { collect: "Tahsil et", pay: "Öde", endorse: "Ciro et", bounce: "Karşılıksız" };
   const run = async (e) => {
     e.preventDefault();
+    if (kind === "endorse" && !contactId) {
+      toast.error("Ciro edilecek cariyi seçin.");
+      return;
+    }
     setBusy(true);
     try {
       const id = row.id;
@@ -219,10 +240,14 @@ const ActionModal = ({ kind, row, accounts, contacts, companyId, onClose, onDone
         {kind === "endorse" && (
           <div className="text-xs">
             <label className="block font-semibold mb-1">Ciro edilecek cari</label>
-            <select required value={contactId} onChange={(e) => setContactId(e.target.value)} className={inputCls} data-testid="cheque-endorse-contact">
-              <option value="">Seçin…</option>
-              {contacts.filter((c) => (c.id || c._id) !== row.contact_id).map((c) => <option key={c.id || c._id} value={c.id || c._id}>{c.name}</option>)}
-            </select>
+            <ContactSearchSelect
+              companyId={companyId}
+              value={contactId}
+              valueLabel={contactName}
+              placeholder="Cari ara…"
+              onChange={(id, c) => { setContactId(id || ""); setContactName(c?.name || ""); }}
+              testId="cheque-endorse-contact"
+            />
           </div>
         )}
         {kind === "bounce" && (
@@ -244,7 +269,6 @@ export default function ChequesPage() {
   const { activeCompany } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [data, setData] = useState({ cheques: [], summary: null });
-  const [contacts, setContacts] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [tab, setTab] = useState("all");
   const [q, setQ] = useState("");
@@ -263,13 +287,11 @@ export default function ChequesPage() {
     if (tab === "received" || tab === "issued") params.set("direction", tab);
     if (tab === "open") params.set("status", "open");
     if (qLive.trim()) params.set("q", qLive.trim());
-    const [c, ct, acc] = await Promise.all([
+    const [c, acc] = await Promise.all([
       axios.get(`${API_URL}/cheques?${params}`),
-      axios.get(`${API_URL}/contacts?company_id=${companyId}`).catch(() => ({ data: [] })),
       axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).catch(() => ({ data: [] })),
     ]);
     setData(c.data);
-    setContacts(ct.data || []);
     setAccounts((acc.data || []));
   }, [companyId, tab, qLive]);
 
@@ -402,8 +424,8 @@ export default function ChequesPage() {
         </div>
       </div>
       <p className="text-[11px] text-slate-400 flex items-center gap-1"><Landmark className="w-3 h-3" /> Tahsil alınan çekleri kasaya/bankaya yatırır; ödeme verilen çekin bedelini hesaptan düşer. Ciro, çeki başka bir cariye (tedarikçi ödemesi) devreder.</p>
-      {modal && <ChequeModal companyId={companyId} contacts={contacts} onClose={() => setModal(false)} onSaved={load} />}
-      {action && <ActionModal kind={action.kind} row={action.row} accounts={accounts} contacts={contacts} companyId={companyId} onClose={() => setAction(null)} onDone={load} />}
+      {modal && <ChequeModal companyId={companyId} onClose={() => setModal(false)} onSaved={load} />}
+      {action && <ActionModal kind={action.kind} row={action.row} accounts={accounts} companyId={companyId} onClose={() => setAction(null)} onDone={load} />}
       {printNotes && (
         <PromissoryPrint
           notes={printNotes}
