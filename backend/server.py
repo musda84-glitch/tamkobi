@@ -344,6 +344,13 @@ async def startup_event():
             )
         except Exception as _pe:
             logger.warning("platform ephemera cleanup loop skipped: %s", _pe)
+        try:
+            _start_leased_background(
+                "bg.idempotency_cleanup",
+                lambda: idempotency.cleanup_loop(db),
+            )
+        except Exception as _ie:
+            logger.warning("idempotency cleanup loop skipped: %s", _ie)
     else:
         logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
 
@@ -6971,7 +6978,7 @@ async def _pos_return_core(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail="İptal edilmiş fiş iade edilemez.")
     grand = float(inv.get("grand_total") or 0)
     # Atomik iade kilidi (returned != True)
-    claim = await db.invoices.update_one(
+    claim = await db.invoices.update_one_atomic(
         {"_id": inv["_id"], "returned": {"$ne": True}},
         {"$set": {"returned": True, "_return_claimed_at": datetime.now(timezone.utc).isoformat()}},
     )
@@ -9147,8 +9154,12 @@ async def pay_installment(
     inst = await tenant_access.get_tenant_doc(db, "installments", inst_id, user, not_found="Taksit bulunamadı.")
 
     async def _do():
-        claim = await db.installments.update_one(
-            {"_id": inst_id, "status": {"$ne": "paid"}},
+        claim = await db.installments.update_one_atomic(
+            {
+                "_id": inst_id,
+                "status": {"$ne": "paid"},
+                "_pay_claimed_at": {"$exists": False},
+            },
             {"$set": {"_pay_claimed_at": datetime.now(timezone.utc).isoformat()}},
         )
         if claim.matched_count == 0:
@@ -9217,7 +9228,7 @@ async def pay_installment(
                 result = {"status": "success", "kind": "balance"}
             new_paid = round(fresh.get("paid_amount", 0) + amount, 2)
             status = "paid" if new_paid >= fresh["amount"] - 0.01 else "partial"
-            upd = await db.installments.update_one(
+            upd = await db.installments.update_one_atomic(
                 {"_id": inst_id, "status": {"$ne": "paid"}},
                 {"$set": {
                     "paid_amount": new_paid,
@@ -12776,10 +12787,15 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
             await db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
         except Exception:
             logging.getLogger(__name__).exception("Prim güncelleme kasa recalc: %s", account_id)
-    filt = {"_id": bonus_id, "status": {"$ne": "paid"}} if paying else {"_id": bonus_id}
-    res = await db.bonus_payments.update_one(filt, {"$set": upd})
-    if paying and res.matched_count == 0:
-        raise HTTPException(status_code=409, detail="Bu prim/avans zaten ödenmiş.")
+    if paying:
+        res = await db.bonus_payments.update_one_atomic(
+            {"_id": bonus_id, "status": {"$ne": "paid"}},
+            {"$set": upd},
+        )
+        if res.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Bu prim/avans zaten ödenmiş.")
+    else:
+        await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
     return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
 
 
@@ -19647,8 +19663,12 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
     if account_id and partner_id:
         raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
 
-    claim = await db.payrolls.update_one(
-        {"_id": payroll_id, "status": {"$ne": "paid"}},
+    claim = await db.payrolls.update_one_atomic(
+        {
+            "_id": payroll_id,
+            "status": {"$ne": "paid"},
+            "_pay_claimed_at": {"$exists": False},
+        },
         {"$set": {"_pay_claimed_at": datetime.now(timezone.utc).isoformat()}},
     )
     if claim.matched_count == 0:
@@ -19711,7 +19731,7 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
             except Exception:
                 logging.getLogger(__name__).exception("Bordro ödemesi kasa recalc: %s", account_id)
 
-        upd = await db.payrolls.update_one(
+        upd = await db.payrolls.update_one_atomic(
             {"_id": payroll_id, "status": {"$ne": "paid"}},
             {"$set": {
                 "status": "paid",
