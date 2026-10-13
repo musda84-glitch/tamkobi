@@ -27,7 +27,7 @@ async def _user_dep(request: Request) -> dict:
 
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "exit_tolerance_minutes": 0, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True,
-                    "notify_checkin_reminder": True, "notify_checkout_reminder": False, "require_registered_device": True, "require_punch_auth": "off"}
+                    "notify_checkin_reminder": True, "notify_checkout_reminder": False, "require_registered_device": False, "require_punch_auth": "off"}
 # Personel kartı: konum izleme (iş yeri + dış görev ayrı).
 DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15, "exit_tolerance_hours": 0}
 DEFAULT_LOCATION_TRACKING = {**DEFAULT_LOCATION_MODE, "field": dict(DEFAULT_LOCATION_MODE)}
@@ -2687,9 +2687,18 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     )
     if not gate["allow"]:
         raise HTTPException(status_code=403, detail=gate["detail"])
+    bound = await attendance_security.commit_device_bind(_db, gate)
+    if not bound.get("ok", True):
+        raise HTTPException(status_code=403, detail=bound.get("detail") or "Cihaz kaydı tamamlanamadı.")
     patch = {"status": "present", action: clock}
-    rec = await apply_day(emp, date, patch, source="self", confirmed=True)
-    await attendance_security.commit_device_bind(_db, gate)
+    try:
+        rec = await apply_day(emp, date, patch, source="self", confirmed=True)
+    except Exception:
+        try:
+            await attendance_security.release_new_bind(_db, bound)
+        except Exception:
+            logger.exception("device bind rollback")
+        raise
     extra = {}
     if workplace:
         extra["workplace"] = workplace
@@ -2752,7 +2761,10 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             msg += " Yöneticiye alışkanlık sapması bildirildi."
     except Exception:
         pass
-    return {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+    payload = {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+    if bound.get("device_token"):
+        payload["device_token"] = bound["device_token"]
+    return payload
 
 
 async def open_geo_confirm_request(

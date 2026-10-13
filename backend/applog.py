@@ -39,7 +39,7 @@ _SENSITIVE = {
     "password", "password_hash", "current_password", "new_password", "token",
     "access_token", "refresh_token", "b2b_token", "b2b_password_hash",
     "secret", "api_key", "authorization", "cookie", "credit_card", "card_number",
-    "cvv", "pin", "shopfloor_pin_hash",
+    "cvv", "pin", "punch_pin", "punch_pin_hash", "shopfloor_pin_hash",
 }
 _NOISE_SQL_COLLECTIONS = {"activity_logs", "login_attempts"}
 _CRITICAL_COLLECTIONS = {
