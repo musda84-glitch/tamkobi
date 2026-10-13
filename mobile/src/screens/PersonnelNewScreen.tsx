@@ -127,8 +127,12 @@ export function PersonnelNewScreen() {
         </Pressable>
         {showDetails ? (
           <>
+            <Pressable testID="emp-sgk-insured" onPress={() => setDraft({ ...draft, sgk_insured: !draft.sgk_insured })} style={{ paddingVertical: 6 }}>
+              <Text style={{ fontWeight: "700", color: colors.text }}>{draft.sgk_insured ? "☑ SGK'lı" : "☐ SGK'lı"}</Text>
+            </Pressable>
+            <Field label="Resmi maaş (₺)" testID="emp-official-salary" value={draft.official_salary} onChangeText={(v) => setDraft({ ...draft, official_salary: v })} keyboardType="decimal-pad" />
             <Field label="SGK sicil no" testID="emp-sgk" value={draft.sgk_number} onChangeText={(v) => setDraft({ ...draft, sgk_number: v.replace(/\D/g, "").slice(0, 13) })} keyboardType="number-pad" />
-            <Field label={String(draft.sgk_number || "").trim() ? "IBAN (zorunlu)" : "IBAN"} testID="emp-iban" value={draft.iban} onChangeText={(v) => setDraft({ ...draft, iban: v })} autoCapitalize="characters" />
+            <Field label={(String(draft.sgk_number || "").trim() || draft.sgk_insured) ? "IBAN (zorunlu)" : "IBAN"} testID="emp-iban" value={draft.iban} onChangeText={(v) => setDraft({ ...draft, iban: v })} autoCapitalize="characters" />
             <Field label="Yemek ücreti (aylık ₺)" testID="emp-meal" value={draft.meal_allowance} onChangeText={(v) => setDraft({ ...draft, meal_allowance: v })} keyboardType="decimal-pad" />
             <Field label="Yol ödemesi (aylık ₺)" testID="emp-transport" value={draft.transport_allowance} onChangeText={(v) => setDraft({ ...draft, transport_allowance: v })} keyboardType="decimal-pad" />
             <Field label="Doğum tarihi" testID="emp-birth" value={draft.birth_date} onChangeText={(v) => setDraft({ ...draft, birth_date: v })} placeholder="YYYY-AA-GG" />

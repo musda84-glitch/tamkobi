@@ -698,6 +698,8 @@ class Employee(BaseDocument):
     pay_recurring: bool = True
     skip_check_in: bool = False  # True: giriş/çıkış yok; planlanan mesai otomatik sayılır
     sgk_number: Optional[str] = None  # SGK sicil no — doluysa ana maaş yalnız bankadan
+    sgk_insured: bool = False  # SGK'lı — resmi maaş yalnız bankadan
+    official_salary: Optional[float] = None  # Resmi maaş; boşsa SGK'lıda salary kullanılır
     iban: Optional[str] = None  # Personel banka IBAN
     birth_date: Optional[str] = None
     address: Optional[str] = None
@@ -729,6 +731,7 @@ class Payroll(BaseDocument):
     deduction: float = 0.0
     advance_payment: float = 0.0
     final_payable: float
+    paid_amount: float = 0.0
     status: str = "pending"  # pending, paid
     paid_date: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
