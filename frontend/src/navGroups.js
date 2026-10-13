@@ -58,6 +58,7 @@ const PATH_GROUP = {
   "/ai-advisor": "ai",
   "/settings": "sistem",
   "/trash": "sistem",
+  "/islem-gecmisi": "sistem",
   "/sistem": "sistem",
 };
 

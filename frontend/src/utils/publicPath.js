@@ -59,6 +59,7 @@ const SESSION_PREFIXES = [
   "/loans",
   "/cheques",
   "/trash",
+  "/islem-gecmisi",
   "/edoc-inbox",
   "/b2b-yonetim",
   "/yardim",

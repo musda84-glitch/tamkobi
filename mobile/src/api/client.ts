@@ -123,7 +123,7 @@ export async function request<T>(
   path: string,
   opts?: { body?: unknown; query?: Query }
 ): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: "application/json", "X-Tamkobi-Client": "mobile" };
   if (opts?.body !== undefined) headers["Content-Type"] = "application/json";
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
   let res: Response;
@@ -155,7 +155,7 @@ export async function request<T>(
 
 /** Multipart yükleme: Content-Type'ı fetch kendisi (boundary ile) koyar. */
 export async function upload<T>(client: ApiClient, path: string, form: FormData, query?: Query): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: "application/json", "X-Tamkobi-Client": "mobile" };
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
   let res: Response;
   try {
