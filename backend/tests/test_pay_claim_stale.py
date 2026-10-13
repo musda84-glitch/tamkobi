@@ -93,6 +93,9 @@ class MemoryDB:
             self._cols[name] = MemoryCollection()
         return self._cols[name]
 
+    def __getitem__(self, name):
+        return self.__getattr__(name)
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -475,3 +478,92 @@ def test_cli_defaults_to_dry_run():
     args_apply = mod.build_parser().parse_args(["--apply", "--company", "co1"])
     assert args_apply.apply is True
     assert args_apply.company == "co1"
+
+
+def test_cli_dry_run_with_real_mysql_client(monkeypatch, tmp_path):
+    """clear_stale_pay_claims.py --dry-run gerçek MySQLClient ile koleksiyon okur."""
+    import os
+    import subprocess
+    import uuid
+
+    from mysql_store import MySQLClient, mysql_settings_from_env
+
+    db_name = "tamkobi_payclaim_test"
+    monkeypatch.setenv("TAMKOBI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MYSQL_HOST", os.environ.get("MYSQL_HOST", "127.0.0.1"))
+    monkeypatch.setenv("MYSQL_PORT", os.environ.get("MYSQL_PORT", "3306"))
+    monkeypatch.setenv("MYSQL_USER", os.environ.get("MYSQL_USER", "tamkobi"))
+    monkeypatch.setenv("MYSQL_PASSWORD", os.environ.get("MYSQL_PASSWORD", "tamkobi"))
+    monkeypatch.setenv("MYSQL_DATABASE", db_name)
+    monkeypatch.setenv("DB_NAME", db_name)
+    monkeypatch.setenv("MYSQL_URL", "")
+    monkeypatch.setenv("DATABASE_URL", "")
+
+    company = f"co_dry_{uuid.uuid4().hex[:8]}"
+    inst_id = f"inst_dry_{uuid.uuid4().hex[:10]}"
+    claimed = _iso(datetime.now(timezone.utc) - timedelta(minutes=30))
+
+    async def seed():
+        import pymysql
+
+        cfg = mysql_settings_from_env()
+        conn = pymysql.connect(
+            host=cfg["host"],
+            port=int(cfg["port"]),
+            user=cfg["user"],
+            password=cfg["password"],
+            charset="utf8mb4",
+            autocommit=True,
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"CREATE DATABASE IF NOT EXISTS `{db_name}` "
+                    "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                )
+        finally:
+            conn.close()
+
+        client = MySQLClient()
+        assert type(client).__name__ == "MySQLClient"
+        db = client[db_name]
+        await db._ensure()
+        await db.installments.delete_many({"_id": inst_id})
+        await db.installments.insert_one({
+            "_id": inst_id,
+            "company_id": company,
+            "status": "pending",
+            "amount": 15,
+            "paid_amount": 0,
+            "_pay_claimed_at": claimed,
+            "_pay_idempotency_key": "dry-key",
+            "_pay_idempotency_company": company,
+        })
+        await client.close_async()
+
+    _run(seed())
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "clear_stale_pay_claims.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), "--dry-run", "--company", company],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "dry-run" in proc.stdout
+    assert inst_id in proc.stdout
+    assert "has no attribute" not in proc.stderr
+
+    async def check():
+        client = MySQLClient()
+        db = client[db_name]
+        doc = await db.installments.find_one({"_id": inst_id})
+        await db.installments.delete_many({"_id": inst_id})
+        await client.close_async()
+        return doc
+
+    doc = _run(check())
+    assert doc["status"] == "pending"
+    assert doc["_pay_claimed_at"] == claimed

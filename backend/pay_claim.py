@@ -72,8 +72,22 @@ def claim_query(doc_id: str, *, now: Optional[datetime] = None, stale_after: tim
     }
 
 
+def _database(db):
+    """MySQLClient veritabanı istemcisidir; koleksiyonlar varsayılan veritabanındadır.
+
+    server.py `client[DB_NAME]` verir. clear_stale_pay_claims.py MySQLClient verir.
+    """
+    from mysql_store import MySQLClient, mysql_settings_from_env
+
+    if isinstance(db, MySQLClient):
+        db_name = str(mysql_settings_from_env().get("db") or "tamkobi")
+        return db[db_name]
+    return db
+
+
 def _collection(db, name: str):
-    return getattr(db, name)
+    """Koleksiyon. Diğer modüllerle aynı: db[name] (tenant_access, company_reset, …)."""
+    return _database(db)[name]
 
 
 async def find_recorded_payment(
@@ -91,10 +105,11 @@ async def find_recorded_payment(
     """
     import idempotency
 
+    db = _database(db)
     key = str(doc.get("_pay_idempotency_key") or "").strip()
     idem_company = doc.get("_pay_idempotency_company") or company_id
     if key:
-        row = await db.idempotency_keys.find_one({"_id": idempotency._doc_id(idem_company, key)})
+        row = await _collection(db, "idempotency_keys").find_one({"_id": idempotency._doc_id(idem_company, key)})
         if row and (row.get("payment_applied") or row.get("status") == "completed"):
             payment = row.get("payment") or {}
             response = row.get("response")
