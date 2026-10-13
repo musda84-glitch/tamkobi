@@ -8,6 +8,8 @@ import {
   orderDocumentDate,
   orderHasOldDocumentDate,
   ordersHaveOldDocumentDate,
+  docDocumentDate,
+  shouldAskBulkEInvoiceDate,
   orderRowId,
   todayYmd,
 } from "./orderBulkActions";
@@ -76,6 +78,9 @@ test("old document dates trigger the bulk e-invoice date prompt", () => {
     { invoice_date: "2026-10-05" },
     { order_date: "2026-09-20" },
   ], "2026-10-05")).toBe(true);
+  expect(docDocumentDate({ issue_date: "2026-08-01T12:00:00Z" })).toBe("2026-08-01");
+  expect(shouldAskBulkEInvoiceDate([{ issue_date: "2026-10-04" }], "2026-10-05")).toBe(true);
+  expect(shouldAskBulkEInvoiceDate([{ issue_date: "2026-10-05" }], "2026-10-05")).toBe(false);
 });
 
 test("mini invoice slip uses the requested paper size", () => {

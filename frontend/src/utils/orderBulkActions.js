@@ -81,23 +81,35 @@ export function ymdPrefix(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
 }
 
-/** Fatura / sipariş belge tarihi (GİB IssueDate). */
-export function orderDocumentDate(ord) {
+/** Fatura / sipariş belge tarihi (GİB IssueDate): invoice_date | issue_date | order_date. */
+export function docDocumentDate(doc) {
   return (
-    ymdPrefix(ord?.invoice_date)
-    || ymdPrefix(ord?.issue_date)
-    || ymdPrefix(ord?.order_date)
-    || ymdPrefix(ord?.created_at)
+    ymdPrefix(doc?.invoice_date)
+    || ymdPrefix(doc?.issue_date)
+    || ymdPrefix(doc?.order_date)
+    || ymdPrefix(doc?.created_at)
   );
 }
 
-export function orderHasOldDocumentDate(ord, today = todayYmd()) {
-  const d = orderDocumentDate(ord);
+/** @deprecated alias — sipariş/fatura ortak */
+export const orderDocumentDate = docDocumentDate;
+
+export function docHasOldDocumentDate(doc, today = todayYmd()) {
+  const d = docDocumentDate(doc);
   return !!d && d < today;
 }
 
-export function ordersHaveOldDocumentDate(list, today = todayYmd()) {
-  return (list || []).some((o) => orderHasOldDocumentDate(o, today));
+export const orderHasOldDocumentDate = docHasOldDocumentDate;
+
+export function docsHaveOldDocumentDate(list, today = todayYmd()) {
+  return (list || []).some((o) => docHasOldDocumentDate(o, today));
+}
+
+export const ordersHaveOldDocumentDate = docsHaveOldDocumentDate;
+
+/** Toplu e-belge öncesi tarih sorusu: listede bugünden eski belge varsa. */
+export function shouldAskBulkEInvoiceDate(list, today = todayYmd()) {
+  return docsHaveOldDocumentDate(list, today);
 }
 
 /** Toplu e-belge: faturalaşmış, faturası var, henüz GİB'e kesilmemiş. */

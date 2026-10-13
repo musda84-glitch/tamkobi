@@ -2,24 +2,30 @@ import React, { useState } from "react";
 import { X } from "lucide-react";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
-import { ordersHaveOldDocumentDate } from "../utils/orderBulkActions";
+import { docsHaveOldDocumentDate } from "../utils/orderBulkActions";
 
 /**
- * Toplu E-Fatura ön onayı: eski tarihli faturaları bugüne çekme seçeneği.
+ * Toplu E-Fatura ön onayı: eski tarihli fatura/siparişleri bugüne çekme seçeneği.
+ * Sipariş (`orders`) veya fatura (`invoices` / `docs`) listesi alır.
  */
 export function BulkEInvoiceConfirmModal({
   orders = [],
+  invoices = [],
+  docs,
   onClose,
   onConfirm,
   busy = false,
 }) {
   useEscape(busy ? () => {} : onClose);
-  const hasOld = ordersHaveOldDocumentDate(orders);
+  const list = (Array.isArray(docs) && docs.length)
+    ? docs
+    : (Array.isArray(invoices) && invoices.length ? invoices : (orders || []));
+  const hasOld = docsHaveOldDocumentDate(list);
   const [mode, setMode] = useState("today"); // today | keep
 
   const submit = () => {
     if (busy) return;
-    onConfirm?.({ setDateToToday: mode === "today", orders });
+    onConfirm?.({ setDateToToday: mode === "today", orders: list, invoices: list, docs: list });
   };
 
   return (
@@ -58,7 +64,7 @@ export function BulkEInvoiceConfirmModal({
             </div>
           ) : (
             <p className="text-sm text-slate-600" data-testid="bulk-einvoice-same-day-note">
-              {orders.length} faturalaşmış sipariş için e-Fatura / e-Arşiv kesilecek.
+              {list.length} faturalaşmış sipariş için e-Fatura / e-Arşiv kesilecek.
             </p>
           )}
 
@@ -103,7 +109,7 @@ export function BulkEInvoiceConfirmModal({
             <button
               type="button"
               onClick={submit}
-              disabled={busy || !orders.length}
+              disabled={busy || !list.length}
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50"
               data-testid="bulk-einvoice-confirm-submit"
             >

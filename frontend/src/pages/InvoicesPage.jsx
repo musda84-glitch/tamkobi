@@ -20,11 +20,13 @@ import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS, toggleInvoiceSort, invoiceSortCol, invoiceSortDir } from "../components/InvoiceToolbar";
 import InvoiceActionPanel from "../components/InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
+import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
 import { invoiceBulkNeedsSelection, bulkApiErrorDetail } from "../utils/invoiceBulkActions";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
+import { shouldAskBulkEInvoiceDate, todayYmd } from "../utils/orderBulkActions";
 import { FxPicker } from "../components/FxPicker";
 import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
@@ -176,6 +178,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [ctxMenu, setCtxMenu] = useState(null);
   /** null | { mode: 'send'|'print', invoice?, invoices? } */
   const [eFaturaJob, setEFaturaJob] = useState(null);
+  const [bulkEInvoiceConfirm, setBulkEInvoiceConfirm] = useState(null);
+  const [bulkEInvoiceBusy, setBulkEInvoiceBusy] = useState(false);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [installmentInv, setInstallmentInv] = useState(null);
@@ -829,6 +833,52 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     return { ok, fail, skipped: Math.max(0, docs.length - capped.length) };
   };
 
+  const openEFaturaSendJob = (rows) => {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return;
+    setEFaturaJob({
+      mode: "send",
+      invoices: list,
+      invoice: list.length === 1 ? list[0] : null,
+    });
+  };
+
+  const confirmBulkEInvoiceDates = async ({ setDateToToday, invoices: list, docs }) => {
+    const rows = Array.isArray(docs) && docs.length ? docs : (Array.isArray(list) ? list : []);
+    if (!rows.length) {
+      setBulkEInvoiceConfirm(null);
+      return;
+    }
+    if (setDateToToday) {
+      const today = todayYmd();
+      setBulkEInvoiceBusy(true);
+      const updated = [];
+      try {
+        for (const inv of rows) {
+          const id = inv.id || inv._id;
+          if (!id) {
+            updated.push({ ...inv, issue_date: today, invoice_date: today });
+            continue;
+          }
+          try {
+            await axios.put(`${API_URL}/invoices/${id}`, { issue_date: today });
+            updated.push({ ...inv, issue_date: today, invoice_date: today });
+          } catch (err) {
+            toast.error(bulkApiErrorDetail(err) || `${inv.invoice_number || id} tarihi güncellenemedi.`);
+            updated.push(inv);
+          }
+        }
+      } finally {
+        setBulkEInvoiceBusy(false);
+      }
+      setBulkEInvoiceConfirm(null);
+      openEFaturaSendJob(updated);
+      return;
+    }
+    setBulkEInvoiceConfirm(null);
+    openEFaturaSendJob(rows);
+  };
+
   const downloadInvoiceXmlBulk = async (list) => {
     const ids = [...new Set(list.map((o) => o.id || o._id).filter(Boolean))];
     if (!ids.length) { toast.error("Seçili faturalarda e-belge yok."); return; }
@@ -898,7 +948,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         toast.info("Seçili faturalarda e-belge gönderilecek uygun kayıt yok.");
         return;
       }
-      setEFaturaJob({ mode: "send", invoices: issuable });
+      if (shouldAskBulkEInvoiceDate(issuable)) {
+        setBulkEInvoiceConfirm({ invoices: issuable });
+        return;
+      }
+      openEFaturaSendJob(issuable);
       return;
     }
     if (action === "xml") {
@@ -1631,6 +1685,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         onFilterOutgoingGib={filterOutgoingGib}
         onFilterDispatch={filterDispatchList}
       />
+      {bulkEInvoiceConfirm && (
+        <BulkEInvoiceConfirmModal
+          invoices={bulkEInvoiceConfirm.invoices || []}
+          busy={bulkEInvoiceBusy}
+          onClose={() => !bulkEInvoiceBusy && setBulkEInvoiceConfirm(null)}
+          onConfirm={confirmBulkEInvoiceDates}
+        />
+      )}
       {eFaturaJob && (
         <ElektronikFaturaOnayModal
           mode={eFaturaJob.mode || "send"}
