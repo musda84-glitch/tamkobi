@@ -89,6 +89,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "user_id", "user_name", "module", "path", "method", "status", "ip"),
         "refs": ("users._id", "companies._id"),
     },
+    "company_audit_log": {
+        "scope": SCOPE_TENANT,
+        "description": "Firma işlem geçmişi. Yalnızca eklenir; 1 yıl sonra temizlenir. Şifre, token ve kart yazılmaz.",
+        "keys": ("_id", "company_id", "at", "user_id", "user_name", "module", "action", "record_label", "summary", "ip", "source", "expires_at"),
+        "refs": ("users._id", "companies._id"),
+    },
     "platform_settings": {
         "scope": SCOPE_PLATFORM,
         "description": "Tek satırlık platform ayarı (_id=platform): marka, deneme, GİB paketleri, AI, bakım penceresi.",

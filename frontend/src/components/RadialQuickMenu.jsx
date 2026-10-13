@@ -92,6 +92,7 @@ const PATH_ICONS = {
   "/atolye": MonitorPlay,
   "/reports": BarChart3,
   "/trash": Trash2,
+  "/islem-gecmisi": ScrollText,
   "/edoc-inbox": Inbox,
   "/b2b-yonetim": ShoppingCart,
 };

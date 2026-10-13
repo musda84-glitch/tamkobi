@@ -62,6 +62,7 @@ import {
   ClipboardList,
   Smartphone,
   ScrollText,
+  History,
   Headset,
   Car,
   PanelLeftClose,
@@ -168,7 +169,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     "/warehouses": Building2, "/vehicles": Car, "/production": Factory, "/personnel": UserCheck, "/personelim": UserRound, "/mesai": CalendarClock,
     "/communication": MailOpen, "/ai-advisor": Bot, "/settings": Settings, "/support": Headset,
     "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3,
-    "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart,
+    "/trash": Trash2, "/islem-gecmisi": History, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart,
   };
   const menuItems = (orderedMenu || [])
     .map((m) => ({ ...m, icon: ICONS[m.path] || Package }))

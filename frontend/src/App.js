@@ -52,6 +52,7 @@ const LoansPage = page(() => import("./pages/LoansPage"));
 const ChequesPage = page(() => import("./pages/ChequesPage"));
 const VehiclesPage = page(() => import("./pages/VehiclesPage"));
 const TrashPage = page(() => import("./pages/TrashPage"));
+const CompanyAuditPage = page(() => import("./pages/CompanyAuditPage"));
 const EdocInboxPage = page(() => import("./pages/EdocInboxPage"));
 const SupportPage = page(() => import("./pages/SupportPage"));
 const SystemAdminPage = page(() => import("./pages/SystemAdminPage"));
@@ -150,6 +151,7 @@ export default function App() {
                   <Route path="/loans" element={<LoansPage />} />
                   <Route path="/cheques" element={<ChequesPage />} />
                   <Route path="/trash" element={<TrashPage />} />
+                  <Route path="/islem-gecmisi" element={<CompanyAuditPage />} />
                   <Route path="/edoc-inbox" element={<EdocInboxPage />} />
                   <Route path="/sistem/giris" element={<SystemLoginPage />} />
                   <Route path="/sistem/2fa-kurulum" element={<System2FASetupPage />} />
