@@ -19346,11 +19346,15 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
 
 @api_router.delete("/personnel/movements/{movement_id}")
 async def reverse_personnel_movement(movement_id: str, user: dict = Depends(get_current_user)):
-    """Ödemeyi geri al: kasa/banka hareketlerini sil, bakiyeleri ve paid_amount değerlerini düzelt."""
+    """Ödemeyi geri al: kasa/banka hareketlerini sil, bakiyeleri ve paid_amount değerlerini düzelt.
+
+    Yalnızca şirket yöneticisi yapabilir.
+    """
     import personnel_payments
     mov = await tenant_access.get_tenant_doc(
         db, "personnel_movements", movement_id, user, not_found="Ödeme hareketi bulunamadı.",
     )
+    await tenant_access.require_company_admin(user, str(mov.get("company_id") or ""))
     return await personnel_payments.reverse_payment(db, mov, actor=user)
 
 

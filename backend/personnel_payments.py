@@ -13,6 +13,8 @@ import finance_txn
 import idempotency
 import linked_moves
 import partner_pay
+import pay_claim
+import tenant_access
 
 KIND_LABELS = {
     "salary": "Maaş",
@@ -133,6 +135,101 @@ def _payroll_lock_query(p: dict, cid: str) -> dict:
     return q
 
 
+def _pay_claim_unlocked() -> dict:
+    """Taze _pay_claimed_at yok. Bayat kilit ödeme/geri almayı engellemez."""
+    cutoff = (pay_claim._now() - pay_claim.STALE_AFTER).isoformat()
+    return {"$or": [
+        {"_pay_claimed_at": {"$exists": False}},
+        {"_pay_claimed_at": None},
+        {"_pay_claimed_at": ""},
+        {"_pay_claimed_at": {"$lt": cutoff}},
+    ]}
+
+
+def _paid_amount_clause(doc: dict) -> dict:
+    if doc.get("paid_amount") not in (None, ""):
+        return {"paid_amount": doc.get("paid_amount")}
+    return {"$or": [
+        {"paid_amount": {"$exists": False}},
+        {"paid_amount": None},
+        {"paid_amount": ""},
+    ]}
+
+
+def _target_amount(coll: str, doc: dict) -> float:
+    if coll == "payrolls":
+        return employee_pay.payroll_payable(doc)
+    if coll == "expenses":
+        raw = doc.get("total") if doc.get("total") not in (None, "") else doc.get("amount")
+        return round(_amt(raw), 2)
+    if doc.get("final_payable") not in (None, ""):
+        return round(_amt(doc.get("final_payable")), 2)
+    raw = doc.get("amount") if doc.get("amount") not in (None, "") else doc.get("total")
+    return round(_amt(raw), 2)
+
+
+def _current_paid(coll: str, doc: dict) -> float:
+    if doc.get("paid_amount") not in (None, ""):
+        return round(_amt(doc.get("paid_amount")), 2)
+    if coll == "payrolls":
+        return employee_pay.payroll_paid_amount(doc)
+    marker = doc.get("payment_status") if coll == "expenses" else doc.get("status")
+    if str(marker or "") == "paid":
+        return _target_amount(coll, doc)
+    return 0.0
+
+
+def _status_after_paid(coll: str, doc: dict, new_paid: float) -> Dict[str, Any]:
+    """Yeni paid_amount tam tutarı karşılıyorsa paid, değilse açık."""
+    target = _target_amount(coll, doc)
+    fully = target > 0.004 and new_paid + 0.004 >= target
+    patch: Dict[str, Any] = {"paid_amount": round(new_paid, 2)}
+    if coll == "expenses":
+        patch["payment_status"] = "paid" if fully else "unpaid"
+    else:
+        patch["status"] = "paid" if fully else "pending"
+    if not fully:
+        patch["paid_date"] = None
+    return patch
+
+
+def _tracks_paid_amount(coll: str, doc: Optional[dict]) -> bool:
+    if coll == "payrolls":
+        return True
+    return bool(doc) and "paid_amount" in doc
+
+
+async def _subtract_paid_amount(db, coll: str, doc_id: str, delta: float) -> None:
+    """Bu ödemenin tutarını güncel paid_amount'tan düş; status'u yeniden hesapla.
+
+    Mutlak prev_paid yazılmaz. Koşul, okunan paid_amount ve taze ödeme kilidi;
+    eşzamanlı ikinci ödeme kendi tutarını korur.
+    """
+    delta = round(_amt(delta), 2)
+    if delta <= 0.004:
+        return
+    store = getattr(db, coll, None)
+    if store is None:
+        return
+    busy = "Bu bordro ödemesi sürüyor." if coll == "payrolls" else "Bu kayıt üzerinde ödeme sürüyor."
+    for _attempt in range(8):
+        doc = await store.find_one({"_id": doc_id})
+        if not doc:
+            return
+        current = _current_paid(coll, doc)
+        new_paid = round(max(0.0, current - delta), 2)
+        res = await store.update_one_atomic(
+            {"_id": doc_id, "$and": [_paid_amount_clause(doc), _pay_claim_unlocked()]},
+            {"$set": _status_after_paid(coll, doc, new_paid)},
+        )
+        if _matched(res):
+            return
+    fresh = await store.find_one({"_id": doc_id})
+    if fresh and fresh.get("_pay_claimed_at") not in (None, "") and not pay_claim.is_stale_claim(fresh.get("_pay_claimed_at")):
+        raise HTTPException(status_code=409, detail=busy)
+    raise HTTPException(status_code=409, detail="Kayıt aynı anda güncellendi. Tekrar deneyin.")
+
+
 async def _cover_salary(
     db, emp: dict, period: str, amount: float, pay_date: str, *, movement_id: str, cx: finance_txn.CompensatingTxn,
 ) -> tuple[float, List[dict]]:
@@ -163,46 +260,96 @@ async def _cover_salary(
             break
         payable = employee_pay.payroll_payable(p)
         already = employee_pay.payroll_paid_amount(p)
+        prev_status = p.get("status")
+        prev_date = p.get("paid_date")
         room = round(max(0.0, payable - already), 2)
         take = round(min(room, left), 2) if room > 0.004 else 0.0
         if take <= 0.004:
             continue
+        applied = await _apply_payroll_payment(
+            db, p, take, pay_date, cid, link, cx,
+            stamp_link=bool(effects and effects[-1].get("id") == p["_id"] and effects[-1].get("action") == "insert"),
+        )
+        if applied <= 0.004:
+            continue
+        effects.append({
+            "collection": "payrolls",
+            "id": p["_id"],
+            "action": "update",
+            "paid_delta": applied,
+            "prev_paid": already,
+            "prev_status": prev_status,
+            "prev_paid_date": prev_date,
+        })
+        left = round(left - applied, 2)
+    return round(max(0.0, left), 2), effects
+
+
+async def _apply_payroll_payment(
+    db, p: dict, take: float, pay_date: str, cid: str, link: dict, cx: finance_txn.CompensatingTxn, *, stamp_link: bool,
+) -> float:
+    """Bordro paid_amount artır. Taze _pay_claimed_at varsa 409; kendi kilidini yazıp bırakır."""
+    pid = p["_id"]
+    claimed_at = None
+    try:
+        gate = await pay_claim.acquire_pay_claim(
+            db,
+            "payrolls",
+            pid,
+            company_id=cid,
+            idempotency_key="",
+            source_type="payroll",
+            paid_detail="Bu bordro zaten ödenmiş.",
+            busy_detail="Bu bordro ödemesi sürüyor.",
+        )
+        if gate["action"] == "already_paid":
+            raise HTTPException(status_code=409, detail="Bu bordro zaten ödenmiş.")
+        claimed_at = gate["claimed_at"]
+        fresh = await db.payrolls.find_one({"_id": pid}) or p
+        payable = employee_pay.payroll_payable(fresh)
+        already = employee_pay.payroll_paid_amount(fresh)
+        room = round(max(0.0, payable - already), 2)
+        take = round(min(room, take), 2)
+        if take <= 0.004:
+            return 0.0
         new_paid = round(already + take, 2)
         status = "paid" if new_paid + 0.004 >= payable else "pending"
-        prev_status = p.get("status")
-        prev_date = p.get("paid_date")
+        prev_date = fresh.get("paid_date")
         upd = {
             "paid_amount": new_paid,
             "status": status,
             "paid_date": pay_date if status == "paid" else prev_date,
         }
-        if effects and effects[-1].get("id") == p["_id"] and effects[-1].get("action") == "insert":
+        if stamp_link:
             upd.update(link)
-        res = await db.payrolls.update_one_atomic(_payroll_lock_query(p, cid), {"$set": upd})
+        query = _payroll_lock_query(fresh, cid)
+        query["_pay_claimed_at"] = claimed_at
+        res = await db.payrolls.update_one_atomic(
+            query,
+            {
+                "$set": upd,
+                "$unset": {
+                    "_pay_claimed_at": "",
+                    "_pay_idempotency_key": "",
+                    "_pay_idempotency_company": "",
+                },
+            },
+        )
         if _matched(res) == 0:
             raise HTTPException(status_code=409, detail="Bordro aynı anda güncellendi. Tekrar deneyin.")
-        pid = p["_id"]
-
-        async def _undo_pay(pid=pid, prev_paid=already, prev_status=prev_status, prev_date=prev_date):
-            await db.payrolls.update_one(
-                {"_id": pid},
-                {"$set": {"paid_amount": prev_paid, "status": prev_status, "paid_date": prev_date}},
-            )
-
-        cx.push("payroll_upd", _undo_pay)
+        claimed_at = None
         p["paid_amount"] = new_paid
         p["status"] = status
-        effects.append({
-            "collection": "payrolls",
-            "id": pid,
-            "action": "update",
-            "paid_delta": take,
-            "prev_paid": already,
-            "prev_status": prev_status,
-            "prev_paid_date": prev_date,
-        })
-        left = round(left - take, 2)
-    return round(max(0.0, left), 2), effects
+        p["paid_date"] = upd["paid_date"]
+
+        async def _undo_pay(pid=pid, delta=take):
+            await _subtract_paid_amount(db, "payrolls", pid, delta)
+
+        cx.push("payroll_upd", _undo_pay)
+        return take
+    finally:
+        if claimed_at:
+            await pay_claim.release_pay_claim(db, "payrolls", pid, claimed_at)
 
 
 async def _mark_amount(
@@ -223,33 +370,49 @@ async def _mark_amount(
         prev_status = row.get(status_field)
         prev_paid_at = row.get("paid_at")
         prev_paid_date = row.get("paid_date")
-        res = await getattr(db, coll).update_one_atomic(
-            {"_id": row["_id"], "company_id": cid, status_field: {"$ne": paid_value}},
-            {"$set": {status_field: paid_value, "paid_at": pay_date, "paid_date": pay_date}},
-        )
+        has_paid = "paid_amount" in row
+        set_doc = {status_field: paid_value, "paid_at": pay_date, "paid_date": pay_date}
+        query: Dict[str, Any] = {"_id": row["_id"], "company_id": cid, status_field: {"$ne": paid_value}}
+        if has_paid:
+            set_doc["paid_amount"] = round(_current_paid(coll, row) + row_amt, 2)
+            if row.get("paid_amount") not in (None, ""):
+                query["paid_amount"] = row.get("paid_amount")
+            else:
+                query["paid_amount"] = {"$exists": False}
+        res = await getattr(db, coll).update_one_atomic(query, {"$set": set_doc})
         if _matched(res) == 0:
             continue
         rid = row["_id"]
-
-        async def _undo_mark(
-            coll=coll, rid=rid, status_field=status_field,
-            prev_status=prev_status, prev_paid_at=prev_paid_at, prev_paid_date=prev_paid_date,
-        ):
-            await getattr(db, coll).update_one(
-                {"_id": rid},
-                {"$set": {status_field: prev_status, "paid_at": prev_paid_at, "paid_date": prev_paid_date}},
-            )
+        if has_paid:
+            async def _undo_mark(coll=coll, rid=rid, delta=row_amt):
+                await _subtract_paid_amount(db, coll, rid, delta)
+        else:
+            async def _undo_mark(
+                coll=coll, rid=rid, status_field=status_field,
+                prev_status=prev_status, prev_paid_at=prev_paid_at, prev_paid_date=prev_paid_date,
+            ):
+                await getattr(db, coll).update_one_atomic(
+                    {"_id": rid, status_field: paid_value},
+                    {"$set": {status_field: prev_status, "paid_at": prev_paid_at, "paid_date": prev_paid_date}},
+                )
 
         cx.push(f"{coll}_upd", _undo_mark)
-        effects.append({
+        effect = {
             "collection": coll,
             "id": rid,
             "action": "update",
             "status_field": status_field,
+            "paid_value": paid_value,
             "prev_status": prev_status,
             "prev_paid_at": prev_paid_at,
             "prev_paid_date": prev_paid_date,
-        })
+        }
+        if has_paid:
+            effect["paid_delta"] = row_amt
+        effects.append(effect)
+        row[status_field] = paid_value
+        if has_paid:
+            row["paid_amount"] = set_doc["paid_amount"]
         left = round(left - row_amt, 2)
     return round(max(0.0, left), 2), effects
 
@@ -589,19 +752,17 @@ async def _undo_effect(db, eff: dict) -> None:
     if action == "insert":
         await store.delete_one({"_id": did})
         return
-    if coll == "payrolls":
-        await store.update_one(
-            {"_id": did},
-            {"$set": {
-                "paid_amount": eff.get("prev_paid") or 0,
-                "status": eff.get("prev_status") or "pending",
-                "paid_date": eff.get("prev_paid_date"),
-            }},
-        )
+    doc = await store.find_one({"_id": did})
+    if not doc:
+        return
+    delta = round(_amt(eff.get("paid_delta")), 2)
+    if delta > 0.004 and _tracks_paid_amount(coll, doc):
+        await _subtract_paid_amount(db, coll, did, delta)
         return
     field = eff.get("status_field") or ("status" if coll == "bonus_payments" else "payment_status")
-    await store.update_one(
-        {"_id": did},
+    paid_value = eff.get("paid_value") or "paid"
+    await store.update_one_atomic(
+        {"_id": did, field: paid_value},
         {"$set": {
             field: eff.get("prev_status"),
             "paid_at": eff.get("prev_paid_at"),
@@ -613,26 +774,50 @@ async def _undo_effect(db, eff: dict) -> None:
 async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
     if not mov:
         raise HTTPException(status_code=404, detail="Ödeme hareketi bulunamadı.")
-    if str(mov.get("status") or "") in ("reversed", "cancelled"):
+    if actor is not None:
+        await tenant_access.require_company_admin(actor, str(mov.get("company_id") or ""))
+    status = str(mov.get("status") or "posted")
+    if status in ("reversed", "cancelled"):
         return {"status": "success", "idempotent": True, "message": "Ödeme zaten geri alınmış."}
     cid = str(mov.get("company_id") or "")
     mid = mov["_id"]
-    rev = await linked_moves.reverse_linked(
-        db, SOURCE, mid, mode="delete", actor=actor,
-        reason="ödemeyi geri al", also_expenses=True, company_id=cid or None,
+    claim = await db.personnel_movements.update_one_atomic(
+        {"_id": mid, "status": {"$nin": ["reversed", "cancelled", "reversing"]}},
+        {"$set": {"status": "reversing", "reversing_at": _now()}},
     )
-    for eff in reversed(list(mov.get("effects") or [])):
-        await _undo_effect(db, eff)
-    rid = mov.get("receipt_id")
-    if rid:
-        await db.personnel_receipts.update_one(
-            {"_id": rid, "company_id": cid} if cid else {"_id": rid},
-            {"$set": {"status": "cancelled", "cancelled_at": _now()}},
+    if _matched(claim) == 0:
+        fresh = await db.personnel_movements.find_one({"_id": mid}) or {}
+        if str(fresh.get("status") or "") in ("reversed", "cancelled"):
+            return {"status": "success", "idempotent": True, "message": "Ödeme zaten geri alınmış."}
+        raise HTTPException(status_code=409, detail="Bu ödemenin geri alınması sürüyor.")
+    applied = 0
+    try:
+        rev = await linked_moves.reverse_linked(
+            db, SOURCE, mid, mode="delete", actor=actor,
+            reason="ödemeyi geri al", also_expenses=True, company_id=cid or None,
         )
-    await db.personnel_movements.update_one(
-        {"_id": mid},
-        {"$set": {"status": "reversed", "reversed_at": _now()}},
-    )
+        for eff in reversed(list(mov.get("effects") or [])):
+            await _undo_effect(db, eff)
+            applied += 1
+        rid = mov.get("receipt_id")
+        if rid:
+            await db.personnel_receipts.update_one(
+                {"_id": rid, "company_id": cid} if cid else {"_id": rid},
+                {"$set": {"status": "cancelled", "cancelled_at": _now()}},
+            )
+        done = await db.personnel_movements.update_one_atomic(
+            {"_id": mid, "status": "reversing"},
+            {"$set": {"status": "reversed", "reversed_at": _now()}, "$unset": {"reversing_at": ""}},
+        )
+        if _matched(done) == 0:
+            raise HTTPException(status_code=409, detail="Bu ödemenin geri alınması sürüyor.")
+    except Exception:
+        if applied == 0:
+            await db.personnel_movements.update_one_atomic(
+                {"_id": mid, "status": "reversing"},
+                {"$set": {"status": status}, "$unset": {"reversing_at": ""}},
+            )
+        raise
     return {
         "status": "success",
         "idempotent": False,

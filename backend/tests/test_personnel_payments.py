@@ -27,6 +27,9 @@ class FakeCollection:
                 return False
             return any(self._match(d, clause) for clause in q["$or"])
         if "$and" in q:
+            rest = {k: v for k, v in q.items() if k != "$and"}
+            if rest and not self._match(d, rest):
+                return False
             return all(self._match(d, clause) for clause in q["$and"])
         for k, v in (q or {}).items():
             if isinstance(v, dict):
@@ -39,12 +42,28 @@ class FakeCollection:
                     if d.get(k) == v["$ne"]:
                         return False
                     continue
+                if any(op in v for op in ("$lt", "$lte", "$gt", "$gte")):
+                    cur = d.get(k)
+                    try:
+                        if "$lt" in v and not (cur is not None and cur < v["$lt"]):
+                            return False
+                        if "$lte" in v and not (cur is not None and cur <= v["$lte"]):
+                            return False
+                        if "$gt" in v and not (cur is not None and cur > v["$gt"]):
+                            return False
+                        if "$gte" in v and not (cur is not None and cur >= v["$gte"]):
+                            return False
+                    except TypeError:
+                        return False
+                    continue
                 if "$in" in v:
                     if d.get(k) not in v["$in"]:
                         return False
                     continue
-                if "$nin" in v and d.get(k) in v["$nin"]:
-                    return False
+                if "$nin" in v:
+                    if d.get(k) in v["$nin"]:
+                        return False
+                    continue
                 if "$regex" in v:
                     flags = re.I if "i" in str(v.get("$options") or "") else 0
                     if not re.search(v["$regex"], str(d.get(k) or ""), flags):
@@ -343,6 +362,22 @@ def _init_linked(db):
     linked_moves.init(db, reverse_tx_fn=reverse_tx)
 
 
+def _admin():
+    return {"_id": "u_admin", "role": "admin", "company_ids": ["c1"], "active_company_id": "c1"}
+
+
+def _reverse(db, mov, actor=None):
+    async def _sd(coll, doc, *a, **k):
+        await db[coll].delete_one({"_id": doc["_id"]})
+        return "tid"
+
+    async def _go():
+        with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
+            return await personnel_payments.reverse_payment(db, mov, actor=actor)
+
+    return asyncio.run(_go())
+
+
 def test_reverse_payment_restores_balance_and_no_orphans():
     db = FakeDb()
     _init_linked(db)
@@ -355,13 +390,7 @@ def test_reverse_payment_restores_balance_and_no_orphans():
     assert db.bank_accounts.docs[0]["current_balance"] == 40000
     assert db.payrolls.docs[0]["paid_amount"] == 10000
     mov = db.personnel_movements.docs[0]
-
-    async def _sd(coll, doc, *a, **k):
-        await db[coll].delete_one({"_id": doc["_id"]})
-        return "tid"
-
-    with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
-        rev = asyncio.run(personnel_payments.reverse_payment(db, mov))
+    rev = _reverse(db, mov, actor=_admin())
     assert rev["status"] == "success"
     assert db.bank_accounts.docs[0]["current_balance"] == 50000
     assert db.payrolls.docs[0]["paid_amount"] == 0
@@ -372,3 +401,169 @@ def test_reverse_payment_restores_balance_and_no_orphans():
     report = asyncio.run(linked_moves.scan_orphans(db, "c1"))
     assert report["orphan_personnel_payment_moves"] == []
     assert report["summary"]["orphan_moves"] == 0
+
+
+def test_reverse_first_of_two_payments_keeps_the_second():
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "period": "2026-10", "status": "pending",
+        "final_payable": 10000, "net_salary": 10000, "paid_amount": 0,
+    })
+    _run(db, _emp(), [{"kind": "salary", "amount": 4000, "account_id": "bank"}])
+    _run(db, _emp(), [{"kind": "salary", "amount": 3000, "account_id": "bank"}])
+    assert db.payrolls.docs[0]["paid_amount"] == 7000
+    assert db.bank_accounts.docs[0]["current_balance"] == 43000
+    first, second = db.personnel_movements.docs
+    assert first["effects"][0]["paid_delta"] == 4000
+    assert first["effects"][0]["prev_paid"] == 0
+    rev = _reverse(db, first, actor=_admin())
+    assert rev["idempotent"] is False
+    payroll = db.payrolls.docs[0]
+    assert payroll["paid_amount"] == 3000
+    assert payroll["status"] == "pending"
+    assert db.personnel_movements.docs[0]["status"] == "reversed"
+    assert db.personnel_movements.docs[1]["status"] == "posted"
+    assert db.bank_accounts.docs[0]["current_balance"] == 47000
+    assert second["effects"][0]["paid_delta"] == 3000
+
+
+def test_concurrent_reverse_applies_once():
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "period": "2026-10", "status": "pending",
+        "final_payable": 10000, "net_salary": 10000, "paid_amount": 0,
+    })
+    _run(db, _emp(), [{"kind": "salary", "amount": 4000, "account_id": "bank"}])
+    _run(db, _emp(), [{"kind": "salary", "amount": 3000, "account_id": "bank"}])
+    first = db.personnel_movements.docs[0]
+
+    async def _sd(coll, doc, *a, **k):
+        await db[coll].delete_one({"_id": doc["_id"]})
+        return "tid"
+
+    async def _both():
+        with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
+            return await asyncio.gather(
+                personnel_payments.reverse_payment(db, first, actor=_admin()),
+                personnel_payments.reverse_payment(db, first, actor=_admin()),
+                return_exceptions=True,
+            )
+
+    results = asyncio.run(_both())
+    applied = [r for r in results if isinstance(r, dict) and r.get("status") == "success" and not r.get("idempotent")]
+    blocked = [r for r in results if isinstance(r, HTTPException) and r.status_code == 409]
+    idem = [r for r in results if isinstance(r, dict) and r.get("idempotent")]
+    assert len(applied) == 1, results
+    assert len(blocked) + len(idem) == 1, results
+    assert db.payrolls.docs[0]["paid_amount"] == 3000
+    assert db.payrolls.docs[0]["status"] == "pending"
+    assert db.bank_accounts.docs[0]["current_balance"] == 47000
+    assert db.personnel_movements.docs[1]["status"] == "posted"
+
+
+def test_reverse_status_only_bonus_restores_previous_status():
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc(current_balance=5000))
+    db.bonus_payments.docs.append({
+        "_id": "b1", "company_id": "c1", "employee_id": "e1", "type": "bonus",
+        "status": "pending", "amount": 500,
+    })
+    _run(db, _emp(), [{"kind": "bonus", "amount": 500, "account_id": "bank"}], balance={"remaining": 500, "unpaid_payroll": 0})
+    assert db.bonus_payments.docs[0]["status"] == "paid"
+    mov = db.personnel_movements.docs[0]
+    _reverse(db, mov, actor=_admin())
+    assert db.bonus_payments.docs[0]["status"] == "pending"
+    assert "paid_amount" not in db.bonus_payments.docs[0]
+    assert db.bank_accounts.docs[0]["current_balance"] == 5000
+    assert db.personnel_movements.docs[0]["status"] == "reversed"
+
+
+def test_reverse_requires_company_admin():
+    db = FakeDb()
+    _init_linked(db)
+    db.personnel_movements.docs.append({
+        "_id": "m1", "company_id": "c1", "status": "posted", "effects": [], "amount": 10,
+    })
+    sales = {"_id": "u_sales", "role": "sales", "company_ids": ["c1"], "active_company_id": "c1"}
+    try:
+        _reverse(db, db.personnel_movements.docs[0], actor=sales)
+        raise AssertionError("403 expected")
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    assert db.personnel_movements.docs[0]["status"] == "posted"
+    src = open(os.path.join(os.path.dirname(__file__), "..", "server.py"), encoding="utf-8").read()
+    start = src.index("async def reverse_personnel_movement")
+    chunk = src[start:start + 700]
+    assert "require_company_admin" in chunk
+
+
+def test_undo_effect_subtracts_paid_amount_on_other_collections():
+    db = FakeDb()
+    db.bonus_payments.docs.append({
+        "_id": "b1", "company_id": "c1", "paid_amount": 800, "amount": 1000, "status": "pending",
+    })
+    db.expenses.docs.append({
+        "_id": "x1", "company_id": "c1", "paid_amount": 100, "total": 100, "amount": 100,
+        "payment_status": "paid",
+    })
+
+    async def _go():
+        await personnel_payments._undo_effect(db, {
+            "collection": "bonus_payments", "id": "b1", "action": "update",
+            "paid_delta": 300, "prev_paid": 0, "prev_status": "pending",
+        })
+        await personnel_payments._undo_effect(db, {
+            "collection": "expenses", "id": "x1", "action": "update",
+            "paid_delta": 40, "prev_paid": 0, "prev_status": "unpaid", "status_field": "payment_status",
+        })
+
+    asyncio.run(_go())
+    assert db.bonus_payments.docs[0]["paid_amount"] == 500
+    assert db.bonus_payments.docs[0]["status"] == "pending"
+    assert db.expenses.docs[0]["paid_amount"] == 60
+    assert db.expenses.docs[0]["payment_status"] == "unpaid"
+
+
+def test_payroll_payment_respects_fresh_pay_claim():
+    from datetime import datetime, timezone
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    fresh = datetime.now(timezone.utc).isoformat()
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "period": "2026-10", "status": "pending",
+        "final_payable": 10000, "net_salary": 10000, "paid_amount": 0,
+        "_pay_claimed_at": fresh,
+    })
+    try:
+        _run(db, _emp(), [{"kind": "salary", "amount": 4000, "account_id": "bank"}])
+        raise AssertionError("409 expected")
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert "sürüyor" in str(exc.detail)
+    assert db.payrolls.docs[0]["paid_amount"] == 0
+    assert db.payrolls.docs[0]["_pay_claimed_at"] == fresh
+    assert db.personnel_movements.docs == []
+    assert db.bank_transactions.docs == []
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+
+
+def test_payroll_payment_takes_over_stale_pay_claim():
+    from datetime import datetime, timedelta, timezone
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "period": "2026-10", "status": "pending",
+        "final_payable": 10000, "net_salary": 10000, "paid_amount": 0,
+        "_pay_claimed_at": stale,
+    })
+    _run(db, _emp(), [{"kind": "salary", "amount": 4000, "account_id": "bank"}])
+    payroll = db.payrolls.docs[0]
+    assert payroll["paid_amount"] == 4000
+    assert payroll["status"] == "pending"
+    assert "_pay_claimed_at" not in payroll
