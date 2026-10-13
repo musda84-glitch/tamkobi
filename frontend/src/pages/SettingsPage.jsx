@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Bell } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Bell, Wrench } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
@@ -19,6 +19,7 @@ import { MigrationPanel } from "../components/MigrationPanel";
 import { MorningSummarySettings } from "../components/PricingCenter";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 import { MyStoragePanel } from "../components/saas/StorageManagerPanel";
+import { IntegrityPanel } from "../components/saas/IntegrityPanel";
 import IsnetIntegrationPanel from "../components/IsnetIntegrationPanel";
 import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { EinvoicePull30dButton } from "../components/EinvoicePull30dButton";
@@ -30,7 +31,7 @@ import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } 
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["integrity", "Veri Tutarlılığı", Wrench], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -747,6 +748,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}
+          {tab === "integrity" && <IntegrityPanel companyId={companyId} compact />}
           {tab === "summary" && <MorningSummarySettings companyId={companyId} />}
           {tab === "modules" && <div className="space-y-4"><ModuleOrder /><RadialSlotsEditor /></div>}
         </div>

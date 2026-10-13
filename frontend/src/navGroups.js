@@ -89,7 +89,7 @@ export const SYSTEM_NAV_GROUPS = [
   { id: "web", label: "Web", paths: ["/sistem/web"] },
   { id: "paketler", label: "Paketler", paths: ["/sistem/paketler", "/sistem/moduller"] },
   { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kotalar", "/sistem/depolama", "/sistem/kullanicilar", "/sistem/veri-silme"] },
-  { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar", "/sistem/duyurular", "/sistem/loglar"] },
+  { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar", "/sistem/duyurular", "/sistem/veri-tutarliligi", "/sistem/loglar"] },
   { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/sms", "/sistem/e-fatura-tasarim", "/sistem/ai", "/sistem/araclar"] },
   { id: "kurallar", label: "Kurallar", paths: ["/sistem/veritabani", "/sistem/ayarlar"] },
   { id: "platform", label: "Platform", paths: ["/sistem/urunler", "/sistem/api-anahtarlari", "/sistem/denetim"] },
@@ -119,5 +119,5 @@ export const SETTINGS_TAB_GROUPS = [
   { id: "belgeler", label: "Belgeler", tabs: ["print", "einvoice"] },
   { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "fx", "channels", "whatsapp", "extension"] },
   { id: "kurallar", label: "Kurallar", tabs: ["units", "project_stages", "work_parks", "workshop_zones", "users"] },
-  { id: "veri", label: "Veri", tabs: ["migration", "storage", "summary"] },
+  { id: "veri", label: "Veri", tabs: ["migration", "storage", "integrity", "summary"] },
 ];
