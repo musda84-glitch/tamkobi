@@ -58,6 +58,137 @@ export function employeePayModalStart(initialKind, lines) {
   return { mode: "all", selected: (lines || []).map((l) => l.key) };
 }
 
+export const PAYMENT_LINE_KINDS = [
+  { key: "salary", label: "Maaş" },
+  { key: "remaining", label: "Kalan ödeme" },
+  { key: "advance", label: "Avans" },
+  { key: "bonus", label: "Prim" },
+  { key: "expense", label: "Masraf iadesi" },
+  { key: "meal", label: "Yol/Yemek" },
+];
+
+const CASH_TYPES = new Set(["cash", "kasa", "cashbox", "nakit", "cash_box"]);
+const POS_TYPES = new Set(["pos", "okc_pos", "credit_card", "customer_credit_card"]);
+const SALARY_LINE_KINDS = new Set(["salary", "remaining"]);
+export const SGK_BANK_MSG = "SGK'lı personelin resmi maaşı bankadan ödenmelidir";
+export const CASH_SHORT_MSG = "Kasa bakiyesi yetersiz";
+export const OVERPAY_MSG = "sonraki maaştan düşülecek";
+
+export function istanbulPeriod(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit" }).formatToParts(date);
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  return y && m ? `${y}-${m}` : "";
+}
+
+export function shiftPeriod(period, delta) {
+  const [y, m] = String(period || "").split("-").map(Number);
+  if (!y || !m) return period || "";
+  const idx = y * 12 + (m - 1) + delta;
+  const yy = Math.floor(idx / 12);
+  const mm = (idx % 12) + 1;
+  return `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}`;
+}
+
+export function accountTypeOf(acc) {
+  return String(acc?.type || "").toLowerCase();
+}
+
+export function accountIdOf(acc) {
+  return acc?.id || acc?._id || "";
+}
+
+/** Maaş için varsayılan: banka, yoksa kasa. POS/kart seçilmez. */
+export function defaultPayAccount(accounts) {
+  const list = accounts || [];
+  const bank = list.find((a) => accountTypeOf(a) === "bank");
+  if (bank) return bank;
+  return list.find((a) => CASH_TYPES.has(accountTypeOf(a))) || null;
+}
+
+export function sgkInsured(emp) {
+  return emp?.sgk_insured === true || Boolean(String(emp?.sgk_number || "").trim());
+}
+
+export function officialSalaryOf(emp) {
+  if (!sgkInsured(emp)) return 0;
+  if (emp?.official_salary !== undefined && emp?.official_salary !== null && emp?.official_salary !== "") {
+    return round2(emp.official_salary);
+  }
+  return round2(emp?.salary);
+}
+
+export function sgkRuleOn(companyOrFlag) {
+  if (typeof companyOrFlag === "boolean") return companyOrFlag;
+  const company = companyOrFlag || {};
+  if (company.settings && Object.prototype.hasOwnProperty.call(company.settings, "sgk_salary_bank_only")) {
+    return Boolean(company.settings.sgk_salary_bank_only);
+  }
+  if (Object.prototype.hasOwnProperty.call(company, "sgk_salary_bank_only")) return Boolean(company.sgk_salary_bank_only);
+  return true;
+}
+
+export function sgkCashBlocked(emp, ruleOnFlag, lines, accounts) {
+  if (!sgkRuleOn(ruleOnFlag) || !sgkInsured(emp)) return null;
+  const official = officialSalaryOf(emp);
+  const salaryLines = (lines || []).filter((l) => SALARY_LINE_KINDS.has(l.kind) && Number(l.amount) > 0.004);
+  if (!salaryLines.length || official <= 0.004) return null;
+  const byId = Object.fromEntries((accounts || []).map((a) => [accountIdOf(a), a]));
+  let bank = 0;
+  let other = 0;
+  for (const l of salaryLines) {
+    const id = l.accountId || l.account_id;
+    const acc = byId[id];
+    const amt = Number(l.amount) || 0;
+    if (accountTypeOf(acc) === "bank" && !l.partner_id) bank += amt;
+    else other += amt;
+  }
+  const need = Math.min(official, salaryLines.reduce((s, l) => s + (Number(l.amount) || 0), 0));
+  if (bank + 0.004 < need && other > 0.004) return SGK_BANK_MSG;
+  return null;
+}
+
+export function cashShortfallWarning(lines, accounts) {
+  const byId = Object.fromEntries((accounts || []).map((a) => [accountIdOf(a), a]));
+  const totals = {};
+  for (const l of lines || []) {
+    const id = l.accountId || l.account_id;
+    const acc = byId[id];
+    if (!id || !CASH_TYPES.has(accountTypeOf(acc))) continue;
+    totals[id] = (totals[id] || 0) + (Number(l.amount) || 0);
+  }
+  for (const [id, total] of Object.entries(totals)) {
+    const bal = Number(byId[id]?.current_balance);
+    if (Number.isFinite(bal) && bal + 0.004 < total) return CASH_SHORT_MSG;
+  }
+  return null;
+}
+
+export function posSalaryWarning(lines, accounts) {
+  const byId = Object.fromEntries((accounts || []).map((a) => [accountIdOf(a), a]));
+  const hit = (lines || []).some((l) => SALARY_LINE_KINDS.has(l.kind) && POS_TYPES.has(accountTypeOf(byId[l.accountId || l.account_id])));
+  return hit ? "POS/kart hesabı maaşta varsayılan değildir." : null;
+}
+
+export function paymentPreview(remaining, lines) {
+  const paying = round2((lines || []).reduce((s, l) => s + (Number(l.amount) || 0), 0));
+  const after = round2((Number(remaining) || 0) - paying);
+  return {
+    paying,
+    remainingAfter: after,
+    overpaid: after < -0.004,
+    message: after < -0.004 ? OVERPAY_MSG : "",
+  };
+}
+
+export function initialPaymentKind(initialKind) {
+  if (initialKind === "advance") return "advance";
+  if (initialKind === "meal" || initialKind === "transport") return "meal";
+  if (initialKind === "bonus" || initialKind === "expense" || initialKind === "salary" || initialKind === "remaining") return initialKind;
+  if (initialKind === "overtime") return "bonus";
+  return "salary";
+}
+
 export function employeePayModalTitle(initialKind, emp) {
   const name = emp?.full_name || "";
   if (initialKind === "advance") return name ? `Avans — ${name}` : "Avans";

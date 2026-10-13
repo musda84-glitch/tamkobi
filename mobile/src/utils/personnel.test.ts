@@ -188,6 +188,10 @@ describe("employee draft", () => {
     d.tc_kimlik = "123";
     d.sgk_number = "111222333";
     expect(validateEmployee(d)).toContain("IBAN");
+    d.sgk_number = "";
+    d.sgk_insured = true;
+    d.official_salary = "17000";
+    expect(validateEmployee(d)).toContain("IBAN");
     expect(hasEmployeeDetails(d)).toBe(true);
     d.iban = "TR00";
     expect(validateEmployee(d)).toBeNull();
@@ -207,6 +211,8 @@ describe("employee draft", () => {
     expect(body.blood_type).toBe("A+");
     expect(body.illnesses).toBe("astım");
     expect(body.safety_info).toBe("İSG 2026");
+    expect(body.sgk_insured).toBe(true);
+    expect(body.official_salary).toBe(17000);
   });
 
   it("labels requests and sums period bonuses", () => {

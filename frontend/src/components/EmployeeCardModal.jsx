@@ -190,7 +190,7 @@ const UserTab = ({ card, reload, onResetData }) => {
   );
 };
 
-export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp, onClose, onChanged }) => {
+export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp, sgkSalaryBankOnly = true, onClose, onChanged }) => {
   const [tab, setTab] = useState("summary");
   const [card, setCard] = useState(null);
   const id = employee.id || employee._id;
@@ -638,6 +638,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           companyId={companyId}
           accounts={accounts}
           card={card}
+          sgkSalaryBankOnly={sgkSalaryBankOnly}
           onClose={() => setUnifyPay(false)}
           onDone={afterMoney}
         />

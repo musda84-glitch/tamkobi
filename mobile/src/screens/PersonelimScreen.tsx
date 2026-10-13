@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
+import { fileUrl } from "../api/url";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { DateField } from "../components/DateField";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -47,6 +48,7 @@ type PersonelimPayload = {
   leave_balance?: { annual?: number; used?: number; remaining?: number; pending?: number } | null;
   payrolls?: { id?: string; _id?: string; period?: string; status?: string; net_salary?: number; final_payable?: number; overtime_pay?: number; overtime_hours?: number; second_salary?: number }[];
   bonuses?: { id?: string; _id?: string; type?: string; amount?: number; status?: string; period?: string; note?: string; source?: string }[];
+  receipts?: { id?: string; period?: string; date?: string; total?: number; url?: string }[];
   balance?: {
     remaining?: number;
     unpaid_payroll?: number;
@@ -459,6 +461,21 @@ export function PersonelimScreen() {
                   p.second_salary ? `2. maaş ${fmtMoney(p.second_salary)}` : null,
                 ].filter(Boolean).join(" · ") || undefined}
                 right={`${fmtMoney(p.final_payable ?? p.net_salary)} · ${statusTr(p.status)}`}
+              />
+            ))}
+          </Card>
+          <Card>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Ödeme makbuzları</Text>
+            {!(data?.receipts || []).length ? <Muted>Makbuz yok.</Muted> : (data?.receipts || []).map((r) => (
+              <ListRow
+                key={r.id}
+                title={`${r.period || "Makbuz"} · ${fmtMoney(r.total)}`}
+                subtitle={r.date}
+                right="PDF"
+                onPress={() => {
+                  const href = fileUrl(client.baseUrl, r.url || `/api/personnel/receipts/${r.id}`);
+                  if (href) Linking.openURL(href).catch(() => null);
+                }}
               />
             ))}
           </Card>
