@@ -20774,6 +20774,10 @@ rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
 import platform_notices
 platform_notices.init(db)
+import help_center
+import onboarding
+help_center.init(db, get_current_user)
+onboarding.init(db, get_current_user)
 import platform_admin
 import platform_v1
 platform_admin.init(db)
@@ -21021,6 +21025,8 @@ app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
 app.include_router(platform_notices.router)
+app.include_router(help_center.router)
+app.include_router(onboarding.router)
 app.include_router(platform_admin.router)
 app.include_router(platform_v1.router)
 app.include_router(user_erase.router)

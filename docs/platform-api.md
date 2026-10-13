@@ -56,6 +56,25 @@ Girdi: `{ "instance_ref", "version", "meta" }` — kapsam: `heartbeat`
 Girdi: `{ "instance_ref", "metrics", "period" }` — kapsam: `usage:write`  
 Kayıtta `key_id` ve `product_id` saklanır.
 
+### Yardım Merkezi (ürün etiketli içerik)
+
+İçerikler YNT’de (`/sistem/yardim`) yönetilir. `product_tags`: `tamkobi` | `tameticaret`.
+
+**Yayın (kimlik doğrulamasız, yalnızca `published`):**
+
+- `GET /api/public/help/meta`
+- `GET /api/public/help/articles?product=tameticaret&q=&page_key=/orders&content_type=article|video&limit=50`
+- `GET /api/public/help/articles/{slug}?product=tameticaret`
+- `GET /api/public/help/search?product=tameticaret&q=`
+
+**HMAC (kapsam `help:read` veya `platform:all`):**
+
+- `GET /api/platform/v1/help/articles?product=…` — imza gövdesi boş
+- `GET /api/platform/v1/help/articles/{slug}?product=…`
+- `POST /api/platform/v1/help/search` — gövde `{ "product", "q", "page_key", "content_type", "limit" }`
+
+**Asistan bağlamı (ileride AI):** `GET /api/help/assistant/context?page=/invoices&product=tamkobi` — `chat_ready: false`, `chat_endpoint: /api/ai/help-chat`.
+
 ## Python
 
 ```python

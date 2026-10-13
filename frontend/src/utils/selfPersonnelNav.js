@@ -11,6 +11,7 @@ export const PERSONEL_MENU_PATHS = [
   "/saha",
   "/communication",
   "/support",
+  "/yardim",
 ];
 
 export function hasSelfPersonnelRecord(user) {
@@ -41,6 +42,7 @@ export function personelMenuPathAllowed(path, user) {
   if (!isPersonelRole(user)) return true;
   const p = String(path || "").split("?")[0];
   if (p === "/hesap" || p.startsWith("/hesap/")) return true;
+  if (p === "/yardim" || p.startsWith("/yardim/")) return true;
   return PERSONEL_MENU_PATHS.includes(p);
 }
 

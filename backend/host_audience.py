@@ -64,6 +64,9 @@ _YNT_ALLOWED_PREFIXES = (
     "/api/public/plans",
     # ynt /yasal* sayfası
     "/api/public/legal",
+    # Yardım merkezi dağıtımı (TamKobi / TamEticaret ürün etiketleri)
+    "/api/public/help",
+    "/api/system/help",
 )
 
 

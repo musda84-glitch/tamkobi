@@ -33,6 +33,7 @@ STARTUP_INDEXES = (
     {"collection": "orders", "name": "company_id_channel_order_number", "fields": ("company_id", "channel", "order_number"), "unique": True},
     {"collection": "purchase_orders", "name": "order_number", "fields": ("order_number",), "unique": False},
     {"collection": "login_attempts", "name": "identifier", "fields": ("identifier",), "unique": False},
+    {"collection": "help_articles", "name": "slug", "fields": ("slug",), "unique": True},
 )
 
 # Core collections that a seeded local database is expected to contain.
@@ -62,7 +63,7 @@ COLLECTIONS = {
     "companies": {
         "scope": SCOPE_PLATFORM,
         "description": "Kiracı firmalar (vergi, adres, lisans, üst şirket, B2B ve yazdırma ayarları).",
-        "keys": ("_id", "name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "license_id", "parent_company_id"),
+        "keys": ("_id", "name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "license_id", "parent_company_id", "onboarding"),
         "refs": ("company_licenses._id via license_id", "companies._id via parent_company_id"),
     },
     "roles": {
@@ -99,6 +100,12 @@ COLLECTIONS = {
         "scope": SCOPE_PLATFORM,
         "description": "Şirket panellerinde çıkan bilgilendirme pop-up duyuruları.",
         "keys": ("_id", "title", "body", "active", "kind", "starts_at", "ends_at", "created_by"),
+        "refs": (),
+    },
+    "help_articles": {
+        "scope": SCOPE_PLATFORM,
+        "description": "YNT yardım merkezi makale/video içerikleri; product_tags ile TamKobi ve TamEticaret'e dağıtılır.",
+        "keys": ("_id", "slug", "title", "summary", "body_md", "content_type", "video_url", "product_tags", "page_keys", "status", "assistant"),
         "refs": (),
     },
     "platform_products": {

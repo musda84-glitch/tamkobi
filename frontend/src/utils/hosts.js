@@ -155,6 +155,7 @@ export const HOST_ROUTE_RULES = {
     /^\/odeme(\/|$)/,
     /^\/yenile(\/|$)/,
     /^\/sso(\/|$)/,
+    /^\/yardim(\/|$)/,
   ],
   b2b: [/^\/$/, /^\/b2b(\/|$)/, /^\/portal(\/|$)/],
   ik: [
@@ -164,6 +165,7 @@ export const HOST_ROUTE_RULES = {
     /^\/login(\/|$)/,
     /^\/sifre(\/|$)/,
     /^\/davet(\/|$)/,
+    /^\/yardim(\/|$)/,
   ],
   ynt: [
     /^\/$/,

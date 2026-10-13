@@ -118,6 +118,7 @@ export function mesaimExclusivePathAllowed(path) {
   const p = String(path || "");
   if (p === "/mesai" || p.startsWith("/mesai/")) return true;
   if (p === "/hesap" || p.startsWith("/hesap")) return true;
+  if (p === "/yardim" || p.startsWith("/yardim")) return true;
   if (p === "/login") return true;
   return false;
 }

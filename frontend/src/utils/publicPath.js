@@ -61,6 +61,7 @@ const SESSION_PREFIXES = [
   "/trash",
   "/edoc-inbox",
   "/b2b-yonetim",
+  "/yardim",
 ];
 
 export function requiresSession(pathname) {
