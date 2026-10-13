@@ -96,7 +96,7 @@ def test_netgsm_send_dict_body_returns_provider_error(monkeypatch):
 
 
 def test_send_test_dict_response_is_clear_message(monkeypatch):
-    payload = {"code": "30", "description": "invalid auth"}
+    payload = {"code": "30", "description": "invalid auth https://sms.example/token=leak"}
 
     class _Client:
         def __init__(self, *a, **k):
@@ -127,9 +127,12 @@ def test_send_test_dict_response_is_clear_message(monkeypatch):
     out = _run(platform_sms.platform_sms_send_test({"phone": "05321234567", "message": "deneme"}, _={}))
     assert out["ok"] is False
     msg = out.get("message") or ""
-    assert "başarısız" in msg.lower()
+    assert "gönderilemedi" in msg.lower() or "başarısız" in msg.lower()
     assert "slice" not in msg
-    assert "şifre" in msg.lower() or "API" in msg or "30" in msg
+    assert "30" in msg
+    assert "invalid auth" not in msg
+    assert "https://" not in msg
+    assert "token=leak" not in (out.get("detail") or "")
 
 
 def test_clean_attendance_row_without_id():
@@ -292,14 +295,25 @@ def test_fetch_integrator_pdf_reraises_provider_error(caplog):
     fake_db.invoices.find_one = AsyncMock(return_value=inv)
     fake_db.einvoice_settings.find_one = AsyncMock(return_value=settings)
     e_invoice.init(fake_db)
-    dl = AsyncMock(side_effect=HTTPException(status_code=502, detail="İşNet PDF: oturum kapalı"))
+    leak = (
+        "İşNet PDF: oturum kapalı https://einvoice.example/pdf?token=leak "
+        "username=portal.admin ErrorCode=401"
+    )
+    dl = AsyncMock(side_effect=HTTPException(status_code=502, detail=leak))
     with caplog.at_level(logging.WARNING):
         with patch("e_invoice.isnet.download_invoice_pdf", dl):
             with pytest.raises(HTTPException) as ei:
                 _run(e_invoice.fetch_integrator_pdf("inv_pdf_err"))
     assert ei.value.status_code == 502
-    assert "oturum kapalı" in ei.value.detail
-    assert any("oturum kapalı" in r.message for r in caplog.records)
+    assert "Entegratör belgesi alınamadı" in ei.value.detail
+    assert "401" in ei.value.detail
+    assert "oturum kapalı" not in ei.value.detail.lower()
+    assert "https://" not in ei.value.detail
+    assert "portal.admin" not in ei.value.detail
+    logged = " ".join(r.message for r in caplog.records)
+    assert "oturum kapalı" in logged.lower()
+    assert "https://einvoice.example" not in logged
+    assert "portal.admin" not in logged
 
 
 def test_invoice_pdf_shows_integrator_error_and_logs(caplog):
@@ -307,18 +321,22 @@ def test_invoice_pdf_shows_integrator_error_and_logs(caplog):
     saas_docs.init(MagicMock())
     req = MagicMock()
     req.query_params = {}
+    leak = "İşNet SOAP hatası: belge yok https://einvoice.example/err?token=abc ErrorCode=5001"
     with caplog.at_level(logging.WARNING, logger="TamKobiERP"):
         with patch.object(saas_docs, "_require_invoice_doc_access", AsyncMock(return_value=(inv, None))):
-            with patch("e_invoice.fetch_integrator_pdf", AsyncMock(side_effect=HTTPException(status_code=502, detail="İşNet SOAP hatası: belge yok"))):
+            with patch("e_invoice.fetch_integrator_pdf", AsyncMock(side_effect=HTTPException(status_code=502, detail=leak))):
                 with pytest.raises(HTTPException) as ei:
                     _run(saas_docs.invoice_pdf("inv_pdf_err", req, require_integrator=True))
     assert ei.value.status_code == 502
-    assert "belge yok" in ei.value.detail
+    assert "Entegratör belgesi alınamadı" in ei.value.detail
+    assert "5001" in ei.value.detail
+    assert "belge yok" not in ei.value.detail
+    assert "https://" not in ei.value.detail
     assert "slice" not in str(ei.value.detail)
     assert any("belge yok" in r.message for r in caplog.records)
 
 
-def test_isnet_pdf_dict_body_is_http_error_not_slice():
+def test_isnet_pdf_dict_body_is_http_error_not_slice(caplog):
     class _Client:
         def __init__(self, *a, **k):
             pass
@@ -330,11 +348,65 @@ def test_isnet_pdf_dict_body_is_http_error_not_slice():
             return False
 
         async def get(self, *a, **k):
-            return _DictText({"ErrorMessage": "Oturum kapalı"}, status_code=500)
+            return _DictText(
+                {
+                    "ErrorCode": "401",
+                    "ErrorMessage": "Oturum kapalı https://einvoice.example/login?token=leak",
+                },
+                status_code=500,
+            )
 
-    with patch.object(isnet.httpx, "AsyncClient", _Client):
-        with pytest.raises(HTTPException) as ei:
-            _run(isnet._http_get_invoice_pdf({"api_url": "https://einvoice.example"}, "abc"))
+    with caplog.at_level(logging.WARNING):
+        with patch.object(isnet.httpx, "AsyncClient", _Client):
+            with pytest.raises(HTTPException) as ei:
+                _run(isnet._http_get_invoice_pdf({"api_url": "https://einvoice.example"}, "abc"))
     assert ei.value.status_code == 502
     assert "slice" not in ei.value.detail
-    assert "Oturum kapalı" in ei.value.detail
+    assert "Entegratör PDF alınamadı" in ei.value.detail
+    assert "401" in ei.value.detail
+    assert "Oturum kapalı" not in ei.value.detail
+    assert "https://" not in ei.value.detail
+    logged = " ".join(r.message for r in caplog.records)
+    assert "Oturum kapalı" in logged
+    assert "https://einvoice.example/login" not in logged
+
+
+def test_isnet_soap_http_body_not_returned_to_user(caplog):
+    class _Resp:
+        status_code = 500
+        text = (
+            "<Fault><faultcode>a:Server</faultcode>"
+            "<faultstring>stack https://einvoiceservice.example/trace?token=abc "
+            "UserName=isnet.demo</faultstring></Fault>"
+        )
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return _Resp()
+
+    with caplog.at_level(logging.WARNING):
+        with patch.object(isnet.httpx, "AsyncClient", _Client):
+            with pytest.raises(HTTPException) as ei:
+                _run(isnet._soap_call(
+                    {"mode": "test"},
+                    endpoint=isnet.TEST_SOAP,
+                    action="HealthCheck",
+                    service_interface="IInvoiceService",
+                ))
+    assert ei.value.status_code == 502
+    assert "Entegratör SOAP yanıtı alınamadı" in ei.value.detail
+    assert "a:Server" in ei.value.detail
+    assert "https://" not in ei.value.detail
+    assert "isnet.demo" not in ei.value.detail
+    assert "token=abc" not in ei.value.detail
+    logged = " ".join(r.message for r in caplog.records)
+    assert "[url]" in logged or "einvoiceservice.example" not in logged

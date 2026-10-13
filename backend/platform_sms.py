@@ -10,6 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import saas
 import comm_service
+from safe_error import (
+    looks_like_raw_body,
+    mask_sensitive_text,
+    public_provider_detail,
+    provider_error_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,26 +116,37 @@ async def send_platform_sms(
     try:
         res = await comm_service.sms_send(creds, [{"no": no, "msg": msg}])
     except Exception as e:
-        logger.warning("platform sms send failed: %s", e)
-        provider_err = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=300)
-        if not provider_err or provider_err.startswith("slice("):
-            provider_err = "SMS sağlayıcısı hata döndürdü."
+        raw_err = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=500)
+        logger.warning("platform sms send failed: %s", mask_sensitive_text(raw_err or str(e))[:2000])
+        code = provider_error_code(getattr(e, "detail", None) or e)
+        public = public_provider_detail("SMS gönderilemedi.", raw_err, code=code)
         res = {
             "ok": False,
             "jobid": None,
-            "code": "",
-            "error": provider_err,
-            "message": provider_err,
+            "code": code,
+            "error": public,
+            "message": public,
             "raw": None,
         }
     if not isinstance(res, dict):
         res = {"ok": False, "error": "Geçersiz sağlayıcı cevabı", "raw": res}
     ok = bool(res.get("ok"))
-    detail = comm_service.sms_detail_text(
+    raw_for_log = comm_service.sms_detail_text(
         res.get("error") or res.get("message") or res.get("description") or res.get("raw") or ("" if ok else "SMS gönderilemedi."),
-        limit=300,
+        limit=500,
     )
-    code = str(res.get("code") or "")
+    code = str(res.get("code") or "") or provider_error_code(res.get("raw") or res.get("error") or res)
+    if ok:
+        detail = comm_service.sms_detail_text(res.get("message") or "OK", limit=300)
+    else:
+        logger.warning("platform sms provider error: %s", mask_sensitive_text(raw_for_log)[:2000])
+        mapped = res.get("error") if isinstance(res.get("error"), str) else ""
+        if looks_like_raw_body(mapped) or mapped.startswith("slice("):
+            mapped = ""
+        mapped = mask_sensitive_text(mapped) if mapped else ""
+        if any(tag in mapped for tag in ("[url]", "[token]", "[user]")):
+            mapped = ""
+        detail = public_provider_detail(mapped or "SMS gönderilemedi.", raw_for_log, code=code)
     job_id = res.get("jobid")
     if job_id is not None and not isinstance(job_id, str):
         job_id = str(job_id)
@@ -267,20 +284,43 @@ async def verify_platform_sms(_: dict = Depends(saas.require_super_admin)):
     try:
         res = await comm_service.sms_verify(creds)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Doğrulama başarısız: {str(e)[:160]}") from e
+        raw_err = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=500)
+        logger.warning("platform sms verify failed: %s", mask_sensitive_text(raw_err)[:2000])
+        raise HTTPException(
+            status_code=502,
+            detail=public_provider_detail("SMS doğrulaması başarısız.", raw_err),
+        ) from e
     ok = bool(res.get("ok"))
+    raw_verify = comm_service.sms_detail_text(
+        res.get("message") or res.get("error") or res.get("raw") or ("OK" if ok else "Başarısız"),
+        limit=500,
+    )
+    if ok:
+        verify_message = comm_service.sms_detail_text(res.get("message") or "OK", limit=300)
+    else:
+        logger.warning("platform sms verify body: %s", mask_sensitive_text(raw_verify)[:2000])
+        mapped = res.get("error") or res.get("message") or ""
+        if looks_like_raw_body(mapped):
+            mapped = ""
+        verify_message = public_provider_detail(
+            mapped or "SMS doğrulaması başarısız.",
+            raw_verify,
+            code=str(res.get("code") or ""),
+        )
     patch = {
         "verified": ok,
         "verified_at": _now_iso() if ok else None,
-        "verify_message": comm_service.sms_detail_text(
-            res.get("message") or res.get("error") or res.get("raw") or ("OK" if ok else "Başarısız"),
-            limit=300,
-        ),
+        "verify_message": verify_message,
         "updated_at": _now_iso(),
     }
     await _db.platform_settings.update_one({"_id": SETTINGS_ID}, {"$set": patch}, upsert=True)
     out = _public_view(await load_settings())
-    out["test"] = res
+    safe_test = dict(res) if isinstance(res, dict) else {"ok": ok}
+    safe_test.pop("raw", None)
+    if not ok:
+        safe_test["error"] = verify_message
+        safe_test["message"] = verify_message
+    out["test"] = safe_test
     return out
 
 
@@ -304,7 +344,12 @@ async def platform_sms_balance(_: dict = Depends(saas.require_super_admin)):
     try:
         res = await comm_service.sms_balance(creds)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)[:160]) from e
+        raw_err = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=500)
+        logger.warning("platform sms balance failed: %s", mask_sensitive_text(raw_err)[:2000])
+        raise HTTPException(
+            status_code=502,
+            detail=public_provider_detail("SMS bakiye sorgusu başarısız.", raw_err),
+        ) from e
     return res
 
 
@@ -328,10 +373,12 @@ async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.req
         raise
     except Exception as e:
         logger.exception("platform sms send-test failed")
-        detail = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=300)
-        if not detail or detail.startswith("slice("):
-            detail = "SMS sağlayıcısı hata döndürdü."
-        raise HTTPException(status_code=502, detail=f"Test SMS başarısız: {detail}") from e
+        raw = comm_service.sms_detail_text(getattr(e, "detail", None) or e, limit=500)
+        logger.warning("platform sms send-test body: %s", mask_sensitive_text(raw)[:2000])
+        raise HTTPException(
+            status_code=502,
+            detail=public_provider_detail("Test SMS gönderilemedi.", raw),
+        ) from e
     await _db.platform_settings.update_one(
         {"_id": SETTINGS_ID},
         {"$set": {"last_test_at": _now_iso(), "updated_at": _now_iso()}},
@@ -339,10 +386,13 @@ async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.req
     )
     if result.get("ok"):
         msg = f"Test SMS gönderildi: {result.get('phone')}"
-    else:
-        detail = result.get("detail") or "bilinmeyen hata"
-        msg = f"Test SMS başarısız: {detail}"
-    return {**result, "message": msg}
+        return {**result, "message": msg}
+    msg = public_provider_detail(
+        "Test SMS gönderilemedi.",
+        result.get("detail"),
+        code=str(result.get("code") or ""),
+    )
+    return {**result, "detail": msg, "message": msg}
 
 
 @router.get("/system/sms/logs")

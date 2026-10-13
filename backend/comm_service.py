@@ -187,18 +187,15 @@ NETGSM_ERRORS = {
 
 
 def netgsm_error_message(code: Any, description: Any = None) -> str:
+    """Kullanıcıya kısa Türkçe; ham sağlayıcı açıklaması eklenmez."""
+    _ = description
     c = str(code or "").strip()
     mapped = NETGSM_ERRORS.get(c)
-    desc = sms_detail_text(description, limit=200).strip()
-    if mapped and desc and desc.lower() not in mapped.lower():
-        return f"{mapped} ({desc})"
     if mapped:
         return mapped
-    if desc:
-        return desc
     if c:
-        return f"Netgsm hata kodu: {c}"
-    return "Netgsm gönderimi başarısız."
+        return f"SMS gönderilemedi. (kod: {c})"
+    return "SMS gönderilemedi."
 
 def normalize_phone(phone: str) -> Optional[str]:
     digits = re.sub(r"\D", "", phone or "")
