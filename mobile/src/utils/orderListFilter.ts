@@ -22,7 +22,7 @@ const RETURNED = new Set(["returned", "partially_returned"]);
 const SHIPPED = new Set(["shipped", "delivered", "completed"]);
 const CANCELLED_MP = new Set(["cancelled", "canceled", "iptal"]);
 const RETURNED_MP = new Set(["returned", "iade", "iade edildi"]);
-const SHIPPED_MP = new Set(["shipped", "delivered", "intransit", "in_transit", "kargolandi", "kargoda"]);
+const SHIPPED_MP = new Set(["shipped", "delivered", "intransit", "in_transit", "atcollectionpoint", "kargolandi", "kargoda"]);
 
 function fold(raw: unknown): string {
   return String(raw || "")
@@ -36,11 +36,11 @@ function marketplaceOf(o: Pick<Order, "marketplace_status"> | null | undefined):
   return fold(o?.marketplace_status);
 }
 
-function hasCargo(o: Pick<Order, "cargo_tracking_number" | "tracking"> | null | undefined): boolean {
-  return !!(
-    String(o?.cargo_tracking_number || "").trim()
-    || String(o?.tracking?.tracking_number || "").trim()
-  );
+/** Kargolandı: sipariş durumu veya pazaryeri durumu. Takip no tek başına yetmez. */
+export function isShippedOrder(o: Pick<Order, "order_status" | "status" | "marketplace_status"> | null | undefined): boolean {
+  const st = fold(orderStatusOf(o));
+  if (SHIPPED.has(st)) return true;
+  return SHIPPED_MP.has(marketplaceOf(o));
 }
 
 /** İptal / iade / kargo / yeni — öncelik: iptal → iade → kargolandı → yeni. */
@@ -53,7 +53,7 @@ export function orderListBucket(o: Pick<Order, "order_status" | "status" | "mark
   if (RETURNED.has(st) || RETURNED_MP.has(mp)) {
     return "returned";
   }
-  if (SHIPPED.has(st) || SHIPPED_MP.has(mp) || hasCargo(o)) {
+  if (isShippedOrder(o)) {
     return "shipped";
   }
   return "new";

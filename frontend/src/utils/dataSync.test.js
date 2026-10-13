@@ -106,8 +106,8 @@ test("order filters incoming and dispatched groups", () => {
     { order_number: "X", order_status: "cancelled", cargo_tracking_number: "YK3" },
   ];
   const base = { q: "", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "number" };
-  expect(applyOrderFilters(rows, { ...base, status: "incoming" }).map((o) => o.order_number)).toEqual(["N2", "N1"]);
-  expect(applyOrderFilters(rows, { ...base, status: "dispatched" }).map((o) => o.order_number).sort()).toEqual(["S1", "S2", "S3"]);
+  expect(applyOrderFilters(rows, { ...base, status: "incoming" }).map((o) => o.order_number).sort()).toEqual(["N1", "N2", "S3"]);
+  expect(applyOrderFilters(rows, { ...base, status: "dispatched" }).map((o) => o.order_number).sort()).toEqual(["S1", "S2"]);
 });
 
 test("cancelled and returned stay out of all/incoming order lists", () => {

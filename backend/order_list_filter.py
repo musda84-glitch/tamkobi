@@ -25,6 +25,10 @@ ORDER_LIST_EXPORT_MAX = 5000
 CLOSED_STATUSES = frozenset({"cancelled", "returned", "partially_returned", "canceled"})
 INCOMING_STATUSES = frozenset({"pending", "new", "approved", "held_cart", "active_cart"})
 DISPATCHED_STATUSES = frozenset({"shipped", "delivered", "completed"})
+SHIPPED_MARKETPLACE = frozenset({
+    "shipped", "delivered", "intransit", "in_transit",
+    "atcollectionpoint", "kargolandi", "kargoda",
+})
 DOC_STATUS_ALL = ("draft", "dispatched", "invoiced", "cancelled")
 
 _TR_FOLD = str.maketrans({
@@ -55,18 +59,23 @@ def is_active_cart(order: Optional[dict]) -> bool:
     )
 
 
+def is_shipped_order(order: Optional[dict]) -> bool:
+    """Kargolandı: sipariş durumu veya pazaryeri durumu. Takip no tek başına yetmez."""
+    if not order:
+        return False
+    if (order.get("order_status") or "") in DISPATCHED_STATUSES:
+        return True
+    return fold_tr(order.get("marketplace_status")).strip() in SHIPPED_MARKETPLACE
+
+
 def is_incoming_order(order: Optional[dict]) -> bool:
     if not order:
         return False
-    return order.get("order_status") in INCOMING_STATUSES and not order.get("cargo_tracking_number")
+    return order.get("order_status") in INCOMING_STATUSES and not is_shipped_order(order)
 
 
 def is_dispatched_order(order: Optional[dict]) -> bool:
-    if not order:
-        return False
-    if order.get("order_status") in DISPATCHED_STATUSES:
-        return True
-    return bool(order.get("cargo_tracking_number")) and order.get("order_status") not in CLOSED_STATUSES
+    return is_shipped_order(order)
 
 
 def order_has_einvoice(order: Optional[dict]) -> bool:
@@ -105,17 +114,33 @@ def doc_status_filter_active(selected: Optional[Sequence[str]]) -> bool:
     return True
 
 
+def _as_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def order_display_amount(order: Optional[dict]) -> float:
-    """Satırda görünen tutar: grand_total varsa o, yoksa total_amount."""
+    """TRY karşılığı. Döviz siparişinde local_total, yoksa grand_total * fx_rate."""
     if not order:
         return 0.0
-    raw = order.get("grand_total")
-    if raw in (None, ""):
-        raw = order.get("total_amount")
-    try:
-        return float(raw or 0)
-    except (TypeError, ValueError):
-        return 0.0
+    currency = str(order.get("currency") or "TRY").upper()
+    if currency != "TRY":
+        local = _as_float(order.get("local_total"))
+        if local is not None:
+            return round(local, 2)
+        amt = _as_float(order.get("grand_total"))
+        if amt is None:
+            amt = _as_float(order.get("total_amount")) or 0.0
+        rate = _as_float(order.get("fx_rate")) or 1.0
+        return round(amt * rate, 2)
+    raw = _as_float(order.get("grand_total"))
+    if raw is None:
+        raw = _as_float(order.get("total_amount")) or 0.0
+    return raw
 
 
 def order_search_blob(order: Optional[dict]) -> str:
@@ -191,6 +216,27 @@ def in_istanbul_range(order: dict, date_from: str, date_to: str) -> bool:
     return True
 
 
+def order_date_sql_range(date_from: str = "", date_to: str = "") -> Optional[Dict[str, str]]:
+    """SQL ön filtresi: İstanbul günü UTC, 1 gün pay (ISO/tarih-only karışmasın)."""
+    start = istanbul_day_start(date_from) if date_from else None
+    end = istanbul_day_end_exclusive(date_to) if date_to else None
+    if start is None and end is None:
+        return None
+    cond: Dict[str, str] = {}
+    if start is not None:
+        cond["$gte"] = (start.astimezone(timezone.utc) - timedelta(days=1)).date().isoformat()
+    if end is not None:
+        cond["$lt"] = (end.astimezone(timezone.utc) + timedelta(days=1)).date().isoformat()
+    return cond
+
+
+def needs_invoice_ebelge_filter(invoiced: Optional[str] = None, doc_status: Optional[Sequence[str]] = None) -> bool:
+    """E-fatura veya belge filtresi e-belge alanlarına bakmadan doğru eşleşmez."""
+    if (invoiced or "all") == "einvoice":
+        return True
+    return doc_status_filter_active(doc_status)
+
+
 def parse_doc_status(raw: Optional[str]) -> Optional[List[str]]:
     if raw is None:
         return None
@@ -258,9 +304,9 @@ def order_matches(order: dict, filt: OrderListFilter) -> bool:
         return False
 
     cargo = filt.cargo or "all"
-    if cargo == "yes" and not order.get("cargo_tracking_number"):
+    if cargo == "yes" and not is_shipped_order(order):
         return False
-    if cargo == "no" and order.get("cargo_tracking_number"):
+    if cargo == "no" and is_shipped_order(order):
         return False
 
     if doc_status_filter_active(filt.doc_status) and order_doc_status(order) not in set(filt.doc_status or []):
@@ -319,6 +365,7 @@ def paginate_orders(orders: Sequence[dict], page: int, page_size: int) -> Dict[s
         "page_size": size,
         "has_more": start + size < total,
         "total_amount": round(sum(order_display_amount(o) for o in orders), 2),
+        "truncated": False,
     }
 
 

@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { RotateCcw, XCircle, MessageCircleQuestion, Send, PackageCheck, Loader2, Receipt, Ban, Truck } from "lucide-react";
@@ -217,19 +217,76 @@ export const ClaimsPanel = ({ companyId }) => {
   );
 };
 
-export const CancelledPanel = ({ orders }) => {
-  const list = orders.filter((o) => ["cancelled", "returned"].includes(o.order_status));
+export const CancelledPanel = ({ companyId, closedCount = 0 }) => {
+  const [orders, setOrders] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const pageRef = useRef(1);
+  const loadingMore = useRef(false);
+  const sentinelRef = useRef(null);
+  const reqRef = useRef(0);
+
+  const fetchPage = useCallback(async (page) => {
+    const req = ++reqRef.current;
+    loadingMore.current = true;
+    if (page === 1) setLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/orders`, {
+        params: {
+          company_id: companyId,
+          paged: 1,
+          scope: "cancellations",
+          page,
+          page_size: 50,
+          sort: "date_desc",
+        },
+      });
+      if (req !== reqRef.current) return;
+      const items = r.data?.items || [];
+      setOrders((prev) => (page === 1 ? items : prev.concat(items)));
+      setHasMore(!!r.data?.has_more);
+    } catch {
+      if (req === reqRef.current) toast.error("İptal listesi yüklenemedi.");
+    } finally {
+      if (req === reqRef.current) {
+        loadingMore.current = false;
+        setLoading(false);
+      }
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    pageRef.current = 1;
+    setOrders([]);
+    void fetchPage(1);
+  }, [fetchPage]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || loading) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting) || loadingMore.current) return;
+      pageRef.current += 1;
+      void fetchPage(pageRef.current);
+    }, { rootMargin: "240px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loading, orders.length, fetchPage]);
+
+  const headingCount = Number(closedCount) || orders.length;
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden" data-testid="cancelled-panel">
-      <div className="px-4 py-3 border-b"><b className="text-sm flex items-center gap-2"><XCircle className="w-4 h-4 text-rose-600" /> İptal & İade Edilen Siparişler ({list.length})</b></div>
-      {list.length === 0 && <div className="p-10 text-center text-xs text-slate-400">İptal edilen sipariş yok.</div>}
-      <div className="divide-y divide-slate-100 text-xs">{list.map((o) => (
-        <div key={o.id} className="px-4 py-2.5 flex flex-wrap items-center gap-3" data-testid={`cancelled-${o.order_number}`}>
+      <div className="px-4 py-3 border-b"><b className="text-sm flex items-center gap-2"><XCircle className="w-4 h-4 text-rose-600" /> İptal & İade Edilen Siparişler ({headingCount})</b></div>
+      {loading && orders.length === 0 && <div className="p-10 text-center text-xs text-slate-400">Yükleniyor…</div>}
+      {!loading && orders.length === 0 && <div className="p-10 text-center text-xs text-slate-400">İptal edilen sipariş yok.</div>}
+      <div className="divide-y divide-slate-100 text-xs">{orders.map((o) => (
+        <div key={o.id || o._id || o.order_number} className="px-4 py-2.5 flex flex-wrap items-center gap-3" data-testid={`cancelled-${o.order_number}`}>
           <span className="font-bold">{o.order_number}</span><span className="text-[10px] font-semibold bg-slate-100 px-1.5 py-0.5 rounded">{channelTr(o.channel)}</span><span className="text-slate-600">{o.customer_name}</span>
           <span className="text-slate-500">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</span>
           <span className="ml-auto font-bold">{fmt(o.total_amount)} ₺</span><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${o.order_status === "returned" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{o.order_status === "returned" ? "İADE" : "İPTAL"}{o.marketplace_status ? ` · ${marketplaceStatusTr(o.marketplace_status)}` : ""}</span>
           {o.is_invoiced && <span className="text-[10px] text-rose-700 font-semibold">Faturalı — iade faturası gerekir</span>}
         </div>))}</div>
+      {hasMore && <div ref={sentinelRef} className="h-8" data-testid="cancelled-load-more" />}
     </div>
   );
 };

@@ -169,15 +169,24 @@ export const ORDER_STATUS_OPTIONS = [
 
 const INCOMING_STATUSES = new Set(["pending", "new", "approved", "held_cart", "active_cart"]);
 const DISPATCHED_STATUSES = new Set(["shipped", "delivered", "completed"]);
+const SHIPPED_MARKETPLACE = new Set([
+  "shipped", "delivered", "intransit", "in_transit",
+  "atcollectionpoint", "kargolandi", "kargoda",
+]);
 export const CLOSED_STATUSES = new Set(["cancelled", "returned", "partially_returned"]);
 
+/** Kargolandı: sipariş durumu veya pazaryeri durumu. Takip no tek başına yetmez. */
+export function isShippedOrder(o) {
+  if (DISPATCHED_STATUSES.has(o?.order_status)) return true;
+  return SHIPPED_MARKETPLACE.has(foldTr(o?.marketplace_status).trim());
+}
+
 export function isIncomingOrder(o) {
-  return INCOMING_STATUSES.has(o?.order_status) && !o?.cargo_tracking_number;
+  return INCOMING_STATUSES.has(o?.order_status) && !isShippedOrder(o);
 }
 
 export function isDispatchedOrder(o) {
-  if (DISPATCHED_STATUSES.has(o?.order_status)) return true;
-  return !!o?.cargo_tracking_number && !CLOSED_STATUSES.has(o?.order_status);
+  return isShippedOrder(o);
 }
 
 export function orderFiltersFromSearch(params) {
@@ -282,8 +291,8 @@ export const applyOrderFilters = (orders, f) => {
     if (f.invoiced === "yes" && !o.invoice_id) return false;
     if (f.invoiced === "einvoice" && !orderHasEInvoiceIssued(o)) return false;
     if (f.invoiced === "no" && o.invoice_id) return false;
-    if (f.cargo === "yes" && !o.cargo_tracking_number) return false;
-    if (f.cargo === "no" && o.cargo_tracking_number) return false;
+    if (f.cargo === "yes" && !isShippedOrder(o)) return false;
+    if (f.cargo === "no" && isShippedOrder(o)) return false;
     if (!orderMatchesDocStatus(o, f.docStatus)) return false;
     if (f.from || f.to) {
       const ms = orderInstantMs(o.order_date || o.created_at);

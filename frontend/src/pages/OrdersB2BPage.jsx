@@ -65,7 +65,6 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { cachedList, contactTypeFilter, dropCached } from "../utils/dataSync";
 import {
   ORDER_CHANNELS,
-  ORDER_FILTER_DEFAULTS,
   buildOrderListParams,
   columnSortFromOrderSort,
   decorateB2bHeldOrder,
@@ -718,9 +717,8 @@ export default function OrdersB2BPage() {
     try { localStorage.setItem("orders-page-size", String(v)); } catch { /* ignore */ }
   }, []);
   const [listMeta, setListMeta] = useState({
-    total: 0, total_amount: 0, open_count: 0, closed_count: 0, missing_contact: 0, counts: {}, channels: [],
+    total: 0, total_amount: 0, open_count: 0, closed_count: 0, missing_contact: 0, counts: {}, channels: [], truncated: false,
   });
-  const [closedOrders, setClosedOrders] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const pageRef = useRef(1);
@@ -799,17 +797,9 @@ export default function OrdersB2BPage() {
       const params = buildOrderListParams(ordF, {
         companyId, page: pageToFetch, pageSize, customer: customerFilter,
       });
-      const jobs = [axios.get(`${API_URL}/orders`, { params })];
-      if (pageToFetch === 1) {
-        jobs.push(axios.get(`${API_URL}/orders`, {
-          params: buildOrderListParams(ORDER_FILTER_DEFAULTS, {
-            companyId, scope: "cancellations", exportAll: true,
-          }),
-        }));
-      }
-      const results = await Promise.all(jobs);
+      const r = await axios.get(`${API_URL}/orders`, { params });
       if (req !== listReq.current) return;
-      const data = results[0].data || {};
+      const data = r.data || {};
       const items = (data.items || []).map(decorateB2bHeldOrder);
       setOrders((prev) => {
         if (pageToFetch === 1) return items;
@@ -825,8 +815,8 @@ export default function OrdersB2BPage() {
         missing_contact: Number(data.missing_contact) || 0,
         counts: data.counts || {},
         channels: Array.isArray(data.channels) ? data.channels : [],
+        truncated: !!data.truncated,
       });
-      if (results[1]) setClosedOrders((results[1].data?.items || []).map(decorateB2bHeldOrder));
     } catch {
       if (req === listReq.current) {
         if (pageToFetch > 1) pageRef.current = pageToFetch - 1;
@@ -1738,7 +1728,7 @@ export default function OrdersB2BPage() {
         </div>
       </div>
       {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
-      {activeTab === "cancelled" && <CancelledPanel orders={closedOrders} />}
+      {activeTab === "cancelled" && <CancelledPanel companyId={companyId} closedCount={listMeta.closed_count} />}
       {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "pricing" && <PricingCenter companyId={activeCompany?.id || "comp_nexus_main_01"} />}
@@ -1791,6 +1781,11 @@ export default function OrdersB2BPage() {
       )}
 
       {activeTab === "orders" ? (<>
+        {listMeta.truncated && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800" data-testid="orders-truncated-warning">
+            Sipariş taraması kesildi (üst sınır). Toplam adet ve tutar eksik olabilir; tarih aralığını daraltın.
+          </div>
+        )}
         <OrdersToolbar
           f={{ ...ordF, q: qDraft }}
           setF={setOrdF}

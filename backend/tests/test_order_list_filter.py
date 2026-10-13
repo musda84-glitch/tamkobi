@@ -6,6 +6,10 @@ from order_list_filter import (
     ORDER_LIST_SCAN_CAP,
     OrderListFilter,
     fold_tr,
+    is_shipped_order,
+    needs_invoice_ebelge_filter,
+    order_date_sql_range,
+    order_display_amount,
     query_orders,
 )
 
@@ -102,10 +106,36 @@ def test_status_incoming_and_dispatched():
         _row(order_number="S3", order_status="approved", cargo_tracking_number="YK2"),
         _row(order_number="X", order_status="cancelled", cargo_tracking_number="YK3"),
     ]
-    incoming = query_orders(rows, OrderListFilter(status="incoming", sort="number"))
-    assert _ids(incoming) == ["N2", "N1"]
+    incoming = query_orders(rows, OrderListFilter(status="incoming", sort="number_asc"))
+    assert _ids(incoming) == ["N1", "N2", "S3"]
     dispatched = query_orders(rows, OrderListFilter(status="dispatched", sort="number_asc"))
-    assert _ids(dispatched) == ["S1", "S2", "S3"]
+    assert _ids(dispatched) == ["S1", "S2"]
+
+
+def test_shipped_uses_status_not_tracking_number():
+    trendyol_created = _row(
+        order_number="TY-C",
+        order_status="pending",
+        channel="trendyol",
+        marketplace_status="Created",
+        cargo_tracking_number="TY123456",
+    )
+    b2b_shipped = _row(order_number="B2B-S", order_status="shipped", channel="b2b")
+    in_transit = _row(order_number="IT", order_status="approved", marketplace_status="InTransit")
+    collection = _row(order_number="ACP", order_status="approved", marketplace_status="AtCollectionPoint")
+    kargolandi = _row(order_number="KG", order_status="pending", marketplace_status="Kargolandı")
+    assert is_shipped_order(trendyol_created) is False
+    assert is_shipped_order(b2b_shipped) is True
+    assert is_shipped_order(in_transit) is True
+    assert is_shipped_order(collection) is True
+    assert is_shipped_order(kargolandi) is True
+    rows = [trendyol_created, b2b_shipped, in_transit, collection, kargolandi]
+    assert sorted(_ids(query_orders(rows, OrderListFilter(cargo="yes"), page_size=20))) == [
+        "ACP", "B2B-S", "IT", "KG",
+    ]
+    assert _ids(query_orders(rows, OrderListFilter(cargo="no"))) == ["TY-C"]
+    assert "TY-C" not in _ids(query_orders(rows, OrderListFilter(status="dispatched")))
+    assert "B2B-S" in _ids(query_orders(rows, OrderListFilter(status="dispatched")))
 
 
 def test_channel_filter_and_empty_channel_counts_as_b2b():
@@ -298,3 +328,30 @@ def test_scan_cap_is_above_legacy_500_window():
     assert ORDER_LIST_SCAN_CAP >= 1000
     assert olf.ORDER_LIST_EXPORT_MAX >= 1000
     assert olf.ORDER_LIST_PAGE_MAX >= 50
+
+
+def test_total_amount_uses_local_total_for_fx_orders():
+    try_row = _row(order_number="TRY", currency="TRY", grand_total=100, total_amount=80)
+    usd_local = _row(
+        order_number="USD", currency="USD", grand_total=100, fx_rate=40, local_total=4000, total_amount=100,
+    )
+    eur_rate = _row(order_number="EUR", currency="EUR", grand_total=50, fx_rate=36, total_amount=50)
+    assert order_display_amount(try_row) == 100
+    assert order_display_amount(usd_local) == 4000
+    assert order_display_amount(eur_rate) == 1800
+    out = query_orders([try_row, usd_local], OrderListFilter(status="all"))
+    assert out["total_amount"] == 4100
+
+
+def test_order_date_sql_range_pads_istanbul_day():
+    bounds = order_date_sql_range("2026-10-13", "2026-10-13")
+    assert bounds["$gte"] <= "2026-10-12"
+    assert bounds["$lt"] >= "2026-10-14"
+    assert order_date_sql_range("", "") is None
+
+
+def test_needs_invoice_ebelge_only_for_einvoice_or_doc_filter():
+    assert needs_invoice_ebelge_filter("einvoice", None) is True
+    assert needs_invoice_ebelge_filter("all", ["invoiced"]) is True
+    assert needs_invoice_ebelge_filter("yes", None) is False
+    assert needs_invoice_ebelge_filter("all", None) is False

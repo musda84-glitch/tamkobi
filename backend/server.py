@@ -39,6 +39,8 @@ from order_list_filter import (
     ORDER_LIST_PAGE_MAX,
     ORDER_LIST_SCAN_CAP,
     OrderListFilter,
+    needs_invoice_ebelge_filter,
+    order_date_sql_range,
     parse_doc_status,
     query_orders,
 )
@@ -15931,6 +15933,11 @@ async def _list_orders_filtered(
 ):
     """Panel listesi: şirket siparişleri taranır, filtre + sayfa sunucuda uygulanır."""
     query: Dict[str, Any] = {"company_id": company_id}
+    date_range = order_date_sql_range(date_from or "", date_to or "")
+    if date_range:
+        query["order_date"] = date_range
+    if (scope or "") == "cancellations":
+        query["order_status"] = {"$in": ["cancelled", "returned"]}
     if status == "active_cart":
         query["$or"] = [
             {"order_status": "active_cart"},
@@ -15939,7 +15946,9 @@ async def _list_orders_filtered(
         ]
     elif not include_active_cart:
         query.update(_orders_list_active_cart_nor())
-    orders = await db.orders.find(query).sort("order_date", -1).to_list(ORDER_LIST_SCAN_CAP)
+    fetched = await db.orders.find(query).sort("order_date", -1).to_list(ORDER_LIST_SCAN_CAP + 1)
+    truncated = len(fetched) > ORDER_LIST_SCAN_CAP
+    orders = fetched[:ORDER_LIST_SCAN_CAP]
     docs = clean_docs(orders)
     deduped = dedupe_orders_by_marketplace_key(docs)
     if len(deduped) < len(docs):
@@ -15955,7 +15964,6 @@ async def _list_orders_filtered(
     docs = deduped
     for o in docs:
         _decorate_b2b_held_order(o)
-    docs = await _enrich_orders_invoice_ebelge(docs)
     filt = OrderListFilter(
         q=q or "",
         status=status or "all",
@@ -15969,6 +15977,9 @@ async def _list_orders_filtered(
         sort=sort or "date_desc",
         scope=scope or "",
     )
+    need_ebelge = needs_invoice_ebelge_filter(filt.invoiced, filt.doc_status)
+    if need_ebelge:
+        docs = await _enrich_orders_invoice_ebelge(docs)
     if export:
         page_n, size = 1, ORDER_LIST_EXPORT_MAX
     else:
@@ -15982,10 +15993,13 @@ async def _list_orders_filtered(
         include_active_cart=include_active_cart,
     )
     items = result["items"]
+    if not need_ebelge:
+        items = await _enrich_orders_invoice_ebelge(items)
     items = await _enrich_orders_marketplace_item_media(items, company_id=company_id)
     items = await _enrich_orders_stock_matches(items, company_id=company_id)
     items = await _enrich_orders_production_flags(items, company_id=company_id)
     result["items"] = items
+    result["truncated"] = truncated
     return result
 
 

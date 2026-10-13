@@ -2,6 +2,8 @@ import {
   applyOrderFilters,
   ORDER_FILTER_DEFAULTS,
   isIncomingOrder,
+  isShippedOrder,
+  isDispatchedOrder,
   CLOSED_STATUSES,
   isActiveCartOrder,
   orderPanelFilter,
@@ -24,6 +26,31 @@ test("CLOSED_STATUSES covers iptal and iade", () => {
 test("cancelled orders are not incoming", () => {
   expect(isIncomingOrder({ order_status: "cancelled" })).toBe(false);
   expect(isIncomingOrder({ order_status: "pending" })).toBe(true);
+});
+
+test("shipped is status or marketplace status, not tracking number alone", () => {
+  expect(isShippedOrder({
+    order_status: "pending",
+    marketplace_status: "Created",
+    channel: "trendyol",
+    cargo_tracking_number: "TY-123",
+  })).toBe(false);
+  expect(isIncomingOrder({
+    order_status: "pending",
+    marketplace_status: "Created",
+    cargo_tracking_number: "TY-123",
+  })).toBe(true);
+  expect(isShippedOrder({ order_status: "shipped", channel: "b2b" })).toBe(true);
+  expect(isDispatchedOrder({ order_status: "shipped" })).toBe(true);
+  expect(isShippedOrder({ order_status: "approved", marketplace_status: "InTransit" })).toBe(true);
+  expect(isShippedOrder({ order_status: "approved", marketplace_status: "AtCollectionPoint" })).toBe(true);
+  expect(isShippedOrder({ order_status: "approved", marketplace_status: "Kargolandı" })).toBe(true);
+  const rows = [
+    { order_number: "TY", order_status: "pending", marketplace_status: "Created", cargo_tracking_number: "TY-123" },
+    { order_number: "B2B", order_status: "shipped", channel: "b2b" },
+  ];
+  expect(applyOrderFilters(rows, { ...ORDER_FILTER_DEFAULTS, cargo: "yes" }).map((o) => o.order_number)).toEqual(["B2B"]);
+  expect(applyOrderFilters(rows, { ...ORDER_FILTER_DEFAULTS, cargo: "no" }).map((o) => o.order_number)).toEqual(["TY"]);
 });
 
 test("default all filter hides cancelled like B2B-2026-0016", () => {
@@ -92,7 +119,7 @@ test("date range follows the Istanbul calendar day", () => {
 test("channel invoice cargo and doc filters", () => {
   const rows = [
     { order_number: "B", order_status: "pending", channel: "", invoice_id: "", cargo_tracking_number: "" },
-    { order_number: "T", order_status: "pending", channel: "trendyol", invoice_id: "i1", is_invoiced: true, cargo_tracking_number: "C1" },
+    { order_number: "T", order_status: "shipped", channel: "trendyol", invoice_id: "i1", is_invoiced: true, cargo_tracking_number: "C1" },
     { order_number: "G", order_status: "approved", channel: "trendyol", invoice_id: "i2", is_invoiced: true, einvoice_state: "sent", cargo_tracking_number: "" },
     { order_number: "D", order_status: "approved", channel: "b2b", dispatch_number: "IRS-1" },
   ];
