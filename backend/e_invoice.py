@@ -645,8 +645,15 @@ async def issue_invoice(
                 "email": company.get("email"),
                 "phone": company.get("phone"),
             }
+            xslt = None
+            try:
+                import einvoice_designs as _ed
+                xslt = await _ed.selected_xslt_for_e_type("e_dispatch")
+            except Exception:
+                logger.exception("e-irsaliye seçili XSLT yüklenemedi")
             xml = ubl_export.build_despatch_ubl(
-                {**inv, "gib_scenario": scen}, seller, ubl_export._buyer_from(inv, contact), send_ready=False
+                {**inv, "gib_scenario": scen}, seller, ubl_export._buyer_from(inv, contact),
+                send_ready=False, xslt=xslt,
             )
             await store_outgoing_xml(invoice_id, inv["company_id"], xml, {"scenario": scen, "source": "ubl_despatch"})
         else:
@@ -819,8 +826,14 @@ async def issue_invoice(
                 "invoice_number": gib_no or inv.get("invoice_number"),
             }
             if et == "e_dispatch":
+                dispatch_xslt = None
+                try:
+                    import einvoice_designs as _ed
+                    dispatch_xslt = await _ed.selected_xslt_for_e_type("e_dispatch")
+                except Exception:
+                    logger.exception("e-irsaliye arşiv XSLT yüklenemedi")
                 xml_str, ettn, _iid = isnet.build_despatch_ubl(
-                    archive_inv, company, contact, ettn=sent.get("ettn"),
+                    archive_inv, company, contact, ettn=sent.get("ettn"), xslt=dispatch_xslt,
                 )
             elif provider in ("isnet", "isnet_portal"):
                 # İşNet: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil

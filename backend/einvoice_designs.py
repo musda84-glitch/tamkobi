@@ -25,8 +25,8 @@ _db = None
 
 COLLECTION = "einvoice_designs"
 SETTINGS_ID = "einvoice_design_settings"
-KINDS = ("e_invoice", "e_archive")
-KIND_LABELS = {"e_invoice": "e-Fatura", "e_archive": "e-Arşiv"}
+KINDS = ("e_invoice", "e_archive", "e_dispatch")
+KIND_LABELS = {"e_invoice": "e-Fatura", "e_archive": "e-Arşiv", "e_dispatch": "e-İrsaliye"}
 SOURCES = ("visual", "xslt")
 MAX_XSLT_BYTES = 2 * 1024 * 1024
 MAX_LAYOUT_BYTES = 500 * 1024
@@ -57,6 +57,12 @@ BUILTIN = (
         "name": "Varsayılan e-Arşiv",
         "file": "default_e_archive.xslt",
     },
+    {
+        "id": "einvoice_xslt_default_e_dispatch",
+        "kind": "e_dispatch",
+        "name": "Klasik (İşNet örneği)",
+        "file": "",
+    },
 )
 
 
@@ -75,8 +81,10 @@ def _kind(value: Any) -> str:
         k = "e_invoice"
     if k in ("earsiv", "e-arsiv", "e_arsiv", "archive"):
         k = "e_archive"
+    if k in ("e-irsaliye", "irsaliye", "despatch", "e_despatch"):
+        k = "e_dispatch"
     if k not in KINDS:
-        raise HTTPException(status_code=400, detail="Tasarım türü e-Fatura veya e-Arşiv olmalı.")
+        raise HTTPException(status_code=400, detail="Tasarım türü e-Fatura, e-Arşiv veya e-İrsaliye olmalı.")
     return k
 
 
@@ -128,6 +136,11 @@ def compile_and_transform_xslt(text: str) -> str:
         xslt_doc = etree.fromstring(raw.encode("utf-8"), parser)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"XSLT XML parse hatası: {e}") from e
+    # İşNet standart şablonları XSLT 2.0 (character-map). lxml yalnız 1.0 derler;
+    # 2.0 metin güvenlik ve iyi biçimlilikten geçer, orijinal haliyle saklanır.
+    version = str(xslt_doc.get("version") or "").strip()
+    if version.startswith("2"):
+        return raw
     try:
         transform = etree.XSLT(xslt_doc, access_control=etree.XSLTAccessControl.DENY_ALL)
     except Exception as e:
@@ -181,10 +194,10 @@ def _normalize_source(value: Any, *, has_layout: bool) -> str:
 async def get_xslt_embed_mode() -> str:
     try:
         row = await _db.platform_settings.find_one({"_id": SETTINGS_ID}) or {}
-        mode = str(row.get("xslt_embed") or "gzip_base64").strip().lower()
-        return mode if mode in ("base64", "gzip_base64") else "gzip_base64"
+        mode = str(row.get("xslt_embed") or "base64").strip().lower()
+        return mode if mode in ("base64", "gzip_base64") else "base64"
     except Exception:
-        return "gzip_base64"
+        return "base64"
 
 
 async def set_xslt_embed_mode(mode: str) -> str:
@@ -239,7 +252,7 @@ async def ensure_defaults() -> None:
             "_id": spec["id"],
             "name": spec["name"],
             "kind": spec["kind"],
-            "xslt": _read_builtin_xslt(spec["file"]),
+            "xslt": _builtin_xslt_for_kind(spec["kind"]),
             "is_builtin": True,
             "is_selected": not bool(same_kind),
             "created_at": _now(),
@@ -249,8 +262,13 @@ async def ensure_defaults() -> None:
 
 
 def _builtin_xslt_for_kind(kind: str) -> str:
-    spec = next((s for s in BUILTIN if s["kind"] == kind), BUILTIN[0])
-    return _read_builtin_xslt(spec["file"])
+    spec = next((s for s in BUILTIN if s["kind"] == kind), None)
+    if spec and spec.get("file"):
+        return _read_builtin_xslt(spec["file"])
+    if (spec and spec["kind"] == "e_dispatch") or kind == "e_dispatch":
+        from einvoice_classic_xslt import classic_isnet_xslt
+        return classic_isnet_xslt("e_dispatch")
+    return _read_builtin_xslt(BUILTIN[0]["file"])
 
 
 async def selected_xslt(kind: str) -> Optional[str]:
@@ -277,12 +295,26 @@ _DATA_IMAGE_RE = re.compile(
     r"data:image/(webp|jpeg|jpg|png|gif);base64,([A-Za-z0-9+/=\s]+)",
     re.IGNORECASE,
 )
+# İşNet render anında bu dizeleri görselle değiştirir; JPEG'e çevrilmez.
+_ISNET_IMAGE_TOKENS = frozenset({
+    "firmaLogoImageString",
+    "firmaImzaImageString",
+    "qrCodeImageString",
+})
 
 
 def gzip_xslt_b64(xslt: str) -> str:
-    """GİB UBL: XSLT gzip + Base64 (EmbeddedDocumentBinaryObject)."""
+    """Eski gzip+Base64 yardımcı. UBL gömme artık plain_xslt_b64 kullanır."""
     raw = str(xslt or "").encode("utf-8")
     return base64.b64encode(gzip.compress(raw, compresslevel=9)).decode("ascii")
+
+
+def plain_xslt_b64(xslt: str) -> str:
+    """UBL EmbeddedDocumentBinaryObject: gzip'siz düz Base64. 2 MB sınırını aşarsa hata."""
+    raw = str(xslt or "").encode("utf-8")
+    if len(raw) > MAX_XSLT_BYTES:
+        raise ValueError(f"XSLT {len(raw)} bayt; sınır {MAX_XSLT_BYTES} bayt.")
+    return base64.b64encode(raw).decode("ascii")
 
 
 def _image_bytes_to_jpeg_b64(mime: str, payload_b64: str) -> str:
@@ -311,6 +343,9 @@ def prepare_xslt_for_gib(xslt: str) -> str:
 
     def _repl(match: re.Match) -> str:
         mime, payload = match.group(1), match.group(2)
+        compact = re.sub(r"\s+", "", payload or "")
+        if compact in _ISNET_IMAGE_TOKENS:
+            return match.group(0)
         try:
             jpeg_b64 = _image_bytes_to_jpeg_b64(mime, payload)
         except Exception:
@@ -323,7 +358,12 @@ def prepare_xslt_for_gib(xslt: str) -> str:
 async def selected_xslt_for_e_type(e_type: str) -> Optional[str]:
     """Giden UBL'ye gömülecek seçili tasarım (GİB-uyumlu JPEG logo)."""
     raw_kind = str(e_type or "").strip().lower()
-    kind = "e_archive" if raw_kind in ("e_archive", "earsiv", "e-arsiv") else "e_invoice"
+    if raw_kind in ("e_archive", "earsiv", "e-arsiv"):
+        kind = "e_archive"
+    elif raw_kind in ("e_dispatch", "e-irsaliye", "irsaliye", "despatch", "e_despatch"):
+        kind = "e_dispatch"
+    else:
+        kind = "e_invoice"
     raw = await selected_xslt(kind)
     if not raw:
         return None
@@ -381,8 +421,7 @@ async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_supe
         xslt = src.get("xslt") or ""
         if not str(req.get("name") or "").strip():
             name = f"{src.get('name') or KIND_LABELS[kind]} kopya"
-    builtin_file = next((s["file"] for s in BUILTIN if s["kind"] == kind), BUILTIN[0]["file"])
-    raw_xslt = xslt if xslt is not None else _read_builtin_xslt(builtin_file)
+    raw_xslt = xslt if xslt is not None else _builtin_xslt_for_kind(kind)
     # Builtin kopyada lxml katı doğrulama opsiyonel gevşek: yine de stylesheet şart.
     try:
         xslt = await validate_xslt_async(raw_xslt)

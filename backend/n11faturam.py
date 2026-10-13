@@ -324,8 +324,13 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     if "<xsl:stylesheet" in xslt_text or "<xsl:transform" in xslt_text:
         try:
             import einvoice_designs as _ed
-            payload = _ed.gzip_xslt_b64(xslt_text)
-            fname = "earsiv.xslt" if e_type == "e_archive" else "efatura.xslt"
+            payload = _ed.plain_xslt_b64(xslt_text)
+            if e_type == "e_archive":
+                fname = "earsiv.xslt"
+            elif e_type == "e_dispatch":
+                fname = "eirsaliye.xslt"
+            else:
+                fname = "efatura.xslt"
             xslt_ref = (
                 "<cac:AdditionalDocumentReference>"
                 f"<cbc:ID>{uuid.uuid4()}</cbc:ID>"
@@ -337,6 +342,8 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
                 "</cac:Attachment>"
                 "</cac:AdditionalDocumentReference>"
             )
+        except ValueError:
+            raise
         except Exception:
             xslt_ref = ""
 
