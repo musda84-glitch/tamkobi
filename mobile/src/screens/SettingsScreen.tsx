@@ -24,6 +24,7 @@ import {
 import { idOf } from "../utils/money";
 import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
+import { savePunchPin } from "../utils/punchAuth";
 
 type MeEmployee = {
   id?: string;
@@ -54,6 +55,12 @@ export function SettingsScreen() {
   const [me, setMe] = useState<MeEmployee | null>(null);
   const [consent, setConsent] = useState<LocationConsent | null>(null);
   const [consentBusy, setConsentBusy] = useState(false);
+  const [remindIn, setRemindIn] = useState(true);
+  const [remindOut, setRemindOut] = useState(false);
+  const [remindBusy, setRemindBusy] = useState(false);
+  const [punchMode, setPunchMode] = useState("off");
+  const [zone, setZone] = useState("Europe/Istanbul");
+  const [newPin, setNewPin] = useState("");
 
   const linkedEmployee = Boolean(user?.employee_id);
   const empId = String(user?.employee_id || idOf(me) || "").trim();
@@ -69,6 +76,20 @@ export function SettingsScreen() {
       const r = await get<MePayload>(client, "/personnel/me");
       setMe(r?.employee || null);
       setConsent(r?.location_consent || null);
+      try {
+        const prefs = await get<{
+          notify_checkin_reminder?: boolean;
+          notify_checkout_reminder?: boolean;
+          require_punch_auth?: string;
+          timezone?: string;
+        }>(client, "/personnel/attendance/reminder-prefs");
+        setRemindIn(prefs?.notify_checkin_reminder !== false);
+        setRemindOut(!!prefs?.notify_checkout_reminder);
+        setPunchMode(prefs?.require_punch_auth || "off");
+        setZone(prefs?.timezone || "Europe/Istanbul");
+      } catch {
+        /* tercih okunamadı */
+      }
     } catch {
       setMe(null);
       setConsent(null);
@@ -253,6 +274,56 @@ export function SettingsScreen() {
           ) : (
             <Muted>Mesaim ekranından KVKK (K) ve konum (KK) sözleşmelerini kabul edebilirsiniz.</Muted>
           )}
+        </Card>
+      ) : null}
+
+      {linkedEmployee ? (
+        <Card testID="settings-reminders">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Mesai hatırlatması</Text>
+          <Muted>Saat dilimi: {zone}. Firma kapalıysa bildirim gitmez. İzin, rapor, tatil ve vardiyasız günde gönderilmez.</Muted>
+          <Pressable testID="settings-remind-checkin" onPress={() => setRemindIn((v) => !v)}>
+            <Text style={{ fontWeight: "700", color: colors.text }}>{remindIn ? "Giriş hatırlatması açık" : "Giriş hatırlatması kapalı"}</Text>
+          </Pressable>
+          <Pressable testID="settings-remind-checkout" onPress={() => setRemindOut((v) => !v)}>
+            <Text style={{ fontWeight: "700", color: colors.text }}>{remindOut ? "Çıkış hatırlatması açık" : "Çıkış hatırlatması kapalı"}</Text>
+          </Pressable>
+          <PrimaryButton
+            title={remindBusy ? "Kaydediliyor…" : "Hatırlatmayı kaydet"}
+            testID="settings-remind-save"
+            loading={remindBusy}
+            color={colors.primary}
+            onPress={async () => {
+              setRemindBusy(true);
+              setError(null);
+              try {
+                await post(client, "/personnel/attendance/reminder-prefs", {
+                  notify_checkin_reminder: remindIn,
+                  notify_checkout_reminder: remindOut,
+                });
+                setMessage("Hatırlatma tercihi kaydedildi.");
+              } catch (err) {
+                setError(apiErrorMessage(err, "Hatırlatma kaydedilemedi."));
+              } finally {
+                setRemindBusy(false);
+              }
+            }}
+          />
+          {punchMode !== "off" ? (
+            <>
+              <Muted>Firma girişte {punchMode === "pin" ? "PIN" : "biyometrik veya PIN"} istiyor.</Muted>
+              <Field label="Mesai PIN" testID="settings-punch-pin" value={newPin} onChangeText={setNewPin} keyboardType="number-pad" secureTextEntry />
+              <PrimaryButton
+                title="PIN kaydet"
+                testID="settings-punch-pin-save"
+                color={colors.primary}
+                onPress={async () => {
+                  const invalid = await savePunchPin(newPin);
+                  if (invalid) setError(invalid);
+                  else { setNewPin(""); setMessage("Mesai PIN’i bu telefona kaydedildi."); }
+                }}
+              />
+            </>
+          ) : null}
         </Card>
       ) : null}
 

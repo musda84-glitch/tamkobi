@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import { del, post, type ApiClient } from "../api/client";
 import { IOS_PUSH_PERMISSION, isExpoPushToken, isPushPermissionGranted, PUSH_CHANNEL, PUSH_SOUND, PUSH_SOUND_ANDROID, shouldAskPushOnOpen } from "./push";
 import { localPushContent, planLocalPush } from "./pushLocal";
+import { getStableDeviceId } from "./punchAuth";
 import type { Notification } from "../types";
 
 const TOKEN_KEY = "tamkobi.pushToken";
@@ -111,11 +112,11 @@ export async function registerDevicePush(client: ApiClient): Promise<PushResult>
   const got = await requestPushToken();
   if (got.status !== "ok" || !got.token) return got;
   try {
-    const Device = await import("expo-device");
+    const deviceId = await getStableDeviceId();
     await post(client, "/notifications/push-token", {
       token: got.token,
       platform: Platform.OS,
-      device_id: Device.modelName || Device.osInternalBuildId || Device.osName || "",
+      device_id: deviceId,
     });
     return got;
   } catch (err) {

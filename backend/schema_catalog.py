@@ -449,7 +449,7 @@ COLLECTIONS = {
     "employees": {
         "scope": SCOPE_TENANT,
         "description": "Personel kartları, PIN, yan haklar.",
-        "keys": ("_id", "company_id", "full_name", "tc_kimlik", "sgk_number", "iban", "salary", "meal_allowance", "transport_allowance", "pay_start_date", "pay_day", "pay_recurring", "skip_check_in", "marital_status", "blood_type", "illnesses", "safety_info", "user_id", "status", "start_date", "end_date"),
+        "keys": ("_id", "company_id", "full_name", "tc_kimlik", "sgk_number", "iban", "salary", "meal_allowance", "transport_allowance", "pay_start_date", "pay_day", "pay_recurring", "skip_check_in", "notify_checkin_reminder", "notify_checkout_reminder", "marital_status", "blood_type", "illnesses", "safety_info", "user_id", "status", "start_date", "end_date"),
         "refs": ("users._id",),
     },
     "payrolls": {
@@ -511,6 +511,18 @@ COLLECTIONS = {
         "description": "Mesai uyarıları.",
         "keys": ("_id", "company_id", "type"),
         "refs": ("companies._id",),
+    },
+    "attendance_devices": {
+        "scope": SCOPE_TENANT,
+        "description": "Personel mesai giriş telefonları.",
+        "keys": ("_id", "company_id", "employee_id", "device_id", "status"),
+        "refs": ("employees._id", "companies._id"),
+    },
+    "attendance_device_events": {
+        "scope": SCOPE_TENANT,
+        "description": "Mesai cihazı bağlama, red ve onay kaydı.",
+        "keys": ("_id", "company_id", "employee_id", "device_id", "type"),
+        "refs": ("employees._id", "companies._id"),
     },
     "shift_plans": {
         "scope": SCOPE_TENANT,

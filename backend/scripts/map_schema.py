@@ -19,7 +19,7 @@ GROUPS = {
     "Finans": ["bank_accounts", "bank_transactions", "partners", "partner_transactions", "cash_approval_requests", "fx_rates", "gib_wallets", "gib_credit_ledger"],
     "Satış / sipariş": ["orders", "order_pick_sessions", "projects", "surveys", "cargo_configs", "cargo_shipments"],
     "Stok / üretim": ["products", "product_categories", "units", "warehouses", "stock_movements", "stock_counts", "recipes", "production_orders", "work_orders", "label_templates"],
-    "İK": ["employees", "payrolls", "leave_requests", "bonus_payments", "attendance_alerts"],
+    "İK": ["employees", "payrolls", "leave_requests", "bonus_payments", "attendance_alerts", "attendance_devices", "attendance_device_events"],
     "Entegrasyon": ["integration_configs", "einvoice_settings", "migration_api_configs", "migration_api_cache"],
     "Sistem": ["activity_logs", "notifications", "trash", "counters"],
 }

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Clock, LogIn, CalendarX2, Timer, CheckCircle2, MapPin, MessageSquareWarning, DoorOpen, ArrowLeftRight, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
+import { AttendanceDevicesPanel } from "./AttendanceDevicesPanel";
 import { ShiftPlanner } from "./ShiftPlanner";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { formatTrAmount } from "../utils/money";
@@ -123,6 +124,7 @@ export const AttendancePanel = ({ companyId }) => {
     <div className="space-y-4 text-xs" data-testid="attendance-panel">
       <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-indigo-600" /> Puantaj — Giriş / Çıkış & Mesai</h3><label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Aylık dönem<input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-xs font-semibold text-slate-800 normal-case tracking-normal" data-testid="attendance-month-input" /></label></div>
       <WorkScheduleSettings companyId={companyId} onSaved={load} />
+      <AttendanceDevicesPanel companyId={companyId} />
       <ShiftPlanner companyId={companyId} onChanged={load} />
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Mesai</th><th className="px-4 py-2">Bugün</th><th className="px-4 py-2 text-right">Gün</th><th className="px-4 py-2 text-right">Devamsız</th><th className="px-4 py-2 text-right">İzin</th><th className="px-4 py-2 text-right">Saat</th><th className="px-4 py-2 text-right">F. Mesai</th><th className="px-4 py-2 text-right">Mesai ₺</th><th className="px-4 py-2 text-right">Geç</th><th className="px-4 py-2 text-right">Onaysız</th><th className="px-4 py-2"></th></tr></thead>
         <tbody className="divide-y divide-slate-100">{data.summary.map((s) => (

@@ -26,6 +26,7 @@ _IK_SELF_SERVICE_PREFIXES = (
     "/api/personnel/messages",
     "/api/personnel/attendance/self",
     "/api/personnel/attendance/me",
+    "/api/personnel/attendance/reminder-prefs",
     "/api/personnel/attendance/geo",
     "/api/personnel/attendance/early-leave-request",
     "/api/personnel/attendance/intraday-leave-request",
