@@ -118,16 +118,20 @@ export const OrdersToolbar = ({
   onPageSizeChange,
   onRefresh,
   refreshBusy = false,
+  channelOptions,
+  statusCounts,
+  loadExportRows,
 }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
-  const channels = [...new Set(orders.map((o) => o.channel || "b2b"))];
+  const channels = [...(channelOptions?.length ? channelOptions : new Set((orders || []).map((o) => o.channel || "b2b")))];
+  if (f.channel && f.channel !== "all" && !channels.includes(f.channel)) channels.push(f.channel);
   const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
   const active = Object.keys(ORDER_FILTER_DEFAULTS).filter((k) => {
     if (k === "sort") return false;
     if (k === "docStatus") return docStatusFilterActive(f.docStatus);
     return f[k] !== ORDER_FILTER_DEFAULTS[k];
   }).length;
-  const counts = orders.reduce((m, o) => {
+  const counts = statusCounts || (orders || []).reduce((m, o) => {
     m[o.order_status] = (m[o.order_status] || 0) + 1;
     if (isIncomingOrder(o)) m.incoming = (m.incoming || 0) + 1;
     if (isDispatchedOrder(o)) m.dispatched = (m.dispatched || 0) + 1;
@@ -180,7 +184,7 @@ export const OrdersToolbar = ({
         )}
         <div className="ml-auto flex items-center gap-3 text-slate-500">
           {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
-          <ExportButtons rows={rows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" />
+          <ExportButtons rows={rows} loadRows={loadExportRows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" />
           <div data-testid="ord-result-summary"><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
         </div>
       </div>
