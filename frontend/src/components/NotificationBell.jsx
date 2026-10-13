@@ -94,6 +94,14 @@ export const NotificationBell = ({ companyId }) => {
                 note={n}
                 onOpen={() => openItem(n)}
                 onDelete={() => deleteItem(n)}
+                onDecide={async (action) => {
+                  const id = n.ref_id;
+                  if (!id || n.ref_type !== "pos_approval") return;
+                  try {
+                    await axios.post(`${API_URL}/pos/approvals/${id}/${action}`, {});
+                    load();
+                  } catch { /* ignore */ }
+                }}
               />
             ))}
           </div>
@@ -103,7 +111,7 @@ export const NotificationBell = ({ companyId }) => {
   );
 };
 
-function SwipeNoteRow({ note, onOpen, onDelete }) {
+function SwipeNoteRow({ note, onOpen, onDelete, onDecide }) {
   const canDelete = notificationCanDelete(note);
   const startX = React.useRef(0);
   const origin = React.useRef(0);
@@ -116,7 +124,14 @@ function SwipeNoteRow({ note, onOpen, onDelete }) {
       data-testid={`notification-item-${note.id || note._id}`}
     >
       {note.title?.includes("ONAYLANDI") ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />}
-      <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{note.title}</span><span className="block text-[11px] text-slate-600">{localizeNotificationText(note.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(note.created_at).toLocaleString("tr-TR")}</span></span>
+      <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{note.title}</span><span className="block text-[11px] text-slate-600">{localizeNotificationText(note.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(note.created_at).toLocaleString("tr-TR")}</span>
+        {note.ref_type === "pos_approval" && !note.is_read && onDecide ? (
+          <span className="mt-1 flex gap-1">
+            <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onDecide("approve"); }} onKeyDown={(e) => e.key === "Enter" && onDecide("approve")} className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold" data-testid={`pos-notify-approve-${note.ref_id}`}>Onayla</span>
+            <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onDecide("reject"); }} onKeyDown={(e) => e.key === "Enter" && onDecide("reject")} className="px-2 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold" data-testid={`pos-notify-reject-${note.ref_id}`}>Reddet</span>
+          </span>
+        ) : null}
+      </span>
     </button>
   );
   if (!canDelete) return content;

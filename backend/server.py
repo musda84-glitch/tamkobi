@@ -93,6 +93,7 @@ import image_opt
 import bank_providers
 import bank_guard
 import cash_approval
+import pos_cashier
 import marketplace_providers
 from marketplace_settlement import (
     is_marketplace_settlement_tx,
@@ -242,6 +243,8 @@ def clean_doc(doc: dict) -> dict:
         doc["has_b2b_password"] = bool(doc.pop("b2b_password_hash"))
     if "shopfloor_pin_hash" in doc:
         doc["has_shopfloor_pin"] = bool(doc.pop("shopfloor_pin_hash"))
+    if "cashier_pin_hash" in doc:
+        doc["has_cashier_pin"] = bool(doc.pop("cashier_pin_hash"))
     doc.pop("punch_pin_hash", None)
     doc.pop("password_hash", None)
     if doc.get("order_date"):
@@ -6868,19 +6871,30 @@ async def product_lots(product_id: str, include_empty: bool = False, user: dict 
 @api_router.post("/pos/checkout")
 async def pos_checkout(req: Dict[str, Any], request: Request):
     """Perakende hızlı satış: çok satırlı sepet → onaylı e-arşiv + kasa tahsilatı."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    user = await get_current_user(request)
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    req = {**req, "company_id": company_id}
     return await idempotency.run(
         db, company_id, request, "pos/checkout",
-        lambda: _pos_checkout_core(req, request),
+        lambda: _pos_checkout_core(req, request, user),
     )
 
 
-async def _pos_checkout_core(req: Dict[str, Any], request: Request):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Optional[dict] = None):
+    pos_meta = {
+        "company_id": req.get("company_id", "comp_nexus_main_01"),
+        "payment_method": (req.get("payment_method") or "cash").lower(),
+        "cash_amount": req.get("cash_amount") or 0,
+        "card_amount": req.get("card_amount") or 0,
+        "tendered_cash": req.get("tendered_cash") or 0,
+    }
+    if user and (user.get("_id") or user.get("id") or user.get("role")):
+        pos_meta = await pos_cashier.preflight_checkout(user, req)
+    company_id = pos_meta.get("company_id") or req.get("company_id", "comp_nexus_main_01")
     items_in = req.get("items") or []
     if not items_in:
         raise HTTPException(status_code=400, detail="Sepet boş.")
-    payment_method = (req.get("payment_method") or "cash").lower()
+    payment_method = (pos_meta.get("payment_method") or req.get("payment_method") or "cash").lower()
     sector = req.get("sector") or "market"
 
     # Perakende cari
@@ -6974,11 +6988,33 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request):
         "source_channel": "pos_quick",
         "pos_sector": sector,
         "payment_method": payment_method,
+        "cashier_user_id": pos_meta.get("cashier_user_id"),
+        "cashier_name": pos_meta.get("cashier_name"),
+        "pos_shift_id": pos_meta.get("shift_id"),
+        "pos_terminal_id": pos_meta.get("terminal_id"),
         "notes": f"Hızlı satış ({sector})",
         "effects_applied": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "approved_at": datetime.now(timezone.utc).isoformat(),
     }
+    cash_amt, card_amt, change_given = pos_cashier.mixed_change(
+        grand, pos_meta.get("cash_amount") or 0, pos_meta.get("card_amount") or 0, pos_meta.get("tendered_cash") or 0,
+    )
+    if payment_method == "mixed":
+        invoice["cash_amount"] = cash_amt
+        invoice["card_amount"] = card_amt
+        invoice["tendered_cash"] = float(pos_meta.get("tendered_cash") or 0)
+        invoice["change_given"] = change_given
+    elif payment_method == "cash":
+        tend = float(pos_meta.get("tendered_cash") or 0)
+        invoice["tendered_cash"] = tend
+        invoice["change_given"] = round(max(0.0, tend - grand), 2) if tend else 0.0
+    elif payment_method == "credit":
+        invoice["payment_status"] = "unpaid"
+        invoice["paid_amount"] = 0
+    pos_meta["cash_amount"] = cash_amt if payment_method == "mixed" else (grand if payment_method == "cash" else 0)
+    pos_meta["card_amount"] = card_amt if payment_method == "mixed" else (grand if payment_method == "card" else 0)
+
     await _apply_invoice_effects(invoice)
     await db.invoices.insert_one(invoice)
 
@@ -7021,7 +7057,7 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request):
             )
 
     company = await db.companies.find_one({"_id": company_id}) or {}
-    return {
+    out = {
         "status": "success",
         "invoice": clean_doc(invoice),
         "receipt": {
@@ -7050,9 +7086,18 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request):
             "vat_total": vat_total,
             "grand_total": grand,
             "currency": invoice.get("currency") or company.get("currency") or "TRY",
+            "change_given": invoice.get("change_given") or 0,
+            "cash_amount": invoice.get("cash_amount"),
+            "card_amount": invoice.get("card_amount"),
+            "cashier_name": invoice.get("cashier_name"),
         },
         "message": f"Satış tamamlandı: {grand:,.2f} ₺",
     }
+    try:
+        await pos_cashier.on_checkout_done(user or {}, invoice, pos_meta)
+    except Exception:
+        logging.getLogger(__name__).exception("POS checkout kasiyer kaydı yazılamadı")
+    return out
 
 
 async def _pos_find_receipt(company_id: str, invoice_number: str):
@@ -7092,15 +7137,32 @@ async def pos_lookup_receipt(invoice_number: str, company_id: Optional[str] = "c
 @api_router.post("/pos/return")
 async def pos_return(req: Dict[str, Any], request: Request):
     """POS fiş iadesi: stok geri + kasa çıkışı + iade kaydı."""
+    user = None
+    try:
+        user = await get_current_user(request)
+    except HTTPException:
+        user = None
     company_id = req.get("company_id", "comp_nexus_main_01")
+    if user:
+        company_id = tenant_access.resolve_company_id(user, company_id)
+        req = {**req, "company_id": company_id}
     return await idempotency.run(
         db, company_id, request, "pos/return",
-        lambda: _pos_return_core(req, request),
+        lambda: _pos_return_core(req, request, user),
     )
 
 
-async def _pos_return_core(req: Dict[str, Any], request: Request):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def _pos_return_core(req: Dict[str, Any], request: Request, user: Optional[dict] = None, skip_preflight: bool = False):
+    pos_meta = {}
+    if user and not skip_preflight:
+        pos_meta = await pos_cashier.preflight_return(user, req)
+    elif skip_preflight:
+        pos_meta = {
+            "company_id": req.get("company_id"),
+            "cashier_user_id": req.get("cashier_user_id"),
+            "cashier_name": req.get("cashier_name"),
+        }
+    company_id = (pos_meta or {}).get("company_id") or req.get("company_id", "comp_nexus_main_01")
     invoice_number = req.get("invoice_number") or ""
     invoice_id = req.get("invoice_id")
     inv = None
@@ -7243,7 +7305,7 @@ async def _pos_return_core(req: Dict[str, Any], request: Request):
             )
 
     company = await db.companies.find_one({"_id": company_id}) or {}
-    return {
+    out = {
         "status": "success",
         "invoice": clean_doc(return_inv),
         "original": clean_doc(await db.invoices.find_one({"_id": inv["_id"]})),
@@ -7275,6 +7337,64 @@ async def _pos_return_core(req: Dict[str, Any], request: Request):
         },
         "message": f"İade tamamlandı: {grand:,.2f} ₺ ({inv.get('invoice_number')} → {ret_number})",
     }
+    if user:
+        try:
+            await pos_cashier.on_return_done(user, inv, return_inv, pos_meta or {})
+        except Exception:
+            logging.getLogger(__name__).exception("POS iade kasiyer kaydı yazılamadı")
+    return out
+
+
+class _PosDummyRequest:
+    headers = {}
+
+
+async def _pos_do_return(payload: Dict[str, Any]):
+    req = dict(payload or {})
+    company_id = req.get("company_id")
+    actor = {
+        "role": "admin",
+        "is_super_admin": True,
+        "company_ids": [company_id] if company_id else [],
+        "active_company_id": company_id,
+        "_id": payload.get("cashier_user_id") or "pos",
+        "name": payload.get("cashier_name") or "POS",
+    }
+    return await _pos_return_core(req, _PosDummyRequest(), actor, skip_preflight=True)
+
+
+async def _pos_do_cancel_sale(payload: Dict[str, Any]):
+    company_id = payload.get("company_id")
+    invoice_id = payload.get("invoice_id")
+    invoice_number = payload.get("invoice_number")
+    inv = None
+    if invoice_id:
+        inv = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id})
+    if not inv and invoice_number:
+        inv = await _pos_find_receipt(company_id, invoice_number)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fiş bulunamadı.")
+    if inv.get("source_channel") not in ("pos_quick", None) and not str(inv.get("invoice_number") or "").startswith("POS"):
+        raise HTTPException(status_code=400, detail="Yalnızca POS satış fişleri bu ekrandan iptal edilir.")
+    actor = {
+        "role": "admin",
+        "is_super_admin": True,
+        "company_ids": [company_id],
+        "active_company_id": company_id,
+        "_id": payload.get("cashier_user_id") or "pos",
+        "name": payload.get("cashier_name") or "POS",
+    }
+    result = await _cancel_invoice_core(inv["_id"], {"reason": "POS satış iptali"}, actor)
+    for tx in await db.bank_transactions.find({"invoice_id": inv["_id"], "source": "pos_quick"}).to_list(20):
+        amt = float(tx.get("amount") or 0)
+        aid = tx.get("account_id")
+        if aid and tx.get("type") == "inflow":
+            await db.bank_accounts.update_one({"_id": aid}, {"$inc": {"current_balance": -amt}})
+        await db.bank_transactions.update_one(
+            {"_id": tx["_id"]},
+            {"$set": {"category": "POS satış iptali", "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    return result
 
 
 @api_router.get("/products/{product_id}/purchase-costs")
@@ -8692,8 +8812,7 @@ def _invoice_cancel_block_reason(inv: dict) -> Optional[str]:
     return None
 
 
-@api_router.post("/invoices/{invoice_id}/cancel")
-async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user: dict = None):
     """Onaylı e-faturayı iptal et: cari/stok etkilerini geri al, sipariş bağını kopar, kaydı cancelled bırak (listede gizlenir)."""
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
@@ -8771,6 +8890,12 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict
         if pay_rows:
             msg += " Tahsilat/ödeme kasa kayıtları durur; cari bakiyesinden düşüldü."
     return {"status": "success", "message": msg}
+
+
+@api_router.post("/invoices/{invoice_id}/cancel")
+async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+    return await _cancel_invoice_core(invoice_id, req, user)
+
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
@@ -20893,6 +21018,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 company_audit.init(db, get_current_user)
+pos_cashier.init(db, get_current_user, {"do_return": _pos_do_return, "do_cancel_sale": _pos_do_cancel_sale})
 saas.init(db, get_current_user)
 import platform_notices
 platform_notices.init(db)
@@ -21132,6 +21258,7 @@ app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(company_audit.router)
+app.include_router(pos_cashier.router)
 app.include_router(expenses.router)
 app.include_router(tax_obligations.router)
 app.include_router(vehicles.router)

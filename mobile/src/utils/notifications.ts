@@ -22,6 +22,9 @@ const TYPE_ROLES: Record<string, string[]> = {
   b2b_order: ["admin", "manager", "sales"],
   quote_response: ["admin", "manager", "sales"],
   cash_approval: ["admin", "manager", "accountant"],
+  pos_approval: ["admin", "manager"],
+  pos_approval_decision: [],
+  pos_daily_summary: ["admin", "manager"],
   bank_sync: ["admin", "manager", "accountant"],
 };
 
@@ -30,7 +33,7 @@ export const TILE_NOTIFICATION_TYPES: Record<string, string[]> = {
   orders: ["b2b_order"],
   sevk: ["order_pick_missing", "order_pick_production"],
   personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "attendance_dispute_decision", "early_leave_request", "early_leave_decision", "intraday_leave_request", "intraday_leave_decision"],
-  banking: ["cash_approval", "bank_sync"],
+  banking: ["cash_approval", "bank_sync", "pos_approval", "pos_daily_summary"],
 };
 
 export function rolesForType(type?: string | null): string[] {
@@ -38,7 +41,7 @@ export function rolesForType(type?: string | null): string[] {
 }
 
 /** Ana ekranda kişi kendi rolüne veya kendisine atanan kayıtlara bakar. */
-const STAFF_ADMIN_BROADCAST = new Set(["bank_sync", "cash_approval", "license"]);
+const STAFF_ADMIN_BROADCAST = new Set(["bank_sync", "cash_approval", "license", "pos_approval", "pos_daily_summary"]);
 
 export function visibleNotifications(rows: Notification[] | null | undefined, user?: User | null): Notification[] {
   const list = rows || [];
@@ -185,7 +188,7 @@ export function notificationLook(n: Notification): NotificationLook {
   if (/reddedil|iptal|silin|eksik|başarısız/.test(text)) return { icon: "close-circle", tone: "rose" };
   const type = lower(String(n.type || ""));
   if (type.startsWith("b2b")) return { icon: "cart", tone: "sky" };
-  if (type.startsWith("cash") || type.startsWith("bank")) return { icon: "wallet", tone: "teal" };
+  if (type.startsWith("cash") || type.startsWith("bank") || type.startsWith("pos")) return { icon: "wallet", tone: "teal" };
   if (type.startsWith("quote")) return { icon: "create", tone: "amber" };
   if (type === "role_assigned") return { icon: "people", tone: "violet" };
   if (type === "task_assigned") return { icon: "briefcase", tone: "indigo" };
@@ -209,6 +212,7 @@ const REF_ROUTES: Record<string, string> = {
   contact: "/contacts",
   cheque: "/cheques",
   cash_approval: "/banking",
+  pos_approval: "/notifications",
   bank: "/banking",
   employee: "/personnel",
   staff_message: "/",

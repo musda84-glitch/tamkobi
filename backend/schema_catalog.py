@@ -80,7 +80,7 @@ COLLECTIONS = {
     },
     "login_attempts": {
         "scope": SCOPE_PLATFORM,
-        "description": "Brute-force kilidi; identifier genelde e-posta.",
+        "description": "Brute-force kilidi. identifier e-posta veya pospin:{şirket}:{terminal}:{ip}.",
         "keys": ("_id", "identifier", "count", "last_attempt"),
         "refs": (),
     },
@@ -408,6 +408,36 @@ COLLECTIONS = {
         "scope": SCOPE_TENANT,
         "description": "Kasa çift onay talepleri.",
         "keys": ("_id", "company_id", "status", "kind", "requested_by", "approved_by"),
+        "refs": ("users._id",),
+    },
+    "pos_sessions": {
+        "scope": SCOPE_TENANT,
+        "description": "Hızlı Satış kasiyer oturumu (PIN, kilit, sepet, çıkış).",
+        "keys": ("_id", "company_id", "terminal_id", "cashier_user_id", "locked", "cart", "shift_id", "last_activity"),
+        "refs": ("users._id", "pos_shifts._id"),
+    },
+    "pos_approvals": {
+        "scope": SCOPE_TENANT,
+        "description": "POS yönetici onay kuyruğu (satır silme, iptal, iade, fiyat, çekmece, çıkış).",
+        "keys": ("_id", "company_id", "kind", "status", "session_id", "requested_by", "payload", "snapshot"),
+        "refs": ("pos_sessions._id", "users._id"),
+    },
+    "pos_held_carts": {
+        "scope": SCOPE_TENANT,
+        "description": "Kasiyere bağlı bekleyen POS sepetleri.",
+        "keys": ("_id", "company_id", "cashier_user_id", "cart", "held_at"),
+        "refs": ("users._id",),
+    },
+    "pos_shifts": {
+        "scope": SCOPE_TENANT,
+        "description": "POS vardiya kasa açılış/kapanış ve gün sonu farkı.",
+        "keys": ("_id", "company_id", "cashier_user_id", "status", "opening_cash", "counted_cash", "cash_diff"),
+        "refs": ("users._id",),
+    },
+    "pos_events": {
+        "scope": SCOPE_TENANT,
+        "description": "POS işlem geçmişi (satış, iptal, iade, fiyat, onay).",
+        "keys": ("_id", "company_id", "kind", "summary", "user_id", "cashier_user_id", "created_at"),
         "refs": ("users._id",),
     },
     "partners": {

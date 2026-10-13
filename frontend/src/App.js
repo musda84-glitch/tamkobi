@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AuthProvider } from "./context/AuthContext";
 import { HelpProvider } from "./context/HelpContext";
 import { HelpHost } from "./components/help/HelpHost";
+import { PosSessionProvider } from "./context/PosSessionContext";
 import { MesaimGateProvider } from "./context/MesaimGateContext";
 import { Toaster } from "sonner";
 import HostShell from "./components/HostShell";
@@ -102,6 +103,7 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <HelpProvider>
+        <PosSessionProvider>
         <MesaimGateProvider>
         <Toaster position="top-right" richColors closeButton />
         <HelpHost />
@@ -194,6 +196,7 @@ export default function App() {
           </HostRouteGuard>
         </SetupGuard>
         </MesaimGateProvider>
+        </PosSessionProvider>
         </HelpProvider>
       </AuthProvider>
     </BrowserRouter>

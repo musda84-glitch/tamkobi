@@ -36,6 +36,8 @@ def test_roles_for_known_types():
     assert roles_for_type("gib_credits_low") == ["admin"]
     assert roles_for_type("receivable_overdue") == ["admin", "accountant"]
     assert roles_for_type("unknown_type") == ["admin"]
+    assert "manager" in roles_for_type("pos_approval")
+    assert roles_for_type("pos_daily_summary") == ["admin", "manager"]
     assert role_label("warehouse") == "Depo"
     assert role_label("manager") == "Müdür"
 

@@ -30,6 +30,7 @@ const SRC = __dirname;
 
 /** Aynı testid'nin birden çok kez geçmesi doğru olan yerler ve sebepleri. */
 const ALLOWED_DUPLICATE_TESTIDS = {
+  "help/pageRegistry.js": ['"help-page-btn"'], // tur adımları aynı ? düğmesini hedefler; düğme bir kez çizilir
   "components/AppSidebarNav.jsx": [
     "{`nav-group-${g.id}`}", // başlıklı ve başlıksız grup dalları
     "{`nav-count-${item.path.replace(\"/\", \"\") || \"dashboard\"}`}",
