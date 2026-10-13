@@ -129,6 +129,7 @@ import personnel_wage
 import trash
 import linked_moves
 import idempotency
+import pay_claim
 import finance_txn
 import migration
 import pricing
@@ -9276,21 +9277,26 @@ async def pay_installment(
     inst = await tenant_access.get_tenant_doc(db, "installments", inst_id, user, not_found="Taksit bulunamadı.")
 
     async def _do():
-        claim = await db.installments.update_one_atomic(
-            {
-                "_id": inst_id,
-                "status": {"$ne": "paid"},
-                "_pay_claimed_at": {"$exists": False},
-            },
-            {"$set": {"_pay_claimed_at": datetime.now(timezone.utc).isoformat()}},
+        company_id = inst.get("company_id") or user.get("company_id") or ""
+        pay_key = idempotency.header_key(request)
+        gate = await pay_claim.acquire_pay_claim(
+            db,
+            "installments",
+            inst_id,
+            company_id=company_id,
+            idempotency_key=pay_key,
+            source_type="installment",
+            paid_detail="Bu taksit zaten ödenmiş.",
+            busy_detail="Bu taksit ödemesi sürüyor.",
         )
-        if claim.matched_count == 0:
-            raise HTTPException(status_code=409, detail="Bu taksit zaten ödenmiş.")
+        if gate["action"] == "already_paid":
+            return gate["response"]
+        claimed_at = gate["claimed_at"]
         fresh = await db.installments.find_one({"_id": inst_id}) or inst
         remaining = round(fresh["amount"] - fresh.get("paid_amount", 0), 2)
         amount = round(float(req.get("amount") or remaining), 2)
         if amount <= 0 or amount > remaining + 0.01:
-            await db.installments.update_one({"_id": inst_id}, {"$unset": {"_pay_claimed_at": ""}})
+            await pay_claim.release_pay_claim(db, "installments", inst_id, claimed_at)
             raise HTTPException(status_code=400, detail=f"Tutar 0 ile {remaining} arasında olmalı.")
         link = linked_moves.link_fields("installment", inst_id)
         txn = finance_txn.CompensatingTxn(label=f"installment-pay:{inst_id}")
@@ -9350,31 +9356,45 @@ async def pay_installment(
                 result = {"status": "success", "kind": "balance"}
             new_paid = round(fresh.get("paid_amount", 0) + amount, 2)
             status = "paid" if new_paid >= fresh["amount"] - 0.01 else "partial"
-            upd = await db.installments.update_one_atomic(
-                {"_id": inst_id, "status": {"$ne": "paid"}},
-                {"$set": {
-                    "paid_amount": new_paid,
-                    "status": status,
-                    "paid_at": datetime.now(timezone.utc).isoformat() if status == "paid" else None,
-                    "account_id": req.get("account_id"),
-                }, "$unset": {"_pay_claimed_at": ""}},
-            )
-            if upd.matched_count == 0:
-                raise HTTPException(status_code=409, detail="Bu taksit zaten ödenmiş.")
-            if fresh.get("invoice_id"):
-                paid_count = await db.installments.count_documents({"invoice_id": fresh["invoice_id"], "status": "paid"})
-                await db.invoices.update_one({"_id": fresh["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
-            return {
+            paid_at = datetime.now(timezone.utc).isoformat() if status == "paid" else None
+            response = {
                 "status": "success",
                 "installment_status": status,
                 "invoice_payment": result,
                 "message": f"{fresh['label']} için {amount:,.2f} ₺ {'tahsil edildi' if fresh.get('direction') == 'receivable' else 'ödendi'}.",
             }
+            await idempotency.mark_payment_applied(db, company_id, pay_key, {
+                "collection": "installments",
+                "doc_id": inst_id,
+                "source_type": "installment",
+                "finalize": {
+                    "paid_amount": new_paid,
+                    "status": status,
+                    "paid_at": paid_at,
+                    "account_id": req.get("account_id"),
+                },
+                "response": response,
+            })
+
+            async def _unmark_applied():
+                await idempotency.clear_payment_applied(db, company_id, pay_key)
+
+            cx.push("pay_applied", _unmark_applied)
+            done = await pay_claim.finish_pay_claim(db, "installments", inst_id, claimed_at, {
+                "paid_amount": new_paid,
+                "status": status,
+                "paid_at": paid_at,
+                "account_id": req.get("account_id"),
+            })
+            if done != "already_paid" and fresh.get("invoice_id"):
+                paid_count = await db.installments.count_documents({"invoice_id": fresh["invoice_id"], "status": "paid"})
+                await db.invoices.update_one({"_id": fresh["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
+            return response
 
         try:
             return await txn.run(_body)
         except Exception:
-            await db.installments.update_one({"_id": inst_id}, {"$unset": {"_pay_claimed_at": ""}})
+            await pay_claim.release_pay_claim(db, "installments", inst_id, claimed_at)
             raise
 
     return await idempotency.run(
@@ -19889,26 +19909,34 @@ async def generate_payroll(req: Dict[str, Any]):
     total_ot = round(sum(g["overtime_pay"] for g in generated), 2)
     return {"status": "success", "message": f"{period} dönemi için {len(generated)} personelin bordrosu hesaplandı." + (f" Toplam {total_ot:,.2f} ₺ fazla mesai ücreti eklendi." if total_ot else ""), "payrolls": generated}
 
-async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
+async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict, idempotency_key: str = ""):
     account_id = req.get("account_id") or req.get("bank_account_id")
     partner_id = req.get("partner_id")
     payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
     if account_id and partner_id:
         raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
 
-    claim = await db.payrolls.update_one_atomic(
-        {
-            "_id": payroll_id,
-            "status": {"$ne": "paid"},
-            "_pay_claimed_at": {"$exists": False},
-        },
-        {"$set": {"_pay_claimed_at": datetime.now(timezone.utc).isoformat()}},
+    company_id = payroll.get("company_id") or user.get("company_id") or ""
+    gate = await pay_claim.acquire_pay_claim(
+        db,
+        "payrolls",
+        payroll_id,
+        company_id=company_id,
+        idempotency_key=idempotency_key,
+        source_type="payroll",
+        paid_detail="Bu bordro zaten ödenmiş.",
+        busy_detail="Bu bordro ödemesi sürüyor.",
     )
-    if claim.matched_count == 0:
-        raise HTTPException(status_code=409, detail="Bu bordro zaten ödenmiş.")
+    if gate["action"] == "already_paid":
+        return gate["response"]
+    claimed_at = gate["claimed_at"]
 
     emp = await db.employees.find_one({"_id": payroll.get("employee_id")}) or {}
-    await _assert_salary_bank_only(emp, account_id, partner_id)
+    try:
+        await _assert_salary_bank_only(emp, account_id, partner_id)
+    except Exception:
+        await pay_claim.release_pay_claim(db, "payrolls", payroll_id, claimed_at)
+        raise
 
     amount = payroll.get("final_payable", 0.0)
     today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -19964,24 +19992,38 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
             except Exception:
                 logging.getLogger(__name__).exception("Bordro ödemesi kasa recalc: %s", account_id)
 
-        upd = await db.payrolls.update_one_atomic(
-            {"_id": payroll_id, "status": {"$ne": "paid"}},
-            {"$set": {
+        response = {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
+        await idempotency.mark_payment_applied(db, company_id, idempotency_key, {
+            "collection": "payrolls",
+            "doc_id": payroll_id,
+            "source_type": "payroll",
+            "finalize": {
                 "status": "paid",
                 "paid_date": today,
                 "account_id": account_id,
                 "partner_id": partner_id,
                 "account_name": paid_from,
-            }, "$unset": {"_pay_claimed_at": ""}},
-        )
-        if upd.matched_count == 0:
-            raise HTTPException(status_code=409, detail="Bu bordro zaten ödenmiş.")
-        return {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
+            },
+            "response": response,
+        })
+
+        async def _unmark_applied():
+            await idempotency.clear_payment_applied(db, company_id, idempotency_key)
+
+        cx.push("pay_applied", _unmark_applied)
+        await pay_claim.finish_pay_claim(db, "payrolls", payroll_id, claimed_at, {
+            "status": "paid",
+            "paid_date": today,
+            "account_id": account_id,
+            "partner_id": partner_id,
+            "account_name": paid_from,
+        })
+        return response
 
     try:
         return await txn.run(_body)
     except Exception:
-        await db.payrolls.update_one({"_id": payroll_id}, {"$unset": {"_pay_claimed_at": ""}})
+        await pay_claim.release_pay_claim(db, "payrolls", payroll_id, claimed_at)
         raise
 
 @api_router.post("/personnel/payrolls/{payroll_id}/pay")
@@ -19992,12 +20034,13 @@ async def pay_payroll(
     user: dict = Depends(get_current_user),
 ):
     payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
+    pay_key = idempotency.header_key(request)
     return await idempotency.run(
         db,
         payroll.get("company_id") or user.get("company_id") or "",
         request,
         f"personnel/payrolls/{payroll_id}/pay",
-        lambda: _pay_payroll_core(payroll_id, req, user),
+        lambda: _pay_payroll_core(payroll_id, req, user, idempotency_key=pay_key),
     )
 
 @api_router.delete("/personnel/payrolls/{payroll_id}")

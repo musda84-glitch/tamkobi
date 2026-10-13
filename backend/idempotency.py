@@ -60,8 +60,16 @@ def header_key(request: Optional[Request]) -> str:
     return str(raw).strip()[:200]
 
 
+def company_id_of(company_id: str) -> str:
+    return str(company_id or "").strip() or "_"
+
+
 def _doc_id(company_id: str, key: str) -> str:
-    return f"{company_id}:{key}"
+    return f"{company_id_of(company_id)}:{key}"
+
+
+def _is_pay_endpoint(endpoint: str) -> bool:
+    return str(endpoint or "").rstrip("/").endswith("/pay")
 
 
 def _reset_indexed_for_tests() -> None:
@@ -99,7 +107,7 @@ async def begin(db, company_id: str, key: str, endpoint: str) -> Optional[Dict[s
     key = (key or "").strip()
     if not key:
         return None
-    cid = str(company_id or "").strip() or "_"
+    cid = company_id_of(company_id)
     await ensure_indexes(db)
     now = _now()
     doc = {
@@ -129,14 +137,74 @@ async def begin(db, company_id: str, key: str, endpoint: str) -> Optional[Dict[s
         if not existing:
             raise HTTPException(status_code=409, detail="Idempotency çakışması.")
 
+    if existing.get("payment_applied"):
+        await _finalize_applied(db, existing)
+        resp = existing.get("response")
+        if resp is None:
+            resp = (existing.get("payment") or {}).get("response") or {
+                "status": "success",
+                "already_paid": True,
+            }
+        return {"hit": True, "response": resp, "key": key, "company_id": cid}
     if existing.get("status") == "completed" and existing.get("response") is not None:
         return {"hit": True, "response": existing["response"], "key": key, "company_id": cid}
     if existing.get("status") == "in_progress":
+        touched = _as_utc(existing.get("updated_at") or existing.get("created_at")) or now
+        age_s = (now - touched).total_seconds()
+        # Yalnız ödeme uçları: süreç düşünce aynı anahtar bayat kilidi devralabilsin.
+        if _is_pay_endpoint(existing.get("endpoint") or endpoint) and age_s >= _pay_claim_stale_seconds():
+            if await _reclaim_stale_in_progress(db, existing, now):
+                return {"hit": False, "key": key, "company_id": cid, "reclaimed": True}
         raise HTTPException(
             status_code=409,
             detail="Aynı Idempotency-Key ile işlem devam ediyor.",
         )
     raise HTTPException(status_code=409, detail="Idempotency-Key daha önce kullanıldı.")
+
+
+def _pay_claim_stale_seconds() -> float:
+    import pay_claim
+
+    return float(pay_claim.STALE_AFTER.total_seconds())
+
+
+async def _finalize_applied(db, existing: dict) -> None:
+    try:
+        import pay_claim
+
+        await pay_claim.finalize_from_idempotency_doc(db, existing)
+    except Exception:
+        logger.exception("uygulanmış ödeme kaydı toparlanamadı")
+
+
+async def _reclaim_stale_in_progress(db, existing: dict, now: datetime) -> bool:
+    """Bayat in_progress anahtarını tek istek devralsın (SELECT FOR UPDATE)."""
+    q: Dict[str, Any] = {
+        "_id": existing["_id"],
+        "status": "in_progress",
+        "payment_applied": {"$ne": True},
+    }
+    stamp = existing.get("updated_at")
+    if stamp is not None:
+        q["updated_at"] = stamp
+    else:
+        created = existing.get("created_at")
+        if created is not None:
+            q["created_at"] = created
+        q["updated_at"] = {"$exists": False}
+    upd = {"$set": {
+        "status": "in_progress",
+        "created_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+        "payment_applied": False,
+    }}
+    coll = db.idempotency_keys
+    atomic = getattr(coll, "update_one_atomic", None)
+    if atomic is not None:
+        res = await atomic(q, upd)
+    else:
+        res = await coll.update_one(q, upd)
+    return int(getattr(res, "matched_count", 0) or 0) == 1
 
 
 async def complete(db, company_id: str, key: str, response: Any) -> None:
@@ -145,6 +213,30 @@ async def complete(db, company_id: str, key: str, response: Any) -> None:
     await db.idempotency_keys.update_one(
         {"_id": _doc_id(str(company_id or "_"), key)},
         {"$set": {"status": "completed", "response": response, "updated_at": _now().isoformat()}},
+    )
+
+
+async def mark_payment_applied(db, company_id: str, key: str, payment: Dict[str, Any]) -> None:
+    """Para hareketi yazıldı. Çökme sonrası aynı ödeme tekrar kesilmesin."""
+    if not key:
+        return
+    await db.idempotency_keys.update_one(
+        {"_id": _doc_id(company_id, key)},
+        {"$set": {
+            "payment_applied": True,
+            "payment": payment,
+            "updated_at": _now().isoformat(),
+        }},
+    )
+
+
+async def clear_payment_applied(db, company_id: str, key: str) -> None:
+    """Yumuşak hata geri alındığında 'yazıldı' işaretini kaldır."""
+    if not key:
+        return
+    await db.idempotency_keys.update_one(
+        {"_id": _doc_id(company_id, key)},
+        {"$set": {"payment_applied": False, "updated_at": _now().isoformat()}, "$unset": {"payment": ""}},
     )
 
 
