@@ -1435,11 +1435,12 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
             direction=direction,
         )
     except HTTPException as exc:
-        logger.info("fetch_integrator_pdf: %s → %s", invoice_id, getattr(exc, "detail", exc))
-        return None
-    except Exception:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        logger.warning("fetch_integrator_pdf: %s → %s", invoice_id, detail)
+        raise HTTPException(status_code=exc.status_code or 502, detail=detail) from exc
+    except Exception as exc:
         logger.exception("fetch_integrator_pdf failed for %s", invoice_id)
-        return None
+        raise HTTPException(status_code=502, detail=f"Entegratör PDF hatası: {exc}") from exc
 
 
 async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:

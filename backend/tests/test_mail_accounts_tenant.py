@@ -183,7 +183,7 @@ def test_decrypt_failure_409_needs_reauth(setup_mail):
         with pytest.raises(HTTPException) as ei:
             await mail_accounts.load_mail_account("c1")
         assert ei.value.status_code == 409
-        assert "yeniden girin" in ei.value.detail.lower() or "çözülemedi" in ei.value.detail.lower()
+        assert ei.value.detail == "Mail şifresi yeniden girilmeli"
         assert setup_mail.mail_accounts.docs["ma1"]["status"] == "needs_reauth"
 
     asyncio.run(_run())
