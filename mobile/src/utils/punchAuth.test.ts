@@ -22,12 +22,16 @@ describe("punchAuth", () => {
       isMock: true,
       isRooted: false,
       punchAuth: true,
+      deviceToken: "tok-1",
+      punchPin: "1234",
     })).toEqual({
       device_id: "phone-a",
+      device_token: "tok-1",
       platform: "android",
       is_mock: true,
       is_rooted: false,
       punch_auth: true,
+      punch_pin: "1234",
     });
   });
 });

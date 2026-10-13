@@ -30,7 +30,7 @@ import { locationConsentAccepted, locationConsentPayload, locationUnavailablePay
 import { syncLocationBackground } from "../utils/locationBackgroundSync";
 import { selfLeavePayload, validateSelfLeave } from "../utils/personnel";
 import { mesaimGeoHeaderLine, checkInHasGeoTarget, type Workplace } from "../utils/workplace";
-import { detectRooted, getStableDeviceId, punchSecurityFields, resolvePunchAuth } from "../utils/punchAuth";
+import { detectRooted, getStableDeviceId, punchSecurityFields, readDeviceToken, resolvePunchAuth, saveDeviceToken, savePunchPin } from "../utils/punchAuth";
 
 type LocationTracking = {
   enabled?: boolean;
@@ -269,14 +269,18 @@ export function AttendanceScreen() {
       setPinAsk(false);
       const security = punchSecurityFields({
         deviceId: await getStableDeviceId(),
+        deviceToken: await readDeviceToken(),
         platform: Platform.OS,
         isMock: Boolean(extra.mocked),
         isRooted: await detectRooted(),
         punchAuth: auth.punchAuth,
+        punchPin: auth.punchPin,
       });
       const { mocked: _dropMock, ...coordsExtra } = extra;
       void _dropMock;
-      const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...coordsExtra, ...security });
+      const r = await post<{ message?: string; device_token?: string }>(client, "/personnel/attendance/self", { action, ...coordsExtra, ...security });
+      if (r.device_token) await saveDeviceToken(r.device_token);
+      if (auth.punchPin) await savePunchPin(auth.punchPin);
       setMessage(r.message || "Kaydedildi.");
       await load();
       // Mesai girişi sonrası ana ekran: Özet

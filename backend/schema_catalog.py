@@ -515,7 +515,7 @@ COLLECTIONS = {
     "attendance_devices": {
         "scope": SCOPE_TENANT,
         "description": "Personel mesai giriş telefonları.",
-        "keys": ("_id", "company_id", "employee_id", "device_id", "status"),
+        "keys": ("_id", "company_id", "employee_id", "device_id", "status", "device_token_hash"),
         "refs": ("employees._id", "companies._id"),
     },
     "attendance_device_events": {

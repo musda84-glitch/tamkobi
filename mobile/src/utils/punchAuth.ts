@@ -1,5 +1,6 @@
 const DEVICE_KEY = "tamkobi.deviceId";
 const PIN_KEY = "tamkobi.punchPin";
+const DEVICE_TOKEN_KEY = "tamkobi.deviceToken";
 
 export function punchAuthRequired(mode?: string | null): boolean {
   return mode === "pin" || mode === "biometric" || mode === "either";
@@ -17,17 +18,21 @@ export function pinMatches(stored: string | null | undefined, typed: string): bo
 
 export function punchSecurityFields(input: {
   deviceId: string;
+  deviceToken?: string;
   platform?: string;
   isMock?: boolean;
   isRooted?: boolean;
   punchAuth?: boolean;
-}): { device_id: string; platform: string; is_mock: boolean; is_rooted: boolean; punch_auth: boolean } {
+  punchPin?: string;
+}): { device_id: string; device_token: string; platform: string; is_mock: boolean; is_rooted: boolean; punch_auth: boolean; punch_pin: string } {
   return {
     device_id: input.deviceId,
+    device_token: input.deviceToken || "",
     platform: input.platform || "",
     is_mock: Boolean(input.isMock),
     is_rooted: Boolean(input.isRooted),
     punch_auth: Boolean(input.punchAuth),
+    punch_pin: input.punchPin || "",
   };
 }
 
@@ -36,13 +41,13 @@ async function storage() {
   return AsyncStorage;
 }
 
-async function pinKv() {
+async function secretKv(key: string) {
   try {
     const Secure = await import("expo-secure-store");
     if (Secure.getItemAsync && Secure.setItemAsync) {
       return {
-        get: () => Secure.getItemAsync(PIN_KEY),
-        set: (value: string) => Secure.setItemAsync(PIN_KEY, value),
+        get: () => Secure.getItemAsync(key),
+        set: (value: string) => Secure.setItemAsync(key, value),
       };
     }
   } catch {
@@ -50,9 +55,17 @@ async function pinKv() {
   }
   const AsyncStorage = await storage();
   return {
-    get: () => AsyncStorage.getItem(PIN_KEY),
-    set: (value: string) => AsyncStorage.setItem(PIN_KEY, value),
+    get: () => AsyncStorage.getItem(key),
+    set: (value: string) => AsyncStorage.setItem(key, value),
   };
+}
+
+async function pinKv() {
+  return secretKv(PIN_KEY);
+}
+
+async function deviceTokenKv() {
+  return secretKv(DEVICE_TOKEN_KEY);
 }
 
 export async function getStableDeviceId(): Promise<string> {
@@ -63,6 +76,16 @@ export async function getStableDeviceId(): Promise<string> {
   const id = uuid || `dev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
   await AsyncStorage.setItem(DEVICE_KEY, id);
   return id;
+}
+
+export async function readDeviceToken(): Promise<string> {
+  return (await (await deviceTokenKv()).get()) || "";
+}
+
+export async function saveDeviceToken(token: string): Promise<void> {
+  const value = String(token || "").trim();
+  if (!value) return;
+  await (await deviceTokenKv()).set(value);
 }
 
 export async function readPunchPin(): Promise<string | null> {
@@ -110,25 +133,29 @@ export async function resolvePunchAuth(mode: string | null | undefined, typedPin
   ok: boolean;
   needPin: boolean;
   punchAuth: boolean;
+  punchPin: string;
   error?: string;
 }> {
-  if (!punchAuthRequired(mode)) return { ok: true, needPin: false, punchAuth: false };
+  if (!punchAuthRequired(mode)) return { ok: true, needPin: false, punchAuth: false, punchPin: "" };
   if (mode === "biometric" || mode === "either") {
     const bio = await tryBiometric();
-    if (bio === true) return { ok: true, needPin: false, punchAuth: true };
+    if (bio === true) return { ok: true, needPin: false, punchAuth: true, punchPin: "" };
     if (mode === "biometric" && bio === false) {
-      return { ok: false, needPin: false, punchAuth: false, error: "Biyometrik doğrulama iptal edildi." };
+      return { ok: false, needPin: false, punchAuth: false, punchPin: "", error: "Biyometrik doğrulama iptal edildi." };
     }
   }
   const stored = await readPunchPin();
   const typed = String(typedPin || "").trim();
-  if (!stored) {
-    if (!typed) return { ok: false, needPin: true, punchAuth: false, error: "4-6 rakamlı mesai PIN’i belirleyin." };
-    const invalid = await savePunchPin(typed);
-    if (invalid) return { ok: false, needPin: true, punchAuth: false, error: invalid };
-    return { ok: true, needPin: false, punchAuth: true };
+  if (!typed) {
+    return {
+      ok: false, needPin: true, punchAuth: false, punchPin: "",
+      error: stored ? "Mesai PIN’ini girin." : "4-6 rakamlı mesai PIN’i belirleyin.",
+    };
   }
-  if (!typed) return { ok: false, needPin: true, punchAuth: false, error: "Mesai PIN’ini girin." };
-  if (!pinMatches(stored, typed)) return { ok: false, needPin: true, punchAuth: false, error: "PIN hatalı." };
-  return { ok: true, needPin: false, punchAuth: true };
+  const invalid = validatePunchPin(typed);
+  if (invalid) return { ok: false, needPin: true, punchAuth: false, punchPin: "", error: invalid };
+  if (stored && !pinMatches(stored, typed)) {
+    return { ok: false, needPin: true, punchAuth: false, punchPin: "", error: "PIN hatalı." };
+  }
+  return { ok: true, needPin: false, punchAuth: false, punchPin: typed };
 }

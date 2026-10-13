@@ -6,10 +6,16 @@ Saatler firma saat dilimine göredir; varsayılan Europe/Istanbul.
 """
 from __future__ import annotations
 
+import hashlib
+import re
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
+
+from auth_utils import hash_password, verify_password
+from mysql_store import DuplicateKeyError
 
 REMIND_BEFORE_MIN = 5
 REMIND_GAP_MIN = 15
@@ -166,9 +172,187 @@ def normalize_punch_auth(raw: Any) -> str:
 
 
 def registered_device_required(schedule: Optional[dict]) -> bool:
-    if not isinstance(schedule, dict) or "require_registered_device" not in schedule:
-        return True
+    """Kapalı varsayılan. Kayıtlı anahtar yoksa mevcut firmalar otomatik açılmaz."""
+    if not isinstance(schedule, dict):
+        return False
     return bool(schedule.get("require_registered_device"))
+
+
+_PIN_RE = re.compile(r"^\d{4,6}$")
+
+
+def clean_punch_pin(raw: Any) -> str:
+    text = str(raw or "").strip()
+    return text if _PIN_RE.fullmatch(text) else ""
+
+
+def new_device_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_device_token(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def clean_device_token(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text or len(text) > 200 or any(ch.isspace() for ch in text):
+        return ""
+    return text
+
+
+def device_token_matches(token: str, stored_hash: str) -> bool:
+    presented = clean_device_token(token)
+    stored = str(stored_hash or "")
+    if not presented or not stored:
+        return False
+    digest = hash_device_token(presented)
+    if len(digest) != len(stored):
+        return False
+    return secrets.compare_digest(digest, stored)
+
+
+def active_slot_id(company_id: str, employee_id: str) -> str:
+    return f"devslot:{company_id}:{employee_id}"[:160]
+
+
+async def _punch_auth_state(db, employee: dict, mode: str, body: dict) -> dict:
+    """PIN sunucuda hash ile doğrulanır. Kayıt yoksa ilk geçerli PIN hash'lenerek yazılır."""
+    normalized = normalize_punch_auth(mode)
+    pin = clean_punch_pin((body or {}).get("punch_pin"))
+    biometric = as_bool((body or {}).get("punch_auth"))
+    if normalized == "off":
+        return {"ok": True, "enroll": False, "pin": "", "wrong": False}
+    stored = ""
+    emp_id = (employee or {}).get("_id")
+    if emp_id is not None:
+        row = await db.employees.find_one({"_id": emp_id})
+        if row:
+            stored = str(row.get("punch_pin_hash") or "")
+    pin_ok = False
+    wrong = False
+    enroll = False
+    if pin and stored:
+        pin_ok = verify_password(pin, stored)
+        wrong = not pin_ok
+    elif pin and not stored:
+        pin_ok = True
+        enroll = True
+    if normalized == "pin":
+        ok = pin_ok
+    else:
+        ok = biometric or pin_ok
+    return {"ok": ok, "enroll": enroll and ok, "pin": pin if enroll else "", "wrong": wrong}
+
+
+async def _enroll_punch_pin(db, employee: dict, pin: str) -> None:
+    pin = clean_punch_pin(pin)
+    emp_id = (employee or {}).get("_id")
+    if not pin or emp_id is None:
+        return
+    hashed = hash_password(pin)
+    res = await db.employees.update_one(
+        {"_id": emp_id, "$or": [
+            {"punch_pin_hash": {"$exists": False}},
+            {"punch_pin_hash": ""},
+            {"punch_pin_hash": None},
+        ]},
+        {"$set": {"punch_pin_hash": hashed, "updated_at": _now()}},
+    )
+    if getattr(res, "matched_count", 0):
+        return
+    fresh = await db.employees.find_one({"_id": emp_id}) or {}
+    if fresh.get("punch_pin_hash"):
+        return
+    await db.employees.update_one({"_id": emp_id}, {"$set": {"punch_pin_hash": hashed, "updated_at": _now()}})
+
+
+def _matched_row(rows: list, company_id: str, employee_id: str, device_id: str) -> Optional[dict]:
+    for row in rows:
+        if (row or {}).get("status") != "active":
+            continue
+        if str(row.get("company_id") or "") != str(company_id):
+            continue
+        if str(row.get("employee_id") or "") != str(employee_id):
+            continue
+        if str(row.get("device_id") or "") != str(device_id):
+            continue
+        return row
+    return None
+
+
+async def _claim_slot(db, company_id: str, employee_id: str, device_id: str) -> bool:
+    """Personel başına tek aktif cihaz. İlk insert yarışı DuplicateKeyError ile biter."""
+    slot_id = active_slot_id(company_id, employee_id)
+    now = _now()
+    try:
+        await db.attendance_devices.insert_one({
+            "_id": slot_id,
+            "company_id": company_id,
+            "employee_id": employee_id,
+            "device_id": device_id,
+            "status": "slot",
+            "created_at": now,
+            "updated_at": now,
+        })
+        return True
+    except DuplicateKeyError:
+        pass
+    slot = await db.attendance_devices.find_one({"_id": slot_id}) or {}
+    if str(slot.get("company_id") or company_id) != str(company_id):
+        return False
+    owner = str(slot.get("device_id") or "")
+    if owner == device_id:
+        return True
+    if owner:
+        return False
+    fields = {
+        "device_id": device_id,
+        "company_id": company_id,
+        "employee_id": employee_id,
+        "status": "slot",
+        "updated_at": now,
+    }
+    atomic = getattr(db.attendance_devices, "update_one_atomic", None)
+    if atomic is not None:
+        res = await atomic({"_id": slot_id, "device_id": ""}, {"$set": fields})
+        return bool(getattr(res, "matched_count", 0))
+    await db.attendance_devices.update_one({"_id": slot_id, "device_id": ""}, {"$set": fields})
+    again = await db.attendance_devices.find_one({"_id": slot_id}) or {}
+    return str(again.get("device_id") or "") == device_id
+
+
+async def _point_slot(db, company_id: str, employee_id: str, device_id: str) -> None:
+    slot_id = active_slot_id(company_id, employee_id)
+    now = _now()
+    fields = {
+        "company_id": company_id,
+        "employee_id": employee_id,
+        "device_id": device_id,
+        "status": "slot",
+        "updated_at": now,
+    }
+    current = await db.attendance_devices.find_one({"_id": slot_id})
+    if current:
+        await db.attendance_devices.update_one({"_id": slot_id}, {"$set": fields})
+        return
+    try:
+        await db.attendance_devices.insert_one({"_id": slot_id, "created_at": now, **fields})
+    except DuplicateKeyError:
+        await db.attendance_devices.update_one({"_id": slot_id}, {"$set": fields})
+
+
+async def _release_slot_if_idle(db, company_id: str, employee_id: str) -> None:
+    remaining = await db.attendance_devices.find({
+        "company_id": company_id, "employee_id": employee_id, "status": "active",
+    }).to_list(5)
+    if remaining:
+        return
+    slot_id = active_slot_id(company_id, employee_id)
+    await db.attendance_devices.update_one(
+        {"_id": slot_id},
+        {"$set": {"device_id": "", "updated_at": _now()}},
+    )
 
 
 def evaluate_device(
@@ -277,6 +461,14 @@ async def _notify(notify, company_id: str, title: str, message: str, dedupe_key:
         return
 
 
+def _auth_failure(auth: dict) -> dict:
+    detail = "PIN hatalı." if auth.get("wrong") else "Giriş için biyometrik veya PIN doğrulaması gerekli."
+    return {
+        "allow": False, "reason": "punch_auth_required", "bind": False, "pending": False,
+        "detail": detail, "bind_doc": None,
+    }
+
+
 async def gate_self_punch(
     db,
     *,
@@ -290,23 +482,35 @@ async def gate_self_punch(
     """Girişi yazmadan önce cihaz kararını verir. Reddederse kayıt açmaz, yöneticiye haber verir."""
     sch = schedule or {}
     body = req or {}
+    auth = await _punch_auth_state(db, employee, sch.get("require_punch_auth"), body)
+    punch_ok = bool(auth["ok"])
     decision = evaluate_device(
         [],
         employee_id=str(employee.get("_id") or ""),
         device_id=clean_device_id(body.get("device_id")),
         is_mock=as_bool(body.get("is_mock")),
         is_rooted=as_bool(body.get("is_rooted")),
-        punch_auth_ok=as_bool(body.get("punch_auth")),
+        punch_auth_ok=punch_ok,
         require_punch_auth=normalize_punch_auth(sch.get("require_punch_auth")),
         require_device=registered_device_required(sch),
     )
     if decision["reason"] == "disabled":
-        return {**decision, "bind_doc": None}
+        if not punch_ok:
+            return _auth_failure(auth)
+        if auth.get("enroll"):
+            await _enroll_punch_pin(db, employee, auth.get("pin") or "")
+        return {**decision, "bind_doc": None, "company_id": company_id}
     device_id = clean_device_id(body.get("device_id"))
     rows = []
     if device_id:
-        rows.extend(await db.attendance_devices.find({"device_id": device_id}).to_list(20))
-    mine = await db.attendance_devices.find({"employee_id": employee.get("_id"), "status": {"$in": ["active", "pending"]}}).to_list(20)
+        rows.extend(await db.attendance_devices.find({
+            "company_id": company_id, "device_id": device_id,
+        }).to_list(20))
+    mine = await db.attendance_devices.find({
+        "company_id": company_id,
+        "employee_id": employee.get("_id"),
+        "status": {"$in": ["active", "pending"]},
+    }).to_list(20)
     seen = {r.get("_id") for r in rows}
     for row in mine:
         if row.get("_id") not in seen:
@@ -317,13 +521,15 @@ async def gate_self_punch(
         device_id=device_id,
         is_mock=as_bool(body.get("is_mock")),
         is_rooted=as_bool(body.get("is_rooted")),
-        punch_auth_ok=as_bool(body.get("punch_auth")),
+        punch_auth_ok=punch_ok,
         require_punch_auth=normalize_punch_auth(sch.get("require_punch_auth")),
         require_device=True,
     )
     day = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     name = employee.get("full_name") or "Personel"
     emp_id = str(employee.get("_id") or "")
+    if decision["reason"] == "punch_auth_required" and auth.get("wrong"):
+        decision = {**decision, "detail": "PIN hatalı."}
     if decision["reason"] in ("mock_location", "rooted", "device_other_employee", "device_required"):
         await _event(db, company_id, emp_id, device_id, decision["reason"], decision["detail"])
         await _notify(
@@ -335,7 +541,7 @@ async def gate_self_punch(
         return {**decision, "bind_doc": None}
     if decision["pending"]:
         doc = _device_doc(company_id, employee, device_id, body, "pending")
-        existing = await db.attendance_devices.find_one({"_id": doc["_id"]})
+        existing = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": company_id})
         if not existing:
             await db.attendance_devices.insert_one(doc)
         await _event(db, company_id, emp_id, device_id, "change_requested", decision["detail"])
@@ -346,26 +552,126 @@ async def gate_self_punch(
             dedupe_key=f"device-change:{emp_id}:{device_id}:{day}",
         )
         return {**decision, "bind_doc": None}
-    bind_doc = _device_doc(company_id, employee, device_id, body, "active") if decision["bind"] else None
-    return {**decision, "bind_doc": bind_doc}
+    if not decision["allow"]:
+        return {**decision, "bind_doc": None}
+    if decision["reason"] == "matched":
+        row = _matched_row(rows, company_id, emp_id, device_id)
+        presented = clean_device_token(body.get("device_token"))
+        stored_hash = str((row or {}).get("device_token_hash") or "")
+        if stored_hash and not device_token_matches(presented, stored_hash):
+            detail = "Bu telefon doğrulanamadı. Kayıtlı cihaz jetonu geçersiz."
+            await _event(db, company_id, emp_id, device_id, "device_token", detail)
+            return {
+                "allow": False, "reason": "device_token", "bind": False, "pending": False,
+                "detail": detail, "bind_doc": None,
+            }
+        if auth.get("enroll"):
+            await _enroll_punch_pin(db, employee, auth.get("pin") or "")
+        if row and not stored_hash:
+            token = new_device_token()
+            return {
+                **decision, "bind_doc": None, "company_id": company_id,
+                "touch_id": row.get("_id"), "device_token": token,
+                "enroll_id": row.get("_id"), "enroll_hash": hash_device_token(token),
+            }
+        return {
+            **decision, "bind_doc": None, "company_id": company_id,
+            "touch_id": (row or {}).get("_id"),
+        }
+    if auth.get("enroll"):
+        await _enroll_punch_pin(db, employee, auth.get("pin") or "")
+    if decision.get("bind"):
+        token = new_device_token()
+        doc = _device_doc(company_id, employee, device_id, body, "active")
+        doc["device_token_hash"] = hash_device_token(token)
+        return {**decision, "bind_doc": doc, "device_token": token, "company_id": company_id}
+    return {**decision, "bind_doc": None, "company_id": company_id}
 
 
-async def commit_device_bind(db, gate: Optional[dict]) -> None:
-    doc = (gate or {}).get("bind_doc")
-    if not doc:
-        if (gate or {}).get("reason") == "matched":
-            return
-        return
-    current = await db.attendance_devices.find_one({"_id": doc["_id"]})
-    if current and current.get("status") == "active":
-        await db.attendance_devices.update_one({"_id": doc["_id"]}, {"$set": {"updated_at": _now(), "last_seen_at": _now()}})
-        return
+async def _upsert_bound_device(db, doc: dict, issued: Optional[str]) -> dict:
+    now = _now()
+    current = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": doc.get("company_id")})
+    if current and current.get("status") == "active" and current.get("device_token_hash"):
+        await db.attendance_devices.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"updated_at": now, "last_seen_at": now}},
+        )
+        return {"created": False, "device_token": None}
+    payload = {k: v for k, v in {**doc, "status": "active", "last_seen_at": now, "updated_at": now}.items() if k != "_id"}
+    created = current is None or current.get("status") != "active"
     if current:
-        await db.attendance_devices.update_one({"_id": doc["_id"]}, {"$set": {**doc, "status": "active", "last_seen_at": _now()}})
+        await db.attendance_devices.update_one({"_id": doc["_id"]}, {"$set": payload})
     else:
-        doc = {**doc, "last_seen_at": _now()}
-        await db.attendance_devices.insert_one(doc)
-    await _event(db, doc["company_id"], doc["employee_id"], doc["device_id"], "bound", "İlk telefon kaydedildi.")
+        try:
+            await db.attendance_devices.insert_one({**payload, "_id": doc["_id"]})
+        except DuplicateKeyError:
+            fresh = await db.attendance_devices.find_one({"_id": doc["_id"]}) or {}
+            if fresh.get("status") == "active" and fresh.get("device_token_hash"):
+                await db.attendance_devices.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {"updated_at": now, "last_seen_at": now}},
+                )
+                return {"created": False, "device_token": None}
+            await db.attendance_devices.update_one({"_id": doc["_id"]}, {"$set": payload})
+            created = fresh.get("status") != "active"
+    if created:
+        await _event(db, doc["company_id"], doc["employee_id"], doc["device_id"], "bound", "İlk telefon kaydedildi.")
+    return {"created": bool(created), "device_token": issued}
+
+
+async def commit_device_bind(db, gate: Optional[dict]) -> dict:
+    """Tek aktif kayıt. Kaybedilen yarış ikinci aktif satır açmaz."""
+    gate = gate or {}
+    doc = gate.get("bind_doc")
+    issued = gate.get("device_token")
+    if doc:
+        if not await _claim_slot(db, doc["company_id"], doc["employee_id"], doc["device_id"]):
+            return {
+                "ok": False, "created": False, "enrolled": False, "device_token": None,
+                "detail": "Bu personel için başka bir cihaz kaydı oluştu.",
+            }
+        saved = await _upsert_bound_device(db, doc, issued)
+        return {
+            "ok": True, "created": bool(saved.get("created")), "enrolled": False,
+            "device_token": saved.get("device_token"), "doc": doc,
+        }
+    enroll_id = gate.get("enroll_id")
+    if enroll_id and issued and gate.get("enroll_hash"):
+        await db.attendance_devices.update_one(
+            {"_id": enroll_id, "company_id": gate.get("company_id")},
+            {"$set": {
+                "device_token_hash": gate["enroll_hash"],
+                "updated_at": _now(), "last_seen_at": _now(),
+            }},
+        )
+        return {
+            "ok": True, "created": False, "enrolled": True, "device_token": issued,
+            "enroll_id": enroll_id, "company_id": gate.get("company_id"),
+        }
+    if gate.get("reason") == "matched" and gate.get("touch_id"):
+        await db.attendance_devices.update_one(
+            {"_id": gate["touch_id"], "company_id": gate.get("company_id")},
+            {"$set": {"updated_at": _now(), "last_seen_at": _now()}},
+        )
+    return {"ok": True, "created": False, "enrolled": False, "device_token": None}
+
+
+async def release_new_bind(db, bound: Optional[dict]) -> None:
+    """Puantaj yazılamazsa yeni bağlanan cihazı geri al; jeton istemciye gitmeden düşer."""
+    bound = bound or {}
+    if bound.get("created") and bound.get("doc"):
+        doc = bound["doc"]
+        await db.attendance_devices.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"status": "revoked", "revoked_at": _now(), "updated_at": _now()}},
+        )
+        await _release_slot_if_idle(db, doc["company_id"], doc["employee_id"])
+        return
+    if bound.get("enrolled") and bound.get("enroll_id"):
+        await db.attendance_devices.update_one(
+            {"_id": bound["enroll_id"], "company_id": bound.get("company_id")},
+            {"$set": {"device_token_hash": "", "updated_at": _now()}},
+        )
 
 
 async def claim_once(db, company_id: str, key: str) -> bool:
@@ -532,12 +838,17 @@ async def approve_device(db, company_id: str, row_id: str, approver_id: str) -> 
     if row.get("status") != "pending":
         return {"ok": False, "status": 400, "detail": "Yalnız bekleyen cihaz değişikliği onaylanır."}
     clash = await db.attendance_devices.find_one({
-        "device_id": row.get("device_id"), "status": "active", "employee_id": {"$ne": row.get("employee_id")},
+        "company_id": company_id,
+        "device_id": row.get("device_id"),
+        "status": "active",
+        "employee_id": {"$ne": row.get("employee_id")},
     })
     if clash:
         return {"ok": False, "status": 409, "detail": "Bu telefon başka bir personele kayıtlı."}
     previous = await db.attendance_devices.find({
-        "employee_id": row.get("employee_id"), "status": "active",
+        "company_id": company_id,
+        "employee_id": row.get("employee_id"),
+        "status": "active",
     }).to_list(20)
     for old in previous:
         await db.attendance_devices.update_one({"_id": old["_id"]}, {"$set": {
@@ -547,6 +858,7 @@ async def approve_device(db, company_id: str, row_id: str, approver_id: str) -> 
     await db.attendance_devices.update_one({"_id": row_id}, {"$set": {
         "status": "active", "approved_at": _now(), "approved_by": approver_id, "updated_at": _now(),
     }})
+    await _point_slot(db, company_id, row.get("employee_id"), row.get("device_id"))
     await _event(db, company_id, row.get("employee_id"), row.get("device_id"), "approved", "Yönetici cihaz değişikliğini onayladı.")
     return {"ok": True, "status": 200, "detail": "Cihaz onaylandı."}
 
@@ -560,6 +872,7 @@ async def revoke_device(db, company_id: str, row_id: str, approver_id: str) -> d
     await db.attendance_devices.update_one({"_id": row_id}, {"$set": {
         "status": "revoked", "revoked_at": _now(), "revoked_by": approver_id, "updated_at": _now(),
     }})
+    await _release_slot_if_idle(db, company_id, row.get("employee_id"))
     await _event(db, company_id, row.get("employee_id"), row.get("device_id"), "revoked", "Yönetici cihaz kaydını iptal etti.")
     return {"ok": True, "status": 200, "detail": "Cihaz iptal edildi."}
 

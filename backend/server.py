@@ -241,6 +241,7 @@ def clean_doc(doc: dict) -> dict:
         doc["has_b2b_password"] = bool(doc.pop("b2b_password_hash"))
     if "shopfloor_pin_hash" in doc:
         doc["has_shopfloor_pin"] = bool(doc.pop("shopfloor_pin_hash"))
+    doc.pop("punch_pin_hash", None)
     doc.pop("password_hash", None)
     if doc.get("order_date"):
         normalized = ensure_utc_iso(doc.get("order_date"))

@@ -123,6 +123,11 @@ def test_timezone_defaults_to_istanbul():
     assert _merge({})["timezone"] == "Europe/Istanbul"
     assert _merge({})["notify_checkin_reminder"] is True
     assert _merge({})["notify_checkout_reminder"] is False
+    assert attendance.DEFAULT_SCHEDULE["require_registered_device"] is False
+    assert _merge({})["require_registered_device"] is False
+    assert sec.registered_device_required({}) is False
+    assert sec.registered_device_required(None) is False
+    assert sec.registered_device_required({"require_registered_device": True}) is True
 
 
 def test_runner_sends_before_and_second_only_if_still_out():
@@ -327,3 +332,162 @@ def test_self_checkin_calls_gate_before_write():
     apply_at = text.find("await apply_day(emp, date, patch", gate_at)
     raise_at = text.find('if not gate["allow"]', gate_at)
     assert 0 < gate_at < raise_at < apply_at
+
+
+def _active_devices(db):
+    return [d for d in db.attendance_devices.docs.values() if d.get("status") == "active"]
+
+
+def test_legacy_client_without_device_checks_in_when_setting_off():
+    async def go(schedule):
+        db = MemoryDB()
+        gate = await sec.gate_self_punch(
+            db, company_id="co",
+            employee={"_id": "e1", "full_name": "Ali", "company_id": "co"},
+            schedule=schedule,
+            req={},
+            notify=None,
+            today="2026-10-12",
+        )
+        return gate
+
+    missing = _run(go({}))
+    assert missing["allow"] is True and missing["reason"] == "disabled"
+    explicit = _run(go({"require_registered_device": False}))
+    assert explicit["allow"] is True
+    merged = _run(go(attendance.merge_schedule({})))
+    assert merged["allow"] is True
+    locked = _run(go({"require_registered_device": True}))
+    assert locked["allow"] is False and locked["reason"] == "device_required"
+
+
+def test_same_phone_in_two_companies_is_not_blocked():
+    async def punch_other_company():
+        db = MemoryDB()
+        await db.attendance_devices.insert_one({
+            "_id": "devbind:e1:phone-a", "company_id": "co-a", "employee_id": "e1",
+            "device_id": "phone-a", "status": "active",
+            "device_token_hash": sec.hash_device_token("secret-a"),
+        })
+        gate = await sec.gate_self_punch(
+            db, company_id="co-b",
+            employee={"_id": "e2", "full_name": "Veli", "company_id": "co-b"},
+            schedule={"require_registered_device": True, "require_punch_auth": "off"},
+            req={"device_id": "phone-a"},
+            notify=None, today="2026-10-12",
+        )
+        saved = await sec.commit_device_bind(db, gate)
+        companies = {row["company_id"] for row in _active_devices(db)}
+        return gate, saved, companies
+
+    async def approve_other_company():
+        db = MemoryDB()
+        await db.attendance_devices.insert_one({
+            "_id": "devbind:e1:phone-a", "company_id": "co-a", "employee_id": "e1",
+            "device_id": "phone-a", "status": "active",
+        })
+        pending = {
+            "_id": "devpend:e2:phone-a", "company_id": "co-b", "employee_id": "e2",
+            "device_id": "phone-a", "status": "pending",
+        }
+        await db.attendance_devices.insert_one(pending)
+        return await sec.approve_device(db, "co-b", pending["_id"], "boss")
+
+    gate, saved, companies = _run(punch_other_company())
+    approved = _run(approve_other_company())
+    assert gate["allow"] is True and gate["reason"] == "bind"
+    assert saved["ok"] is True
+    assert approved["ok"] is True
+    assert companies == {"co-a", "co-b"}
+
+
+def test_first_bind_stores_token_hash_and_punch_checks_it():
+    async def go():
+        db = MemoryDB()
+        employee = {"_id": "e1", "full_name": "Ali", "company_id": "co"}
+        gate = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": True, "require_punch_auth": "off"},
+            req={"device_id": "phone-a"}, notify=None, today="2026-10-12",
+        )
+        saved = await sec.commit_device_bind(db, gate)
+        row = await db.attendance_devices.find_one({"_id": gate["bind_doc"]["_id"]})
+        missing = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": True},
+            req={"device_id": "phone-a"}, notify=None, today="2026-10-12",
+        )
+        ok = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": True},
+            req={"device_id": "phone-a", "device_token": gate["device_token"]},
+            notify=None, today="2026-10-12",
+        )
+        listed = await sec.list_devices(db, "co")
+        return gate, saved, row, missing, ok, listed
+
+    gate, saved, row, missing, ok, listed = _run(go())
+    token = gate["device_token"]
+    assert token and saved["device_token"] == token
+    assert row["device_token_hash"] == sec.hash_device_token(token)
+    assert token not in row.values()
+    assert "device_token" not in row
+    assert missing["allow"] is False and missing["reason"] == "device_token"
+    assert ok["allow"] is True and ok["reason"] == "matched"
+    dumped = str(listed)
+    assert token not in dumped and "device_token_hash" not in dumped
+
+
+def test_commit_device_bind_rejects_a_second_active_device():
+    async def go():
+        db = MemoryDB()
+        employee = {"_id": "e1", "full_name": "Ali", "company_id": "co"}
+        first = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": True},
+            req={"device_id": "phone-a"}, notify=None, today="2026-10-12",
+        )
+        other = dict(first["bind_doc"])
+        other["_id"] = sec.device_row_id("e1", "phone-b")
+        other["device_id"] = "phone-b"
+        other["device_token_hash"] = sec.hash_device_token("other-token")
+        won = await sec.commit_device_bind(db, first)
+        lost = await sec.commit_device_bind(db, {"bind_doc": other, "device_token": "other-token"})
+        again = await sec.commit_device_bind(db, first)
+        return won, lost, again, [row["device_id"] for row in _active_devices(db)]
+
+    won, lost, again, devices = _run(go())
+    assert won["ok"] is True and lost["ok"] is False
+    assert again["ok"] is True
+    assert devices == ["phone-a"]
+
+
+def test_punch_pin_is_stored_hashed_and_checked_on_the_server():
+    async def go():
+        db = MemoryDB()
+        await db.employees.insert_one(_emp())
+        employee = _emp()
+        opened = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": False, "require_punch_auth": "pin"},
+            req={"punch_pin": "1234"}, notify=None, today="2026-10-12",
+        )
+        stored = await db.employees.find_one({"_id": "e1"})
+        bad = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": False, "require_punch_auth": "pin"},
+            req={"punch_pin": "9999"}, notify=None, today="2026-10-12",
+        )
+        good = await sec.gate_self_punch(
+            db, company_id="co", employee=employee,
+            schedule={"require_registered_device": False, "require_punch_auth": "pin"},
+            req={"punch_pin": "1234"}, notify=None, today="2026-10-12",
+        )
+        return opened, stored, bad, good
+
+    opened, stored, bad, good = _run(go())
+    assert opened["allow"] is True
+    assert stored["punch_pin_hash"] != "1234"
+    assert stored["punch_pin_hash"].startswith("$2")
+    assert bad["allow"] is False and bad["detail"] == "PIN hatalı."
+    assert good["allow"] is True
