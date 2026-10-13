@@ -1,4 +1,6 @@
 import {
+  cashShortfallWarning,
+  defaultPayAccount,
   employeeAllowanceSaveMessage,
   employeeDueLines,
   employeePayKindLabel,
@@ -6,7 +8,10 @@ import {
   employeePayModalStart,
   employeePayModalTitle,
   employeePayTotal,
+  istanbulPeriod,
   payDayOf,
+  paymentPreview,
+  sgkCashBlocked,
 } from "./employeePay";
 
 describe("employeePay", () => {
@@ -49,6 +54,30 @@ describe("employeePay", () => {
     expect(employeePayModalTitle("overtime", { full_name: "Ali" })).toBe("Mesai — Ali");
     expect(employeePayModalTitle("advance", { full_name: "Ali" })).toBe("Avans — Ali");
     expect(employeePayKindsForSubmit("split", lines.filter((l) => l.key !== "salary"), ["salary"])).toEqual(["salary"]);
+  });
+
+  it("defaults salary account to bank and never POS", () => {
+    const accounts = [
+      { id: "pos", type: "pos" },
+      { id: "card", type: "credit_card" },
+      { id: "cash", type: "cash_box" },
+    ];
+    expect(defaultPayAccount(accounts).id).toBe("cash");
+    expect(defaultPayAccount([{ id: "bank", type: "bank" }, ...accounts]).id).toBe("bank");
+  });
+
+  it("blocks SGK official salary paid from cash and previews overpay", () => {
+    const emp = { sgk_insured: true, official_salary: 15000, salary: 28000 };
+    const accounts = [{ id: "b", type: "bank" }, { id: "k", type: "cash_box", current_balance: 100 }];
+    expect(sgkCashBlocked(emp, true, [{ kind: "salary", amount: 15000, accountId: "k" }], accounts)).toContain("bankadan");
+    expect(sgkCashBlocked(emp, true, [
+      { kind: "salary", amount: 15000, accountId: "b" },
+      { kind: "advance", amount: 2000, accountId: "k" },
+    ], accounts)).toBeNull();
+    expect(sgkCashBlocked({ salary: 10000 }, true, [{ kind: "salary", amount: 10000, accountId: "k" }], accounts)).toBeNull();
+    expect(cashShortfallWarning([{ kind: "advance", amount: 150, accountId: "k" }], accounts)).toContain("yetersiz");
+    expect(paymentPreview(5000, [{ amount: 7000 }]).message).toContain("sonraki maaştan düşülecek");
+    expect(istanbulPeriod(new Date("2026-09-30T21:30:00Z"))).toBe("2026-10");
   });
 
   it("formats yemek/yol hak ediş save toast like partner salary", () => {

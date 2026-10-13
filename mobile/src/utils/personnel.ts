@@ -30,6 +30,8 @@ export type Employee = {
   yevmiye_days?: number;
   yevmiye_due?: number;
   sgk_number?: string | null;
+  sgk_insured?: boolean;
+  official_salary?: number | null;
   iban?: string | null;
   birth_date?: string | null;
   address?: string | null;
@@ -1202,6 +1204,8 @@ export type EmployeeDraft = {
   pay_type: "monthly" | "daily";
   daily_wage: string;
   sgk_number: string;
+  sgk_insured: boolean;
+  official_salary: string;
   iban: string;
   meal_allowance: string;
   transport_allowance: string;
@@ -1453,6 +1457,8 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
     pay_type: "monthly",
     daily_wage: "",
     sgk_number: "",
+    sgk_insured: false,
+    official_salary: "",
     iban: "",
     meal_allowance: "",
     transport_allowance: "",
@@ -1507,6 +1513,8 @@ export function draftFromEmployee(emp: Employee, today: string): EmployeeDraft {
     pay_type: isDailyWage(emp) ? "daily" : "monthly",
     daily_wage: emp.daily_wage == null ? "" : String(emp.daily_wage),
     sgk_number: emp.sgk_number || "",
+    sgk_insured: Boolean(emp.sgk_insured),
+    official_salary: emp.official_salary == null ? "" : String(emp.official_salary),
     iban: emp.iban || "",
     meal_allowance: emp.meal_allowance == null ? "" : String(emp.meal_allowance),
     transport_allowance: emp.transport_allowance == null ? "" : String(emp.transport_allowance),
@@ -1521,9 +1529,11 @@ export function draftFromEmployee(emp: Employee, today: string): EmployeeDraft {
   };
 }
 
-export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "iban" | "meal_allowance" | "transport_allowance" | "birth_date" | "address" | "emergency_contact" | "marital_status" | "blood_type" | "illnesses" | "safety_info" | "notes">): boolean {
+export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "sgk_insured" | "official_salary" | "iban" | "meal_allowance" | "transport_allowance" | "birth_date" | "address" | "emergency_contact" | "marital_status" | "blood_type" | "illnesses" | "safety_info" | "notes">): boolean {
   return Boolean(
-    String(d.sgk_number || "").trim()
+    d.sgk_insured
+    || String(d.official_salary || "").trim()
+    || String(d.sgk_number || "").trim()
     || String(d.iban || "").trim()
     || String(d.meal_allowance || "").trim()
     || String(d.transport_allowance || "").trim()
@@ -1541,7 +1551,7 @@ export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "iban" 
 export function validateEmployee(d: EmployeeDraft): string | null {
   if (!d.full_name.trim() || !d.tc_kimlik.trim()) return "Lütfen ad soyad ve TC kimlik no girin.";
   if (d.pay_type === "daily" && parseYevmiyeWage(d.daily_wage) == null) return "Yevmiye ücreti girin.";
-  if (String(d.sgk_number || "").trim() && !String(d.iban || "").trim()) {
+  if ((String(d.sgk_number || "").trim() || d.sgk_insured) && !String(d.iban || "").trim()) {
     return "SGK sicil numarası girildiğinde IBAN zorunludur — maaş yalnız bankadan ödenir.";
   }
   return null;
@@ -1570,6 +1580,8 @@ export function employeePayload(d: EmployeeDraft, companyId?: string) {
     salary: isDaily ? Math.round(daily * 26 * 100) / 100 : monthly,
     start_date: d.start_date,
     sgk_number: sgk || null,
+    sgk_insured: Boolean(d.sgk_insured),
+    official_salary: String(d.official_salary || "").trim() ? num(d.official_salary) : null,
     iban: iban || null,
     meal_allowance: num(d.meal_allowance) || 0,
     transport_allowance: num(d.transport_allowance) || 0,

@@ -1,10 +1,21 @@
 """Personel alacak hak edişi: tarih, aylık tekrar, satır seçimi."""
 from datetime import datetime, timezone, date as dt_date
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
 import partner_pay
+
+IST = ZoneInfo("Europe/Istanbul")
+SGK_BANK_MSG = "SGK'lı personelin resmi maaşı bankadan ödenmelidir"
+CASH_SHORT_MSG = "Kasa bakiyesi yetersiz"
+OVERPAY_MSG = "sonraki maaştan düşülecek"
+CLOSED_PAYROLL = {"rejected", "cancelled", "canceled", "void"}
+CASH_ACCOUNT_TYPES = {"cash", "kasa", "cashbox", "nakit", "cash_box"}
+POS_ACCOUNT_TYPES = {"pos", "okc_pos", "credit_card", "customer_credit_card"}
+SALARY_LINE_KINDS = {"salary", "remaining"}
+ADMIN_ROLES = {"admin", "owner"}
 
 MEAL_CAT = "Yemek"
 TRANSPORT_CAT = "Yol / Ulaşım"
@@ -23,8 +34,45 @@ PAY_KIND_FIELDS = (
 )
 
 
+def istanbul_today(now: Any = None) -> dt_date:
+    """Europe/Istanbul takvim günü. Naive datetime UTC sayılır."""
+    if isinstance(now, datetime):
+        dt = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+        return dt.astimezone(IST).date()
+    if isinstance(now, dt_date):
+        return now
+    if now not in (None, ""):
+        text = str(now).strip().replace("Z", "+00:00")
+        parsed = partner_pay.parse_iso_date(text[:10])
+        if len(text) > 10:
+            try:
+                dt = datetime.fromisoformat(text)
+            except ValueError:
+                dt = None
+            if dt is not None:
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(IST).date()
+        if parsed:
+            return parsed
+    return datetime.now(IST).date()
+
+
+def istanbul_period(now: Any = None) -> str:
+    d = istanbul_today(now)
+    return f"{d.year:04d}-{d.month:02d}"
+
+
 def today_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return istanbul_today().isoformat()
+
+
+def as_of_date(as_of: Any = None) -> dt_date:
+    if isinstance(as_of, datetime):
+        return istanbul_today(as_of)
+    if isinstance(as_of, dt_date):
+        return as_of
+    return istanbul_today(as_of) if as_of else istanbul_today()
 
 
 def _amt(v: Any, default: float = 0.0) -> float:
@@ -107,7 +155,7 @@ def prepare_employee_pay(doc: Dict[str, Any], *, fill_start: bool = False) -> Di
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Hak ediş günü geçersiz.")
     if fill_start and not out.get("pay_start_date"):
-        today = datetime.now(timezone.utc).date()
+        today = istanbul_today()
         out["pay_start_date"] = today.isoformat()
         out["pay_day"] = today.day
         out.setdefault("pay_recurring", True)
@@ -155,7 +203,7 @@ def period_is_entitled(emp: Dict[str, Any], month: str, as_of: Optional[str] = N
     """Ay için hak ediş günü gelmiş mi? (maaş slotları ile aynı)."""
     if not emp or not emp.get("pay_start_date"):
         return False
-    today = partner_pay.parse_iso_date(as_of) or datetime.now(timezone.utc).date()
+    today = partner_pay.parse_iso_date(as_of) or istanbul_today()
     slots = partner_pay.salary_slots(pay_slot_emp(emp), today, explicit_period=month)
     return any(per == month and due <= today for per, due in slots)
 
@@ -223,7 +271,7 @@ async def accrue_allowances(
     generate_payroll_fn=None,
 ) -> Dict[str, Any]:
     """Hak ediş tarihinde yemek/yol masrafını (ödenmemiş) yazar. Aynı ay tekrar etmez."""
-    today = partner_pay.parse_iso_date(as_of) or datetime.now(timezone.utc).date()
+    today = partner_pay.parse_iso_date(as_of) or istanbul_today()
     q: Dict[str, Any] = {"company_id": company_id}
     if employee_id:
         q = {"_id": employee_id}
@@ -346,3 +394,252 @@ async def scheduler_loop(db, generate_payroll_fn=None):
         except Exception as exc:  # noqa: BLE001
             log.warning("employee allowance scheduler: %s", exc)
         await asyncio.sleep(3600)
+
+
+def payroll_status(p: Optional[dict]) -> str:
+    return str((p or {}).get("status") or "").strip().casefold()
+
+
+def payroll_payable(p: Optional[dict]) -> float:
+    row = p or {}
+    return round(_amt(row.get("final_payable"), _amt(row.get("net_salary"))), 2)
+
+
+def payroll_paid_amount(p: Optional[dict]) -> float:
+    row = p or {}
+    if row.get("paid_amount") not in (None, ""):
+        return round(_amt(row.get("paid_amount")), 2)
+    if payroll_status(row) == "paid":
+        return payroll_payable(row)
+    return 0.0
+
+
+def payroll_open_remainder(p: Optional[dict]) -> float:
+    if payroll_status(p) in CLOSED_PAYROLL:
+        return 0.0
+    return round(max(0.0, payroll_payable(p) - payroll_paid_amount(p)), 2)
+
+
+def month_blocks_salary_fallback(payrolls: Optional[List[dict]], month: str) -> bool:
+    """Bu ay için reddedilmemiş bordro varsa maaş tahmini eklenmez."""
+    per = (month or "")[:7]
+    for p in payrolls or []:
+        if str(p.get("period") or "")[:7] != per:
+            continue
+        if payroll_status(p) in CLOSED_PAYROLL:
+            continue
+        return True
+    return False
+
+
+def entitlement_slot_partner(emp: Dict[str, Any], month: str) -> Optional[Dict[str, Any]]:
+    """pay_start_date yoksa işe giriş, o da yoksa dönem başı hak ediş çapasını kurar."""
+    start = emp.get("pay_start_date") or emp.get("start_date")
+    if not start and _amt(emp.get("salary")) > 0.004 and len(str(month or "")) >= 7:
+        start = f"{str(month)[:7]}-01"
+    if not start:
+        return None
+    rec = emp.get("pay_recurring")
+    return {
+        "salary_start_date": str(start)[:10],
+        "salary_day": emp.get("pay_day"),
+        "salary_recurring": True if rec is None else bool(rec),
+    }
+
+
+def unpaid_salary_amount(
+    emp: Dict[str, Any],
+    payrolls: Optional[List[dict]],
+    month: str,
+    as_of: Any = None,
+) -> float:
+    """Açık bordro kalanı; yoksa İstanbul gününe göre hak edilmiş maaş.
+
+    Reddedilen / iptal bordro alacağı şişirmez ve hak edişi de gizlemez.
+    Kısmi `paid_amount` düşülür. pay_start_date boşsa start_date çapa olur.
+    """
+    total = round(sum(payroll_open_remainder(p) for p in (payrolls or [])), 2)
+    if total > 0.004:
+        return total
+    if str((emp or {}).get("pay_type") or "monthly").lower() == "daily":
+        return 0.0
+    per = (month or "")[:7]
+    if month_blocks_salary_fallback(payrolls, per):
+        return 0.0
+    partner = entitlement_slot_partner(emp or {}, per)
+    if not partner:
+        return 0.0
+    today = as_of_date(as_of)
+    if partner.get("salary_recurring") is False:
+        start = partner_pay.parse_iso_date(partner.get("salary_start_date"))
+        if not start or partner_pay.period_of(start) != per:
+            return 0.0
+    slots = partner_pay.salary_slots(partner, today, explicit_period=per)
+    if any(slot_per == per and due <= today for slot_per, due in slots):
+        return round(_amt((emp or {}).get("salary")), 2)
+    return 0.0
+
+
+def period_figures(
+    emp: Dict[str, Any],
+    payrolls: Optional[List[dict]],
+    bonuses: Optional[List[dict]],
+    month: str,
+    *,
+    unpaid_payroll: float = 0,
+    bonus_pending: float = 0,
+    overtime_due: float = 0,
+    extra_advance: float = 0,
+    bakiye_paid: float = 0,
+) -> Dict[str, float]:
+    """Öde ekranı özeti: hak edilen, prim/mesai, kesinti, önceki ödeme."""
+    per = (month or "")[:7]
+    earned = 0.0
+    deductions = 0.0
+    previous = 0.0
+    saw = False
+    for p in payrolls or []:
+        if str(p.get("period") or "")[:7] != per:
+            continue
+        if payroll_status(p) in CLOSED_PAYROLL:
+            continue
+        saw = True
+        payable = payroll_payable(p)
+        earned += payable
+        deductions += _amt(p.get("deduction"))
+        previous += payroll_paid_amount(p)
+    if not saw and unpaid_payroll > 0.004:
+        earned = _amt((emp or {}).get("salary"))
+    for b in bonuses or []:
+        in_period = str(b.get("period") or "")[:7] == per or str(b.get("date") or "").startswith(per)
+        if not in_period or b.get("status") != "paid":
+            continue
+        if str(b.get("type") or "").lower() in ("advance", "borc", "bakiye"):
+            continue
+        previous += _amt(b.get("amount"))
+    return {
+        "salary_earned": round(earned, 2),
+        "premium": round(_amt(bonus_pending) + _amt(overtime_due), 2),
+        "deductions": round(deductions + _amt(extra_advance), 2),
+        "previous_payments": round(previous + _amt(bakiye_paid), 2),
+    }
+
+
+def sgk_rule_enabled(company: Optional[dict]) -> bool:
+    """Firma ayarı yoksa kural açıktır."""
+    company = company or {}
+    settings = company.get("settings") if isinstance(company.get("settings"), dict) else {}
+    if "sgk_salary_bank_only" in settings:
+        return bool(settings.get("sgk_salary_bank_only"))
+    if "sgk_salary_bank_only" in company:
+        return bool(company.get("sgk_salary_bank_only"))
+    return True
+
+
+def employee_is_sgk(emp: Optional[dict]) -> bool:
+    emp = emp or {}
+    if emp.get("sgk_insured") is True:
+        return True
+    return bool(str(emp.get("sgk_number") or "").strip())
+
+
+def official_salary_of(emp: Optional[dict]) -> float:
+    emp = emp or {}
+    if not employee_is_sgk(emp):
+        return 0.0
+    if emp.get("official_salary") not in (None, ""):
+        return round(_amt(emp.get("official_salary")), 2)
+    return round(_amt(emp.get("salary")), 2)
+
+
+def account_type(acc: Optional[dict]) -> str:
+    return str((acc or {}).get("type") or "").strip().lower()
+
+
+def account_is_bank(acc: Optional[dict]) -> bool:
+    return account_type(acc) == "bank"
+
+
+def account_is_cash(acc: Optional[dict]) -> bool:
+    return account_type(acc) in CASH_ACCOUNT_TYPES
+
+
+def account_is_pos(acc: Optional[dict]) -> bool:
+    return account_type(acc) in POS_ACCOUNT_TYPES
+
+
+def is_company_admin(user: Optional[dict]) -> bool:
+    user = user or {}
+    if user.get("is_super_admin"):
+        return True
+    return str(user.get("role") or "").strip().lower() in ADMIN_ROLES
+
+
+def sgk_setting_error(user: Optional[dict], enabled: bool) -> Optional[str]:
+    if is_company_admin(user):
+        return None
+    if not enabled:
+        return "SGK maaş kuralını yalnızca firma yöneticisi kapatabilir."
+    return "SGK maaş kuralını yalnızca firma yöneticisi değiştirebilir."
+
+
+def validate_sgk_lines(
+    emp: Optional[dict],
+    company: Optional[dict],
+    lines: Optional[List[dict]],
+    accounts_by_id: Optional[Dict[str, dict]] = None,
+) -> Optional[str]:
+    """Resmi maaş kadar kısmı bankadan karşılanmadan kasa/POS/ortak kabul edilmez."""
+    if not sgk_rule_enabled(company) or not employee_is_sgk(emp):
+        return None
+    official = official_salary_of(emp)
+    salary_lines = [ln for ln in (lines or []) if str(ln.get("kind") or "") in SALARY_LINE_KINDS and _amt(ln.get("amount")) > 0.004]
+    if not salary_lines or official <= 0.004:
+        return None
+    accounts_by_id = accounts_by_id or {}
+    bank_cover = 0.0
+    other = 0.0
+    for ln in salary_lines:
+        amt = _amt(ln.get("amount"))
+        acc = accounts_by_id.get(ln.get("account_id") or "")
+        if ln.get("partner_id") or not account_is_bank(acc):
+            other += amt
+        else:
+            bank_cover += amt
+    need = min(official, round(sum(_amt(ln.get("amount")) for ln in salary_lines), 2))
+    if bank_cover + 0.004 < need and other > 0.004:
+        return SGK_BANK_MSG
+    return None
+
+
+def cash_shortfall(account: Optional[dict], amount: float) -> bool:
+    if not account_is_cash(account):
+        return False
+    return _amt((account or {}).get("current_balance")) + 0.004 < _amt(amount)
+
+
+def grouped_cash_shortfall(lines: Optional[List[dict]], accounts_by_id: Optional[Dict[str, dict]]) -> Optional[str]:
+    totals: Dict[str, float] = {}
+    accounts_by_id = accounts_by_id or {}
+    for ln in lines or []:
+        aid = ln.get("account_id")
+        acc = accounts_by_id.get(aid or "")
+        if not aid or not account_is_cash(acc):
+            continue
+        totals[aid] = round(totals.get(aid, 0.0) + _amt(ln.get("amount")), 2)
+    for aid, total in totals.items():
+        if cash_shortfall(accounts_by_id.get(aid), total):
+            return CASH_SHORT_MSG
+    return None
+
+
+def payment_after(remaining: float, lines: Optional[List[dict]]) -> Dict[str, Any]:
+    paying = round(sum(_amt(ln.get("amount")) for ln in (lines or [])), 2)
+    after = round(_amt(remaining) - paying, 2)
+    over = after < -0.004
+    return {
+        "paying": paying,
+        "remaining_after": after,
+        "overpaid": over,
+        "message": OVERPAY_MSG if over else None,
+    }

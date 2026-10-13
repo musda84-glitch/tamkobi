@@ -89,6 +89,7 @@ export default function MyPersonnelPage() {
   const wos = data?.work_orders || [];
   const payrolls = data?.payrolls || [];
   const bonuses = data?.bonuses || [];
+  const receipts = data?.receipts || [];
   const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
 
   const submitAdvance = async (e) => {
@@ -313,6 +314,23 @@ export default function MyPersonnelPage() {
                     <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ${p.status === "paid" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
                       {statusTr[p.status] || p.status}
                     </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden" data-testid="my-personnel-receipts">
+            <div className="px-4 py-3 border-b text-xs font-bold text-slate-700">Ödeme makbuzları</div>
+            {receipts.length === 0 ? (
+              <div className="p-4 text-xs text-slate-400">Makbuz yok.</div>
+            ) : (
+              <ul className="divide-y text-xs">
+                {receipts.map((r) => (
+                  <li key={r.id} className="px-4 py-2.5 flex items-center gap-3">
+                    <span className="font-mono text-slate-700">{r.period}</span>
+                    <span>{r.date}</span>
+                    <span className="font-semibold">{money(r.total)}</span>
+                    <a className="ml-auto text-emerald-700 font-semibold" href={`${API_URL}/personnel/receipts/${r.id}`} target="_blank" rel="noreferrer" data-testid={`my-pers-receipt-${r.id}`}>Makbuz PDF</a>
                   </li>
                 ))}
               </ul>

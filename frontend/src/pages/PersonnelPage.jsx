@@ -57,14 +57,16 @@ import {
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
-const hasSgk = (emp) => Boolean(String(emp?.sgk_number || "").trim());
+const hasSgk = (emp) => Boolean(emp?.sgk_insured) || Boolean(String(emp?.sgk_number || "").trim());
 const isBankAcc = (a) => {
   const t = String(a?.type || "").toLowerCase();
   return t === "bank" || (!t && (a?.iban || a?.bank_name));
 };
 
 export default function PersonnelPage() {
-  const { activeCompany, can } = useAuth();
+  const { activeCompany, can, user } = useAuth();
+  const isCompanyAdmin = Boolean(user?.is_super_admin) || ["admin", "owner"].includes(String(user?.role || "").toLowerCase());
+  const [sgkSalaryBankOnly, setSgkSalaryBankOnly] = useState(true);
   const canDeletePersonnel = can("/personnel", "delete");
   const [employees, setEmployees] = useState([]);
   const [attToday, setAttToday] = useState({});
@@ -119,6 +121,8 @@ export default function PersonnelPage() {
     start_date: new Date().toISOString().split("T")[0],
     photo_url: "",
     sgk_number: "",
+    sgk_insured: false,
+    official_salary: "",
     iban: "",
     meal_allowance: "",
     transport_allowance: "",
@@ -156,6 +160,8 @@ export default function PersonnelPage() {
       start_date: emp.start_date || new Date().toISOString().split("T")[0],
       photo_url: emp.photo_url || "",
       sgk_number: emp.sgk_number || "",
+      sgk_insured: Boolean(emp.sgk_insured),
+      official_salary: emp.official_salary ?? "",
       iban: emp.iban || "",
       meal_allowance: emp.meal_allowance ?? "",
       transport_allowance: emp.transport_allowance ?? "",
@@ -227,6 +233,31 @@ export default function PersonnelPage() {
   }, [companyId]);
   useEffect(() => { loadPersonnelData(); }, [loadPersonnelData]);
 
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let cancel = false;
+    axios.get(`${API_URL}/companies/${companyId}`)
+      .then((r) => {
+        if (cancel) return;
+        const flag = r.data?.settings?.sgk_salary_bank_only;
+        setSgkSalaryBankOnly(flag === undefined ? true : Boolean(flag));
+      })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [companyId]);
+
+  const saveSgkRule = async (next) => {
+    const prev = sgkSalaryBankOnly;
+    setSgkSalaryBankOnly(next);
+    try {
+      await axios.put(`${API_URL}/companies/${companyId}/personnel-settings`, { sgk_salary_bank_only: next });
+      toast.success(next ? "SGK maaş kuralı açık." : "SGK maaş kuralı kapatıldı.");
+    } catch (err) {
+      setSgkSalaryBankOnly(prev);
+      toast.error(err.response?.data?.detail || "Ayar kaydedilemedi.");
+    }
+  };
+
   const toggleCardLocation = async (emp, enabled) => {
     const id = empIdOf(emp);
     if (!id) return;
@@ -295,7 +326,7 @@ export default function PersonnelPage() {
     }
     const sgk = String(newEmployee.sgk_number || "").trim();
     const iban = String(newEmployee.iban || "").trim();
-    if (sgk && !iban) {
+    if ((sgk || newEmployee.sgk_insured) && !iban) {
       setShowEmpDetails(true);
       toast.error("SGK sicil numarası girildiğinde IBAN zorunludur — maaş yalnız bankadan ödenir.");
       return;
@@ -316,6 +347,8 @@ export default function PersonnelPage() {
       salary: isDaily ? Math.round(daily * 26 * 100) / 100 : monthly,
       annual_leave_days: annualLeave,
       sgk_number: sgk || null,
+      sgk_insured: Boolean(newEmployee.sgk_insured),
+      official_salary: newEmployee.official_salary === "" || newEmployee.official_salary == null ? null : Number(newEmployee.official_salary),
       iban: iban || null,
       meal_allowance: Number(newEmployee.meal_allowance || 0) || 0,
       transport_allowance: Number(newEmployee.transport_allowance || 0) || 0,
@@ -631,6 +664,12 @@ export default function PersonnelPage() {
             Aylık Toplam Net Maaş Yükü: <span className="font-bold text-slate-900">{totalMonthlyPayroll.toLocaleString('tr-TR')} ₺</span>
             {hasDaily ? <span className="text-slate-400"> · yevmiye × 26 gün tahmini</span> : null}
           </p>
+          {isCompanyAdmin ? (
+            <label className="mt-2 inline-flex items-center gap-2 text-xs text-slate-700" data-testid="sgk-salary-bank-toggle">
+              <input type="checkbox" checked={sgkSalaryBankOnly} onChange={(ev) => saveSgkRule(ev.target.checked)} />
+              SGK&apos;lı personelin resmi maaşı yalnız bankadan ödensin
+            </label>
+          ) : null}
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
@@ -1308,6 +1347,29 @@ export default function PersonnelPage() {
               {showEmpDetails && (
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3" data-testid="employee-details-section">
                   <div className="grid grid-cols-2 gap-2">
+                    <div className="col-span-2 flex flex-wrap items-end gap-3">
+                      <label className="inline-flex items-center gap-2 font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(newEmployee.sgk_insured)}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, sgk_insured: e.target.checked })}
+                          data-testid="employee-sgk-insured"
+                        />
+                        SGK&apos;lı
+                      </label>
+                      <div className="flex-1 min-w-[8rem]">
+                        <label className="block font-semibold text-slate-700 mb-1">Resmi maaş (₺)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={newEmployee.official_salary}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, official_salary: e.target.value })}
+                          className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                          data-testid="employee-official-salary"
+                        />
+                      </div>
+                    </div>
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">SGK Sicil No</label>
                       <input
@@ -1332,7 +1394,7 @@ export default function PersonnelPage() {
                     </div>
                   </div>
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">IBAN {String(newEmployee.sgk_number || "").trim() ? <span className="text-rose-600">(zorunlu)</span> : null}</label>
+                    <label className="block font-semibold text-slate-700 mb-1">IBAN {(String(newEmployee.sgk_number || "").trim() || newEmployee.sgk_insured) ? <span className="text-rose-600">(zorunlu)</span> : null}</label>
                     <input
                       type="text"
                       placeholder="TR.."
@@ -1341,8 +1403,8 @@ export default function PersonnelPage() {
                       className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono"
                       data-testid="employee-iban-input"
                     />
-                    {String(newEmployee.sgk_number || "").trim() ? (
-                      <p className="text-[10px] text-sky-800 mt-1" data-testid="employee-sgk-bank-hint">SGK sicili girildiğinde ana maaş yalnız banka hesabından ödenir.</p>
+                    {(String(newEmployee.sgk_number || "").trim() || newEmployee.sgk_insured) ? (
+                      <p className="text-[10px] text-sky-800 mt-1" data-testid="employee-sgk-bank-hint">SGK&apos;lı personelin resmi maaşı bankadan ödenmelidir. Resmi maaşı aşan kısım, avans, prim ve masraf kasadan ödenebilir.</p>
                     ) : null}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -1487,7 +1549,7 @@ export default function PersonnelPage() {
           </div>
         </div>
       )}
-      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={companyId} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
+      {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={companyId} accounts={bankAccounts} sgkSalaryBankOnly={sgkSalaryBankOnly} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
       {settlePay ? (
         <EmployeePayModal
           employee={settlePay.emp}
@@ -1495,6 +1557,7 @@ export default function PersonnelPage() {
           accounts={bankAccounts}
           card={{ employee: settlePay.emp, balance: settlePay.emp?.balance }}
           initialKind={settlePay.kind}
+          sgkSalaryBankOnly={sgkSalaryBankOnly}
           onClose={() => setSettlePay(null)}
           onDone={() => { setSettlePay(null); loadPersonnelData(); }}
         />

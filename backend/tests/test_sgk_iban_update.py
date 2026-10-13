@@ -19,6 +19,13 @@ def test_clearing_iban_while_sgk_set_rejected():
     assert err and "IBAN" in err
 
 
+def test_sgk_insured_without_iban_rejected():
+    existing = {"sgk_insured": False, "iban": None, "sgk_number": None}
+    err = sgk_iban_update_error(existing, {"sgk_insured": True})
+    assert err and "IBAN" in err
+    assert sgk_iban_update_error(existing, {"annual_leave_days": 20}) is None
+
+
 def test_sgk_with_iban_ok():
     existing = {"sgk_number": None, "iban": None}
     assert sgk_iban_update_error(

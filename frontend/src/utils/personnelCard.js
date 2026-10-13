@@ -277,6 +277,18 @@ export function employeePayMoves(card) {
       status: b.status,
     });
   }
+  for (const m of card?.movements || []) {
+    if (["reversed", "cancelled"].includes(String(m.status || ""))) continue;
+    rows.push({
+      id: idOf(m),
+      kind: "personnel_payment",
+      title: m.kind_label || "Ödeme",
+      subtitle: [m.period, m.account_name, m.description].filter(Boolean).join(" · "),
+      amount: Number(m.amount) || 0,
+      date: String(m.date || m.created_at || ""),
+      status: m.status || "posted",
+    });
+  }
   return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
@@ -458,11 +470,18 @@ export function payMoveDeletePath(row) {
   if (!id || /^pay-\d{4}-\d{2}$/.test(id)) return null;
   if (row?.kind === "payroll") return `/personnel/payrolls/${id}`;
   if (row?.kind === "bonus") return `/personnel/bonuses/${id}`;
+  if (row?.kind === "personnel_payment") return `/personnel/movements/${id}`;
   return null;
 }
 
 export function payMoveDeleteConfirm(row) {
   const paid = row?.status === "paid";
+  if (row?.kind === "personnel_payment") {
+    return {
+      title: "Ödemeyi geri al",
+      message: "Bu ödeme geri alınsın mı? Kasa/banka bakiyesi ve avans/bordro/prim kapatmaları düzeltilir, makbuz iptal edilir.",
+    };
+  }
   if (row?.kind === "payroll") {
     return {
       title: "Maaş kaydını sil",
