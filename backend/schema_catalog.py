@@ -80,7 +80,7 @@ COLLECTIONS = {
     },
     "login_attempts": {
         "scope": SCOPE_PLATFORM,
-        "description": "Brute-force kilidi; identifier genelde e-posta.",
+        "description": "Brute-force kilidi. identifier e-posta veya pospin:{şirket}:{terminal}:{ip}.",
         "keys": ("_id", "identifier", "count", "last_attempt"),
         "refs": (),
     },
