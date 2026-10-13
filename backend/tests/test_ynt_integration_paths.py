@@ -114,6 +114,8 @@ def test_is_ynt_allowed_integration_paths():
     assert ha.is_ynt_allowed_path("/api/files/upload")
     assert ha.is_ynt_allowed_path("/api/public/plans")
     assert ha.is_ynt_allowed_path("/api/public/legal/kvkk")
+    assert ha.is_ynt_allowed_path("/api/public/help/articles")
+    assert ha.is_ynt_allowed_path("/api/system/help/articles")
     assert ha.is_ynt_allowed_path("/api/comm/sms/settings")
     assert ha.is_ynt_allowed_path("/api/comm/sms/logs")
     assert ha.is_ynt_allowed_path("/api/comm/sms/verify")

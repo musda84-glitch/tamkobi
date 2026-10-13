@@ -6,6 +6,7 @@ import { useAuth } from "../../context/AuthContext";
 import { groupSystemSections } from "../../navGroups";
 import { SYSTEM_SECTIONS } from "./systemSections";
 import { BuildStamp } from "../BuildStamp";
+import { HelpButton } from "../help/HelpButton";
 
 export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) => {
   const { user, loading, logout, authenticated } = useAuth();
@@ -72,7 +73,12 @@ export const SystemLayout = ({ children, pendingCount = 0, openTickets = 0 }) =>
           <BuildStamp tone="system" layout="sidebar" />
         </div>
       </aside>
-      <main className="flex-1 min-w-0 p-6 lg:p-8 overflow-y-auto">{children}</main>
+      <main className="flex-1 min-w-0 p-6 lg:p-8 overflow-y-auto">
+        <div className="flex justify-end mb-3">
+          <HelpButton tone="system" />
+        </div>
+        {children}
+      </main>
     </div>
   );
 };

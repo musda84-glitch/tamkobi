@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Building2, ChevronDown, Plus, Settings, UserRound, Wallet, Check, Loader2 } from "lucide-react";
+import { Building2, ChevronDown, Plus, Settings, UserRound, Wallet, Check, Loader2, CircleHelp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { isPersonelRole, personelCanManageCompany } from "../utils/selfPersonnelNav";
 
@@ -142,6 +142,7 @@ export const AccountMenu = () => {
           {!staffOnly && (
             <Link to="/hesap?tab=sirketler" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-page"><Building2 className="w-3.5 h-3.5" /> Hesabım</Link>
           )}
+          <Link to="/yardim" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-help"><CircleHelp className="w-3.5 h-3.5" /> Yardım Merkezi</Link>
           <Link to="/hesap?tab=profil" onClick={() => setOpen(false)} className={`flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 ${canManageCo ? "" : "rounded-b-xl"}`} data-testid="account-go-profile"><UserRound className="w-3.5 h-3.5" /> Profilim</Link>
           {canManageCo && (
             <Link to="/hesap?tab=ayarlar" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 rounded-b-xl" data-testid="account-go-settings"><Settings className="w-3.5 h-3.5" /> Firma ayarları</Link>

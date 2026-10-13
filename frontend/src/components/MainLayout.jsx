@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useAuth, API_URL } from "../context/AuthContext";
 import { useMesaimGate } from "../context/MesaimGateContext";
 import { NotificationBell } from "./NotificationBell";
+import { HelpButton } from "./help/HelpButton";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { RadialQuickMenu } from "./RadialQuickMenu";
@@ -244,7 +245,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const personelDenied =
     isPersonelRole(user)
     && !personelMenuPathAllowed(location.pathname, user)
-    && !location.pathname.startsWith("/hesap");
+    && !location.pathname.startsWith("/hesap")
+    && !location.pathname.startsWith("/yardim");
   const staffUi = isPersonelRole(user);
   const erpShortcuts = personelCanUseErpShortcuts(user);
   const homePath = staffUi ? "/mesai" : "/panel";
@@ -380,6 +382,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
                 <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
               </div>
             )}
+            <HelpButton />
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             {erpShortcuts && feature("header_barcode") && personelMenuPathAllowed("/stock", user) && (
               <Link to="/stock?scan=true" className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition shrink-0" data-testid="quick-barcode-scan-btn" title="Barkod Oku">

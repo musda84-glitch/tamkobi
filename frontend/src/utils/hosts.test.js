@@ -80,6 +80,7 @@ describe("pathAllowedOnHost / preferredHostForPath", () => {
 
   test("panel routes belong on app", () => {
     expect(pathAllowedOnHost("/invoices", "app")).toBe(true);
+    expect(pathAllowedOnHost("/yardim", "app")).toBe(true);
     expect(pathAllowedOnHost("/panel", "site")).toBe(false);
     expect(preferredHostForPath("/invoices")).toBe("app");
     expect(preferredHostForPath("/login")).toBe("app");

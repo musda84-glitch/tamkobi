@@ -82,6 +82,7 @@ describe("mesaimExclusiveUntilCheckIn", () => {
     expect(mesaimExclusiveUntilCheckIn({ role: "personel", employee_id: "e1", skip_check_in: true }, { check_out: "17:00" })).toBe(false);
     expect(mesaimExclusivePathAllowed("/mesai")).toBe(true);
     expect(mesaimExclusivePathAllowed("/hesap?tab=profil")).toBe(true);
+    expect(mesaimExclusivePathAllowed("/yardim")).toBe(true);
     expect(mesaimExclusivePathAllowed("/panel")).toBe(false);
   });
 });

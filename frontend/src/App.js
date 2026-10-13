@@ -1,6 +1,8 @@
 import React, { Suspense, lazy } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { HelpProvider } from "./context/HelpContext";
+import { HelpHost } from "./components/help/HelpHost";
 import { MesaimGateProvider } from "./context/MesaimGateContext";
 import { Toaster } from "sonner";
 import HostShell from "./components/HostShell";
@@ -72,6 +74,7 @@ const B2BAdminPage = page(() => import("./pages/B2BAdminPage"));
 const FieldSalesPage = page(() => import("./pages/FieldSalesPage"));
 const TradePage = page(() => import("./pages/TradePage"));
 const SsoHandoffPage = page(() => import("./pages/SsoHandoffPage"));
+const HelpCenterPage = page(() => import("./pages/HelpCenterPage"));
 
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
@@ -97,8 +100,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <HelpProvider>
         <MesaimGateProvider>
         <Toaster position="top-right" richColors closeButton />
+        <HelpHost />
         <NoticesGate />
         <SetupGuard>
           <HostRouteGuard>
@@ -109,6 +114,7 @@ export default function App() {
                   <Route path="/" element={<HostHome />} />
                   <Route path="/kurulum" element={<SetupPage />} />
                   <Route path="/panel" element={<Dashboard />} />
+                  <Route path="/yardim" element={<HelpCenterPage />} />
                   <Route path="/invoices" element={<InvoicesPage />} />
                   <Route path="/dis-ticaret" element={<TradePage />} />
                   <Route path="/contacts" element={<ContactsPage />} />
@@ -186,6 +192,7 @@ export default function App() {
           </HostRouteGuard>
         </SetupGuard>
         </MesaimGateProvider>
+        </HelpProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { HelpButton } from "./help/HelpButton";
 
 /** Minimal self-service shell for ik.tamkobi.com (no MainLayout / panel menu). */
 export default function IkLayout({ children }) {
@@ -30,6 +31,7 @@ export default function IkLayout({ children }) {
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-600">
+            <HelpButton />
             <span className="hidden sm:inline truncate max-w-[12rem]">{user?.name || user?.email}</span>
             <button
               type="button"

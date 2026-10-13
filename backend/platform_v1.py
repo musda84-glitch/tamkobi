@@ -16,6 +16,7 @@ MAX_SKEW_SEC = 300
 SCOPE_VERIFY = "license:verify"
 SCOPE_HEARTBEAT = "heartbeat"
 SCOPE_USAGE = "usage:write"
+SCOPE_HELP = "help:read"
 
 
 async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict, Dict[str, Any]]:
@@ -48,8 +49,10 @@ async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict,
     if not store.verify_signature(secret, ts, nonce, method, path, body, sig):
         raise HTTPException(status_code=401, detail="İmza doğrulanamadı")
 
-    if required_scope not in (doc.get("scopes") or []):
-        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+    scopes = doc.get("scopes") or []
+    if required_scope not in scopes:
+        if not (required_scope == SCOPE_HELP and store.SCOPE_PLATFORM_ALL in scopes):
+            raise HTTPException(status_code=403, detail="Kapsam yetersiz")
 
     if not await store.check_and_store_nonce(key_id, nonce):
         raise HTTPException(status_code=401, detail="Tekrarlanan nonce")
@@ -122,6 +125,60 @@ async def v1_usage(request: Request):
         )
     except store.KeyScopeError as e:
         raise HTTPException(status_code=403, detail=str(e) or "Anahtar bu hedef için yetkili değil")
+
+
+@router.get("/help/articles")
+async def v1_help_list(request: Request):
+    """TamEticaret / diğer ürünler: yayınlanmış yardım içerikleri (HMAC, help:read)."""
+    import help_center
+
+    await _authenticate(request, required_scope=SCOPE_HELP)
+    qp = request.query_params
+    product = (qp.get("product") or help_center.PRODUCT_TAMKOBI).strip()
+    rows = await help_center.fetch_published(
+        product=product,
+        q=qp.get("q") or "",
+        page_key=qp.get("page_key") or "",
+        content_type=qp.get("content_type") or "",
+        locale=qp.get("locale") or "",
+        limit=int(qp.get("limit") or 50),
+    )
+    return {
+        "product": product,
+        "count": len(rows),
+        "articles": [help_center.public_article(r, include_body=False) for r in rows],
+    }
+
+
+@router.get("/help/articles/{slug}")
+async def v1_help_get(slug: str, request: Request):
+    import help_center
+
+    await _authenticate(request, required_scope=SCOPE_HELP)
+    product = (request.query_params.get("product") or help_center.PRODUCT_TAMKOBI).strip()
+    doc = await help_center.fetch_by_slug(slug, product=product)
+    return help_center.public_article(doc, include_body=True)
+
+
+@router.post("/help/search")
+async def v1_help_search(request: Request):
+    import help_center
+
+    _key, payload = await _authenticate(request, required_scope=SCOPE_HELP)
+    product = str(payload.get("product") or help_center.PRODUCT_TAMKOBI).strip()
+    rows = await help_center.fetch_published(
+        product=product,
+        q=str(payload.get("q") or ""),
+        page_key=str(payload.get("page_key") or ""),
+        content_type=str(payload.get("content_type") or ""),
+        locale=str(payload.get("locale") or ""),
+        limit=int(payload.get("limit") or 50),
+    )
+    return {
+        "product": product,
+        "count": len(rows),
+        "articles": [help_center.public_article(r, include_body=False) for r in rows],
+    }
 
 
 def init(db):
