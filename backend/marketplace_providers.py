@@ -10,6 +10,13 @@ import httpx
 from fastapi import HTTPException
 
 from line_totals import enrich_items
+from order_time import (
+    ORDER_DATE_TZ_UTC,
+    parse_marketplace_local,
+    trendyol_order_ms_to_utc,
+    trendyol_window_ms,
+    utc_iso,
+)
 
 # Müşteriye gösterilen / XML'deki birim fiyat KDV dahildir.
 VAT_INCL_CHANNELS = frozenset({
@@ -232,9 +239,11 @@ class TrendyolClient:
         return out
 
     async def orders(self, days: int = 14, status: Optional[str] = None, size: int = TY_PAGE_SIZE) -> List[dict]:
-        """Trendyol V2 sipariş paketleri — tarih aralığı en fazla 14 gün; yoğun satıcıda daha küçük dilimler."""
-        end = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start_all = end - max(1, int(days)) * 86400000
+        """Trendyol V2 sipariş paketleri — tarih aralığı en fazla 14 gün; yoğun satıcıda daha küçük dilimler.
+
+        startDate/endDate GMT+3 duvar saati olarak epoch milisaniyesidir (UTC değil).
+        """
+        start_all, end = trendyol_window_ms(days)
         extra = {"orderByField": "PackageLastModifiedDate", "orderByDirection": "DESC"}
         if status:
             extra["status"] = status
@@ -254,8 +263,7 @@ class TrendyolClient:
 
     async def claims(self, days: int = 14) -> List[dict]:
         """İade paketleri — Trendyol claimItemStatus ile filtre ister; durumları tek tek çek."""
-        end = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start_all = end - max(1, int(days)) * 86400000
+        start_all, end = trendyol_window_ms(days)
         # Docs: Created / WaitingInAction / Accepted / Cancelled / Rejected / Unresolved / InAnalysis
         statuses = (
             "Created", "WaitingInAction", "Accepted", "Cancelled",
@@ -359,10 +367,23 @@ class TrendyolClient:
 
 
 def _ms(v) -> Optional[str]:
+    """Gerçek Unix epoch milisaniyesi (createdDate gibi GMT alanlar). orderDate için kullanma."""
     try:
-        return datetime.fromtimestamp(int(v) / 1000, tz=timezone.utc).isoformat()
-    except (TypeError, ValueError):
+        seconds, millis = divmod(int(v), 1000)
+        return utc_iso(datetime.fromtimestamp(seconds, tz=timezone.utc).replace(microsecond=millis * 1000))
+    except (TypeError, ValueError, OSError, OverflowError):
         return None
+
+
+def _trendyol_order_date(value) -> str:
+    parsed = trendyol_order_ms_to_utc(value)
+    return utc_iso(parsed) if parsed is not None else utc_iso(datetime.now(timezone.utc))
+
+
+def _local_order_date(raw: str) -> str:
+    """ShopPHP gibi saat dilimsiz metin: Europe/Istanbul duvar saati → UTC."""
+    parsed = parse_marketplace_local(raw) if str(raw or "").strip() else None
+    return utc_iso(parsed) if parsed is not None else utc_iso(datetime.now(timezone.utc))
 
 
 def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
@@ -382,7 +403,7 @@ def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
             "order_status": TY_STATUS.get(ty_status, "pending"), "marketplace_status": ty_status, "cargo_carrier": TY_CARRIER.get(pkg.get("cargoProviderName"), (pkg.get("cargoProviderName") or "").split(" ")[0].lower() or None),
             "cargo_carrier_name": pkg.get("cargoProviderName"), "cargo_tracking_number": str(pkg.get("cargoTrackingNumber") or "") or None, "cargo_tracking_url": pkg.get("cargoTrackingLink"),
             "cargo_barcode": pkg.get("cargoSenderNumber") or str(pkg.get("cargoTrackingNumber") or "") or None, "estimated_delivery": _ms(pkg.get("estimatedDeliveryEndDate")),
-            "order_date": _ms(pkg.get("orderDate")) or datetime.now(timezone.utc).isoformat(), "marketplace_updated_at": _ms(pkg.get("lastModifiedDate")),
+            "order_date": _trendyol_order_date(pkg.get("orderDate")), "order_date_tz": ORDER_DATE_TZ_UTC, "marketplace_updated_at": _ms(pkg.get("lastModifiedDate")),
             # Trendyol paket durumu (Invoiced/Shipped/Delivered) yerel cari faturalaşma değildir.
             # True yazılırsa taslak fatura açılmaz ve listede yanlış yeşil «Faturalaştı» görünür.
             "is_invoiced": False,
@@ -465,7 +486,7 @@ def simulated_orders(company_id: str, channel: str) -> List[dict]:
     return [{"company_id": company_id, "channel": channel, "order_number": f"{channel.upper()[:2]}-SIM-{uuid.uuid4().hex[:6].upper()}", "external_id": None, "customer_name": "Ayşe Gökmen", "customer_phone": "0533 888 77 66",
              "shipping_address": "Çankaya Mah. Atatürk Bulvarı No:105 D:12", "city": "Ankara", "items": [{"product_id": "prod_01", "product_name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)", "sku": "NX-BT-PRO", "quantity": 1, "unit_price": 1899.0, "total": 1899.0}],
              "total_amount": 1899.0, "currency": "TRY", "order_status": "approved", "marketplace_status": "Picking", "cargo_carrier": "yurtici", "cargo_carrier_name": "Yurtiçi Kargo", "cargo_tracking_number": f"YK-{str(uuid.uuid4().int)[:10]}",
-             "cargo_barcode": f"8690{str(uuid.uuid4().int)[:9]}", "is_invoiced": False, "order_date": now.isoformat(), "estimated_delivery": (now + timedelta(days=3)).isoformat(), "is_simulated": True, "source": "marketplace_sync"}]
+             "cargo_barcode": f"8690{str(uuid.uuid4().int)[:9]}", "is_invoiced": False, "order_date": utc_iso(now), "order_date_tz": ORDER_DATE_TZ_UTC, "estimated_delivery": (now + timedelta(days=3)).isoformat(), "is_simulated": True, "source": "marketplace_sync"}]
 
 
 # ---------------- ShopPHP (REST: auth_email + auth_key=md5(email+md5(password))) ----------------
@@ -675,15 +696,12 @@ def map_shopphp_order(o: dict, company_id: str, channel: str) -> dict:
     addr_text = addr if isinstance(addr, str) else " ".join(str(v) for v in addr.values() if v) if isinstance(addr, dict) else ""
     name = _g(o, "adSoyad", "musteri", "musteriAdi", "aliciAdi", "customer", "name", default=None) or (isinstance(addr, dict) and _g(addr, "adSoyad", "ad", default=None)) or "ShopPHP Müşterisi"
     raw_date = str(_g(o, "tarih", "siparisTarihi", "date", "created_at", default="") or "")
-    try:
-        order_date = datetime.fromisoformat(raw_date.replace(" ", "T")).replace(tzinfo=timezone.utc).isoformat() if raw_date else datetime.now(timezone.utc).isoformat()
-    except ValueError:
-        order_date = datetime.now(timezone.utc).isoformat()
+    order_date = _local_order_date(raw_date)
     return {"company_id": company_id, "channel": channel, "order_number": str(_g(o, "no", "SIPARIS_NO", "siparisNo", "id", "ID", default=uuid.uuid4().hex[:8])), "external_id": str(_g(o, "no", "SIPARIS_NO", "id", "ID", default="") or ""),
             "customer_name": str(name), "customer_phone": str(_g(o, "telefon", "tel", "gsm", "phone", default="") or (isinstance(addr, dict) and _g(addr, "telefon", "tel", default="")) or ""), "customer_email": str(_g(o, "email", "eposta", "mail", default="") or ""),
             "shipping_address": addr_text or "-", "city": str(_g(o, "il", "sehir", "city", default="") or (isinstance(addr, dict) and _g(addr, "il", "sehir", default="")) or "-"), "items": items, "total_amount": round(total, 2), "currency": "TRY",
             "order_status": SHOPPHP_STATUS.get(status_no, "approved"), "marketplace_status": str(_g(o, "durumAdi", "durum_adi", "statusName", default=status_no)), "cargo_carrier_name": str(_g(o, "kargoFirma", "KargoFirma", "kargo", default="") or ""),
-            "cargo_tracking_number": str(_g(o, "kargoSeriNo", "KargoTakipNo", "kargoTakip", default="") or ""), "payment_method": str(_g(o, "odeme", "odemeTipi", "payment", default="") or ""), "is_invoiced": False, "order_date": order_date,
+            "cargo_tracking_number": str(_g(o, "kargoSeriNo", "KargoTakipNo", "kargoTakip", default="") or ""), "payment_method": str(_g(o, "odeme", "odemeTipi", "payment", default="") or ""), "is_invoiced": False, "order_date": order_date, "order_date_tz": ORDER_DATE_TZ_UTC,
             "is_simulated": False, "source": "marketplace_sync", "raw": {k: o[k] for k in list(o)[:40]}}
 
 
@@ -780,17 +798,14 @@ def map_shopphp_xml_order(s: ET.Element, company_id: str, channel: str) -> dict:
         })
     status_no = _xt(s, "DURUM_NO", "2")
     date = _xt(s, "TARIH"); time_ = _xt(s, "ZAMAN", "00:00:00")
-    try:
-        order_date = datetime.fromisoformat(f"{date}T{time_}").replace(tzinfo=timezone.utc).isoformat()
-    except ValueError:
-        order_date = datetime.now(timezone.utc).isoformat()
+    order_date = _local_order_date(f"{date}T{time_}" if date else "")
     net, paid = _xf(s, "NET_TOPLAM"), _xf(s, "ODEME_TOPLAM")
     return {"company_id": company_id, "channel": channel, "order_number": _xt(s, "SIPARIS_NO"), "external_id": _xt(s, "SIPARIS_NO"), "customer_name": _xt(s, "TeslimAlici") or _xt(s, "FirmaUnvani") or "ShopPHP Müşterisi", "customer_email": _xt(s, "POSTA"),
             "customer_phone": _xt(s, "TeslimTelefon"), "customer_tax_id": _xt(s, "VergiNo") or _xt(s, "TeslimTCKNo"), "customer_tax_office": _xt(s, "VergiDairesi"), "customer_company": _xt(s, "FirmaUnvani"),
             "shipping_address": " ".join(x for x in (_xt(s, "TeslimAdresi"), _xt(s, "TeslimMahalle"), _xt(s, "TeslimIlce"), _xt(s, "TeslimIl")) if x) or "-", "city": _xt(s, "TeslimIl") or "-", "district": _xt(s, "TeslimIlce"),
             "billing_address": " ".join(x for x in (_xt(s, "FaturaAdresi"), _xt(s, "FaturaIlce"), _xt(s, "FaturaIl")) if x), "items": items, "total_amount": round(paid or net or sum(i["total"] for i in items), 2), "gross_total": round(net, 2), "discount_total": round(abs(_xf(s, "ISKONTO")) + _xf(s, "SEPETINDIRIM") + _xf(s, "PROMOSYON"), 2),
             "cargo_fee": _xf(s, "KARGO_UCRETI"), "currency": "TRY", "order_status": SHOPPHP_STATUS.get(status_no, "approved"), "marketplace_status": _xt(s, "ODEME_DURUM") or status_no, "payment_method": _xt(s, "ODEME_SEKLI"), "bank_name": _xt(s, "BANKA_ADI"),
-            "cargo_carrier_name": _xt(s, "KargoFirma"), "cargo_tracking_number": _xt(s, "KargoTakipNo"), "cargo_barcode": _xt(s, "KargoBarkodNo"), "cargo_tracking_url": _xt(s, "KargoURL"), "customer_note": _xt(s, "Not"), "is_invoiced": False, "order_date": order_date, "is_simulated": False, "source": "marketplace_sync"}
+            "cargo_carrier_name": _xt(s, "KargoFirma"), "cargo_tracking_number": _xt(s, "KargoTakipNo"), "cargo_barcode": _xt(s, "KargoBarkodNo"), "cargo_tracking_url": _xt(s, "KargoURL"), "customer_note": _xt(s, "Not"), "is_invoiced": False, "order_date": order_date, "order_date_tz": ORDER_DATE_TZ_UTC, "is_simulated": False, "source": "marketplace_sync"}
 
 
 async def shopphp_products_xml(cfg: dict) -> List[dict]:

@@ -39,6 +39,25 @@ test("orderPanelFilter excludes active B2B carts", () => {
   expect(orderPanelFilter({ order_status: "held_cart", is_held_cart: true })).toBe(true);
 });
 
+test("date range uses Istanbul calendar day so 23:30 stays on that day", () => {
+  const evening = {
+    order_number: "TY-2330",
+    order_status: "pending",
+    channel: "trendyol",
+    order_date: "2026-10-13T20:30:00+00:00",
+  };
+  const afterMidnight = {
+    order_number: "TY-0030",
+    order_status: "pending",
+    channel: "shopphp",
+    order_date: "2026-10-13T21:30:00+00:00",
+  };
+  const onDay = applyOrderFilters([evening, afterMidnight], { ...ORDER_FILTER_DEFAULTS, from: "2026-10-13", to: "2026-10-13" });
+  expect(onDay.map((o) => o.order_number)).toEqual(["TY-2330"]);
+  const nextDay = applyOrderFilters([evening, afterMidnight], { ...ORDER_FILTER_DEFAULTS, from: "2026-10-14", to: "2026-10-14" });
+  expect(nextDay.map((o) => o.order_number)).toEqual(["TY-0030"]);
+});
+
 test("prepareOrdersForPanel decorates held carts and sorts", () => {
   const rows = [
     { id: "1", order_status: "approved", order_number: "A" },
