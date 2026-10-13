@@ -6,7 +6,7 @@ import { API_URL } from "../context/AuthContext";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { txDescriptionLabel } from "../utils/bankMatchLabel";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
-import { SearchSelect } from "./SearchSelect";
+import { ContactSearchSelect } from "./ContactSearchSelect";
 import {
   BANK_MATCH_MODES,
   PERSONNEL_PAY_KINDS,
@@ -108,15 +108,13 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
         <div className="flex flex-wrap gap-1.5 items-center">
           <select value={mode} onChange={(e) => onModeChange(e.target.value)} className={sel} data-testid={`match-mode-${tx.id}`}>{BANK_MATCH_MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           {mode === "contact" && (
-            <SearchSelect
+            <ContactSearchSelect
+              companyId={companyId}
               value={contactId}
               onChange={(id) => setContactId(id || "")}
-              options={contacts || []}
-              getLabel={contactLabel}
-              getSub={(c) => c.tax_number_or_id || c.phone || ""}
               valueLabel={selectedContactName}
               placeholder="Cari seçin (boş = onayla)"
-              searchPlaceholder="Cari adı ara…"
+              searchPlaceholder="Cari adı, VKN veya telefon ara…"
               clearable
               className="w-44"
               testId={`match-contact-select-${tx.id}`}

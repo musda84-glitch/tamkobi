@@ -15,6 +15,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { PrintDocument, PrintTemplateEditor, shouldUseIntegratorPdf } from "../components/PrintDocument";
 import { ExpenseSlipPrint } from "../components/ExpenseSlipPrint";
 import { SearchSelect } from "../components/SearchSelect";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS, toggleInvoiceSort, invoiceSortCol, invoiceSortDir } from "../components/InvoiceToolbar";
@@ -388,6 +389,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     price_mode: "excl",
     contact_id: "",
     contact_name: "",
+    contact_tax_id: "",
+    contact_tax_office: "",
     issue_date: now.issue_date,
     issue_time: now.issue_time,
     due_date: new Date(Date.now() + 15 * 86400000).toISOString().split("T")[0],
@@ -430,6 +433,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"),
       contact_id: c?.id || fd.contact_id || "",
       contact_name: c?.name || fd.contact_name || "",
+      contact_tax_id: c?.tax_number_or_id || fd.contact_tax_id || "",
+      contact_tax_office: c?.tax_office || fd.contact_tax_office || "",
       shipping_address: c?.address || fd.shipping_address || "",
       city: c?.city || fd.city || "",
       customer_phone: c?.phone || fd.customer_phone || "",
@@ -528,6 +533,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       status: "draft",
       contact_id: inv.contact_id || "",
       contact_name: inv.contact_name || "",
+      contact_tax_id: inv.contact_tax_id || "",
+      contact_tax_office: inv.contact_tax_office || "",
       shipping_address: inv.shipping_address || inv.address || "",
       city: inv.city || "",
       customer_phone: inv.customer_phone || "",
@@ -1964,17 +1971,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <span>Cari Seçin</span>
                     <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button>
                   </label>
-                  <SearchSelect
+                  <ContactSearchSelect
+                    companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
                     value={formData.contact_id}
                     valueLabel={formData.contact_name || ""}
-                    options={contacts}
                     placeholder="Cari ara ve seç..."
-                    getLabel={(c) => c.name}
-                    getSub={(c) => `${c.type === 'customer' ? 'Müşteri' : c.type === 'supplier' ? 'Tedarikçi' : 'Müşteri & Tedarikçi'} • VKN ${c.tax_number_or_id}`}
                     onChange={(id, c) => setFormData({
                       ...formData,
                       contact_id: id,
                       contact_name: c?.name || "",
+                      contact_tax_id: c?.tax_number_or_id || "",
+                      contact_tax_office: c?.tax_office || "",
                       shipping_address: c?.address || formData.shipping_address || "",
                       city: c?.city || formData.city || "",
                       customer_phone: c?.phone || formData.customer_phone || "",
@@ -1989,6 +1996,28 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       onSelect: pickRetailContact,
                     } : null}
                   />
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">VKN / TCKN</label>
+                      <input
+                        value={formData.contact_tax_id || ""}
+                        onChange={(e) => setFormData({ ...formData, contact_tax_id: e.target.value })}
+                        placeholder="Kart boşsa faturadan yazılır"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
+                        data-testid="inv-contact-tax"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Vergi dairesi</label>
+                      <input
+                        value={formData.contact_tax_office || ""}
+                        onChange={(e) => setFormData({ ...formData, contact_tax_office: e.target.value })}
+                        placeholder="Kart boşsa faturadan yazılır"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                        data-testid="inv-contact-tax-office"
+                      />
+                    </div>
+                  </div>
                   {formData.invoice_type !== "purchase" && !formData.contact_id && (
                     <button
                       type="button"
@@ -2014,7 +2043,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </div>
                 )}
                 <div className="sm:col-span-3">
-                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
+                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType, meta) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">

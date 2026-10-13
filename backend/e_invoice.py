@@ -529,6 +529,16 @@ async def issue_invoice(
     )
 
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    if inv.get("invoice_type") == "sales" and contact:
+        from contact_tax import contact_tax_patch
+        tax_patch = contact_tax_patch(
+            contact,
+            inv.get("contact_tax_id") or inv.get("buyer_tax_id"),
+            inv.get("contact_tax_office"),
+        )
+        if tax_patch:
+            await _db.contacts.update_one({"_id": contact["_id"]}, {"$set": tax_patch})
+            contact = {**contact, **tax_patch}
     requested = e_type if e_type is not None else inv.get("e_type")
     gib_meta: Optional[Dict[str, Any]] = None
     # İrsaliye belgesi — GİB mükellef çözümlemesi e_archive'a çevirmesin

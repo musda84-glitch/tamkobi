@@ -2,10 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
-import { SearchSelect } from "./SearchSelect";
-
-const CONTACT_TYPE_LABEL = { customer: "Müşteri", supplier: "Tedarikçi", both: "Cari" };
-const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR");
+import { ContactSearchSelect } from "./ContactSearchSelect";
 
 const contactIdFromValue = (value) => (
   String(value || "").startsWith("contact:") ? String(value).slice(8) : ""
@@ -98,20 +95,16 @@ export const VirmanPartySelect = ({
           emptyLabel={emptyLabel}
         />
       ) : (
-        <SearchSelect
+        <ContactSearchSelect
+          companyId={companyId}
           value={selectedContactId}
+          valueLabel={(() => {
+            const hit = contacts.find((c) => (c.id || c._id) === selectedContactId);
+            return hit?.name || hit?.company_title || "";
+          })()}
           onChange={(id) => onChange(id ? `contact:${id}` : "")}
-          options={contacts}
           placeholder="Cari ara (ad, VKN, telefon)…"
           searchPlaceholder="Cari adı, VKN veya telefon ara…"
-          getLabel={(c) => c.name || c.company_title || "Cari"}
-          getSub={(c) => {
-            const kind = CONTACT_TYPE_LABEL[c.type] || "Cari";
-            const tax = c.tax_number || c.tax || "";
-            const phone = c.phone || "";
-            const bal = `${fmt(c.balance)} ₺`;
-            return [kind, tax, phone, bal].filter(Boolean).join(" · ");
-          }}
           clearable
           clearLabel="Cari seçimini kaldır"
           testId={`${testId}-contact`}

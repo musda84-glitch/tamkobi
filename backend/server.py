@@ -34,6 +34,8 @@ from order_dedupe import (
     pick_canonical_order,
 )
 from b2b_catalog import b2b_catalog_mongo_filter
+from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
+from contact_tax import contact_tax_patch
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -4115,6 +4117,85 @@ async def list_contacts(
     return docs
 
 
+_CONTACT_SEARCH_PROJ = {
+    "name": 1, "company_title": 1, "category": 1, "code": 1, "erp_code": 1, "contact_code": 1,
+    "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1,
+    "tax_number_or_id": 1, "tax_office": 1, "balance": 1, "is_active": 1, "is_e_invoice_user": 1,
+    "contact_person": 1, "updated_at": 1, "created_at": 1,
+}
+
+
+async def _recent_contact_ids(company_id: str, cap: int = 80) -> list:
+    """Fatura, sipariş ve teklifte en son geçen cariler (boş arama listesi)."""
+    scored = []
+    specs = (
+        ("invoices", ("created_at", "issue_date")),
+        ("orders", ("order_date", "created_at")),
+        ("quotes", ("created_at", "issue_date")),
+    )
+    for coll, keys in specs:
+        try:
+            docs = await db[coll].find(
+                {"company_id": company_id},
+                {"contact_id": 1, **{k: 1 for k in keys}},
+            ).sort(keys[0], -1).to_list(250)
+        except Exception:
+            logging.exception("recent contact ids %s", coll)
+            continue
+        for d in docs:
+            cid = str(d.get("contact_id") or "").strip()
+            if not cid:
+                continue
+            ts = ""
+            for k in keys:
+                if d.get(k):
+                    ts = str(d.get(k))
+                    break
+            scored.append((ts, cid))
+    return recent_ids_from_scored(scored, limit=cap)
+
+
+@api_router.get("/contacts/search")
+async def search_contacts_api(
+    company_id: Optional[str] = None,
+    q: str = "",
+    page: int = 1,
+    limit: int = CONTACT_SEARCH_PAGE,
+    user: dict = Depends(get_current_user),
+):
+    """Sunucu tarafı cari arama. Müşteri, tedarikçi ve ikisi birden; pasifler gizli.
+
+    Boş sorguda son kullanılan cariler. Sayfa boyu 20.
+    """
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    size = int(limit or CONTACT_SEARCH_PAGE)
+    rows = await db.contacts.find({"company_id": company_id}, _CONTACT_SEARCH_PROJ).to_list(100000)
+    recent = []
+    if not (q or "").strip():
+        recent = await _recent_contact_ids(company_id)
+    found = search_contacts(rows, q or "", page=page, limit=size, recent_ids=recent)
+    return {
+        "items": clean_docs(found["items"]),
+        "total": found["total"],
+        "page": found["page"],
+        "limit": found["limit"],
+        "has_more": found["has_more"],
+    }
+
+
+async def _sync_contact_tax_from_sales_invoice(invoice_type, contact_id, tax_id, tax_office, contact=None):
+    """Satış faturasında girilen VKN/vergi dairesini, kartta boşsa yaz."""
+    if str(invoice_type or "") != "sales" or not contact_id:
+        return
+    row = contact if contact is not None else await db.contacts.find_one({"_id": contact_id})
+    if not row:
+        return
+    patch = contact_tax_patch(row, tax_id, tax_office)
+    if not patch:
+        return
+    await db.contacts.update_one({"_id": contact_id}, {"$set": patch})
+
+
 async def _contact_open_amounts(company_id: Optional[str]) -> dict:
     """Satış faturalarının cari bazında kalan alacağı (taslak/iptal hariç)."""
     rows = await db.invoices.aggregate([
@@ -8026,6 +8107,14 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     _contact_row = None
     if invoice.contact_id:
         _contact_row = await db.contacts.find_one({"_id": invoice.contact_id})
+    if _contact_row and invoice.invoice_type == "sales":
+        await _sync_contact_tax_from_sales_invoice(
+            invoice.invoice_type,
+            invoice.contact_id,
+            invoice.contact_tax_id,
+            invoice.contact_tax_office,
+            contact=_contact_row,
+        )
     if not invoice.due_date and _contact_row and _contact_row.get("payment_term_days"):
         invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_contact_row["payment_term_days"]))).isoformat()
     # Yazdırma SAYIN bloğu için adres: boşsa cariden doldur
@@ -8306,7 +8395,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
     reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
         _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
@@ -8327,6 +8416,15 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
                     allowed["customer_phone"] = phone
             if "contact_name" not in allowed:
                 allowed["contact_name"] = _c.get("name") or inv.get("contact_name")
+    inv_type_for_tax = allowed.get("invoice_type", inv.get("invoice_type"))
+    tax_contact_id = allowed.get("contact_id") or inv.get("contact_id")
+    if inv_type_for_tax == "sales" and tax_contact_id:
+        await _sync_contact_tax_from_sales_invoice(
+            inv_type_for_tax,
+            tax_contact_id,
+            allowed.get("contact_tax_id", inv.get("contact_tax_id")),
+            allowed.get("contact_tax_office", inv.get("contact_tax_office")),
+        )
     if "issue_time" in allowed and allowed["issue_time"] is not None:
         t = str(allowed["issue_time"] or "").strip()
         if len(t) == 5 and t[2] == ":":
