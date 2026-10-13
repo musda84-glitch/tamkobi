@@ -33,6 +33,14 @@ from order_dedupe import (
     merge_keep_fields,
     pick_canonical_order,
 )
+from order_list_filter import (
+    ORDER_LIST_EXPORT_MAX,
+    ORDER_LIST_PAGE_MAX,
+    ORDER_LIST_SCAN_CAP,
+    OrderListFilter,
+    parse_doc_status,
+    query_orders,
+)
 from b2b_catalog import b2b_catalog_mongo_filter
 
 from models import (
@@ -15898,17 +15906,116 @@ async def _enrich_orders_stock_matches(
     return docs
 
 
+async def _list_orders_filtered(
+    company_id: Optional[str],
+    status: Optional[str],
+    include_active_cart: bool,
+    q: Optional[str],
+    channel: Optional[str],
+    invoiced: Optional[str],
+    cargo: Optional[str],
+    doc_status: Optional[str],
+    date_from: Optional[str],
+    date_to: Optional[str],
+    customer: Optional[str],
+    sort: Optional[str],
+    page: int,
+    page_size: int,
+    export: bool,
+    scope: Optional[str],
+):
+    """Panel listesi: şirket siparişleri taranır, filtre + sayfa sunucuda uygulanır."""
+    query: Dict[str, Any] = {"company_id": company_id}
+    if status == "active_cart":
+        query["$or"] = [
+            {"order_status": "active_cart"},
+            {"is_active_cart": True},
+            {"source": "b2b_active_cart"},
+        ]
+    elif not include_active_cart:
+        query.update(_orders_list_active_cart_nor())
+    orders = await db.orders.find(query).sort("order_date", -1).to_list(ORDER_LIST_SCAN_CAP)
+    docs = clean_docs(orders)
+    deduped = dedupe_orders_by_marketplace_key(docs)
+    if len(deduped) < len(docs):
+        keep_ids = {str(o.get("id") or o.get("_id") or "") for o in deduped}
+        drop_ids = [str(o.get("id") or o.get("_id") or "") for o in docs if str(o.get("id") or o.get("_id") or "") not in keep_ids]
+        drop_ids = [i for i in drop_ids if i]
+        if drop_ids:
+            try:
+                asyncio.create_task(db.orders.delete_many({"_id": {"$in": drop_ids}}))
+            except RuntimeError:
+                await db.orders.delete_many({"_id": {"$in": drop_ids}})
+            logger.warning("list_orders removed %s duplicate order row(s) for company %s", len(drop_ids), company_id)
+    docs = deduped
+    for o in docs:
+        _decorate_b2b_held_order(o)
+    docs = await _enrich_orders_invoice_ebelge(docs)
+    filt = OrderListFilter(
+        q=q or "",
+        status=status or "all",
+        channel=channel or "all",
+        invoiced=invoiced or "all",
+        cargo=cargo or "all",
+        doc_status=parse_doc_status(doc_status),
+        date_from=date_from or "",
+        date_to=date_to or "",
+        customer=customer or "",
+        sort=sort or "date_desc",
+        scope=scope or "",
+    )
+    if export:
+        page_n, size = 1, ORDER_LIST_EXPORT_MAX
+    else:
+        page_n = max(int(page or 1), 1)
+        size = min(max(int(page_size or 50), 1), ORDER_LIST_PAGE_MAX)
+    result = query_orders(
+        docs,
+        filt,
+        page=page_n,
+        page_size=size,
+        include_active_cart=include_active_cart,
+    )
+    items = result["items"]
+    items = await _enrich_orders_marketplace_item_media(items, company_id=company_id)
+    items = await _enrich_orders_stock_matches(items, company_id=company_id)
+    items = await _enrich_orders_production_flags(items, company_id=company_id)
+    result["items"] = items
+    return result
+
+
 @api_router.get("/orders")
 async def list_orders(
     company_id: Optional[str] = "comp_nexus_main_01",
     status: Optional[str] = None,
     include_active_cart: bool = False,
+    paged: bool = False,
+    q: Optional[str] = None,
+    channel: Optional[str] = None,
+    invoiced: Optional[str] = None,
+    cargo: Optional[str] = None,
+    doc_status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    customer: Optional[str] = None,
+    sort: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    export: bool = False,
+    scope: Optional[str] = None,
 ):
     """Sipariş listesi.
 
     Varsayılan: B2B *aktif sepet* satırları hariç (portal taslakları listeyi şişirir).
     `include_active_cart=1` ile eski davranış. Bekleyen sepet (held_cart) gelir.
+    `paged=1` panel filtresidir: {items, total, page, page_size, has_more, total_amount}.
+    paged yokken yanıt eskisi gibi bir dizidir (eski istemciler).
     """
+    if paged or export:
+        return await _list_orders_filtered(
+            company_id, status, include_active_cart, q, channel, invoiced, cargo,
+            doc_status, date_from, date_to, customer, sort, page, page_size, export, scope,
+        )
     query: Dict[str, Any] = {"company_id": company_id}
     if status and status != "all":
         query["order_status"] = status
