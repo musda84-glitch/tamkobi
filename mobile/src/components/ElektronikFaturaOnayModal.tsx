@@ -17,6 +17,7 @@ import {
   type EfaturaOnayPayload,
 } from "../utils/efaturaOnay";
 import { WITHHOLDING, withholdingSelectGroups } from "../utils/invoiceDraft";
+import { docDocumentDate, docHasOldDocumentDate } from "../utils/invoiceDocDate";
 import { formatIssueStamp, nowIssueDateTime, showEfaturaStampNow } from "../utils/invoiceIssueNow";
 import { B2BSheet } from "./b2b/B2BSheet";
 import { GroupedSelect } from "./GroupedSelect";
@@ -63,6 +64,7 @@ export function ElektronikFaturaOnayModal({
   invoice,
   preferredEType,
   contactIsEInvoiceUser,
+  initialStampNow = true,
   onClose,
   onConfirm,
 }: {
@@ -71,6 +73,8 @@ export function ElektronikFaturaOnayModal({
   invoice?: DocLike | null;
   preferredEType?: "e_invoice" | "e_archive" | null;
   contactIsEInvoiceUser?: boolean | null;
+  /** Hızlı gönderim tarih sorusu sonucu (web #1154 stamp_now). */
+  initialStampNow?: boolean;
   onClose: () => void;
   onConfirm: (payload: EfaturaOnayPayload) => void | Promise<void>;
 }) {
@@ -82,6 +86,8 @@ export function ElektronikFaturaOnayModal({
   const prefilled = useMemo(() => prefillReturnBillingRef(doc), [doc]);
   const offerStamp = showEfaturaStampNow({ isBulk: false, isPrint: false, mode: "send" });
   const stampPreview = nowIssueDateTime();
+  const docDateYmd = docDocumentDate(doc);
+  const docDateIsOld = docHasOldDocumentDate(doc);
 
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [credits, setCredits] = useState<number | null>(null);
@@ -92,7 +98,7 @@ export function ElektronikFaturaOnayModal({
     alias?: string;
     message?: string;
   } | null>(null);
-  const [stampNow, setStampNow] = useState(true);
+  const [stampNow, setStampNow] = useState(initialStampNow);
   const [exemptionCode, setExemptionCode] = useState(
     String(doc?.tax_exemption_code || doc?.vat_exemption_code || "").trim(),
   );
@@ -110,10 +116,10 @@ export function ElektronikFaturaOnayModal({
     setReturnInvoiceDate(prefilled.date);
     setWithholdingValue("");
     setWithholdingTouched(false);
-    setStampNow(true);
+    setStampNow(initialStampNow !== false);
     setFormError(null);
     setSubmitting(false);
-  }, [visible, doc, prefilled.number, prefilled.date]);
+  }, [visible, doc, prefilled.number, prefilled.date, initialStampNow]);
 
   useEffect(() => {
     if (!visible || !companyId) {
@@ -339,17 +345,36 @@ export function ElektronikFaturaOnayModal({
       ) : null}
 
       {offerStamp ? (
-        <Row style={{ marginTop: 12, justifyContent: "space-between", alignItems: "center" }} testID="efatura-onay-stamp">
-          <View style={{ flex: 1, paddingRight: 10 }}>
-            <Text style={{ fontWeight: "700", color: colors.text, fontSize: 13 }}>Tarih/saat şimdi</Text>
-            <Muted>
-              {stampNow
-                ? `GİB’e ${formatIssueStamp(stampPreview.issue_date, stampPreview.issue_time)} yazılır.`
-                : `Belgedeki tarih kalır: ${formatIssueStamp(doc?.issue_date, doc?.issue_time)}.`}
-            </Muted>
-          </View>
-          <Switch value={stampNow} onValueChange={setStampNow} testID="efatura-onay-stamp-switch" />
-        </Row>
+        <View style={{ marginTop: 12, gap: 8 }} testID="efatura-onay-stamp-block">
+          {docDateIsOld ? (
+            <View
+              style={{
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: "#FCD34D",
+                backgroundColor: "#FFFBEB",
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+              }}
+              testID="efatura-onay-old-date-warn"
+            >
+              <Text style={{ color: "#78350F", fontSize: 12, fontWeight: "600" }}>
+                Belge tarihi {formatIssueStamp(docDateYmd, "")} — GİB'e eski tarihle gidecek
+              </Text>
+            </View>
+          ) : null}
+          <Row style={{ justifyContent: "space-between", alignItems: "center" }} testID="efatura-onay-stamp">
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={{ fontWeight: "700", color: colors.text, fontSize: 13 }}>Tarih/saat şimdi</Text>
+              <Muted>
+                {stampNow
+                  ? `GİB’e ${formatIssueStamp(stampPreview.issue_date, stampPreview.issue_time)} yazılır.`
+                  : `Belgedeki tarih kalır: ${formatIssueStamp(doc?.issue_date || docDateYmd, doc?.issue_time)}.`}
+              </Muted>
+            </View>
+            <Switch value={stampNow} onValueChange={setStampNow} testID="efatura-onay-stamp-switch" />
+          </Row>
+        </View>
       ) : null}
 
       {isReturn ? (

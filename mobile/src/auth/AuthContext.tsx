@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { get, post, type ApiClient } from "../api/client";
+import { get, post, put, type ApiClient } from "../api/client";
 import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
+import { forgotErpPayload, type ForgotChannel } from "../utils/forgotPassword";
 import { setPriceDecimals } from "../utils/money";
 import { parseB2bToken } from "../utils/b2bToken";
 import { can as canPerm, feature as featurePerm, moduleOn as moduleOnPerm } from "../utils/permissions";
@@ -44,8 +45,12 @@ type AuthContextValue = AuthState & {
   enterB2bToken: (tokenOrLink: string, serverUrl?: string) => Promise<void>;
   forgotB2b: (email: string) => Promise<B2BForgotResult>;
   resetB2b: (resetToken: string, password: string) => Promise<void>;
-  forgotErp: (email: string, next?: "login" | "sistem") => Promise<B2BForgotResult>;
+  forgotErp: (
+    input: string | { channel?: ForgotChannel | string; email?: string; phone?: string },
+    next?: "login" | "sistem",
+  ) => Promise<B2BForgotResult>;
   resetErp: (resetToken: string, password: string) => Promise<{ redirect?: string; email?: string }>;
+  updateProfile: (fields: { name?: string; phone?: string }) => Promise<{ message?: string }>;
   logout: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;
   setServer: (url: string) => Promise<void>;
@@ -239,11 +244,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await persistB2b(state.baseUrl, res.token, res.name);
   }, [persistB2b, state.baseUrl]);
 
-  const forgotErp = useCallback(async (email: string, next: "login" | "sistem" = "login") => {
+  const forgotErp = useCallback(async (
+    input: string | { channel?: ForgotChannel | string; email?: string; phone?: string },
+    next: "login" | "sistem" = "login",
+  ) => {
+    const fields = typeof input === "string" ? { email: input, channel: "email" as const } : input;
     return post<B2BForgotResult>(
       { baseUrl: state.baseUrl, token: null },
       "/auth/forgot-password",
-      { email, base_url: state.baseUrl, next }
+      forgotErpPayload({
+        channel: fields.channel,
+        email: fields.email,
+        phone: fields.phone,
+        baseUrl: state.baseUrl,
+        next,
+      }),
     );
   }, [state.baseUrl]);
 
@@ -254,6 +269,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       { password }
     );
   }, [state.baseUrl]);
+
+  const updateProfile = useCallback(async (fields: { name?: string; phone?: string }) => {
+    if (!state.token) throw new Error("Oturum gerekli.");
+    const res = await put<{ status?: string; message?: string; user?: { name?: string; phone?: string } }>(
+      { baseUrl: state.baseUrl, token: state.token },
+      "/auth/me",
+      fields,
+    );
+    setState((s) => ({
+      ...s,
+      user: s.user
+        ? {
+            ...s.user,
+            name: res?.user?.name ?? fields.name ?? s.user.name,
+            phone: res?.user?.phone ?? fields.phone ?? s.user.phone,
+          }
+        : s.user,
+    }));
+    return { message: res?.message || "Profil güncellendi." };
+  }, [state.baseUrl, state.token]);
 
   const logout = useCallback(async () => {
     try {
@@ -343,6 +378,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       resetB2b,
       forgotErp,
       resetErp,
+      updateProfile,
       logout,
       switchCompany,
       setServer,
@@ -357,7 +393,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return addons[key] !== false;
       },
     }),
-    [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, resetB2b, resetErp, setServer, state, switchCompany]
+    [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, resetB2b, resetErp, setServer, state, switchCompany, updateProfile]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

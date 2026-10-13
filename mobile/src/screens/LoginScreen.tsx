@@ -15,6 +15,7 @@ import {
   type LegalAcceptMap,
 } from "../utils/b2bLegal";
 import { contentBottomPad, loginSheetJustify } from "../utils/keyboardPad";
+import { forgotResultMessage, type ForgotChannel } from "../utils/forgotPassword";
 import { emailToRemember } from "../utils/loginRemember";
 import { useKeyboardAwareScroll } from "../utils/useKeyboardAwareScroll";
 
@@ -50,12 +51,14 @@ export function LoginScreen() {
   const { login, loginB2b, enterB2bToken, forgotB2b, resetB2b, forgotErp, resetErp, baseUrl } = useAuth();
   const [mode, setMode] = useState<Mode>("erp");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [server, setServerField] = useState(baseUrl);
   const [showServer, setShowServer] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [forgotChannel, setForgotChannel] = useState<ForgotChannel>("email");
   const [resetInfo, setResetInfo] = useState<B2BForgotResult | null>(null);
   const [resetToken, setResetToken] = useState("");
   const [portalLink, setPortalLink] = useState("");
@@ -98,6 +101,7 @@ export function LoginScreen() {
     setPassword("");
     setPassword2("");
     setResetInfo(null);
+    if (next === "erp-forgot") setForgotChannel("email");
     if (next === "erp" || next === "erp-forgot") {
       const saved = await loadRememberedEmail();
       if (saved) setEmail(saved);
@@ -166,9 +170,18 @@ export function LoginScreen() {
     setError(null);
     setResetInfo(null);
     try {
-      const res = kind === "erp" ? await forgotErp(email.trim(), "login") : await forgotB2b(email.trim());
-      setResetInfo(res);
-      // reset_token istemciye dönülmez (e-posta doğrulamasını atlatır).
+      if (kind === "erp") {
+        const res = await forgotErp(
+          forgotChannel === "sms"
+            ? { channel: "sms", phone: phone.trim() }
+            : { channel: "email", email: email.trim() },
+          "login",
+        );
+        setResetInfo({ message: forgotResultMessage(res, forgotChannel) });
+      } else {
+        const res = await forgotB2b(email.trim());
+        setResetInfo({ message: forgotResultMessage(res, "email") });
+      }
     } catch (err) {
       setError(apiErrorMessage(err, "İstek gönderilemedi."));
     } finally {
@@ -243,22 +256,44 @@ export function LoginScreen() {
             <>
               <Text style={styles.eyebrow}>Şifre Sıfırlama</Text>
               <Text style={styles.brand}>Bağlantı isteyin</Text>
-              <Text style={styles.hint}>ERP veya personel e-postanızı girin. Eşleşen hesap varsa sıfırlama bağlantısı gönderilir.</Text>
+              <Text style={styles.hint}>ERP veya personel hesabınız için sıfırlama bağlantısı alın. Kayıtlı bir hesap varsa seçtiğiniz kanala gönderilir.</Text>
+              <View style={styles.channelRow} testID="login-forgot-channel">
+                <Pressable
+                  testID="login-forgot-channel-email"
+                  onPress={() => { setForgotChannel("email"); setResetInfo(null); setError(null); }}
+                  style={[styles.channelBtn, forgotChannel === "email" && styles.channelBtnOn]}
+                >
+                  <Text style={[styles.channelText, forgotChannel === "email" && styles.channelTextOn]}>E-posta</Text>
+                </Pressable>
+                <Pressable
+                  testID="login-forgot-channel-sms"
+                  onPress={() => { setForgotChannel("sms"); setResetInfo(null); setError(null); }}
+                  style={[styles.channelBtn, forgotChannel === "sms" && styles.channelBtnOn]}
+                >
+                  <Text style={[styles.channelText, forgotChannel === "sms" && styles.channelTextOn]}>SMS</Text>
+                </Pressable>
+              </View>
               {error ? <Text style={styles.error} testID="login-forgot-error">{error}</Text> : null}
               {resetInfo ? (
                 <View style={styles.okBox} testID="login-forgot-result">
                   <Text style={styles.okText}>{resetInfo.message}</Text>
-                  {resetInfo.mail_status === "sent" ? <Text style={styles.okText}>E-postanızı kontrol edin (1 saat geçerli).</Text> : null}
-                  {resetInfo.mail_status && resetInfo.mail_status !== "sent" ? (
-                    <Text style={styles.okText} testID="login-forgot-mail-fail">{resetInfo.detail || "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin."}</Text>
-                  ) : null}
                 </View>
               ) : null}
-              <Field label="E-posta" testID="login-forgot-email" autoCapitalize="none" keyboardType="email-address" autoComplete="email" value={email} onChangeText={setEmail} />
+              {forgotChannel === "sms" ? (
+                <Field label="Kayıtlı telefon" testID="login-forgot-phone" autoCapitalize="none" keyboardType="phone-pad" autoComplete="tel" value={phone} onChangeText={setPhone} placeholder="05XXXXXXXXX" />
+              ) : (
+                <Field label="E-posta" testID="login-forgot-email" autoCapitalize="none" keyboardType="email-address" autoComplete="email" value={email} onChangeText={setEmail} />
+              )}
               {showServer ? (
                 <Field label="API adresi" testID="login-api" autoCapitalize="none" value={server} onChangeText={setServerField} placeholder="https://tamkobi.com" />
               ) : null}
-              <PrimaryButton testID="login-forgot-submit" title={busy ? "Gönderiliyor…" : "Sıfırlama Bağlantısı Gönder"} onPress={() => submitForgot("erp")} loading={busy} disabled={!email} />
+              <PrimaryButton
+                testID="login-forgot-submit"
+                title={busy ? "Gönderiliyor…" : (forgotChannel === "sms" ? "SMS ile Bağlantı Gönder" : "Sıfırlama Bağlantısı Gönder")}
+                onPress={() => submitForgot("erp")}
+                loading={busy}
+                disabled={forgotChannel === "sms" ? !phone.trim() : !email.trim()}
+              />
               <Pressable onPress={() => switchMode("erp")} testID="login-forgot-back" style={{ paddingTop: 12 }}>
                 <Text style={styles.server}>Girişe dön</Text>
               </Pressable>
@@ -285,10 +320,6 @@ export function LoginScreen() {
               {resetInfo ? (
                 <View style={styles.okBox} testID="b2b-forgot-result">
                   <Text style={styles.okText}>{resetInfo.message}</Text>
-                  {resetInfo.mail_status === "sent" ? <Text style={styles.okText}>E-postanızı kontrol edin (1 saat geçerli).</Text> : null}
-                  {resetInfo.mail_status && resetInfo.mail_status !== "sent" ? (
-                    <Text style={styles.okText} testID="b2b-forgot-mail-fail">{resetInfo.detail || "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin."}</Text>
-                  ) : null}
                 </View>
               ) : null}
               <Field label="E-posta veya VKN" testID="b2b-forgot-email" autoCapitalize="none" autoComplete="email" value={email} onChangeText={setEmail} />
@@ -367,6 +398,19 @@ const styles = StyleSheet.create({
   b2bLink: { color: colors.indigo, ...typeface("800") },
   erpLink: { color: colors.primary, ...typeface("800") },
   forgot: { textAlign: "center", color: colors.primaryHover, fontSize: 13, ...typeface("800") },
+  channelRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  channelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#fff",
+    alignItems: "center",
+  },
+  channelBtnOn: { backgroundColor: colors.ink, borderColor: colors.ink },
+  channelText: { fontSize: 12, color: colors.slate800, ...typeface("800") },
+  channelTextOn: { color: "#fff" },
   okBox: { backgroundColor: colors.emerald50, borderRadius: 12, padding: 10, marginBottom: 12, gap: 4 },
   okText: { color: "#065F46", fontSize: 12, ...typeface("600") },
   rememberRow: {
