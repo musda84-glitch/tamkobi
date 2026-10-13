@@ -30,6 +30,7 @@ import {
   remainingAmount,
   type GdMode,
 } from "../utils/invoiceDraft";
+import { askInvoiceDatePrompt, INVOICE_DATE_PROMPT, shouldAskInvoiceDatePrompt } from "../utils/invoiceDocDate";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
@@ -73,6 +74,7 @@ export function InvoiceDetailScreen() {
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
   const [efaturaOpen, setEfaturaOpen] = useState(false);
   const [efaturaPreferred, setEfaturaPreferred] = useState<"e_invoice" | "e_archive" | null>(null);
+  const [efaturaStampNow, setEfaturaStampNow] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -449,8 +451,21 @@ export function InvoiceDetailScreen() {
                 testID={`inv-issue-${t.key}`}
                 onPress={() => {
                   if (t.key === "e_invoice" || t.key === "e_archive") {
-                    setEfaturaPreferred(t.key);
-                    setEfaturaOpen(true);
+                    const openOnay = (stampNow: boolean) => {
+                      setEfaturaPreferred(t.key);
+                      setEfaturaStampNow(stampNow);
+                      setEfaturaOpen(true);
+                    };
+                    if (shouldAskInvoiceDatePrompt(inv)) {
+                      if (Platform.OS === "web" && typeof window !== "undefined") {
+                        const stamp = window.confirm(`${INVOICE_DATE_PROMPT.message}\n\nTamam = ${INVOICE_DATE_PROMPT.stampNowLabel}`);
+                        openOnay(stamp);
+                        return;
+                      }
+                      askInvoiceDatePrompt((choice) => openOnay(choice === "stamp_now"), Alert.alert);
+                      return;
+                    }
+                    openOnay(true);
                     return;
                   }
                   run(async () => {
@@ -645,6 +660,7 @@ export function InvoiceDetailScreen() {
         visible={efaturaOpen}
         invoice={inv}
         preferredEType={efaturaPreferred}
+        initialStampNow={efaturaStampNow}
         onClose={() => setEfaturaOpen(false)}
         onConfirm={confirmEBelge}
       />

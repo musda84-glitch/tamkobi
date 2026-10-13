@@ -51,10 +51,11 @@ function devWebOrigin(): string | null {
  * üretim derlemesi doğrudan API'ye gider.
  */
 export function requestTarget(base: string, path: string): { url: string; proxiedBase?: string } {
-  const direct = `${apiRoot(base)}${path}`;
+  const resolved = resolveApiBase(base);
+  const direct = `${apiRoot(resolved)}${path}`;
   const origin = devWebOrigin();
   if (!origin) return { url: direct };
-  const normalized = normalizeApiBase(base);
+  const normalized = normalizeApiBase(resolved);
   if (normalized === origin) return { url: direct };
   return { url: `${origin}/api${path}`, proxiedBase: normalized };
 }
@@ -89,4 +90,46 @@ export function displayFileUrl(base: string, url?: string | null, sameOrigin = f
     /* keep absolute */
   }
   return absolute;
+}
+
+export function isPermanentRedirect(status: number): boolean {
+  return status === 301 || status === 308;
+}
+
+/**
+ * 301/308 Location → yeni API origin (host değiştiyse). Aynı host’ta null.
+ * Relative Location currentBase’e göre çözülür.
+ */
+export function redirectBaseFromLocation(
+  location: string | null | undefined,
+  currentBase: string,
+): string | null {
+  const raw = String(location || "").trim();
+  if (!raw) return null;
+  const current = normalizeApiBase(currentBase);
+  try {
+    const abs = /^https?:\/\//i.test(raw) ? raw : new URL(raw, `${current}/`).href;
+    const parsed = new URL(abs);
+    const next = normalizeApiBase(`${parsed.protocol}//${parsed.host}`);
+    if (!next || next === current) return null;
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+/** Oturum içinde 301/308 sonrası tercih edilen base (AsyncStorage ile birlikte). */
+let sessionRedirectBase: string | null = null;
+
+export function applyRedirectedApiBase(base: string): string {
+  sessionRedirectBase = normalizeApiBase(base);
+  return sessionRedirectBase;
+}
+
+export function resolveApiBase(base: string): string {
+  return sessionRedirectBase || normalizeApiBase(base);
+}
+
+export function clearRedirectedApiBase(): void {
+  sessionRedirectBase = null;
 }

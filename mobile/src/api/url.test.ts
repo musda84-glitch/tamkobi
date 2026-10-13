@@ -1,4 +1,19 @@
-import { apiRoot, displayFileUrl, extraApiUrl, fileUrl, normalizeApiBase, requestTarget } from "./url";
+import {
+  apiRoot,
+  applyRedirectedApiBase,
+  clearRedirectedApiBase,
+  displayFileUrl,
+  extraApiUrl,
+  fileUrl,
+  isPermanentRedirect,
+  normalizeApiBase,
+  redirectBaseFromLocation,
+  requestTarget,
+} from "./url";
+
+afterEach(() => {
+  clearRedirectedApiBase();
+});
 
 describe("normalizeApiBase", () => {
   it("defaults empty to production", () => {
@@ -45,5 +60,18 @@ describe("normalizeApiBase", () => {
     expect(displayFileUrl("https://tamkobi.com", "tamkobi/p.jpg", true)).toBe("/api/files/tamkobi/p.jpg");
     expect(displayFileUrl("https://tamkobi.com", "https://cdn.test/x.jpg", true)).toBe("https://cdn.test/x.jpg");
     expect(displayFileUrl("https://tamkobi.com", "/api/files/x.jpg", false)).toBe("https://tamkobi.com/api/files/x.jpg");
+  });
+
+  it("parses 301/308 Location host once", () => {
+    expect(isPermanentRedirect(301)).toBe(true);
+    expect(isPermanentRedirect(308)).toBe(true);
+    expect(isPermanentRedirect(302)).toBe(false);
+    expect(redirectBaseFromLocation("https://app.tamkobi.com/api/auth/me", "https://tamkobi.com")).toBe(
+      "https://app.tamkobi.com",
+    );
+    expect(redirectBaseFromLocation("https://tamkobi.com/api/x", "https://tamkobi.com")).toBeNull();
+    expect(redirectBaseFromLocation("/api/auth/me", "https://tamkobi.com")).toBeNull();
+    applyRedirectedApiBase("https://app.tamkobi.com");
+    expect(requestTarget("https://tamkobi.com", "/auth/me").url).toBe("https://app.tamkobi.com/api/auth/me");
   });
 });

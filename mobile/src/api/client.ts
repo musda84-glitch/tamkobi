@@ -1,5 +1,16 @@
+import { saveApiBase } from "../auth/storage";
 import { ApiHttpError, apiErrorMessage } from "./errors";
-import { API_BASE_HEADER, apiRoot, displayFileUrl, fileUrl, normalizeApiBase, requestTarget } from "./url";
+import {
+  API_BASE_HEADER,
+  apiRoot,
+  applyRedirectedApiBase,
+  displayFileUrl,
+  fileUrl,
+  isPermanentRedirect,
+  normalizeApiBase,
+  redirectBaseFromLocation,
+  requestTarget,
+} from "./url";
 
 export type Query = Record<string, string | number | boolean | null | undefined>;
 
@@ -19,25 +30,88 @@ export type ApiClient = {
   token: string | null;
 };
 
+async function persistRedirectBase(next: string): Promise<string> {
+  const applied = applyRedirectedApiBase(next);
+  try {
+    await saveApiBase(applied);
+  } catch {
+    /* AsyncStorage yoksa oturum override yeterli */
+  }
+  return applied;
+}
+
+type FetchInit = {
+  method: string;
+  headers: Record<string, string>;
+  body?: string | FormData;
+};
+
+/**
+ * 301/308 gelirse Location host’una bir kez yeniden dener ve kaydeder.
+ * Diğer 3xx yanıtlar Location’a follow edilir.
+ */
+async function fetchApi(
+  client: ApiClient,
+  pathWithQuery: string,
+  init: FetchInit,
+): Promise<Response> {
+  let base = client.baseUrl;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { url, proxiedBase } = requestTarget(base, pathWithQuery);
+    const headers = { ...init.headers };
+    if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
+    else delete headers[API_BASE_HEADER];
+
+    const res = await fetch(url, {
+      method: init.method,
+      headers,
+      body: init.body,
+      redirect: "manual",
+    });
+
+    if (attempt === 0 && isPermanentRedirect(res.status)) {
+      const next = redirectBaseFromLocation(res.headers.get("Location"), base);
+      if (next) {
+        base = await persistRedirectBase(next);
+        continue;
+      }
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("Location");
+      if (loc) {
+        const abs = /^https?:\/\//i.test(loc) ? loc : new URL(loc, url).href;
+        return fetch(abs, {
+          method: init.method,
+          headers,
+          body: init.body,
+          redirect: "follow",
+        });
+      }
+    }
+    return res;
+  }
+  throw new ApiHttpError(0, null, "Yönlendirme sonrası istek tamamlanamadı.");
+}
+
 export async function request<T>(
   client: ApiClient,
   method: string,
   path: string,
   opts?: { body?: unknown; query?: Query }
 ): Promise<T> {
-  const { url, proxiedBase } = requestTarget(client.baseUrl, withQuery(path, opts?.query));
   const headers: Record<string, string> = { Accept: "application/json" };
   if (opts?.body !== undefined) headers["Content-Type"] = "application/json";
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
-  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchApi(client, withQuery(path, opts?.query), {
       method,
       headers,
       body: opts?.body === undefined ? undefined : JSON.stringify(opts.body),
     });
   } catch (err) {
+    if (err instanceof ApiHttpError) throw err;
     throw new ApiHttpError(0, null, apiErrorMessage(err, "Sunucuya bağlanılamadı. API adresini kontrol edin."));
   }
   const text = await res.text();
@@ -58,14 +132,17 @@ export async function request<T>(
 
 /** Multipart yükleme: Content-Type'ı fetch kendisi (boundary ile) koyar. */
 export async function upload<T>(client: ApiClient, path: string, form: FormData, query?: Query): Promise<T> {
-  const { url, proxiedBase } = requestTarget(client.baseUrl, withQuery(path, query));
   const headers: Record<string, string> = { Accept: "application/json" };
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
-  if (proxiedBase) headers[API_BASE_HEADER] = proxiedBase;
   let res: Response;
   try {
-    res = await fetch(url, { method: "POST", headers, body: form });
+    res = await fetchApi(client, withQuery(path, query), {
+      method: "POST",
+      headers,
+      body: form,
+    });
   } catch (err) {
+    if (err instanceof ApiHttpError) throw err;
     throw new ApiHttpError(0, null, apiErrorMessage(err, "Dosya yüklenemedi. Bağlantıyı kontrol edin."));
   }
   const text = await res.text();

@@ -18,6 +18,7 @@ export type User = {
   id: string;
   email: string;
   name: string;
+  phone?: string;
   role: string;
   role_name?: string;
   active_company_id?: string;

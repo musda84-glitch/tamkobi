@@ -38,11 +38,14 @@ type MePayload = {
 };
 
 export function SettingsScreen() {
-  const { client, companies, activeCompany, switchCompany, companyId, user, logout } = useAuth();
+  const { client, companies, activeCompany, switchCompany, companyId, user, logout, updateProfile } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileName, setProfileName] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +82,29 @@ export function SettingsScreen() {
   useEffect(() => {
     loadMe();
   }, [loadMe]);
+
+  useEffect(() => {
+    setProfileName(String(user?.name || ""));
+    setProfilePhone(String(user?.phone || ""));
+  }, [user?.name, user?.phone]);
+
+  const saveProfile = async () => {
+    const name = profileName.trim();
+    if (!name) {
+      setError("Ad soyad boş olamaz.");
+      return;
+    }
+    setProfileBusy(true);
+    setError(null);
+    try {
+      const r = await updateProfile({ name, phone: profilePhone.trim() });
+      setMessage(r?.message || "Profil güncellendi.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Profil güncellenemedi."));
+    } finally {
+      setProfileBusy(false);
+    }
+  };
 
   const savePassword = async () => {
     const invalid = validatePasswordChange(current, next, confirm);
@@ -166,6 +192,14 @@ export function SettingsScreen() {
       <Muted>{user?.email} · {user?.role_name || user?.role}</Muted>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
+
+      <Card testID="settings-profile">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Profilim</Text>
+        <Muted>Ad soyad ve telefonunuzu güncelleyin. E-posta şirket yöneticisi tarafından değiştirilir.</Muted>
+        <Field label="Ad Soyad" testID="settings-profile-name" value={profileName} onChangeText={setProfileName} autoCapitalize="words" />
+        <Field label="Telefon" testID="settings-profile-phone" value={profilePhone} onChangeText={setProfilePhone} keyboardType="phone-pad" placeholder="05XX XXX XX XX" />
+        <PrimaryButton title={profileBusy ? "Kaydediliyor…" : "Kaydet"} testID="settings-profile-save" onPress={saveProfile} loading={profileBusy} color={colors.primary} />
+      </Card>
 
       {linkedEmployee ? (
         <Card testID="settings-self-photo">
