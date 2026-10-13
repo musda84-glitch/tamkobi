@@ -76,11 +76,7 @@ describe("orderPick", () => {
     expect(pendingPickCount([
       { pick_status: "idle", order_status: "approved" },
       { pick_status: "picking", order_status: "preparing" },
-<<<<<<< HEAD
-      { pick_status: "shipped", order_status: "shipped" },
-=======
       { pick_status: "shipped", order_status: "shipped" }, // B2B/manual sevk sonrası teslim bekler
->>>>>>> 452fa1a6 (feat(mobile): forgot SMS, profile edit, e-invoice date prompt, API redirect)
     ])).toBe(3);
     expect(pendingSevkCount({
       picks: [{ pick_status: "idle" }],
