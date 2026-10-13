@@ -25,7 +25,7 @@ _db = None
 RESET_CONFIRM_PHRASE = "VERİLERİ SIFIRLA"
 ALL_SCOPE = "all"
 
-_SKIP_ON_RESET = frozenset(set(saas._SKIP_ON_COMPANY_DELETE) | {"roles", "sync_tombstones"})
+_SKIP_ON_RESET = frozenset(set(saas._SKIP_ON_COMPANY_DELETE) | {"roles", "sync_tombstones", "company_audit_log"})
 _NON_BUSINESS = frozenset({"sync_tombstones", "storage_folders", "activity_logs"})
 
 RESET_SCOPES: Dict[str, Dict[str, Any]] = {

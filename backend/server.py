@@ -130,6 +130,7 @@ import trash
 import linked_moves
 import idempotency
 import pay_claim
+import company_audit
 import finance_txn
 import migration
 import pricing
@@ -309,6 +310,7 @@ async def startup_event():
             await db.work_orders.create_index([("order_id", 1), ("step_no", 1)])
             await db.recipes.create_index([("company_id", 1), ("created_at", -1)])
             await db.login_attempts.create_index("identifier")
+            await company_audit.ensure_indexes(db)
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
             except Exception:
@@ -366,6 +368,10 @@ async def startup_event():
             _start_leased_background(
                 "bg.idempotency_cleanup",
                 lambda: idempotency.cleanup_loop(db),
+            )
+            _start_leased_background(
+                "bg.company_audit_cleanup",
+                lambda: company_audit.cleanup_loop(db),
             )
         except Exception as _ie:
             logger.warning("idempotency cleanup loop skipped: %s", _ie)
@@ -630,6 +636,7 @@ async def _issue_session_for_user(
     email = (user.get("email") or "").strip().lower()
     user_id = str(user.get("_id", user.get("id")))
     is_sa = bool(user.get("is_super_admin"))
+    await company_audit.record_auth(db, user, request, "login", "Giriş yapıldı")
     role_doc = await rbac.role_for(user)
     emp = await attendance.employee_for_user(user)
     emp_id = (emp or {}).get("_id") or user.get("employee_id")
@@ -3507,6 +3514,12 @@ async def logout(request: Request, response: Response):
     except Exception:
         logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
     applog.log_auth("logout", f"{email or 'session'} signed out", email=email, user_email=email, user_id=str(uid) if uid else None, ip=applog.client_ip(request))
+    if uid:
+        try:
+            u = await db.users.find_one({"_id": uid}) or {"_id": uid, "email": email, "name": email or ""}
+            await company_audit.record_auth(db, u, request, "logout", "Çıkış yapıldı")
+        except Exception:
+            logging.getLogger(__name__).exception("İşlem geçmişine çıkış yazılamadı")
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
     return {"status": "success", "message": "Çıkış yapıldı."}
@@ -20771,6 +20784,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
+company_audit.init(db, get_current_user)
 saas.init(db, get_current_user)
 import platform_notices
 platform_notices.init(db)
@@ -21009,6 +21023,7 @@ app.include_router(api_router)
 app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)
+app.include_router(company_audit.router)
 app.include_router(expenses.router)
 app.include_router(tax_obligations.router)
 app.include_router(vehicles.router)

@@ -21,7 +21,7 @@ GROUPS = {
     "Stok / üretim": ["products", "product_categories", "units", "warehouses", "stock_movements", "stock_counts", "recipes", "production_orders", "work_orders", "label_templates"],
     "İK": ["employees", "payrolls", "leave_requests", "bonus_payments", "attendance_alerts"],
     "Entegrasyon": ["integration_configs", "einvoice_settings", "migration_api_configs", "migration_api_cache"],
-    "Sistem": ["activity_logs", "notifications", "trash", "counters"],
+    "Sistem": ["activity_logs", "company_audit_log", "notifications", "trash", "counters"],
 }
 
 

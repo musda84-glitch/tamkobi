@@ -130,12 +130,15 @@ FEATURES = [
     ("sevk_draft_invoice", "Sevk: Taslak fatura", "Mobil Depo Sevkiyat toplama ekranındaki Taslak fatura butonu. Kapalıysa mobilde gizlenir; Faturalar modül yetkisi de gerekir."),
     ("account_companies", "Hesap: Şirketlerim", "Sol menü Hesap açılır listesindeki Şirketlerim alanı ve şirket değiştirme. Kapalıysa personel yalnız aktif firmayı görür; şirket listesi/geçiş gizlenir."),
     ("export_personal_data", "Kişisel verilerimi ZIP indir", "Kenar çubuğundaki kişisel veri ZIP indirme ve Hesap → Profil veri dışa aktarımı. Kapalıysa buton gizlenir; API de engeller."),
+    ("company_audit", "İşlem geçmişini görebilir", "Sistem menüsündeki İşlem Geçmişi. Kapalıysa kullanıcı ve personel bu ekranı açamaz. Firma yöneticisi her zaman görür ve buradan yetki verir."),
 ]
 FEATURE_DEFAULTS: Dict[str, bool] = {k: True for k, _, _ in FEATURES}
 
 
 def feature_default(code: str, key: str) -> bool:
     """Per-role defaults when a feature key was never saved on the role doc."""
+    if key == "company_audit":
+        return False
     if code == "admin":
         return True
     if key in ("account_companies", "export_personal_data") and code == "personel":
@@ -615,6 +618,16 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         if skip_rbac and not user:
             return await call_next(request)
 
+        if user and request.method not in ("GET", "HEAD", "OPTIONS"):
+            import company_audit
+            await company_audit.safe_prepare(request, _db, user)
+
+        async def _audit_done(response):
+            if user and request.method not in ("GET", "HEAD", "OPTIONS"):
+                import company_audit
+                await company_audit.safe_commit(request, _db, user, getattr(response, "status_code", 500))
+            return response
+
         if user and not user.get("is_super_admin"):
             cid = request.query_params.get("company_id")
             if not cid:
@@ -633,7 +646,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"detail": "Bu şirket hesabına erişiminiz yok."}, status_code=403)
 
         if skip_rbac:
-            return await call_next(request)
+            return await _audit_done(await call_next(request))
 
         module = module_for_path(path)
         # Mesaim self-service confirm/dispute is licensed under /mesai, not /personnel
@@ -660,9 +673,9 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                     try:
                         data = mask_money(_json.loads(body))
                     except ValueError:
-                        return JSONResponse(content=None, status_code=response.status_code)
-                    return JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"})
-            return response
+                        return await _audit_done(JSONResponse(content=None, status_code=response.status_code))
+                    return await _audit_done(JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"}))
+            return await _audit_done(response)
         if user and user.get("role") != "admin" and module:
             role = await role_for(user)
             perms = role.get("permissions", {})
@@ -673,7 +686,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             ip = request_ip(request)
             await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": user.get("active_company_id") or "comp_nexus_main_01", "user_id": user.get("id"), "user_name": user.get("name"),
                                                 "method": request.method, "path": path, "module": module, "ip": ip, "status": response.status_code, "created_at": _now()})
-        return response
+        return await _audit_done(response)
 
 
 async def _notify_role_assigned(company_id: Optional[str], emp: Dict[str, Any], role: str, user_id: Optional[str]):

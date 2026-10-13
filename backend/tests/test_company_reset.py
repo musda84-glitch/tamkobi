@@ -1,8 +1,15 @@
 """Şirket iş verisi sıfırlama: /api/system/companies/{id}/reset-preview|reset-data."""
+import asyncio
+import copy
 import os
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import requests
+
+import company_reset
+from mysql_store import match_query
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
 API = BASE_URL + "/api"
@@ -181,3 +188,93 @@ class TestCompanyDataReset:
             timeout=30,
         )
         assert bad.status_code == 400
+
+
+class _ResetColl:
+    def __init__(self):
+        self.docs = []
+        self._found = []
+
+    def find(self, query=None, projection=None):
+        self._found = [copy.deepcopy(d) for d in self.docs if match_query(d, query or {})]
+        return self
+
+    async def to_list(self, length=None):
+        rows = self._found
+        if length is not None:
+            rows = rows[:length]
+        return rows
+
+    async def delete_many(self, query):
+        kept = []
+        deleted = 0
+        for doc in self.docs:
+            if match_query(doc, query or {}):
+                deleted += 1
+            else:
+                kept.append(doc)
+        self.docs = kept
+        return SimpleNamespace(deleted_count=deleted)
+
+    async def delete_one(self, query):
+        return SimpleNamespace(deleted_count=0)
+
+    async def update_one(self, query, update):
+        return SimpleNamespace(modified_count=1)
+
+    async def count_documents(self, query):
+        return sum(1 for doc in self.docs if match_query(doc, query or {}))
+
+
+class _ResetDB:
+    def __init__(self):
+        self._cols = {}
+
+    def __getitem__(self, name):
+        self._cols.setdefault(name, _ResetColl())
+        return self._cols[name]
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self[name]
+
+    async def list_collection_names(self):
+        return list(self._cols.keys())
+
+
+def test_reset_keeps_company_audit_log(monkeypatch):
+    asyncio.run(_reset_keeps_company_audit_log(monkeypatch))
+
+
+async def _reset_keeps_company_audit_log(monkeypatch):
+    assert "company_audit_log" in company_reset._SKIP_ON_RESET
+    db = _ResetDB()
+    db["invoices"].docs.append({"_id": "inv1", "company_id": "co_a", "invoice_number": "F-1"})
+    db["company_audit_log"].docs.append({
+        "_id": "aud1",
+        "company_id": "co_a",
+        "summary": "Fiyat 100 → 120",
+    })
+    monkeypatch.setattr(company_reset.saas, "license_id_of", AsyncMock(return_value="lic_a"))
+    monkeypatch.setattr(
+        company_reset.saas,
+        "companies_on_license",
+        AsyncMock(return_value=[{"_id": "co_a"}, {"_id": "co_b"}]),
+    )
+    monkeypatch.setattr("rbac.ensure_roles", AsyncMock())
+    monkeypatch.setattr("storage_manager.ensure_account_folders", AsyncMock())
+    previous = company_reset._db
+    company_reset.init(db)
+    try:
+        deleted = await company_reset.wipe_company_business_data("co_a")
+    finally:
+        company_reset._db = previous
+    assert "company_audit_log" not in deleted
+    assert db["company_audit_log"].docs == [{
+        "_id": "aud1",
+        "company_id": "co_a",
+        "summary": "Fiyat 100 → 120",
+    }]
+    assert db["invoices"].docs == []
+    assert deleted.get("invoices") == 1

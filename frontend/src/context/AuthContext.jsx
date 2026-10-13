@@ -51,6 +51,7 @@ const BASE_MENU = [
   { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
   { label: "Destek", path: "/support", badge: "Talep" },
   { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
+  { label: "İşlem Geçmişi", path: "/islem-gecmisi", badge: "1 yıl" },
 ];
 
 export const AuthProvider = ({ children }) => {
@@ -71,7 +72,15 @@ export const AuthProvider = ({ children }) => {
 
   const menuItems = useMemo(() => {
     if (!user) return [];
-    const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && selfPersonnelNavAllowed(m.path, user) && personelMenuPathAllowed(m.path, user) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
+    const roleCode = String(user?.role || "").trim().toLowerCase();
+    const isCompanyAdmin = roleCode === "admin" || roleCode === "owner" || roleCode === "yönetici" || roleCode === "yonetici";
+    const canSeeAudit = isCompanyAdmin || !!user?.is_super_admin || user?.features?.company_audit === true;
+    const visible = (m) => {
+      if (m.path === "/islem-gecmisi" && !canSeeAudit) return false;
+      const personelOk = personelMenuPathAllowed(m.path, user) || (m.path === "/islem-gecmisi" && canSeeAudit);
+      const allowed = m.path === "/islem-gecmisi" ? canSeeAudit : can(m.path);
+      return m.isSystem ? !!user?.is_super_admin : allowed && moduleOn(m.path) && selfPersonnelNavAllowed(m.path, user) && personelOk && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets"));
+    };
     const rank = (path) => {
       const i = moduleOrder.indexOf(path);
       if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
