@@ -76,6 +76,8 @@ const ALLOWED_DUPLICATE_TESTIDS = {
   ],
   "pages/SettingsPage.jsx": ['"einvoice-assigned-provider"'],
   "pages/SupportPage.jsx": ["{`support-att-${i}`}"],
+  // Tur hedefleri: gerçek düğme HelpButton'da; burada CSS seçici olarak geçer.
+  "help/pageRegistry.js": ['"help-page-btn"'],
 };
 
 function sourceFiles(dir = SRC, out = []) {
