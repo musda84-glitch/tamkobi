@@ -268,7 +268,7 @@ def format_integrator_gib_status(
             if resolved.get("status_code"):
                 code = resolved["status_code"]
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("Beklenmeyen hata (e_invoice.py)")
 
     if portal:
         low = portal.lower().replace("ı", "i").replace("İ", "i")

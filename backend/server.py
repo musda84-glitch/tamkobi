@@ -115,6 +115,8 @@ import location_consent
 import personnel_wage
 import trash
 import linked_moves
+import idempotency
+import finance_txn
 import migration
 import pricing
 from report_helpers import issue_q as _issue_q, report_insights as _report_insights
@@ -292,7 +294,7 @@ async def startup_event():
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
             except Exception:
-                pass
+                logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
             filled = await user_numbers.backfill_missing_user_numbers(db)
             if filled:
                 logger.info("Assigned user_number to %s existing users", filled)
@@ -342,6 +344,13 @@ async def startup_event():
             )
         except Exception as _pe:
             logger.warning("platform ephemera cleanup loop skipped: %s", _pe)
+        try:
+            _start_leased_background(
+                "bg.idempotency_cleanup",
+                lambda: idempotency.cleanup_loop(db),
+            )
+        except Exception as _ie:
+            logger.warning("idempotency cleanup loop skipped: %s", _ie)
     else:
         logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
 
@@ -369,7 +378,7 @@ async def get_current_user(request: Request) -> dict:
     except HTTPException:
         raise
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
     return user
 
 
@@ -409,7 +418,7 @@ async def _platform_admin_audit_middleware(request: Request, call_next):
                 details={"status": response.status_code},
             )
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
     return response
 
 
@@ -3478,7 +3487,7 @@ async def logout(request: Request, response: Response):
             email = u.get("email")
             uid = u.get("id") or u.get("_id")
     except Exception:
-        pass
+        logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
     applog.log_auth("logout", f"{email or 'session'} signed out", email=email, user_email=email, user_id=str(uid) if uid else None, ip=applog.client_ip(request))
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
@@ -3559,7 +3568,7 @@ async def _forgot_sms_deliver(
                 {"$set": {"used_at": now.isoformat(), "revoked": True, "sms_failed": True, "sms_error": sms_detail[:200]}},
             )
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         logger.warning("forgot-password sms %s user=%s: %s", sms_status, email or phone_raw, sms_detail)
 
 
@@ -4842,7 +4851,7 @@ def _b2b_guess_table_name(filename: str, data: bytes) -> str:
             sample.decode("utf-8")
             return (name or "siparis") + ".csv"
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
     return name or "siparis.xlsx"
 
 
@@ -6722,6 +6731,14 @@ async def product_lots(product_id: str, include_empty: bool = False, user: dict 
 async def pos_checkout(req: Dict[str, Any], request: Request):
     """Perakende hızlı satış: çok satırlı sepet → onaylı e-arşiv + kasa tahsilatı."""
     company_id = req.get("company_id", "comp_nexus_main_01")
+    return await idempotency.run(
+        db, company_id, request, "pos/checkout",
+        lambda: _pos_checkout_core(req, request),
+    )
+
+
+async def _pos_checkout_core(req: Dict[str, Any], request: Request):
+    company_id = req.get("company_id", "comp_nexus_main_01")
     items_in = req.get("items") or []
     if not items_in:
         raise HTTPException(status_code=400, detail="Sepet boş.")
@@ -6851,8 +6868,19 @@ async def pos_checkout(req: Dict[str, Any], request: Request):
                 "source": "pos_quick",
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
-        except HTTPException:
-            pass
+            try:
+                bal = await account_balance.recalc_account_balance(db, cash["_id"])
+                await db.bank_accounts.update_one({"_id": cash["_id"]}, {"$set": {"current_balance": bal}})
+            except Exception:
+                logging.getLogger(__name__).exception("POS checkout kasa recalc: %s", cash["_id"])
+        except HTTPException as exc:
+            logging.getLogger(__name__).exception(
+                "POS checkout kasa tahsilatı atlandı (finans): %s · %s", invoice.get("invoice_number"), exc.detail
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "POS checkout kasa tahsilatı başarısız: %s", invoice.get("invoice_number")
+            )
 
     company = await db.companies.find_one({"_id": company_id}) or {}
     return {
@@ -6927,6 +6955,14 @@ async def pos_lookup_receipt(invoice_number: str, company_id: Optional[str] = "c
 async def pos_return(req: Dict[str, Any], request: Request):
     """POS fiş iadesi: stok geri + kasa çıkışı + iade kaydı."""
     company_id = req.get("company_id", "comp_nexus_main_01")
+    return await idempotency.run(
+        db, company_id, request, "pos/return",
+        lambda: _pos_return_core(req, request),
+    )
+
+
+async def _pos_return_core(req: Dict[str, Any], request: Request):
+    company_id = req.get("company_id", "comp_nexus_main_01")
     invoice_number = req.get("invoice_number") or ""
     invoice_id = req.get("invoice_id")
     inv = None
@@ -6941,61 +6977,94 @@ async def pos_return(req: Dict[str, Any], request: Request):
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fiş iade edilemez.")
     grand = float(inv.get("grand_total") or 0)
+    # Atomik iade kilidi (returned != True)
+    claim = await db.invoices.update_one_atomic(
+        {"_id": inv["_id"], "returned": {"$ne": True}},
+        {"$set": {"returned": True, "_return_claimed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Bu fiş zaten iade edilmiş.")
     returned_prev = float(inv.get("returned_amount") or 0)
     if returned_prev >= grand - 0.01 and grand > 0:
-        raise HTTPException(status_code=400, detail="Bu fiş zaten iade edilmiş.")
+        await db.invoices.update_one({"_id": inv["_id"]}, {"$unset": {"_return_claimed_at": ""}, "$set": {"returned": True}})
+        raise HTTPException(status_code=409, detail="Bu fiş zaten iade edilmiş.")
 
-    # Stok geri al
-    for item in inv.get("items", []):
-        pid, qty = _invoice_item_pid_qty(item)
-        if pid and qty:
-            await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-        await _apply_lot_delta(item, +1.0)
+    txn = finance_txn.CompensatingTxn(label=f"pos-return:{inv['_id']}")
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    inv_count = await db.invoices.count_documents({"company_id": company_id})
-    ret_number = f"IAD{datetime.now(timezone.utc).strftime('%Y%m%d')}{str(inv_count + 1).zfill(5)}"
-    return_inv = {
-        "_id": str(uuid.uuid4()),
-        "company_id": company_id,
-        "invoice_type": "sales_return",
-        "e_type": "e_archive",
-        "invoice_number": ret_number,
-        "contact_id": inv.get("contact_id"),
-        "contact_name": inv.get("contact_name"),
-        "contact_tax_id": inv.get("contact_tax_id") or "",
-        "issue_date": today,
-        "due_date": today,
-        "currency": "TRY",
-        "fx_rate": 1,
-        "items": inv.get("items") or [],
-        "subtotal": inv.get("subtotal") or 0,
-        "vat_total": inv.get("vat_total") or 0,
-        "discount_total": 0,
-        "grand_total": grand,
-        "status": "approved",
-        "gib_status": "İade",
-        "payment_status": "refunded",
-        "paid_amount": grand,
-        "source_channel": "pos_return",
-        "original_invoice_id": inv["_id"],
-        "original_invoice_number": inv.get("invoice_number"),
-        "payment_method": inv.get("payment_method") or "cash",
-        "notes": f"POS iade ← {inv.get('invoice_number')}",
-        "effects_applied": True,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "approved_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.invoices.insert_one(return_inv)
-    await db.invoices.update_one(
-        {"_id": inv["_id"]},
-        {"$set": {
-            "returned_amount": grand,
-            "return_invoice_id": return_inv["_id"],
-            "return_invoice_number": ret_number,
-            "returned_at": datetime.now(timezone.utc).isoformat(),
-        }},
-    )
+    async def _body(cx: finance_txn.CompensatingTxn):
+        # Stok geri al
+        for item in inv.get("items", []):
+            pid, qty = _invoice_item_pid_qty(item)
+            if pid and qty:
+                await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
+            await _apply_lot_delta(item, +1.0)
+
+        async def _undo_stock():
+            for item in inv.get("items", []):
+                pid, qty = _invoice_item_pid_qty(item)
+                if pid and qty:
+                    await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+                await _apply_lot_delta(item, -1.0)
+
+        cx.push("stock", _undo_stock)
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        inv_count = await db.invoices.count_documents({"company_id": company_id})
+        ret_number = f"IAD{datetime.now(timezone.utc).strftime('%Y%m%d')}{str(inv_count + 1).zfill(5)}"
+        return_inv = {
+            "_id": str(uuid.uuid4()),
+            "company_id": company_id,
+            "invoice_type": "sales_return",
+            "e_type": "e_archive",
+            "invoice_number": ret_number,
+            "contact_id": inv.get("contact_id"),
+            "contact_name": inv.get("contact_name"),
+            "contact_tax_id": inv.get("contact_tax_id") or "",
+            "issue_date": today,
+            "due_date": today,
+            "currency": "TRY",
+            "fx_rate": 1,
+            "items": inv.get("items") or [],
+            "subtotal": inv.get("subtotal") or 0,
+            "vat_total": inv.get("vat_total") or 0,
+            "discount_total": 0,
+            "grand_total": grand,
+            "status": "approved",
+            "gib_status": "İade",
+            "payment_status": "refunded",
+            "paid_amount": grand,
+            "source_channel": "pos_return",
+            "original_invoice_id": inv["_id"],
+            "original_invoice_number": inv.get("invoice_number"),
+            "payment_method": inv.get("payment_method") or "cash",
+            "notes": f"POS iade ← {inv.get('invoice_number')}",
+            "effects_applied": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.invoices.insert_one(return_inv)
+        cx.push("ret_inv", lambda: db.invoices.delete_one({"_id": return_inv["_id"]}))
+        await db.invoices.update_one(
+            {"_id": inv["_id"]},
+            {"$set": {
+                "returned": True,
+                "returned_amount": grand,
+                "return_invoice_id": return_inv["_id"],
+                "return_invoice_number": ret_number,
+                "returned_at": datetime.now(timezone.utc).isoformat(),
+            }, "$unset": {"_return_claimed_at": ""}},
+        )
+        return return_inv, today, ret_number
+
+    try:
+        return_inv, today, ret_number = await txn.run(_body)
+    except Exception:
+        await db.invoices.update_one(
+            {"_id": inv["_id"]},
+            {"$unset": {"returned": "", "_return_claimed_at": ""}},
+        )
+        raise
+
 
     # Cari: satışta artış vardı; iadede düş
     if inv.get("contact_id"):
@@ -7026,8 +7095,14 @@ async def pos_return(req: Dict[str, Any], request: Request):
                 "source": "pos_return",
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
-        except HTTPException:
-            pass
+        except HTTPException as exc:
+            logging.getLogger(__name__).exception(
+                "POS iade kasa çıkışı atlandı (finans): %s · %s", inv.get("invoice_number"), exc.detail
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "POS iade kasa çıkışı başarısız: %s", inv.get("invoice_number")
+            )
 
     company = await db.companies.find_one({"_id": company_id}) or {}
     return {
@@ -7504,7 +7579,7 @@ def _line_set(it, key, val):
         try:
             object.__setattr__(it, key, val)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
 
 async def _fill_stock_codes(company_id: str, items: list):
     """Copy product SKU / barcode onto document lines when missing (print + scan)."""
@@ -8066,8 +8141,34 @@ async def _apply_lot_delta(item: dict, sign: float):
             await db.stock_lots.update_one({"_id": lot_id}, {"$set": {"is_active": False}})
 
 
+def _invoice_payment_status(paid_amount: float, grand_total: float) -> str:
+    paid = float(paid_amount or 0)
+    grand = float(grand_total or 0)
+    if paid >= grand - 0.01 and grand > 0:
+        return "paid"
+    if paid > 0.01:
+        return "partially_paid"
+    return "unpaid"
+
+
+_INVOICE_EFFECT_KEYS = frozenset({
+    "items", "contact_id", "currency", "fx_rate", "fx_source", "issue_date",
+    "invoice_type", "general_discount_rate", "general_discount_amount",
+    "withholding_rate", "price_mode",
+})
+
+
+def _purchase_tracks_stock(inv: dict) -> bool:
+    """Alış stok takibi: gelen e-belge veya stock_effects_applied bayrağı olan faturalar."""
+    if inv.get("invoice_type") != "purchase":
+        return False
+    if inv.get("source") == "edoc_inbox" or inv.get("edoc_id"):
+        return True
+    return inv.get("stock_effects_applied") is not None
+
+
 async def _apply_invoice_effects(inv: dict):
-    """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. İrsaliye bakiyeye yazılmaz."""
+    """Onaylanan fatura: cari bakiyesi + satış stok düşümü / alış stok girişi. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
     if inv.get("contact_id"):
@@ -8079,14 +8180,25 @@ async def _apply_invoice_effects(inv: dict):
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
             await _apply_lot_delta(item, -1.0)
+    elif _purchase_tracks_stock(inv):
+        # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
+        if inv.get("stock_effects_applied") is False:
+            for item in inv.get("items", []):
+                pid, qty = _invoice_item_pid_qty(item)
+                if pid:
+                    await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
+                await _apply_lot_delta(item, +1.0)
+        if inv.get("_id"):
+            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"stock_effects_applied": True}})
+        inv["stock_effects_applied"] = True
 
 
 async def _reverse_invoice_effects(inv: dict):
-    """Gelen e-fatura reddi: cariyi geri al; satış stok düşümünü veya gelen alış stok girişini tersine çevir. İrsaliye bakiyeye yazılmaz."""
+    """Onaylı fatura etkilerini geri al: cari + satış/alış stok. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
     if inv.get("contact_id"):
-        change = -float(inv.get("grand_total", 0)) if inv.get("invoice_type") == "sales" else float(inv.get("grand_total", 0))
+        change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
     if inv.get("invoice_type") == "sales":
         for item in inv.get("items", []):
@@ -8094,11 +8206,15 @@ async def _reverse_invoice_effects(inv: dict):
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
             await _apply_lot_delta(item, +1.0)
-    elif inv.get("invoice_type") == "purchase" and (inv.get("source") == "edoc_inbox" or inv.get("edoc_id")):
+    elif _purchase_tracks_stock(inv) and inv.get("stock_effects_applied") is not False:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+            await _apply_lot_delta(item, -1.0)
+        if inv.get("_id"):
+            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"stock_effects_applied": False}})
+        inv["stock_effects_applied"] = False
 
 
 @api_router.post("/invoices/{invoice_id}/approve")
@@ -8191,6 +8307,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
     allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
         _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
         if _c:
@@ -8208,6 +8325,8 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
                 phone = str(_c.get("phone") or "").strip()
                 if phone:
                     allowed["customer_phone"] = phone
+            if "contact_name" not in allowed:
+                allowed["contact_name"] = _c.get("name") or inv.get("contact_name")
     if "issue_time" in allowed and allowed["issue_time"] is not None:
         t = str(allowed["issue_time"] or "").strip()
         if len(t) == 5 and t[2] == ":":
@@ -8230,15 +8349,45 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(allowed["grand_total"], stamp["fx_rate"])
-        if inv.get("effects_applied") and inv.get("contact_id") and inv.get("invoice_type") == "sales":
-            await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": allowed["local_total"] - fx.try_amount(inv)}})
-    elif any(k in allowed for k in ("currency", "fx_rate", "issue_date")):
+    elif any(k in allowed for k in ("currency", "fx_rate", "fx_source", "issue_date")):
         merged = {**inv, **allowed}
         stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(merged.get("grand_total") or inv.get("grand_total") or 0, stamp["fx_rate"])
+    # Onaylı fatura: önce eski etkileri geri al, sonra yeni dokümana uygula (cari + stok)
+    if reapply_effects:
+        try:
+            await _reverse_invoice_effects(inv)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Onaylı fatura düzenleme: eski etkiler geri alınamadı %s", invoice_id
+            )
+            raise HTTPException(status_code=500, detail="Fatura etkileri geri alınamadı; düzenleme iptal.")
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
     updated = await db.invoices.find_one({"_id": invoice_id})
+    if reapply_effects and updated:
+        try:
+            await _apply_invoice_effects(updated)
+            paid = float(updated.get("paid_amount") or 0)
+            ps = _invoice_payment_status(paid, updated.get("grand_total") or 0)
+            if ps != updated.get("payment_status"):
+                await db.invoices.update_one({"_id": invoice_id}, {"$set": {"payment_status": ps}})
+                updated["payment_status"] = ps
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Onaylı fatura düzenleme: yeni etkiler uygulanamadı %s — eski hâle dönülüyor", invoice_id
+            )
+            try:
+                await _reverse_invoice_effects(updated)
+                await db.invoices.update_one({"_id": invoice_id}, {"$set": {
+                    k: inv.get(k) for k in allowed.keys() if k in inv
+                }})
+                await _apply_invoice_effects(inv)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
+                )
+            raise HTTPException(status_code=500, detail="Fatura etkileri uygulanamadı; değişiklik geri alındı.")
     if updated and updated.get("status") == "draft" and "items" in allowed:
         try:
             await _sync_draft_order_items(updated, allowed.get("items") or updated.get("items") or [])
@@ -8729,90 +8878,133 @@ async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], use
 
     new_paid = inv.get("paid_amount", 0) + amount
     grand_total = inv.get("grand_total", 0)
-    payment_status = "paid" if new_paid >= grand_total - 0.01 else "partially_paid"
+    payment_status = _invoice_payment_status(new_paid, grand_total)
     try_amt = fx.try_amount(inv, amount)
+    txn = finance_txn.CompensatingTxn(label=f"record-payment:{invoice_id}")
 
-    await db.invoices.update_one(
-        {"_id": invoice_id},
-        {"$set": {"paid_amount": new_paid, "payment_status": payment_status}}
-    )
-
-    if req.get("partner_id"):
-        partner = await db.partners.find_one({"_id": req["partner_id"]})
-        if not partner:
-            raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-        is_sales = inv.get("invoice_type") == "sales"
-        tx_type = "withdrawal" if is_sales else "capital_in"
-        inc = {"balance": -try_amt, "total_withdrawn": try_amt} if is_sales else {"balance": try_amt, "total_capital_in": try_amt}
-        await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
-        description = f"{inv.get('invoice_number')} nolu fatura {'tahsilatı ortak tarafından alındı' if is_sales else 'ödemesi ortak tarafından yapıldı'} / {inv.get('contact_name')}"
-        ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=try_amt,
-                                 account_id=None, account_name="Ortaklar Hesabı", description=description, date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-        pdoc = ptx.to_mongo()
-        pdoc["contact_id"] = inv.get("contact_id")
-        pdoc["contact_name"] = inv.get("contact_name")
-        pdoc["related_invoice_id"] = invoice_id
-        for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
-            if req.get(k) is not None:
-                pdoc[k] = req[k]
-        await db.partner_transactions.insert_one(pdoc)
-        await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": -try_amt if is_sales else try_amt}})
-        return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status, "via": "partner"}
-
-    if account_id:
-        acc = await db.bank_accounts.find_one({"_id": account_id})
-        acc_name = acc.get("account_name", "Banka") if acc else "Banka"
-        await bank_guard.assert_manual_allowed(db, account_id)
-        is_sales = inv.get("invoice_type") == "sales"
-        if is_sales:
-            await bank_guard.assert_collection_allowed(db, account_id)
-        acc_ccy = (acc.get("currency") if acc else "TRY") or "TRY"
-        posted = amount if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else try_amt
-        posted_ccy = acc_ccy if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else "TRY"
-
-        
-        await db.bank_accounts.update_one(
-            {"_id": account_id},
-            {"$inc": {"current_balance": posted if is_sales else -posted}}
+    async def _body(cx: finance_txn.CompensatingTxn):
+        await db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": {"paid_amount": new_paid, "payment_status": payment_status}}
         )
+        old_paid = inv.get("paid_amount", 0)
+        old_ps = inv.get("payment_status")
+        cx.push("invoice_paid", lambda: db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": {"paid_amount": old_paid, "payment_status": old_ps}},
+        ))
 
-        tx_doc = {
-            "_id": str(uuid.uuid4()),
-            "company_id": inv.get("company_id"),
-            "account_id": account_id,
-            "account_name": acc_name,
-            "type": "inflow" if is_sales else "outflow",
-            "category": "Fatura Tahsilatı" if is_sales else "Fatura Ödemesi",
-            "amount": posted,
-            "currency": posted_ccy,
-            "description": f"{inv.get('invoice_number')} nolu fatura ödemesi / {inv.get('contact_name')}" + (f" ({amount} {inv.get('currency')} × {inv.get('fx_rate')})" if posted_ccy == "TRY" and (inv.get("currency") or "TRY") != "TRY" else ""),
-            "contact_id": inv.get("contact_id"),
-            "contact_name": inv.get("contact_name"),
-            "related_invoice_id": invoice_id,
-            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
-            if req.get(k) is not None:
-                tx_doc[k] = req[k]
-        if not is_sales:
-            owner_meta = await bank_guard.apply_customer_card_owner_effect(
-                db, acc, "outflow", try_amt, inv.get("contact_id"), sign=1,
+        if req.get("partner_id"):
+            partner = await db.partners.find_one({"_id": req["partner_id"]})
+            if not partner:
+                raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+            is_sales = inv.get("invoice_type") == "sales"
+            tx_type = "withdrawal" if is_sales else "capital_in"
+            inc = {"balance": -try_amt, "total_withdrawn": try_amt} if is_sales else {"balance": try_amt, "total_capital_in": try_amt}
+            await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+            cx.push("partner_bal", lambda: db.partners.update_one(
+                {"_id": partner["_id"]}, {"$inc": {k: -v for k, v in inc.items()}},
+            ))
+            description = f"{inv.get('invoice_number')} nolu fatura {'tahsilatı ortak tarafından alındı' if is_sales else 'ödemesi ortak tarafından yapıldı'} / {inv.get('contact_name')}"
+            ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=try_amt,
+                                     account_id=None, account_name="Ortaklar Hesabı", description=description, date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+            pdoc = ptx.to_mongo()
+            pdoc["contact_id"] = inv.get("contact_id")
+            pdoc["contact_name"] = inv.get("contact_name")
+            pdoc["related_invoice_id"] = invoice_id
+            for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
+                if req.get(k) is not None:
+                    pdoc[k] = req[k]
+            await db.partner_transactions.insert_one(pdoc)
+            cx.push("partner_tx", lambda: db.partner_transactions.delete_one({"_id": pdoc["_id"]}))
+            contact_delta = -try_amt if is_sales else try_amt
+            await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": contact_delta}})
+            cx.push("contact_bal", lambda: db.contacts.update_one(
+                {"_id": inv.get("contact_id")}, {"$inc": {"balance": -contact_delta}},
+            ))
+            return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status, "via": "partner"}
+
+        if account_id:
+            acc = await db.bank_accounts.find_one({"_id": account_id})
+            acc_name = acc.get("account_name", "Banka") if acc else "Banka"
+            await bank_guard.assert_manual_allowed(db, account_id)
+            is_sales = inv.get("invoice_type") == "sales"
+            if is_sales:
+                await bank_guard.assert_collection_allowed(db, account_id)
+            acc_ccy = (acc.get("currency") if acc else "TRY") or "TRY"
+            posted = amount if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else try_amt
+            posted_ccy = acc_ccy if acc_ccy.upper() == (inv.get("currency") or "TRY").upper() else "TRY"
+            bal_delta = posted if is_sales else -posted
+            await db.bank_accounts.update_one(
+                {"_id": account_id},
+                {"$inc": {"current_balance": bal_delta}}
             )
-            if owner_meta:
-                tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
-                tx_doc["owner_contact_name"] = owner_meta.get("owner_contact_name") or None
-        await db.bank_transactions.insert_one(tx_doc)
+            cx.push("bank_bal", lambda: db.bank_accounts.update_one(
+                {"_id": account_id}, {"$inc": {"current_balance": -bal_delta}},
+            ))
 
-        balance_change = -try_amt if is_sales else try_amt
-        await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": balance_change}})
+            tx_doc = {
+                "_id": str(uuid.uuid4()),
+                "company_id": inv.get("company_id"),
+                "account_id": account_id,
+                "account_name": acc_name,
+                "type": "inflow" if is_sales else "outflow",
+                "category": "Fatura Tahsilatı" if is_sales else "Fatura Ödemesi",
+                "amount": posted,
+                "currency": posted_ccy,
+                "description": f"{inv.get('invoice_number')} nolu fatura ödemesi / {inv.get('contact_name')}" + (f" ({amount} {inv.get('currency')} × {inv.get('fx_rate')})" if posted_ccy == "TRY" and (inv.get("currency") or "TRY") != "TRY" else ""),
+                "contact_id": inv.get("contact_id"),
+                "contact_name": inv.get("contact_name"),
+                "related_invoice_id": invoice_id,
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
+                if req.get(k) is not None:
+                    tx_doc[k] = req[k]
+            if not is_sales:
+                owner_meta = await bank_guard.apply_customer_card_owner_effect(
+                    db, acc, "outflow", try_amt, inv.get("contact_id"), sign=1,
+                )
+                if owner_meta:
+                    tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
+                    tx_doc["owner_contact_name"] = owner_meta.get("owner_contact_name") or None
+            await db.bank_transactions.insert_one(tx_doc)
+            cx.push("bank_tx", lambda: db.bank_transactions.delete_one({"_id": tx_doc["_id"]}))
 
-    return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status}
+            balance_change = -try_amt if is_sales else try_amt
+            await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": balance_change}})
+            cx.push("contact_bal", lambda: db.contacts.update_one(
+                {"_id": inv.get("contact_id")}, {"$inc": {"balance": -balance_change}},
+            ))
+            try:
+                bal = await account_balance.recalc_account_balance(db, account_id)
+                await db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Fatura ödemesi sonrası kasa bakiyesi yeniden hesaplanamadı: %s", account_id
+                )
+
+        return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status}
+
+    return await txn.run(_body)
 
 
 @api_router.post("/invoices/{invoice_id}/record-payment")
-async def record_invoice_payment(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    return await _record_invoice_payment_core(invoice_id, req, user)
+async def record_invoice_payment(
+    invoice_id: str,
+    req: Dict[str, Any],
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    return await idempotency.run(
+        db,
+        inv.get("company_id") or user.get("company_id") or "",
+        request,
+        f"invoices/{invoice_id}/record-payment",
+        lambda: _record_invoice_payment_core(invoice_id, req, user),
+    )
 
 # ----------------- TAKSİT MODÜLÜ -----------------
 def _add_interval(d: date, interval: str, n: int, interval_days: int = 30) -> date:
@@ -8953,52 +9145,123 @@ async def installments_summary(company_id: Optional[str] = None, user: dict = De
             "paid_total": round(sum(r.get("paid_amount", 0) for r in rows), 2)}
 
 @api_router.post("/installments/{inst_id}/pay")
-async def pay_installment(inst_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def pay_installment(
+    inst_id: str,
+    req: Dict[str, Any],
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     inst = await tenant_access.get_tenant_doc(db, "installments", inst_id, user, not_found="Taksit bulunamadı.")
-    if inst.get("status") == "paid":
-        raise HTTPException(status_code=400, detail="Bu taksit zaten ödenmiş.")
-    remaining = round(inst["amount"] - inst.get("paid_amount", 0), 2)
-    amount = round(float(req.get("amount") or remaining), 2)
-    if amount <= 0 or amount > remaining + 0.01:
-        raise HTTPException(status_code=400, detail=f"Tutar 0 ile {remaining} arasında olmalı.")
-    link = linked_moves.link_fields("installment", inst_id)
-    if inst.get("invoice_id"):
-        result = await _record_invoice_payment_core(inst["invoice_id"], {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id"), **link}, user)
-    else:
-        is_recv = inst.get("direction") == "receivable"
-        if req.get("partner_id"):
-            partner = await db.partners.find_one({"_id": req["partner_id"]})
-            if not partner:
-                raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-            inc = {"balance": -amount, "total_withdrawn": amount} if is_recv else {"balance": amount, "total_capital_in": amount}
-            await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
-            ptx = PartnerTransaction(company_id=inst["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type="withdrawal" if is_recv else "capital_in", amount=amount, account_id=None, account_name="Ortaklar Hesabı",
-                                     description=f"{inst.get('contact_name')} bakiye {inst['label']} ortak tarafından {'tahsil edildi' if is_recv else 'ödendi'}", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-            pdoc = ptx.to_mongo()
-            pdoc.update(link)
-            await db.partner_transactions.insert_one(pdoc)
-        else:
-            acc = await db.bank_accounts.find_one({"_id": req.get("account_id")})
-            if not acc:
-                raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
-            await bank_guard.assert_manual_allowed(db, acc["_id"])
-            if is_recv:
-                await bank_guard.assert_collection_allowed(db, acc["_id"])
-            tx = BankTransaction(company_id=inst["company_id"], account_id=acc["_id"], account_name=acc.get("account_name", "Banka"), type="inflow" if is_recv else "outflow", category="Taksit Tahsilatı" if is_recv else "Taksit Ödemesi",
-                                 amount=amount, description=f"{inst.get('contact_name')} • Açık bakiye {inst['label']}", contact_id=inst["contact_id"], contact_name=inst.get("contact_name"))
-            tdoc = tx.to_mongo()
-            tdoc.update(link)
-            await db.bank_transactions.insert_one(tdoc)
-            await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": amount if is_recv else -amount}})
-        await db.contacts.update_one({"_id": inst["contact_id"]}, {"$inc": {"balance": -amount if is_recv else amount}})
-        result = {"status": "success", "kind": "balance"}
-    new_paid = round(inst.get("paid_amount", 0) + amount, 2)
-    status = "paid" if new_paid >= inst["amount"] - 0.01 else "partial"
-    await db.installments.update_one({"_id": inst_id}, {"$set": {"paid_amount": new_paid, "status": status, "paid_at": datetime.now(timezone.utc).isoformat() if status == "paid" else None, "account_id": req.get("account_id")}})
-    if inst.get("invoice_id"):
-        paid_count = await db.installments.count_documents({"invoice_id": inst["invoice_id"], "status": "paid"})
-        await db.invoices.update_one({"_id": inst["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
-    return {"status": "success", "installment_status": status, "invoice_payment": result, "message": f"{inst['label']} için {amount:,.2f} ₺ {'tahsil edildi' if inst.get('direction') == 'receivable' else 'ödendi'}."}
+
+    async def _do():
+        claim = await db.installments.update_one_atomic(
+            {
+                "_id": inst_id,
+                "status": {"$ne": "paid"},
+                "_pay_claimed_at": {"$exists": False},
+            },
+            {"$set": {"_pay_claimed_at": datetime.now(timezone.utc).isoformat()}},
+        )
+        if claim.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Bu taksit zaten ödenmiş.")
+        fresh = await db.installments.find_one({"_id": inst_id}) or inst
+        remaining = round(fresh["amount"] - fresh.get("paid_amount", 0), 2)
+        amount = round(float(req.get("amount") or remaining), 2)
+        if amount <= 0 or amount > remaining + 0.01:
+            await db.installments.update_one({"_id": inst_id}, {"$unset": {"_pay_claimed_at": ""}})
+            raise HTTPException(status_code=400, detail=f"Tutar 0 ile {remaining} arasında olmalı.")
+        link = linked_moves.link_fields("installment", inst_id)
+        txn = finance_txn.CompensatingTxn(label=f"installment-pay:{inst_id}")
+
+        async def _body(cx: finance_txn.CompensatingTxn):
+            if fresh.get("invoice_id"):
+                result = await _record_invoice_payment_core(
+                    fresh["invoice_id"],
+                    {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id"), **link},
+                    user,
+                )
+            else:
+                is_recv = fresh.get("direction") == "receivable"
+                if req.get("partner_id"):
+                    partner = await db.partners.find_one({"_id": req["partner_id"]})
+                    if not partner:
+                        raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+                    inc = {"balance": -amount, "total_withdrawn": amount} if is_recv else {"balance": amount, "total_capital_in": amount}
+                    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+                    cx.push("partner", lambda: db.partners.update_one(
+                        {"_id": partner["_id"]}, {"$inc": {k: -v for k, v in inc.items()}},
+                    ))
+                    ptx = PartnerTransaction(company_id=fresh["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type="withdrawal" if is_recv else "capital_in", amount=amount, account_id=None, account_name="Ortaklar Hesabı",
+                                             description=f"{fresh.get('contact_name')} bakiye {fresh['label']} ortak tarafından {'tahsil edildi' if is_recv else 'ödendi'}", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+                    pdoc = ptx.to_mongo()
+                    pdoc.update(link)
+                    await db.partner_transactions.insert_one(pdoc)
+                    cx.push("ptx", lambda: db.partner_transactions.delete_one({"_id": pdoc["_id"]}))
+                else:
+                    acc = await db.bank_accounts.find_one({"_id": req.get("account_id")})
+                    if not acc:
+                        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+                    await bank_guard.assert_manual_allowed(db, acc["_id"])
+                    if is_recv:
+                        await bank_guard.assert_collection_allowed(db, acc["_id"])
+                    tx = BankTransaction(company_id=fresh["company_id"], account_id=acc["_id"], account_name=acc.get("account_name", "Banka"), type="inflow" if is_recv else "outflow", category="Taksit Tahsilatı" if is_recv else "Taksit Ödemesi",
+                                         amount=amount, description=f"{fresh.get('contact_name')} • Açık bakiye {fresh['label']}", contact_id=fresh["contact_id"], contact_name=fresh.get("contact_name"))
+                    tdoc = tx.to_mongo()
+                    tdoc.update(link)
+                    await db.bank_transactions.insert_one(tdoc)
+                    cx.push("btx", lambda: db.bank_transactions.delete_one({"_id": tdoc["_id"]}))
+                    bal_d = amount if is_recv else -amount
+                    await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": bal_d}})
+                    cx.push("acc", lambda: db.bank_accounts.update_one(
+                        {"_id": acc["_id"]}, {"$inc": {"current_balance": -bal_d}},
+                    ))
+                    try:
+                        bal = await account_balance.recalc_account_balance(db, acc["_id"])
+                        await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$set": {"current_balance": bal}})
+                    except Exception:
+                        logging.getLogger(__name__).exception("Taksit ödemesi kasa recalc: %s", acc["_id"])
+                contact_d = -amount if is_recv else amount
+                await db.contacts.update_one({"_id": fresh["contact_id"]}, {"$inc": {"balance": contact_d}})
+                cx.push("contact", lambda: db.contacts.update_one(
+                    {"_id": fresh["contact_id"]}, {"$inc": {"balance": -contact_d}},
+                ))
+                result = {"status": "success", "kind": "balance"}
+            new_paid = round(fresh.get("paid_amount", 0) + amount, 2)
+            status = "paid" if new_paid >= fresh["amount"] - 0.01 else "partial"
+            upd = await db.installments.update_one_atomic(
+                {"_id": inst_id, "status": {"$ne": "paid"}},
+                {"$set": {
+                    "paid_amount": new_paid,
+                    "status": status,
+                    "paid_at": datetime.now(timezone.utc).isoformat() if status == "paid" else None,
+                    "account_id": req.get("account_id"),
+                }, "$unset": {"_pay_claimed_at": ""}},
+            )
+            if upd.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Bu taksit zaten ödenmiş.")
+            if fresh.get("invoice_id"):
+                paid_count = await db.installments.count_documents({"invoice_id": fresh["invoice_id"], "status": "paid"})
+                await db.invoices.update_one({"_id": fresh["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
+            return {
+                "status": "success",
+                "installment_status": status,
+                "invoice_payment": result,
+                "message": f"{fresh['label']} için {amount:,.2f} ₺ {'tahsil edildi' if fresh.get('direction') == 'receivable' else 'ödendi'}.",
+            }
+
+        try:
+            return await txn.run(_body)
+        except Exception:
+            await db.installments.update_one({"_id": inst_id}, {"$unset": {"_pay_claimed_at": ""}})
+            raise
+
+    return await idempotency.run(
+        db,
+        inst.get("company_id") or user.get("company_id") or "",
+        request,
+        f"installments/{inst_id}/pay",
+        _do,
+    )
 
 
 @api_router.post("/installments/{inst_id}/unpay")
@@ -9387,7 +9650,7 @@ async def delete_simulated_bank_transactions(company_id: Optional[str] = Query("
         try:
             await _reverse_tx_effects(tx, -1)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         await trash.soft_delete(
             "bank_transactions",
             tx,
@@ -10189,6 +10452,7 @@ async def _reverse_partner_tx(tx: dict):
 @api_router.put("/banking/partners/transactions/{tx_id}")
 async def update_partner_transaction(tx_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     tx = await tenant_access.get_tenant_doc(db, "partner_transactions", tx_id, user, not_found="Hareket bulunamadı.")
+    linked_moves.assert_not_source_linked(tx)
     if tx.get("expense_id") or tx.get("source") == "expense":
         raise HTTPException(status_code=400, detail="Masrafa bağlı ortak hareketi buradan düzenlenemez. Masraflar ekranından düzenleyin veya silin.")
     if tx["type"] == "profit_share":
@@ -10225,6 +10489,7 @@ async def update_partner_transaction(tx_id: str, req: Dict[str, Any], user: dict
 @api_router.delete("/banking/partners/transactions/{tx_id}")
 async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_current_user)):
     tx = await tenant_access.get_tenant_doc(db, "partner_transactions", tx_id, user, not_found="Hareket bulunamadı.")
+    linked_moves.assert_not_source_linked(tx)
     related = await _linked_expense_related(tx)
     # Banka eşleşmesini önce iptal et (partner reverse sonrası orphan match kalmasın)
     from bank_match_target import clear_bank_match_for_partner_tx
@@ -12372,58 +12637,93 @@ async def list_bonuses(company_id: Optional[str] = "comp_nexus_main_01", period:
     return clean_docs(await db.bonus_payments.find(q).sort("created_at", -1).to_list(500))
 
 @api_router.post("/personnel/bonuses")
-async def create_bonus(req: Dict[str, Any]):
-    emp = await db.employees.find_one({"_id": req.get("employee_id")})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
-    amount = float(req.get("amount", 0))
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
-    b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense, overtime, yevmiye
-    labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai", "yevmiye": "Yevmiye", "alacak": "Alacak", "borc": "Borç", "bakiye": "Bakiye"}
-    if b_type not in labels:
-        raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
-    period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
-    account_id = req.get("account_id") or None
-    partner_id = req.get("partner_id") or None
-    if account_id and partner_id:
-        raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
-    account_name, status_val = None, "pending"
-    today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    bonus_id = str(uuid.uuid4())
-    if partner_id:
-        pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {labels[b_type]}", today, extra=linked_moves.link_fields("personnel_bonus", bonus_id))
-        account_name, status_val = f"{pname} (Ortak)", "paid"
-    elif account_id:
-        acc = await db.bank_accounts.find_one({"_id": account_id})
-        if not acc:
-            raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
-        await bank_guard.assert_manual_allowed(db, account_id)
-        await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
-        tx_doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
-                  "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
-                  "description": f"{emp['full_name']} - {period} {labels[b_type]}",
-                  "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
-        tx_doc.update(linked_moves.link_fields("personnel_bonus", bonus_id))
-        await db.bank_transactions.insert_one(tx_doc)
-        account_name, status_val = acc.get("account_name"), "paid"
-    doc = {"_id": bonus_id, "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
-           "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "partner_id": partner_id, "account_name": account_name,
-           "status": status_val, "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
-    if status_val == "paid":
-        doc["paid_at"] = today
-    if req.get("worked_days") not in (None, ""):
-        try:
-            doc["worked_days"] = max(0, int(float(req.get("worked_days"))))
-        except (TypeError, ValueError):
-            pass
-    if req.get("daily_wage") not in (None, ""):
-        try:
-            doc["daily_wage"] = round(float(req.get("daily_wage")), 2)
-        except (TypeError, ValueError):
-            pass
-    await db.bonus_payments.insert_one(doc)
-    return clean_doc(doc)
+async def create_bonus(req: Dict[str, Any], request: Request):
+    async def _do():
+        emp = await db.employees.find_one({"_id": req.get("employee_id")})
+        if not emp:
+            raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+        amount = float(req.get("amount", 0))
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+        b_type = req.get("type", "bonus")  # bonus, second_salary, advance, expense, overtime, yevmiye
+        labels = {"bonus": "Prim", "second_salary": "İkinci Maaş", "advance": "Avans", "expense": "Masraf Ödemesi", "overtime": "Fazla Mesai", "yevmiye": "Yevmiye", "alacak": "Alacak", "borc": "Borç", "bakiye": "Bakiye"}
+        if b_type not in labels:
+            raise HTTPException(status_code=400, detail="Geçersiz ödeme türü.")
+        period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
+        account_id = req.get("account_id") or None
+        partner_id = req.get("partner_id") or None
+        if account_id and partner_id:
+            raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
+        account_name, status_val = None, "pending"
+        today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        bonus_id = str(uuid.uuid4())
+        txn = finance_txn.CompensatingTxn(label=f"bonus-create:{bonus_id}")
+
+        async def _body(cx: finance_txn.CompensatingTxn):
+            nonlocal account_name, status_val
+            if partner_id:
+                pname = await partner_pay.withdraw(
+                    db, emp["company_id"], partner_id, amount,
+                    f"{emp['full_name']} - {period} {labels[b_type]}", today,
+                    extra=linked_moves.link_fields("personnel_bonus", bonus_id),
+                )
+                account_name, status_val = f"{pname} (Ortak)", "paid"
+
+                async def _undo_p():
+                    await partner_pay.reverse_one(db, {"bonus_id": bonus_id})
+
+                cx.push("partner", _undo_p)
+            elif account_id:
+                acc = await db.bank_accounts.find_one({"_id": account_id})
+                if not acc:
+                    raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+                await bank_guard.assert_manual_allowed(db, account_id)
+                await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+                cx.push("acc", lambda: db.bank_accounts.update_one(
+                    {"_id": account_id}, {"$inc": {"current_balance": amount}},
+                ))
+                tx_doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
+                          "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
+                          "description": f"{emp['full_name']} - {period} {labels[b_type]}",
+                          "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
+                tx_doc.update(linked_moves.link_fields("personnel_bonus", bonus_id))
+                await db.bank_transactions.insert_one(tx_doc)
+                cx.push("btx", lambda: db.bank_transactions.delete_one({"_id": tx_doc["_id"]}))
+                account_name, status_val = acc.get("account_name"), "paid"
+                try:
+                    bal = await account_balance.recalc_account_balance(db, account_id)
+                    await db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+                except Exception:
+                    logging.getLogger(__name__).exception("Prim ödemesi kasa recalc: %s", account_id)
+            doc = {"_id": bonus_id, "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
+                   "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "partner_id": partner_id, "account_name": account_name,
+                   "status": status_val, "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
+            if status_val == "paid":
+                doc["paid_at"] = today
+            if req.get("worked_days") not in (None, ""):
+                try:
+                    doc["worked_days"] = max(0, int(float(req.get("worked_days"))))
+                except (TypeError, ValueError):
+                    pass
+            if req.get("daily_wage") not in (None, ""):
+                try:
+                    doc["daily_wage"] = round(float(req.get("daily_wage")), 2)
+                except (TypeError, ValueError):
+                    pass
+            await db.bonus_payments.insert_one(doc)
+            cx.push("bonus", lambda: db.bonus_payments.delete_one({"_id": bonus_id}))
+            return clean_doc(doc)
+
+        return await txn.run(_body)
+
+    emp_probe = await db.employees.find_one({"_id": req.get("employee_id")}, {"company_id": 1})
+    return await idempotency.run(
+        db,
+        (emp_probe or {}).get("company_id") or req.get("company_id") or "",
+        request,
+        "personnel/bonuses",
+        _do,
+    )
 
 
 async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
@@ -12465,6 +12765,7 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
     today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     label = rec.get("type_label") or rec.get("type") or "Ödeme"
     period = upd.get("period") or rec.get("period")
+    paying = bool(partner_id or account_id)
     if partner_id:
         pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {label}", today, extra=linked_moves.link_fields("personnel_bonus", bonus_id))
         upd.update({"partner_id": partner_id, "account_id": None, "account_name": f"{pname} (Ortak)", "status": "paid", "date": today, "paid_at": today})
@@ -12481,13 +12782,38 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
         tx_doc.update(linked_moves.link_fields("personnel_bonus", bonus_id))
         await db.bank_transactions.insert_one(tx_doc)
         upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid", "date": today, "paid_at": today})
-    await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
+        try:
+            bal = await account_balance.recalc_account_balance(db, account_id)
+            await db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+        except Exception:
+            logging.getLogger(__name__).exception("Prim güncelleme kasa recalc: %s", account_id)
+    if paying:
+        res = await db.bonus_payments.update_one_atomic(
+            {"_id": bonus_id, "status": {"$ne": "paid"}},
+            {"$set": upd},
+        )
+        if res.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Bu prim/avans zaten ödenmiş.")
+    else:
+        await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
     return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
 
 
 @api_router.put("/personnel/bonuses/{bonus_id}")
-async def update_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    return await _update_bonus_core(bonus_id, req, user)
+async def update_bonus(
+    bonus_id: str,
+    req: Dict[str, Any],
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    rec = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
+    return await idempotency.run(
+        db,
+        rec.get("company_id") or user.get("company_id") or "",
+        request,
+        f"personnel/bonuses/{bonus_id}",
+        lambda: _update_bonus_core(bonus_id, req, user),
+    )
 
 @api_router.post("/personnel/bonuses/{bonus_id}/decide")
 async def decide_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -13074,7 +13400,7 @@ async def upsert_attendance(req: Dict[str, Any]):
                     roles=[],
                 ))
             except Exception:
-                pass
+                logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
     return rec
 
 # ----------------- MALİ MÜŞAVİR PANELİ -----------------
@@ -14099,7 +14425,7 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
                     except HTTPException:
                         pass
         except Exception:
-            pass
+            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         await _a.sleep(interval_s)
 
 async def _run_bank_auto_sync_tick():
@@ -16218,7 +16544,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
             try:
                 await db.products.update_one({"_id": doc["finished_product_id"]}, {"$set": {"has_recipe": True}})
             except Exception:
-                pass
+                logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         recipe_out = clean_doc(dict(doc))
         po_out = await _open_po(doc) if create_po else None
         await _mark_sales_order_sent_to_production(
@@ -19337,53 +19663,109 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
     if account_id and partner_id:
         raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
 
+    claim = await db.payrolls.update_one_atomic(
+        {
+            "_id": payroll_id,
+            "status": {"$ne": "paid"},
+            "_pay_claimed_at": {"$exists": False},
+        },
+        {"$set": {"_pay_claimed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Bu bordro zaten ödenmiş.")
+
     emp = await db.employees.find_one({"_id": payroll.get("employee_id")}) or {}
     await _assert_salary_bank_only(emp, account_id, partner_id)
 
     amount = payroll.get("final_payable", 0.0)
     today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     paid_from = None
-
     link = linked_moves.link_fields("payroll", payroll_id)
-    if partner_id:
-        pname = await partner_pay.withdraw(db, payroll.get("company_id"), partner_id, amount, f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi", today, extra=link)
-        paid_from = f"{pname} (Ortak)"
-    elif account_id:
-        acc = await db.bank_accounts.find_one({"_id": account_id})
-        acc_name = acc.get("account_name", "Banka") if acc else "Banka"
-        await bank_guard.assert_manual_allowed(db, account_id)
-        await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
-        desc = f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi"
-        emp_iban = _norm_iban(emp.get("iban"))
-        if emp_iban:
-            desc = f"{desc} · IBAN {emp.get('iban')}"
-        tx_doc = {
-            "_id": str(uuid.uuid4()),
-            "company_id": payroll.get("company_id"),
-            "account_id": account_id,
-            "account_name": acc_name,
-            "type": "outflow",
-            "category": "Personel Maaş Ödemesi",
-            "amount": amount,
-            "currency": "TRY",
-            "description": desc,
-            "date": today,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        tx_doc.update(link)
-        await db.bank_transactions.insert_one(tx_doc)
-        paid_from = acc_name
+    txn = finance_txn.CompensatingTxn(label=f"payroll-pay:{payroll_id}")
 
-    await db.payrolls.update_one(
-        {"_id": payroll_id},
-        {"$set": {"status": "paid", "paid_date": today, "account_id": account_id, "partner_id": partner_id, "account_name": paid_from}}
-    )
+    async def _body(cx: finance_txn.CompensatingTxn):
+        nonlocal paid_from
+        if partner_id:
+            pname = await partner_pay.withdraw(
+                db, payroll.get("company_id"), partner_id, amount,
+                f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi", today, extra=link,
+            )
+            paid_from = f"{pname} (Ortak)"
 
-    return {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
+            async def _undo_partner():
+                await partner_pay.reverse_one(db, {"payroll_id": payroll_id})
+
+            cx.push("partner", _undo_partner)
+        elif account_id:
+            acc = await db.bank_accounts.find_one({"_id": account_id})
+            acc_name = acc.get("account_name", "Banka") if acc else "Banka"
+            await bank_guard.assert_manual_allowed(db, account_id)
+            await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+            cx.push("acc", lambda: db.bank_accounts.update_one(
+                {"_id": account_id}, {"$inc": {"current_balance": amount}},
+            ))
+            desc = f"{payroll.get('employee_name')} - {payroll.get('period')} Maaş Ödemesi"
+            emp_iban = _norm_iban(emp.get("iban"))
+            if emp_iban:
+                desc = f"{desc} · IBAN {emp.get('iban')}"
+            tx_doc = {
+                "_id": str(uuid.uuid4()),
+                "company_id": payroll.get("company_id"),
+                "account_id": account_id,
+                "account_name": acc_name,
+                "type": "outflow",
+                "category": "Personel Maaş Ödemesi",
+                "amount": amount,
+                "currency": "TRY",
+                "description": desc,
+                "date": today,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tx_doc.update(link)
+            await db.bank_transactions.insert_one(tx_doc)
+            cx.push("btx", lambda: db.bank_transactions.delete_one({"_id": tx_doc["_id"]}))
+            paid_from = acc_name
+            try:
+                bal = await account_balance.recalc_account_balance(db, account_id)
+                await db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+            except Exception:
+                logging.getLogger(__name__).exception("Bordro ödemesi kasa recalc: %s", account_id)
+
+        upd = await db.payrolls.update_one_atomic(
+            {"_id": payroll_id, "status": {"$ne": "paid"}},
+            {"$set": {
+                "status": "paid",
+                "paid_date": today,
+                "account_id": account_id,
+                "partner_id": partner_id,
+                "account_name": paid_from,
+            }, "$unset": {"_pay_claimed_at": ""}},
+        )
+        if upd.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Bu bordro zaten ödenmiş.")
+        return {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
+
+    try:
+        return await txn.run(_body)
+    except Exception:
+        await db.payrolls.update_one({"_id": payroll_id}, {"$unset": {"_pay_claimed_at": ""}})
+        raise
 
 @api_router.post("/personnel/payrolls/{payroll_id}/pay")
-async def pay_payroll(payroll_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    return await _pay_payroll_core(payroll_id, req, user)
+async def pay_payroll(
+    payroll_id: str,
+    req: Dict[str, Any],
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
+    return await idempotency.run(
+        db,
+        payroll.get("company_id") or user.get("company_id") or "",
+        request,
+        f"personnel/payrolls/{payroll_id}/pay",
+        lambda: _pay_payroll_core(payroll_id, req, user),
+    )
 
 @api_router.delete("/personnel/payrolls/{payroll_id}")
 async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)):
@@ -19676,7 +20058,7 @@ async def ai_invoice_extract(
                 cfg = await load_ai_settings()
                 await ai_record_last_test(ok=False, reason=err[:220], model=cfg.get("extract_model") or "", provider=cfg.get("provider") or "")
             except Exception:
-                pass
+                logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
             hint = ""
             low = err.lower()
             if "401" in err or "403" in err or "anahtar" in low or "api key" in low:

@@ -969,6 +969,63 @@ class MySQLCollection:
             await self._save(new_doc)
         return UpdateResult(1, 1 if changed else 0, None)
 
+    async def update_one_atomic(self, query: dict, update: dict):
+        """Koşullu güncellemeyi aynı bağlantıda kilitleyerek uygula.
+
+        BEGIN → SELECT … FOR UPDATE → match_query → apply_update → UPDATE → COMMIT.
+        `matched_count` kilit altında sorgu eşleşmesini yansıtır (eşzamanlı claim için).
+        `query` içinde eşitlik `_id` zorunlu.
+        """
+        q = query or {}
+        doc_id = q.get("_id")
+        if doc_id is None or isinstance(doc_id, dict):
+            raise ValueError("update_one_atomic requires equality _id in query")
+        await self._db._ensure()
+        t0 = time.perf_counter()
+        async with self._db._pool.acquire() as conn:
+            await conn.begin()
+            try:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT doc FROM docs WHERE collection=%s AND id=%s FOR UPDATE",
+                        (self.name, str(doc_id)),
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        await conn.rollback()
+                        _audit_sql(
+                            "UPDATE_ATOMIC", self.name, doc_id=doc_id,
+                            duration_ms=(time.perf_counter() - t0) * 1000,
+                        )
+                        return UpdateResult(0, 0, None)
+                    old = loads(row[0])
+                    if not match_query(old, q):
+                        await conn.rollback()
+                        _audit_sql(
+                            "UPDATE_ATOMIC", self.name, doc_id=doc_id,
+                            duration_ms=(time.perf_counter() - t0) * 1000,
+                        )
+                        return UpdateResult(0, 0, None)
+                    new_doc = apply_update(old, update, q, is_insert=False)
+                    changed = new_doc != old
+                    if changed:
+                        await cur.execute(
+                            "UPDATE docs SET doc=%s WHERE collection=%s AND id=%s",
+                            (dumps(new_doc), self.name, str(doc_id)),
+                        )
+                    await conn.commit()
+                    _audit_sql(
+                        "UPDATE_ATOMIC", self.name, doc_id=doc_id,
+                        duration_ms=(time.perf_counter() - t0) * 1000,
+                    )
+                    return UpdateResult(1, 1 if changed else 0, None)
+            except Exception:
+                try:
+                    await conn.rollback()
+                except Exception:
+                    pass
+                raise
+
     async def update_many(self, query: dict, update: dict, upsert: bool = False):
         docs = await self._load_filtered(query)
         if not docs:

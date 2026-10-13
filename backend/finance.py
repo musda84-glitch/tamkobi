@@ -1,6 +1,7 @@
 """Krediler (loans) + kart/banka ekstresi: AI ile PDF/Excel'den ödeme planı / hareket aktarımı."""
 import io
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -368,10 +369,27 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
         tx_doc.update(link)
         await _db.bank_transactions.insert_one(tx_doc)
         paid_name = acc.get("account_name")
-    await _db.loans.update_one({"_id": loan_id, "installments.no": ins["no"]}, {"$set": {"installments.$.paid": True, "installments.$.paid_date": pay_date, "installments.$.account_name": paid_name, "installments.$.partner_id": partner_id}})
+    upd = await _db.loans.update_one(
+        {"_id": loan_id, "installments": {"$elemMatch": {"no": ins["no"], "paid": {"$ne": True}}}},
+        {"$set": {
+            "installments.$.paid": True,
+            "installments.$.paid_date": pay_date,
+            "installments.$.account_name": paid_name,
+            "installments.$.partner_id": partner_id,
+        }},
+    )
+    if upd.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Bu kredi taksiti zaten ödenmiş.")
     if ins.get("interest") or ins.get("kkdf_bsmv"):
         cost = round(float(ins.get("interest") or 0) + float(ins.get("kkdf_bsmv") or 0), 2)
         await _db.expenses.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "expense_number": f"KRD-{loan_id[:4].upper()}-{no:02d}", "date": pay_date, "category": "Kredi Faizi / Finansman", "description": f"{loan['name']} {no}. taksit faiz+KKDF/BSMV", "amount": cost, "vat_rate": 0, "vat_amount": 0, "total": cost, "currency": "TRY", "payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": paid_name, "paid_date": pay_date, "loan_id": loan_id, "notes": "Kredi modülünden otomatik", "is_recurring": False, "created_at": _now()})
+    try:
+        if account_id:
+            import account_balance
+            bal = await account_balance.recalc_account_balance(_db, account_id)
+            await _db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+    except Exception:
+        logging.getLogger(__name__).exception("Kredi taksit ödemesi kasa recalc: %s", account_id)
     return _clean(await _db.loans.find_one({"_id": loan_id}))
 
 
