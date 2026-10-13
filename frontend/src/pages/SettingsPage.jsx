@@ -14,6 +14,7 @@ import { PrintTemplateEditor } from "../components/PrintDocument";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { UsersRolesPanel } from "../components/UsersRolesPanel";
+import { PosRulesPanel } from "../components/PosRulesPanel";
 import { CompanyLocationPanel } from "../components/CompanyLocationPanel";
 import { MigrationPanel } from "../components/MigrationPanel";
 import { MorningSummarySettings } from "../components/PricingCenter";
@@ -31,7 +32,7 @@ import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } 
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["integrity", "Veri Tutarlılığı", Wrench], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["integrity", "Veri Tutarlılığı", Wrench], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -746,6 +747,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "work_parks" && <WorkParksSettings companyId={companyId} />}
           {tab === "workshop_zones" && <WorkshopZonesSettings companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
+          {tab === "pos_rules" && <PosRulesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}
           {tab === "integrity" && <IntegrityPanel companyId={companyId} compact />}

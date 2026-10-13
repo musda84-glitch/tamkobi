@@ -401,7 +401,7 @@ const LogTab = ({ companyId, users }) => {
       <div className="max-h-[420px] overflow-auto border rounded-xl" data-testid="activity-log">
         <table className="w-full"><tbody className="divide-y">
           {rows.length === 0 && <tr><td className="p-4 text-center text-slate-400">Kayıt yok.</td></tr>}
-          {rows.map((r) => <tr key={r.id} className="hover:bg-slate-50"><td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">{new Date(r.created_at).toLocaleString("tr-TR")}</td><td className="px-3 font-semibold">{r.user_name}</td><td className="px-3"><span className={`px-1.5 rounded text-[10px] font-bold ${r.method === "DELETE" ? "bg-rose-100 text-rose-700" : r.method === "POST" ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}`}>{r.method}</span></td><td className="px-3 font-mono text-slate-600">{r.path}</td><td className="px-3 text-slate-400">{r.module}</td></tr>)}
+          {rows.map((r) => <tr key={r.id} className="hover:bg-slate-50"><td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">{new Date(r.created_at).toLocaleString("tr-TR")}</td><td className="px-3 font-semibold">{r.user_name}</td><td className="px-3"><span className={`px-1.5 rounded text-[10px] font-bold ${r.method === "DELETE" || r.method === "POS" ? "bg-rose-100 text-rose-700" : r.method === "POST" ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}`}>{r.method}</span></td><td className="px-3 font-mono text-slate-600">{r.path}</td><td className="px-3 text-slate-400">{r.detail || r.module}</td></tr>)}
         </tbody></table>
       </div>
     </div>

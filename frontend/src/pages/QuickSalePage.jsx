@@ -7,6 +7,7 @@ import {
   CreditCard,
   FolderPlus,
   LayoutGrid,
+  Lock,
   Maximize2,
   Minimize2,
   Minus,
@@ -20,10 +21,14 @@ import {
   Search,
   ShoppingCart,
   Trash2,
+  Unlock,
+  UserRound,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { usePosSession } from "../context/PosSessionContext";
+import { actionIsFree, isPendingApproval, mixedChange } from "../utils/posCashier";
 import { CameraScanner, ScanButton } from "../components/CameraScanner";
 import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
@@ -84,9 +89,10 @@ function loadHeldCarts(companyId) {
 }
 
 const PAYMENT_OPTIONS = [
-  { value: "cash", label: "Nakit", icon: Banknote, hint: "Elden nakit tahsilat" },
+  { value: "cash", label: "Nakit", icon: Banknote, hint: "Elden nakit tahsilat · para üstü" },
   { value: "card", label: "Kart", icon: CreditCard, hint: "POS / kredi kartı" },
-  { value: "transfer", label: "Havale / EFT", icon: Banknote, hint: "Banka transferi" },
+  { value: "mixed", label: "Karma", icon: Banknote, hint: "Nakit + kart" },
+  { value: "credit", label: "Veresiye", icon: Banknote, hint: "Cari / veresiye satış" },
 ];
 
 function ShortcutTile({ product, onClick, tablet }) {
@@ -116,7 +122,9 @@ function ShortcutTile({ product, onClick, tablet }) {
 
 export default function QuickSalePage() {
   const { activeCompany } = useAuth();
+  const pos = usePosSession();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const posRules = pos?.session?.rules || pos?.rules || {};
   const barcodeRef = useRef(null);
   const pendingScanQtyRef = useRef(1);
   const [scanQty, setScanQty] = useState("1");
@@ -157,6 +165,13 @@ export default function QuickSalePage() {
   const [receiptQuery, setReceiptQuery] = useState("");
   const [returnPreview, setReturnPreview] = useState(null);
   const [showReturnPanel, setShowReturnPanel] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(null);
+  const [tenderedCash, setTenderedCash] = useState("");
+  const [mixCash, setMixCash] = useState("");
+  const [openingCash, setOpeningCash] = useState("");
+  const [closeCash, setCloseCash] = useState("");
+  const [closeCard, setCloseCard] = useState("");
+  const [showShift, setShowShift] = useState(false);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -196,6 +211,48 @@ export default function QuickSalePage() {
   }, [tabletMode]);
 
   useEffect(() => { focusBarcode(); }, [tabletMode, focusBarcode]);
+
+  useEffect(() => {
+    const sc = pos?.session?.cart;
+    if (sc && Array.isArray(sc.items)) {
+      setCart(sc.items);
+      if (sc.customer_name) setCustomerName(sc.customer_name);
+    }
+    if (Array.isArray(pos?.heldCarts) && pos.session?.cashier_user_id) {
+      setHeldCarts(pos.heldCarts.map((h) => ({
+        id: h.id,
+        label: h.label,
+        cart: h.cart?.items || h.cart || [],
+        customerName: h.cart?.customer_name || "Perakende Müşteri",
+        heldAt: h.held_at,
+      })));
+    }
+  }, [pos?.session?.cart, pos?.heldCarts, pos?.session?.cashier_user_id]);
+
+  const syncCart = async (nextItems, extra = {}) => {
+    if (!pos?.session?.cashier_user_id) return { status: "success" };
+    try {
+      const { data } = await axios.put(`${API_URL}/pos/session/cart`, {
+        company_id: companyId,
+        terminal_id: pos.terminalId,
+        items: nextItems,
+        customer_name: extra.customerName || customerName,
+        pin: extra.pin,
+        approval_id: extra.approval_id,
+      }, { headers: pos.headers });
+      if (isPendingApproval(data)) {
+        toast.message(data.message || "Yönetici onayı bekleniyor");
+        if (pos.session?.cart?.items) setCart(pos.session.cart.items);
+        return data;
+      }
+      if (data.cart?.items) setCart(data.cart.items);
+      return data;
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sepet güncellenemedi");
+      await pos.reload?.();
+      return { status: "error" };
+    }
+  };
 
   const productMap = useMemo(() => {
     const map = new Map();
@@ -274,6 +331,7 @@ export default function QuickSalePage() {
     unit: product.unit || "Adet",
     quantity: Number(qty) || 1,
     unit_price: Number(product.sale_price || 0),
+    catalog_price: Number(product.sale_price || 0),
     vat_rate: Number(product.vat_rate || 20),
     lot_id: lot?.id || null,
     lot_number: lot?.lot_number || "",
@@ -317,21 +375,21 @@ export default function QuickSalePage() {
       return;
     }
 
+    const line = makeLine(product, qty);
+    let next;
     if (isWeighableUnit(product.unit)) {
-      setCart((prev) => [...prev, makeLine(product, qty)]);
-      return;
-    }
-
-    setCart((prev) => {
+      next = [...cart, line];
+    } else {
       const id = productKey(product);
-      const idx = prev.findIndex((l) => l.product_id === id && !l.lot_id && !l.serial_number);
+      const idx = cart.findIndex((l) => l.product_id === id && !l.lot_id && !l.serial_number);
       if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = { ...next[idx], quantity: Number(next[idx].quantity) + Number(qty) };
-        return next;
+        next = cart.map((l, i) => (i === idx ? { ...l, quantity: Number(l.quantity) + Number(qty) } : l));
+      } else {
+        next = [...cart, line];
       }
-      return [...prev, makeLine(product, qty)];
-    });
+    }
+    setCart(next);
+    await syncCart(next);
   };
 
   const confirmScalePrompt = async (qty) => {
@@ -342,9 +400,11 @@ export default function QuickSalePage() {
     focusBarcode();
   };
 
-  const confirmLot = (lot) => {
+  const confirmLot = async (lot) => {
     if (!lotPicker) return;
-    setCart((prev) => [...prev, makeLine(lotPicker.product, lotPicker.qty, lot)]);
+    const next = [...cart, makeLine(lotPicker.product, lotPicker.qty, lot)];
+    setCart(next);
+    await syncCart(next);
     setLotPicker(null);
     setLotOptions([]);
     focusBarcode();
@@ -394,41 +454,98 @@ export default function QuickSalePage() {
     await applyScanCode(barcode, scanQty);
   };
 
-  const bumpQty = (lineId, delta) => {
-    setCart((prev) =>
-      prev
-        .map((l) => (l.id === lineId ? { ...l, quantity: Math.max(0, Number(l.quantity) + delta) } : l))
-        .filter((l) => Number(l.quantity) > 0)
-    );
-  };
-
-  const setLineQty = (lineId, qty) => {
-    const n = Number(qty);
-    if (!(n > 0)) {
-      setCart((prev) => prev.filter((l) => l.id !== lineId));
+  const bumpQty = async (lineId, delta) => {
+    const line = cart.find((l) => l.id === lineId);
+    if (!line) return;
+    const nextQty = Math.max(0, Number(line.quantity) + delta);
+    if (!(nextQty > 0)) {
+      await removeLine(lineId);
       return;
     }
-    setCart((prev) => prev.map((l) => (l.id === lineId ? { ...l, quantity: n } : l)));
+    const next = cart.map((l) => (l.id === lineId ? { ...l, quantity: nextQty } : l));
+    setCart(next);
+    await syncCart(next);
   };
 
-  const removeLine = (lineId) => setCart((prev) => prev.filter((l) => l.id !== lineId));
-  const clearCart = () => setCart([]);
+  const setLineQty = async (lineId, qty) => {
+    const n = Number(qty);
+    if (!(n > 0)) {
+      await removeLine(lineId);
+      return;
+    }
+    const next = cart.map((l) => (l.id === lineId ? { ...l, quantity: n } : l));
+    setCart(next);
+    await syncCart(next);
+  };
 
-  const holdCurrentCart = () => {
+  const removeLine = async (lineId) => {
+    if (!actionIsFree(posRules, "delete_line")) {
+      const data = await pos.requestAction("delete_line", { line_id: lineId, summary: "Satır silme" });
+      if (isPendingApproval(data)) return;
+      if (data.status === "rejected") {
+        toast.error("Satır silme reddedildi");
+        return;
+      }
+      await pos.reload();
+      return;
+    }
+    const next = cart.filter((l) => l.id !== lineId);
+    setCart(next);
+    await syncCart(next, { kind: "delete_line" });
+  };
+  const clearCart = async () => {
+    if (cart.length && !actionIsFree(posRules, "cancel_cart")) {
+      const data = await pos.requestAction("cancel_cart", { summary: "Sepet iptali" });
+      if (isPendingApproval(data)) return;
+      if (data.status === "rejected") {
+        toast.error("İptal reddedildi");
+        return;
+      }
+      await pos.reload();
+      return;
+    }
+    setCart([]);
+    await syncCart([], { kind: "cancel_cart" });
+  };
+
+  const holdCurrentCart = async () => {
     if (!cart.length) {
       toast.error("Beklemeye alınacak ürün yok");
       return;
     }
+    if (pos?.session?.cashier_user_id) {
+      try {
+        await axios.post(`${API_URL}/pos/session/hold`, { company_id: companyId, terminal_id: pos.terminalId }, { headers: pos.headers });
+        await pos.reload();
+        toast.success("Sepet kasiyere bağlı beklemeye alındı");
+        focusBarcode();
+        return;
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Bekletilemedi");
+        return;
+      }
+    }
     const id = `hold_${Date.now()}`;
     const label = `Bekleyen ${heldCarts.length + 1}`;
     setHeldCarts((prev) => [...prev, { id, label, cart, customerName, heldAt: new Date().toISOString() }]);
-    clearCart();
+    setCart([]);
     setActiveCartTab("active");
     toast.success(`${label} beklemeye alındı`);
     focusBarcode();
   };
 
-  const resumeHeldCart = (holdId) => {
+  const resumeHeldCart = async (holdId) => {
+    if (pos?.session?.cashier_user_id) {
+      try {
+        await axios.post(`${API_URL}/pos/session/resume`, { company_id: companyId, terminal_id: pos.terminalId, hold_id: holdId }, { headers: pos.headers });
+        await pos.reload();
+        setActiveCartTab("active");
+        return;
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Sepet yüklenemedi");
+        return;
+      }
+    }
     const hold = heldCarts.find((h) => h.id === holdId);
     if (!hold) return;
     if (cart.length) {
@@ -477,6 +594,22 @@ export default function QuickSalePage() {
 
   const confirmReturn = async () => {
     if (!returnPreview?.invoice) return;
+    if (!actionIsFree(posRules, "refund")) {
+      const inv = returnPreview.invoice;
+      const data = await pos.requestAction("refund", {
+        invoice_id: inv.id || inv._id,
+        invoice_number: inv.invoice_number,
+        summary: `İade ${inv.invoice_number}`,
+      });
+      if (isPendingApproval(data)) {
+        toast.message("İade yönetici onayı bekliyor");
+        return;
+      }
+      if (data.status === "rejected") {
+        toast.error("İade reddedildi");
+        return;
+      }
+    }
     setBusy(true);
     try {
       const inv = returnPreview.invoice;
@@ -484,7 +617,8 @@ export default function QuickSalePage() {
         company_id: companyId,
         invoice_id: inv.id || inv._id,
         invoice_number: inv.invoice_number,
-      });
+        terminal_id: pos.terminalId,
+      }, { headers: pos.headers });
       if (data.receipt) {
         setLastReceipt(data.receipt);
         printThermalReceipt(data.receipt);
@@ -519,11 +653,21 @@ export default function QuickSalePage() {
     setShowPayPicker(false);
     setBusy(true);
     try {
+      if (pay === "credit" && !actionIsFree(posRules, "credit_sale")) {
+        toast.error("Veresiye satış yetkiniz yok");
+        setBusy(false);
+        return;
+      }
+      const mix = mixedChange(totals.total, Number(mixCash) || 0, 0, Number(tenderedCash) || 0);
       const { data } = await axios.post(`${API_URL}/pos/checkout`, {
         company_id: companyId,
         customer_name: customerName || "Perakende Müşteri",
         payment_method: pay,
         sector: "retail",
+        terminal_id: pos.terminalId,
+        cash_amount: pay === "mixed" ? Number(mixCash) || mix.cash : (pay === "cash" ? totals.total : 0),
+        card_amount: pay === "mixed" ? Math.max(0, totals.total - (Number(mixCash) || 0)) : (pay === "card" ? totals.total : 0),
+        tendered_cash: Number(tenderedCash) || 0,
         items: cart.map((l) => ({
           product_id: l.product_id,
           quantity: l.quantity,
@@ -537,7 +681,7 @@ export default function QuickSalePage() {
           expiry_date: l.expiry_date,
           weighed: l.weighed,
         })),
-      });
+      }, { headers: pos.headers });
       const receipt = {
         ...(data.receipt || {}),
         company_name: data.receipt?.company_name || activeCompany?.name || "İşletme",
@@ -548,7 +692,10 @@ export default function QuickSalePage() {
       setLastReceipt(receipt);
       printThermalReceipt(receipt);
       toast.success(data.message || `Satış tamam: ${receipt.invoice_number}`);
-      clearCart();
+      setCart([]);
+      setTenderedCash("");
+      setMixCash("");
+      await pos.reload?.();
       setActiveCartTab("active");
       await loadProducts();
       focusBarcode();
@@ -614,12 +761,40 @@ export default function QuickSalePage() {
           <p className="text-sm text-slate-500 mt-1">Barkod veya stok adı · adet çarpan / 5*barkod · bekleyen sepet, iade ve termal fiş</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900 text-xs font-bold" data-testid="pos-cashier-chip">
+            <UserRound className="w-4 h-4" />
+            {pos.session?.cashier_name || "Kasiyer bekleniyor"}
+          </div>
+          <button type="button" onClick={() => pos.switchCashier?.()} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 ${btnSize}`} data-testid="pos-switch-cashier">
+            <Unlock className="w-4 h-4" /> Kasiyer değiştir
+          </button>
+          <button type="button" onClick={() => setShowShift(true)} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 ${btnSize}`} data-testid="pos-shift-btn">
+            Vardiya
+          </button>
+          <button type="button" onClick={async () => {
+            const data = await pos.requestAction("open_drawer", { summary: "Satışsız çekmece" });
+            if (isPendingApproval(data)) toast.message("Çekmece için yönetici onayı bekleniyor");
+            else if (data.status === "rejected") toast.error("Reddedildi");
+            else {
+              await axios.post(`${API_URL}/pos/drawer/open`, { company_id: companyId, terminal_id: pos.terminalId }, { headers: pos.headers }).catch(() => {});
+              toast.success("Çekmece açıldı");
+            }
+          }} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 ${btnSize}`} data-testid="pos-drawer-btn">
+            Çekmece
+          </button>
           <button type="button" onClick={() => openEditor()} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 ${btnSize}`} data-testid="pos-edit-sections">
             <Pencil className="w-4 h-4" /> Bölümleri Düzenle
           </button>
           <button type="button" onClick={() => setTabletMode((v) => !v)} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white font-semibold ${btnSize}`} data-testid="pos-tablet-toggle">
             {tabletMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-            {tabletMode ? "Çık" : "Tablet Modu"}
+            {tabletMode ? "Tablet kapat" : "Tablet Modu"}
+          </button>
+          <button type="button" onClick={async () => {
+            const data = await pos.exitPos();
+            if (isPendingApproval(data)) toast.message("Çıkış yönetici onayı bekliyor");
+            else if (data?.status === "exited") toast.success("Çıkış verildi");
+          }} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-200 text-rose-700 font-semibold bg-white ${btnSize}`} data-testid="pos-exit-btn">
+            <Lock className="w-4 h-4" /> Çıkış
           </button>
         </div>
       </div>
@@ -741,14 +916,14 @@ export default function QuickSalePage() {
                       <div className="min-w-0">
                         <div className="font-medium text-sm text-slate-900 truncate">{l.name}</div>
                         <div className="text-xs text-slate-500">
-                          {money(l.unit_price)} / {l.unit}
+                          <button type="button" className="hover:underline" data-testid={`pos-line-price-${l.id}`} onClick={() => setEditingPrice({ id: l.id, value: String(l.unit_price) })}>{money(l.unit_price)}</button> / {l.unit}
                           {l.lot_number ? ` · Lot ${l.lot_number}` : ""}
                           {l.serial_number ? ` · S/N ${l.serial_number}` : ""}
                           {l.expiry_date ? ` · SKT ${l.expiry_date}` : ""}
                         </div>
                       </div>
                     </div>
-                    <button type="button" onClick={() => removeLine(l.id)} className="text-slate-400 hover:text-red-600 p-1"><Trash2 className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => removeLine(l.id)} className="text-slate-400 hover:text-red-600 p-1" data-testid={`pos-line-del-${l.id}`}><Trash2 className="w-4 h-4" /></button>
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <div className="flex items-center gap-1">
@@ -947,7 +1122,13 @@ export default function QuickSalePage() {
               <button type="button" onClick={() => setShowPayPicker(false)} className="p-2 rounded-lg hover:bg-slate-100" data-testid="pos-pay-picker-close"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-4 grid gap-3">
-              {PAYMENT_OPTIONS.map((opt) => {
+              <label className="text-xs font-semibold text-slate-600">Nakit alınan
+                <input value={tenderedCash} onChange={(e) => setTenderedCash(e.target.value)} className="mt-1 w-full border rounded-lg p-2" inputMode="decimal" data-testid="pos-tendered-cash" placeholder="Para üstü için" />
+              </label>
+              <label className="text-xs font-semibold text-slate-600">Karma — nakit payı
+                <input value={mixCash} onChange={(e) => setMixCash(e.target.value)} className="mt-1 w-full border rounded-lg p-2" inputMode="decimal" data-testid="pos-mix-cash" />
+              </label>
+              {PAYMENT_OPTIONS.filter((opt) => opt.value !== "credit" || actionIsFree(posRules, "credit_sale")).map((opt) => {
                 const Icon = opt.icon;
                 return (
                   <button
@@ -1018,6 +1199,93 @@ export default function QuickSalePage() {
                   İadeyi onayla
                 </button>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {editingPrice && (
+        <div className="fixed inset-0 z-[130] bg-black/40 flex items-center justify-center p-4" data-testid="pos-price-modal">
+          <form
+            className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const price = Number(editingPrice.value);
+              const line = cart.find((l) => l.id === editingPrice.id);
+              if (!line) { setEditingPrice(null); return; }
+              const catalog = Number(line.catalog_price ?? line.sale_price ?? line.unit_price);
+              const next = cart.map((l) => (l.id === editingPrice.id ? { ...l, unit_price: price } : l));
+              if (!actionIsFree(posRules, "price_change", { catalog_price: catalog, unit_price: price })) {
+                const data = await pos.requestAction("price_change", { line_id: line.id, unit_price: price, catalog_price: catalog, summary: `Fiyat ${line.unit_price} → ${price}` }, { catalog_price: catalog, unit_price: price });
+                if (isPendingApproval(data) || data.status === "rejected") {
+                  if (data.status === "rejected") toast.error("Fiyat değişikliği reddedildi");
+                  setEditingPrice(null);
+                  return;
+                }
+                await pos.reload();
+                setEditingPrice(null);
+                return;
+              }
+              setCart(next);
+              await syncCart(next);
+              setEditingPrice(null);
+            }}
+          >
+            <h3 className="font-bold">Satır fiyatı</h3>
+            <input value={editingPrice.value} onChange={(e) => setEditingPrice({ ...editingPrice, value: e.target.value })} className="w-full border rounded-lg p-2" data-testid="pos-price-input" />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setEditingPrice(null)} className="flex-1 border rounded-xl py-2">Vazgeç</button>
+              <button type="submit" className="flex-1 bg-emerald-600 text-white rounded-xl py-2 font-bold" data-testid="pos-price-save">Kaydet</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showShift && (
+        <div className="fixed inset-0 z-[130] bg-black/40 flex items-center justify-center p-4" data-testid="pos-shift-modal">
+          <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold">Vardiya / gün sonu</h3>
+              <button type="button" onClick={() => setShowShift(false)}><X className="w-5 h-5" /></button>
+            </div>
+            {pos.shift ? (
+              <div className="text-xs space-y-1 bg-slate-50 rounded-xl p-3">
+                <div>Kasiyer: {pos.shift.cashier_name}</div>
+                <div>Açılış nakit: {money(pos.shift.opening_cash)}</div>
+                <div>Satış nakit: {money(pos.shift.sales_cash)}</div>
+                <div>Satış kart: {money(pos.shift.sales_card)}</div>
+                <div>İade: {money(pos.shift.refunds_amount)}</div>
+              </div>
+            ) : <p className="text-xs text-slate-500">Açık vardiya yok.</p>}
+            {!pos.shift && (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await axios.post(`${API_URL}/pos/shifts/open`, { company_id: companyId, terminal_id: pos.terminalId, opening_cash: Number(openingCash) || 0 }, { headers: pos.headers });
+                  toast.success("Kasa açıldı");
+                  await pos.reload();
+                } catch (err) { toast.error(err.response?.data?.detail || "Açılamadı"); }
+              }} className="space-y-2">
+                <input value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} placeholder="Açılış nakit" className="w-full border rounded-lg p-2" data-testid="pos-shift-open-cash" />
+                <button type="submit" className="w-full bg-emerald-600 text-white rounded-xl py-2 font-bold" data-testid="pos-shift-open">Kasa aç</button>
+              </form>
+            )}
+            {pos.shift && (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  const { data } = await axios.post(`${API_URL}/pos/shifts/${pos.shift.id}/close`, {
+                    counted_cash: Number(closeCash) || 0,
+                    counted_card: Number(closeCard) || 0,
+                  }, { headers: pos.headers });
+                  toast.success(`Kapanış · nakit fark ${money(data.difference?.cash)} · kart fark ${money(data.difference?.card)}`);
+                  await pos.reload();
+                } catch (err) { toast.error(err.response?.data?.detail || "Kapanamadı"); }
+              }} className="space-y-2">
+                <input value={closeCash} onChange={(e) => setCloseCash(e.target.value)} placeholder="Sayılan nakit" className="w-full border rounded-lg p-2" data-testid="pos-shift-count-cash" />
+                <input value={closeCard} onChange={(e) => setCloseCard(e.target.value)} placeholder="Sayılan kart" className="w-full border rounded-lg p-2" data-testid="pos-shift-count-card" />
+                <button type="submit" className="w-full bg-slate-900 text-white rounded-xl py-2 font-bold" data-testid="pos-shift-close">Gün sonu kapat</button>
+              </form>
             )}
           </div>
         </div>

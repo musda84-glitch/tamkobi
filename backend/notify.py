@@ -53,6 +53,9 @@ TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "receivable_overdue": ("admin", "accountant"),
     "quote_response": ("admin", "manager", "sales"),
     "cash_approval": ("admin", "manager", "accountant"),
+    "pos_approval": ("admin", "manager"),
+    "pos_approval_decision": (),
+    "pos_daily_summary": ("admin", "manager"),
     "bank_sync": ("admin", "manager", "accountant"),
     "license": ("admin",),
 }
@@ -70,7 +73,7 @@ ROLE_LABELS = {
 }
 
 # Personel kartı bağlı yönetici depo/üretim yayınlarını görmez; kasa-banka kritik.
-STAFF_ADMIN_BROADCAST_TYPES = frozenset({"bank_sync", "cash_approval", "license"})
+STAFF_ADMIN_BROADCAST_TYPES = frozenset({"bank_sync", "cash_approval", "license", "pos_approval", "pos_daily_summary"})
 
 
 def roles_for_type(ntype: str) -> List[str]:
