@@ -995,7 +995,7 @@ async def update_company(company_id: str, req: Dict[str, Any]):
 @api_router.put("/companies/{company_id}/personnel-settings")
 async def put_personnel_settings(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """SGK resmi maaşının bankadan ödenmesi. Varsayılan açık; kapatmak firma yöneticisine aittir."""
-    if company_id not in (user.get("company_ids") or []) and not user.get("is_super_admin"):
+    if not tenant_access.user_may_access_company(user, company_id):
         raise HTTPException(status_code=403, detail="Yalnızca bu şirketin kullanıcıları bu ayarı yönetebilir.")
     if "sgk_salary_bank_only" not in (req or {}):
         raise HTTPException(status_code=400, detail="sgk_salary_bank_only alanı gerekli.")
@@ -18491,8 +18491,8 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     ids = [e["_id"] for e in employees]
     if not ids:
         return []
-    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}}).to_list(4000)
-    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}}).to_list(4000)
+    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}, "company_id": company_id}).to_list(4000)
+    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}, "company_id": company_id}).to_list(4000)
     expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
     leave_rows = await db.leave_requests.find({"employee_id": {"$in": ids}}).to_list(8000)
     pmap, bmap, emap, lmap = {}, {}, {}, {}
@@ -18870,9 +18870,14 @@ async def employee_card(emp_id: str, month: Optional[str] = None, user: dict = D
     month = str(month or "").strip()[:7]
     if len(month) != 7 or month[4] != "-":
         month = employee_pay.istanbul_period()
-    payrolls = clean_docs(await db.payrolls.find({"employee_id": emp_id}).sort("period", -1).to_list(60))
+    emp_cid = emp.get("company_id")
+    pay_q = {"employee_id": emp_id, "company_id": emp_cid} if emp_cid else {"employee_id": emp_id}
+    payrolls = clean_docs(await db.payrolls.find(pay_q).sort("period", -1).to_list(60))
     leaves = clean_docs(await db.leave_requests.find({"employee_id": emp_id}).sort("start_date", -1).to_list(200))
-    bonuses = clean_docs(await db.bonus_payments.find({"employee_id": emp_id}).sort("created_at", -1).to_list(200))
+    bonuses = clean_docs(await db.bonus_payments.find(pay_q).sort("created_at", -1).to_list(200))
+    movements = clean_docs(await db.personnel_movements.find({
+        **pay_q, "status": {"$nin": ["reversed", "cancelled"]},
+    }).sort("created_at", -1).to_list(200))
     att = await db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
     docs = clean_docs(await db.files.find({"entity": "employee", "entity_id": emp_id, "is_deleted": False}).sort("created_at", -1).to_list(200))
     user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
@@ -18913,6 +18918,7 @@ async def employee_card(emp_id: str, month: Optional[str] = None, user: dict = D
     if invite_payload:
         invite_payload["role_name"] = role_names.get(invite_payload.get("role"), invite_payload.get("role"))
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
+            "movements": movements,
             "leave_balance": leave_bal,
             "attendance": {"month": month, **att_sum},
             "overtime": {"hours": ot["overtime_hours"], "weekday_hours": ot["weekday_hours"], "holiday_hours": ot["holiday_hours"],
@@ -18945,8 +18951,9 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
         import personnel_payments
         company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
         ot = await attendance.overtime_pay_for_period(company, emp, month)
-        payrolls = await db.payrolls.find({"employee_id": emp_id}).to_list(60)
-        bonuses = await db.bonus_payments.find({"employee_id": emp_id}).to_list(200)
+        pay_q = {"employee_id": emp_id, "company_id": emp.get("company_id")} if emp.get("company_id") else {"employee_id": emp_id}
+        payrolls = await db.payrolls.find(pay_q).to_list(60)
+        bonuses = await db.bonus_payments.find(pay_q).to_list(200)
         balance = await _employee_receivable(
             {**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
             payrolls, bonuses, month,
@@ -18955,12 +18962,13 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
         if not body.get("idempotency_key") and request is not None:
             body["idempotency_key"] = idempotency.header_key(request)
         return await personnel_payments.apply_payment_lines(
-            db, emp, company, body, balance=balance, pay_date=pay_date, period=month,
+            db, emp, company, body, balance=balance, pay_date=pay_date, period=month, request=request,
         )
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
     ot = await attendance.overtime_pay_for_period(company, emp, month)
-    payrolls = await db.payrolls.find({"employee_id": emp_id}).to_list(60)
-    bonuses = await db.bonus_payments.find({"employee_id": emp_id}).to_list(200)
+    pay_q = {"employee_id": emp_id, "company_id": emp.get("company_id")} if emp.get("company_id") else {"employee_id": emp_id}
+    payrolls = await db.payrolls.find(pay_q).to_list(60)
+    bonuses = await db.bonus_payments.find(pay_q).to_list(200)
     balance = await _employee_receivable(
         {**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
         payrolls, bonuses, month,
@@ -18984,7 +18992,7 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
         pending = [p for p in payrolls if p.get("status") != "paid"]
         if not pending:
             await generate_payroll({"company_id": emp.get("company_id"), "period": month, "employee_id": emp_id})
-            payrolls = await db.payrolls.find({"employee_id": emp_id}).to_list(60)
+            payrolls = await db.payrolls.find(pay_q).to_list(60)
             pending = [p for p in payrolls if p.get("status") != "paid"]
         for p in pending:
             await _pay_payroll_core(p["_id"], pay_req, user)
@@ -19067,6 +19075,16 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
     }
 
 
+@api_router.delete("/personnel/movements/{movement_id}")
+async def reverse_personnel_movement(movement_id: str, user: dict = Depends(get_current_user)):
+    """Ödemeyi geri al: kasa/banka hareketlerini sil, bakiyeleri ve paid_amount değerlerini düzelt."""
+    import personnel_payments
+    mov = await tenant_access.get_tenant_doc(
+        db, "personnel_movements", movement_id, user, not_found="Ödeme hareketi bulunamadı.",
+    )
+    return await personnel_payments.reverse_payment(db, mov, actor=user)
+
+
 def _truthy_confirm(v) -> bool:
     if v is True:
         return True
@@ -19122,6 +19140,8 @@ async def _employee_receipts(emp_id: str) -> list:
     rows = await db.personnel_receipts.find({"employee_id": emp_id}).to_list(40)
     out = []
     for r in rows:
+        if str(r.get("status") or "") == "cancelled":
+            continue
         rid = r.get("_id") or r.get("id")
         out.append({
             "id": rid,
@@ -19140,12 +19160,12 @@ async def personnel_receipt_pdf(receipt_id: str, user: dict = Depends(get_curren
     rec = await db.personnel_receipts.find_one({"_id": receipt_id})
     if not rec:
         raise HTTPException(status_code=404, detail="Makbuz bulunamadı.")
-    allowed = bool(user.get("is_super_admin")) or rec.get("company_id") in (user.get("company_ids") or [])
-    if not allowed:
+    try:
+        tenant_access.assert_doc_company(user, rec, not_found="Makbuz bulunamadı.")
+    except HTTPException:
         emp = await attendance.employee_for_user(user)
-        allowed = bool(emp and str(emp.get("_id")) == str(rec.get("employee_id")))
-    if not allowed:
-        raise HTTPException(status_code=403, detail="Bu makbuza erişemezsiniz.")
+        if not (emp and str(emp.get("_id")) == str(rec.get("employee_id"))):
+            raise HTTPException(status_code=404, detail="Makbuz bulunamadı.")
     company = await db.companies.find_one({"_id": rec.get("company_id")}) or {}
     import personnel_receipt
     pdf = personnel_receipt.render_pdf(rec, company)
@@ -19170,8 +19190,9 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
     emp_id = emp["_id"]
     month = month or employee_pay.istanbul_period()
     company_id = emp.get("company_id")
-    payrolls = clean_docs(await db.payrolls.find({"employee_id": emp_id}).sort("period", -1).to_list(24))
-    bonuses = clean_docs(await db.bonus_payments.find({"employee_id": emp_id}).sort("created_at", -1).to_list(100))
+    pay_q = {"employee_id": emp_id, "company_id": company_id} if company_id else {"employee_id": emp_id}
+    payrolls = clean_docs(await db.payrolls.find(pay_q).sort("period", -1).to_list(24))
+    bonuses = clean_docs(await db.bonus_payments.find(pay_q).sort("created_at", -1).to_list(100))
     leaves = clean_docs(await db.leave_requests.find({"employee_id": emp_id}).sort("start_date", -1).to_list(100))
     att_rows = await db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
     leave_bal = attendance.compute_leave_balance(emp, leaves)

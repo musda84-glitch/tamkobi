@@ -108,7 +108,7 @@ class FakeDb:
             "bank_accounts", "bank_transactions", "partners", "partner_transactions",
             "bonus_payments", "payrolls", "loans", "installments", "expenses",
             "contacts", "companies", "activity_logs", "trash", "products", "stock_movements",
-            "invoices",
+            "invoices", "personnel_movements", "personnel_receipts",
         ]
         for n in names:
             setattr(self, n, FakeCollection())
@@ -156,6 +156,9 @@ def test_link_fields_specialty():
     assert f3["loan_id"] == "L1"
     f4 = linked_moves.link_fields("installment", "i1")
     assert f4["installment_id"] == "i1"
+    f5 = linked_moves.link_fields("personnel_payment", "mov1")
+    assert f5["source_type"] == "personnel_payment" and f5["source_id"] == "mov1"
+    assert f5["personnel_movement_id"] == "mov1" and f5["source"] == "personnel_payment"
 
 
 def test_source_guard_blocks_linked_tx():
@@ -383,6 +386,17 @@ def test_cleanup_foreign_company_payroll_skipped(db):
     assert result["actions"][0]["result"]["reason"] == "foreign_company"
     assert any(t.get("_id") == "tx_b" for t in db.bank_transactions.docs)
     assert db.bank_accounts.docs[1]["current_balance"] == pytest.approx(500.0)
+
+
+def test_personnel_payment_orphan_scan(db):
+    db.bank_transactions.docs.append({
+        "_id": "pp_orphan", "company_id": "c1", "account_id": "acc1", "type": "outflow",
+        "amount": 25, "personnel_movement_id": "gone_mov", "description": "ghost pay",
+        **linked_moves.link_fields("personnel_payment", "gone_mov"),
+    })
+    report = _run(linked_moves.scan_orphans(db, "c1"))
+    assert any(r["source_id"] == "gone_mov" for r in report["orphan_personnel_payment_moves"])
+    assert report["summary"]["orphan_moves"] >= 1
 
 
 def test_link_query_scopes_company_id(db):

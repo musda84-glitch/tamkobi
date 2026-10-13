@@ -178,6 +178,12 @@ describe("personnelCard", () => {
     expect(payMoveCanDelete({ id: "pay-2026-11", kind: "payroll" }, true)).toBe(false);
     expect(payMoveCanDelete({ id: "pay_cedeeef3", kind: "payroll" }, false)).toBe(false);
     expect(payMoveDeleteConfirm({ kind: "payroll", status: "paid" }).message).toContain("geri alınır");
+    expect(payMoveDeletePath({ id: "mov_1", kind: "personnel_payment" })).toBe("/personnel/movements/mov_1");
+    expect(payMoveCanDelete({ id: "mov_1", kind: "personnel_payment", status: "posted" }, true)).toBe(true);
+    expect(payMoveDeleteConfirm({ kind: "personnel_payment" }).title).toBe("Ödemeyi geri al");
+    expect(employeePayMoves({
+      movements: [{ id: "mov_1", kind_label: "Maaş", amount: 1000, date: "2026-10-13", period: "2026-10", status: "posted" }],
+    }).map((m) => m.kind)).toEqual(["personnel_payment"]);
   });
 
   test("personnel data reset path and confirm copy", () => {

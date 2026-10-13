@@ -141,3 +141,20 @@ test("SGK'lı personelde kasa resmi maaşı engeller", () => {
   });
   expect(host.querySelector('[data-testid="emp-pay-sgk-warn"]').textContent).toBe("SGK'lı personelin resmi maaşı bankadan ödenmelidir");
 });
+
+test("ödeme açılışında uuid üretir ve Idempotency-Key gönderir", async () => {
+  render(
+    <EmployeePayModal employee={{ id: "e1", full_name: "Ali" }} companyId="c1" accounts={accounts} card={card} onClose={() => {}} />,
+  );
+  act(() => setNative(host.querySelector('[data-testid="emp-pay-line-amount-0"]'), "100"));
+  await act(async () => {
+    host.querySelector('[data-testid="emp-pay-submit"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(axios.post).toHaveBeenCalled();
+  const [, body, cfg] = axios.post.mock.calls[0];
+  expect(body.idempotency_key).toEqual(expect.any(String));
+  expect(body.idempotency_key.length).toBeGreaterThan(8);
+  expect(cfg.headers["Idempotency-Key"]).toBe(body.idempotency_key);
+});
