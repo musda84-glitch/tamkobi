@@ -1,4 +1,4 @@
-/** Banka hareketi eşleşme rozeti: hedef cari/hesap + işlemi yapan kullanıcı. */
+/** Banka hareketi eşleşme rozeti: hedef cari/hesap + işlem kullanıcıları. */
 
 const GENERIC_DESC = /^(banka\s*hareketi|gelen(\s*havale)?(\s*\/?\s*eft)?|giden(\s*(ödeme|odeme|eft|havale))?|havale(\s*\/?\s*eft)?|eft|fast)(\s*[·•\-]\s*ref\s+\S+)?$/i;
 
@@ -64,22 +64,41 @@ export function sanitizeActorLabel(name) {
   return s;
 }
 
-/** Hareketi oluşturan / eşleştiren yönetici — listede gösterilir. */
-export function txCreatedByLabel(tx) {
+/** Otomatik banka içe aktarımda oluşturan etiketi — her zaman Sistem (Banka aktarımı). */
+export function txCreatedSourceLabel(tx) {
+  const src = String(tx?.source || "");
+  if (src === "bank_sync" || src === "card_statement" || src === "bank_statement") {
+    return tx?.is_simulated ? "Simüle" : "Sistem (Banka aktarımı)";
+  }
   const created = sanitizeActorLabel(tx?.created_by_name);
   if (created) return created;
-  const matched = sanitizeActorLabel(matchActorName(tx));
-  if (matched) return matched;
-  if (tx?.source === "bank_sync") return tx?.is_simulated ? "Simüle" : "Banka";
-  if (tx?.source === "ledger") return "Sistem";
+  if (src === "ledger") return "Sistem";
   return "";
+}
+
+/**
+ * Kullanıcı sütunu: «Oluşturan: X · Eşleştiren: Y»
+ * Eşleşme yoksa yalnızca oluşturan.
+ */
+export function txUserColumnLabel(tx) {
+  const created = txCreatedSourceLabel(tx);
+  const matched = matchActorName(tx);
+  const isMatched = String(tx?.match_status || "") === "matched" && !!matched;
+  if (isMatched && created) return `Oluşturan: ${created} · Eşleştiren: ${matched}`;
+  if (isMatched) return `Eşleştiren: ${matched}`;
+  return created || "";
+}
+
+/** @deprecated alias — liste sütunu için txUserColumnLabel kullanın. */
+export function txCreatedByLabel(tx) {
+  return txUserColumnLabel(tx);
 }
 
 export function matchStatusLabel(tx) {
   const target = matchTargetLabel(tx);
   const sep = tx?.contact_name ? ": " : target ? " → " : "";
-  const actor = matchActorName(tx);
-  return `EŞLEŞTİ${target ? `${sep}${target}` : ""}${actor ? ` · ${actor}` : ""}`;
+  // Kullanıcı adı rozette değil; Kullanıcı sütununda Eşleştiren olarak görünür.
+  return `EŞLEŞTİ${target ? `${sep}${target}` : ""}`;
 }
 
 export function matchActorTitle(tx) {

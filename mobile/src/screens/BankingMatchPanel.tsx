@@ -34,6 +34,7 @@ import {
   type MatchSuggestion,
   type PersonnelPayKind,
 } from "../utils/bankMatch";
+import { txUserColumnLabel } from "../utils/bankMatchLabel";
 import type { BankAccount, ExpenseCategory, Partner } from "../utils/finance";
 import type { Employee } from "../utils/personnel";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
@@ -302,7 +303,12 @@ export function BankingMatchPanel({
               key={idOf(t)}
               testID={`matched-tx-${idOf(t)}`}
               title={t.description || "Hareket"}
-              subtitle={[fmtDate(t.date), matchResultLabel(t), matchedViaTr(t.matched_via)].filter(Boolean).join(" · ")}
+              subtitle={[
+                fmtDate(t.date),
+                matchResultLabel(t),
+                matchedViaTr(t.matched_via),
+                txUserColumnLabel({ ...t, match_status: "matched" }),
+              ].filter(Boolean).join(" · ")}
               right={`${t.type === "inflow" ? "+" : "-"}${fmtMoney(t.amount)}`}
               rightSub={canEdit ? "Geri al" : undefined}
               onPress={canEdit ? () => unmatch(t) : undefined}

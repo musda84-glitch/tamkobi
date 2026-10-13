@@ -1,4 +1,5 @@
 import { dateSortKey } from "./calendar";
+import { txUserColumnLabel } from "./bankMatchLabel";
 import { collectableAccounts } from "./contactDraft";
 import { fmtMoney, idOf } from "./money";
 
@@ -89,6 +90,10 @@ export type BankTx = {
   is_simulated?: boolean;
   match_status?: string;
   matched_via?: string;
+  matched_by_id?: string;
+  matched_by_name?: string;
+  created_by_id?: string;
+  created_by_name?: string;
   suggested_contact_id?: string;
   suggested_contact_name?: string;
   related_invoice_id?: string;
@@ -956,7 +961,7 @@ export function bankMovementNotice(tx: BankTx, accounts: { id?: string; _id?: st
   return {
     id: idOf(tx),
     title: String(tx.description || tx.category || txTypeTr(tx.type)),
-    detail: [txTypeTr(tx.type), tx.account_name, tx.contact_name].filter(Boolean).join(" · "),
+    detail: [txTypeTr(tx.type), tx.account_name, tx.contact_name, txUserColumnLabel(tx)].filter(Boolean).join(" · "),
     signed: signedTxForGroup(tx, ids),
     currency: tx.currency,
   };

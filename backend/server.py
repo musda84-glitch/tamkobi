@@ -10945,6 +10945,7 @@ async def _apply_personnel_bank_match(tx: dict, emp: dict, kind: str, amount: fl
 
 async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None, personnel_pay_kind: Optional[str] = None) -> dict:
     from bank_auto_match import match_actor_fields
+    from bank_match_desc import append_match_suffix, match_phrase, strip_match_suffix
     update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
     if category:
         update["category"] = category
@@ -11046,12 +11047,23 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
             if not category:
                 update["category"] = "Hesaplar Arası Virman"
             target_account_id = t_id
+    # Açıklamaya kullanıcı adı yazılmaz; hedef «Eşleşti: …» olarak eklenir.
+    phrase = match_phrase(
+        contact_name=update.get("contact_name") or contact_name,
+        invoice_number=update.get("related_invoice_number"),
+        target_account_name=update.get("target_account_name") or target_name,
+        category=update.get("category") or category,
+    )
+    base_desc = strip_match_suffix(tx.get("description") or "")
+    update["description"] = append_match_suffix(base_desc, phrase)
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
     if learn:
-        await _learn_rule(tx["company_id"], tx.get("description", ""), contact_id, contact_name, category, target_account_id, target_name)
+        # Kural öğrenmede orijinal banka açıklaması (Eşleşti eki olmadan)
+        await _learn_rule(tx["company_id"], base_desc, contact_id, contact_name, category, target_account_id, target_name)
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
 async def _unmatch(tx: dict) -> dict:
+    from bank_match_desc import strip_match_suffix, strip_trailing_actor
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
     if tx.get("contact_id"):
@@ -11091,14 +11103,23 @@ async def _unmatch(tx: dict) -> dict:
                 {"_id": pid},
                 {"$set": {"status": "unpaid"}, "$unset": {"paid_date": "", "account_id": "", "account_name": "", "bank_transaction_id": "", "matched_via": "", "partner_id": ""}},
             )
+    cleaned_desc = strip_trailing_actor(
+        strip_match_suffix(tx.get("description") or ""),
+        tx.get("matched_by_name"),
+    )
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {
-        "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
+        "$set": {
+            "match_status": "unmatched",
+            "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
+            "description": cleaned_desc,
+        },
         "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
 async def _prior_match_from_history(company_id: str, description: str, skip_id: Optional[str] = None):
     """Aynı açıklama kalıbıyla daha önce işlenmiş hareketin cari / kasa / kategorisi."""
-    pattern = _match_pattern(description)
+    from bank_match_desc import strip_match_suffix
+    pattern = _match_pattern(strip_match_suffix(description))
     if not pattern:
         return None
     prev = await db.bank_transactions.find({
@@ -11109,7 +11130,7 @@ async def _prior_match_from_history(company_id: str, description: str, skip_id: 
     for t in prev:
         if skip_id and t.get("_id") == skip_id:
             continue
-        if _match_pattern(t.get("description", "")) != pattern:
+        if _match_pattern(strip_match_suffix(t.get("description", ""))) != pattern:
             continue
         if t.get("contact_id") or t.get("target_account_id") or t.get("category"):
             return t
@@ -11290,6 +11311,20 @@ async def unmatch_bank_transaction(tx_id: str, user: dict = Depends(get_current_
     if tx.get("match_status") != "matched":
         raise HTTPException(status_code=400, detail="Bu hareket eşleştirilmemiş.")
     return await _unmatch(tx)
+
+
+@api_router.post("/banking/transactions/migrate-match-descriptions")
+async def migrate_match_descriptions_endpoint(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    """Eşleşmiş hareket açıklamalarındaki eski kullanıcı eklerini Eşleşti: formatına çevir.
+
+    dry_run varsayılan True — şirket bazında. Şirket admini zorunlu.
+    """
+    from bank_match_desc import migrate_match_descriptions
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await tenant_access.require_company_admin(user, company_id)
+    dry_run = True if req.get("dry_run") is None else bool(req.get("dry_run"))
+    return await migrate_match_descriptions(db, company_id, dry_run=dry_run)
+
 
 @api_router.get("/banking/transactions/matched")
 async def list_matched_transactions(company_id: Optional[str] = "comp_nexus_main_01", limit: int = 100):

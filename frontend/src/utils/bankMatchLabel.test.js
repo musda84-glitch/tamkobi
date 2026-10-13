@@ -1,4 +1,13 @@
-import { matchActorTitle, matchStatusLabel, matchTargetLabel, sanitizeActorLabel, txCreatedByLabel, txDescriptionLabel } from "./bankMatchLabel";
+import {
+  matchActorTitle,
+  matchStatusLabel,
+  matchTargetLabel,
+  sanitizeActorLabel,
+  txCreatedByLabel,
+  txCreatedSourceLabel,
+  txDescriptionLabel,
+  txUserColumnLabel,
+} from "./bankMatchLabel";
 
 describe("bankMatchLabel", () => {
   it("txDescriptionLabel prefers real description and counterparty over generic Banka Hareketi", () => {
@@ -38,11 +47,11 @@ describe("bankMatchLabel", () => {
     })).toBe("ACME A.Ş.");
   });
 
-  it("shows contact, then actor who matched", () => {
+  it("matchStatusLabel shows target without matcher username", () => {
     expect(matchStatusLabel({
       contact_name: "Mustafa Bal",
       matched_by_name: "Ayşe Yılmaz",
-    })).toBe("EŞLEŞTİ: Mustafa Bal · Ayşe Yılmaz");
+    })).toBe("EŞLEŞTİ: Mustafa Bal");
   });
 
   it("uses arrow for account/partner target", () => {
@@ -50,7 +59,7 @@ describe("bankMatchLabel", () => {
     expect(matchStatusLabel({
       target_account_name: "Mustafa Bal",
       matched_by_name: "Admin",
-    })).toBe("EŞLEŞTİ → Mustafa Bal · Admin");
+    })).toBe("EŞLEŞTİ → Mustafa Bal");
   });
 
   it("omits actor when unknown (eski kayıtlar)", () => {
@@ -63,33 +72,58 @@ describe("bankMatchLabel", () => {
     expect(matchActorTitle({})).toBe("");
   });
 
-  it("txCreatedByLabel prefers created_by, then match actor, then bank source", () => {
+  it("txUserColumnLabel shows Oluşturan / Eşleştiren", () => {
+    expect(txUserColumnLabel({ created_by_name: "Ayşe" })).toBe("Ayşe");
+    expect(txUserColumnLabel({
+      created_by_name: "Ayşe",
+      matched_by_name: "Ali",
+      match_status: "matched",
+      source: "manual",
+    })).toBe("Oluşturan: Ayşe · Eşleştiren: Ali");
+    expect(txUserColumnLabel({
+      created_by_name: "Ayşe",
+      matched_by_name: "Ali",
+      match_status: "matched",
+      source: "bank_sync",
+    })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Ali");
+    expect(txUserColumnLabel({
+      matched_by_name: "Ali",
+      match_status: "matched",
+      source: "bank_sync",
+    })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Ali");
+    expect(txCreatedSourceLabel({ source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txCreatedSourceLabel({ created_by_name: "Ayşe", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txUserColumnLabel({ created_by_name: "Ayşe", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txCreatedSourceLabel({ source: "bank_sync", is_simulated: true })).toBe("Simüle");
+    expect(txUserColumnLabel({ source: "ledger" })).toBe("Sistem");
+    expect(txUserColumnLabel({})).toBe("");
     expect(txCreatedByLabel({ created_by_name: "Ayşe" })).toBe("Ayşe");
-    expect(txCreatedByLabel({ matched_by_name: "Ali", source: "bank_sync" })).toBe("Ali");
-    expect(txCreatedByLabel({ source: "bank_sync" })).toBe("Banka");
-    expect(txCreatedByLabel({ source: "bank_sync", is_simulated: true })).toBe("Simüle");
-    expect(txCreatedByLabel({ source: "ledger" })).toBe("Sistem");
-    expect(txCreatedByLabel({})).toBe("");
   });
 
   it("hides site brand / bare domain as actor (tamkobi.com)", () => {
     expect(sanitizeActorLabel("tamkobi.com")).toBe("");
     expect(sanitizeActorLabel("TamKobi")).toBe("");
     expect(sanitizeActorLabel("Ayşe")).toBe("Ayşe");
-    expect(txCreatedByLabel({ created_by_name: "tamkobi.com", matched_by_name: "Ali" })).toBe("Ali");
-    expect(txCreatedByLabel({ created_by_name: "tamkobi.com", source: "bank_sync" })).toBe("Banka");
+    expect(txUserColumnLabel({
+      created_by_name: "tamkobi.com",
+      matched_by_name: "Ali",
+      match_status: "matched",
+      source: "bank_sync",
+    })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Ali");
+    expect(txUserColumnLabel({ created_by_name: "tamkobi.com", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
   });
 
   it("hides platform CRM emails that are not company users", () => {
     expect(sanitizeActorLabel("tamkobi.crm@gmail.com")).toBe("");
     expect(sanitizeActorLabel("destek@tamkobi.com")).toBe("");
     expect(sanitizeActorLabel("mustafa@matek.com")).toBe("mustafa@matek.com");
-    expect(txCreatedByLabel({ created_by_name: "tamkobi.crm@gmail.com", source: "bank_sync" })).toBe("Banka");
-    expect(txCreatedByLabel({
+    expect(txUserColumnLabel({ created_by_name: "tamkobi.crm@gmail.com", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txUserColumnLabel({
       created_by_name: "tamkobi.crm@gmail.com",
       matched_by_name: "Mustafa BAL",
+      match_status: "matched",
       source: "bank_sync",
-    })).toBe("Mustafa BAL");
+    })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Mustafa BAL");
     expect(matchStatusLabel({
       contact_name: "Mustafa Bal",
       matched_by_name: "tamkobi.crm@gmail.com",

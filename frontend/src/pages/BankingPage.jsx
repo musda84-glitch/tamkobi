@@ -9,7 +9,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { asContactList, canUploadBankStatement } from "../utils/bankStatementUpload";
-import { matchActorTitle, matchStatusLabel, txCreatedByLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
+import { matchActorTitle, matchStatusLabel, txUserColumnLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { filterAccountTransactions } from "../utils/bankAccountTx";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
@@ -727,8 +727,8 @@ export default function BankingPage() {
                       {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
                       {tx.source === "bank_match" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap" data-testid={`tx-actor-${tx.id || tx._id}`} title={txCreatedByLabel(tx) || undefined}>
-                      {txCreatedByLabel(tx) || <span className="text-slate-300">—</span>}
+                    <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap" data-testid={`tx-actor-${tx.id || tx._id}`} title={txUserColumnLabel(tx) || undefined}>
+                      {txUserColumnLabel(tx) || <span className="text-slate-300">—</span>}
                     </td>
                     <td className={`px-4 py-2.5 text-right font-bold ${
                       tx.type === 'inflow' ? 'text-emerald-600' : tx.type === 'outflow' ? 'text-rose-600' : 'text-indigo-600'

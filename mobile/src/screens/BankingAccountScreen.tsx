@@ -9,6 +9,7 @@ import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Scree
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact } from "../types";
+import { txUserColumnLabel } from "../utils/bankMatchLabel";
 import { accountBalance, accountCashTxRequest, accountTypeTr, normalizeAccountType, sortBankTransactions, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
@@ -163,14 +164,18 @@ export function BankingAccountScreen() {
         </Card>
       ) : isCard ? <Muted>Kredi kartında tahsilat kapalı; masraf veya ekstre kullanın.</Muted> : null}
       <Text style={{ fontWeight: "800", color: colors.text }}>Hareketler</Text>
-      {!txs.length ? <Muted>Hareket yok.</Muted> : sortBankTransactions(txs).slice(0, 40).map((tx) => (
-        <ListRow
-          key={idOf(tx)}
-          title={`${txTypeTr(tx.type)} · ${fmtDate(tx.date)}`}
-          subtitle={[tx.category, tx.description, tx.contact_name].filter(Boolean).join(" · ")}
-          right={`${tx.type === "outflow" ? "-" : tx.type === "inflow" ? "+" : ""}${fmtMoney(tx.amount, tx.currency)}`}
-        />
-      ))}
+      {!txs.length ? <Muted>Hareket yok.</Muted> : sortBankTransactions(txs).slice(0, 40).map((tx) => {
+        const actor = txUserColumnLabel(tx);
+        return (
+          <ListRow
+            key={idOf(tx)}
+            testID={`bank-tx-row-${idOf(tx)}`}
+            title={`${txTypeTr(tx.type)} · ${fmtDate(tx.date)}`}
+            subtitle={[tx.category, tx.description, tx.contact_name, actor].filter(Boolean).join(" · ")}
+            right={`${tx.type === "outflow" ? "-" : tx.type === "inflow" ? "+" : ""}${fmtMoney(tx.amount, tx.currency)}`}
+          />
+        );
+      })}
       {canEdit ? (
         <Pressable onPress={remove} testID="bank-delete" style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>
           <Ionicons name="trash-outline" size={18} color={colors.danger} />
