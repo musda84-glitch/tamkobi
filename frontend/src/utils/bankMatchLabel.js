@@ -64,14 +64,15 @@ export function sanitizeActorLabel(name) {
   return s;
 }
 
-/** Otomatik banka içe aktarımda oluşturan etiketi. */
+/** Otomatik banka içe aktarımda oluşturan etiketi — her zaman Sistem (Banka aktarımı). */
 export function txCreatedSourceLabel(tx) {
-  const created = sanitizeActorLabel(tx?.created_by_name);
-  if (created) return created;
-  if (tx?.source === "bank_sync" || tx?.source === "card_statement" || tx?.source === "bank_statement") {
+  const src = String(tx?.source || "");
+  if (src === "bank_sync" || src === "card_statement" || src === "bank_statement") {
     return tx?.is_simulated ? "Simüle" : "Sistem (Banka aktarımı)";
   }
-  if (tx?.source === "ledger") return "Sistem";
+  const created = sanitizeActorLabel(tx?.created_by_name);
+  if (created) return created;
+  if (src === "ledger") return "Sistem";
   return "";
 }
 

@@ -11002,10 +11002,11 @@ async def unmatch_bank_transaction(tx_id: str, user: dict = Depends(get_current_
 async def migrate_match_descriptions_endpoint(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Eşleşmiş hareket açıklamalarındaki eski kullanıcı eklerini Eşleşti: formatına çevir.
 
-    dry_run varsayılan True — şirket bazında.
+    dry_run varsayılan True — şirket bazında. Şirket admini zorunlu.
     """
     from bank_match_desc import migrate_match_descriptions
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await tenant_access.require_company_admin(user, company_id)
     dry_run = True if req.get("dry_run") is None else bool(req.get("dry_run"))
     return await migrate_match_descriptions(db, company_id, dry_run=dry_run)
 

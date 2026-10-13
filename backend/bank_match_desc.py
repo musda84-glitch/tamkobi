@@ -123,15 +123,24 @@ def rewrite_matched_description(tx: Dict[str, Any]) -> Tuple[str, str]:
     return old, new
 
 
+AUTO_IMPORT_SOURCES = ("bank_sync", "card_statement", "bank_statement")
+
+
 async def migrate_match_descriptions(db, company_id: str, *, dry_run: bool = True) -> Dict[str, Any]:
-    """Şirket bazında eşleşme açıklamalarını düzelt. dry_run varsayılan True."""
+    """Şirket bazında eşleşme açıklamalarını düzelt + otomatik aktarım created_by temizle.
+
+    dry_run varsayılan True.
+    """
     cid = (company_id or "").strip()
     if not cid:
-        return {"dry_run": dry_run, "scanned": 0, "would_update": 0, "updated": 0, "samples": []}
+        return {
+            "dry_run": dry_run, "scanned": 0, "would_update": 0, "updated": 0,
+            "would_clear_created_by": 0, "cleared_created_by": 0, "samples": [],
+        }
     q = {
         "company_id": cid,
         "match_status": "matched",
-        "source": {"$in": ["bank_sync", "card_statement", "bank_statement"]},
+        "source": {"$in": list(AUTO_IMPORT_SOURCES)},
     }
     rows: List[Dict[str, Any]] = await db.bank_transactions.find(q).to_list(20000)
     samples: List[Dict[str, Any]] = []
@@ -140,28 +149,51 @@ async def migrate_match_descriptions(db, company_id: str, *, dry_run: bool = Tru
     for tx in rows:
         if not description_needs_rewrite(tx):
             continue
-        old, new = rewrite_matched_description(tx)
-        if old == new:
+        old_desc, new_desc = rewrite_matched_description(tx)
+        if old_desc == new_desc:
             continue
         would += 1
         if len(samples) < 20:
-            samples.append({"id": tx.get("_id"), "before": old, "after": new})
+            samples.append({"id": tx.get("_id"), "before": old_desc, "after": new_desc})
         if not dry_run:
             await db.bank_transactions.update_one(
                 {"_id": tx["_id"]},
-                {"$set": {"description": new}},
+                {"$set": {"description": new_desc}},
             )
             updated += 1
+
+    # Otomatik içe aktarımda created_by oturum kullanıcısı kalmışsa temizle
+    actor_q = {
+        "company_id": cid,
+        "source": {"$in": list(AUTO_IMPORT_SOURCES)},
+        "$or": [
+            {"created_by_name": {"$exists": True, "$nin": [None, ""]}},
+            {"created_by_id": {"$exists": True, "$nin": [None, ""]}},
+        ],
+    }
+    actor_rows: List[Dict[str, Any]] = await db.bank_transactions.find(actor_q).to_list(20000)
+    would_clear = len(actor_rows)
+    cleared = 0
+    if not dry_run:
+        for tx in actor_rows:
+            await db.bank_transactions.update_one(
+                {"_id": tx["_id"]},
+                {"$unset": {"created_by_name": "", "created_by_id": ""}},
+            )
+            cleared += 1
+
     return {
         "dry_run": dry_run,
         "company_id": cid,
         "scanned": len(rows),
         "would_update": would,
         "updated": updated if not dry_run else 0,
+        "would_clear_created_by": would_clear,
+        "cleared_created_by": cleared if not dry_run else 0,
         "samples": samples,
         "message": (
-            f"{would} kayıt güncellenecek (dry-run)."
+            f"{would} açıklama, {would_clear} created_by temizlenecek (dry-run)."
             if dry_run
-            else f"{updated} kayıt güncellendi."
+            else f"{updated} açıklama güncellendi, {cleared} created_by temizlendi."
         ),
     }

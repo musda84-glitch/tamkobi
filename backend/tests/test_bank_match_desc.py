@@ -144,3 +144,124 @@ def test_migrate_apply_rewrites():
     assert "Ayşe" not in coll.docs[0]["description"]
     assert "Eşleşti: ACME (cari)" in coll.docs[0]["description"]
     assert coll.docs[0]["description"].startswith("Havale")
+
+
+def test_migrate_clears_created_by_on_auto_import_dry_run_reports():
+    class Coll:
+        def __init__(self):
+            self.docs = [
+                {
+                    "_id": "a1",
+                    "company_id": "matek",
+                    "source": "bank_sync",
+                    "match_status": "unmatched",
+                    "description": "EFT",
+                    "created_by_name": "Mehmet",
+                    "created_by_id": "u1",
+                },
+                {
+                    "_id": "a2",
+                    "company_id": "matek",
+                    "source": "bank_sync",
+                    "match_status": "matched",
+                    "description": "Havale",
+                    "contact_name": "ACME",
+                    "created_by_name": "Ayşe",
+                },
+            ]
+            self.updates = []
+
+        def find(self, q):
+            class Cur:
+                def __init__(self, rows):
+                    self._rows = rows
+
+                async def to_list(self, n):
+                    return self._rows
+
+            rows = [d for d in self.docs if d.get("company_id") == "matek"]
+            # Rough filter for matched vs actor clear queries
+            if q.get("match_status") == "matched":
+                rows = [d for d in rows if d.get("match_status") == "matched"]
+            elif "$or" in q or (isinstance(q.get("$and"), list)):
+                rows = [d for d in rows if d.get("created_by_name") or d.get("created_by_id")]
+            return Cur(rows)
+
+        async def update_one(self, filt, op):
+            self.updates.append((filt, op))
+
+    coll = Coll()
+    db = MagicMock()
+    db.bank_transactions = coll
+    out = _run(bmd.migrate_match_descriptions(db, "matek", dry_run=True))
+    assert out["dry_run"] is True
+    assert out["would_clear_created_by"] == 2
+    assert out["cleared_created_by"] == 0
+    assert coll.updates == []
+    assert coll.docs[0]["created_by_name"] == "Mehmet"
+
+
+def test_migrate_clears_created_by_when_applied():
+    class Coll:
+        def __init__(self):
+            self.docs = [
+                {
+                    "_id": "a1",
+                    "company_id": "matek",
+                    "source": "card_statement",
+                    "description": "POS",
+                    "created_by_name": "Mehmet",
+                    "created_by_id": "u1",
+                },
+            ]
+
+        def find(self, q):
+            class Cur:
+                def __init__(self, rows):
+                    self._rows = rows
+
+                async def to_list(self, n):
+                    return self._rows
+
+            rows = list(self.docs)
+            if q.get("match_status") == "matched":
+                rows = [d for d in rows if d.get("match_status") == "matched"]
+            elif "$or" in q:
+                rows = [d for d in rows if d.get("created_by_name") or d.get("created_by_id")]
+            return Cur(rows)
+
+        async def update_one(self, filt, op):
+            for d in self.docs:
+                if d["_id"] == filt["_id"]:
+                    for k in (op.get("$unset") or {}):
+                        d.pop(k, None)
+                    d.update(op.get("$set") or {})
+
+    coll = Coll()
+    db = MagicMock()
+    db.bank_transactions = coll
+    out = _run(bmd.migrate_match_descriptions(db, "matek", dry_run=False))
+    assert out["cleared_created_by"] == 1
+    assert not coll.docs[0].get("created_by_name")
+    assert not coll.docs[0].get("created_by_id")
+
+
+def test_migrate_endpoint_requires_company_admin():
+    """Şirket admini değilse 403; admin ise migrate çalışır."""
+    import pytest
+    from fastapi import HTTPException
+    from unittest.mock import AsyncMock, patch
+
+    import server
+
+    user = {"id": "u1", "role": "user", "active_company_id": "matek", "company_ids": ["matek"]}
+    with pytest.raises(HTTPException) as e:
+        _run(server.migrate_match_descriptions_endpoint({"company_id": "matek", "dry_run": True}, user))
+    assert e.value.status_code == 403
+
+    admin = {"id": "a1", "role": "admin", "active_company_id": "matek", "company_ids": ["matek"]}
+    with patch("bank_match_desc.migrate_match_descriptions", new_callable=AsyncMock) as mig:
+        mig.return_value = {"dry_run": True, "updated": 0, "would_clear_created_by": 0}
+        out = _run(server.migrate_match_descriptions_endpoint({"company_id": "matek", "dry_run": True}, admin))
+        assert out["dry_run"] is True
+        mig.assert_awaited_once()

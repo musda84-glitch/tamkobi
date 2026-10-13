@@ -78,13 +78,22 @@ describe("bankMatchLabel", () => {
       created_by_name: "Ayşe",
       matched_by_name: "Ali",
       match_status: "matched",
+      source: "manual",
     })).toBe("Oluşturan: Ayşe · Eşleştiren: Ali");
+    expect(txUserColumnLabel({
+      created_by_name: "Ayşe",
+      matched_by_name: "Ali",
+      match_status: "matched",
+      source: "bank_sync",
+    })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Ali");
     expect(txUserColumnLabel({
       matched_by_name: "Ali",
       match_status: "matched",
       source: "bank_sync",
     })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Ali");
     expect(txCreatedSourceLabel({ source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txCreatedSourceLabel({ created_by_name: "Ayşe", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txUserColumnLabel({ created_by_name: "Ayşe", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
     expect(txCreatedSourceLabel({ source: "bank_sync", is_simulated: true })).toBe("Simüle");
     expect(txUserColumnLabel({ source: "ledger" })).toBe("Sistem");
     expect(txUserColumnLabel({})).toBe("");

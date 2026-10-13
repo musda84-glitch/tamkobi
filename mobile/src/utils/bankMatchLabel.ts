@@ -21,12 +21,12 @@ export function sanitizeActorLabel(name?: string | null): string {
 }
 
 export function txCreatedSourceLabel(tx?: TxActorLike | null): string {
-  const created = sanitizeActorLabel(tx?.created_by_name);
-  if (created) return created;
   const src = String(tx?.source || "");
   if (src === "bank_sync" || src === "card_statement" || src === "bank_statement") {
     return tx?.is_simulated ? "Simüle" : "Sistem (Banka aktarımı)";
   }
+  const created = sanitizeActorLabel(tx?.created_by_name);
+  if (created) return created;
   if (src === "ledger") return "Sistem";
   return "";
 }

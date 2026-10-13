@@ -4,6 +4,7 @@ describe("bankMatchLabel (mobile)", () => {
   it("shows Sistem (Banka aktarımı) for auto import without created_by", () => {
     expect(txCreatedSourceLabel({ source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
     expect(txUserColumnLabel({ source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+    expect(txUserColumnLabel({ created_by_name: "Mehmet", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
   });
 
   it("shows Oluşturan / Eşleştiren when matched", () => {
