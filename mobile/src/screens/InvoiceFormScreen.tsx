@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -8,6 +8,7 @@ import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { confirmAction } from "../components/chips";
+import { LineProductNameField } from "../components/LineProductNameField";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
@@ -21,6 +22,17 @@ import {
   VAT_OPTIONS,
 } from "../utils/documentLines";
 import { itemStripe } from "../utils/workDocs";
+import {
+  applyLineNameDraft,
+  fetchLineProductHits,
+  fillInvoiceLineFromProduct,
+  findCatalogByScan,
+  findCatalogProduct,
+  lineBarcodeLookupRequest,
+  lineProductDetailRequest,
+  lineProductNeedsHydrate,
+  type LineProductHit,
+} from "../utils/lineProductSearch";
 import {
   applyTradeKind,
   CURRENCIES,
@@ -128,7 +140,10 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [quickPhone, setQuickPhone] = useState("");
   const [gibTax, setGibTax] = useState("");
   const [scan, setScan] = useState(false);
+  const [scanLine, setScanLine] = useState<number | null>(null);
   const [lineDrafts, setLineDrafts] = useState<Record<string, string>>({});
+  const productsRef = useRef(products);
+  productsRef.current = products;
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -308,6 +323,57 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     try {
       const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(code)}`, { company_id: companyId });
       addProduct(p);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+    }
+  };
+
+  const loadLineHits = useCallback(
+    async (q: string) =>
+      fetchLineProductHits({
+        search: (path, query) => get(client, path, query),
+        companyId,
+        query: q,
+        catalog: productsRef.current,
+      }),
+    [client, companyId],
+  );
+
+  const resolveLineProduct = async (hit: LineProductHit | Product): Promise<Product> => {
+    const fromCat = findCatalogProduct(productsRef.current, hit);
+    const candidate = (fromCat || hit) as Product;
+    if (!lineProductNeedsHydrate(candidate)) return candidate;
+    const pid = idOf(candidate);
+    if (!pid) return candidate;
+    try {
+      return await get<Product>(client, lineProductDetailRequest(pid).path);
+    } catch {
+      return candidate;
+    }
+  };
+
+  const pickLineProduct = async (index: number, hit: LineProductHit | Product) => {
+    const full = await resolveLineProduct(hit);
+    setProducts((prev) => (idOf(full) && prev.some((x) => idOf(x) === idOf(full)) ? prev : [...prev, full]));
+    setDraft((d) => ({
+      ...d,
+      items: d.items.map((it, i) => (i === index ? fillInvoiceLineFromProduct(it, full, d.invoice_type) : it)),
+    }));
+  };
+
+  const applyBarcodeToLine = async (code: string) => {
+    const index = scanLine;
+    setScanLine(null);
+    if (index == null) return;
+    const local = findCatalogByScan(productsRef.current, code);
+    if (local) {
+      await pickLineProduct(index, local);
+      return;
+    }
+    try {
+      const req = lineBarcodeLookupRequest(companyId, code);
+      const p = await get<Product>(client, req.path, req.query);
+      await pickLineProduct(index, p);
     } catch (err) {
       setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
     }
@@ -669,12 +735,28 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                 <Ionicons name="trash-outline" size={20} color={colors.danger} />
               </Pressable>
             </Row>
-            <Field
+            <LineProductNameField
               compact
-              label={it.is_service ? "Hizmet adı" : "Ad"}
               testID={`inv-item-name-${idx}`}
+              label={it.is_service ? "Hizmet adı" : "Ürün adı"}
               value={it.name}
-              onChangeText={(v) => patchLine(idx, "name", v)}
+              isService={!!it.is_service}
+              editable={canEdit}
+              placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı / SKU / barkod"}
+              loadHits={loadLineHits}
+              excludeProductId={it.product_id}
+              onChangeText={(v) => {
+                setDraft((d) => ({
+                  ...d,
+                  items: d.items.map((row, i) => {
+                    if (i !== idx) return row;
+                    const next = applyLineNameDraft(row, v);
+                    return computeLine({ ...next, product_name: next.name });
+                  }),
+                }));
+              }}
+              onSelect={(p) => { void pickLineProduct(idx, p); }}
+              onScanPress={canEdit && !it.is_service ? () => setScanLine(idx) : undefined}
             />
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
               <View style={{ width: 64, flexShrink: 0 }}>
@@ -837,7 +919,14 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         color={colors.primary}
         testID="save-invoice-btn"
       />
-      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={lookupBarcode} />
+      <BarcodeScannerModal
+        visible={scan || scanLine != null}
+        onClose={() => { setScan(false); setScanLine(null); }}
+        onScan={(code) => {
+          if (scanLine != null) void applyBarcodeToLine(code);
+          else void lookupBarcode(code);
+        }}
+      />
     </Screen>
   );
 }
