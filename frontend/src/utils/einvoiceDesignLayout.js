@@ -1160,11 +1160,10 @@ function xsltLogoAlt(R) {
 
 function xsltLogoCluster(L, R) {
   const logoH = asLogoSize(L.logoSize);
-  const logoSrc = gibSafeLogoSrc(L.logo);
-  const embedded = logoSrc
-    ? `<xsl:otherwise><img height="${logoH}" src="${xmlEscape(logoSrc)}" style="height:${logoH}px;width:auto;border:0;">${xsltLogoAlt(R)}</img></xsl:otherwise>`
-    : "";
-  return `<xsl:choose><xsl:when test="$IsLogoExists='true'"><img style="height:${logoH}px;width:auto;border:0;" src="data:image/jpeg;base64,firmaLogoImageString">${xsltLogoAlt(R)}</img></xsl:when>${embedded}</xsl:choose><xsl:if test="$IsEimzaLogoExists='true'"><img style="width:91px;" align="bottom" alt="E-Imza Logo" src="data:image/jpeg;base64,firmaImzaImageString"/></xsl:if>${xsltDocTitle(R)}`;
+  // L.logo yalnızca tuval önizlemesi içindir. XSLT'ye gömülmez: İşNet
+  // $IsLogoExists='true' iken portal logosu (firmaLogoImageString) önceliklidir;
+  // şirket logosu gönderim anında companies.logo'dan üretilir.
+  return `<xsl:choose><xsl:when test="$IsLogoExists='true'"><img style="height:${logoH}px;width:auto;border:0;" src="data:image/jpeg;base64,firmaLogoImageString">${xsltLogoAlt(R)}</img></xsl:when></xsl:choose><xsl:if test="$IsEimzaLogoExists='true'"><img style="width:91px;" align="bottom" alt="E-Imza Logo" src="data:image/jpeg;base64,firmaImzaImageString"/></xsl:if>${xsltDocTitle(R)}`;
 }
 
 function xsltStamp(L) {

@@ -509,7 +509,10 @@ async def build_and_store_xml(invoice: dict, company: dict, contact: Optional[di
     xslt = None
     try:
         import einvoice_designs as _ed
-        xslt = await _ed.selected_xslt_for_e_type(inv.get("e_type") or "e_invoice")
+        xslt = await _ed.selected_xslt_for_e_type(
+            inv.get("e_type") or "e_invoice",
+            inv.get("company_id") or (company or {}).get("_id") or (company or {}).get("id"),
+        )
     except Exception:
         logger.exception("e-invoice selected xslt load failed")
     xml = ubl_export.build_invoice_ubl(inv, seller, buyer, xslt=xslt)
@@ -667,7 +670,10 @@ async def issue_invoice(
             xslt = None
             try:
                 import einvoice_designs as _ed
-                xslt = await _ed.selected_xslt_for_e_type("e_dispatch")
+                xslt = await _ed.selected_xslt_for_e_type(
+                    "e_dispatch",
+                    inv.get("company_id") or (company or {}).get("_id") or (company or {}).get("id"),
+                )
             except Exception:
                 logger.exception("e-irsaliye seçili XSLT yüklenemedi")
             xml = ubl_export.build_despatch_ubl(
@@ -856,21 +862,34 @@ async def issue_invoice(
                 dispatch_xslt = None
                 try:
                     import einvoice_designs as _ed
-                    dispatch_xslt = await _ed.selected_xslt_for_e_type("e_dispatch")
+                    dispatch_xslt = await _ed.selected_xslt_for_e_type(
+                        "e_dispatch",
+                        inv.get("company_id") or (company or {}).get("_id") or (company or {}).get("id"),
+                    )
                 except Exception:
                     logger.exception("e-irsaliye arşiv XSLT yüklenemedi")
                 xml_str, ettn, _iid = isnet.build_despatch_ubl(
                     archive_inv, company, contact, ettn=sent.get("ettn"), xslt=dispatch_xslt,
                 )
-            elif provider in ("isnet", "isnet_portal"):
-                # İşNet: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil
-                xml_str, ettn, _iid = isnet.build_ubl(
-                    archive_inv, company, contact, ettn=sent.get("ettn"),
-                )
             else:
-                xml_str, ettn, _iid = n11faturam.build_ubl(
-                    archive_inv, company, contact, ettn=sent.get("ettn"),
-                )
+                archive_xslt = None
+                try:
+                    import einvoice_designs as _ed
+                    archive_xslt = await _ed.selected_xslt_for_e_type(
+                        et,
+                        inv.get("company_id") or (company or {}).get("_id") or (company or {}).get("id"),
+                    )
+                except Exception:
+                    logger.exception("e-fatura arşiv XSLT yüklenemedi")
+                if provider in ("isnet", "isnet_portal"):
+                    # İşNet: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil
+                    xml_str, ettn, _iid = isnet.build_ubl(
+                        archive_inv, company, contact, ettn=sent.get("ettn"), xslt=archive_xslt,
+                    )
+                else:
+                    xml_str, ettn, _iid = n11faturam.build_ubl(
+                        archive_inv, company, contact, ettn=sent.get("ettn"), xslt=archive_xslt,
+                    )
             await store_outgoing_xml(
                 invoice_id, inv["company_id"], xml_str.encode("utf-8"),
                 {"scenario": scen, "ettn": ettn, "source": provider},

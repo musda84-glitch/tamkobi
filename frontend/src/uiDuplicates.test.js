@@ -75,7 +75,7 @@ const ALLOWED_DUPLICATE_TESTIDS = {
     "{`survey-done-${s.survey_number}`}", "{`survey-to-quote-${s.survey_number}`}",
     "{`project-print-quote-${p.project_number}`}",
   ],
-  "pages/SettingsPage.jsx": ['"einvoice-assigned-provider"'],
+  "pages/SettingsPage.jsx": ['"einvoice-assigned-provider"', '"einvoice-isnet-logo-hint"'],
   "pages/SupportPage.jsx": ["{`support-att-${i}`}"],
   // Tur hedefleri: gerçek düğme HelpButton'da; burada CSS seçici olarak geçer.
   "help/pageRegistry.js": ['"help-page-btn"'],

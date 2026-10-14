@@ -223,9 +223,9 @@ COLLECTIONS = {
     },
     "einvoice_designs": {
         "scope": SCOPE_PLATFORM,
-        "description": "GİB e-Fatura / e-Arşiv XSLT görsel tasarımları (Sistem paneli).",
-        "keys": ("_id", "name", "kind", "xslt", "layout", "is_builtin", "is_selected"),
-        "refs": (),
+        "description": "GİB e-Fatura / e-Arşiv XSLT tasarımları: platform varsayılanı ve şirket kopyaları (company_id).",
+        "keys": ("_id", "name", "kind", "xslt", "layout", "is_builtin", "is_selected", "company_id"),
+        "refs": ("companies._id",),
     },
     "gib_wallets": {
         "scope": SCOPE_PLATFORM,

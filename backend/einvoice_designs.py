@@ -1,4 +1,4 @@
-"""Platform e-Fatura / e-Arşiv XSLT tasarımları (Sistem paneli)."""
+"""e-Fatura / e-Arşiv XSLT tasarımları: platform varsayılanı + şirket kopyaları."""
 from __future__ import annotations
 
 import asyncio
@@ -11,17 +11,19 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 import saas
+import tenant_access
 
 logger = logging.getLogger("TamKobiERP")
 
 router = APIRouter(prefix="/api", tags=["einvoice-designs"])
 _db = None
+_current_user: Optional[Callable[..., Awaitable[dict]]] = None
 
 COLLECTION = "einvoice_designs"
 SETTINGS_ID = "einvoice_design_settings"
@@ -66,9 +68,42 @@ BUILTIN = (
 )
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Kimlik doğrulama bağlanmadı.")
+    return await _current_user(request)
+
+
+def _col(name: str):
+    if _db is None:
+        return None
+    if isinstance(_db, dict):
+        return _db.get(name)
+    return getattr(_db, name, None)
+
+
+def _is_platform(doc: Optional[dict]) -> bool:
+    return not str((doc or {}).get("company_id") or "").strip()
+
+
+def _doc_company_id(doc: Optional[dict]) -> str:
+    return str((doc or {}).get("company_id") or "").strip()
+
+
+def _kind_from_e_type(e_type: str) -> str:
+    raw_kind = str(e_type or "").strip().lower()
+    if raw_kind in ("e_archive", "earsiv", "e-arsiv"):
+        return "e_archive"
+    if raw_kind in ("e_dispatch", "e-irsaliye", "irsaliye", "despatch", "e_despatch"):
+        return "e_dispatch"
+    return "e_invoice"
 
 
 def _now() -> str:
@@ -229,6 +264,8 @@ def _public(doc: dict, *, include_xslt: bool = False) -> dict:
         "kind": doc.get("kind"),
         "kind_label": KIND_LABELS.get(doc.get("kind") or "", doc.get("kind") or ""),
         "source": source,
+        "company_id": _doc_company_id(doc) or None,
+        "is_platform": _is_platform(doc),
         "is_builtin": bool(doc.get("is_builtin")),
         "is_selected": bool(doc.get("is_selected")),
         "has_layout": has_layout and source == "visual",
@@ -247,7 +284,7 @@ async def ensure_defaults() -> None:
         existing = await _db[COLLECTION].find_one({"_id": spec["id"]})
         if existing:
             continue
-        same_kind = await _db[COLLECTION].find_one({"kind": spec["kind"], "is_selected": True})
+        same_kind = await _find_platform_selected(spec["kind"])
         doc = {
             "_id": spec["id"],
             "name": spec["name"],
@@ -271,12 +308,61 @@ def _builtin_xslt_for_kind(kind: str) -> str:
     return _read_builtin_xslt(BUILTIN[0]["file"])
 
 
-async def selected_xslt(kind: str) -> Optional[str]:
+async def _rows_of_kind(kind: str) -> List[dict]:
+    col = _col(COLLECTION)
+    if col is None:
+        return []
+    try:
+        rows = await col.find({"kind": kind}).sort("name", 1).to_list(400)
+    except Exception:
+        rows = []
+    return [r for r in (rows or []) if r.get("kind") == kind]
+
+
+async def _find_platform_selected(kind: str) -> Optional[dict]:
+    for row in await _rows_of_kind(kind):
+        if _is_platform(row) and row.get("is_selected"):
+            return row
+    return None
+
+
+async def _find_company_selected(kind: str, company_id: str) -> Optional[dict]:
+    cid = str(company_id or "").strip()
+    if not cid:
+        return None
+    col = _col(COLLECTION)
+    if col is None:
+        return None
+    row = await col.find_one({"kind": kind, "company_id": cid, "is_selected": True})
+    if row and _doc_company_id(row) == cid:
+        return row
+    for item in await _rows_of_kind(kind):
+        if _doc_company_id(item) == cid and item.get("is_selected"):
+            return item
+    return None
+
+
+async def _selected_row(kind: str, company_id: Optional[str] = None) -> Tuple[Optional[dict], str]:
+    """Şirkete özel seçili tasarım, yoksa platform varsayılanı."""
     k = _kind(kind)
     await ensure_defaults()
-    row = await _db[COLLECTION].find_one({"kind": k, "is_selected": True})
-    if not row:
-        row = await _db[COLLECTION].find_one({"kind": k})
+    cid = str(company_id or "").strip()
+    if cid:
+        row = await _find_company_selected(k, cid)
+        if row:
+            return row, "company"
+    row = await _find_platform_selected(k)
+    if row:
+        return row, "platform"
+    for item in await _rows_of_kind(k):
+        if _is_platform(item):
+            return item, "platform"
+    return None, "builtin"
+
+
+async def selected_xslt(kind: str, company_id: Optional[str] = None) -> Optional[str]:
+    k = _kind(kind)
+    row, scope = await _selected_row(k, company_id)
     if not row:
         return _builtin_xslt_for_kind(k)
     raw = row.get("xslt") or ""
@@ -285,8 +371,8 @@ async def selected_xslt(kind: str) -> Optional[str]:
         return raw
     except HTTPException as e:
         logger.error(
-            "selected_xslt broken kind=%s id=%s detail=%s — falling back to GİB default",
-            k, row.get("_id"), getattr(e, "detail", e),
+            "selected_xslt broken kind=%s id=%s scope=%s detail=%s — falling back to GİB default",
+            k, row.get("_id"), scope, getattr(e, "detail", e),
         )
         return _builtin_xslt_for_kind(k)
 
@@ -337,8 +423,131 @@ def _image_bytes_to_jpeg_b64(mime: str, payload_b64: str) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def prepare_xslt_for_gib(xslt: str) -> str:
-    """GİB HTML görüntüleyici WebP/HTTP logo okumaz — JPEG data URI'ye çevir."""
+# xsl:otherwise içine gömülmüş gerçek logo (yer tutucu değil).
+_FALLBACK_LOGO_OTHERWISE_RE = re.compile(
+    r"<xsl:otherwise>\s*<img\b[^>]*src=[\"']data:image/(?:webp|jpeg|jpg|png|gif);base64,"
+    r"(?!firmaLogoImageString|firmaImzaImageString|qrCodeImageString)[A-Za-z0-9+/=\s]+[\"']"
+    r"[^>]*/?>(?:\s*<xsl:attribute\b[^>]*>[\s\S]*?</xsl:attribute>\s*</img>)?"
+    r"\s*</xsl:otherwise>",
+    re.IGNORECASE,
+)
+_LOGO_WHEN_CLOSE_RE = re.compile(
+    r"(<xsl:when\b[^>]*\$IsLogoExists='true'[^>]*>[\s\S]*?firmaLogoImageString[\s\S]*?</xsl:when>)",
+    re.IGNORECASE,
+)
+
+
+def company_logo_to_jpeg_data_uri(logo: Any) -> Optional[str]:
+    """companies.logo / data URI / ham Base64 → JPEG data URI."""
+    if logo is None:
+        return None
+    if isinstance(logo, (bytes, bytearray)):
+        raw = bytes(logo)
+        mime = "jpeg" if raw[:2] == b"\xff\xd8" else "png"
+        try:
+            jpeg_b64 = _image_bytes_to_jpeg_b64(mime, base64.b64encode(raw).decode("ascii"))
+        except Exception:
+            return None
+        return f"data:image/jpeg;base64,{jpeg_b64}"
+    s = str(logo or "").strip()
+    if not s:
+        return None
+    m = _DATA_IMAGE_RE.search(s.replace("\n", ""))
+    if m:
+        compact = re.sub(r"\s+", "", m.group(2) or "")
+        if compact in _ISNET_IMAGE_TOKENS:
+            return None
+        try:
+            jpeg_b64 = _image_bytes_to_jpeg_b64(m.group(1), m.group(2))
+        except Exception:
+            return None
+        return f"data:image/jpeg;base64,{jpeg_b64}"
+    try:
+        raw = base64.b64decode(re.sub(r"\s+", "", s), validate=False)
+    except Exception:
+        return None
+    if len(raw) < 8:
+        return None
+    mime = "jpeg" if raw[:2] == b"\xff\xd8" else "png"
+    try:
+        jpeg_b64 = _image_bytes_to_jpeg_b64(mime, base64.b64encode(raw).decode("ascii"))
+    except Exception:
+        return None
+    return f"data:image/jpeg;base64,{jpeg_b64}"
+
+
+async def load_company_logo(company_id: Optional[str]) -> Optional[str]:
+    """Şirket ayarlarındaki logo (companies.logo, yoksa logo_url)."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        return None
+    col = _col("companies")
+    if col is None:
+        return None
+    try:
+        co = await col.find_one({"_id": cid}) or await col.find_one({"id": cid})
+    except Exception:
+        return None
+    if not co:
+        return None
+    raw = co.get("logo")
+    if raw:
+        return raw if isinstance(raw, (bytes, bytearray)) else str(raw)
+    url = str(co.get("logo_url") or "").strip()
+    if not url:
+        return None
+    if url.startswith("data:image/"):
+        return url
+    if url.startswith("/api/files/"):
+        path = url[len("/api/files/"):]
+        try:
+            from storage_service import get_object
+            data, ctype = get_object(path)
+        except Exception:
+            return None
+        mime = "png"
+        ct = (ctype or "").lower()
+        if "jpeg" in ct or "jpg" in ct:
+            mime = "jpeg"
+        elif "webp" in ct:
+            mime = "webp"
+        elif "gif" in ct:
+            mime = "gif"
+        return f"data:image/{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    return None
+
+
+def _strip_embedded_fallback_logos(text: str) -> str:
+    return _FALLBACK_LOGO_OTHERWISE_RE.sub("", text)
+
+
+def _inject_company_fallback_logo(text: str, jpeg_data_uri: str) -> str:
+    cleaned = _strip_embedded_fallback_logos(text)
+    otherwise = (
+        f'<xsl:otherwise><img style="height:72px;width:auto;border:0;" '
+        f'src="{jpeg_data_uri}"/></xsl:otherwise>'
+    )
+    m = _LOGO_WHEN_CLOSE_RE.search(cleaned)
+    if m:
+        return cleaned[: m.end()] + otherwise + cleaned[m.end():]
+    token = "data:image/jpeg;base64,firmaLogoImageString"
+    idx = cleaned.find(token)
+    if idx < 0:
+        return cleaned
+    close = cleaned.find("</xsl:when>", idx)
+    if close < 0:
+        return cleaned
+    end = close + len("</xsl:when>")
+    return cleaned[:end] + otherwise + cleaned[end:]
+
+
+def prepare_xslt_for_gib(xslt: str, company_logo: Optional[Any] = None) -> str:
+    """GİB HTML görüntüleyici WebP/HTTP logo okumaz — JPEG data URI'ye çevir.
+
+    Platform varsayılanında gömülü firma logosu olmaz (yalnız firmaLogoImageString).
+    Şirkete özel tasarımda fallback logo companies.logo'dan üretilir; başka şirket
+    logosu asla gömülmez. $IsLogoExists='true' İşNet portal logosunu öncelikli tutar.
+    """
     text = str(xslt or "")
 
     def _repl(match: re.Match) -> str:
@@ -352,22 +561,36 @@ def prepare_xslt_for_gib(xslt: str) -> str:
             return match.group(0)
         return f"data:image/jpeg;base64,{jpeg_b64}"
 
-    return _DATA_IMAGE_RE.sub(_repl, text)
+    text = _DATA_IMAGE_RE.sub(_repl, text)
+    if company_logo is not None and str(company_logo).strip() != "":
+        uri = company_logo_to_jpeg_data_uri(company_logo)
+        if uri:
+            return _inject_company_fallback_logo(text, uri)
+        return _strip_embedded_fallback_logos(text)
+    return _strip_embedded_fallback_logos(text)
 
 
-async def selected_xslt_for_e_type(e_type: str) -> Optional[str]:
+async def selected_xslt_for_e_type(e_type: str, company_id: Optional[str] = None) -> Optional[str]:
     """Giden UBL'ye gömülecek seçili tasarım (GİB-uyumlu JPEG logo)."""
-    raw_kind = str(e_type or "").strip().lower()
-    if raw_kind in ("e_archive", "earsiv", "e-arsiv"):
-        kind = "e_archive"
-    elif raw_kind in ("e_dispatch", "e-irsaliye", "irsaliye", "despatch", "e_despatch"):
-        kind = "e_dispatch"
-    else:
-        kind = "e_invoice"
-    raw = await selected_xslt(kind)
-    if not raw:
-        return None
-    return prepare_xslt_for_gib(raw)
+    kind = _kind_from_e_type(e_type)
+    row, scope = await _selected_row(kind, company_id)
+    if not row:
+        raw = _builtin_xslt_for_kind(kind)
+        return prepare_xslt_for_gib(raw)
+    raw = row.get("xslt") or ""
+    try:
+        await validate_xslt_async(raw)
+    except HTTPException as e:
+        logger.error(
+            "selected_xslt_for_e_type broken kind=%s id=%s detail=%s — falling back to GİB default",
+            kind, row.get("_id"), getattr(e, "detail", e),
+        )
+        raw = _builtin_xslt_for_kind(kind)
+        scope = "platform"
+    logo = None
+    if scope == "company":
+        logo = await load_company_logo(company_id)
+    return prepare_xslt_for_gib(raw, company_logo=logo)
 
 
 async def _get(design_id: str) -> dict:
@@ -377,10 +600,39 @@ async def _get(design_id: str) -> dict:
     return doc
 
 
-async def _list() -> List[dict]:
+def _visible_for_company(doc: dict, company_id: Optional[str]) -> bool:
+    if _is_platform(doc):
+        return True
+    cid = str(company_id or "").strip()
+    return bool(cid) and _doc_company_id(doc) == cid
+
+
+def _effective_selected_id(items: List[dict], kind: str, company_id: Optional[str]) -> Optional[str]:
+    cid = str(company_id or "").strip()
+    if cid:
+        for it in items:
+            if it.get("kind") == kind and it.get("company_id") == cid and it.get("is_selected"):
+                return it.get("id")
+    for it in items:
+        if it.get("kind") == kind and it.get("is_platform") and it.get("is_selected"):
+            return it.get("id")
+    for it in items:
+        if it.get("kind") == kind and it.get("is_platform"):
+            return it.get("id")
+    return None
+
+
+async def _list(company_id: Optional[str] = None) -> List[dict]:
     await ensure_defaults()
-    rows = await _db[COLLECTION].find({}).sort("name", 1).to_list(200)
-    return [_public(r) for r in rows]
+    rows = await _db[COLLECTION].find({}).sort("name", 1).to_list(400)
+    cid = str(company_id or "").strip() or None
+    visible = [r for r in rows if _visible_for_company(r, cid)] if cid else [r for r in rows if _is_platform(r)]
+    items = [_public(r) for r in visible]
+    if cid:
+        selected_ids = {k: _effective_selected_id(items, k, cid) for k in KINDS}
+        for it in items:
+            it["is_selected"] = it.get("id") == selected_ids.get(it.get("kind"))
+    return items
 
 
 @router.get("/system/einvoice-designs")
@@ -409,8 +661,7 @@ async def download_design(design_id: str, _: dict = Depends(saas.require_super_a
     )
 
 
-@router.post("/system/einvoice-designs")
-async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+async def _create_design_impl(req: Dict[str, Any], company_id: Optional[str] = None) -> dict:
     await ensure_defaults()
     copy_from = str(req.get("copy_from_id") or "").strip()
     src = await _get(copy_from) if copy_from else None
@@ -465,12 +716,19 @@ async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_supe
         "created_at": _now(),
         "updated_at": _now(),
     }
+    cid = str(company_id or "").strip()
+    if cid:
+        doc["company_id"] = cid
     await _db[COLLECTION].insert_one(doc)
     return _public(doc, include_xslt=True)
 
 
-@router.put("/system/einvoice-designs/{design_id}")
-async def update_design(design_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+@router.post("/system/einvoice-designs")
+async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+    return await _create_design_impl(req)
+
+
+async def _update_design_impl(design_id: str, req: Dict[str, Any]) -> dict:
     await ensure_defaults()
     doc = await _get(design_id)
     patch: Dict[str, Any] = {"updated_at": _now()}
@@ -499,16 +757,41 @@ async def update_design(design_id: str, req: Dict[str, Any], _: dict = Depends(s
     return _public(await _get(design_id), include_xslt=True)
 
 
+@router.put("/system/einvoice-designs/{design_id}")
+async def update_design(design_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+    doc = await _get(design_id)
+    if not _is_platform(doc):
+        raise HTTPException(status_code=403, detail="Şirket tasarımı yalnızca şirket yöneticisi tarafından değiştirilir.")
+    return await _update_design_impl(design_id, req)
+
+
+async def _unselect_scope(kind: str, company_id: Optional[str] = None) -> None:
+    now = _now()
+    cid = str(company_id or "").strip()
+    for row in await _rows_of_kind(kind):
+        if cid:
+            match = _doc_company_id(row) == cid
+        else:
+            match = _is_platform(row)
+        if match and row.get("is_selected"):
+            await _db[COLLECTION].update_one(
+                {"_id": row["_id"]},
+                {"$set": {"is_selected": False, "updated_at": now}},
+            )
+
+
 @router.post("/system/einvoice-designs/{design_id}/select")
 async def select_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
     await ensure_defaults()
     doc = await _get(design_id)
+    if not _is_platform(doc):
+        raise HTTPException(status_code=403, detail="Platform varsayılanı yalnızca platform tasarımlarından seçilir.")
     try:
         await validate_xslt_async(doc.get("xslt") or "")
     except HTTPException as e:
         raise HTTPException(status_code=400, detail=f"Bozuk tasarım seçilemez: {e.detail}") from e
     kind = doc.get("kind")
-    await _db[COLLECTION].update_many({"kind": kind, "is_selected": True}, {"$set": {"is_selected": False, "updated_at": _now()}})
+    await _unselect_scope(kind)
     await _db[COLLECTION].update_one({"_id": design_id}, {"$set": {"is_selected": True, "updated_at": _now()}})
     return {"status": "success", "id": design_id, "kind": kind, "items": await _list()}
 
@@ -590,9 +873,180 @@ async def put_embed_settings(req: Dict[str, Any], _: dict = Depends(saas.require
 async def delete_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
     await ensure_defaults()
     doc = await _get(design_id)
+    if not _is_platform(doc):
+        raise HTTPException(status_code=403, detail="Şirket tasarımı Sistem panelinden silinemez.")
     if doc.get("is_builtin"):
         raise HTTPException(status_code=400, detail="Varsayılan tasarım silinemez. Kopyalayıp düzenleyin.")
     if doc.get("is_selected"):
         raise HTTPException(status_code=400, detail="Seçili tasarım silinemez. Önce başka bir tasarımı seçin.")
     await _db[COLLECTION].delete_one({"_id": design_id})
     return {"status": "success", "items": await _list()}
+
+
+def _catalog(items: List[dict]) -> dict:
+    selected = {k: next((i["id"] for i in items if i["kind"] == k and i["is_selected"]), None) for k in KINDS}
+    return {"items": items, "selected": selected, "kinds": [{"id": k, "label": KIND_LABELS[k]} for k in KINDS]}
+
+
+async def _company_scope(user: dict, requested: Optional[str]) -> str:
+    cid = tenant_access.resolve_company_id(user, requested)
+    await tenant_access.require_company_admin(user, cid)
+    return cid
+
+
+async def _get_for_company(design_id: str, company_id: str) -> dict:
+    doc = await _get(design_id)
+    if _is_platform(doc) or _doc_company_id(doc) == company_id:
+        return doc
+    raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+
+
+@router.get("/einvoice/designs")
+async def list_company_designs(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, company_id)
+    items = await _list(cid)
+    return _catalog(items)
+
+
+@router.get("/einvoice/designs/{design_id}")
+async def get_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, company_id)
+    await ensure_defaults()
+    return _public(await _get_for_company(design_id, cid), include_xslt=True)
+
+
+@router.get("/einvoice/designs/{design_id}/download")
+async def download_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, company_id)
+    await ensure_defaults()
+    doc = await _get_for_company(design_id, cid)
+    body = (doc.get("xslt") or "").encode("utf-8")
+    filename = _slug_filename(doc.get("name") or "", doc.get("kind") or "e_invoice")
+    return Response(
+        content=body,
+        media_type="application/xslt+xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/einvoice/designs/{design_id}/export")
+async def export_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, company_id)
+    await ensure_defaults()
+    doc = await _get_for_company(design_id, cid)
+    source = _normalize_source(doc.get("source"), has_layout=isinstance(doc.get("layout"), dict))
+    payload = {
+        "schema_version": 1,
+        "kind": doc.get("kind"),
+        "name": doc.get("name"),
+        "source": source,
+        "layout": doc.get("layout") if source == "visual" else None,
+        "xslt": doc.get("xslt") or "",
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    fname = _slug_filename(doc.get("name") or "tasarim", doc.get("kind") or "e_invoice").replace(".xslt", ".tkdesign.json")
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.post("/einvoice/designs")
+async def create_company_design(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, (req or {}).get("company_id"))
+    copy_from = str((req or {}).get("copy_from_id") or "").strip()
+    if copy_from:
+        await _get_for_company(copy_from, cid)
+    return await _create_design_impl(req or {}, company_id=cid)
+
+
+@router.put("/einvoice/designs/{design_id}")
+async def update_company_design(design_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, (req or {}).get("company_id"))
+    doc = await _get_for_company(design_id, cid)
+    if _is_platform(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="Platform varsayılanı yalnız süper yönetici tarafından değiştirilir. Kopyalayıp kendi tasarımınızı kaydedin.",
+        )
+    if _doc_company_id(doc) != cid:
+        raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+    return await _update_design_impl(design_id, req or {})
+
+
+@router.post("/einvoice/designs/{design_id}/select")
+async def select_company_design(design_id: str, req: Optional[Dict[str, Any]] = None, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, company_id or (req or {}).get("company_id"))
+    await ensure_defaults()
+    doc = await _get_for_company(design_id, cid)
+    try:
+        await validate_xslt_async(doc.get("xslt") or "")
+    except HTTPException as e:
+        raise HTTPException(status_code=400, detail=f"Bozuk tasarım seçilemez: {e.detail}") from e
+    kind = doc.get("kind")
+    await _unselect_scope(kind, cid)
+    if _is_platform(doc):
+        # Şirket seçimi yok → platform varsayılanı kullanılır.
+        return {"status": "success", "id": design_id, "kind": kind, "items": await _list(cid)}
+    await _db[COLLECTION].update_one(
+        {"_id": design_id},
+        {"$set": {"is_selected": True, "updated_at": _now()}},
+    )
+    return {"status": "success", "id": design_id, "kind": kind, "items": await _list(cid)}
+
+
+@router.post("/einvoice/designs/import")
+async def import_company_design(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, (req or {}).get("company_id"))
+    created = await import_design(req or {}, user)
+    await _db[COLLECTION].update_one({"_id": created["id"]}, {"$set": {"company_id": cid, "updated_at": _now()}})
+    return _public(await _get(created["id"]), include_xslt=True)
+
+
+@router.delete("/einvoice/designs/{design_id}")
+async def delete_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = await _company_scope(user, company_id)
+    await ensure_defaults()
+    doc = await _get_for_company(design_id, cid)
+    if _is_platform(doc) or doc.get("is_builtin"):
+        raise HTTPException(status_code=400, detail="Varsayılan tasarım silinemez. Kopyalayıp düzenleyin.")
+    if _doc_company_id(doc) != cid:
+        raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+    if doc.get("is_selected"):
+        raise HTTPException(status_code=400, detail="Seçili tasarım silinemez. Önce başka bir tasarımı seçin.")
+    await _db[COLLECTION].delete_one({"_id": design_id})
+    return {"status": "success", "items": await _list(cid)}
+
+
+_VISUAL_DOC_TYPES = frozenset({
+    "LOGO", "KASE", "KAŞE", "STAMP", "IMAGE", "GORSEL", "GÖRSEL", "FIRMA_LOGO", "SIGNATURE", "IMZA", "İMZA",
+})
+_QR_TYPES = frozenset({"QRCODE", "KAREKOD", "QR"})
+
+
+def assert_send_ready_has_no_visuals(xml: Any) -> None:
+    """send_ready UBL'de logo/kaşe görsel eki olmamalı (XSLT ve GİB karekod serbest)."""
+    import xml.etree.ElementTree as ET
+
+    if isinstance(xml, bytes):
+        root = ET.fromstring(xml)
+    elif isinstance(xml, str):
+        root = ET.fromstring(xml.encode("utf-8"))
+    else:
+        root = xml
+    ns = {
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+    }
+    for adr in root.findall("cac:AdditionalDocumentReference", ns):
+        dtype = (adr.findtext("cbc:DocumentType", default="", namespaces=ns) or "").strip().upper()
+        dcode = (adr.findtext("cbc:DocumentTypeCode", default="", namespaces=ns) or "").strip().upper()
+        if dtype in _VISUAL_DOC_TYPES or dcode in _VISUAL_DOC_TYPES:
+            raise AssertionError(f"send_ready UBL görsel ek içeriyor: {dtype or dcode}")
+        obj = adr.find("cac:Attachment/cbc:EmbeddedDocumentBinaryObject", ns)
+        if obj is None:
+            continue
+        mime = (obj.get("mimeCode") or "").lower()
+        if mime.startswith("image/") and dtype not in _QR_TYPES and dcode not in _QR_TYPES:
+            raise AssertionError(f"send_ready UBL görsel ek içeriyor: mime={mime} type={dtype}")
