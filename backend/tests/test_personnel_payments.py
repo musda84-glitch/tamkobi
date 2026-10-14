@@ -69,6 +69,14 @@ class FakeCollection:
                     if not re.search(v["$regex"], str(d.get(k) or ""), flags):
                         return False
                     continue
+                if "$elemMatch" in v:
+                    items = d.get(k)
+                    spec = v["$elemMatch"] if isinstance(v["$elemMatch"], dict) else {}
+                    if not isinstance(items, list) or not any(
+                        isinstance(item, dict) and self._match(item, spec) for item in items
+                    ):
+                        return False
+                    continue
                 if d.get(k) != v:
                     return False
             elif d.get(k) != v:
@@ -582,3 +590,78 @@ def test_payroll_payment_takes_over_stale_pay_claim():
     assert payroll["paid_amount"] == 4000
     assert payroll["status"] == "pending"
     assert "_pay_claimed_at" not in payroll
+
+
+def _reverse_links(db, doc, collection):
+    async def _sd(coll, row, *a, **k):
+        await db[coll].delete_one({"_id": row["_id"]})
+        return "tid"
+
+    async def _go():
+        with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
+            return await personnel_payments.reverse_linked_personnel_payments(
+                db, doc, collection=collection,
+            )
+
+    return asyncio.run(_go())
+
+
+def test_deleting_advance_reverses_linked_source_movement():
+    """Avans personel kaydı silinince bağlı banka hareketi de geri alınır; bakiye bir kez düzelir."""
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc("bank", type="bank", account_name="Banka", current_balance=5000))
+    _run(
+        db, _emp(),
+        [{"kind": "advance", "amount": 1500, "account_id": "bank", "description": "Avans"}],
+        balance={"remaining": 0, "unpaid_payroll": 0},
+    )
+    bonus = dict(db.bonus_payments.docs[0])
+    mov = db.personnel_movements.docs[0]
+    assert bonus["source_type"] == "personnel_payment"
+    assert bonus["source_id"] == mov["_id"]
+    assert mov["account_name"] == "Banka"
+    assert db.bank_accounts.docs[0]["current_balance"] == 3500
+    n = _reverse_links(db, bonus, "bonus_payments")
+    assert n == 1
+    assert db.bonus_payments.docs == []
+    assert db.personnel_movements.docs[0]["status"] == "reversed"
+    assert db.bank_transactions.docs == []
+    assert db.bank_accounts.docs[0]["current_balance"] == 5000
+    assert _reverse_links(db, bonus, "bonus_payments") == 0
+    assert db.bank_accounts.docs[0]["current_balance"] == 5000
+
+
+def test_deleting_payroll_reverses_linked_movement_once():
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "period": "2026-10", "status": "pending",
+        "final_payable": 10000, "net_salary": 10000, "paid_amount": 0,
+    })
+    _run(db, _emp(), [{"kind": "salary", "amount": 10000, "account_id": "bank"}])
+    payroll = dict(db.payrolls.docs[0])
+    assert payroll.get("source_type") != "personnel_payment"
+    assert db.bank_accounts.docs[0]["current_balance"] == 40000
+    db.personnel_movements.docs.append({
+        "_id": "other_co", "company_id": "c2", "status": "posted", "amount": 10,
+        "effects": [{"collection": "payrolls", "id": "p1", "action": "update"}],
+    })
+    n = _reverse_links(db, payroll, "payrolls")
+    assert n == 1
+    assert db.payrolls.docs[0]["paid_amount"] == 0
+    assert db.payrolls.docs[0]["status"] == "pending"
+    assert db.personnel_movements.docs[0]["status"] == "reversed"
+    assert db.personnel_movements.docs[1]["status"] == "posted"
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+    assert _reverse_links(db, payroll, "payrolls") == 0
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+
+
+def test_delete_endpoints_call_linked_payment_reverse():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "server.py"), encoding="utf-8").read()
+    for name, limit in (("async def delete_bonus", 1200), ("async def delete_payroll", 1200)):
+        start = src.index(name)
+        chunk = src[start:start + limit]
+        assert "_reverse_personnel_payment_links" in chunk

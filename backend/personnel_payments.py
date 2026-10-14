@@ -829,3 +829,79 @@ async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
         "reversed": rev.get("reversed", 0),
         "receipt_id": rid,
     }
+
+
+_CLOSED_MOVE = ("reversed", "cancelled", "reversing")
+
+
+def movement_ids_on(doc: Optional[dict]) -> List[str]:
+    """Personel kaydının işaret ettiği ödeme hareketi id'leri."""
+    if not doc:
+        return []
+    ids: List[str] = []
+    for key in ("movement_id", "personnel_movement_id"):
+        val = str(doc.get(key) or "").strip()
+        if val and val not in ids:
+            ids.append(val)
+    st = str(doc.get("source_type") or doc.get("source") or "").strip()
+    if st == SOURCE:
+        val = str(doc.get("source_id") or "").strip()
+        if val and val not in ids:
+            ids.append(val)
+    return ids
+
+
+def _move_open(mov: Optional[dict]) -> bool:
+    if not mov:
+        return False
+    return str(mov.get("status") or "posted") not in _CLOSED_MOVE
+
+
+async def movements_linked_to(db, doc: dict, collection: str) -> List[dict]:
+    """Personel prim/bordro kaydına bağlı, hâlâ açık ödeme hareketleri.
+
+    Doğrudan movement_id / source_id ve effects içindeki kayıt id'si.
+    Bakiye formülüne dokunmaz; yalnız silme sırasında geri alınacak hareketi bulur.
+    """
+    cid = str((doc or {}).get("company_id") or "")
+    doc_id = str((doc or {}).get("_id") or (doc or {}).get("id") or "")
+    out: List[dict] = []
+    seen = set()
+
+    def _keep(mov: Optional[dict]) -> None:
+        if not _move_open(mov):
+            return
+        mid = str(mov.get("_id") or "")
+        if not mid or mid in seen:
+            return
+        mcid = str(mov.get("company_id") or "")
+        if cid and mcid and mcid != cid:
+            return
+        seen.add(mid)
+        out.append(mov)
+
+    for mid in movement_ids_on(doc):
+        _keep(await db.personnel_movements.find_one({"_id": mid}))
+
+    if doc_id and collection:
+        q: Dict[str, Any] = {"effects": {"$elemMatch": {"id": doc_id, "collection": collection}}}
+        if cid:
+            q["company_id"] = cid
+        for mov in await _rows(db, "personnel_movements", q, limit=500):
+            _keep(mov)
+    return out
+
+
+async def reverse_linked_personnel_payments(
+    db, doc: dict, *, collection: str, actor: Optional[dict] = None,
+) -> int:
+    """Bağlı ödeme hareketini mevcut reverse_payment ile geri al.
+
+    actor verilmezse personel kaydı silme yolu yönetici kontrolünü tekrarlamaz;
+    kasa/banka/ortak düzeltmesi reverse_payment → linked_moves içindedir.
+    """
+    n = 0
+    for mov in await movements_linked_to(db, doc, collection):
+        await reverse_payment(db, mov, actor=actor)
+        n += 1
+    return n

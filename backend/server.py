@@ -13335,9 +13335,20 @@ async def decide_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(
     )
     return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
 
+async def _reverse_personnel_payment_links(doc: dict, collection: str) -> None:
+    """Personel kaydı silinirken bağlı ödeme hareketini mevcut reverse_payment ile geri al."""
+    import personnel_payments
+    await personnel_payments.reverse_linked_personnel_payments(db, doc, collection=collection)
+
+
 @api_router.delete("/personnel/bonuses/{bonus_id}")
 async def delete_bonus(bonus_id: str, user: dict = Depends(get_current_user)):
     b = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
+    await _reverse_personnel_payment_links(b, "bonus_payments")
+    fresh = await db.bonus_payments.find_one({"_id": bonus_id})
+    if not fresh:
+        return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
+    b = fresh
     related = []
     if b.get("status") == "paid":
         related = await linked_moves.prepare_source_trash(
@@ -20565,6 +20576,11 @@ async def pay_payroll(
 @api_router.delete("/personnel/payrolls/{payroll_id}")
 async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)):
     payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
+    await _reverse_personnel_payment_links(payroll, "payrolls")
+    fresh = await db.payrolls.find_one({"_id": payroll_id})
+    if not fresh:
+        return {"status": "success", "message": "Maaş kaydı çöp kutusuna taşındı."}
+    payroll = fresh
     amount = float(payroll.get("final_payable") or payroll.get("net_salary") or 0)
     related = []
     if payroll.get("status") == "paid":

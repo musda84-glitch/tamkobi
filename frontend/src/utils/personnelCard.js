@@ -250,46 +250,137 @@ function yevmiyeDaysFromBonus(b) {
   return m ? Number(m[1]) || null : null;
 }
 
+function payBits(bits) {
+  return bits.filter(Boolean).join(" · ");
+}
+
+/** Ödeme kaynağı etiketi: "Kaynak: Ali BAL (Ortak)". */
+export function paySourceCaption(names) {
+  const unique = [];
+  for (const raw of names || []) {
+    const s = String(raw || "").trim().replace(/^kaynak\s*:\s*/i, "");
+    if (!s || unique.some((x) => x.toLocaleLowerCase("tr-TR") === s.toLocaleLowerCase("tr-TR"))) continue;
+    unique.push(s);
+  }
+  return unique.length ? `Kaynak: ${unique.join(", ")}` : "";
+}
+
+function linkedPaymentId(doc) {
+  const direct = String(doc?.movement_id || doc?.personnel_movement_id || "").trim();
+  if (direct) return direct;
+  const st = String(doc?.source_type || doc?.source || "").trim();
+  if (st === "personnel_payment") return String(doc?.source_id || "").trim();
+  return "";
+}
+
+function rememberSource(row, name) {
+  const s = String(name || "").trim();
+  if (!s) return;
+  row._sources.push(s);
+}
+
+function rememberMovement(row, movementId) {
+  const mid = String(movementId || "").trim();
+  if (!mid) return;
+  if (!row.linkedMovementId) row.linkedMovementId = mid;
+  if (!row.linkedMovementIds.includes(mid)) row.linkedMovementIds.push(mid);
+}
+
+function finishPayRow(row) {
+  const cap = paySourceCaption(row._sources);
+  if (cap) row.subtitle = payBits([row.subtitle, cap]);
+  row.sourceLabel = cap;
+  delete row._sources;
+  if (!row.linkedMovementIds.length) delete row.linkedMovementIds;
+  return row;
+}
+
+function effectHitsPersonnel(eff, rowId) {
+  const id = String(eff?.id || "").trim();
+  if (!id || id !== rowId) return false;
+  const coll = String(eff?.collection || "");
+  return coll === "bonus_payments" || coll === "payrolls";
+}
+
 export function employeePayMoves(card) {
-  const rows = [];
+  const personnel = [];
+  const byId = new Map();
+  const indexRow = (row) => {
+    const id = String(row?.id || "").trim();
+    if (id && !id.startsWith("pay-") && !id.startsWith("bonus-")) byId.set(id, row);
+  };
   for (const p of card?.payrolls || []) {
-    const wage = payrollWageLine(p);
-    rows.push({
+    const row = {
       id: idOf(p) || `pay-${p.period || ""}`,
       kind: "payroll",
       title: isDailyWage(p) ? "Yevmiye" : "Maaş",
-      subtitle: [p.period, wage, payrollStatusTr(p.status, p.paid_date)].filter(Boolean).join(" · "),
+      subtitle: payBits([p.period, payrollWageLine(p), payrollStatusTr(p.status, p.paid_date)]),
       amount: Number(p.final_payable ?? p.net_salary) || 0,
       date: String(p.paid_date || p.period || ""),
       status: p.status,
-    });
+      _sources: [],
+      linkedMovementIds: [],
+    };
+    rememberSource(row, p.account_name);
+    rememberMovement(row, linkedPaymentId(p));
+    personnel.push(row);
+    indexRow(row);
   }
   for (const b of card?.bonuses || []) {
     const days = yevmiyeDaysFromBonus(b);
     const paidDate = bonusPaidDate(b);
-    rows.push({
+    const row = {
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",
       title: bonusTypeTr(b.type, b.type_label),
-      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status, paidDate), b.account_name, b.note].filter(Boolean).join(" · "),
+      subtitle: payBits([b.period, days ? `${days} gün` : "", bonusStatusTr(b.status, paidDate), b.note]),
       amount: Number(b.amount) || 0,
       date: String(paidDate || b.created_at || b.period || ""),
       status: b.status,
-    });
+      _sources: [],
+      linkedMovementIds: [],
+    };
+    rememberSource(row, b.account_name);
+    rememberMovement(row, linkedPaymentId(b));
+    personnel.push(row);
+    indexRow(row);
   }
+  const rows = personnel;
+  const shown = byId;
   for (const m of card?.movements || []) {
     if (["reversed", "cancelled"].includes(String(m.status || ""))) continue;
-    rows.push({
-      id: idOf(m),
+    const mid = idOf(m);
+    const targets = [];
+    for (const row of shown.values()) {
+      if ((row.linkedMovementIds || []).includes(mid) || row.linkedMovementId === mid) targets.push(row);
+    }
+    for (const eff of m.effects || []) {
+      for (const [id, row] of shown) {
+        if (effectHitsPersonnel(eff, id) && !targets.includes(row)) targets.push(row);
+      }
+    }
+    if (targets.length) {
+      for (const row of targets) {
+        rememberMovement(row, mid);
+        rememberSource(row, m.account_name);
+      }
+      continue;
+    }
+    const lone = {
+      id: mid,
       kind: "personnel_payment",
       title: m.kind_label || "Ödeme",
-      subtitle: [m.period, m.account_name, m.description].filter(Boolean).join(" · "),
+      subtitle: payBits([m.period, m.description]),
       amount: Number(m.amount) || 0,
       date: String(m.date || m.created_at || ""),
       status: m.status || "posted",
-    });
+      _sources: [],
+      linkedMovementIds: [],
+    };
+    rememberSource(lone, m.account_name);
+    rows.push(lone);
   }
-  return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return rows.map(finishPayRow).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
 export function payMovesPeriodLabel(period) {
