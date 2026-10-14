@@ -9,10 +9,10 @@ export type ProductDraft = {
   unit: string;
   vat_rate: string;
   purchase_vat_rate: string;
-  purchase_price: string;
-  sale_price: string;
-  stock_quantity: string;
-  min_stock_alert: string;
+  purchase_price: string | number;
+  sale_price: string | number;
+  stock_quantity: string | number;
+  min_stock_alert: string | number;
   vat_exemption_code: string;
   price_includes_vat: boolean;
   show_in_b2b: boolean;
@@ -24,7 +24,7 @@ export type ProductDraft = {
   width: string;
   height: string;
   package_count: string;
-  unit_content_qty: string;
+  unit_content_qty: string | number;
   unit_content_unit: string;
   gtip: string;
   origin_country: string;
@@ -40,13 +40,13 @@ export const PRODUCT_TYPES = [
 
 export const VAT_RATES = [20, 10, 1, 0];
 
-function num(v: string, fallback = 0): number {
+function num(v: string | number, fallback = 0): number {
   if (v === "" || v == null) return fallback;
   const n = Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : fallback;
 }
 
-function optNum(v: string): number | null {
+function optNum(v: string | number): number | null {
   if (v === "" || v == null) return null;
   const n = Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : null;

@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Pencil } from "lucide-react";
 import { fmtMoney } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import {
   normalizeStockPrice,
   parseStockPriceInput,
   stockPriceChanged,
-  stockPriceDraftValue,
 } from "../utils/stockInlinePrice";
 
 /**
@@ -23,21 +23,13 @@ export function StockInlinePrice({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef(null);
   const savedRef = useRef(false);
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
 
   const start = (e) => {
     e?.stopPropagation?.();
     if (disabled || busy) return;
     savedRef.current = false;
-    setDraft(stockPriceDraftValue(value));
+    setDraft(Number(value) ? value : "");
     setEditing(true);
   };
 
@@ -68,13 +60,12 @@ export function StockInlinePrice({
 
   if (editing) {
     return (
-      <input
-        ref={inputRef}
-        type="text"
-        inputMode="decimal"
+      <MoneyInput
+        autoFocus
+        selectOnFocus
         disabled={busy}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={setDraft}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Enter") {

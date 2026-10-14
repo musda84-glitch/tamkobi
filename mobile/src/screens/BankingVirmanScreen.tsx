@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { MoneyInput } from "../components/MoneyInput";
 import { ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { validateVirman, virmanSelectGroups, type BankAccount, type ContactLite, type Partner } from "../utils/finance";
@@ -16,7 +17,7 @@ export function BankingVirmanScreen() {
   const [contacts, setContacts] = useState<ContactLite[]>([]);
   const [source, setSource] = useState("");
   const [target, setTarget] = useState("");
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState<string | number>("");
   const [desc, setDesc] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +88,7 @@ export function BankingVirmanScreen() {
         searchable
         searchPlaceholder="Cari ara…"
       />
-      <Field label="Tutar" testID="virman-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+      <MoneyInput label="Tutar" testID="virman-amount" value={amount} onChange={(n) => setAmount(n ?? "")} />
       <Field label="Açıklama" testID="virman-desc" value={desc} onChangeText={setDesc} />
       <PrimaryButton title={busy ? "Aktarılıyor…" : "Virmanı kaydet"} onPress={save} loading={busy} disabled={!canEdit} color={colors.primary} testID="submit-virman-btn" />
     </Screen>

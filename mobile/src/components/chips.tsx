@@ -62,7 +62,9 @@ export function confirmAction(title: string, msg: string, onYes: () => void, con
   ]);
 }
 
-export function n(v: string): number {
+export function n(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (v == null || v === "") return 0;
   const x = Number(String(v).replace(",", "."));
   return Number.isFinite(x) ? x : 0;
 }

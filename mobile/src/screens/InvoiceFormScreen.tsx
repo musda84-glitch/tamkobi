@@ -11,6 +11,7 @@ import { confirmAction } from "../components/chips";
 import { LineProductNameField } from "../components/LineProductNameField";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
 import {
@@ -62,8 +63,7 @@ import {
   retailContactCreatePayload,
 } from "../utils/barcodeSale";
 import { contactTypeTr } from "../utils/labels";
-import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown } from "../utils/lineNumberDraft";
-import { fmtMoney, idOf, sanitizeMoneyInput } from "../utils/money";
+import { fmtMoney, idOf } from "../utils/money";
 
 type Project = { id?: string; _id?: string; name?: string; project_number?: string };
 
@@ -109,11 +109,6 @@ function Chip({
   );
 }
 
-function n(v: string): number {
-  const x = Number(String(v).replace(",", "."));
-  return Number.isFinite(x) ? x : 0;
-}
-
 export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const { type: filterType, contact_id: preContactId, contact_name: preContactName } = useLocalSearchParams<{
     type?: string;
@@ -141,7 +136,6 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [gibTax, setGibTax] = useState("");
   const [scan, setScan] = useState(false);
   const [scanLine, setScanLine] = useState<number | null>(null);
-  const [lineDrafts, setLineDrafts] = useState<Record<string, string>>({});
   const productsRef = useRef(products);
   productsRef.current = products;
   const [error, setError] = useState<string | null>(null);
@@ -160,29 +154,9 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     }));
   };
 
-  const lineFieldValue = (index: number, field: string, stored: unknown) =>
-    lineNumberShown(lineDrafts, lineDraftKey(index, field), stored);
-
-  const focusLineNumber = (index: number, field: string) => {
-    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: lineNumberOnFocus() }));
-  };
-
-  const changeLineNumber = (index: number, field: string, raw: string, emptyFallback: number) => {
-    const typed = sanitizeMoneyInput(raw);
-    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: typed }));
-    const next = lineNumberCommit(typed, emptyFallback);
-    if (next != null) patchLine(index, field, next);
-  };
-
-  const blurLineNumber = (index: number, field: string, emptyFallback: number) => {
-    const key = lineDraftKey(index, field);
-    const next = lineNumberCommit(lineDrafts[key], emptyFallback);
-    if (next != null) patchLine(index, field, next);
-    setLineDrafts((m) => {
-      const copy = { ...m };
-      delete copy[key];
-      return copy;
-    });
+  const setLineNumber = (index: number, field: string, n: number | null) => {
+    if (n == null) return;
+    patchLine(index, field, n);
   };
 
   const loadLookups = useCallback(async () => {
@@ -690,7 +664,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         ))}
       </Row>
       {draft.currency !== "TRY" ? (
-        <Field label="Kur (₺)" testID="inv-fx-rate" value={String(draft.fx_rate || "")} onChangeText={(v) => set("fx_rate", n(v))} keyboardType="decimal-pad" />
+        <MoneyInput label="Kur (₺)" testID="inv-fx-rate" decimals={4} maxFractionDigits={6} value={draft.fx_rate || ""} onChange={(v) => set("fx_rate", v ?? 1)} />
       ) : null}
 
       <Card>
@@ -763,57 +737,45 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                 <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
               </View>
               <View style={{ width: 72, flexShrink: 0 }}>
-                <Field
+                <QuantityInput
                   compact
                   label="Miktar"
                   testID={`inv-item-qty-${idx}`}
-                  clearTextOnFocus
-                  value={lineFieldValue(idx, "quantity", it.quantity)}
-                  onFocus={() => focusLineNumber(idx, "quantity")}
-                  onBlur={() => blurLineNumber(idx, "quantity", 1)}
-                  onChangeText={(v) => changeLineNumber(idx, "quantity", v, 1)}
-                  keyboardType="decimal-pad"
+                  value={it.quantity}
+                  editable={canEdit}
+                  onChange={(n) => setLineNumber(idx, "quantity", n)}
                 />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Field
+                <MoneyInput
                   compact
                   label="Fiyat"
                   testID={`inv-item-price-${idx}`}
-                  clearTextOnFocus
-                  value={lineFieldValue(idx, "unit_price", it.unit_price)}
-                  onFocus={() => focusLineNumber(idx, "unit_price")}
-                  onBlur={() => blurLineNumber(idx, "unit_price", 0)}
-                  onChangeText={(v) => changeLineNumber(idx, "unit_price", v, 0)}
-                  keyboardType="decimal-pad"
+                  value={it.unit_price}
+                  editable={canEdit}
+                  onChange={(n) => setLineNumber(idx, "unit_price", n)}
                 />
               </View>
             </Row>
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
               <View style={{ flex: 1, minWidth: 88 }}>
-                <Field
+                <MoneyInput
                   compact
                   label="KDV'li"
                   testID={`inv-item-price-incl-${idx}`}
-                  clearTextOnFocus
-                  value={lineFieldValue(idx, "unit_price_incl", it.unit_price_incl)}
-                  onFocus={() => focusLineNumber(idx, "unit_price_incl")}
-                  onBlur={() => blurLineNumber(idx, "unit_price_incl", 0)}
-                  onChangeText={(v) => changeLineNumber(idx, "unit_price_incl", v, 0)}
-                  keyboardType="decimal-pad"
+                  value={it.unit_price_incl}
+                  editable={canEdit}
+                  onChange={(n) => setLineNumber(idx, "unit_price_incl", n)}
                 />
               </View>
               <View style={{ width: 64, flexShrink: 0 }}>
-                <Field
+                <MoneyInput
                   compact
                   label="İsk %"
                   testID={`inv-item-disc-${idx}`}
-                  clearTextOnFocus
-                  value={lineFieldValue(idx, "discount_rate", it.discount_rate)}
-                  onFocus={() => focusLineNumber(idx, "discount_rate")}
-                  onBlur={() => blurLineNumber(idx, "discount_rate", 0)}
-                  onChangeText={(v) => changeLineNumber(idx, "discount_rate", v, 0)}
-                  keyboardType="decimal-pad"
+                  value={it.discount_rate || ""}
+                  editable={canEdit}
+                  onChange={(n) => setLineNumber(idx, "discount_rate", n)}
                 />
               </View>
             </Row>
@@ -854,12 +816,11 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
           <Chip label="%" active={draft.gdMode === "percent"} onPress={() => set("gdMode", "percent")} testID="gd-mode-percent" />
           <Chip label="₺" active={draft.gdMode === "amount"} onPress={() => set("gdMode", "amount")} testID="gd-mode-amount" />
         </Row>
-        <Field
+        <MoneyInput
           label={draft.gdMode === "percent" ? "Genel iskonto %" : "Genel iskonto tutarı"}
           testID="general-discount-input"
-          value={String(draft.gdMode === "percent" ? draft.general_discount_rate || "" : draft.general_discount_amount || "")}
-          onChangeText={(v) => set(draft.gdMode === "percent" ? "general_discount_rate" : "general_discount_amount", n(v))}
-          keyboardType="decimal-pad"
+          value={draft.gdMode === "percent" ? draft.general_discount_rate || "" : draft.general_discount_amount || ""}
+          onChange={(v) => set(draft.gdMode === "percent" ? "general_discount_rate" : "general_discount_amount", v ?? 0)}
         />
         {totals.gd > 0 ? (
           <Row style={{ justifyContent: "space-between" }}><Muted>Genel iskonto</Muted><Text style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.gd, draft.currency)}</Text></Row>

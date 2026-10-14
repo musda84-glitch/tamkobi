@@ -28,7 +28,7 @@ export function receiptAmountInput(amount: number, sep: "." | "," = ","): string
   return rounded.toFixed(2).replace(".", sep);
 }
 
-export function applyReceiptDraft<T extends { type?: string; amount?: string; description?: string }>(
+export function applyReceiptDraft<T extends { type?: string; amount?: string | number; description?: string }>(
   form: T,
   draft?: ReceiptDraft | null,
   amountSep: "." | "," = ",",

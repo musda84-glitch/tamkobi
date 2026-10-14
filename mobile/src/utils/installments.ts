@@ -28,7 +28,7 @@ export type InstallmentGroup = {
 
 export type PlanDraft = {
   count: string;
-  down_payment: string;
+  down_payment: string | number;
   interval: "month" | "week" | "days";
   interval_days: string;
   first_due_date: string;
@@ -197,7 +197,7 @@ export function lockedPaymentLabel(p: ContactPayment): string {
   return "Banka";
 }
 
-export type PaymentEdit = { id: string; amount: string; date: string; description: string; account_id: string };
+export type PaymentEdit = { id: string; amount: string | number; date: string; description: string; account_id: string };
 
 export function paymentEditFrom(p: ContactPayment): PaymentEdit {
   return {

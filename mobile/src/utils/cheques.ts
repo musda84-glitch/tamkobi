@@ -98,7 +98,7 @@ export type ChequeDraft = {
   instrument: "cheque" | "promissory";
   contact_id: string;
   contact_name: string;
-  amount: string;
+  amount: string | number;
   issue_date: string;
   due_date: string;
   serial_no: string;
@@ -180,7 +180,7 @@ export function chequeReturnContact(params?: {
   return { id, name: paramOne(params?.contact_name) };
 }
 
-function num(v: string): number {
+function num(v: string | number): number {
   const n = Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }

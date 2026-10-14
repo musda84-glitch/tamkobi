@@ -5,6 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
 import { PartnerAvatar } from "../components/PartnerAvatar";
 import { colors } from "../theme";
@@ -293,7 +294,7 @@ export function BankingPartnersPanel({
           groups={expenseCategoryGroups(expCats, [expDraft.category])}
         />
         <Field label="Açıklama" testID="partner-exp-description" value={expDraft.description} onChangeText={(v) => setExpDraft((d) => ({ ...d, description: v }))} placeholder="Örn: Ofis malzemesi" />
-        <Field label="Tutar (₺)" testID="partner-exp-amount" value={expDraft.amount} onChangeText={(v) => setExpDraft((d) => ({ ...d, amount: v }))} keyboardType="decimal-pad" />
+        <MoneyInput label="Tutar (₺)" testID="partner-exp-amount" value={expDraft.amount} onChange={(n) => setExpDraft((d) => ({ ...d, amount: n ?? "" }))} />
         <Muted>KDV %</Muted>
         <Row style={{ justifyContent: "space-between" }}>
           <Row style={{ flexShrink: 1 }}>

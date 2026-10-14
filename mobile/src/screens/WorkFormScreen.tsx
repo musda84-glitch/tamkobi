@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { del, get, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -17,6 +17,7 @@ import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectSta
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { LineProductNameField } from "../components/LineProductNameField";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
@@ -31,7 +32,7 @@ import { normalizeProjectStages, type ProjectStage } from "../utils/projectStage
 import type { StagePhoto } from "../utils/stagePhotos";
 import { statusTr, trUpper } from "../utils/labels";
 import { ymdOrToday } from "../utils/calendar";
-import { formatMoneyInput, fmtMoney, idOf, parseMoneyInput, sanitizeMoneyInput, todayIso } from "../utils/money";
+import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
@@ -121,10 +122,6 @@ import {
 
 const PERM: Record<WorkKind, string> = { quote: "/quotes", project: "/projects", survey: "/surveys" };
 
-function quotePriceText(v: unknown): string {
-  return formatMoneyInput(v);
-}
-
 function quoteDraftSig(
   title: string,
   contactId: string,
@@ -187,7 +184,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [validUntil, setValidUntil] = useState("");
   const [notes, setNotes] = useState("");
   const [address, setAddress] = useState("");
-  const [budget, setBudget] = useState("");
+  const [budget, setBudget] = useState<string | number>("");
   const [startDate, setStartDate] = useState(kind === "project" ? ymdOrToday() : "");
   const [endDate, setEndDate] = useState("");
   const [surveyDate, setSurveyDate] = useState(todayIso());
@@ -196,11 +193,6 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [status, setStatus] = useState(kind === "quote" ? "draft" : kind === "project" ? "planning" : "planned");
   const [items, setItems] = useState<WorkItem[]>([emptyItem()]);
   const [noteOpen, setNoteOpen] = useState<Record<number, boolean>>({});
-  const [grossDraft, setGrossDraft] = useState<Record<number, string>>({});
-  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
-  const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
-  const [qtyFocus, setQtyFocus] = useState<Record<number, boolean>>({});
-  const [priceFocus, setPriceFocus] = useState<Record<number, boolean>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
@@ -1006,7 +998,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       {kind === "quote" ? <DateField label="Geçerlilik" testID="q-valid" value={validUntil} onChangeText={setValidUntil} editable={canEdit} /> : null}
       {kind === "project" ? (
         <>
-          <Field label="Bütçe" testID="p-budget" value={budget} onChangeText={setBudget} keyboardType="decimal-pad" editable={canEdit} />
+          <MoneyInput label="Bütçe" testID="p-budget" value={budget} onChange={(n) => setBudget(n ?? "")} editable={canEdit} />
           <DateField label="Başlangıç" testID="p-start" value={startDate} onChangeText={setStartDate} editable={canEdit} defaultToday />
           <DateField label="Bitiş" testID="p-end" value={endDate} onChangeText={setEndDate} min={startDate} editable={canEdit} />
           <Card testID="pf-production-order-block">
@@ -1128,28 +1120,20 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                   overflow: "hidden",
                 }}
               >
-                <TextInput
+                <MoneyInput
                   testID={`q-item-gross-${i}`}
-                  value={grossDraft[i] ?? (it.name ? quotePriceText(workItemLineGross(it)) : "")}
-                  onFocus={() => setGrossDraft((m) => ({ ...m, [i]: quotePriceText(workItemLineGross(it)) }))}
-                  onBlur={() => setGrossDraft((m) => {
-                    const next = { ...m };
-                    delete next[i];
-                    return next;
-                  })}
-                  onChangeText={(v) => {
-                    if (!canEdit) return;
-                    const typed = sanitizeMoneyInput(v);
-                    setGrossDraft((m) => ({ ...m, [i]: typed }));
-                    const unit = workItemPriceFromGross(it, parseMoneyInput(typed));
+                  dense
+                  value={it.name ? workItemLineGross(it) : ""}
+                  editable={canEdit}
+                  containerStyle={{ flex: 1, minWidth: 0 }}
+                  onChange={(n) => {
+                    if (!canEdit || n == null) return;
+                    const unit = workItemPriceFromGross(it, n);
                     setItems((rows) => rows.map((row, idx) => (
                       idx === i ? { ...row, unit_price: unit, unit_price_incl: undefined } : row
                     )));
                   }}
-                  keyboardType="decimal-pad"
-                  editable={canEdit}
-                  numberOfLines={1}
-                  style={{ flex: 1, minWidth: 0, textAlign: "right", fontWeight: "800", fontSize: 15, color: colors.text, padding: 0, minHeight: 32 }}
+                  style={{ flex: 1, borderWidth: 0, backgroundColor: "transparent", textAlign: "right", fontWeight: "800", fontSize: 15, paddingHorizontal: 0, paddingVertical: 0, minHeight: 32 }}
                 />
                 <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 13, flexShrink: 0 }}>₺</Text>
               </View>
@@ -1281,63 +1265,25 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 testID={`q-item-qty-dec-${i}`}
                                 accessibilityLabel="Miktarı azalt"
                                 disabled={!canEdit}
-                                onPress={() => {
-                                  setQtyDraft((m) => {
-                                    const next = { ...m };
-                                    delete next[i];
-                                    return next;
-                                  });
-                                  patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1));
-                                }}
+                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, -1))}
                                 style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
                               >
                                 <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>−</Text>
                               </Pressable>
-                              <TextInput
+                              <QuantityInput
                                 testID={`q-item-qty-${i}`}
-                                clearTextOnFocus
-                                value={qtyFocus[i] ? (qtyDraft[i] ?? "") : String(it.quantity || "")}
-                                onPressIn={() => {
-                                  setQtyFocus((m) => ({ ...m, [i]: true }));
-                                  setQtyDraft((m) => ({ ...m, [i]: "" }));
-                                }}
-                                onFocus={() => {
-                                  setQtyFocus((m) => ({ ...m, [i]: true }));
-                                  setQtyDraft((m) => ({ ...m, [i]: "" }));
-                                }}
-                                onBlur={() => {
-                                  setQtyFocus((m) => {
-                                    const next = { ...m };
-                                    delete next[i];
-                                    return next;
-                                  });
-                                  setQtyDraft((m) => {
-                                    const next = { ...m };
-                                    delete next[i];
-                                    return next;
-                                  });
-                                }}
-                                onChangeText={(v) => {
-                                  const typed = sanitizeMoneyInput(v);
-                                  setQtyDraft((m) => ({ ...m, [i]: typed }));
-                                  if (typed.trim()) patchItem(i, "quantity", parseMoneyInput(typed));
-                                }}
-                                keyboardType="decimal-pad"
+                                dense
+                                value={it.quantity || ""}
                                 editable={canEdit}
-                                style={{ width: 32, textAlign: "center", fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
+                                containerStyle={{ width: 44 }}
+                                onChange={(n) => { if (n != null) patchItem(i, "quantity", n); }}
+                                style={{ width: 44, borderWidth: 0, backgroundColor: "transparent", textAlign: "center", fontWeight: "700", fontSize: 13, paddingHorizontal: 0, paddingVertical: 0, minHeight: 32 }}
                               />
                               <Pressable
                                 testID={`q-item-qty-inc-${i}`}
                                 accessibilityLabel="Miktarı artır"
                                 disabled={!canEdit}
-                                onPress={() => {
-                                  setQtyDraft((m) => {
-                                    const next = { ...m };
-                                    delete next[i];
-                                    return next;
-                                  });
-                                  patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1));
-                                }}
+                                onPress={() => patchItem(i, "quantity", bumpWorkItemQty(it.quantity, 1))}
                                 style={{ width: 28, height: 32, alignItems: "center", justifyContent: "center" }}
                               >
                                 <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>+</Text>
@@ -1361,39 +1307,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 minWidth: 0,
                               }}
                             >
-                              <TextInput
+                              <MoneyInput
                                 testID={`q-item-price-${i}`}
-                                clearTextOnFocus
-                                value={priceFocus[i] ? (priceDraft[i] ?? "") : quotePriceText(it.unit_price)}
-                                onPressIn={() => {
-                                  setPriceFocus((m) => ({ ...m, [i]: true }));
-                                  setPriceDraft((m) => ({ ...m, [i]: "" }));
-                                }}
-                                onFocus={() => {
-                                  setPriceFocus((m) => ({ ...m, [i]: true }));
-                                  setPriceDraft((m) => ({ ...m, [i]: "" }));
-                                }}
-                                onBlur={() => {
-                                  setPriceFocus((m) => {
-                                    const next = { ...m };
-                                    delete next[i];
-                                    return next;
-                                  });
-                                  setPriceDraft((m) => {
-                                    const next = { ...m };
-                                    delete next[i];
-                                    return next;
-                                  });
-                                }}
-                                onChangeText={(v) => {
-                                  const typed = sanitizeMoneyInput(v);
-                                  setPriceDraft((m) => ({ ...m, [i]: typed }));
-                                  if (typed.trim()) patchItem(i, "unit_price", parseMoneyInput(typed));
-                                }}
-                                keyboardType="decimal-pad"
+                                dense
+                                value={it.unit_price || ""}
                                 editable={canEdit}
-                                numberOfLines={1}
-                                style={{ flex: 1, minWidth: 0, fontWeight: "700", fontSize: 12, color: colors.text, padding: 0, minHeight: 32 }}
+                                containerStyle={{ flex: 1, minWidth: 0 }}
+                                onChange={(n) => { if (n != null) patchItem(i, "unit_price", n); }}
+                                style={{ flex: 1, borderWidth: 0, backgroundColor: "transparent", fontWeight: "700", fontSize: 12, paddingHorizontal: 0, paddingVertical: 0, minHeight: 32 }}
                               />
                               <Text style={{ color: colors.muted, fontWeight: "700", fontSize: 12, flexShrink: 0 }}>₺</Text>
                             </View>
@@ -1579,7 +1500,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           groups={expenseCategoryGroups(expCats, [expDraft.category])}
         />
         <Field label="Açıklama" testID="proj-exp-description" value={expDraft.description} onChangeText={(v) => setExpDraft((d) => ({ ...d, description: v }))} placeholder="Örn: Şantiye malzemesi" />
-        <Field label="Tutar (₺)" testID="proj-exp-amount" value={expDraft.amount} onChangeText={(v) => setExpDraft((d) => ({ ...d, amount: v }))} keyboardType="decimal-pad" />
+        <MoneyInput label="Tutar (₺)" testID="proj-exp-amount" value={expDraft.amount} onChange={(n) => setExpDraft((d) => ({ ...d, amount: n ?? "" }))} />
         <Muted>KDV %</Muted>
         <Row style={{ justifyContent: "space-between" }}>
           <Row style={{ flexShrink: 1 }}>

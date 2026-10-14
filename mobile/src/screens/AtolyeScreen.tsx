@@ -6,6 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
+import { QuantityInput } from "../components/MoneyInput";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
 import { archivedAssignedDuties, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
@@ -232,7 +233,7 @@ export function AtolyeScreen() {
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockErr, setUnlockErr] = useState("");
   const [finishing, setFinishing] = useState<WorkOrder | null>(null);
-  const [fin, setFin] = useState({ produced_qty: "", scrap_qty: "0", notes: "" });
+  const [fin, setFin] = useState<{ produced_qty: string | number; scrap_qty: string | number; notes: string }>({ produced_qty: "", scrap_qty: "0", notes: "" });
   const [trashBusy, setTrashBusy] = useState(false);
   const [trashTarget, setTrashTarget] = useState<WorkOrder | null>(null);
   const [trashReqBusy, setTrashReqBusy] = useState(false);
@@ -867,22 +868,20 @@ export function AtolyeScreen() {
             </Muted>
             <Row>
               <View style={{ flex: 1 }}>
-                <Field
+                <QuantityInput
                   label={`Üretilen (${finishing ? workOrderFinishPlan(finishing).unit : "adet"})`}
                   testID="wo-finish-produced"
                   value={fin.produced_qty}
-                  onChangeText={(v) => setFin((f) => ({ ...f, produced_qty: v }))}
-                  keyboardType="decimal-pad"
+                  onChange={(n) => setFin((f) => ({ ...f, produced_qty: n ?? "" }))}
                   compact
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Field
+                <QuantityInput
                   label="Fire / Hatalı"
                   testID="wo-finish-scrap"
                   value={fin.scrap_qty}
-                  onChangeText={(v) => setFin((f) => ({ ...f, scrap_qty: v }))}
-                  keyboardType="decimal-pad"
+                  onChange={(n) => setFin((f) => ({ ...f, scrap_qty: n ?? "" }))}
                   compact
                 />
               </View>

@@ -59,7 +59,17 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
     e.preventDefault(); setBusy(true);
     try { if (plan.id) await axios.put(`${API_URL}/system/plans/${plan.id}`, f, cred); else await axios.post(`${API_URL}/system/plans`, f, cred); toast.success("Paket kaydedildi."); onSaved(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
-  const num = (k, l, money = false) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label>{money ? <MoneyInput value={f[k]} onChange={(n) => setF({ ...f, [k]: n ?? 0 })} className={inputCls} data-testid={`plan-${k}`} /> : <input type="number" min={0} value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} className={inputCls} data-testid={`plan-${k}`} />}</div>;
+  const num = (k, l, money = false) => {
+    const tid = `plan-${k}`;
+    return (
+      <div>
+        <label className="block font-semibold text-slate-700 mb-1">{l}</label>
+        {money
+          ? <MoneyInput value={f[k]} onChange={(n) => setF({ ...f, [k]: n ?? 0 })} className={inputCls} data-testid={tid} />
+          : <input type="number" min={0} value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} className={inputCls} data-testid={tid} />}
+      </div>
+    );
+  };
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4 text-xs max-h-[90vh] overflow-y-auto" data-testid="plan-editor">

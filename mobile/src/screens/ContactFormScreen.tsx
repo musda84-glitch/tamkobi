@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction } from "../components/chips";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { LocationPicker } from "../components/LocationPicker";
 import { colors } from "../theme";
@@ -205,10 +206,10 @@ export function ContactFormScreen({ contactId }: { contactId?: string }) {
       ) : null}
       {tab === "finance" ? (
         <Card>
-          <Field label="Kredi / risk limiti (₺)" testID="cf-credit_limit" value={draft.credit_limit} onChangeText={(v) => set("credit_limit", v)} keyboardType="decimal-pad" />
+          <MoneyInput label="Kredi / risk limiti (₺)" testID="cf-credit_limit" value={draft.credit_limit} onChange={(n) => set("credit_limit", n ?? "")} />
           <Field label="Vade (gün)" testID="cf-payment_term_days" value={draft.payment_term_days} onChangeText={(v) => set("payment_term_days", v)} keyboardType="number-pad" />
           <Field label="Gecikme faizi (% / ay)" testID="cf-late_fee_rate" value={draft.late_fee_rate} onChangeText={(v) => set("late_fee_rate", v)} keyboardType="decimal-pad" />
-          <Field label="Varsayılan iskonto (%)" testID="cf-default_discount" value={draft.default_discount} onChangeText={(v) => set("default_discount", v)} keyboardType="decimal-pad" />
+          <MoneyInput label="Varsayılan iskonto (%)" testID="cf-default_discount" value={draft.default_discount} onChange={(n) => set("default_discount", n ?? "")} />
           <Muted>Risk</Muted>
           <Row style={{ flexWrap: "wrap" }}>
             {CONTACT_RISK.map((r) => (
@@ -222,7 +223,7 @@ export function ContactFormScreen({ contactId }: { contactId?: string }) {
       {tab === "b2b" ? (
         <Card>
           <Flag label="B2B sipariş portalı açık" value={draft.b2b_enabled} onChange={(v) => set("b2b_enabled", v)} testID="cf-b2b_enabled" />
-          <Field label="B2B iskonto (%)" testID="cf-b2b_discount" value={draft.b2b_discount} onChangeText={(v) => set("b2b_discount", v)} keyboardType="decimal-pad" />
+          <MoneyInput label="B2B iskonto (%)" testID="cf-b2b_discount" value={draft.b2b_discount} onChange={(n) => set("b2b_discount", n ?? "")} />
           <Field label="Portal giriş e-postası" testID="cf-b2b_login_email" value={draft.b2b_login_email} onChangeText={(v) => set("b2b_login_email", v)} autoCapitalize="none" />
           <Field label="Portal şifresi" testID="cf-b2b_password" value={draft.b2b_password} onChangeText={(v) => set("b2b_password", v)} secureTextEntry placeholder={isNew ? "min 6" : "değiştirmek için yazın"} />
         </Card>
