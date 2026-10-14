@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
 import { MoneyInput } from "./MoneyInput";
@@ -15,7 +15,8 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice } from "./InvoiceContextMenu";
+import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
@@ -43,7 +44,7 @@ import {
 import { isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { openChequeBalance } from "../utils/chequeBalance";
-import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
+import { statusTr, channelTr } from "../utils/labels";
 import { orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
 import { useNavigate } from "react-router-dom";
 import { fmtDate, fmtMoney } from "../utils/money";
@@ -101,7 +102,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [printDoc, setPrintDoc] = useState(null);
   const [editTpl, setEditTpl] = useState(null);
   const navigate = useNavigate();
-  const { activeCompany } = useAuth();
+  const { activeCompany, can } = useAuth();
+  const canIssueInv = can("/invoices", "edit");
 
   useEscape(onClose);
   const onCloseRef = useRef(onClose);
@@ -767,8 +769,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         {onMessage && !incoming ? (
                           <button onClick={() => onMessage(c)} className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition" title="SMS / E-posta gönder" data-testid={`detail-inv-notify-${inv.invoice_number}`}><MessageSquare className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
-                        {inv.status === "draft" && !incoming ? (
-                          <button onClick={() => sendToGib(inv, inv.e_type)} disabled={busy === inv.id} className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition disabled:opacity-40" title={`${E_TYPE_TR[inv.e_type] || inv.e_type} olarak kes — başka tür için ⋮`} data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}</button>
+                        {canIssueInv && canFaturalastirDraftInvoice(inv) ? (
+                          <DraftInvoiceFaturalastirButton
+                            inv={inv}
+                            onIssue={issueFromMenu}
+                            disabled={busy === inv.id}
+                            testId={`detail-faturalastir-btn-${inv.invoice_number}`}
+                            chooserTestId={`detail-faturalastir-chooser-${inv.invoice_number}`}
+                          />
                         ) : busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin text-slate-400" /> : <span className="w-7 h-7" aria-hidden="true" />}
                         {canCancelInvoice(inv) ? (
                           <button onClick={() => cancelInvoice(inv)} className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition" title={inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch" ? "İrsaliyeyi iptal et" : "Faturayı iptal et"} data-testid={`detail-inv-cancel-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>

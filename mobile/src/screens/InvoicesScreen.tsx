@@ -6,11 +6,13 @@ import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { confirmAction } from "../components/chips";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
+import { DraftInvoiceFaturalastir } from "../components/DraftInvoiceFaturalastir";
 import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoiceListTitle, invoiceRowDangerAction } from "../utils/invoiceDraft";
+import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -197,6 +199,7 @@ export function InvoicesScreen() {
             const iid = idOf(inv);
             const danger = invoiceRowDangerAction(inv);
             const allowDanger = (danger === "delete" && canDelete) || (danger === "cancel" && canEdit);
+            const showFaturalastir = canEdit && canFaturalastirDraftInvoice(inv);
             const row = (
               <ListRow
                 testID={allowDanger ? undefined : `inv-row-${iid}`}
@@ -206,12 +209,10 @@ export function InvoicesScreen() {
                 onPress={allowDanger ? undefined : () => go("InvoiceDetail", { id: iid })}
               />
             );
-            if (!allowDanger || !danger) {
-              return <Fragment key={iid}>{row}</Fragment>;
-            }
-            return (
+            const body = !allowDanger || !danger ? (
+              <Fragment>{row}</Fragment>
+            ) : (
               <SwipeRevealRow
-                key={iid}
                 rowKey={iid}
                 openKey={openRow}
                 onOpen={setOpenRow}
@@ -223,6 +224,20 @@ export function InvoicesScreen() {
               >
                 {row}
               </SwipeRevealRow>
+            );
+            return (
+              <View key={iid} style={{ gap: 4 }}>
+                {body}
+                {showFaturalastir ? (
+                  <DraftInvoiceFaturalastir
+                    invoice={inv}
+                    allowed={canEdit}
+                    testID={`inv-faturalastir-${iid}`}
+                    onIssued={() => { setError(null); load(); }}
+                    onError={setError}
+                  />
+                ) : null}
+              </View>
             );
           })}
         </>

@@ -6,6 +6,7 @@ import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
+import { DraftInvoiceFaturalastir } from "../components/DraftInvoiceFaturalastir";
 import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
@@ -17,6 +18,7 @@ import { colors } from "../theme";
 import type { Invoice, Product } from "../types";
 import { splitPaymentTarget } from "../utils/contactDraft";
 import type { EfaturaOnayPayload } from "../utils/efaturaOnay";
+import { canFaturalastirDraftInvoice, issueInvoiceFromOnay } from "../utils/invoiceFaturalastir";
 import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
 import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import {
@@ -33,7 +35,6 @@ import {
   type GdMode,
 } from "../utils/invoiceDraft";
 import { askInvoiceDatePrompt, INVOICE_DATE_PROMPT, shouldAskInvoiceDatePrompt } from "../utils/invoiceDocDate";
-import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
@@ -182,43 +183,7 @@ export function InvoiceDetailScreen() {
     setBusy(true);
     setMessage(null);
     try {
-      if (payload.alias && inv?.contact_id) {
-        try {
-          await put(client, `/contacts/${inv.contact_id}`, {
-            e_invoice_alias: payload.alias,
-            is_e_invoice_user: payload.eType === "e_invoice",
-          });
-        } catch {
-          /* gönderim yine denenecek */
-        }
-      }
-      const patch: Record<string, unknown> = {};
-      if (payload.stampNow) Object.assign(patch, nowIssueDateTime());
-      if (payload.withholding) {
-        patch.withholding_rate = Number(payload.withholding.withholding_rate || 0);
-        patch.withholding_code = payload.withholding.withholding_code || null;
-      }
-      if (payload.exemption?.tax_exemption_code) {
-        patch.tax_exemption_code = payload.exemption.tax_exemption_code;
-        patch.tax_exemption_reason = payload.exemption.tax_exemption_reason || null;
-      }
-      if (payload.returnRef?.original_invoice_number) {
-        patch.original_invoice_number = payload.returnRef.original_invoice_number;
-        patch.original_issue_date = payload.returnRef.original_issue_date || null;
-        if (payload.returnRef.notes) patch.notes = payload.returnRef.notes;
-      }
-      if (Object.keys(patch).length) {
-        await put(client, `/invoices/${id}`, patch);
-      }
-      const body: Record<string, unknown> = { e_type: payload.eType };
-      if (payload.scenario) body.scenario = payload.scenario;
-      if (payload.stampNow) {
-        const stamp = nowIssueDateTime();
-        body.stamp_now = true;
-        body.issue_date = stamp.issue_date;
-        body.issue_time = stamp.issue_time;
-      }
-      await post(client, `/invoices/${id}/send-to-gib`, body);
+      await issueInvoiceFromOnay(client, inv, payload);
       setError(null);
       setMessage(`${label} olarak kesildi.`);
       await load();
@@ -426,20 +391,18 @@ export function InvoiceDetailScreen() {
         )}
       </Card>
 
-      {canEdit && draft ? (
-        <PrimaryButton
-          title="Onayla (cariye işle)"
-          onPress={() => run(async () => {
-            await post(client, `/invoices/${id}/approve`);
-            setMessage("Fatura onaylandı; cari bakiyesi ve stok işlendi.");
-          }, "Onaylanamadı.")}
-          loading={busy}
-          color={colors.primary}
-          testID="inv-approve"
+      {canEdit && canFaturalastirDraftInvoice(inv) ? (
+        <DraftInvoiceFaturalastir
+          invoice={inv}
+          allowed={canEdit}
+          busy={busy}
+          testID="inv-faturalastir"
+          onIssued={(msg) => { setError(null); setMessage(msg); load(); }}
+          onError={setError}
         />
       ) : null}
 
-      {canEdit && !issued && !incomingPending && inv.invoice_type !== "dispatch" ? (
+      {canEdit && !draft && !issued && !incomingPending && inv.invoice_type !== "dispatch" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>GİB'e kes</Text>
           <Muted>E-Fatura / e-Arşiv onay penceresi; e-İhracat veya kağıt doğrudan kesilir.</Muted>
