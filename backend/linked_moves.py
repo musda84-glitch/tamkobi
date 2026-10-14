@@ -387,7 +387,7 @@ async def reverse_linked(
             amount = float(ptx.get("amount") or 0)
             t = ptx.get("type")
             if t in partner_pay.MUTABLE_TYPES:
-                inc = {k: -v for k, v in partner_pay.balance_inc(t, amount).items()}
+                inc = {k: -v for k, v in partner_pay.posting_inc(ptx).items()}
                 await db.partners.update_one({"_id": ptx["partner_id"]}, {"$inc": inc})
             elif t == "profit_share":
                 await db.partners.update_one(
@@ -483,7 +483,7 @@ async def restore_linked_from_related(db, related: Optional[List[dict]], actor: 
                 amount = float(doc.get("amount") or 0)
                 t = doc.get("type")
                 if t in partner_pay.MUTABLE_TYPES:
-                    await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": partner_pay.balance_inc(t, amount)})
+                    await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": partner_pay.posting_inc(doc)})
                 elif t == "profit_share":
                     await db.partners.update_one(
                         {"_id": doc["partner_id"]},
@@ -530,7 +530,7 @@ async def undo_effects_keep_docs(db, related: List[dict]) -> None:
                 amount = float(ptx.get("amount") or 0)
                 t = ptx.get("type")
                 if t in partner_pay.MUTABLE_TYPES:
-                    inc = {k: -v for k, v in partner_pay.balance_inc(t, amount).items()}
+                    inc = {k: -v for k, v in partner_pay.posting_inc(ptx).items()}
                     await db.partners.update_one({"_id": ptx["partner_id"]}, {"$inc": inc})
                 elif t == "profit_share":
                     await db.partners.update_one(
@@ -939,7 +939,7 @@ async def cleanup_orphans(
                     amount = float(tx.get("amount") or 0)
                     ptype = tx.get("type")
                     if ptype in partner_pay.MUTABLE_TYPES:
-                        inc = {k: -v for k, v in partner_pay.balance_inc(ptype, amount).items()}
+                        inc = {k: -v for k, v in partner_pay.posting_inc(tx).items()}
                         await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": inc})
                     await _soft_delete_move("partner_transactions", tx, "partner_transaction", note="integrity_cleanup")
                 entry["result"] = {"status": "reversed", "tx_id": t["tx_id"], "kind": kind}

@@ -17,77 +17,78 @@ export const ALI_BAL_TXS = [
   { type: "profit_share", amount: 9000, is_paid: true, description: "ödenmiş kâr payı" },
 ];
 
-const ALI_LEHINE = 1079589.78;
-const ALI_ALEYHINE = 193400;
-const ALI_NET = 886189.78;
+const ALI_GIRIS = 278400;
+const ALI_CIKIS = 994589.78;
+const ALI_NET = -716189.78;
 
 describe("partnerTx", () => {
-  it("labels txs by partner side (lehine / aleyhine)", () => {
-    expect(PARTNER_TX_LABEL.debit).toBe("Ortak aleyhine");
-    expect(PARTNER_TX_LABEL.credit).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "credit", amount: 1, expense_id: "e1" })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "credit", amount: 1, source: "expense" })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "credit", amount: 1, description: "Ortak Alacak Fişi" })).toBe("Ortak lehine");
-    expect(partnerTxIsCashInflow({ type: "credit", amount: 1 })).toBe(true);
-    expect(partnerTxSign("credit", { type: "credit", amount: 1 })).toBe("+");
-    expect(partnerTxIncreasesBalance("credit")).toBe(true);
-    expect(partnerTxLabel({ type: "withdrawal", amount: 1, contact_id: "c1", description: "Ferhat: Cari tahsilat" })).toBe("Ortak aleyhine");
-    expect(partnerTxLabel({ type: "withdrawal", amount: 1 })).toBe("Ortak aleyhine");
-    expect(partnerTxLabel({ type: "withdrawal", amount: 1, description: "Virman → ortak" })).toBe("Ortak aleyhine");
-    expect(partnerTxLabel({ type: "capital_in", amount: 1 })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "capital_in", amount: 1, contact_id: "c1" })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "salary", amount: 1 })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "debit", amount: 1 })).toBe("Ortak aleyhine");
-    expect(partnerTxLabel({ type: "profit_share", amount: 1, is_paid: false })).toBe("Ortak lehine");
+  it("labels cash direction as Giriş / Çıkış", () => {
+    expect(PARTNER_TX_LABEL.debit).toBe("Çıkış");
+    expect(PARTNER_TX_LABEL.credit).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "credit", amount: 1, expense_id: "e1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "credit", amount: 1, source: "expense" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "credit", amount: 1, description: "Ortak Alacak Fişi" })).toBe("Çıkış");
+    expect(partnerTxIsCashInflow({ type: "credit", amount: 1 })).toBe(false);
+    expect(partnerTxSign("credit", { type: "credit", amount: 1 })).toBe("-");
+    expect(partnerTxIncreasesBalance("credit")).toBe(false);
+    expect(partnerTxLabel({ type: "withdrawal", amount: 1, contact_id: "c1", description: "Ferhat: Cari tahsilat" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "withdrawal", amount: 1 })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "withdrawal", amount: 1, description: "Virman → ortak" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "capital_in", amount: 1 })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "capital_in", amount: 1, contact_id: "c1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "salary", amount: 1 })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "debit", amount: 1 })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "profit_share", amount: 1, is_paid: false })).toBe("Giriş");
     expect(partnerTxLabel({ type: "profit_share", amount: 1, is_paid: true })).toBe("Denk");
     expect(isPartnerExpenseTx({ expense_id: "e1" })).toBe(true);
     expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
-    expect(partnerTxIsCashInflow({ type: "credit", amount: 1, expense_id: "e1" })).toBe(true);
-    expect(partnerTxIsCashInflow({ type: "withdrawal", amount: 1, contact_id: "c1" })).toBe(false);
-    expect(partnerTxSign("credit", { type: "credit", amount: 1, expense_id: "e1" })).toBe("+");
-    expect(partnerTxSign("withdrawal", { type: "withdrawal", amount: 1, contact_id: "c1" })).toBe("-");
+    expect(partnerTxIsCashInflow({ type: "credit", amount: 1, expense_id: "e1" })).toBe(false);
+    expect(partnerTxIsCashInflow({ type: "withdrawal", amount: 1, contact_id: "c1" })).toBe(true);
+    expect(partnerTxSign("credit", { type: "credit", amount: 1, expense_id: "e1" })).toBe("-");
+    expect(partnerTxSign("withdrawal", { type: "withdrawal", amount: 1, contact_id: "c1" })).toBe("+");
     expect(partnerTxLabel({
       type: "withdrawal",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "outflow",
       description: "Vadesiz TL Hesabı: Banka Hareketi",
-    })).toBe("Ortak aleyhine");
+    })).toBe("Giriş");
     expect(partnerTxIsCashInflow({
       type: "withdrawal",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "outflow",
-    })).toBe(false);
+    })).toBe(true);
     expect(partnerTxSign("withdrawal", {
       type: "withdrawal",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "outflow",
-    })).toBe("-");
+    })).toBe("+");
     expect(partnerTxLabel({
       type: "capital_in",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "outflow",
-    })).toBe("Ortak aleyhine");
+    })).toBe("Giriş");
     expect(partnerTxLabel({
       type: "capital_in",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "inflow",
-    })).toBe("Ortak lehine");
+    })).toBe("Çıkış");
     expect(partnerTxLabel({
       type: "withdrawal",
       amount: 1,
       source: "bank_match",
       related_bank_tx_id: "btx1",
       description: "Vadesiz TL Hesabı: Banka Hareketi",
-    })).toBe("Ortak aleyhine");
-    expect(partnerTxEffect({ balance_delta: -40, side: "aleyhine", type: "credit" })).toEqual({ delta: -40, side: "aleyhine" });
+    })).toBe("Çıkış");
+    expect(partnerTxEffect({ balance_delta: -40, side: "aleyhine", type: "credit", amount: 40 })).toEqual({ delta: -40, side: "cikis" });
+    expect(partnerTxEffect({ balance_delta: 10, side: "giris", type: "credit", amount: 40 })).toEqual({ delta: 10, side: "giris" });
   });
 
-  it("bank outflow match reduces Alacaklı (856059.78 - 80000 = 776059.78)", () => {
+  it("bank outflow match is Giriş (816859.78 − 39200 + 80000 = 857659.78)", () => {
     const txs = [
       { type: "capital_in", amount: 816859.78 },
       { type: "credit", amount: 39200, expense_id: "e1", source: "expense" },
@@ -98,34 +99,36 @@ describe("partnerTx", () => {
         bank_tx_type: "outflow",
       },
     ];
-    expect(partnerTxBalanceDelta(txs[2])).toBe(-80000);
-    const br = partnerLedgerBreakdown(txs, 776059.78);
-    expect(br.ledger).toBeCloseTo(776059.78, 2);
+    expect(partnerTxBalanceDelta(txs[2])).toBe(80000);
+    const br = partnerLedgerBreakdown(txs, 857659.78);
+    expect(br.ledger).toBeCloseTo(857659.78, 2);
     expect(br.drift).toBe(false);
-    expect(partnerTxLabel(txs[2])).toBe("Ortak aleyhine");
-    expect(partnerBalanceMeta(776059.78).display).toBeCloseTo(-776059.78, 2);
+    expect(partnerTxLabel(txs[2])).toBe("Giriş");
+    expect(partnerBalanceMeta(857659.78).display).toBeCloseTo(857659.78, 2);
+    expect(partnerBalanceMeta(857659.78).label).toBe("Alacaklı");
   });
 
-  it("Ali BAL: kart = Σ liste delta = lehine − aleyhine", () => {
-    expect(partnerTxBalanceDelta(ALI_BAL_TXS[2])).toBe(-78400);
-    expect(partnerTxBalanceDelta(ALI_BAL_TXS[5])).toBeCloseTo(705389.78, 2);
-    expect(partnerTxBalanceDelta(ALI_BAL_TXS[6])).toBe(150000);
-    expect(partnerTxBalanceDelta(ALI_BAL_TXS[7])).toBe(39200);
+  it("Ali BAL: kart = Σ liste delta = Toplam Giriş − Toplam Çıkış", () => {
+    expect(partnerTxBalanceDelta(ALI_BAL_TXS[2])).toBe(78400);
+    expect(partnerTxBalanceDelta(ALI_BAL_TXS[5])).toBeCloseTo(-705389.78, 2);
+    expect(partnerTxBalanceDelta(ALI_BAL_TXS[6])).toBe(-150000);
+    expect(partnerTxBalanceDelta(ALI_BAL_TXS[7])).toBe(-39200);
     expect(partnerTxBalanceDelta(ALI_BAL_TXS[12])).toBe(0);
-    expect(partnerTxLabel(ALI_BAL_TXS[3])).toBe("Ortak aleyhine");
-    expect(partnerTxLabel(ALI_BAL_TXS[5])).toBe("Ortak lehine");
+    expect(partnerTxLabel(ALI_BAL_TXS[3])).toBe("Çıkış");
+    expect(partnerTxLabel(ALI_BAL_TXS[5])).toBe("Çıkış");
     const br = partnerLedgerBreakdown(ALI_BAL_TXS, ALI_NET);
-    expect(br.cashIn).toBeCloseTo(ALI_LEHINE, 2);
-    expect(br.cashOut).toBeCloseTo(ALI_ALEYHINE, 2);
-    expect(br.girisDisplay).toBeCloseTo(ALI_LEHINE, 2);
-    expect(br.cikisDisplay).toBeCloseTo(-ALI_ALEYHINE, 2);
+    expect(br.cashIn).toBeCloseTo(ALI_GIRIS, 2);
+    expect(br.cashOut).toBeCloseTo(ALI_CIKIS, 2);
+    expect(br.girisDisplay).toBeCloseTo(ALI_GIRIS, 2);
+    expect(br.cikisDisplay).toBeCloseTo(ALI_CIKIS, 2);
     expect(br.netDisplay).toBeCloseTo(ALI_NET, 2);
     expect(br.ledger).toBeCloseTo(ALI_NET, 2);
     expect(br.cardDisplay).toBeCloseTo(ALI_NET, 2);
     expect(br.cardPocket).toBeCloseTo(ALI_NET, 2);
     expect(br.netMatchesCard).toBe(true);
     expect(br.drift).toBe(false);
-    expect(partnerBalanceMeta(br.cardPocket).badge).toBe("Alacaklı");
+    expect(partnerBalanceMeta(br.cardPocket).badge).toBe("Borçlu");
+    expect(partnerBalanceMeta(br.cardPocket).display).toBeCloseTo(Math.abs(ALI_NET), 2);
   });
 
   it("amber card uses the same balance presentation as partner balances", () => {
@@ -155,13 +158,13 @@ describe("partnerTx", () => {
     expect(mus).not.toContain("-");
   });
 
-  it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {
+  it("shows only Alacaklı or Borçlu; display is always absolute", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.label).toBe("Alacaklı");
     expect(credit.badge).toBe("Alacaklı");
     expect(credit.hint).toBe("");
     expect(credit.side).toBe("credit");
-    expect(credit.display).toBe(-1200);
+    expect(credit.display).toBe(1200);
 
     const debit = partnerBalanceMeta(-705389.78);
     expect(debit.badge).toBe("Borçlu");
@@ -175,10 +178,11 @@ describe("partnerTx", () => {
     expect(partnerBalanceMeta(0).hint).toBe("");
     expect(partnerBalanceMeta(0).display).toBe(0);
   });
-  it("treats credit like capital_in for balance", () => {
-    expect(partnerTxIncreasesBalance("credit")).toBe(true);
+  it("treats credit as Çıkış and capital_in as Giriş", () => {
+    expect(partnerTxIncreasesBalance("credit")).toBe(false);
     expect(partnerTxIncreasesBalance("capital_in")).toBe(true);
-    expect(partnerTxSign("credit")).toBe("+");
+    expect(partnerTxSign("credit")).toBe("-");
+    expect(partnerTxSign("capital_in")).toBe("+");
     expect(partnerTxSign("debit")).toBe("-");
     expect(partnerTxIncreasesBalance("debit")).toBe(false);
     expect(partnerTxIncreasesBalance("withdrawal")).toBe(false);
@@ -191,7 +195,7 @@ describe("partnerTx", () => {
     expect(partnerTxSign("profit_share", { is_paid: true, amount: 1 })).toBe("");
   });
 
-  it("reconciles card balance to ledger buckets (688189.78 style)", () => {
+  it("reconciles card balance to Giriş − Çıkış", () => {
     const txs = [
       { type: "capital_in", amount: 500000 },
       { type: "salary", amount: 150000 },
@@ -200,16 +204,16 @@ describe("partnerTx", () => {
       { type: "withdrawal", amount: 31810.22 },
       { type: "profit_share", amount: 9000, is_paid: true },
     ];
-    const ledger = 500000 + 150000 + 50000 + 20000 - 31810.22;
+    const ledger = 500000 - 150000 - 50000 + 20000 - 31810.22;
     expect(partnerTxBalanceDelta(txs[0])).toBe(500000);
     expect(partnerTxBalanceDelta(txs[5])).toBe(0);
     const br = partnerLedgerBreakdown(txs, ledger);
-    expect(br.ledger).toBeCloseTo(688189.78, 2);
+    expect(br.ledger).toBeCloseTo(288189.78, 2);
     expect(br.drift).toBe(false);
     expect(br.buckets.salary).toBe(150000);
     expect(br.buckets.profit_paid).toBe(9000);
-    expect(br.girisDisplay).toBeCloseTo(500000 + 150000 + 50000 + 20000, 2);
-    expect(br.cikisDisplay).toBeCloseTo(-31810.22, 2);
+    expect(br.girisDisplay).toBeCloseTo(500000 + 20000, 2);
+    expect(br.cikisDisplay).toBeCloseTo(150000 + 50000 + 31810.22, 2);
     expect(br.cardDisplay).toBeCloseTo(br.netDisplay, 2);
     expect(br.netMatchesCard).toBe(true);
     expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
@@ -224,11 +228,11 @@ describe("partnerTx", () => {
     expect(isPartnerCashType("salary")).toBe(false);
   });
 
-  it("treats monthly salary as Ortak lehine", () => {
-    expect(PARTNER_TX_LABEL.salary).toBe("Ortak lehine");
-    expect(partnerTxIncreasesBalance("salary")).toBe(true);
-    expect(partnerTxIsCashInflow({ type: "salary", amount: 150000 })).toBe(true);
-    expect(partnerTxSign("salary", { type: "salary", amount: 150000 })).toBe("+");
+  it("treats monthly salary as Çıkış", () => {
+    expect(PARTNER_TX_LABEL.salary).toBe("Çıkış");
+    expect(partnerTxIncreasesBalance("salary")).toBe(false);
+    expect(partnerTxIsCashInflow({ type: "salary", amount: 150000 })).toBe(false);
+    expect(partnerTxSign("salary", { type: "salary", amount: 150000 })).toBe("-");
   });
   it("prompts to set salary on the partner card when amount is empty", () => {
     expect(partnerSalaryActionLabel(0)).toBe("Belirle");

@@ -337,25 +337,25 @@ describe("finance drafts", () => {
       { id: "p4", type: "capital_in", amount: 2, date: "2026-09-22" },
     ]).map((t) => t.id)).toEqual(["p4", "p2", "p3"]);
     expect(partnerMovementNotice({ id: "p2", type: "withdrawal", amount: 5 }).signed).toBe(-5);
-    expect(partnerTxLabel({ type: "withdrawal", amount: 1, expense_id: "e1" })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "capital_in", amount: 1 })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "credit", amount: 1, expense_id: "e1" })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "salary", amount: 1 })).toBe("Ortak lehine");
-    expect(partnerTxLabel({ type: "withdrawal", amount: 1, contact_id: "c1" })).toBe("Ortak aleyhine");
+    expect(partnerTxLabel({ type: "withdrawal", amount: 1, expense_id: "e1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "capital_in", amount: 1 })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "credit", amount: 1, expense_id: "e1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "salary", amount: 1 })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "withdrawal", amount: 1, contact_id: "c1" })).toBe("Giriş");
     expect(partnerTxLabel({
       type: "withdrawal",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "outflow",
-    })).toBe("Ortak aleyhine");
+    })).toBe("Giriş");
     expect(partnerTxLabel({
       type: "capital_in",
       amount: 1,
       source: "bank_match",
       bank_tx_type: "inflow",
-    })).toBe("Ortak lehine");
-    expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).detail).toMatch(/Ortak lehine/);
-    expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).signed).toBe(40);
+    })).toBe("Çıkış");
+    expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).detail).toMatch(/Çıkış/);
+    expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).signed).toBe(-40);
   });
 
   it("sorts bank/cash movements newest date first across ISO and DMY", () => {
@@ -388,7 +388,7 @@ describe("finance drafts", () => {
   it("partner balance meta matches web Alacaklı/Borçlu display", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.badge).toBe("Alacaklı");
-    expect(credit.display).toBe(-1200);
+    expect(credit.display).toBe(1200);
     const debit = partnerBalanceMeta(-500);
     expect(debit.badge).toBe("Borçlu");
     expect(debit.display).toBe(500);
@@ -401,7 +401,7 @@ describe("finance drafts", () => {
       total_balance: 50,
     });
     expect(card.fromCash).toBe(true);
-    expect(card.display).toBe(-800);
+    expect(card.display).toBe(800);
     expect(card.badge).toBe("Alacaklı");
     expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).toContain("Borçlu");
     expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).not.toContain("-");
@@ -423,8 +423,8 @@ describe("finance drafts", () => {
       { id: "4", partner_id: "other", type: "capital_in", amount: 999 },
     ], "p1");
     expect(flow.fromTx).toBe(true);
-    expect(flow.giris).toBe(50000 + 5000);
-    expect(flow.cikis).toBe(-20000);
+    expect(flow.giris).toBe(50000);
+    expect(flow.cikis).toBe(20000 + 5000);
     expect(flow.display).toBe(382340.22);
     expect(flow.badge).toBe("Borçlu");
   });
@@ -445,17 +445,20 @@ describe("finance drafts", () => {
       { type: "profit_share", amount: 20000, is_paid: false, description: "tahakkuk kâr payı" },
       { type: "profit_share", amount: 9000, is_paid: true, description: "ödenmiş kâr payı" },
     ];
-    expect(partnerTxBalanceDelta(txs[2])).toBe(-78400);
-    expect(partnerTxBalanceDelta(txs[5])).toBeCloseTo(705389.78, 2);
+    expect(partnerTxBalanceDelta(txs[2])).toBe(78400);
+    expect(partnerTxBalanceDelta(txs[5])).toBeCloseTo(-705389.78, 2);
     expect(partnerTxBalanceDelta(txs[12])).toBe(0);
-    const br = partnerLedgerBreakdown(txs, 886189.78);
-    expect(br.cashIn).toBeCloseTo(1079589.78, 2);
-    expect(br.cashOut).toBeCloseTo(193400, 2);
-    expect(br.ledger).toBeCloseTo(886189.78, 2);
-    expect(br.cardDisplay).toBeCloseTo(886189.78, 2);
+    const br = partnerLedgerBreakdown(txs, -716189.78);
+    expect(br.cashIn).toBeCloseTo(278400, 2);
+    expect(br.cashOut).toBeCloseTo(994589.78, 2);
+    expect(br.cikisDisplay).toBeCloseTo(994589.78, 2);
+    expect(br.ledger).toBeCloseTo(-716189.78, 2);
+    expect(br.cardDisplay).toBeCloseTo(-716189.78, 2);
     expect(br.drift).toBe(false);
-    const flow = partnerCardCashFlow({ balance: 886189.78 }, txs, undefined);
-    expect(flow.giris).toBeCloseTo(1079589.78, 2);
-    expect(flow.cikis).toBeCloseTo(-193400, 2);
+    const flow = partnerCardCashFlow({ balance: -716189.78 }, txs, undefined);
+    expect(flow.giris).toBeCloseTo(278400, 2);
+    expect(flow.cikis).toBeCloseTo(994589.78, 2);
+    expect(flow.display).toBeCloseTo(716189.78, 2);
+    expect(flow.badge).toBe("Borçlu");
   });
 });

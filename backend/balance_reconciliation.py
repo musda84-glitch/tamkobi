@@ -48,6 +48,8 @@ def _partner_row(partner: dict, txs: List[dict]) -> Dict[str, Any]:
         "id": _rid(partner),
         "ad": partner.get("name") or "",
         "kart_bakiyesi": kart,
+        "liste_giris": totals["cash_in"],
+        "liste_cikis": totals["cash_out"],
         "liste_lehine": totals["cash_in"],
         "liste_aleyhine": totals["cash_out"],
         "liste_net": liste,
@@ -167,7 +169,7 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
     rows: List[List[str]] = [[
         "grup", "id", "ad", "tur", "entegre_mi",
         "gosterilen", "hareket_toplami", "banka_bildirdigi",
-        "kart_bakiyesi", "liste_lehine", "liste_aleyhine",
+        "kart_bakiyesi", "liste_giris", "liste_cikis",
         "kayitli", "hesaplanan", "fark",
     ]]
     for a in report.get("accounts") or []:
@@ -182,7 +184,7 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
         rows.append([
             "ortak", p.get("id") or "", p.get("ad") or "", "partner", "",
             "", "", "",
-            _fmt(p.get("kart_bakiyesi")), _fmt(p.get("liste_lehine")), _fmt(p.get("liste_aleyhine")),
+            _fmt(p.get("kart_bakiyesi")), _fmt(p.get("liste_giris")), _fmt(p.get("liste_cikis")),
             "", "", _fmt(p.get("fark")),
         ])
     for c in report.get("contacts") or []:

@@ -22,12 +22,12 @@ from partner_pay import (  # noqa: E402
 
 
 class TestPartnerLedgerBalance:
-    def test_credit_increases_partner_claim(self):
-        assert balance_inc("credit", 1000) == {"balance": 1000}
+    def test_credit_is_cikis_capital_in_is_giris(self):
+        assert balance_inc("credit", 1000) == {"balance": -1000}
         assert balance_inc("capital_in", 1000) == {"balance": 1000, "total_capital_in": 1000}
 
-    def test_salary_increases_partner_claim_without_capital(self):
-        assert balance_inc("salary", 8000) == {"balance": 8000}
+    def test_salary_is_cikis_without_capital_counter(self):
+        assert balance_inc("salary", 8000) == {"balance": -8000}
         assert "salary" in LEDGER_TYPES
 
     def test_debit_decreases_without_withdrawal_counter(self):
@@ -63,14 +63,14 @@ class TestProfitShareBalance:
             {"type": "profit_share", "amount": 4000, "is_paid": False},
             {"type": "profit_share", "amount": 1000, "is_paid": True},
         ])
-        assert totals["balance"] == 10000 + 2000 + 3000 - 1500 - 500 + 4000
+        assert totals["balance"] == 10000 - 2000 - 3000 - 1500 - 500 + 4000
         assert totals["total_capital_in"] == 10000
         assert totals["total_withdrawn"] == 1500
         assert totals["total_profit_share"] == 5000
 
 
 class TestPartnerCashCardTotals:
-    def test_lehine_minus_aleyhine_equals_ledger(self):
+    def test_giris_minus_cikis_equals_ledger(self):
         shaped = [
             {"type": "credit", "amount": 909959.78},
             {"type": "withdrawal", "amount": 39200},
@@ -81,23 +81,23 @@ class TestPartnerCashCardTotals:
                 "bank_tx_type": "outflow",
             },
         ]
-        assert tx_is_cash_inflow(shaped[0]) is True
+        assert tx_is_cash_inflow(shaped[0]) is False
         assert tx_is_cash_inflow(shaped[1]) is False
-        assert tx_is_cash_inflow(shaped[2]) is False
+        assert tx_is_cash_inflow(shaped[2]) is True
         cash = cash_card_totals(shaped)
         ledger = ledger_totals(shaped)
-        assert cash["cash_in"] == pytest.approx(909959.78)
-        assert cash["cash_out"] == pytest.approx(39200 + 173100)
+        assert cash["cash_in"] == pytest.approx(173100)
+        assert cash["cash_out"] == pytest.approx(909959.78 + 39200)
         assert cash["cash_net"] == pytest.approx(ledger["balance"])
         assert cash["card_pocket"] == pytest.approx(cash["cash_net"])
-        assert ledger["balance"] == pytest.approx(697659.78)
+        assert ledger["balance"] == pytest.approx(-776059.78)
 
 
 class TestAliBalPartnerCardMatchesSelector:
     """Ali BAL hareketleri: kart toplamı = ortak bakiyelerinin toplamı.
 
-    Seçicideki imzalı defter (Ali −288.340,22 + Mustafa +30.257,85)
-    liste lehine − aleyhine ile aynıdır. Kart bu toplamı gösterir.
+    Kart = Toplam Giriş − Toplam Çıkış. Ali alacak fişi ve para çekişi Çıkış,
+    banka çıkış eşleşmesi Giriş. Mustafa para koy Giriş. Kart tutarı mutlak değerdir.
     """
 
     def test_ali_bal_movements_card_equals_sum_of_partner_balances(self):
@@ -123,7 +123,7 @@ class TestAliBalPartnerCardMatchesSelector:
         ]
 
         ali_ledger = ledger_totals(ali_txs)
-        assert ali_ledger["balance"] == pytest.approx(-288340.22)
+        assert ali_ledger["balance"] == pytest.approx(-444203.46)
         mustafa_ledger = ledger_totals(mustafa_txs)
         assert mustafa_ledger["balance"] == pytest.approx(30257.85)
 
@@ -132,36 +132,36 @@ class TestAliBalPartnerCardMatchesSelector:
         ali = by_id["ali"]
         mustafa = by_id["mustafa"]
 
-        assert ali["balance"] == pytest.approx(-288340.22)
+        assert ali["balance"] == pytest.approx(-444203.46)
         assert ali["balance"] != partners[0]["balance"]
         ali_view = present_partner_balance(ali["balance"])
         assert ali["balance_label"] == "Borçlu"
-        assert ali["balance_abs"] == pytest.approx(288340.22)
+        assert ali["balance_abs"] == pytest.approx(444203.46)
         assert ali["balance_display"] == pytest.approx(ali_view["display"])
-        assert ali["balance_display"] == pytest.approx(288340.22)
+        assert ali["balance_display"] == pytest.approx(444203.46)
 
         assert mustafa["balance"] == pytest.approx(30257.85)
         assert mustafa["balance"] != partners[1]["balance"]
         assert mustafa["balance_label"] == "Alacaklı"
         assert mustafa["balance_abs"] == pytest.approx(30257.85)
-        assert mustafa["balance_display"] == pytest.approx(-30257.85)
+        assert mustafa["balance_display"] == pytest.approx(30257.85)
+        assert mustafa["balance_display"] > 0
 
         signed_sum = round(ali["balance"] + mustafa["balance"], 2)
-        display_sum = round(ali["balance_display"] + mustafa["balance_display"], 2)
-        assert signed_sum == pytest.approx(-258082.37)
+        assert signed_sum == pytest.approx(-413945.61)
         assert view["total_balance"] == pytest.approx(signed_sum)
         assert view["total_balance"] == pytest.approx(sum(row["balance"] for row in view["partners"]))
-        assert view["card_display"] == pytest.approx(display_sum)
-        assert view["card_display"] == pytest.approx(sum(row["balance_display"] for row in view["partners"]))
+        assert view["card_display"] == pytest.approx(413945.61)
+        assert view["card_display"] != pytest.approx(ali["balance_display"] + mustafa["balance_display"])
         assert view["label"] == "Borçlu"
-        assert view["abs"] == pytest.approx(258082.37)
+        assert view["abs"] == pytest.approx(413945.61)
         card = present_partner_balance(view["total_balance"])
         assert view["card_display"] == card["display"]
         assert view["label"] == card["label"]
 
         cash = cash_card_totals(txs)
         assert cash["cash_net"] == pytest.approx(view["total_balance"])
-        assert tx_is_cash_inflow(ali_txs[2]) is False
+        assert tx_is_cash_inflow(ali_txs[2]) is True
 
         payload = summary_payload({**view, "cash": cash, "source_partners": partners})
         assert payload["total_balance"] == pytest.approx(view["total_balance"])

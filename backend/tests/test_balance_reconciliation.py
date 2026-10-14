@@ -129,23 +129,25 @@ ALI_BAL_TXS = [
 
 def test_ali_bal_card_equals_list_delta():
     annotated = [partner_pay.annotate_partner_tx(tx) for tx in ALI_BAL_TXS]
-    assert annotated[2]["balance_delta"] == -78400
-    assert annotated[2]["side"] == "aleyhine"
-    assert annotated[5]["balance_delta"] == pytest.approx(705389.78)
-    assert annotated[5]["side"] == "lehine"
+    assert annotated[2]["balance_delta"] == 78400
+    assert annotated[2]["side"] == "giris"
+    assert annotated[5]["balance_delta"] == pytest.approx(-705389.78)
+    assert annotated[5]["side"] == "cikis"
     assert annotated[12]["balance_delta"] == 0
     assert annotated[12]["side"] == "zero"
     cash = partner_pay.cash_card_totals(ALI_BAL_TXS)
     ledger = partner_pay.ledger_totals(ALI_BAL_TXS)
-    assert cash["cash_in"] == pytest.approx(1079589.78)
-    assert cash["cash_out"] == pytest.approx(193400)
-    assert cash["cash_net"] == pytest.approx(886189.78)
+    assert cash["cash_in"] == pytest.approx(278400)
+    assert cash["cash_out"] == pytest.approx(994589.78)
+    assert cash["cash_net"] == pytest.approx(-716189.78)
     assert ledger["balance"] == pytest.approx(cash["cash_net"])
     view = partner_pay.company_partner_balances(
         [{"_id": "ali", "name": "Ali BAL", "balance": 0, "share_percent": 50}],
         [{**tx, "partner_id": "ali"} for tx in ALI_BAL_TXS],
     )
-    assert view["total_balance"] == pytest.approx(886189.78)
+    assert view["total_balance"] == pytest.approx(-716189.78)
+    assert view["partners"][0]["balance_display"] == pytest.approx(716189.78)
+    assert view["partners"][0]["balance_label"] == "Borçlu"
     payload = partner_pay.summary_payload({**view, "cash": cash, "source_partners": view["partners"]})
     assert payload["total_cash_in"] == pytest.approx(cash["cash_in"])
     assert payload["total_cash_out"] == pytest.approx(cash["cash_out"])

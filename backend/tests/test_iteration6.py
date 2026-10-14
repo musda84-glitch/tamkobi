@@ -217,7 +217,7 @@ class TestPartnerPayment:
         assert r.json()["via"] == "partner"
 
         p2 = next(x for x in api.get(f"{BASE}/banking/partners?company_id={COMPANY}").json() if x["id"] == pid)
-        assert p2["balance"] == pytest.approx(bal_before - 100, abs=0.01)
+        assert p2["balance"] == pytest.approx(bal_before + 100, abs=0.01)
         assert p2["total_withdrawn"] == pytest.approx(wd_before + 100, abs=0.01)
 
         ptx = api.get(f"{BASE}/banking/partners/transactions?company_id={COMPANY}&partner_id={pid}").json()

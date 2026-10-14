@@ -9237,11 +9237,6 @@ async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], use
                 raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
             is_sales = inv.get("invoice_type") == "sales"
             tx_type = "withdrawal" if is_sales else "capital_in"
-            inc = {"balance": -try_amt, "total_withdrawn": try_amt} if is_sales else {"balance": try_amt, "total_capital_in": try_amt}
-            await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
-            cx.push("partner_bal", lambda: db.partners.update_one(
-                {"_id": partner["_id"]}, {"$inc": {k: -v for k, v in inc.items()}},
-            ))
             description = f"{inv.get('invoice_number')} nolu fatura {'tahsilatı ortak tarafından alındı' if is_sales else 'ödemesi ortak tarafından yapıldı'} / {inv.get('contact_name')}"
             ptx = PartnerTransaction(company_id=inv.get("company_id"), partner_id=partner["_id"], partner_name=partner["name"], type=tx_type, amount=try_amt,
                                      account_id=None, account_name="Ortaklar Hesabı", description=description, date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
@@ -9249,6 +9244,11 @@ async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], use
             pdoc["contact_id"] = inv.get("contact_id")
             pdoc["contact_name"] = inv.get("contact_name")
             pdoc["related_invoice_id"] = invoice_id
+            inc = partner_pay.posting_inc(pdoc)
+            await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+            cx.push("partner_bal", lambda: db.partners.update_one(
+                {"_id": partner["_id"]}, {"$inc": {k: -v for k, v in inc.items()}},
+            ))
             for k in ("installment_id", "source_type", "source_id", "source", "bonus_id", "payroll_id", "loan_id"):
                 if req.get(k) is not None:
                     pdoc[k] = req[k]
@@ -9528,15 +9528,18 @@ async def pay_installment(
                     partner = await db.partners.find_one({"_id": req["partner_id"]})
                     if not partner:
                         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-                    inc = {"balance": -amount, "total_withdrawn": amount} if is_recv else {"balance": amount, "total_capital_in": amount}
-                    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
-                    cx.push("partner", lambda: db.partners.update_one(
-                        {"_id": partner["_id"]}, {"$inc": {k: -v for k, v in inc.items()}},
-                    ))
                     ptx = PartnerTransaction(company_id=fresh["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type="withdrawal" if is_recv else "capital_in", amount=amount, account_id=None, account_name="Ortaklar Hesabı",
                                              description=f"{fresh.get('contact_name')} bakiye {fresh['label']} ortak tarafından {'tahsil edildi' if is_recv else 'ödendi'}", date=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
                     pdoc = ptx.to_mongo()
                     pdoc.update(link)
+                    if fresh.get("contact_id"):
+                        pdoc["contact_id"] = fresh.get("contact_id")
+                        pdoc["contact_name"] = fresh.get("contact_name")
+                    inc = partner_pay.posting_inc(pdoc)
+                    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+                    cx.push("partner", lambda: db.partners.update_one(
+                        {"_id": partner["_id"]}, {"$inc": {k: -v for k, v in inc.items()}},
+                    ))
                     await db.partner_transactions.insert_one(pdoc)
                     cx.push("ptx", lambda: db.partner_transactions.delete_one({"_id": pdoc["_id"]}))
                 else:
@@ -10796,7 +10799,7 @@ async def _reverse_partner_tx(tx: dict):
     amount = float(tx.get("amount", 0))
     t = tx.get("type")
     if t in PARTNER_MUTABLE_TYPES:
-        inc = partner_pay.balance_inc(t, amount)
+        inc = partner_pay.posting_inc(tx)
         await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {k: -v for k, v in inc.items()}})
     elif t == "profit_share":
         # Tahakkuk silinince bakiyeyi düş; peşin ödemede bakiye hiç artmamıştı.
@@ -10838,7 +10841,7 @@ async def update_partner_transaction(tx_id: str, req: Dict[str, Any], user: dict
         account_id = req.get("account_id") or tx.get("account_id")
         account_name = await _post_partner_cash_movement(tx["company_id"], account_id, tx["type"], amount, tx["partner_name"], description, date, partner_tx_id=tx_id)
         patch.update({"account_id": account_id, "account_name": account_name})
-    await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": partner_pay.balance_inc(tx["type"], amount)})
+    await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": partner_pay.posting_inc({**tx, "amount": amount})})
     # Cari bağlı ortak ödemesi / tahsilatı: yeni tutarı cari bakiyesine yeniden yaz.
     if tx.get("contact_id") and tx["type"] in ("withdrawal", "capital_in"):
         new_delta = -amount if tx["type"] == "withdrawal" else amount
@@ -10911,7 +10914,7 @@ async def _execute_partner_tx(req: Dict[str, Any]):
         account_name = await _post_partner_cash_movement(partner["company_id"], account_id, tx_type, amount, partner["name"], description, date, partner_tx_id=doc["_id"])
         doc["account_name"] = account_name
 
-    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": partner_pay.balance_inc(tx_type, amount)})
+    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": partner_pay.posting_inc(doc)})
     await db.partner_transactions.insert_one(doc)
     return clean_doc(doc)
 
@@ -21367,7 +21370,7 @@ async def _restore_partner_tx(doc, _related):
     amount = float(doc.get("amount") or 0)
     t = doc.get("type")
     if t in PARTNER_MUTABLE_TYPES:
-        await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": partner_pay.balance_inc(t, amount)})
+        await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": partner_pay.posting_inc(doc)})
     elif t == "profit_share":
         await db.partners.update_one(
             {"_id": doc["partner_id"]},

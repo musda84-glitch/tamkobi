@@ -74,7 +74,7 @@ test("375px: ortak hareketleri kart görünümü, tablo kart listesinde yok, yat
   const card = host.querySelector('[data-testid="partner-tx-card-t1"]');
   expect(card).not.toBeNull();
   expect(card.textContent).toContain("Mustafa Bal");
-  expect(card.textContent).toMatch(/Ortak lehine/);
+  expect(card.textContent).toMatch(/Giriş/);
   expect(card.textContent).toMatch(/12\.500/);
   expect(host.querySelector('[data-testid="partner-tx-cards"]').querySelector("table")).toBeNull();
   expect(host.querySelector('[data-testid="partner-tx-table"]')).not.toBeNull();

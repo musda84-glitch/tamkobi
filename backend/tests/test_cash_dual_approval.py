@@ -187,7 +187,7 @@ def test_partner_ledger_debit_credit_queues(admin, accountant, policy_on):
     ok = accountant.post(f"{API}/banking/cash-approvals/{rid}/approve", timeout=20)
     assert ok.status_code == 200, ok.text
     after = next(p for p in admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json() if p["id"] == partner["id"])
-    assert round(float(after.get("balance") or 0) - before, 2) == 40
+    assert round(float(after.get("balance") or 0) - before, 2) == -40
 
     r2 = admin.post(
         f"{API}/banking/partners/transactions",
@@ -200,7 +200,7 @@ def test_partner_ledger_debit_credit_queues(admin, accountant, policy_on):
     ok2 = accountant.post(f"{API}/banking/cash-approvals/{rid2}/approve", timeout=20)
     assert ok2.status_code == 200, ok2.text
     final = next(p for p in admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json() if p["id"] == partner["id"])
-    assert round(float(final.get("balance") or 0) - before, 2) == 25
+    assert round(float(final.get("balance") or 0) - before, 2) == -55
 
 
 def test_virman_queues_then_approves(admin, accountant, policy_on):

@@ -149,7 +149,7 @@ export type PartnerSummary = {
  * Ortak bakiyesi = cebindeki para (yazma):
  *   artı → Alacaklı (ortağa yazılan / çekilebilir)
  *   eksi → Borçlu (fazla çekmiş)
- * Kartta Alacaklı tutar kasa eksi (−) gösterilir.
+ * Kartta tutar her zaman mutlak değerdir; yön yalnızca Alacaklı / Borçlu etiketindedir.
  */
 export function partnerBalanceMeta(balance?: number | null): {
   amount: number;
@@ -162,7 +162,7 @@ export function partnerBalanceMeta(balance?: number | null): {
   const n = Number(balance);
   const amount = Number.isFinite(n) ? n : 0;
   if (amount > 0) {
-    return { amount, abs: amount, display: -amount, label: "Alacaklı", badge: "Alacaklı", side: "credit" };
+    return { amount, abs: amount, display: amount, label: "Alacaklı", badge: "Alacaklı", side: "credit" };
   }
   if (amount < 0) {
     return { amount, abs: Math.abs(amount), display: Math.abs(amount), label: "Borçlu", badge: "Borçlu", side: "debit" };
@@ -388,65 +388,63 @@ export function isPartnerExpenseTx(tx?: PartnerTx | null): boolean {
   return Boolean(tx?.expense_id || tx?.source === "expense");
 }
 
-function effectOf(delta: number): { delta: number; side: "lehine" | "aleyhine" | "zero" } {
+function effectOf(delta: number): { delta: number; side: "giris" | "cikis" | "zero" } {
   const rounded = Math.round(Number(delta) * 100) / 100;
   if (!Number.isFinite(rounded) || rounded === 0) return { delta: 0, side: "zero" };
-  return { delta: rounded, side: rounded > 0 ? "lehine" : "aleyhine" };
+  return { delta: rounded, side: rounded > 0 ? "giris" : "cikis" };
 }
 
-/** Web/backend partnerTxEffect. API balance_delta+side varsa onu kullanır. */
-export function partnerTxEffect(tx?: PartnerTx | null): { delta: number; side: "lehine" | "aleyhine" | "zero" } {
+/** Web/backend partnerTxEffect. API balance_delta+side (giris/cikis) varsa onu kullanır. */
+export function partnerTxEffect(tx?: PartnerTx | null): { delta: number; side: "giris" | "cikis" | "zero" } {
   if (!tx) return { delta: 0, side: "zero" };
-  if (tx.balance_delta != null && tx.balance_delta !== ("" as unknown) && tx.side) {
+  if (tx.balance_delta != null && tx.balance_delta !== ("" as unknown) && (tx.side === "giris" || tx.side === "cikis" || tx.side === "zero")) {
     const delta = Number(tx.balance_delta);
-    const side = tx.side === "lehine" || tx.side === "aleyhine" || tx.side === "zero"
-      ? tx.side
-      : (delta > 0 ? "lehine" : delta < 0 ? "aleyhine" : "zero");
-    return { delta: Number.isFinite(delta) ? Math.round(delta * 100) / 100 : 0, side };
+    return { delta: Number.isFinite(delta) ? Math.round(delta * 100) / 100 : 0, side: tx.side };
   }
   const amt = Number(tx.amount);
   const amount = Number.isFinite(amt) ? Math.abs(amt) : 0;
   if (tx.type === "profit_share") return effectOf(tx.is_paid ? 0 : amount);
-  if (isPartnerExpenseTx(tx)) return effectOf(amount);
+  if (isPartnerExpenseTx(tx)) return effectOf(-amount);
+  if (tx.type === "credit" || tx.type === "salary") return effectOf(-amount);
+  if (tx.contact_id && tx.type === "withdrawal") return effectOf(amount);
+  if (tx.contact_id && tx.type === "capital_in") return effectOf(-amount);
   if (tx.source === "bank_match" || tx.related_bank_tx_id) {
     const bankType = String(tx.bank_tx_type || "").toLowerCase();
-    if (bankType === "inflow" || bankType === "credit") return effectOf(amount);
-    if (bankType === "outflow" || bankType === "debit") return effectOf(-amount);
+    if (bankType === "outflow" || bankType === "debit") return effectOf(amount);
+    if (bankType === "inflow" || bankType === "credit") return effectOf(-amount);
   }
-  if (tx.contact_id && tx.type === "capital_in") return effectOf(amount);
-  if (tx.contact_id && tx.type === "withdrawal") return effectOf(-amount);
-  if (tx.type === "capital_in" || tx.type === "credit" || tx.type === "salary") return effectOf(amount);
+  if (tx.type === "capital_in") return effectOf(amount);
   if (tx.type === "withdrawal" || tx.type === "debit") return effectOf(-amount);
   return effectOf(0);
 }
 
-/** Ortak bakiyesini artırır mı (web partnerTxIncreasesBalance). */
+/** Kart bakiyesini artırır mı — partnerTxEffect ile aynı (Giriş). */
 export function partnerTxIncreasesBalance(type?: string | null, tx?: PartnerTx | null): boolean {
-  if (tx && isPartnerExpenseTx(tx)) return true;
-  if (type === "capital_in" || type === "credit" || type === "salary") return true;
-  if (type === "profit_share") return !(tx && tx.is_paid);
-  return false;
+  const base: PartnerTx = tx && typeof tx === "object" ? { ...tx } : {};
+  if (type) base.type = type;
+  if (base.amount == null) base.amount = 1;
+  return partnerTxEffect(base).side === "giris";
 }
 
-/** Liste işareti: ortak lehine (pozitif delta). */
+/** Liste işareti: Giriş (pozitif delta). */
 export function partnerTxIsCashInflow(tx?: PartnerTx | null): boolean {
-  return partnerTxEffect(tx).side === "lehine";
+  return partnerTxEffect(tx).side === "giris";
 }
 
-/** Liste etiketi: Ortak lehine / Ortak aleyhine. */
+/** Liste etiketi: Giriş / Çıkış. */
 export function partnerTxLabel(tx?: PartnerTx | null): string {
   if (!tx) return "";
   const { side } = partnerTxEffect(tx);
-  if (side === "lehine") return "Ortak lehine";
-  if (side === "aleyhine") return "Ortak aleyhine";
+  if (side === "giris") return "Giriş";
+  if (side === "cikis") return "Çıkış";
   return "Denk";
 }
 
 export function partnerTxSign(type?: string | null, tx?: PartnerTx | null): string {
   if (tx && typeof tx === "object") {
     const { delta, side } = partnerTxEffect({ ...tx, type: type || tx.type });
-    if (side === "lehine" || delta > 0) return "+";
-    if (side === "aleyhine" || delta < 0) return "-";
+    if (side === "giris" || delta > 0) return "+";
+    if (side === "cikis" || delta < 0) return "-";
     return "";
   }
   return partnerTxIncreasesBalance(type, tx) ? "+" : "-";
@@ -457,7 +455,7 @@ export function partnerTxBalanceDelta(tx?: PartnerTx | null): number {
 }
 
 /**
- * Web partnerLedgerBreakdown — kart = Σ delta = lehine − aleyhine.
+ * Web partnerLedgerBreakdown — kart = Σ delta = Toplam Giriş − Toplam Çıkış.
  */
 export function partnerLedgerBreakdown(
   txs: PartnerTx[] | null | undefined,
@@ -492,8 +490,8 @@ export function partnerLedgerBreakdown(
   cashIn = Math.round(cashIn * 100) / 100;
   cashOut = Math.round(cashOut * 100) / 100;
   const girisDisplay = cashIn;
-  const cikisDisplay = Math.round(-cashOut * 100) / 100;
-  const netDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
+  const cikisDisplay = cashOut;
+  const netDisplay = Math.round((girisDisplay - cikisDisplay) * 100) / 100;
   return {
     count: rows.length,
     ledger,
@@ -527,12 +525,13 @@ export function partnerCardCashFlow(
   const mine = filterPartnerTxs(txs, partnerId);
   const br = partnerLedgerBreakdown(mine, partner?.balance);
   const bm = partnerBalanceMeta(partner?.balance);
-  const display = partner?.balance_display != null ? Number(partner.balance_display) : bm.display;
+  const raw = partner?.balance_display != null ? Number(partner.balance_display) : bm.display;
+  const display = Number.isFinite(raw) ? Math.abs(raw) : Math.abs(bm.display);
   return {
     giris: br.count > 0 ? br.girisDisplay : 0,
     cikis: br.count > 0 ? br.cikisDisplay : 0,
     badge: partner?.balance_label || bm.badge,
-    display: Number.isFinite(display) ? display : bm.display,
+    display,
     fromTx: br.count > 0,
   };
 }
