@@ -4,6 +4,9 @@ import {
   layoutFromXslt,
   parseXsltHints,
   prepareXsltForBrowser,
+  SAMPLE_DESPATCH_XML,
+  SAMPLE_UBL_XML,
+  sampleXmlForKind,
   xsltFallbackPreviewHtml,
 } from "./einvoiceXsltPreview";
 
@@ -67,6 +70,20 @@ test("extractXsltLogo ignores the stamp image", () => {
   const logo = `data:image/png;base64,${"B".repeat(40)}`;
   const xslt = `<div class="inv-stamp" align="right"><img alt="Kaşe / İmza" src="${stamp}"/></div><img src="${logo}"/>`;
   expect(extractXsltLogo(xslt)).toBe(logo);
+});
+
+test("sampleXmlForKind uses DespatchAdvice XML for e-İrsaliye", () => {
+  expect(sampleXmlForKind("e_dispatch")).toBe(SAMPLE_DESPATCH_XML);
+  expect(sampleXmlForKind("e_invoice")).toBe(SAMPLE_UBL_XML);
+  expect(sampleXmlForKind("e_archive")).toBe(SAMPLE_UBL_XML);
+  expect(SAMPLE_DESPATCH_XML).toContain("urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2");
+  expect(SAMPLE_DESPATCH_XML).toContain("DespatchSupplierParty");
+  expect(SAMPLE_DESPATCH_XML).toContain("DeliveryCustomerParty");
+  expect(SAMPLE_DESPATCH_XML.match(/<cac:DespatchLine>/g)).toHaveLength(2);
+  expect(SAMPLE_DESPATCH_XML).toContain("Örnek Yazılım A.Ş.");
+  expect(SAMPLE_DESPATCH_XML).toContain("Alıcı Ticaret Ltd. Şti.");
+  expect(SAMPLE_DESPATCH_XML).toContain("1234567890");
+  expect(SAMPLE_DESPATCH_XML).toContain("9876543210");
 });
 
 test("xsltFallbackPreviewHtml uses extracted style", () => {

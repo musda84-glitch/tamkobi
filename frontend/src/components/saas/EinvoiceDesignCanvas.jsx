@@ -3,7 +3,7 @@ import { EyeOff, GripVertical, ImagePlus, Plus, ArrowDown, ArrowUp } from "lucid
 import { QRCodeSVG } from "qrcode.react";
 import { compressImageFile } from "../../utils/compressImage";
 import { prepareStampFile } from "../../utils/einvoiceStampImage";
-import { transformXsltToHtml } from "../../utils/einvoiceXsltPreview";
+import { sampleXmlForKind, transformXsltToHtml } from "../../utils/einvoiceXsltPreview";
 import {
   BLOCK_LABELS,
   BLOCK_FONT_SIZE_OPTIONS,
@@ -723,7 +723,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const onRealXml = () => {
     try {
       const xslt = layoutToXslt(L, kind);
-      const html = transformXsltToHtml(xslt);
+      const html = transformXsltToHtml(xslt, sampleXmlForKind(kind));
       if (!html) {
         setRealXmlHtml("");
         setRealXmlErr("Gerçek XML önizlemesi bu tarayıcıda üretilemedi.");
@@ -1040,7 +1040,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
             <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri) — en: Tam / 1/2 / 1/3. Aynı sütuna yığmak için Üstüne/altına yerleştir veya sürükleyip bırakın.</div>
             <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
               <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
-              <button type="button" onClick={onRealXml} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "real" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-preview-real-xml">Önizle (gerçek XML)</button>
+              <button type="button" onClick={onRealXml} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "real" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-preview-real-xml">Önizle (örnek XML)</button>
               {xsltHtml ? (
                 <button type="button" onClick={() => setPaperMode("xslt")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-xslt">Yüklenen XSLT</button>
               ) : null}

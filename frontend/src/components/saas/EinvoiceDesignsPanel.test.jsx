@@ -60,6 +60,7 @@ beforeEach(() => {
 
 afterEach(() => {
   host.remove();
+  jest.restoreAllMocks();
 });
 
 test("lists designs, opens editor and has download", async () => {
@@ -145,4 +146,50 @@ test("company mode lists via tenant endpoint and shows İşNet logo hint", async
   const selectUrl = String(axios.post.mock.calls[0][0]);
   expect(selectUrl).toContain("/einvoice/designs/einvoice_xslt_custom/select");
   expect(selectUrl).toContain("company_id=co_a");
+});
+
+async function openInvoiceDesign() {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<EinvoiceDesignsPanel />);
+  });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-edit-einvoice_xslt_default_e_invoice"]').click();
+  });
+  await act(async () => { await Promise.resolve(); });
+  return root;
+}
+
+test("dirty kind switch cancelled keeps kind", async () => {
+  jest.spyOn(window, "confirm").mockReturnValue(false);
+  await openInvoiceDesign();
+  const name = host.querySelector('[data-testid="einvoice-design-name"]');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(name, "Kaydedilmedi");
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-kind-e_dispatch"]').click();
+  });
+  expect(window.confirm).toHaveBeenCalledWith("Kaydedilmemiş değişiklikler kaybolacak. Devam?");
+  expect(host.querySelector('[data-testid="einvoice-design-row-einvoice_xslt_default_e_invoice"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-kind-e_invoice"]').className).toMatch(/text-slate-900/);
+  expect(host.querySelector('[data-testid="einvoice-design-canvas"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-name"]')?.value).toBe("Kaydedilmedi");
+});
+
+test("xslt source canvas change cancelled keeps source", async () => {
+  jest.spyOn(window, "confirm").mockReturnValue(false);
+  await openInvoiceDesign();
+  expect(host.querySelector('[data-testid="einvoice-design-source-badge"]')?.textContent).toMatch(/XSLT/i);
+  expect(host.querySelector('[data-testid="einvoice-design-block-iban"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-hide-iban"]').click();
+  });
+  expect(window.confirm).toHaveBeenCalledWith("Görsel düzenleme kaydedilince elle yazılmış XSLT yerine üretilen XSLT kaydedilir");
+  expect(host.querySelector('[data-testid="einvoice-design-source-badge"]')?.textContent).toMatch(/XSLT/i);
+  expect(host.querySelector('[data-testid="einvoice-design-source-badge"]')?.textContent).not.toMatch(/görsel/i);
+  expect(host.querySelector('[data-testid="einvoice-design-block-iban"]')).not.toBeNull();
 });
