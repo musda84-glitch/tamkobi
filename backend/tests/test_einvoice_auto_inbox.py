@@ -211,6 +211,7 @@ class TestAutoLoopSkip:
             {"provider": "n11faturam", "status": "configured", "company_id": "c2", "auto_pull": True, "auto_process": True},
             {"provider": "n11faturam", "status": "configured", "company_id": "c3", "auto_pull": True, "auto_process": False},
             {"provider": "isnet", "status": "configured", "company_id": "c4", "auto_pull": True, "auto_process": True},
+            {"provider": "isnet", "status": "configured", "company_id": "c5", "auto_pull": True, "auto_process": True, "mode": "live"},
         ]
 
         class _Cursor:
@@ -239,6 +240,7 @@ class TestAutoLoopSkip:
 
         pulls, processes = asyncio.get_event_loop().run_until_complete(_once())
         assert "c1" not in pulls
-        assert pulls == ["c2", "c3", "c4"]
-        # n11 + auto_process=True → c2; İşNet asla otomatik içeri alınmaz
+        # mode boş İşNet canlı SOAP'a düşmez; mode=live olan çekilir, içeri alınmaz
+        assert "c4" not in pulls
+        assert pulls == ["c2", "c3", "c5"]
         assert processes == ["c2"]

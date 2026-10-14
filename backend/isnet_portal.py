@@ -342,10 +342,40 @@ async def _try_download_portal_xml(
     return None, last_hint
 
 
-def is_test_mode(settings: dict) -> bool:
-    """mode yoksa test sayma — eksik ayar test Account/Login denemesine düşmesin."""
+_TEST_MODES = frozenset({"test", "sandbox", "demo"})
+_LIVE_MODES = frozenset({"live"})
+
+
+def explicit_environment(settings: dict) -> str:
+    """'test', 'live' veya '' (seçilmemiş / geçersiz)."""
     mode = str((settings or {}).get("mode") or "").strip().lower()
-    return mode in ("test", "sandbox", "demo")
+    if mode in _TEST_MODES:
+        return "test"
+    if mode in _LIVE_MODES:
+        return "live"
+    return ""
+
+
+def is_test_mode(settings: dict) -> bool:
+    """True yalnız mode açıkça test, sandbox veya demo ise.
+
+    Boş veya geçersiz mode False döner; bu canlı seçildiği anlamına gelmez.
+    Portal çağrıları require_explicit_mode ile 400 olur.
+    """
+    return explicit_environment(settings) == "test"
+
+
+def require_explicit_mode(settings: dict) -> str:
+    env = explicit_environment(settings)
+    if not env:
+        raise HTTPException(status_code=400, detail=isnet_mode_required_detail())
+    return env
+
+
+def isnet_mode_required_detail() -> str:
+    return (
+        "İşNet ortamı (Test/Canlı) seçilmemiş. Ayarlar → e-Fatura'dan ortamı seçip kaydedin."
+    )
 
 
 _login_backoff_until: Dict[str, float] = {}
@@ -364,9 +394,8 @@ def _login_backoff_key(settings: dict) -> str:
 
 
 def account_login_ready(settings: dict) -> bool:
-    mode = str((settings or {}).get("mode") or "").strip()
     ident = _vkn(settings or {}) or str((settings or {}).get("username") or "").strip()
-    return bool(mode and ident)
+    return bool(explicit_environment(settings) and ident)
 
 
 def account_login_blocked(settings: dict) -> bool:
@@ -1365,6 +1394,7 @@ async def _portal_login_with_fallback(
 
 async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
     """HTML portal + Mobile API birlikte doğrular (gelen kutu Mobile'a bağlı)."""
+    require_explicit_mode(settings)
     used, info, kontor, portal_meta = await _portal_login_with_fallback(settings, password)
     company_id = info.get("company_id")
     mode = portal_meta.get("suggested_mode") or ("test" if is_test_mode(used) else "live")
@@ -1431,6 +1461,7 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
 
 
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
+    require_explicit_mode(settings)
     async with IsnetPortalClient(settings, password) as client:
         await client.login()
         data = await client.lookup_turmob(tax_id)
@@ -1459,6 +1490,7 @@ async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, A
 
 async def _list_incoming_via_portal(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """Mobile API olmadan HTML portal oturumuyla gelen kutuyu çeker."""
+    require_explicit_mode(settings)
     used, info, _kontor, meta = await _portal_login_with_fallback(settings, password)
     if meta.get("mode_switched") and meta.get("suggested_mode"):
         settings["mode"] = meta["suggested_mode"]
@@ -1491,6 +1523,7 @@ async def _list_incoming_via_portal(settings: dict, password: str, days: int = 1
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """Gelen e-faturaları Mobile REST ile listeler; 401'de Web Portal HTML yedek yolu."""
+    require_explicit_mode(settings)
     try:
         session = await _mobile_login(settings, password)
     except HTTPException as e:
@@ -1601,6 +1634,7 @@ async def send_document(
     contact: Optional[dict] = None,
     company: Optional[dict] = None,
 ) -> Dict[str, Any]:
+    require_explicit_mode(settings)
     contact = contact or {}
     async with IsnetPortalClient(settings, password) as client:
         await client.login()

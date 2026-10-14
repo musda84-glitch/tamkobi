@@ -484,3 +484,22 @@ def test_mobile_login_skips_when_mode_missing():
             asyncio.run(isnet_portal._mobile_login(settings, "secret"))
     assert exc.value.status_code == 400
     assert mock.post.await_count == 0
+
+
+def test_portal_send_document_without_mode_makes_no_call():
+    settings = {"username": "4810173324", "company_id": "co-no-mode"}
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.post = AsyncMock()
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock), patch(
+        "isnet_portal.IsnetPortalClient"
+    ) as client:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                isnet_portal.send_document(settings, "secret", {"e_type": "e_archive"}, {}, {})
+            )
+    assert exc.value.status_code == 400
+    assert "Test/Canlı" in str(exc.value.detail)
+    client.assert_not_called()
+    mock.post.assert_not_called()

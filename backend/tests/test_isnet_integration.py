@@ -2003,3 +2003,63 @@ def test_login_401_backoff_skips_next_payload_loop():
     assert first.value.status_code == 400
     assert second.value.status_code == 429
     assert mock_client.post.await_count == posts
+
+
+def test_send_document_without_mode_is_400_and_makes_no_call():
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com"}
+    invoice = {
+        "e_type": "e_archive",
+        "invoice_number": "MTE2026000000029",
+        "items": [{"name": "Hizmet", "quantity": 1, "unit_price": 10, "vat_rate": 20}],
+    }
+    soap = AsyncMock()
+    client = AsyncMock()
+    with patch("isnet._soap_call", soap), patch("isnet.build_ubl") as build, patch(
+        "isnet.httpx.AsyncClient", return_value=client
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(isnet.send_document(settings, "", invoice, {"name": "Alıcı"}, {"tax_number": "4810173324"}))
+    assert exc.value.status_code == 400
+    assert exc.value.detail == isnet.MODE_REQUIRED_DETAIL
+    soap.assert_not_called()
+    build.assert_not_called()
+    client.assert_not_called()
+
+
+def test_soap_url_follows_explicit_test_and_live():
+    assert isnet.soap_url({"mode": "test"}) == isnet.TEST_SOAP
+    assert isnet.soap_url({"mode": "live"}) == isnet.LIVE_SOAP
+    assert isnet.explicit_environment({"mode": "test"}) == "test"
+    assert isnet.explicit_environment({"mode": "live"}) == "live"
+    assert isnet.explicit_environment({}) == ""
+    assert isnet.explicit_environment({"mode": "staging"}) == ""
+
+
+def test_download_pdf_and_xml_without_mode_make_no_call():
+    settings = {"company_tax_id": "4810173324"}
+    ettn = "f0ad3b22-88d6-49d3-97a4-f738fe213505"
+    soap = AsyncMock()
+    client = AsyncMock()
+    with patch("isnet._soap_call", soap), patch("isnet.httpx.AsyncClient", return_value=client):
+        with pytest.raises(HTTPException) as pdf_exc:
+            asyncio.run(isnet.download_invoice_pdf(settings, ettn, invoice_number="MTE2026000000029"))
+        with pytest.raises(HTTPException) as xml_exc:
+            asyncio.run(isnet.download_invoice_xml(settings, ettn, invoice_number="MTE2026000000029"))
+    assert pdf_exc.value.status_code == 400
+    assert xml_exc.value.status_code == 400
+    assert pdf_exc.value.detail == isnet.MODE_REQUIRED_DETAIL
+    soap.assert_not_called()
+    client.assert_not_called()
+
+
+def test_missing_mode_settings_lists_only_blank_isnet_rows():
+    rows = [
+        {"company_id": "c-live", "provider": "isnet", "status": "configured", "mode": "live"},
+        {"company_id": "c-empty", "provider": "isnet", "status": "configured", "mode": ""},
+        {"company_id": "c-bad", "provider": "isnet_portal", "status": "configured", "mode": "staging"},
+        {"company_id": "c-n11", "provider": "n11faturam", "status": "configured", "mode": ""},
+    ]
+    out = isnet.missing_mode_settings(rows, {"c-empty": "Boş A.Ş.", "c-bad": "Portal"})
+    assert [r["company_id"] for r in out] == ["c-empty", "c-bad"]
+    assert out[0]["company_name"] == "Boş A.Ş."
+    assert out[1]["provider"] == "isnet_portal"

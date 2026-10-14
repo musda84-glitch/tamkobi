@@ -1906,7 +1906,7 @@ async def _run_einvoice_inbox_auto_tick() -> None:
         if not cid:
             continue
         provider = (s.get("provider") or "").strip()
-        if provider == "isnet_portal" and not str(s.get("mode") or "").strip():
+        if provider in ("isnet", "isnet_portal") and not isnet.explicit_environment(s):
             logger.info("e-fatura otomatik gelen kutu atlandı %s: ortam (mode) ayarı yok", cid)
             continue
         if provider == "isnet_portal" and isnet_portal.account_login_blocked(s):

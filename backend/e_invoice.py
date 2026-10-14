@@ -639,6 +639,11 @@ async def issue_invoice(
         )
         return {"status": "success", "einvoice_state": "sent", "message": "Kağıt fatura olarak kesildi.", "invoice_id": invoice_id, "tracking_id": None}
 
+    settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    provider = settings.get("provider") or ""
+    if provider in ("isnet", "isnet_portal") and not isnet.explicit_environment(settings):
+        raise HTTPException(status_code=400, detail=isnet.MODE_REQUIRED_DETAIL)
+
     await _db.invoices.update_one(
         {"_id": invoice_id},
         {"$set": {"einvoice_state": "queued", "gib_scenario": scen, "gib_status": "Kuyrukta", "queued_at": _now()}},
@@ -1139,6 +1144,8 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     provider = (inv.get("integrator") or settings.get("provider") or "").strip()
     if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return {"updated": False, "invoice": inv}
+    if not isnet.explicit_environment(settings):
+        raise HTTPException(status_code=400, detail=isnet.MODE_REQUIRED_DETAIL)
     settings = _isnet_settings_for_invoice(settings, inv)
     e_type = inv.get("e_type") or "e_archive"
     hint_no = str(inv.get("gib_invoice_id") or inv.get("local_invoice_number") or inv.get("invoice_number") or "")
@@ -1641,6 +1648,8 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             continue
 
         if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
+            continue
+        if not isnet.explicit_environment(settings):
             continue
         if not isnet.is_ettn_uuid(ettn):
             continue

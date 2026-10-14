@@ -137,10 +137,70 @@ _ARRAY_ITEM_STRUCTURED_ARCHIVE = {
 }
 
 
+# Boş/geçersiz mode ne test ne canlıdır. URL yardımcıları yine LIVE_* döndürebilir;
+# ağ çağrısı yapan her yol require_explicit_mode ile önce reddedilir.
+MODE_REQUIRED_DETAIL = (
+    "İşNet ortamı (Test/Canlı) seçilmemiş. Ayarlar → e-Fatura'dan ortamı seçip kaydedin."
+)
+_TEST_MODES = frozenset({"test", "sandbox", "demo"})
+_LIVE_MODES = frozenset({"live"})
+
+
+def normalized_mode(settings: dict) -> str:
+    return str((settings or {}).get("mode") or "").strip().lower()
+
+
+def explicit_environment(settings: dict) -> str:
+    """'test', 'live' veya '' (seçilmemiş / geçersiz)."""
+    mode = normalized_mode(settings)
+    if mode in _TEST_MODES:
+        return "test"
+    if mode in _LIVE_MODES:
+        return "live"
+    return ""
+
+
 def is_test_mode(settings: dict) -> bool:
-    """mode yoksa test sayma — eksik ayar canlı SOAP'a ve arka plan login'e düşmesin."""
-    mode = str((settings or {}).get("mode") or "").strip().lower()
-    return mode in ("test", "sandbox", "demo")
+    """True yalnız mode açıkça test, sandbox veya demo ise.
+
+    Boş veya geçersiz mode False döner; bu canlı seçildiği anlamına gelmez.
+    SOAP gönderim, durum doğrulama, PDF/XML indirme ve portal çağrıları
+    require_explicit_mode ile 400 olur — canlı adrese düşülmez.
+    """
+    return explicit_environment(settings) == "test"
+
+
+def require_explicit_mode(settings: dict) -> str:
+    """Ağ çağrısından ve UBL üretiminden önce. 'test' veya 'live' döner."""
+    env = explicit_environment(settings)
+    if not env:
+        raise HTTPException(status_code=400, detail=MODE_REQUIRED_DETAIL)
+    return env
+
+
+def missing_mode_settings(rows: List[dict], names: Optional[Dict[str, str]] = None) -> List[dict]:
+    """Prod einvoice_settings içinde ortamı boş/geçersiz İşNet kayıtları (salt okunur)."""
+    labels = names or {}
+    out: List[dict] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        provider = str(row.get("provider") or "").strip()
+        if provider not in ("isnet", "isnet_portal"):
+            continue
+        if explicit_environment(row):
+            continue
+        cid = str(row.get("company_id") or "").strip()
+        out.append(
+            {
+                "company_id": cid,
+                "company_name": labels.get(cid) or "",
+                "provider": provider,
+                "status": str(row.get("status") or ""),
+                "mode": str(row.get("mode") or ""),
+            }
+        )
+    return out
 
 
 def api_base(settings: dict) -> str:
@@ -321,10 +381,9 @@ def _login_backoff_key(settings: dict) -> str:
 
 
 def account_login_ready(settings: dict) -> bool:
-    """mode veya kullanıcı yoksa Account/Login deneme."""
-    mode = str((settings or {}).get("mode") or "").strip()
+    """Ortam (test/live) veya kullanıcı yoksa Account/Login deneme."""
     username = str((settings or {}).get("username") or "").strip()
-    return bool(mode and username)
+    return bool(explicit_environment(settings) and username)
 
 
 def account_login_blocked(settings: dict) -> bool:
@@ -623,6 +682,7 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
     İşNet resmi not: SOAP'ta kullanıcı/şifre yok; kimlik doğrulama IP–VKN.
     Canlıda IP kaydı: efaturadestek@nettefatura.com.tr
     """
+    require_explicit_mode(settings)
     alias = (settings.get("alias") or "").strip()
     tax = company_tax_code(settings)
     if len(tax) not in (10, 11):
@@ -1404,6 +1464,7 @@ async def get_company_balance(settings: dict, tax_code: Optional[str] = None) ->
 
 async def lookup_despatch_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
     """GetDespatchTaxPayer — e-İrsaliye mükellefiyet / alias (NetteFatura-API)."""
+    require_explicit_mode(settings)
     _ = password
     tax = re.sub(r"\D", "", str(tax_id or ""))
     if len(tax) not in (10, 11):
@@ -1445,6 +1506,7 @@ async def lookup_despatch_user(settings: dict, password: str, tax_id: str) -> Di
 
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
     """GetTaxPayer — NetteFatura-API addressBook.getTaxPayer() / n11faturam.lookup_user."""
+    require_explicit_mode(settings)
     _ = password
     tax = re.sub(r"\D", "", str(tax_id or ""))
     if len(tax) not in (10, 11):
@@ -1885,6 +1947,7 @@ async def send_invoice_xml(
     assign_number=True: resmi *WithoutInvoiceNumber (İşNet kayıtlı seriyi atar).
     Metod yoksa SendInvoiceXml / SendArchiveInvoiceXml.
     """
+    require_explicit_mode(settings)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
@@ -1939,6 +2002,7 @@ async def send_despatch_xml(
     receiver_alias: str = "",
 ) -> Dict[str, Any]:
     """SendDespatchAdviceXml — NetteFatura-API invoice.sendDespatchAdviceXml()."""
+    require_explicit_mode(settings)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
@@ -2089,6 +2153,7 @@ async def send_despatch_document(
     company: dict,
 ) -> Dict[str, Any]:
     """e-İrsaliye → SendDespatchAdviceXml (İşNet SOAP)."""
+    require_explicit_mode(settings)
     merged = {**settings}
     seller_vkn = company_tax_code(merged) or company_tax_code(settings, company)
     if not seller_vkn:
@@ -2220,6 +2285,7 @@ async def send_document(
     Numara: Send*XmlWithoutInvoiceNumber → SOAP/portal InvoiceNumber (TKB değil).
     UBL: isnet.build_ubl → ubl_export (IADE/TEVKIFAT); n11faturam değil.
     """
+    require_explicit_mode(settings)
     e_type = invoice.get("e_type") or "e_archive"
     if e_type == "e_dispatch" or invoice.get("invoice_type") == "dispatch":
         return await send_despatch_document(settings, password, invoice, contact, company)
@@ -2502,6 +2568,7 @@ async def search_archive_invoice(
     fallback_without_vendor: bool = False,
 ) -> List[Dict[str, Any]]:
     """SearchArchiveInvoice — NetteFatura-API invoice.searchArchiveInvoice()."""
+    require_explicit_mode(settings)
     if not (settings or {}).get("_skip_vendor_infer"):
         settings = with_inferred_vendor(settings, invoice_number)
     req_base = _company_request(settings)
@@ -2568,6 +2635,7 @@ async def search_outgoing_invoice(
     include_documents=True → IsHtmlIncluded + IsPdfIncluded (PDF fallback için).
     include_xml=True → IsXMLIncluded (UBL fallback).
     """
+    require_explicit_mode(settings)
     if not (settings or {}).get("_skip_vendor_infer"):
         settings = with_inferred_vendor(settings, invoice_number)
     req_base = _company_request(settings)
@@ -2688,6 +2756,7 @@ async def try_verify_outgoing_in_portal(
     wait_for_gib=True: süreç Status=Ziplendi iken DetailStatus (1300…) gelene kadar
     daha uzun poll (NetteFatura testinde imza+GİB iletimi gecikebilir).
     """
+    require_explicit_mode(settings)
     ettn = (ettn or "").strip()
     if not is_ettn_uuid(ettn):
         return {"ok": False, "document_url": "", "via": ""}
@@ -3039,6 +3108,7 @@ async def get_document_viewer_link(
 
     Vendor varsa CompanyVendorNumber ile, URL yoksa vendorsuz yeniden dener.
     """
+    require_explicit_mode(settings)
     ettn = (ettn or "").strip()
     if not ettn:
         raise HTTPException(status_code=400, detail="ETTN gerekli.")
@@ -3378,6 +3448,7 @@ async def download_invoice_pdf(
       3) Search* InvoicePdf / InvoiceHtml→Chrome PDF
          (Zarflanmadı / Ziplenmiş iken viewer boş kalabiliyor)
     """
+    require_explicit_mode(settings)
     errors: List[str] = []
     inv_no = str(invoice_number or "").strip()
     settings = with_inferred_vendor(settings, inv_no)
@@ -3556,6 +3627,7 @@ async def download_invoice_xml(
     PDF ile aynı: kayıtlı link stale olabilir; taze viewer + alternatif tip/no dene.
     Viewer yoksa SearchInvoice (e-Arşivde SearchArchiveInvoice) IsXMLIncluded.
     """
+    require_explicit_mode(settings)
     errors: List[str] = []
     inv_no = str(invoice_number or "").strip()
     settings = with_inferred_vendor(settings, inv_no)
@@ -3693,6 +3765,7 @@ def _decode_xml_payload(payload: str) -> Optional[bytes]:
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """SearchInvoice (Incoming) — NetteFatura-API invoice.searchInvoice()."""
+    require_explicit_mode(settings)
     _ = password
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
@@ -3795,6 +3868,7 @@ async def _search_despatch_advice_xml(
 
 async def list_incoming_despatch(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """SearchDespatchAdvice (Incoming) — Dolibarr isnetefatura syncDespatch ile aynı operasyon."""
+    require_explicit_mode(settings)
     _ = password
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
@@ -3889,6 +3963,7 @@ async def search_outgoing_despatch(
     max_date: str = "",
 ) -> List[Dict[str, Any]]:
     """SearchDespatchAdvice (Outgoing) — giden e-İrsaliye durum/ETTN."""
+    require_explicit_mode(settings)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
