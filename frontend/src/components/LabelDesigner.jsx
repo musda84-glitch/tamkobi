@@ -11,7 +11,7 @@ import { useEscape } from "../utils/useEscape";
 import { productLabelImageUrl } from "../utils/productImages";
 import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
 import { backdropDismissProps } from "../utils/modalBackdrop";
-import { buildLabelPrintDocument, embedLabelImages } from "../utils/labelPrint";
+import { buildLabelPrintDocument, createLabelPrintWindow, embedLabelImages, showLabelPrintDocument } from "../utils/labelPrint";
 import { LABEL_BOX_DEFAULT_STROKE_MM, LABEL_BOX_MIN_STROKE_MM, labelLineThicknessMm, labelStrokePx } from "../utils/labelBoxStroke";
 import { resolveLabelTemplate } from "../utils/resolveLabelTemplate";
 import {
@@ -86,23 +86,21 @@ const printLabelJobs = async (tpl, jobs, page, sourceId) => {
   if (!jobs.length) { toast.error("Yazdırılacak etiket yok."); return; }
   const source = document.getElementById(sourceId);
   if (!source) { toast.error("Yazdırma kaynağı bulunamadı."); return; }
+  const win = createLabelPrintWindow();
+  if (!win) { toast.error("Yazdırma penceresi açılamadı — tarayıcı pop-up engelini kontrol edin."); return; }
   try {
     await embedLabelImages(source, { baseHref: window.location.href });
   } catch { /* absolute URL fallback in document builder */ }
-  const win = window.open("", "_blank", "width=900,height=700");
-  if (!win) { toast.error("Yazdırma penceresi açılamadı — tarayıcı pop-up engelini kontrol edin."); return; }
   const html = buildLabelPrintDocument({
     html: source.innerHTML || "",
     tpl,
     page,
     baseHref: `${window.location.origin}/`,
   });
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  const trigger = () => { try { win.focus(); win.print(); } catch { /* ignore */ } };
-  // Görseller data-URL; kısa gecikme layout için yeterli
-  setTimeout(trigger, 350);
+  if (!showLabelPrintDocument(win, html)) {
+    try { win.close(); } catch { /* ignore */ }
+    toast.error("Yazdırma penceresi hazırlanamadı.");
+  }
 };
 
 const valueOf = (el, p, company) => labelFieldValue(el, p, company);
@@ -156,7 +154,13 @@ const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
   const code = p ? (p.barcode || p.sku || "0000000000000") : "8680001234011";
   const down = (e) => { e.stopPropagation(); onSelect(el.id); const sx = e.clientX, sy = e.clientY, ox = el.x, oy = el.y; const mv = (ev) => onMove(el.id, ox + (ev.clientX - sx) / PX / scale, oy + (ev.clientY - sy) / PX / scale); const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); };
   let body = null;
-  if (el.type === "barcode") body = <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: el.w * PX, height: el.h * PX, display: "flex", alignItems: "center", justifyContent: "center" }}><Barcode value={code} height={Math.max(10, el.h * PX - (el.showText === false ? 2 : 14))} width={Math.max(0.8, Math.min(3, (el.w * PX) / 110))} fontSize={el.showText === false ? 0 : 10} /></div>;
+  if (el.type === "barcode") {
+    const bar = <Barcode value={code} height={Math.max(10, el.h * PX - (el.showText === false ? 2 : 14))} width={Math.max(0.8, Math.min(3, (el.w * PX) / 110))} fontSize={el.showText === false ? 0 : 10} />;
+    // Yazdırma scale=1: transform etiket kutusunu kaydırır. Yakınlaştırma yalnız tasarımda.
+    body = scale === 1
+      ? <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>{bar}</div>
+      : <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: el.w * PX, height: el.h * PX, display: "flex", alignItems: "center", justifyContent: "center" }}>{bar}</div>;
+  }
   else if (el.type === "qr") body = <QRCodeSVG value={code} size={Math.min(el.w, el.h) * PX * scale} level="M" />;
   else if (el.type === "logo") body = company?.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">LOGO</div>;
   else if (el.type === "image") body = p?.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">GÖRSEL</div>;
@@ -167,7 +171,7 @@ const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
 };
 
 export const LabelCanvas = ({ tpl, product, company, scale = 1, selected, onSelect, onMove, className = "" }) => (
-  <div className={`relative bg-white ${className}`} style={{ width: tpl.width_mm * PX * scale, height: tpl.height_mm * PX * scale, backgroundImage: onSelect ? `linear-gradient(to right, #eef2ff 1px, transparent 1px), linear-gradient(to bottom, #eef2ff 1px, transparent 1px)` : undefined, backgroundSize: `${PX * scale}px ${PX * scale}px`, border: onSelect ? "1px dashed #94a3b8" : "none" }} onMouseDown={() => onSelect && onSelect(null)} data-testid="label-canvas">
+  <div className={`relative bg-white ${className}`} style={{ position: "relative", width: tpl.width_mm * PX * scale, height: tpl.height_mm * PX * scale, backgroundImage: onSelect ? `linear-gradient(to right, #eef2ff 1px, transparent 1px), linear-gradient(to bottom, #eef2ff 1px, transparent 1px)` : undefined, backgroundSize: `${PX * scale}px ${PX * scale}px`, border: onSelect ? "1px dashed #94a3b8" : "none" }} onMouseDown={() => onSelect && onSelect(null)} data-testid="label-canvas">
     {tpl.elements.map((el) => <Element key={el.id} el={el} p={product} company={company} scale={scale} selected={selected === el.id} onSelect={onSelect} onMove={onMove} />)}
   </div>
 );
