@@ -207,6 +207,43 @@ class TestStreamAuth:
         assert "grand_total" not in body
         assert "1250" not in body
 
+    def test_idle_wait_keeps_stream_open(self, monkeypatch):
+        """wait_for idle timeout (asyncio.TimeoutError) must not close the stream."""
+        import inspect
+
+        source = inspect.getsource(company_events.iter_company_events)
+        assert "except asyncio.TimeoutError:" in source
+        assert source.count("except TimeoutError:") == 0
+
+        monkeypatch.setattr(company_events, "POLL_SEC", 0.02)
+        monkeypatch.setattr(company_events, "HEARTBEAT_SEC", 0.08)
+        company_events.reset_for_tests()
+
+        class _Req:
+            def __init__(self):
+                self.n = 0
+
+            async def is_disconnected(self):
+                self.n += 1
+                if self.n == 6:
+                    company_events.note_change("invoices", {
+                        "_id": "late1",
+                        "company_id": "co_a",
+                    })
+                return self.n > 6
+
+        async def _collect():
+            chunks = []
+            async for chunk in company_events.iter_company_events("co_a", _Req()):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
+        body = "".join(chunks)
+        assert body.startswith(": ok\n\n")
+        assert ": ping\n\n" in body
+        assert '"type":"invoice","id":"late1"' in body
+
     def test_app_stream_sends_nginx_header(self, monkeypatch):
         async def _finite(_company_id, _request):
             yield ": ok\n\n"

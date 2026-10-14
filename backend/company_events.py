@@ -307,7 +307,7 @@ async def iter_company_events(company_id: str, request: Request) -> AsyncIterato
                 timeout = min(POLL_SEC, max(0.0, next_db - loop.time()))
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=timeout)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 continue
             chunk = accept(event)
             if chunk:
