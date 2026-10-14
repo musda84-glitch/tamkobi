@@ -31,6 +31,7 @@ export function stackHeaderFallback(routeName: string): string {
   const root = parts[0];
   const child = parts[1];
   const nested = Boolean(child && child !== "index");
+  if (root === "settings" && child === "printers") return "/settings";
   if (nested && LIST_TAB_FALLBACK[root]) return LIST_TAB_FALLBACK[root];
   if (nested && LIST_STACK_ROOTS.has(root)) return `/${root}`;
   return "/";

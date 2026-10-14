@@ -7,6 +7,7 @@ import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { confirmAction, n } from "../components/chips";
 import { QuantityInput } from "../components/MoneyInput";
+import { LabelPrintSheet } from "../components/LabelPrintSheet";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -28,12 +29,13 @@ import {
   type PickSession,
 } from "../utils/orderPick";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { loadLabelPrinter, printShipmentLabels } from "../utils/labelPrinter";
 import { printPickProductLabels } from "../utils/pickLabelPrint";
 import { canSevkDraftInvoice, canSevkOpenOrder } from "../utils/permissions";
 import { ProgressBar } from "./SevkScreen";
 
 export function SevkPickScreen() {
-  const { client, can, user, activeCompany } = useAuth();
+  const { client, can, user, activeCompany, companyId } = useAuth();
   const canEdit = can("/sevk", "edit");
   const showOpenOrder = canSevkOpenOrder(user);
   const showDraftInvoice = canSevkDraftInvoice(user);
@@ -46,6 +48,9 @@ export function SevkPickScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string | number>>({});
   const [scanQty, setScanQty] = useState("1");
+  const [shipPrint, setShipPrint] = useState(false);
+  const [shipBusy, setShipBusy] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -314,6 +319,52 @@ export function SevkPickScreen() {
           testID="sevk-print-labels"
         />
       ) : null}
+      {session ? (
+        <PrimaryButton
+          title="Etiket bas"
+          icon="print"
+          color={colors.primary}
+          testID="sevk-ship-label"
+          onPress={() => { setShipError(null); setShipPrint(true); }}
+        />
+      ) : null}
+      <LabelPrintSheet
+        visible={shipPrint}
+        title="Etiket bas"
+        subtitle={session?.order_number || "Koli etiketi"}
+        quantityLabel="Koli adedi"
+        hint="Her koli için ayrı etiket basılır (sipariş, müşteri, adres, koli x/y, QR)."
+        busy={shipBusy}
+        error={shipError}
+        testID="sevk-ship-sheet"
+        onClose={() => setShipPrint(false)}
+        onPrint={async (copies) => {
+          setShipBusy(true);
+          setShipError(null);
+          try {
+            const settings = await loadLabelPrinter(companyId);
+            const address = [session?.shipping_address, session?.city].filter(Boolean).join(" ");
+            await printShipmentLabels({
+              settings,
+              shipment: {
+                orderNo: session?.order_number,
+                customer: session?.customer_name,
+                address,
+                packageTotal: copies,
+              },
+            });
+            setMessage(`Koli etiketi basıldı (${copies} adet).`);
+            setError(null);
+            setShipPrint(false);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+            setShipError(msg);
+            setError(msg);
+          } finally {
+            setShipBusy(false);
+          }
+        }}
+      />
       {canEdit && items.length && awaitDeliver ? (
         <PrimaryButton
           title="Teslim edildi"
