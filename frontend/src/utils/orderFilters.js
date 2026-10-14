@@ -264,10 +264,17 @@ export function buildOrderListParams(f, { companyId, page = 1, pageSize = 50, cu
 }
 
 const GIB_ERR = /^\s*hata\s*:/i;
+/** e-Fatura / e-Arşiv. Kağıt, gider pusulası ve e-irsaliye e-belge değildir. */
+const EDOC_E_TYPES = new Set(["e_invoice", "e_archive", "efatura", "earsiv"]);
 
-/** Fatura oluşmuş; e-Fatura/e-Arşiv entegratöre/GİB'e gitmemiş (taslak, hata, hiç gönderilmemiş). */
+function orderInvoiceEType(o) {
+  return String(o?.invoice_e_type || o?.e_type || "").trim().toLowerCase();
+}
+
+/** e-Fatura/e-Arşiv oluşmuş ama GİB'e gitmemiş. e-belge değilse false. */
 export function orderInvoiceNotSentToGib(o) {
   if (!o?.invoice_id) return false;
+  if (!EDOC_E_TYPES.has(orderInvoiceEType(o))) return false;
   const state = String(o.einvoice_state || "").toLowerCase();
   const gs = String(o.invoice_gib_status || o.gib_status || "");
   if (state === "error" || GIB_ERR.test(gs)) return true;

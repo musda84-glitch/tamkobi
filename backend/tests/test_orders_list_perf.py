@@ -211,6 +211,10 @@ def test_paged_einvoice_unsent_filters_after_full_scan_enrich():
          "order_date": "2026-06-03T00:00:00Z", "total_amount": 30, "invoice_id": "inv_s"},
         {"_id": "none", "order_number": "NONE", "order_status": "pending", "channel": "b2b",
          "order_date": "2026-06-04T00:00:00Z", "total_amount": 40},
+        {"_id": "paper", "order_number": "PAPER", "order_status": "pending", "channel": "b2b",
+         "order_date": "2026-06-05T00:00:00Z", "total_amount": 5, "invoice_id": "inv_p"},
+        {"_id": "slip", "order_number": "SLIP", "order_status": "pending", "channel": "b2b",
+         "order_date": "2026-06-06T00:00:00Z", "total_amount": 7, "invoice_id": "inv_g"},
     ]
     captured = {"ebelge": []}
 
@@ -228,15 +232,22 @@ def test_paged_einvoice_unsent_filters_after_full_scan_enrich():
         captured["ebelge"].append(len(docs))
         for o in docs:
             if o["order_number"] == "DRAFT":
+                o["invoice_e_type"] = "e_archive"
                 o["einvoice_state"] = "draft"
                 o["invoice_gib_status"] = "Taslak"
             elif o["order_number"] == "ERR":
+                o["invoice_e_type"] = "e_archive"
                 o["einvoice_state"] = "error"
                 o["invoice_gib_status"] = "Hata: şema"
                 o["invoice_gib_uuid"] = "uuid-err"
             elif o["order_number"] == "SENT":
+                o["invoice_e_type"] = "e_archive"
                 o["einvoice_state"] = "sent"
                 o["gib_invoice_id"] = "GIB1"
+            elif o["order_number"] == "PAPER":
+                o["invoice_e_type"] = "paper"
+            elif o["order_number"] == "SLIP":
+                o["invoice_e_type"] = "expense_slip"
         return docs
 
     async def ident(docs, company_id=None):
@@ -256,12 +267,13 @@ def test_paged_einvoice_unsent_filters_after_full_scan_enrich():
             )
 
     out = asyncio.run(run())
-    assert captured["ebelge"] == [4]
+    assert captured["ebelge"] == [6]
     assert out["total"] == 2
     assert out["total_amount"] == 30
     assert out["has_more"] is True
     assert [o["order_number"] for o in out["items"]] == ["DRAFT"]
     assert out["items"][0]["einvoice_state"] == "draft"
+    assert out["items"][0]["invoice_e_type"] == "e_archive"
 
 
 def test_paged_einvoice_filter_enriches_matching_scan():

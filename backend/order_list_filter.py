@@ -94,13 +94,27 @@ def order_has_einvoice(order: Optional[dict]) -> bool:
     return False
 
 
-def order_einvoice_unsent(order: Optional[dict]) -> bool:
-    """Fatura oluşmuş; e-Fatura/e-Arşiv entegratöre/GİB'e gitmemiş.
+# e-Fatura / e-Arşiv. Kağıt, gider pusulası ve e-irsaliye e-belge sayılmaz.
+_EDOC_E_TYPES = frozenset({"e_invoice", "e_archive", "efatura", "earsiv"})
 
-    Taslak, hata (GİB kimliği kalsa bile) ve hiç gönderilmemiş kayıtlar.
-    Faturası olmayan satırlar bu filtreye girmez.
+
+def order_invoice_e_type(order: Optional[dict]) -> str:
+    """Liste enrich'inin yazdığı invoice_e_type; yoksa siparişteki e_type."""
+    if not order:
+        return ""
+    return str(order.get("invoice_e_type") or order.get("e_type") or "").strip().lower()
+
+
+def order_einvoice_unsent(order: Optional[dict]) -> bool:
+    """e-Fatura/e-Arşiv oluşmuş ama GİB'e gitmemiş.
+
+    invoice_e_type e-belge (e_invoice/e_archive) değilse False: kağıt fatura
+    ve gider pusulası bu filtreye girmez. Taslak ve hata (GİB kimliği kalsa
+    bile) girer. GİB'e gitmiş kayıt ve faturası olmayan satır girmez.
     """
     if not order or not order.get("invoice_id"):
+        return False
+    if order_invoice_e_type(order) not in _EDOC_E_TYPES:
         return False
     state = str(order.get("einvoice_state") or "").lower()
     gs = str(order.get("invoice_gib_status") or order.get("gib_status") or "")

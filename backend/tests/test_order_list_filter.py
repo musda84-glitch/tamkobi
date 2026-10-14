@@ -10,6 +10,7 @@ from order_list_filter import (
     needs_invoice_ebelge_filter,
     order_date_sql_range,
     order_display_amount,
+    order_einvoice_unsent,
     query_orders,
 )
 
@@ -359,39 +360,64 @@ def test_needs_invoice_ebelge_only_for_einvoice_or_doc_filter():
     assert needs_invoice_ebelge_filter("all", None) is False
 
 
-def test_einvoice_unsent_is_created_invoice_not_sent_to_gib():
-    """Taslak, hata ve hiç gönderilmemiş faturalar. Gönderilmişler ve faturasızlar yok.
+def test_einvoice_unsent_is_edoc_not_sent_to_gib():
+    """e-Arşiv taslak/hata var. Kağıt, gider pusulası ve GİB'e gitmiş yok.
 
     Sayfa ve toplam, eşleşen kümenin tamamından gelir.
     """
     rows = [
         _row(order_number="NONE", total_amount=1),
-        _row(order_number="DRAFT", invoice_id="d1", is_invoiced=False, einvoice_state="draft", invoice_gib_status="Taslak", total_amount=11),
-        _row(order_number="LOCAL", invoice_id="l1", is_invoiced=True, e_type="paper", total_amount=12),
-        _row(order_number="NEVER", invoice_id="n1", is_invoiced=True, e_type="e_archive", invoice_gib_status="Gönderilmedi", total_amount=13),
         _row(
-            order_number="ERR", invoice_id="e1", is_invoiced=True, einvoice_state="error",
-            invoice_gib_status="Hata: şema", invoice_gib_uuid="uuid-err", total_amount=14,
+            order_number="DRAFT", invoice_id="d1", is_invoiced=False, invoice_e_type="e_archive",
+            einvoice_state="draft", invoice_gib_status="Taslak", total_amount=11,
         ),
-        _row(order_number="SENT", invoice_id="s1", is_invoiced=True, einvoice_state="sent", gib_invoice_id="GIB1", total_amount=15),
-        _row(order_number="QUEUE", invoice_id="q1", is_invoiced=True, einvoice_state="queued", total_amount=16),
-        _row(order_number="ACC", invoice_id="a1", is_invoiced=True, einvoice_state="accepted", total_amount=17),
-        _row(order_number="UUID", invoice_id="u1", is_invoiced=True, invoice_gib_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", total_amount=18),
+        _row(order_number="PAPER", invoice_id="p1", is_invoiced=True, invoice_e_type="paper", total_amount=12),
+        _row(order_number="SLIP", invoice_id="g1", is_invoiced=True, invoice_e_type="expense_slip", total_amount=19),
+        _row(
+            order_number="NEVER", invoice_id="n1", is_invoiced=True, invoice_e_type="e_archive",
+            invoice_gib_status="Gönderilmedi", total_amount=13,
+        ),
+        _row(
+            order_number="ERR", invoice_id="e1", is_invoiced=True, invoice_e_type="e_archive",
+            einvoice_state="error", invoice_gib_status="Hata: şema", invoice_gib_uuid="uuid-err", total_amount=14,
+        ),
+        _row(
+            order_number="SENT", invoice_id="s1", is_invoiced=True, invoice_e_type="e_archive",
+            einvoice_state="sent", gib_invoice_id="GIB1", total_amount=15,
+        ),
+        _row(order_number="QUEUE", invoice_id="q1", is_invoiced=True, invoice_e_type="e_invoice", einvoice_state="queued", total_amount=16),
+        _row(order_number="ACC", invoice_id="a1", is_invoiced=True, invoice_e_type="e_invoice", einvoice_state="accepted", total_amount=17),
+        _row(
+            order_number="UUID", invoice_id="u1", is_invoiced=True, invoice_e_type="e_archive",
+            invoice_gib_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", total_amount=18,
+        ),
     ]
+    assert order_einvoice_unsent(rows[1]) is True
+    assert order_einvoice_unsent(rows[2]) is False
+    assert order_einvoice_unsent(rows[3]) is False
+    assert order_einvoice_unsent(rows[5]) is True
+    assert order_einvoice_unsent(rows[6]) is False
+    assert order_einvoice_unsent(_row(invoice_id="x", e_type="paper")) is False
+    assert order_einvoice_unsent(_row(
+        invoice_id="x", invoice_e_type="paper", einvoice_state="error", invoice_gib_status="Hata: şema",
+    )) is False
+    assert order_einvoice_unsent(_row(invoice_id="x", invoice_e_type="expense_slip", einvoice_state="error")) is False
+    assert order_einvoice_unsent(_row(invoice_id="x", e_type="e_archive", einvoice_state="draft")) is True
+
     filt = OrderListFilter(invoiced="einvoice_unsent", sort="number_asc")
     page1 = query_orders(rows, filt, page=1, page_size=2)
-    assert page1["total"] == 4
-    assert page1["total_amount"] == 50
+    assert page1["total"] == 3
+    assert page1["total_amount"] == 38
     assert page1["has_more"] is True
     assert _ids(page1) == ["DRAFT", "ERR"]
     page2 = query_orders(rows, filt, page=2, page_size=2)
-    assert _ids(page2) == ["LOCAL", "NEVER"]
-    assert page2["total"] == 4
-    assert page2["total_amount"] == 50
+    assert _ids(page2) == ["NEVER"]
+    assert page2["total"] == 3
+    assert page2["total_amount"] == 38
     assert page2["has_more"] is False
 
     assert _ids(query_orders(rows, OrderListFilter(invoiced="no", sort="number_asc"))) == ["NONE"]
     yes = set(_ids(query_orders(rows, OrderListFilter(invoiced="yes", sort="number_asc"), page=1, page_size=50)))
-    assert yes == {"DRAFT", "LOCAL", "NEVER", "ERR", "SENT", "QUEUE", "ACC", "UUID"}
+    assert yes == {"DRAFT", "PAPER", "SLIP", "NEVER", "ERR", "SENT", "QUEUE", "ACC", "UUID"}
     einv = set(_ids(query_orders(rows, OrderListFilter(invoiced="einvoice", sort="number_asc"), page=1, page_size=50)))
     assert einv == {"SENT", "QUEUE", "ACC", "UUID", "ERR"}

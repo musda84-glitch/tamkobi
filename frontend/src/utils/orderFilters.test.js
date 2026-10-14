@@ -129,36 +129,43 @@ test("channel invoice cargo and doc filters", () => {
   expect(applyOrderFilters(rows, { ...base, invoiced: "yes" }).map((o) => o.order_number).sort()).toEqual(["G", "T"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "no" }).map((o) => o.order_number).sort()).toEqual(["B", "D"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice" }).map((o) => o.order_number)).toEqual(["G"]);
-  expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice_unsent" }).map((o) => o.order_number)).toEqual(["T"]);
+  expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice_unsent" }).map((o) => o.order_number)).toEqual([]);
   expect(applyOrderFilters(rows, { ...base, cargo: "yes" }).map((o) => o.order_number)).toEqual(["T"]);
   expect(applyOrderFilters(rows, { ...base, cargo: "no" }).map((o) => o.order_number).sort()).toEqual(["B", "D", "G"]);
   expect(applyOrderFilters(rows, { ...base, docStatus: ["dispatched"] }).map((o) => o.order_number)).toEqual(["D"]);
   expect(applyOrderFilters(rows, { ...base, docStatus: ["invoiced"] }).map((o) => o.order_number).sort()).toEqual(["G", "T"]);
 });
 
-test("einvoice_unsent keeps draft, error and never-sent invoices off GİB", () => {
+test("einvoice_unsent keeps e-archive draft and error, drops paper slip and GİB", () => {
   const rows = [
     { order_number: "NONE", order_status: "pending", invoice_id: "" },
-    { order_number: "DRAFT", order_status: "approved", invoice_id: "d1", is_invoiced: false, einvoice_state: "draft", invoice_gib_status: "Taslak" },
-    { order_number: "LOCAL", order_status: "approved", invoice_id: "l1", is_invoiced: true, e_type: "paper" },
-    { order_number: "NEVER", order_status: "approved", invoice_id: "n1", is_invoiced: true, e_type: "e_archive", invoice_gib_status: "Gönderilmedi" },
-    { order_number: "ERR", order_status: "approved", invoice_id: "e1", is_invoiced: true, einvoice_state: "error", invoice_gib_status: "Hata: şema", invoice_gib_uuid: "uuid-err" },
-    { order_number: "SENT", order_status: "approved", invoice_id: "s1", is_invoiced: true, einvoice_state: "sent", gib_invoice_id: "GIB1" },
-    { order_number: "QUEUE", order_status: "approved", invoice_id: "q1", is_invoiced: true, einvoice_state: "queued" },
-    { order_number: "UUID", order_status: "approved", invoice_id: "u1", invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" },
+    { order_number: "DRAFT", order_status: "approved", invoice_id: "d1", is_invoiced: false, invoice_e_type: "e_archive", einvoice_state: "draft", invoice_gib_status: "Taslak" },
+    { order_number: "PAPER", order_status: "approved", invoice_id: "p1", is_invoiced: true, invoice_e_type: "paper" },
+    { order_number: "SLIP", order_status: "approved", invoice_id: "g1", is_invoiced: true, invoice_e_type: "expense_slip" },
+    { order_number: "NEVER", order_status: "approved", invoice_id: "n1", is_invoiced: true, invoice_e_type: "e_archive", invoice_gib_status: "Gönderilmedi" },
+    { order_number: "ERR", order_status: "approved", invoice_id: "e1", is_invoiced: true, invoice_e_type: "e_archive", einvoice_state: "error", invoice_gib_status: "Hata: şema", invoice_gib_uuid: "uuid-err" },
+    { order_number: "SENT", order_status: "approved", invoice_id: "s1", is_invoiced: true, invoice_e_type: "e_archive", einvoice_state: "sent", gib_invoice_id: "GIB1" },
+    { order_number: "QUEUE", order_status: "approved", invoice_id: "q1", is_invoiced: true, invoice_e_type: "e_invoice", einvoice_state: "queued" },
+    { order_number: "UUID", order_status: "approved", invoice_id: "u1", invoice_e_type: "e_archive", invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" },
   ];
   const base = { ...ORDER_FILTER_DEFAULTS, sort: "number" };
   expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice_unsent" }).map((o) => o.order_number).sort())
-    .toEqual(["DRAFT", "ERR", "LOCAL", "NEVER"]);
+    .toEqual(["DRAFT", "ERR", "NEVER"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice" }).map((o) => o.order_number).sort())
     .toEqual(["ERR", "QUEUE", "SENT", "UUID"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "yes" }).map((o) => o.order_number).sort())
-    .toEqual(["DRAFT", "ERR", "LOCAL", "NEVER", "QUEUE", "SENT", "UUID"]);
+    .toEqual(["DRAFT", "ERR", "NEVER", "PAPER", "QUEUE", "SENT", "SLIP", "UUID"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "no" }).map((o) => o.order_number)).toEqual(["NONE"]);
   expect(orderInvoiceNotSentToGib(rows[1])).toBe(true);
-  expect(orderInvoiceNotSentToGib(rows[4])).toBe(true);
-  expect(orderInvoiceNotSentToGib(rows[5])).toBe(false);
+  expect(orderInvoiceNotSentToGib(rows[2])).toBe(false);
+  expect(orderInvoiceNotSentToGib(rows[3])).toBe(false);
+  expect(orderInvoiceNotSentToGib(rows[5])).toBe(true);
+  expect(orderInvoiceNotSentToGib(rows[6])).toBe(false);
   expect(orderInvoiceNotSentToGib(rows[0])).toBe(false);
+  expect(orderInvoiceNotSentToGib({ invoice_id: "x", e_type: "paper" })).toBe(false);
+  expect(orderInvoiceNotSentToGib({ invoice_id: "x", invoice_e_type: "paper", einvoice_state: "error", invoice_gib_status: "Hata: şema" })).toBe(false);
+  expect(orderInvoiceNotSentToGib({ invoice_id: "x", invoice_e_type: "expense_slip", einvoice_state: "error" })).toBe(false);
+  expect(orderInvoiceNotSentToGib({ invoice_id: "x", e_type: "e_archive", einvoice_state: "draft" })).toBe(true);
   const params = buildOrderListParams(
     { ...ORDER_FILTER_DEFAULTS, invoiced: "einvoice_unsent" },
     { companyId: "c1", page: 2, pageSize: 50 },
