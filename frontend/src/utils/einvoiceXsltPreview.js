@@ -103,7 +103,7 @@ export function extractXsltLogo(xslt) {
   const re = /(?:src|href)\s*=\s*["'](data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+)["']/gi;
   let best = "";
   let m;
-  const text = String(xslt || "");
+  const text = String(xslt || "").replace(/<div class="inv-stamp"[\s\S]*?<\/div>/gi, "");
   while ((m = re.exec(text))) {
     const url = m[1].replace(/\s+/g, "");
     if (url.length > best.length) best = url;

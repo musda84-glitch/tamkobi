@@ -55,6 +55,12 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.blocks.find((b) => b.id === "spacer").hidden).toBe(true);
   expect(L.blocks.find((b) => b.id === "spacer").span).toBe(4);
   expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "stamp").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "stamp").span).toBe(6);
+  expect(L.stampImage).toBe("");
+  expect(L.stampSize).toBe(128);
+  expect(L.stampAlign).toBe("right");
+  expect(L.stampKnockoutWhite).toBe(false);
   expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "name").hidden).toBe(false);
   expect(L.metaFields.find((f) => f.id === "number").hidden).toBe(false);
@@ -219,6 +225,7 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).not.toMatch(/<td><xsl:value-of select="cbc:InvoicedQuantity\/@unitCode"\/><\/td>/);
   expect(xslt).not.toContain("E-Fatura Logo");
   expect(xslt).not.toContain("E-Arşiv Logo");
+  expect(xslt).not.toContain('class="inv-stamp"');
 });
 
 test("layoutToXslt includes added line columns and extra blocks", () => {
@@ -719,6 +726,7 @@ test("classic İşNet layout places logo and QR and hides an empty description c
     }
     expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
     expect(xslt).not.toMatch(/<xsl:stylesheet[^>]*version="2\.0"/);
+    expect(xslt).not.toContain('class="inv-stamp"');
   }
 });
 
@@ -739,4 +747,51 @@ test("line KDV, iskonto and miktar use Turkish XSLT 1.0 paths", () => {
   expect(xslt).toContain("DocumentTypeCode='QRCODE'");
   expect(xslt).toContain("qrCodeImageString");
   expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
+});
+
+const STAMP_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+test("layoutToXslt embeds a stamp data URI for e-Fatura and e-Arşiv", () => {
+  for (const kind of ["e_invoice", "e_archive"]) {
+    const xslt = layoutToXslt(normalizeLayout({
+      kind,
+      stampImage: STAMP_PNG,
+      stampSize: 160,
+      stampAlign: "center",
+      blocks: [{ id: "stamp", hidden: false, span: 6 }],
+    }, kind), kind);
+    expect(xslt).toContain(STAMP_PNG);
+    expect(xslt).toContain('alt="Kaşe / İmza"');
+    expect(xslt).toContain('class="inv-stamp"');
+    expect(xslt).toContain('align="center"');
+    expect(xslt).toContain("text-align:center");
+    expect(xslt).toContain("width:160px");
+    expect(xslt).toContain('width="50%"');
+    expect(xslt).not.toContain("cdn.example");
+    expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
+    expect(xslt).not.toMatch(/version="2\.0"/);
+  }
+  const hidden = layoutToXslt(normalizeLayout({
+    stampImage: STAMP_PNG,
+    blocks: [{ id: "stamp", hidden: true }],
+  }));
+  expect(hidden).not.toContain('class="inv-stamp"');
+  expect(hidden).not.toContain(STAMP_PNG);
+});
+
+test("stamp image drops http urls and payloads over 150 KB", () => {
+  const http = normalizeLayout({ stampImage: "https://cdn.example/stamp.png", blocks: [{ id: "stamp" }] });
+  expect(http.stampImage).toBe("");
+  expect(http.stampAlign).toBe("right");
+  expect(http.stampSize).toBe(128);
+  const weird = normalizeLayout({ stampImage: STAMP_PNG, stampSize: 50, stampAlign: "top" });
+  expect(weird.stampImage).toBe(STAMP_PNG);
+  expect(weird.stampSize).toBe(128);
+  expect(weird.stampAlign).toBe("right");
+  const huge = `data:image/png;base64,${"A".repeat(210000)}`;
+  const dropped = normalizeLayout({ stampImage: huge, blocks: [{ id: "stamp", hidden: false }] });
+  expect(dropped.stampImage).toBe("");
+  const xslt = layoutToXslt(dropped);
+  expect(xslt).not.toContain(huge);
+  expect(xslt).not.toContain("https://cdn.example/stamp.png");
 });
