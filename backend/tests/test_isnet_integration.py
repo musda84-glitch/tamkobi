@@ -789,6 +789,84 @@ def test_isnet_build_ubl_withholding_tevkifat():
     assert "<cac:Signature>" in xml
 
 
+def _assert_no_visual_embed(xml: str, filename: str) -> None:
+    import base64
+
+    import ubl_export
+
+    ns = {
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+    }
+    visual = {"QRCODE", "KAREKOD", "LOGO", "IMZA"}
+    root = ET.fromstring(xml)
+    ubl_export.assert_send_ready_has_no_visuals(root)
+    blobs = []
+    for adr in root.findall("cac:AdditionalDocumentReference", ns):
+        for tag in ("DocumentType", "DocumentTypeCode", "ID"):
+            token = "".join((adr.findtext(f"cbc:{tag}", default="", namespaces=ns) or "").strip().upper().replace("İ", "I").split())
+            assert token not in visual
+        blob = adr.find("cac:Attachment/cbc:EmbeddedDocumentBinaryObject", ns)
+        if blob is None:
+            continue
+        blobs.append(blob)
+        mime = (blob.get("mimeCode") or "").lower()
+        assert not mime.startswith("image/")
+        assert mime == "application/xml"
+        assert (blob.get("filename") or "") == filename
+    assert len(blobs) == 1
+    raw = base64.b64decode(blobs[0].text or "")
+    assert b"qrCodeImageString" in raw
+    assert b"firmaLogoImageString" in raw
+    assert b"firmaImzaImageString" in raw
+
+
+def test_isnet_build_ubl_send_path_has_xslt_qr_placeholder_not_image():
+    """isnet.build_ubl (send_ready) görseli UBL'e gömmez; karekod XSLT yer tutucusundadır."""
+    from einvoice_classic_xslt import classic_isnet_xslt
+
+    inv = {
+        "invoice_number": "TA202600000053",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TICARIFATURA",
+        "issue_date": "2026-10-14",
+        "items": [{"name": "Kalem", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    company = {"name": "Demo", "tax_number": "4810173324", "city": "İstanbul", "address": "Cadde 1", "tax_office": "Tuzla"}
+    contact = {"name": "Alıcı", "tax_number_or_id": "1234567890", "city": "Ankara", "address": "Sokak 2"}
+    xml, ettn, inv_id = isnet.build_ubl(inv, company, contact, xslt=classic_isnet_xslt("e_invoice"))
+    assert inv_id == "TA202600000053"
+    assert ettn
+    _assert_no_visual_embed(xml, "efatura.xslt")
+    archive = {**inv, "e_type": "e_archive", "gib_scenario": "EARSIVFATURA", "invoice_number": "EAR202600000053"}
+    arc_xml, _, arc_id = isnet.build_ubl(archive, company, contact, xslt=classic_isnet_xslt("e_archive"))
+    assert arc_id == "EAR202600000053"
+    _assert_no_visual_embed(arc_xml, "earsiv.xslt")
+
+
+def test_isnet_build_despatch_ubl_send_path_has_no_visual_embed():
+    from einvoice_classic_xslt import classic_isnet_xslt
+
+    inv = {
+        "invoice_number": "IRS2026000000053",
+        "invoice_type": "dispatch",
+        "e_type": "e_dispatch",
+        "issue_date": "2026-10-14",
+        "despatch_plate": "34ABC123",
+        "items": [{"name": "Koli", "quantity": 1, "unit": "Adet", "unit_price": 10, "total": 10}],
+    }
+    company = {"name": "Demo", "tax_number": "4810173324", "city": "İstanbul", "address": "Cadde 1", "tax_office": "Tuzla"}
+    contact = {"name": "Alıcı", "tax_number_or_id": "1234567890", "city": "Ankara", "address": "Sokak 2"}
+    xml, ettn, inv_id = isnet.build_despatch_ubl(inv, company, contact, xslt=classic_isnet_xslt("e_dispatch"))
+    assert inv_id == "IRS2026000000053"
+    assert ettn
+    _assert_no_visual_embed(xml, "eirsaliye.xslt")
+
+
 def test_serialize_structured_uses_invoice_element():
     xml = isnet._serialize_ein(
         {

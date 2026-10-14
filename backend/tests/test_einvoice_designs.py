@@ -188,9 +188,13 @@ def test_builtin_files_exist():
     for spec in ed.BUILTIN:
         text = ed._builtin_xslt_for_kind(spec["kind"])
         assert "<xsl:stylesheet" in text
+        assert "qrCodeImageString" in text
+        assert "firmaLogoImageString" in text
+        assert "DocumentType='QRCODE'" not in text
+        assert "DocumentTypeCode='QRCODE'" not in text
         if spec["kind"] == "e_dispatch":
             assert "DespatchAdvice" in text
-            assert "qrCodeImageString" in text
+            assert "firmaImzaImageString" in text
         else:
             assert "n1:Invoice" in text
 

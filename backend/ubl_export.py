@@ -1,7 +1,4 @@
 """Giden e-Fatura / e-Arşiv UBL-TR XML üretimi (imzasız arşiv kopyası). Gelen parse edocs.parse_ubl ile sınırlıdır."""
-import base64
-import io
-import json
 import re
 import uuid
 import xml.etree.ElementTree as ET
@@ -554,8 +551,7 @@ def gib_qr_fields(
 ) -> Dict[str, str]:
     """GİB karekod alanları: satıcı VKN, alıcı VKN, ETTN, tarih, tutarlar.
 
-    XSLT 1.0 bitmap üretemez (ve harici QR servisi GİB görüntülemede yok).
-    Bu sözlük PNG'ye çevrilip AdditionalDocumentReference/QRCODE olarak gömülür.
+    İşNet karekod görselini XSLT şablonundaki qrCodeImageString yer tutucusuna basar.
     Oran bazlı: her KDV oranı için kdvmatrah(<oran>) ve hesaplanankdv(<oran>)
     satır TaxSubtotal tutarlarından toplanır.
     """
@@ -588,52 +584,56 @@ def gib_qr_fields(
     return fields
 
 
-def _qr_png_b64(payload: str) -> str:
-    import qrcode
-
-    img = qrcode.make(payload, box_size=4, border=1)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+_VISUAL_DOC_TYPES = frozenset({"QRCODE", "KAREKOD", "LOGO", "IMZA"})
 
 
-def _add_invoice_qr(
-    root,
-    inv: Dict[str, Any],
-    seller: Dict[str, Any],
-    buyer: Dict[str, Any],
-    *,
-    profile: str,
-    currency: str,
-    subtotal: float,
-    vat_total: float,
-    grand: float,
-    issue_date: str,
-    tip: str = "",
-) -> None:
-    fields = gib_qr_fields(
-        inv, seller, buyer,
-        profile=profile, currency=currency, subtotal=subtotal, vat_total=vat_total,
-        grand=grand, issue_date=issue_date, tip=tip,
+def _fold_doc_token(value: Any) -> str:
+    text = str(value or "").strip().upper().replace("İ", "I")
+    return re.sub(r"\s+", "", text)
+
+
+def _visual_ubl_error(found: str) -> str:
+    return (
+        "Belge gönderilemedi. İşNet, belge içerisinde yer alan logo, imza, QR kod veya barkod "
+        "benzeri görsel içeriklerin XSLT şablonu üzerinden iletilmesini ister. "
+        f"UBL ekine gömülü görsel kabul edilmez ({found}). "
+        "İzin verilen tek gömülü ek XSLT'dir (application/xml, .xslt). "
+        "Karekod için qrCodeImageString, logo için firmaLogoImageString, "
+        "imza için firmaImzaImageString yer tutucusu kullanılır."
     )
-    try:
-        b64 = _qr_png_b64(json.dumps(fields, ensure_ascii=False, separators=(",", ":")))
-    except Exception:
-        return
-    adr = _cac(root, "AdditionalDocumentReference")
-    _cbc(adr, "ID", "QRCODE")
-    _cbc(adr, "IssueDate", issue_date)
-    _cbc(adr, "DocumentTypeCode", "QRCODE")
-    _cbc(adr, "DocumentType", "QRCODE")
-    att = _cac(adr, "Attachment")
-    _cbc(
-        att,
-        "EmbeddedDocumentBinaryObject",
-        b64,
-        mimeCode="image/png",
-        encodingCode="Base64",
-        filename="qr.png",
-    )
+
+
+def assert_send_ready_has_no_visuals(root) -> None:
+    """send_ready UBL: görsel AdditionalDocumentReference yok; gömülü ek yalnızca XSLT."""
+    for adr in root.findall(f".//{_q(CAC, 'AdditionalDocumentReference')}"):
+        for label, raw in (
+            ("DocumentType", adr.findtext(_q(CBC, "DocumentType"))),
+            ("DocumentTypeCode", adr.findtext(_q(CBC, "DocumentTypeCode"))),
+            ("ID", adr.findtext(_q(CBC, "ID"))),
+        ):
+            token = _fold_doc_token(raw)
+            if token in _VISUAL_DOC_TYPES:
+                raise ValueError(_visual_ubl_error(f"{label}={token}"))
+        for blob in adr.findall(f".//{_q(CBC, 'EmbeddedDocumentBinaryObject')}"):
+            mime = (blob.get("mimeCode") or "").strip().lower()
+            filename = (blob.get("filename") or "").strip()
+            if mime.startswith("image/"):
+                raise ValueError(_visual_ubl_error(
+                    f"mimeCode={mime}, dosya={filename or 'adsız'}"
+                ))
+            if mime != "application/xml" or not filename.lower().endswith(".xslt"):
+                raise ValueError(_visual_ubl_error(
+                    f"mimeCode={mime or '—'}, dosya={filename or 'adsız'}"
+                ))
+            kinds = {
+                _fold_doc_token(adr.findtext(_q(CBC, "DocumentType"))),
+                _fold_doc_token(adr.findtext(_q(CBC, "DocumentTypeCode"))),
+            }
+            kinds.discard("")
+            if "XSLT" not in kinds:
+                raise ValueError(_visual_ubl_error(
+                    f"DocumentType={next(iter(kinds), '—')}, dosya={filename}"
+                ))
 
 
 def attach_xslt_stylesheet(root, xslt: str, issue_date: str, filename: str = "efatura.xslt") -> None:
@@ -792,11 +792,6 @@ def build_invoice_ubl(
             issue_date,
             filename="earsiv.xslt" if (e_type == "e_archive" or profile == "EARSIVFATURA") else "efatura.xslt",
         )
-    _add_invoice_qr(
-        root, inv, seller, buyer,
-        profile=profile, currency=currency, subtotal=subtotal, vat_total=vat_total,
-        grand=grand, issue_date=issue_date, tip=type_code,
-    )
 
     seller_party = {
         "name": seller.get("name"),
@@ -942,6 +937,8 @@ def build_invoice_ubl(
         unit_price = float(it.get("unit_price") or 0)
         _cbc(price, "PriceAmount", _amt(unit_price), currencyID=currency)
 
+    if send_ready:
+        assert_send_ready_has_no_visuals(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -1163,6 +1160,8 @@ def build_despatch_ubl(
             goods = _cac(shipment_line, "GoodsItem")
             _cbc(goods, "ValueAmount", _amt(unit_price * qty), currencyID=(inv.get("currency") or "TRY").upper())
 
+    if send_ready:
+        assert_send_ready_has_no_visuals(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 

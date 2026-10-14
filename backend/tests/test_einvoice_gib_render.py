@@ -270,6 +270,35 @@ def _assert_invoice(html: str):
     assert html.count("İnönü Bulvarı No:2 Çankaya / Ankara") == 1
 
 
+def test_preview_renders_without_qr_attachment():
+    """Önizleme, UBL'de QRCODE eki olmadan İşNet yer tutucusundan karekod basar."""
+    xml = _invoice_xml()
+    assert b"QRCODE" not in xml
+    assert b"EmbeddedDocumentBinaryObject" not in xml
+    sources = [
+        classic_isnet_xslt("e_invoice"),
+        classic_isnet_xslt("e_archive"),
+        classic_isnet_xslt("e_dispatch"),
+        _designer_xslt("e_invoice"),
+        _designer_xslt("e_archive"),
+        _designer_xslt("e_dispatch"),
+        _designer_xslt("render"),
+    ]
+    for xslt in sources:
+        assert "qrCodeImageString" in xslt
+        assert "firmaLogoImageString" in xslt
+        assert "firmaImzaImageString" in xslt
+        assert "DocumentType='QRCODE'" not in xslt
+        assert "DocumentTypeCode='QRCODE'" not in xslt
+    html = _transform(classic_isnet_xslt("e_invoice"), xml)
+    designer = _transform(_designer_xslt("render"), xml)
+    for doc in (html, designer):
+        assert doc.strip()
+        assert "XSLT derlenemedi" not in doc
+        assert _PNG in doc
+        assert "qrCodeImageString" not in doc
+
+
 @pytest.mark.parametrize("kind", ["e_invoice", "e_archive"])
 @pytest.mark.parametrize("source", ["classic", "designer"])
 def test_invoice_html_placeholders_fields_and_address(kind, source):
@@ -441,19 +470,15 @@ def test_ticari_ubl_discount_payment_balance_archive_qr():
     _sub(bal, "cbc", "DocumentType", "BAKIYE")
     root.find("cac:AccountingSupplierParty", _UBL).addprevious(bal)
 
-    marker = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
-    qr = etree.Element(_q("cac", "AdditionalDocumentReference"))
-    _sub(qr, "cbc", "ID", "QRCODE")
-    _sub(qr, "cbc", "IssueDate", "2026-09-30")
-    _sub(qr, "cbc", "DocumentTypeCode", "QRCODE")
-    _sub(qr, "cbc", "DocumentType", "QRCODE")
-    att = _sub(qr, "cac", "Attachment")
-    _sub(att, "cbc", "EmbeddedDocumentBinaryObject", marker, mimeCode="image/png", filename="qr.png")
-    root.find("cac:AccountingSupplierParty", _UBL).addprevious(qr)
-
     xslt = _designer_xslt("render")
     assert "td.inv-foot" in xslt
     assert ".inv-balance { border:1px solid" not in xslt
+    assert "qrCodeImageString" in xslt
+    assert "firmaLogoImageString" in xslt
+    assert "firmaImzaImageString" in xslt
+    assert "DocumentType='QRCODE'" not in xslt
+    assert "DocumentTypeCode='QRCODE'" not in xslt
+    assert b"QRCODE" not in etree.tostring(root)
     html = _transform(xslt, etree.tostring(root))
     assert "e-Arşiv Fatura" in html
     assert "%12,5" in html
@@ -467,7 +492,7 @@ def test_ticari_ubl_discount_payment_balance_archive_qr():
     assert rows, html
     cells = rows[0].xpath("./td[contains(@class, 'inv-foot')]")
     assert len(cells) == 2
-    assert marker in html
+    assert _PNG in html
     assert "qrCodeImageString" not in html
 
 
@@ -480,7 +505,7 @@ def test_payment_means_without_payee_account_hides_iban_heading():
     assert "BANKA HESAP BİLGİLERİMİZ" not in html
 
 
-def test_issued_ubl_drops_draft_marker_and_embeds_gib_qr():
+def test_issued_ubl_drops_draft_marker_without_embedded_qr():
     note = "Sipariş No: ORD-100 onayında oluşturuldu (taslak)."
     assert ubl_export.strip_issued_invoice_note(note) == "Sipariş No: ORD-100 onayında oluşturuldu."
     assert "(taslak)" in ubl_export.strip_issued_invoice_note("Müşteri notu (taslak) kalsın")
@@ -503,8 +528,9 @@ def test_issued_ubl_drops_draft_marker_and_embeds_gib_qr():
     text = xml.decode("utf-8")
     assert "(taslak)" not in text
     assert "oluşturuldu" in text
-    assert "QRCODE" in text
-    assert 'filename="qr.png"' in text
+    assert "QRCODE" not in text
+    assert 'filename="qr.png"' not in text
+    assert "image/" not in text
     fields = ubl_export.gib_qr_fields(
         inv, seller, buyer,
         profile="TICARIFATURA", currency="TRY", subtotal=1, vat_total=0.2,
