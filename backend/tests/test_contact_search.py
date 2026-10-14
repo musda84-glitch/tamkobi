@@ -1,5 +1,5 @@
 """Cari arama: 1000+ kayıt, kelime ortası, Türkçe katlama, ikisi-birden tipi."""
-from contact_search import fold_tr, search_contacts
+from contact_search import extract_firma_adi, fold_tr, resolve_suggest_name, search_contacts
 from contact_tax import contact_tax_patch, plan_sales_invoice_tax_backfill
 
 
@@ -94,6 +94,72 @@ def test_empty_query_returns_recent_active_contacts():
     assert [c["_id"] for c in res["items"]] == ["c3", "c2"]
     fallback = search_contacts(contacts, "   ", recent_ids=[])
     assert fallback["items"][0]["_id"] == "c1"
+
+
+def test_extract_firma_adi_is_turkish_case_insensitive():
+    raw = "FİRMA ADI: MOR PLASTİK İSTANBUL"
+    assert len(fold_tr(raw)) == len(raw)
+    assert extract_firma_adi("Gelen FAST · Firma Adı: MOR PLASTIK ISTANBUL · Açıklama: fatura") == "MOR PLASTIK ISTANBUL"
+    assert extract_firma_adi("FIRMA ADI: MOR PLASTIK İSTANBUL") == "MOR PLASTIK İSTANBUL"
+    assert extract_firma_adi("firma adı MOR PLASTIK") == "MOR PLASTIK"
+    assert extract_firma_adi("FİRMA ADI - Mor Plastik Sanayi") == "Mor Plastik Sanayi"
+    assert extract_firma_adi("Gelen EFT") == ""
+    assert resolve_suggest_name("", "Gelen EFT") == ""
+    assert resolve_suggest_name("Gelen havale", "MOR PLASTIK ISTANBUL") == "MOR PLASTIK ISTANBUL"
+
+
+def test_firma_adi_suggestions_rank_closest_and_skip_city_only():
+    contacts = [
+        _row(1, name="Mor Plastik Sanayi ve Ticaret Ltd", company_title="MOR PLASTIK", type="supplier"),
+        _row(2, name="İstanbul Cam Sanayi", type="supplier"),
+        _row(3, name="Plastik Dünyası", type="customer"),
+        _row(4, name="MOR PLASTİK İSTANBUL", type="both"),
+        _row(5, name="Pasif Plastik", type="both", is_active=False),
+    ]
+    res = search_contacts(
+        contacts, "",
+        suggest="Ödeme Firma Adı: MOR PLASTIK ISTANBUL Açıklama: havale",
+    )
+    ids = [c["_id"] for c in res["suggestions"]]
+    assert res["suggest_query"] == "MOR PLASTIK ISTANBUL"
+    assert ids[0] == "c4"
+    assert "c1" in ids
+    assert "c2" not in ids
+    assert "c3" not in ids
+    assert "c5" not in ids
+    folded = search_contacts(contacts, "", suggest="firma adı: mor plastik istanbul")
+    assert folded["suggestions"][0]["_id"] == "c4"
+    by_party = search_contacts(contacts, "ersay", counterparty="MOR PLASTIK ISTANBUL")
+    assert by_party["suggestions"][0]["_id"] == "c4"
+    assert by_party["items"] == []
+
+
+def test_suggestions_do_not_change_search_paging():
+    contacts = [_row(i, name=f"ERSAY kalem {i:04d}") for i in range(25)]
+    contacts[0]["name"] = "MOR PLASTIK ISTANBUL"
+    page1 = search_contacts(
+        contacts, "ersay", page=1, limit=20,
+        suggest="Firma Adı: MOR PLASTIK ISTANBUL",
+    )
+    assert page1["suggestions"][0]["_id"] == "c0"
+    assert page1["total"] == 24
+    assert len(page1["items"]) == 20
+    assert page1["has_more"] is True
+    assert all(c["_id"] != "c0" for c in page1["items"])
+
+
+def test_exclude_type_hides_customers_from_search_and_suggestions():
+    contacts = [
+        _row(1, name="MOR PLASTIK ISTANBUL", type="customer"),
+        _row(2, name="Mor Plastik Tedarik", type="supplier", company_title="MOR PLASTIK"),
+    ]
+    res = search_contacts(
+        contacts, "",
+        suggest="Firma Adı: MOR PLASTIK ISTANBUL",
+        exclude_types=["customer"],
+    )
+    assert [c["_id"] for c in res["suggestions"]] == ["c2"]
+    assert search_contacts(contacts, "plastik", exclude_types=["customer"])["items"][0]["_id"] == "c2"
 
 
 def test_contact_tax_patch_fills_only_blank_fields():

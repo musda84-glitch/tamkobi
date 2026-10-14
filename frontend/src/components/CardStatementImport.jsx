@@ -8,6 +8,7 @@ import { useEscape } from "../utils/useEscape";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { PanelBoundary } from "./saas/PanelBoundary";
+import { ContactSearchSelect } from "./ContactSearchSelect";
 import {
   BANK_STMT_ACCEPT,
   CARD_STMT_ACCEPT,
@@ -109,8 +110,12 @@ const CardStatementImportBody = ({ account, contacts = [], initialFile = null, o
     if (j !== i) return row;
     const next = { ...row, ...p };
     if (p.contact_id !== undefined) {
-      const c = list.find((x) => (x.id || x._id) === p.contact_id);
-      next.contact_name = c?.name || "";
+      if (Object.prototype.hasOwnProperty.call(p, "contact_name")) {
+        next.contact_name = p.contact_name || "";
+      } else {
+        const c = list.find((x) => (x.id || x._id) === p.contact_id);
+        next.contact_name = c?.name || "";
+      }
       if (p.contact_id && next.kind === "masraf" && row.suggested_contact_id === p.contact_id) {
         next.kind = "cari_odeme";
       }
@@ -232,13 +237,20 @@ const CardStatementImportBody = ({ account, contacts = [], initialFile = null, o
                         </select>
                       </td>
                       <td>
-                        <select value={t.contact_id || ""} onChange={(e) => patchRow(i, { contact_id: e.target.value })} className="bg-slate-50 border border-slate-200 rounded-md p-1 max-w-[10rem]" data-testid={`${tid}-contact-${i}`}>
-                          <option value="">— Cari yok —</option>
-                          {list.map((c) => {
-                            const id = c.id || c._id;
-                            return <option key={id} value={id}>{c.name}</option>;
-                          })}
-                        </select>
+                        <ContactSearchSelect
+                          companyId={companyId}
+                          value={t.contact_id || ""}
+                          valueLabel={t.contact_name || ""}
+                          onChange={(id, c) => patchRow(i, { contact_id: id || "", contact_name: c?.name || "" })}
+                          placeholder="— Cari yok —"
+                          emptyLabel="— Cari yok —"
+                          searchPlaceholder="Cari adı, ünvan, VKN, telefon veya cari kodu"
+                          suggestText={t.description || ""}
+                          counterparty={t.counterparty || t.suggested_contact_name || ""}
+                          clearable
+                          className="min-w-[9rem] max-w-[14rem]"
+                          testId={`${tid}-contact-${i}`}
+                        />
                       </td>
                       <td>
                         <select value={t.category} onChange={(e) => patchRow(i, { category: e.target.value })} className="bg-slate-50 border border-slate-200 rounded-md p-1 max-w-[9rem]" data-testid={`${tid}-cat-${i}`}>

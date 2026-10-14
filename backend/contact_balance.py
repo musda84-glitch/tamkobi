@@ -89,6 +89,53 @@ def infer_opening_balance(stored_balance: float, movement_balance: float) -> flo
     return round(_num(stored_balance) - _num(movement_balance), 2)
 
 
+def contact_currency_code(currency: Any) -> str:
+    if isinstance(currency, dict):
+        currency = currency.get("currency")
+    code = str(currency or "TRY").strip().upper()
+    return code or "TRY"
+
+
+def _rate_value(rates: Optional[dict], code: str) -> float:
+    if not rates or not code:
+        return 0.0
+    raw = rates.get(code)
+    if isinstance(raw, dict):
+        raw = raw.get("rate") if raw.get("rate") is not None else raw.get("selling")
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def native_contact_balance(balance: Any, currency: Any = "TRY", rates: Optional[dict] = None) -> Tuple[float, str]:
+    """Cari kartındaki TRY bakiyeyi, döviz caride kendi para birimine çevir.
+
+    Kur yoksa tutar TRY kalır; yanlış birim yazılmaz. rates sayfa için tek sözlüktür.
+    """
+    amount = round(_num(balance), 2)
+    code = contact_currency_code(currency)
+    if code == "TRY":
+        return amount, "TRY"
+    rate = _rate_value(rates, code)
+    if rate <= 0:
+        return amount, "TRY"
+    return round(amount / rate, 2), code
+
+
+def stamp_search_balances(contacts: Optional[Iterable[dict]], rates: Optional[dict] = None) -> List[dict]:
+    """Arama satırına görünen bakiyeyi aynı belgeden yazar. Cari başına sorgu yok."""
+    out: List[dict] = []
+    for contact in contacts or []:
+        if not isinstance(contact, dict):
+            continue
+        amount, code = native_contact_balance(contact.get("balance"), contact.get("currency"), rates)
+        contact["balance_display"] = amount
+        contact["balance_currency"] = code
+        out.append(contact)
+    return out
+
+
 async def sync_contact_balance(db, contact_id: str) -> Tuple[float, Dict[str, Any]]:
     """Hareketlerden bakiyeyi yeniden hesapla; kaymayı düzelt. (new_balance, meta) döner."""
     contact = await db.contacts.find_one({"_id": contact_id})

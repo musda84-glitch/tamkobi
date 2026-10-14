@@ -5,15 +5,14 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction } from "../components/chips";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row } from "../components/kit";
 import { colors } from "../theme";
-import type { Contact } from "../types";
 import {
   canSubmitMatch,
   connStatusTone,
   connStatusTr,
-  contactSelectGroups,
   employeeSelectGroups,
   emptyMatchDraft,
   isPersonnelExpenseCategory,
@@ -51,7 +50,6 @@ export function BankingMatchPanel({
   const [connections, setConnections] = useState<BankConnection[]>([]);
   const [unmatched, setUnmatched] = useState<BankMatchTx[]>([]);
   const [matched, setMatched] = useState<BankMatchTx[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [expenseCats, setExpenseCats] = useState<ExpenseCategory[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [rules, setRules] = useState<MatchRule[]>([]);
@@ -64,15 +62,16 @@ export function BankingMatchPanel({
   const [active, setActive] = useState<BankMatchTx | null>(null);
   const [draft, setDraft] = useState<MatchDraft>(emptyMatchDraft());
   const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "", target_account_id: "" });
+  const [ruleContactLabel, setRuleContactLabel] = useState("");
+  const [contactLabel, setContactLabel] = useState("");
   const [partners, setPartners] = useState<Partner[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [conn, um, mt, ct, cats, emps, rl, sg, pt] = await Promise.all([
+      const [conn, um, mt, cats, emps, rl, sg, pt] = await Promise.all([
         get<BankConnection[]>(client, "/banking/connections", { company_id: companyId }).catch(() => []),
         get<BankMatchTx[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
         get<BankMatchTx[]>(client, "/banking/transactions/matched", { company_id: companyId, limit: 50 }).catch(() => []),
-        get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
         get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }).catch(() => []),
         get<MatchRule[]>(client, "/banking/match-rules", { company_id: companyId }).catch(() => []),
@@ -82,7 +81,6 @@ export function BankingMatchPanel({
       setConnections(conn || []);
       setUnmatched(um || []);
       setMatched(mt || []);
-      setContacts(ct || []);
       setExpenseCats(cats || []);
       setEmployees(emps || []);
       setRules(rl || []);
@@ -99,6 +97,7 @@ export function BankingMatchPanel({
   const openMatch = (tx: BankMatchTx) => {
     setActive(tx);
     setDraft(emptyMatchDraft(tx));
+    setContactLabel(tx.suggested_contact_name || "");
   };
 
   const run = async (key: string, fn: () => Promise<void>, ok?: string) => {
@@ -344,7 +343,15 @@ export function BankingMatchPanel({
           {canEdit ? (
             <>
               <Field label="Anahtar kelime" testID="rule-pattern-input" value={newRule.pattern} onChangeText={(v) => setNewRule({ ...newRule, pattern: v })} placeholder="örn: trendyol" />
-              <GroupedSelect label="Cari (ops.)" testID="rule-contact-select" value={newRule.contact_id} onChange={(v) => setNewRule({ ...newRule, contact_id: v })} groups={contactSelectGroups(contacts)} emptyLabel="Cari (opsiyonel)" />
+              <ContactSearchSelect
+                label="Cari (ops.)"
+                testID="rule-contact-select"
+                value={newRule.contact_id}
+                valueLabel={ruleContactLabel}
+                onChange={(id, c) => { setNewRule({ ...newRule, contact_id: id }); setRuleContactLabel(c?.name || ""); }}
+                emptyLabel="Cari (opsiyonel)"
+                placeholder="Cari adı, ünvan, VKN, telefon veya cari kodu"
+              />
               <Field label="Kategori (ops.)" testID="rule-category-input" value={newRule.category} onChangeText={(v) => setNewRule({ ...newRule, category: v })} placeholder="Pazaryeri hakediş" />
               <GroupedSelect label="Kasa / virman (ops.)" testID="rule-target-select" value={newRule.target_account_id} onChange={(v) => setNewRule({ ...newRule, target_account_id: v })} groups={transferSelectGroups(cashTargets, partners)} emptyLabel="Kasa/hesap virman (ops.)" />
               <PrimaryButton title="Kural ekle" testID="add-rule-btn" color="#7C3AED" onPress={addRule} />
@@ -419,13 +426,16 @@ export function BankingMatchPanel({
               ))}
             </Row>
             {draft.mode === "contact" ? (
-              <GroupedSelect
+              <ContactSearchSelect
                 label="Cari"
                 testID={`match-contact-select-${idOf(active)}`}
                 value={draft.contact_id}
-                onChange={(v) => setDraft({ ...draft, contact_id: v })}
-                groups={contactSelectGroups(contacts, active.suggested_contact_id)}
+                valueLabel={contactLabel}
+                onChange={(id, c) => { setDraft({ ...draft, contact_id: id }); setContactLabel(c?.name || ""); }}
                 emptyLabel="Cari seçin (boş = sadece onayla)"
+                placeholder="Cari adı, ünvan, VKN, telefon veya cari kodu"
+                suggestText={active.description || ""}
+                counterparty={active.counterparty || active.suggested_contact_name || ""}
               />
             ) : null}
             {draft.mode === "transfer" ? (

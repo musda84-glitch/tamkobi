@@ -37,4 +37,25 @@ describe("ContactSearchSelect ekranları", () => {
     expect(saha).toMatch(/<ContactSearchSelect[\s\S]*testId="saha-customer-search"/);
     expect(saha).not.toContain("custHits");
   });
+
+  test("banka eşleşme, ekstre ve kural carisi ContactSearchSelect", () => {
+    const modal = fs.readFileSync(path.join(__dirname, "../components/BankMatchModal.jsx"), "utf8");
+    expect(modal).toContain('from "./ContactSearchSelect"');
+    expect(modal).toContain('emptyLabel="Cari seçin (boş = sadece onayla)"');
+    expect(modal).toContain("suggestText={tx.description");
+    expect(modal).not.toMatch(/<select[^>]*tx-match-contact/);
+
+    const row = fs.readFileSync(path.join(__dirname, "../components/BankMatchRow.jsx"), "utf8");
+    expect(row).toContain("suggestText={tx.description");
+    expect(row).toContain('emptyLabel="Cari seçin (boş = onayla)"');
+
+    const stmt = fs.readFileSync(path.join(__dirname, "../components/CardStatementImport.jsx"), "utf8");
+    expect(stmt).toContain('from "./ContactSearchSelect"');
+    expect(stmt).toContain("suggestText={t.description");
+    expect(stmt).not.toMatch(/<select[^>]*contact-/);
+
+    const rules = fs.readFileSync(path.join(__dirname, "../components/BankConnectionsPanel.jsx"), "utf8");
+    expect(rules).toContain('testId="rule-contact-select"');
+    expect(rules).not.toMatch(/<select[^>]*rule-contact-select/);
+  });
 });

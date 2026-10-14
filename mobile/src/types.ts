@@ -84,6 +84,8 @@ export type Contact = {
   currency?: string;
   payment_method?: string;
   balance?: number;
+  balance_display?: number;
+  balance_currency?: string;
   credit_limit?: number;
   payment_term_days?: number;
   late_fee_rate?: number;

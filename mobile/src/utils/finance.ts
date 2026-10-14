@@ -96,6 +96,7 @@ export type BankTx = {
   created_by_name?: string;
   suggested_contact_id?: string;
   suggested_contact_name?: string;
+  counterparty?: string;
   related_invoice_id?: string;
   related_invoice_number?: string;
   target_account_id?: string;

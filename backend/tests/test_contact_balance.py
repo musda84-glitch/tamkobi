@@ -4,6 +4,8 @@ from contact_balance import (
     compute_contact_balance,
     infer_opening_balance,
     invoice_balance_delta,
+    native_contact_balance,
+    stamp_search_balances,
 )
 
 
@@ -100,3 +102,22 @@ def test_opening_plus_movements():
         invoices=[],
         bank_txs=[],
     ) == 506190.96
+
+
+def test_search_balance_stays_on_the_contact_and_converts_fx_once():
+    """Güncel bakiye cari belgesinden gelir; döviz kuru satır başına değil sayfa sözlüğünden."""
+    try_row = {"_id": "c1", "name": "Yerli", "balance": -12450, "currency": "TRY"}
+    usd_row = {"_id": "c2", "name": "Foreign", "balance": 3200, "currency": "usd"}
+    no_rate = {"_id": "c3", "name": "Eurosuz", "balance": 90, "currency": "EUR"}
+    stamp_search_balances([try_row, usd_row, no_rate], {"USD": 32.0})
+    assert try_row["balance"] == -12450
+    assert try_row["balance_display"] == -12450
+    assert try_row["balance_currency"] == "TRY"
+    assert usd_row["balance"] == 3200
+    assert usd_row["balance_display"] == 100
+    assert usd_row["balance_currency"] == "USD"
+    assert native_contact_balance(3200, "USD", {"USD": {"rate": 32}}) == (100.0, "USD")
+    # Kur yoksa tutar TRY kalır; 90 EUR diye yazılmaz.
+    assert no_rate["balance_display"] == 90
+    assert no_rate["balance_currency"] == "TRY"
+    assert native_contact_balance(0, None) == (0.0, "TRY")

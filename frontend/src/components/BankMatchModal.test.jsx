@@ -67,6 +67,29 @@ async function renderModal() {
   });
 }
 
+test("cari alanı aranabilir seçicidir, düz select değildir", async () => {
+  await renderModal();
+  const box = document.querySelector('[data-testid="tx-match-contact-tx1"]');
+  expect(box).toBeTruthy();
+  expect(box.tagName).not.toBe("SELECT");
+  expect(document.querySelector('[data-testid="tx-match-contact-tx1-trigger"]')).toBeTruthy();
+  expect(box.textContent).toContain("boş = sadece onayla");
+  await act(async () => {
+    document.querySelector('[data-testid="tx-match-contact-tx1-trigger"]').click();
+  });
+  await act(async () => { await Promise.resolve(); });
+  const search = document.querySelector('[data-testid="tx-match-contact-tx1-search"]');
+  expect(search).toBeTruthy();
+  const call = axios.get.mock.calls.find((c) => String(c[0]).includes("/contacts/search"));
+  expect(call).toBeTruthy();
+  expect(call[1].params).toMatchObject({
+    company_id: "comp1",
+    suggest: "MATEK DEKORASYON",
+    page: 1,
+  });
+  expect(document.querySelector('[data-testid="tx-match-contact-tx1-empty"]')?.textContent).toContain("boş = sadece onayla");
+});
+
 test("mode select has no Cari + Fatura; contact hidden until Cari", async () => {
   await renderModal();
   const mode = document.querySelector('[data-testid="tx-match-mode-tx1"]');
