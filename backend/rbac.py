@@ -143,12 +143,42 @@ FEATURE_DEFAULTS: Dict[str, bool] = {k: True for k, _, _ in FEATURES}
 PORTAL_FEATURE_KEYS = frozenset({
     "portal_atolye", "portal_pick", "portal_sayim", "portal_saha", "portal_vehicles",
 })
-# API öneki -> (özellik anahtarı, modül). En uzun önek kazanır.
-PORTAL_API_RULES = (
+# Alan (önek) — personel kapalı özellikte bu ağaca giremez. En uzun önek kazanır.
+PORTAL_AREAS = (
     ("/api/production/work-orders", "portal_atolye", "/atolye"),
     ("/api/order-picks", "portal_pick", "/sevk"),
     ("/api/warehouses/stock-counts", "portal_sayim", "/sayim"),
     ("/api/vehicles", "portal_vehicles", "/vehicles"),
+)
+# Yöntem + yol şablonu. Özellik yalnız bu saha işlemlerinde mutation_allowed atlar.
+# {id} tek yol parçasıdır. DELETE, *-settings, trash-completed, admin-trash, decide
+# ve araç oluşturma/düzenleme/silme bu listede yoktur.
+PORTAL_API_RULES = (
+    ("GET", "/api/production/work-orders", "portal_atolye", "/atolye"),
+    ("GET", "/api/production/work-orders/stations", "portal_atolye", "/atolye"),
+    ("GET", "/api/production/work-orders/pause-policy", "portal_atolye", "/atolye"),
+    # Operatör şifresi. Start/pause/finish bu doğrulama olmadan tabletten çalışmaz.
+    ("POST", "/api/production/work-orders/shopfloor-unlock", "portal_atolye", "/atolye"),
+    ("PUT", "/api/production/work-orders/{id}/assign", "portal_atolye", "/atolye"),
+    ("POST", "/api/production/work-orders/{id}/start", "portal_atolye", "/atolye"),
+    ("POST", "/api/production/work-orders/{id}/pause", "portal_atolye", "/atolye"),
+    ("POST", "/api/production/work-orders/{id}/finish", "portal_atolye", "/atolye"),
+    ("POST", "/api/production/work-orders/{id}/trash-request", "portal_atolye", "/atolye"),
+    ("GET", "/api/order-picks", "portal_pick", "/sevk"),
+    ("GET", "/api/order-picks/{id}", "portal_pick", "/sevk"),
+    ("POST", "/api/order-picks/{id}/scan", "portal_pick", "/sevk"),
+    ("POST", "/api/order-picks/{id}/adjust", "portal_pick", "/sevk"),
+    ("POST", "/api/order-picks/{id}/notify-missing", "portal_pick", "/sevk"),
+    ("POST", "/api/order-picks/{id}/complete", "portal_pick", "/sevk"),
+    ("GET", "/api/warehouses/stock-counts", "portal_sayim", "/sayim"),
+    ("POST", "/api/warehouses/stock-counts", "portal_sayim", "/sayim"),
+    ("GET", "/api/warehouses/stock-counts/{id}", "portal_sayim", "/sayim"),
+    ("POST", "/api/warehouses/stock-counts/{id}/scan", "portal_sayim", "/sayim"),
+    ("PUT", "/api/warehouses/stock-counts/{id}/items", "portal_sayim", "/sayim"),
+    ("POST", "/api/warehouses/stock-counts/{id}/complete", "portal_sayim", "/sayim"),
+    # Araçlarda filo CRUD yok; personel yalnız okur. Kendi kullanım kaydı ucu yok.
+    ("GET", "/api/vehicles", "portal_vehicles", "/vehicles"),
+    ("GET", "/api/vehicles/{id}", "portal_vehicles", "/vehicles"),
 )
 PORTAL_FEATURE_LABELS = {k: label for k, label, _ in FEATURES if k in PORTAL_FEATURE_KEYS}
 
@@ -178,15 +208,69 @@ def role_features(role: dict) -> Dict[str, bool]:
     return {k: bool(f.get(k, feature_default(code, k))) for k, _, _ in FEATURES}
 
 
-def portal_rule_for_path(path: str):
-    """Saha API kuralı: (prefix, feature_key, module_key) veya None."""
-    p = (path or "").split("?", 1)[0].rstrip("/") or "/"
+def _portal_norm_path(path: str) -> str:
+    return (path or "").split("?", 1)[0].rstrip("/") or "/"
+
+
+def _portal_template_match(template: str, path: str) -> bool:
+    tparts = template.strip("/").split("/")
+    pparts = path.strip("/").split("/")
+    if len(tparts) != len(pparts):
+        return False
+    for tp, pp in zip(tparts, pparts):
+        if len(tp) >= 2 and tp[0] == "{" and tp[-1] == "}":
+            if not pp:
+                return False
+            continue
+        if tp != pp:
+            return False
+    return True
+
+
+def portal_area_for_path(path: str):
+    """Saha API alanı: (prefix, feature_key, module_key) veya None."""
+    p = _portal_norm_path(path)
     best = None
-    for prefix, feat, mod in PORTAL_API_RULES:
+    for prefix, feat, mod in PORTAL_AREAS:
         if p == prefix or p.startswith(prefix + "/"):
             if best is None or len(prefix) > len(best[0]):
                 best = (prefix, feat, mod)
     return best
+
+
+def portal_rule_for_path(path: str, method: str = "GET"):
+    """İzinli saha işlemi: (şablon, feature_key, module_key) veya None.
+
+    Yöntem ve yol birebir eşleşmezse None. Yönetici işlemleri (DELETE, ayar,
+    çöp, karar, araç yazma) bu listede yoktur.
+    """
+    p = _portal_norm_path(path)
+    method_u = str(method or "GET").upper()
+    for rule_method, template, feat, mod in PORTAL_API_RULES:
+        if rule_method != method_u:
+            continue
+        if _portal_template_match(template, p):
+            return (template, feat, mod)
+    return None
+
+
+def portal_admin_operation(path: str, method: str = "GET") -> bool:
+    """Portal özelliğinin açmaması gereken yönetici işlemi.
+
+    DELETE, *-settings, trash-completed, admin-trash, decide ve araç CRUD.
+    Araç GET saha okumasıdır. Eşleşme yalnız saha alanındadır.
+    """
+    if not portal_area_for_path(path):
+        return False
+    p = _portal_norm_path(path)
+    method_u = str(method or "GET").upper()
+    if p.endswith("-settings") or p.endswith("/trash-completed") or p.endswith("/admin-trash") or p.endswith("/decide"):
+        return True
+    if method_u == "DELETE":
+        return True
+    if p == "/api/vehicles" or p.startswith("/api/vehicles/"):
+        return method_u not in ("GET", "HEAD")
+    return False
 
 
 def _portal_module_allows(role: dict, module_key: str, path: str, method: str) -> bool:
@@ -210,30 +294,43 @@ def _portal_module_allows(role: dict, module_key: str, path: str, method: str) -
 def portal_field_allowed(user: Optional[dict], role: Optional[dict], feature_key: str, module_key: str, path: str, method: str = "GET") -> bool:
     """Saha ucu.
 
-    Açık özellik her role yeter (modül none olsa da).
-    Personelde modül mirası yetmez — özellik kapalıysa 403.
-    Diğer rollerde kapalı özellik mevcut modül davranışını bozmaz (GET açık kalır).
+    Açık özellik yalnız PORTAL_API_RULES satırını açar (modül none olsa da).
+    Personelde bunun dışındaki her uç — DELETE, ayar, çöp, karar, araç CRUD,
+    shopfloor-unlock — 403. Modül edit/delete devralınmaz.
+    Diğer rollerde yazma mutation_allowed ile kalır. Kapalı özellik onların
+    GET erişimini bozmaz.
     """
     if not user:
         return False
     if user.get("is_super_admin") or normalize_role_code(user.get("role")) == "admin":
         return True
-    feats = role_features(role or {"code": user.get("role") or "", "features": {}})
-    if feats.get(feature_key):
-        return True
-    if normalize_role_code(user.get("role")) == "personel":
-        return False
     method_u = str(method or "GET").upper()
+    role_code = normalize_role_code(user.get("role"))
+    feats = role_features(role or {"code": role_code, "features": {}})
+    field = portal_rule_for_path(path, method_u)
+    if field and field[1] == feature_key and feats.get(feature_key):
+        return True
+    if role_code == "personel":
+        return False
     if method_u in ("GET", "HEAD"):
         return True
     return _portal_module_allows(role or {}, module_key, path, method_u)
 
 
-def portal_feature_grant(user: Optional[dict], role: Optional[dict], feature_key: str) -> bool:
-    """Özellik açıkça açıksa modül mutation kontrolü bu uçta atlanır (personel modülü none olabilir)."""
+def portal_feature_grant(user: Optional[dict], role: Optional[dict], feature_key: str, path: str = "", method: str = "GET") -> bool:
+    """Özellik, yalnız listelenmiş saha işleminde modül mutation kontrolünü atlar.
+
+    Yönetici işlemlerinde her zaman False: çağıran mutation_allowed uygular.
+    """
     if not user or user.get("is_super_admin") or normalize_role_code(user.get("role")) == "admin":
         return False
-    return bool(role_features(role or {"code": user.get("role") or "", "features": {}}).get(feature_key))
+    if portal_admin_operation(path, method):
+        return False
+    field = portal_rule_for_path(path, method)
+    if not field or field[1] != feature_key:
+        return False
+    role_code = normalize_role_code(user.get("role"))
+    return bool(role_features(role or {"code": role_code, "features": {}}).get(feature_key))
 
 
 def portal_denial_detail(feature_key: str) -> str:
@@ -749,7 +846,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             pass
         portal_grant = False
         if user and not user.get("is_super_admin") and normalize_role_code(user.get("role")) != "admin":
-            rule = portal_rule_for_path(path)
+            rule = portal_area_for_path(path)
             saha_post = request.method == "POST" and path.rstrip("/") == "/api/orders"
             if rule or (saha_post and normalize_role_code(user.get("role")) == "personel"):
                 role = await role_for(user, cid)
@@ -757,7 +854,9 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                     _prefix, feat, mod = rule
                     if not portal_field_allowed(user, role, feat, mod, path, request.method):
                         return JSONResponse({"detail": portal_denial_detail(feat)}, status_code=403)
-                    if portal_feature_grant(user, role, feat):
+                    # Grant yalnız yöntem+yol listesindeki saha işleminde. Ayar, çöp,
+                    # karar, DELETE ve araç CRUD mutation_allowed'da kalır.
+                    if portal_feature_grant(user, role, feat, path, request.method):
                         portal_grant = True
                 # Saha siparişi ortak /orders ucunu kullanır; personelde özellik açıkça gerekir.
                 if saha_post and normalize_role_code(user.get("role")) == "personel":
