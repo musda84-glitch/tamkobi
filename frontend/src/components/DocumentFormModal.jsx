@@ -72,21 +72,21 @@ export function DocumentFormModal({
           e.stopPropagation();
           tagProps.onClick?.(e);
         }}
-        className={`doc-editor-modal bg-white rounded-2xl w-full ${maxWidthClass} shadow-2xl border border-slate-200 min-h-0 ${panelClassName}`}
+        className={`doc-editor-modal flex flex-col overflow-hidden bg-white rounded-2xl w-full ${maxWidthClass} shadow-2xl border border-slate-200 min-h-0 ${panelClassName}`}
         data-testid={testId}
       >
         {header != null && (
-          <div className="doc-editor-header" data-doc-header>
+          <div className="doc-editor-header min-h-0" data-doc-header>
             {header}
           </div>
         )}
         {children != null && children !== false && (
-          <div className="doc-editor-lines" data-doc-lines data-testid={testId ? `${testId}-lines` : undefined}>
+          <div className="doc-editor-lines flex-1 min-h-0 overflow-x-auto overflow-y-auto" data-doc-lines data-testid={testId ? `${testId}-lines` : undefined}>
             {children}
           </div>
         )}
         {footer != null && (
-          <div className="doc-editor-footer" data-doc-footer data-testid={testId ? `${testId}-footer` : undefined}>
+          <div className="doc-editor-footer sticky bottom-0 z-[5] bg-white" data-doc-footer data-testid={testId ? `${testId}-footer` : undefined}>
             {footer}
           </div>
         )}

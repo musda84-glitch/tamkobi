@@ -1,12 +1,17 @@
 /**
  * Belge düzenleme modalları (fatura, sipariş, teklif, irsaliye, alış).
  *
- * Panel max-height: 100dvh - boşluk. Başlık üstte, toplamlar ve Kaydet altta
- * kalır; kalem listesi ortada overflow-y: auto ile kayar.
+ * Panel yüksekliği: 100dvh - küçük boşluk. Başlık üstte (gerekirse kendi
+ * içinde kayar), kalem tablosu kalan alanın tamamını alır (flex: 1,
+ * min-height: 0, overflow-y: auto), toplamlar ve Kaydet altta kalır.
+ * 1080p ve üzeri yükseklikte kalem bölgesi en az 8 satır (~44px) ayırır.
  *
  * Body scroll kilidi yalnızca html/body overflow'unu kapatır. position:fixed
  * ve touch-action:none kullanılmaz; ikisi iOS'ta modal içi kaydırmayı keser.
  */
+
+/** Kompakt kalem satırı yüksekliği (px). */
+export const DOC_LINE_ROW_PX = 44;
 
 let locks = 0;
 let snapshot = null;
@@ -71,13 +76,26 @@ export function safeAreaInsetY() {
 }
 
 /**
+ * Görünür kalem sayısı. linesMax null ise içerik sığıyor demektir.
+ * @param {number | null} linesMax
+ * @param {number} [rowPx]
+ */
+export function visibleLineCount(linesMax, rowPx = DOC_LINE_ROW_PX) {
+  if (linesMax == null || !(rowPx > 0)) return null;
+  return Math.floor(linesMax / rowPx);
+}
+
+/**
  * @param {{ viewport: number, gap?: number, headerScroll: number, footerHeight: number, linesScroll: number }} m
  */
 export function planDocumentEditorScroll({ viewport, gap = 16, headerScroll, footerHeight, linesScroll }) {
   const panelMax = Math.max(200, Math.floor(viewport - gap));
-  const linesFloor = Math.max(72, Math.min(160, Math.floor(panelMax * 0.28)));
-  const headerFloor = 72;
   const available = Math.max(0, panelMax - footerHeight);
+  // 1080p (viewport >= 1000): en az 8 satır. Daha kısa ekranda başlık da kayabilsin.
+  const linesFloor = viewport >= 1000
+    ? Math.min(Math.floor(available * 0.8) || 0, Math.max(DOC_LINE_ROW_PX * 8, 352))
+    : Math.max(72, Math.min(220, Math.floor(panelMax * 0.42)));
+  const headerFloor = 72;
   const natural = headerScroll + linesScroll;
 
   if (natural <= available) {
@@ -126,7 +144,7 @@ export function applyDocumentEditorLayout(panel, metrics = {}) {
   const lines = panel.querySelector("[data-doc-lines]");
   const footer = panel.querySelector("[data-doc-footer]");
   const wide = (window.innerWidth || 1024) >= 640;
-  const gap = metrics.gap != null ? metrics.gap : (wide ? 32 : 16) + (metrics.safeArea != null ? metrics.safeArea : safeAreaInsetY());
+  const gap = metrics.gap != null ? metrics.gap : (wide ? 12 : 8) + (metrics.safeArea != null ? metrics.safeArea : safeAreaInsetY());
   const viewport = metrics.viewport || visibleViewportHeight();
   const border = Math.max(0, (panel.offsetHeight || 0) - (panel.clientHeight || 0));
   const outerMax = Math.max(200, Math.floor(viewport - gap));
@@ -137,6 +155,7 @@ export function applyDocumentEditorLayout(panel, metrics = {}) {
     footerHeight: footer ? footer.offsetHeight : 0,
     linesScroll: lines ? lines.scrollHeight : 0,
   });
+  writeStyle(panel, "height", `${outerMax}px`);
   writeStyle(panel, "maxHeight", `${outerMax}px`);
   if (header) {
     writeStyle(header, "maxHeight", plan.headerMax == null ? "" : `${plan.headerMax}px`);
@@ -145,6 +164,8 @@ export function applyDocumentEditorLayout(panel, metrics = {}) {
     writeStyle(header, "touchAction", "pan-y");
   }
   if (lines) {
+    writeStyle(lines, "flex", "1 1 0%");
+    writeStyle(lines, "minHeight", "0");
     writeStyle(lines, "overflowX", "auto");
     writeStyle(lines, "overflowY", "auto");
     writeStyle(lines, "maxHeight", plan.linesMax == null ? "" : `${plan.linesMax}px`);

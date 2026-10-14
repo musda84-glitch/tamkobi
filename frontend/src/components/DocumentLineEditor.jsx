@@ -7,7 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct, productCardPrice } from "../utils/documentLines";
 import { MoneyInput, QuantityInput } from "./MoneyInput";
 
-const inp = "w-full bg-white border border-slate-200 rounded p-1.5 text-xs";
+const inp = "h-8 w-full bg-white border border-slate-200 rounded px-1.5 text-xs box-border";
 const FALLBACK_UNITS = ["Adet", "Metre", "Kg", "Mt", "Paket", "Koli"];
 
 const unitOptions = (units, current) => {
@@ -35,6 +35,7 @@ export function DocumentLineEditor({
   const ccy = currency || "TRY";
   const { activeCompany } = useAuth();
   const [units, setUnits] = useState(FALLBACK_UNITS);
+  const [openExtra, setOpenExtra] = useState({});
   const itemsRef = useRef(items);
   itemsRef.current = items;
   useEffect(() => {
@@ -129,31 +130,33 @@ export function DocumentLineEditor({
   };
 
   const nameOf = (it) => (kind === "order" ? it.product_name : it.name) || "";
+  const nameField = kind === "order" ? "product_name" : "name";
+  const extraShown = (item, idx) => (openExtra[idx] != null ? !!openExtra[idx] : !!(item.gtip || item.origin_country));
 
   return (
-    <div className="space-y-2" data-testid={`${testIdPrefix}-editor`}>
-      <div className="border border-slate-200 rounded-xl min-w-0" data-line-table>
-        <table className="w-full min-w-[1080px] text-xs">
-          <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0 z-[1] [&_th]:bg-slate-50">
+    <div className="space-y-1" data-testid={`${testIdPrefix}-editor`}>
+      <div className="border border-slate-200 rounded-xl min-w-0 doc-line-table" data-line-table>
+        <table className="w-full min-w-[1080px] text-xs border-separate border-spacing-0">
+          <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0 z-[2] [&_th]:bg-slate-50">
             <tr>
-              <th className="px-2 py-2 text-left min-w-[220px]">Stok adı / Hizmet</th>
-              <th className="px-2 py-2 text-center w-20">Miktar</th>
-              <th className="px-2 py-2 text-center w-24">Birim</th>
-              <th className="px-2 py-2 text-right w-28">Birim (KDV'siz)</th>
-              <th className="px-2 py-2 text-right w-28">Birim (KDV'li)</th>
-              <th className="px-2 py-2 text-center w-20 text-rose-500">İskonto %</th>
-              <th className="px-2 py-2 text-center w-20">KDV %</th>
-              <th className="px-2 py-2 text-right w-28">Tutar (Hariç)</th>
-              <th className="px-2 py-2 text-right w-28">Tutar (Dahil)</th>
-              <th className="w-8"></th>
+              <th className="px-2 py-1.5 text-left min-w-[220px] sticky top-0 bg-slate-50">Stok adı / Hizmet</th>
+              <th className="px-2 py-1.5 text-center w-20 sticky top-0 bg-slate-50">Miktar</th>
+              <th className="px-2 py-1.5 text-center w-24 sticky top-0 bg-slate-50">Birim</th>
+              <th className="px-2 py-1.5 text-right w-28 sticky top-0 bg-slate-50">Birim (KDV'siz)</th>
+              <th className="px-2 py-1.5 text-right w-28 sticky top-0 bg-slate-50">Birim (KDV'li)</th>
+              <th className="px-2 py-1.5 text-center w-20 text-rose-500 sticky top-0 bg-slate-50">İskonto %</th>
+              <th className="px-2 py-1.5 text-center w-20 sticky top-0 bg-slate-50">KDV %</th>
+              <th className="px-2 py-1.5 text-right w-28 sticky top-0 bg-slate-50">Tutar (Hariç)</th>
+              <th className="px-2 py-1.5 text-right w-28 sticky top-0 bg-slate-50">Tutar (Dahil)</th>
+              <th className="w-8 sticky top-0 bg-slate-50"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((item, idx) => (
               <React.Fragment key={idx}>
-              <tr className="align-top" data-testid={`${testIdPrefix}-item-${idx}`}>
-                <td className="px-2 py-1.5">
-                  <div className="flex items-center gap-1.5">
+              <tr className="doc-line-row align-middle" data-line-row="" data-testid={`${testIdPrefix}-item-${idx}`}>
+                <td className="px-1.5">
+                  <div className="flex items-center gap-1 h-8">
                     {allowService && (
                       <button
                         type="button"
@@ -173,49 +176,57 @@ export function DocumentLineEditor({
                           value={nameOf(item)}
                           onChange={(e) => {
                             const v = e.target.value;
-                            patch(idx, kind === "order" ? "product_name" : "name", v);
+                            patch(idx, nameField, v);
                           }}
-                          placeholder="Hizmet / stok adı"
+                          placeholder={item.is_service ? "Hizmet / stok adı" : "Stokta yoksa serbest ad yazın"}
                           className={`${inp} ${item.is_service ? "border-indigo-200" : ""}`}
                           data-testid={kind === "invoice" && products.length ? `inv-item-service-name-${idx}` : `${testIdPrefix}-name-${idx}`}
                         />
                       ) : (
-                        <>
-                          <SearchSelect
-                            value={item.product_id}
-                            options={products}
-                            placeholder="Ürün ara (ad / SKU / barkod)..."
-                            getLabel={(p) => p.name}
-                            getSub={(p) => `${p.unit || "Adet"} • SKU ${p.sku || "—"} • Stok ${p.stock_quantity ?? "—"}`}
-                            getExtra={getProductExtra || ((p) => {
-                              const price = productCardPrice(p, invoiceType);
-                              if (!(price > 0)) return "";
-                              const incl = invoiceType !== "purchase" && p.price_includes_vat;
-                              return `Stok kartı: ${fmtMoney(price, ccy)}${incl ? " (KDV dahil)" : ""}`;
-                            })}
-                            getImage={(p) => p.image_url}
-                            valueLabel={nameOf(item)}
-                            onChange={(id, p) => pickProduct(idx, id, p)}
-                            clearable
-                            clearLabel="Ürün seçimini kaldır"
-                            testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
-                          />
-                          {!item.product_id && (
-                            <input
-                              disabled={disabled}
-                              value={nameOf(item)}
-                              onChange={(e) => patch(idx, kind === "order" ? "product_name" : "name", e.target.value)}
-                              placeholder="Stokta yoksa serbest ad yazın"
-                              className={`${inp} mt-1`}
-                              data-testid={kind === "order" ? `new-order-freename-${idx}` : `${testIdPrefix}-name-${idx}`}
-                            />
-                          )}
-                        </>
+                        <SearchSelect
+                          dense
+                          value={item.product_id}
+                          options={products}
+                          placeholder="Ürün ara (ad / SKU / barkod)..."
+                          getLabel={(p) => p.name}
+                          getSub={(p) => `${p.unit || "Adet"} • SKU ${p.sku || "—"} • Stok ${p.stock_quantity ?? "—"}`}
+                          getExtra={getProductExtra || ((p) => {
+                            const price = productCardPrice(p, invoiceType);
+                            if (!(price > 0)) return "";
+                            const incl = invoiceType !== "purchase" && p.price_includes_vat;
+                            return `Stok kartı: ${fmtMoney(price, ccy)}${incl ? " (KDV dahil)" : ""}`;
+                          })}
+                          getImage={(p) => p.image_url}
+                          valueLabel={nameOf(item)}
+                          onChange={(id, p) => pickProduct(idx, id, p)}
+                          clearable
+                          clearLabel="Ürün seçimini kaldır"
+                          testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
+                          freeTextValue={nameOf(item)}
+                          onFreeTextChange={(v) => patch(idx, nameField, v)}
+                          freeTextPlaceholder="Stokta yoksa serbest ad yazın"
+                          freeTextDisabled={disabled}
+                          freeTextTestId={kind === "order" ? `new-order-freename-${idx}` : `${testIdPrefix}-name-${idx}`}
+                        />
                       )}
                     </div>
+                    {renderRowExtra ? (
+                      <button
+                        type="button"
+                        onClick={() => setOpenExtra((s) => {
+                          const current = s[idx] != null ? !!s[idx] : !!(item.gtip || item.origin_country);
+                          return { ...s, [idx]: !current };
+                        })}
+                        className={`shrink-0 h-7 px-1.5 rounded-md border text-[10px] font-semibold ${extraShown(item, idx) ? "bg-slate-100 text-slate-700 border-slate-300" : "bg-white text-slate-400 border-slate-200"}`}
+                        title="GTIP, menşe ve önceki alış"
+                        data-testid={`${testIdPrefix}-extra-${idx}`}
+                      >
+                        GTIP
+                      </button>
+                    ) : null}
                   </div>
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <QuantityInput
                     disabled={disabled}
                     selectOnFocus
@@ -225,7 +236,7 @@ export function DocumentLineEditor({
                     data-testid={kind === "order" ? `new-order-qty-${idx}` : `${testIdPrefix}-qty-${idx}`}
                   />
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <select
                     disabled={disabled}
                     value={item.unit || "Adet"}
@@ -238,7 +249,7 @@ export function DocumentLineEditor({
                     ))}
                   </select>
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <MoneyInput
                     disabled={disabled}
                     selectOnFocus
@@ -248,7 +259,7 @@ export function DocumentLineEditor({
                     data-testid={kind === "order" ? `new-order-price-${idx}` : testIdPrefix === "inv-item" ? `inv-item-unit-price-${idx}` : `${testIdPrefix}-price-excl-${idx}`}
                   />
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <MoneyInput
                     disabled={disabled}
                     selectOnFocus
@@ -258,7 +269,7 @@ export function DocumentLineEditor({
                     data-testid={`${testIdPrefix}-price-incl-${idx}`}
                   />
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <MoneyInput
                     disabled={disabled}
                     selectOnFocus
@@ -268,7 +279,7 @@ export function DocumentLineEditor({
                     data-testid={kind === "invoice" ? `inv-item-discount-${idx}` : `${testIdPrefix}-discount-${idx}`}
                   />
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <select
                     disabled={disabled}
                     value={item.vat_rate}
@@ -281,10 +292,10 @@ export function DocumentLineEditor({
                     ))}
                   </select>
                 </td>
-                <td className="px-2 py-1.5 text-right font-semibold text-slate-800 whitespace-nowrap" data-testid={`${testIdPrefix}-total-excl-${idx}`}>
+                <td className="px-1.5 text-right font-semibold text-slate-800 whitespace-nowrap" data-testid={`${testIdPrefix}-total-excl-${idx}`}>
                   {fmtMoney(item.total, ccy)}
                 </td>
-                <td className="px-2 py-1.5">
+                <td className="px-1.5">
                   <MoneyInput
                     disabled={disabled}
                     selectOnFocus
@@ -295,7 +306,7 @@ export function DocumentLineEditor({
                     data-testid={`${testIdPrefix}-total-incl-${idx}`}
                   />
                 </td>
-                <td className="px-1 py-1.5 text-center">
+                <td className="px-1 text-center">
                   <button
                     type="button"
                     disabled={disabled || rows.length <= 1}
@@ -307,9 +318,9 @@ export function DocumentLineEditor({
                   </button>
                 </td>
               </tr>
-              {renderRowExtra ? (
-                <tr className="bg-slate-50/60">
-                  <td colSpan={10} className="px-2 pb-2 pt-0">
+              {renderRowExtra && extraShown(item, idx) ? (
+                <tr className="bg-slate-50/60" data-line-extra="">
+                  <td colSpan={10} className="px-2 py-1">
                     {renderRowExtra(item, idx, {
                       patch: (field, value) => patch(idx, field, value),
                     })}
@@ -338,13 +349,13 @@ export function DocumentLineEditor({
 export function LineTotalsFooter({ subtotal, vat, lineDiscount, grandTotal, extra, currency = "TRY" }) {
   const ccy = currency || "TRY";
   return (
-    <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700 text-xs">
-      <div className="flex justify-between w-80"><span>Mal / Hizmet Toplamı (KDV Hariç):</span><span className="font-semibold">{fmtMoney(subtotal + (lineDiscount || 0), ccy)}</span></div>
-      {lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{fmtMoney(lineDiscount, ccy)}</span></div>}
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-700 min-w-0" data-testid="line-totals-footer">
+      <span>Mal/Hizmet <b className="text-slate-900">{fmtMoney(subtotal + (lineDiscount || 0), ccy)}</b></span>
+      {lineDiscount > 0 && <span className="text-rose-600">İskonto <b>-{fmtMoney(lineDiscount, ccy)}</b></span>}
       {extra}
-      <div className="flex justify-between w-80 border-t border-slate-300 pt-1"><span>Ara Toplam (KDV Hariç):</span><span className="font-semibold">{fmtMoney(subtotal, ccy)}</span></div>
-      <div className="flex justify-between w-80"><span>Toplam KDV:</span><span className="font-semibold">{fmtMoney(vat, ccy)}</span></div>
-      <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300"><span>Genel Toplam (KDV Dahil):</span><span className="text-emerald-700">{fmtMoney(grandTotal, ccy)}</span></div>
+      <span>Ara toplam <b>{fmtMoney(subtotal, ccy)}</b></span>
+      <span>KDV <b>{fmtMoney(vat, ccy)}</b></span>
+      <span className="font-bold text-slate-900">Genel Toplam <b className="text-emerald-700">{fmtMoney(grandTotal, ccy)}</b></span>
     </div>
   );
 }

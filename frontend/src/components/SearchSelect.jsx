@@ -6,16 +6,22 @@ import { resolveImageUrl } from "../utils/imageUrl";
 
 const placeMenu = (anchor, wide) => {
   const rect = anchor.getBoundingClientRect();
+  const vv = window.visualViewport;
+  const viewW = vv?.width || window.innerWidth;
+  const viewH = vv?.height || window.innerHeight;
+  const offsetX = vv?.offsetLeft || 0;
+  const offsetY = vv?.offsetTop || 0;
   const width = Math.max(rect.width, wide ? 340 : 280);
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-  const below = window.innerHeight - rect.bottom;
-  const openUp = below < 240 && rect.top > below;
+  const left = Math.max(8, Math.min(rect.left, offsetX + viewW - width - 8));
+  const below = offsetY + viewH - rect.bottom;
+  const above = rect.top - offsetY;
+  const openUp = below < 240 && above > below;
   return {
     left,
     width,
     top: openUp ? undefined : rect.bottom + 4,
-    bottom: openUp ? window.innerHeight - rect.top + 4 : undefined,
-    maxHeight: Math.max(160, Math.min(320, openUp ? rect.top - 16 : below - 16)),
+    bottom: openUp ? offsetY + viewH - rect.top + 4 : undefined,
+    maxHeight: Math.max(160, Math.min(320, openUp ? above - 16 : below - 16)),
   };
 };
 
@@ -39,6 +45,13 @@ export const SearchSelect = ({
   clearLabel = "Seçimi kaldır",
   /** Dropdown üstünde sabit aksiyon (ör. Perakende carisiz). { label, onSelect, testId?, icon? } */
   leadingAction = null,
+  /** Seçim yokken tetikleyicinin içinde serbest metin (ayrı satır açılmaz). */
+  freeTextValue = undefined,
+  onFreeTextChange = null,
+  freeTextPlaceholder = "Stokta yoksa serbest ad yazın",
+  freeTextTestId,
+  freeTextDisabled = false,
+  dense = false,
 }) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -67,6 +80,10 @@ export const SearchSelect = ({
   const selected = options.find((o) => optionId(o) === value);
   const displayLabel = selected ? getLabel(selected) : (value && valueLabel ? valueLabel : "");
   const hasValue = Boolean(value);
+  const showFreeText = typeof onFreeTextChange === "function" && !hasValue;
+  const triggerClass = dense
+    ? "h-8 rounded-md px-1.5"
+    : "rounded-lg p-1.5";
   const clear = (e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
@@ -83,7 +100,7 @@ export const SearchSelect = ({
   }).slice(0, 50);
   const panel = (
     <>
-      <div className="relative border-b"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="w-full pl-8 p-2 text-xs outline-none" data-testid={testId ? `${testId}-search` : undefined} /></div>
+      <div className="relative border-b"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input autoFocus={!showFreeText} value={q} onChange={(e) => { setQ(e.target.value); if (showFreeText) onFreeTextChange?.(e.target.value); }} placeholder={searchPlaceholder} className="w-full pl-8 p-2 text-xs outline-none" data-testid={testId ? `${testId}-search` : undefined} /></div>
       {leadingAction?.label && (
         <button
           type="button"
@@ -129,8 +146,42 @@ export const SearchSelect = ({
   );
   return (
     <div ref={ref} className={`relative ${className}`} data-testid={testId}>
-      <button type="button" onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1.5 text-left text-xs" data-testid={testId ? `${testId}-trigger` : undefined}>
-        {selected && getImage && (getImage(selected) ? <img src={resolveImageUrl(getImage(selected))} alt="" className="w-6 h-6 rounded object-cover shrink-0" /> : <span className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0"><Package className="w-3 h-3" /></span>)}
+      {showFreeText ? (
+        <div className={`w-full flex items-center gap-0.5 bg-white border border-slate-200 text-xs ${triggerClass}`}>
+          <input
+            disabled={freeTextDisabled}
+            value={freeTextValue || ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              onFreeTextChange(v);
+              setQ(v);
+              setOpen(true);
+            }}
+            onFocus={() => {
+              if (freeTextValue && !q) setQ(freeTextValue);
+              setOpen(true);
+            }}
+            placeholder={freeTextPlaceholder}
+            autoComplete="off"
+            className="flex-1 min-w-0 h-7 bg-transparent px-1 text-xs outline-none placeholder:text-slate-400"
+            data-testid={freeTextTestId}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              if (!open && freeTextValue && !q) setQ(freeTextValue);
+              setOpen(!open);
+            }}
+            className="shrink-0 p-1 text-slate-400 hover:text-slate-700"
+            title={placeholder || "Ürün ara"}
+            data-testid={testId ? `${testId}-trigger` : undefined}
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ) : (
+      <button type="button" onClick={() => setOpen(!open)} className={`w-full flex items-center gap-1 bg-white border border-slate-200 text-left text-xs ${triggerClass}`} data-testid={testId ? `${testId}-trigger` : undefined}>
+        {selected && getImage && (getImage(selected) ? <img src={resolveImageUrl(getImage(selected))} alt="" className={`${dense ? "w-5 h-5" : "w-6 h-6"} rounded object-cover shrink-0`} /> : <span className={`${dense ? "w-5 h-5" : "w-6 h-6"} rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0`}><Package className="w-3 h-3" /></span>)}
         <span className={`flex-1 truncate ${displayLabel ? "font-medium text-slate-900" : "text-slate-400"}`}>{displayLabel || placeholder}</span>
         {clearable && hasValue && (
           <span
@@ -147,6 +198,7 @@ export const SearchSelect = ({
         )}
         <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
       </button>
+      )}
       {open && inline && (
         <div ref={menuRef} className="mt-1 w-full min-w-[280px] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden" data-testid={testId ? `${testId}-menu` : undefined}>
           {panel}

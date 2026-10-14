@@ -75,7 +75,7 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
       blur={false}
       onBackdropClose={onClose}
       header={(
-        <div className="p-4 sm:p-5 pb-3 space-y-4">
+        <div className="px-3 py-2 space-y-2">
         <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">Yeni Sipariş Oluştur</h3><button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="new-order-close"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="md:col-span-2"><label className="block font-semibold mb-1">Cari (seçince bilgiler dolar)</label><ContactSearchSelect companyId={companyId} value={f.contact_id} valueLabel={f.customer_name} placeholder="Cari ara…" onChange={pickContact} testId="new-order-contact" /></div>
@@ -103,14 +103,13 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
         </div>
       )}
       footer={(
-        <div className="p-4 sm:p-5 space-y-3">
+        <div className="px-3 py-1.5 flex flex-wrap items-center justify-between gap-2">
         <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} currency="TRY" />
-        <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={inp} data-testid="new-order-notes" />
-        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button><button type="button" onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>
+        <div className="flex gap-2 ml-auto"><button type="button" onClick={onClose} className="h-8 px-3 border rounded-lg">İptal</button><button type="button" onClick={save} disabled={busy} className="h-8 px-3 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>
         </div>
       )}
     >
-        <div className="px-4 sm:px-5 py-3">
+        <div className="px-3 py-2">
         <DocumentLineEditor
           items={items}
           onChange={setItems}
@@ -121,6 +120,10 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
           currency="TRY"
           testIdPrefix="new-order"
         />
+        <details className="mt-1 rounded-md border border-slate-200 px-2 py-1">
+          <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Sipariş notu</summary>
+          <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={`${inp} mt-1`} data-testid="new-order-notes" />
+        </details>
         </div>
     </DocumentFormModal>
   );

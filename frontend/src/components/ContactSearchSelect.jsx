@@ -16,16 +16,22 @@ const TYPE_LABEL = {
 
 const placeMenu = (anchor) => {
   const rect = anchor.getBoundingClientRect();
+  const vv = window.visualViewport;
+  const viewW = vv?.width || window.innerWidth;
+  const viewH = vv?.height || window.innerHeight;
+  const offsetX = vv?.offsetLeft || 0;
+  const offsetY = vv?.offsetTop || 0;
   const width = Math.max(rect.width, 320);
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-  const below = window.innerHeight - rect.bottom;
-  const openUp = below < 240 && rect.top > below;
+  const left = Math.max(8, Math.min(rect.left, offsetX + viewW - width - 8));
+  const below = offsetY + viewH - rect.bottom;
+  const above = rect.top - offsetY;
+  const openUp = below < 240 && above > below;
   return {
     left,
     width,
     top: openUp ? undefined : rect.bottom + 4,
-    bottom: openUp ? window.innerHeight - rect.top + 4 : undefined,
-    maxHeight: Math.max(160, Math.min(360, openUp ? rect.top - 16 : below - 16)),
+    bottom: openUp ? offsetY + viewH - rect.top + 4 : undefined,
+    maxHeight: Math.max(160, Math.min(360, openUp ? above - 16 : below - 16)),
   };
 };
 

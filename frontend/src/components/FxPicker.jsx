@@ -17,7 +17,7 @@ export function useFxRates(companyId, onDate) {
 }
 
 /** Fatura / masraf / dış ticaret formlarında para birimi + kur. */
-export function FxPicker({ companyId, date, currency, rate, source, onChange, testId = "fx" }) {
+export function FxPicker({ companyId, date, currency, rate, source, onChange, testId = "fx", compact = false }) {
   const pack = useFxRates(companyId, date);
   const ccy = currency || "TRY";
   const applyCcy = async (next) => {
@@ -34,18 +34,27 @@ export function FxPicker({ companyId, date, currency, rate, source, onChange, te
     }
   };
   const local = (Number(rate) || 1) * 1;
+  const rateHint = ccy !== "TRY"
+    ? `${source === "manual" ? "Manuel kur" : source === "tcmb" ? "TCMB" : source === "kuveyt" ? "Kuveyt" : "Kur"} · ${fmtMoney(local, "TRY")}/1 ${ccy}`
+    : `Kur (1 ${ccy} = ₺)`;
+  const lbl = compact
+    ? "block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5 truncate"
+    : "block font-semibold text-slate-700 mb-1";
+  const fld = compact
+    ? "w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium"
+    : "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium";
   return (
-    <div className="grid grid-cols-2 gap-2" data-testid={`${testId}-picker`}>
-      <div>
-        <label className="block font-semibold text-slate-700 mb-1">Para birimi</label>
-        <select value={ccy} onChange={(e) => applyCcy(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid={`${testId}-currency`}>
+    <div className={compact ? "flex items-end gap-1.5" : "grid grid-cols-2 gap-2"} data-testid={`${testId}-picker`}>
+      <div className={compact ? "w-[4.75rem]" : ""}>
+        <label className={lbl}>Para birimi</label>
+        <select value={ccy} onChange={(e) => applyCcy(e.target.value)} className={fld} data-testid={`${testId}-currency`}>
           {(pack.currencies || FX_CODES).map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
-      <div>
-        <label className="block font-semibold text-slate-700 mb-1">Kur (1 {ccy} = ₺)</label>
-        <MoneyInput maxFractionDigits={6} disabled={ccy === "TRY"} value={ccy === "TRY" ? 1 : (rate ?? "")} onChange={(n) => onChange({ currency: ccy, fx_rate: n ?? "", fx_source: "manual" })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono" data-testid={`${testId}-rate`} />
-        {ccy !== "TRY" && <div className="text-[10px] text-slate-400 mt-0.5">{source === "manual" ? "Manuel kur" : source === "tcmb" ? "TCMB" : source === "kuveyt" ? "Kuveyt" : "Kur"} · {fmtMoney(local, "TRY")}/1 {ccy}</div>}
+      <div className={compact ? "w-[6.5rem]" : ""}>
+        <label className={lbl} title={`Kur (1 ${ccy} = ₺)`}>{compact ? "Kur" : `Kur (1 ${ccy} = ₺)`}</label>
+        <MoneyInput maxFractionDigits={6} disabled={ccy === "TRY"} value={ccy === "TRY" ? 1 : (rate ?? "")} onChange={(n) => onChange({ currency: ccy, fx_rate: n ?? "", fx_source: "manual" })} title={rateHint} className={`${fld} font-mono`} data-testid={`${testId}-rate`} />
+        {!compact && ccy !== "TRY" && <div className="text-[10px] text-slate-400 mt-0.5">{rateHint}</div>}
       </div>
     </div>
   );
