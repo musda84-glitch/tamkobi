@@ -1,7 +1,8 @@
 import React from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { HelpButton } from "./help/HelpButton";
+import { IkNavTabs } from "./IkPortalNav";
 import { ikFieldDenied, portalFeatureKey, visibleIkLinks } from "../utils/portalFields";
 
 /** Minimal self-service shell for ik.tamkobi.com (no MainLayout / panel menu). */
@@ -9,36 +10,21 @@ export default function IkLayout({ children }) {
   const { pathname } = useLocation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const linkCls = (to) =>
-    `px-3 py-2 text-sm font-medium rounded-md ${
-      pathname === to || pathname.startsWith(to + "/")
-        ? "bg-slate-800 text-white"
-        : "text-slate-600 hover:bg-slate-100"
-    }`;
   const links = visibleIkLinks(user);
   const denied = ikFieldDenied(pathname, user);
   const wide = Boolean(portalFeatureKey(pathname));
 
   return (
-    <div className="min-h-screen bg-slate-50" data-testid="ik-layout">
-      <header className="border-b bg-white">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="font-semibold text-slate-900 tracking-tight shrink-0">TamKobi İK</span>
-            <nav className="flex gap-1 ml-2 overflow-x-auto" data-testid="ik-nav">
-              {links.map((link) => (
-                <Link key={link.to} to={link.to} className={linkCls(link.to)} data-testid={`ik-nav-${link.to.slice(1)}`}>
-                  {link.label}
-                </Link>
-              ))}
-            </nav>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-slate-600">
+    <div className="min-h-screen bg-slate-50 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0" data-testid="ik-layout">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
+        <div className="mx-auto flex h-14 max-w-7xl flex-nowrap items-center justify-between gap-3 px-4">
+          <span className="shrink-0 font-semibold tracking-tight text-slate-900">TamKobi İK</span>
+          <div className="flex shrink-0 items-center gap-2 text-sm text-slate-600">
             <HelpButton />
-            <span className="hidden sm:inline truncate max-w-[12rem]">{user?.name || user?.email}</span>
+            <span className="hidden max-w-[12rem] truncate sm:inline">{user?.name || user?.email}</span>
             <button
               type="button"
-              className="text-rose-600 hover:underline"
+              className="shrink-0 whitespace-nowrap text-rose-600 hover:underline"
               onClick={async () => {
                 try {
                   await logout?.();
@@ -52,6 +38,7 @@ export default function IkLayout({ children }) {
             </button>
           </div>
         </div>
+        <IkNavTabs links={links} pathname={pathname} variant="desktop" />
       </header>
       <main className={`${wide ? "max-w-7xl" : "max-w-3xl"} mx-auto px-4 py-6`}>
         {denied ? (
@@ -60,6 +47,7 @@ export default function IkLayout({ children }) {
           </div>
         ) : children}
       </main>
+      <IkNavTabs links={links} pathname={pathname} variant="mobile" />
     </div>
   );
 }
