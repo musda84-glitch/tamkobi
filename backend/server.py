@@ -12047,12 +12047,36 @@ async def delete_match_rule(rule_id: str, user: dict = Depends(get_current_user)
     return {"status": "success"}
 
 # ----------------- İLETİŞİM: SMS (çoklu operatör) -----------------
+# Operatör ayarı üye şirkete aittir (Ayarlar → SMS, RBAC /settings).
+# ynt firma detayı yalnız özet okur; yazma uçları 403 + platform audit.
+import company_sms as company_sms
+
+
+async def _guard_company_sms(
+    request: Request,
+    user: dict,
+    requested: Optional[str],
+    *,
+    write: bool,
+    action: str,
+    method: str,
+    path: str,
+    settings_need: Optional[str] = None,
+) -> str:
+    company_id = tenant_access.resolve_company_id(user, requested)
+    await company_sms.reject_ynt_company_sms(
+        request, user, write=write, action=action, company_id=company_id, method=method, path=path,
+    )
+    if settings_need:
+        await company_sms.require_company_sms_settings(user, company_id, settings_need)
+    return company_id
+
+
 @api_router.get("/comm/sms/providers")
 async def sms_providers():
     return comm_service.list_sms_providers()
 
-@api_router.get("/comm/sms/settings")
-async def get_sms_settings(company_id: Optional[str] = "comp_nexus_main_01"):
+async def _sms_settings_view(company_id: str) -> dict:
     s = await db.sms_settings.find_one({"company_id": company_id})
     provider = comm_service.normalize_sms_provider((s or {}).get("provider"))
     meta = comm_service.SMS_PROVIDERS[provider]
@@ -12098,9 +12122,42 @@ async def get_sms_settings(company_id: Optional[str] = "comp_nexus_main_01"):
         "providers": comm_service.list_sms_providers(),
     }
 
+
+@api_router.get("/comm/sms/settings")
+async def get_sms_settings(
+    request: Request,
+    company_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    cid = await _guard_company_sms(
+        request, user, company_id, write=False, action="sms.settings.read",
+        method="GET", path="/api/comm/sms/settings",
+    )
+    payload = await _sms_settings_view(cid)
+    if not await _may_view_sms_settings(user, cid):
+        payload = {
+            **payload,
+            "usercode": "",
+            "msgheader": "",
+            "approved_headers": [],
+            "verify_message": "",
+        }
+    return payload
+
+
+async def _may_view_sms_settings(user: dict, company_id: str) -> bool:
+    import rbac
+    if rbac.normalize_role_code((user or {}).get("role")) == "admin":
+        return True
+    role = await rbac.role_for(user, company_id)
+    return company_sms.settings_allows((user or {}).get("role"), role.get("permissions") or {}, "view")
+
 @api_router.put("/comm/sms/settings")
-async def save_sms_settings(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def save_sms_settings(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    company_id = await _guard_company_sms(
+        request, user, req.get("company_id"), write=True, action="sms.settings.save",
+        method="PUT", path="/api/comm/sms/settings", settings_need="edit",
+    )
     provider = comm_service.normalize_sms_provider(req.get("provider"))
     header = comm_service.normalize_msgheader(req.get("msgheader") or "")
     herr = comm_service.validate_msgheader(header) if header else None
@@ -12124,7 +12181,7 @@ async def save_sms_settings(req: Dict[str, Any]):
         {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}},
         upsert=True,
     )
-    return await get_sms_settings(company_id)
+    return await _sms_settings_view(company_id)
 
 async def _sms_creds(company_id: str) -> Optional[dict]:
     s = await db.sms_settings.find_one({"company_id": company_id})
@@ -12155,7 +12212,15 @@ async def _sms_creds(company_id: str) -> Optional[dict]:
     }
 
 @api_router.get("/comm/sms/balance")
-async def sms_balance(company_id: Optional[str] = "comp_nexus_main_01"):
+async def sms_balance(
+    request: Request,
+    company_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    company_id = await _guard_company_sms(
+        request, user, company_id, write=False, action="sms.balance",
+        method="GET", path="/api/comm/sms/balance", settings_need="view",
+    )
     try:
         creds = await _sms_creds(company_id)
     except HTTPException as e:
@@ -12170,10 +12235,13 @@ async def sms_balance(company_id: Optional[str] = "comp_nexus_main_01"):
         return {"ok": False, "simulated": False, "message": f"{name}'e erişilemedi: {str(e)[:120]}"}
 
 @api_router.post("/comm/sms/verify")
-async def sms_verify(req: Dict[str, Any]):
+async def sms_verify(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
     """Operatör kullanıcı/şifre + onaylı başlık doğrulaması. Başarılıysa BAĞLI işaretlenir."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    base = await get_sms_settings(company_id)
+    company_id = await _guard_company_sms(
+        request, user, req.get("company_id"), write=True, action="sms.verify",
+        method="POST", path="/api/comm/sms/verify", settings_need="edit",
+    )
+    base = await _sms_settings_view(company_id)
     try:
         creds = await _sms_creds(company_id)
     except HTTPException as e:
@@ -12193,13 +12261,22 @@ async def sms_verify(req: Dict[str, Any]):
         "approved_headers": res.get("headers") or [],
     }
     await db.sms_settings.update_one({"company_id": company_id}, {"$set": patch})
-    out = await get_sms_settings(company_id)
+    out = await _sms_settings_view(company_id)
     out["ok"] = bool(res.get("ok"))
     out["verify"] = res
     out["message"] = out.get("verify_message") or res.get("message")
     return out
 
 async def _send_sms_to(company_id: str, recipients: List[Dict[str, Any]], message: str, context: str, ref_id: Optional[str]) -> Dict[str, Any]:
+    import public_url as pu
+    message = await pu.rewrite_outbound_doc_text(db, message or "")
+    rewritten: List[Dict[str, Any]] = []
+    for rec in recipients:
+        item = dict(rec)
+        if item.get("message"):
+            item["message"] = await pu.rewrite_outbound_doc_text(db, item.get("message") or "")
+        rewritten.append(item)
+    recipients = rewritten
     try:
         creds = await _sms_creds(company_id)
     except HTTPException as e:
@@ -12253,8 +12330,11 @@ async def _send_sms_to(company_id: str, recipients: List[Dict[str, Any]], messag
             "provider": (creds or {}).get("provider"), "message": msg, "error": last_error if failed else None}
 
 @api_router.post("/comm/sms/send")
-async def send_sms(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def send_sms(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    company_id = await _guard_company_sms(
+        request, user, req.get("company_id"), write=True, action="sms.send",
+        method="POST", path="/api/comm/sms/send",
+    )
     message = (req.get("message") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Mesaj boş olamaz.")
@@ -12266,13 +12346,16 @@ async def send_sms(req: Dict[str, Any]):
     return await _send_sms_to(company_id, recipients, message, req.get("context", "manual"), req.get("ref_id"))
 
 @api_router.post("/comm/sms/campaign")
-async def sms_campaign(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def sms_campaign(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    company_id = await _guard_company_sms(
+        request, user, req.get("company_id"), write=True, action="sms.campaign",
+        method="POST", path="/api/comm/sms/campaign",
+    )
     contact_ids = req.get("contact_ids") or []
     message = (req.get("message") or "").strip()
     if not message or not contact_ids:
         raise HTTPException(status_code=400, detail="Mesaj ve en az bir cari seçilmelidir.")
-    contacts = await db.contacts.find({"_id": {"$in": contact_ids}}).to_list(1000)
+    contacts = await db.contacts.find({"_id": {"$in": contact_ids}, "company_id": company_id}).to_list(1000)
     recipients = []
     for c in contacts:
         personalized = message.replace("{ad}", c.get("name", "")).replace("{bakiye}", f"{c.get('balance', 0):,.2f} ₺")
@@ -12280,7 +12363,16 @@ async def sms_campaign(req: Dict[str, Any]):
     return await _send_sms_to(company_id, recipients, message, "campaign", None)
 
 @api_router.get("/comm/sms/logs")
-async def sms_logs(company_id: Optional[str] = "comp_nexus_main_01", limit: int = 200):
+async def sms_logs(
+    request: Request,
+    company_id: Optional[str] = None,
+    limit: int = 200,
+    user: dict = Depends(get_current_user),
+):
+    company_id = await _guard_company_sms(
+        request, user, company_id, write=False, action="sms.logs",
+        method="GET", path="/api/comm/sms/logs",
+    )
     logs = await db.sms_logs.find({"company_id": company_id}).sort("created_at", -1).to_list(limit)
     return clean_docs(logs)
 
@@ -13861,11 +13953,14 @@ async def wa_webhook(payload: Dict[str, Any]):
 
 @api_router.post("/comm/whatsapp/send")
 async def wa_send(req: Dict[str, Any]):
+    import public_url as pu
     company_id = req.get("company_id", "comp_nexus_main_01")
     s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
     phone = comm_service.normalize_phone(req.get("phone", ""))
-    if not phone or not (req.get("message") or "").strip():
+    message = await pu.rewrite_outbound_doc_text(db, (req.get("message") or "").strip())
+    if not phone or not message:
         raise HTTPException(status_code=400, detail="Numara ve mesaj zorunludur.")
+    req = {**req, "message": message}
     status_val, err = "simulated", None
     if s.get("access_token_enc") and s.get("phone_number_id"):
         try:

@@ -9,7 +9,7 @@ import { backdropDismissProps } from "../../utils/modalBackdrop";
 import { COMPANY_DETAIL_TABS, COMPANY_DETAIL_TAB_IDS } from "../../utils/companyDetailTabs";
 import { AddonToggles } from "./AddonsPanel";
 import IsnetIntegrationPanel from "../IsnetIntegrationPanel";
-import { SmsCenter } from "../SmsCenter";
+import CompanySmsSummary from "./CompanySmsSummary";
 
 /** @deprecated use COMPANY_DETAIL_TABS — testler drawer-tab-* id’lerini bekler */
 const DRAWER_TABS = COMPANY_DETAIL_TABS;
@@ -575,10 +575,10 @@ export const CompanyLicenseDrawer = ({
           {tab === "sms" ? (
             <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-sms">
               <div>
-                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-slate-400" /> Şirket SMS operatörü</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">Bu firmanın kendi SMS operatör ayarları. Platform SMS (şifre sıfırlama vb.) ayrıdır: Sistem → SMS Modülü.</p>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><MessageSquare className="w-4 h-4 text-slate-400" /> Şirket SMS özeti</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Salt okunur. Şifre ve operatör ayarı buradan değiştirilemez. Platform SMS (şifre sıfırlama vb.) ayrıdır: Sistem → SMS Modülü.</p>
               </div>
-              <SmsCenter companyId={companyId} contacts={[]} />
+              <CompanySmsSummary companyId={companyId} />
             </section>
           ) : null}
 

@@ -1044,6 +1044,15 @@ async def list_companies(_: dict = Depends(require_super_admin)):
     return [await _company_row(c) for c in await _db.companies.find({}).sort("created_at", -1).to_list(500)]
 
 
+@router.get("/system/companies/{company_id}/sms")
+async def company_sms_readonly_summary(company_id: str, _: dict = Depends(require_super_admin)):
+    """ynt firma detayı: bağlı mı, operatör, son gönderim, hata sayısı. Sır ve düzenleme yok."""
+    import company_sms
+    if not await _db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return await company_sms.company_sms_summary(_db, company_id)
+
+
 @router.get("/system/companies/{company_id}")
 async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
     c = await _db.companies.find_one({"_id": company_id})

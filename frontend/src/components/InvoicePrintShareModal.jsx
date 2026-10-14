@@ -10,7 +10,6 @@ import {
   INVOICE_PRINT_SHARE_NOTE,
   fetchInvoicePdfFile,
   fetchInvoicePdfShareUrl,
-  invoicePdfPublicUrl,
   invoicePrintShareDocFromOrder,
   invoicePrintShareKindLabel,
   invoicePrintShareMessage,
@@ -46,20 +45,13 @@ export function InvoicePrintShareModal({
     phone,
     email,
   };
-  const [pdfUrl, setPdfUrl] = useState(() =>
-    invoicePdfPublicUrl(
-      typeof window !== "undefined" ? window.location.origin : "",
-      order?.invoice_id,
-    ),
-  );
+  const [pdfUrl, setPdfUrl] = useState("");
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!order?.invoice_id) return;
       try {
-        const url = await fetchInvoicePdfShareUrl(axios, API_URL, order.invoice_id, {
-          origin: typeof window !== "undefined" ? window.location.origin : "",
-        });
+        const url = await fetchInvoicePdfShareUrl(axios, API_URL, order.invoice_id);
         if (!cancelled && url) setPdfUrl(url);
       } catch {
         if (!cancelled) {

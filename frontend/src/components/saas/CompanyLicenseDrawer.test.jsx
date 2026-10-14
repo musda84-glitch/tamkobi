@@ -155,6 +155,9 @@ beforeEach(() => {
     if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [] });
     if (u.includes("/system/storage/")) return Promise.resolve({ data: storagePayload });
     if (u.includes("/system/ai")) return Promise.resolve({ data: { enabled: true, ready: true, provider: "openai", advisor_model: "gpt-4o-mini", extract_model: "gpt-4o-mini" } });
+    if (u.includes("/system/companies/") && u.endsWith("/sms")) {
+      return Promise.resolve({ data: { connected: true, operator: "Netgsm", last_sent_at: "2026-10-12T09:00:00Z", error_count: 2, readonly: true } });
+    }
     if (u.includes("/comm/sms/")) return Promise.resolve({ data: u.includes("/logs") ? [] : { provider: "netgsm", usercode: "", has_password: false, providers: [] } });
     return Promise.resolve({ data: companyPayload });
   });
@@ -244,6 +247,22 @@ test("system company drawer hosts İşNet SOAP panel when provider is isnet", as
   expect(host.querySelector('[data-testid="isnet-despatch-section"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="isnet-company-tax-id"]')).toBeNull();
   expect(host.querySelector('[data-testid="isnet-quick-links"]')).toBeNull();
+});
+
+test("SMS tab is a read-only summary without operator secrets", async () => {
+  await renderDrawer();
+  await clickTab("sms");
+  expect(host.querySelector('[data-testid="drawer-sms"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="company-sms-summary"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="company-sms-connected"]')?.textContent).toContain("Bağlı");
+  expect(host.querySelector('[data-testid="company-sms-operator"]')?.textContent).toContain("Netgsm");
+  expect(host.querySelector('[data-testid="company-sms-errors"]')?.textContent).toContain("2");
+  expect(host.querySelector('[data-testid="sms-password-input"]')).toBeNull();
+  expect(host.querySelector('[data-testid="save-sms-btn"]')).toBeNull();
+  expect(host.querySelector('[data-testid="sms-usercode-input"]')).toBeNull();
+  const smsGet = axios.get.mock.calls.find((c) => String(c[0]).includes("/system/companies/comp_matek/sms"));
+  expect(smsGet).toBeTruthy();
+  expect(axios.put.mock.calls.some((c) => String(c[0]).includes("/comm/sms/"))).toBe(false);
 });
 
 test("Depolama tab loads usage and saves storage limit via license API", async () => {

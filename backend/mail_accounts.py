@@ -283,6 +283,12 @@ async def mail_flag(uid: str, req: Dict[str, Any], user: dict = Depends(_user_de
         raise _mail_error(e)
 
 
+async def _rewrite_customer_copy(text: str) -> str:
+    """Fatura PDF linklerini public app URL ile yazar; istek host'una bakmaz."""
+    import public_url as pu
+    return await pu.rewrite_outbound_doc_text(_db, text or "")
+
+
 async def send_tracked_mail(
     *,
     company_id: str,
@@ -300,6 +306,9 @@ async def send_tracked_mail(
     attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> dict:
     a = account or await load_mail_account(company_id)
+    body = await _rewrite_customer_copy(body or "")
+    if html:
+        html = await _rewrite_customer_copy(html)
     log = MailLog(
         company_id=company_id,
         from_email=a["email"],
