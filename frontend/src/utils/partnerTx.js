@@ -1,53 +1,65 @@
-/** Ortak hareket etiketleri ve işaretleri.
- * Kart tutarı = Giriş + Çıkış (işlem sütunu kasa neti).
- * Tip kovası (ledger) sapma kontrolü için; kart her zaman kasa netini gösterir.
+/** Ortak hareket etiketleri.
+ * Liste ve kart: Ortak lehine (+) / Ortak aleyhine (−) = Σ delta.
+ * Kart bakiyesi = Σ liste delta.
  */
 
 import { fmtDmy } from "./dateFormat";
 
 export const PARTNER_TX_LABEL = {
-  capital_in: "Giriş",
-  withdrawal: "Çıkış",
-  profit_share: "Giriş",
-  credit: "Çıkış",
-  debit: "Çıkış",
-  salary: "Çıkış",
+  capital_in: "Ortak lehine",
+  withdrawal: "Ortak aleyhine",
+  profit_share: "Ortak lehine",
+  credit: "Ortak lehine",
+  debit: "Ortak aleyhine",
+  salary: "Ortak lehine",
 };
 
 export function isPartnerExpenseTx(tx) {
   return Boolean(tx?.expense_id || tx?.source === "expense");
 }
 
-/**
- * İşlem sütunu yönü (kasa / ortak cebi bakışı) — bakiye etkisinden ayrı olabilir:
- * - Masraf / alacak fişi / maaş → Çıkış (şirket eksi); bakiye artar
- * - Cari tahsilat → ortak → Giriş (tahsilat); bakiye azalır
- * - Cari ödeme ← ortak → Çıkış
- * - Banka eşleşmesi: Vadesiz çıkışı → ortak cebine Giriş (etiket);
- *   bakiye tipi withdrawal (Alacaklı ↓) — #1089 capital_in terslemesi geri alındı
- * - Virman / para çek → Çıkış; sermaye → Giriş
- */
-export function partnerTxIsCashInflow(tx) {
-  if (!tx) return false;
-  if (isPartnerExpenseTx(tx)) return false;
-  // Ortak Alacak Fişi / aylık maaş: kasa/şirket yönü çıkış (eksi tutar)
-  if (tx.type === "credit" || tx.type === "salary") return false;
-  if (tx.contact_id && tx.type === "withdrawal") return true;
-  if (tx.contact_id && tx.type === "capital_in") return false;
-  // Banka eşleşmesi: etiket = bankanın karşı tarafı; bakiye tipi banka yönüyle aynı
-  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
-    const bankType = String(tx.bank_tx_type || "").toLowerCase();
-    if (bankType === "outflow" || bankType === "debit") return true; // Giriş
-    if (bankType === "inflow" || bankType === "credit") return false; // Çıkış
-    // bank_tx_type yoksa tip geçerli (outflow→withdrawal → Çıkış; etiket için bank_tx_type şart)
-  }
-  return partnerTxIncreasesBalance(tx.type, tx);
+function effectOf(delta) {
+  const rounded = Math.round(Number(delta) * 100) / 100;
+  if (!Number.isFinite(rounded) || rounded === 0) return { delta: 0, side: "zero" };
+  return { delta: rounded, side: rounded > 0 ? "lehine" : "aleyhine" };
 }
 
-/** İşlem sütunu: yalnızca Giriş / Çıkış (kasa yönü). */
+/** Backend partner_tx_effect. API balance_delta+side varsa onu kullanır. */
+export function partnerTxEffect(tx) {
+  if (!tx) return { delta: 0, side: "zero" };
+  if (tx.balance_delta != null && tx.balance_delta !== "" && tx.side) {
+    const delta = Number(tx.balance_delta);
+    const side = tx.side === "lehine" || tx.side === "aleyhine" || tx.side === "zero" ? tx.side : (delta > 0 ? "lehine" : delta < 0 ? "aleyhine" : "zero");
+    return { delta: Number.isFinite(delta) ? Math.round(delta * 100) / 100 : 0, side };
+  }
+  const amt = Number(tx.amount);
+  const amount = Number.isFinite(amt) ? Math.abs(amt) : 0;
+  if (tx.type === "profit_share") return effectOf(tx.is_paid ? 0 : amount);
+  if (isPartnerExpenseTx(tx)) return effectOf(amount);
+  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
+    const bankType = String(tx.bank_tx_type || "").toLowerCase();
+    if (bankType === "inflow" || bankType === "credit") return effectOf(amount);
+    if (bankType === "outflow" || bankType === "debit") return effectOf(-amount);
+  }
+  if (tx.contact_id && tx.type === "capital_in") return effectOf(amount);
+  if (tx.contact_id && tx.type === "withdrawal") return effectOf(-amount);
+  if (tx.type === "capital_in" || tx.type === "credit" || tx.type === "salary") return effectOf(amount);
+  if (tx.type === "withdrawal" || tx.type === "debit") return effectOf(-amount);
+  return effectOf(0);
+}
+
+/** Liste işareti: ortak lehine (pozitif delta). */
+export function partnerTxIsCashInflow(tx) {
+  return partnerTxEffect(tx).side === "lehine";
+}
+
+/** İşlem sütunu: Ortak lehine / Ortak aleyhine. */
 export function partnerTxLabel(tx) {
   if (!tx) return "";
-  return partnerTxIsCashInflow(tx) ? "Giriş" : "Çıkış";
+  const { side } = partnerTxEffect(tx);
+  if (side === "lehine") return "Ortak lehine";
+  if (side === "aleyhine") return "Ortak aleyhine";
+  return "Denk";
 }
 
 /**
@@ -139,28 +151,23 @@ export function partnerTxIncreasesBalance(type, tx) {
 }
 
 export function partnerTxSign(type, tx) {
-  // Tablo işareti kasa yönüyle aynı (Giriş +, Çıkış −)
   if (tx && typeof tx === "object") {
-    return partnerTxIsCashInflow({ ...tx, type: type || tx.type }) ? "+" : "-";
+    const { delta, side } = partnerTxEffect({ ...tx, type: type || tx.type });
+    if (side === "lehine" || delta > 0) return "+";
+    if (side === "aleyhine" || delta < 0) return "-";
+    return "";
   }
   return partnerTxIncreasesBalance(type, tx) ? "+" : "-";
 }
 
 /** Tek hareketin ortak bakiyesine net etkisi. */
 export function partnerTxBalanceDelta(tx) {
-  if (!tx) return 0;
-  const amt = Number(tx.amount);
-  if (!Number.isFinite(amt)) return 0;
-  // Masraf (expense) — tip withdrawal kalsa bile alacak (+)
-  if (isPartnerExpenseTx(tx) || tx.type === "credit") return amt;
-  if (partnerTxIncreasesBalance(tx.type, tx)) return amt;
-  if (tx.type === "withdrawal" || tx.type === "debit") return -amt;
-  return 0;
+  return partnerTxEffect(tx).delta;
 }
 
 /**
  * Seçili ortağın hareketlerinden bakiye mutabakatı.
- * Kart tutarı = Giriş + Çıkış (kasa neti). Tip kovası (ledger) yalnızca sapma kontrolü.
+ * Kart = Σ delta = lehine − aleyhine.
  */
 export function partnerLedgerBreakdown(txs, storedBalance) {
   const rows = Array.isArray(txs) ? txs : [];
@@ -180,9 +187,10 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
   for (const tx of rows) {
     const amt = Number(tx.amount);
     const n = Number.isFinite(amt) ? amt : 0;
-    ledger += partnerTxBalanceDelta(tx);
-    if (partnerTxIsCashInflow(tx)) cashIn += n;
-    else cashOut += n;
+    const delta = partnerTxBalanceDelta(tx);
+    ledger += delta;
+    if (delta > 0) cashIn += delta;
+    else if (delta < 0) cashOut += -delta;
     if (tx.type === "capital_in") buckets.capital_in += n;
     else if (tx.type === "withdrawal") buckets.withdrawal += n;
     else if (tx.type === "credit") buckets.credit += n;
@@ -197,20 +205,17 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
   const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
   cashIn = Math.round(cashIn * 100) / 100;
   cashOut = Math.round(cashOut * 100) / 100;
-  // Kart = işlem sonucu: Giriş(+) + Çıkış(−)
   const girisDisplay = cashIn;
   const cikisDisplay = Math.round(-cashOut * 100) / 100;
   const netDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
   const cardDisplay = netDisplay;
-  /** Alacaklı/Borçlu rozeti: kasa netinin tersi (eksi net → Alacaklı) */
-  const cardPocket = Math.round(-netDisplay * 100) / 100;
+  const cardPocket = netDisplay;
   return {
     count: rows.length,
     ledger,
     stored: storedN,
     drift: Math.abs(ledger - storedN) > 0.005,
     buckets,
-    /** @deprecated tip kovası; UI kasa yönünü kullanır */
     inflow: cashIn,
     outflow: cashOut,
     cashIn,
@@ -220,8 +225,7 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
     netDisplay,
     cardDisplay,
     cardPocket,
-    /** Kart her zaman Giriş+Çıkış */
-    netMatchesCard: true,
+    netMatchesCard: Math.abs(netDisplay - ledger) < 0.02,
   };
 }
 

@@ -24,6 +24,7 @@ import {
   partnerSummaryCardMeta,
   recentPartnerTx,
   recentTxForAccounts,
+  sumShownBalances,
   totalLiquidity,
   virmanAccounts,
   type BankAccount,
@@ -261,7 +262,7 @@ export function BankingScreen() {
           {tab === "all" ? (
             <View style={{ gap: 8 }} testID="account-groups-stack">
               {overviewGroups.map((g) => {
-                const total = g.items.reduce((s, a) => s + accountBalance(a), 0);
+                const total = sumShownBalances(g.items);
                 const active = groupF === g.key;
                 const tone = accountGroupTone(g.key);
                 const notices = recentTxForAccounts(txs, g.items, 3).map((tx) => bankMovementNotice(tx, g.items));

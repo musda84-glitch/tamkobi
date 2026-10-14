@@ -283,7 +283,15 @@ async def _write_reverse_bank_entry(db, tx: dict, reason: str) -> dict:
         # Fallback: reverse entry etkisini uygula
         change = amt if rev_type == "inflow" else -amt
         if doc.get("account_id"):
-            await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": change}})
+            import account_balance
+            posted = await account_balance.apply_balance_delta(db, doc["account_id"], change)
+            if posted == "integrated":
+                doc["balance_posted"] = False
+                doc["match_status"] = "expected"
+                await db.bank_transactions.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {"balance_posted": False, "match_status": "expected"}},
+                )
         if doc.get("contact_id"):
             await db.contacts.update_one({"_id": doc["contact_id"]}, {"$inc": {"balance": -change}})
     return doc

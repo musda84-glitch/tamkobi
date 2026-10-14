@@ -205,26 +205,77 @@ def balance_inc(tx_type: str, amount: float) -> Dict[str, float]:
     raise HTTPException(status_code=400, detail="Geçersiz işlem türü.")
 
 
-def tx_balance_delta(tx: Dict[str, Any]) -> float:
-    """Tek hareketin ortak bakiyesine etkisi (tahakkuk kâr payı +, peşin ödenen 0).
-
-    Masraf ödemesi tip withdrawal kalsa bile alacak (+); sync onarımı öncesi de doğru.
-    """
+def _tx_amount(tx: Optional[Dict[str, Any]]) -> float:
+    if not tx:
+        return 0.0
     try:
-        amount = float(tx.get("amount") or 0)
+        return abs(float(tx.get("amount") or 0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _effect(delta: float) -> Dict[str, Any]:
+    rounded = round(float(delta or 0), 2)
+    if rounded > 0:
+        side = "lehine"
+    elif rounded < 0:
+        side = "aleyhine"
+    else:
+        side = "zero"
+        rounded = 0.0
+    return {"delta": rounded, "side": side}
+
+
+def partner_tx_effect(tx: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Tek hareketin ortak bakiyesine etkisi.
+
+    + lehine (Alacaklı): para koy, cari ödeme (contact_id), banka inflow eşleşmesi,
+    credit, salary tahakkuku, masraf, tahakkuk kâr payı.
+    − aleyhine (Borçlu): para çek, hesap→ortak, ortaklar arası virman kaynağı,
+    cari tahsilat (contact_id), banka outflow eşleşmesi, debit.
+    0: ödenmiş kâr payı.
+    """
+    if not tx:
+        return _effect(0)
+    amount = _tx_amount(tx)
     t = tx.get("type")
-    # Masraf / expense kaynağı — eski withdrawal yazılmış olsa bile alacak
-    if tx.get("expense_id") or tx.get("source") == "expense" or t == "credit":
-        return amount
-    if t in ("capital_in", "salary"):
-        return amount
-    if t in ("withdrawal", "debit"):
-        return -amount
     if t == "profit_share":
-        return 0.0 if tx.get("is_paid") else amount
-    return 0.0
+        return _effect(0.0 if tx.get("is_paid") else amount)
+    # Masraf — eski withdrawal yazılmış olsa bile alacak
+    if tx.get("expense_id") or tx.get("source") == "expense":
+        return _effect(amount)
+    bank_type = ""
+    if tx.get("source") == "bank_match" or tx.get("related_bank_tx_id"):
+        bank_type = str(tx.get("bank_tx_type") or "").strip().lower()
+        if bank_type in ("inflow", "credit"):
+            return _effect(amount)
+        if bank_type in ("outflow", "debit"):
+            return _effect(-amount)
+    # Cari ödeme (+) / cari tahsilat (−). Tip bu yönü taşır.
+    if tx.get("contact_id") and t == "capital_in":
+        return _effect(amount)
+    if tx.get("contact_id") and t == "withdrawal":
+        return _effect(-amount)
+    # Para koy, alacak fişi, maaş tahakkuku
+    if t in ("capital_in", "credit", "salary"):
+        return _effect(amount)
+    # Para çek, hesap→ortak, virman kaynağı, borç fişi
+    if t in ("withdrawal", "debit"):
+        return _effect(-amount)
+    return _effect(0)
+
+
+def tx_balance_delta(tx: Dict[str, Any]) -> float:
+    """Tek hareketin ortak bakiyesine etkisi (partner_tx_effect)."""
+    return float(partner_tx_effect(tx)["delta"])
+
+
+def annotate_partner_tx(tx: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    row = dict(tx or {})
+    effect = partner_tx_effect(row)
+    row["balance_delta"] = effect["delta"]
+    row["side"] = effect["side"]
+    return row
 
 
 def profit_share_inc(amount: float, is_paid: bool, *, applying: bool) -> Dict[str, float]:
@@ -270,60 +321,31 @@ def ledger_totals(txs: List[Dict[str, Any]]) -> Dict[str, float]:
     }
 
 
-def _tx_increases_balance(tx: Dict[str, Any]) -> bool:
-    """Frontend partnerTxIncreasesBalance ile aynı (kasa yönü yedek yolu)."""
-    t = tx.get("type")
-    if tx.get("expense_id") or tx.get("source") == "expense":
-        return True
-    if t in ("capital_in", "credit", "salary"):
-        return True
-    if t == "profit_share":
-        return not tx.get("is_paid")
-    return False
-
-
 def tx_is_cash_inflow(tx: Optional[Dict[str, Any]]) -> bool:
-    """Kart Giriş/Çıkış yönü — frontend partnerTxIsCashInflow ile birebir."""
-    if not tx:
-        return False
-    if tx.get("expense_id") or tx.get("source") == "expense":
-        return False
-    t = tx.get("type")
-    if t in ("credit", "salary"):
-        return False
-    if tx.get("contact_id") and t == "withdrawal":
-        return True
-    if tx.get("contact_id") and t == "capital_in":
-        return False
-    if tx.get("source") == "bank_match" or tx.get("related_bank_tx_id"):
-        bank_type = str(tx.get("bank_tx_type") or "").lower()
-        if bank_type in ("outflow", "debit"):
-            return True
-        if bank_type in ("inflow", "credit"):
-            return False
-    return _tx_increases_balance(tx)
+    """Liste işareti: ortak lehine (pozitif delta). Alan adı uyumlu."""
+    return partner_tx_effect(tx)["side"] == "lehine"
 
 
 def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Giriş/Çıkış sayaçları (kasa yönü). Bakiye kartı bunu kullanmaz — present_partner_balance."""
-    cash_in = 0.0
-    cash_out = 0.0
+    """Ortak lehine (+) / aleyhine (−) = Σ pozitif / Σ |negatif| delta.
+
+    cash_in / cash_out alan adları korunur. cash_net = lehine − aleyhine = Σ delta.
+    """
+    lehine = 0.0
+    aleyhine = 0.0
     for tx in txs or []:
-        try:
-            amt = float(tx.get("amount") or 0)
-        except (TypeError, ValueError):
-            amt = 0.0
-        if tx_is_cash_inflow(tx):
-            cash_in += amt
-        else:
-            cash_out += amt
-    cash_net = round(cash_in - cash_out, 2)
+        delta = float(partner_tx_effect(tx)["delta"])
+        if delta > 0:
+            lehine += delta
+        elif delta < 0:
+            aleyhine += -delta
+    cash_net = round(lehine - aleyhine, 2)
     return {
         "tx_count": len(txs or []),
-        "cash_in": round(cash_in, 2),
-        "cash_out": round(cash_out, 2),
+        "cash_in": round(lehine, 2),
+        "cash_out": round(aleyhine, 2),
         "cash_net": cash_net,
-        "card_pocket": round(-cash_net, 2),
+        "card_pocket": cash_net,
     }
 
 
@@ -367,7 +389,7 @@ def present_partner_balance(balance: Any) -> Dict[str, Any]:
 def company_partner_balances(partners: List[Dict[str, Any]], txs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Şirket ortak bakiyesi: her ortak hareket defterinden, kart = bu bakiyelerin toplamı.
 
-    Kasa Giriş/Çıkış yönü (banka eşleşmesi, masraf) defterden sapabilir; kart onu kullanmaz.
+    Kart bakiyesi = Σ partner_tx_effect (lehine − aleyhine); liste aynı deltayı kullanır.
     """
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for tx in txs or []:
@@ -416,7 +438,10 @@ async def load_company_partner_view(db, company_id: str) -> Dict[str, Any]:
 
 
 def summary_payload(view: Dict[str, Any]) -> Dict[str, Any]:
-    """Ortaklar Hesabı kartı. Tutar, ortak bakiyelerinin toplamıdır."""
+    """Ortaklar Hesabı kartı. Tutar, ortak bakiyelerinin toplamıdır.
+
+    total_cash_in / total_cash_out = lehine / aleyhine (alan adı uyumlu).
+    """
     partners = view.get("source_partners") or []
     cash = view.get("cash") or {}
     return {
