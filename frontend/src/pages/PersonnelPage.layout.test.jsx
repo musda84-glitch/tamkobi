@@ -127,6 +127,7 @@ test("employee card strip is a single compact horizontal row", async () => {
   expect(card.textContent).toContain("Soner Akkaya");
   expect(card.textContent).toContain("Kalan izin");
   expect(host.querySelector('[data-testid="employee-receivable-14479874352"]')?.textContent).toMatch(/Kalan alacak/);
+  expect(host.querySelector('[data-testid="employee-no-pay-start-14479874352"]')?.textContent).toBe("Hak ediş tarihi tanımlı değil");
   const strip = host.querySelector('[data-testid="employee-card-strip-emp_1"]');
   expect(strip).not.toBeNull();
   expect(strip.className).toMatch(/\bpy-2\b/);

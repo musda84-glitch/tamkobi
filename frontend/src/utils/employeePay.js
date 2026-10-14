@@ -9,6 +9,12 @@ export const EMPLOYEE_PAY_KINDS = [
   { key: "expense", label: "Masraf", field: "unpaid_expenses", testid: "emp-pay-kind-expense" },
 ];
 
+export const PAY_START_MISSING_MSG = "Hak ediş tarihi tanımlı değil";
+
+export function hasPayStartDate(emp) {
+  return Boolean(String(emp?.pay_start_date || "").trim());
+}
+
 export function payDayOf(emp) {
   const fromField = Number(emp?.pay_day);
   if (fromField >= 1 && fromField <= 31) return fromField;

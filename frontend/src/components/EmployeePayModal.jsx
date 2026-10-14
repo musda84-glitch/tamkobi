@@ -16,8 +16,10 @@ import {
   cashShortfallWarning,
   defaultPayAccount,
   employeePayModalTitle,
+  hasPayStartDate,
   initialPaymentKind,
   istanbulPeriod,
+  PAY_START_MISSING_MSG,
   paymentPreview,
   posSalaryWarning,
   sgkCashBlocked,
@@ -67,6 +69,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
 
   const remaining = Number(summary.remaining) || 0;
   const unpaidPayroll = Number(summary.unpaid_payroll) || 0;
+  const payStartMissing = !hasPayStartDate(e) && summary.pay_start_defined !== true;
   const salaryEarned = summary.salary_earned != null ? Number(summary.salary_earned) : unpaidPayroll;
   const premium = summary.premium != null ? Number(summary.premium) : (Number(summary.bonus_pending) || 0) + (Number(summary.overtime_due) || 0);
   const deductions = summary.deductions != null ? Number(summary.deductions) : Number(summary.advances) || 0;
@@ -140,8 +143,11 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
           <button type="button" className="px-2 py-1 border rounded-lg" onClick={() => setMonth((m) => shiftPeriod(m, 1))} data-testid="emp-pay-period-next">→</button>
         </div>
 
+        {payStartMissing ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 px-3 py-2 font-semibold" data-testid="emp-pay-no-start">{PAY_START_MISSING_MSG}</div>
+        ) : null}
         <div className="grid grid-cols-2 gap-2" data-testid="emp-pay-summary">
-          <div className="rounded-lg bg-slate-50 px-2 py-1.5"><div className="text-[10px] text-slate-500">Hak edilen maaş</div><div className="font-semibold">{fmt(salaryEarned)} ₺</div></div>
+          <div className="rounded-lg bg-slate-50 px-2 py-1.5"><div className="text-[10px] text-slate-500">Hak edilen maaş</div><div className="font-semibold">{payStartMissing ? PAY_START_MISSING_MSG : `${fmt(salaryEarned)} ₺`}</div></div>
           <div className="rounded-lg bg-slate-50 px-2 py-1.5"><div className="text-[10px] text-slate-500">Prim / mesai</div><div className="font-semibold">{fmt(premium)} ₺</div></div>
           <div className="rounded-lg bg-slate-50 px-2 py-1.5"><div className="text-[10px] text-slate-500">Kesintiler</div><div className="font-semibold">{fmt(deductions)} ₺</div></div>
           <div className="rounded-lg bg-slate-50 px-2 py-1.5"><div className="text-[10px] text-slate-500">Önceki ödemeler</div><div className="font-semibold">{fmt(previous)} ₺</div></div>
