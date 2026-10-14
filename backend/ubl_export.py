@@ -386,6 +386,21 @@ def _tax_category_kdv(
     return cat
 
 
+def _write_item_identifications(item_el, it: Dict[str, Any]) -> None:
+    """UBL-TR Item: Name sonrası SellersItemIdentification, sonra AdditionalItemIdentification.
+
+    Barkod metin ID olarak yazılır; görsel / StandardItemIdentification eklenmez.
+    """
+    sku = str(it.get("sku") or "").strip()
+    if sku:
+        sid = _cac(item_el, "SellersItemIdentification")
+        _cbc(sid, "ID", sku[:50])
+    barcode = str(it.get("barcode") or it.get("gtin") or "").strip()
+    if barcode:
+        aid = _cac(item_el, "AdditionalItemIdentification")
+        _cbc(aid, "ID", barcode[:50])
+
+
 def _amt(n: Any) -> str:
     try:
         return f"{float(n or 0):.2f}"
@@ -929,10 +944,7 @@ def build_invoice_ubl(
             _cbc(lwsch, "TaxTypeCode", wh_code)
         item_el = _cac(line, "Item")
         _cbc(item_el, "Name", str(it.get("name") or "Kalem")[:200])
-        sku = (it.get("sku") or "").strip()
-        if sku:
-            sid = _cac(item_el, "SellersItemIdentification")
-            _cbc(sid, "ID", sku[:50])
+        _write_item_identifications(item_el, it)
         price = _cac(line, "Price")
         unit_price = float(it.get("unit_price") or 0)
         _cbc(price, "PriceAmount", _amt(unit_price), currencyID=currency)
@@ -1148,10 +1160,7 @@ def build_despatch_ubl(
         _cbc(order_line, "LineID", str(i))
         item_el = _cac(line, "Item")
         _cbc(item_el, "Name", str(it.get("name") or it.get("product_name") or "Kalem")[:200])
-        sku = (it.get("sku") or "").strip()
-        if sku:
-            sid = _cac(item_el, "SellersItemIdentification")
-            _cbc(sid, "ID", sku[:50])
+        _write_item_identifications(item_el, it)
         # Birim fiyat bilgilendirme (irsaliyede KDV yok)
         unit_price = float(it.get("unit_price") or 0)
         if unit_price > 0:

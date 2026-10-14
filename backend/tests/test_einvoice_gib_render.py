@@ -117,6 +117,7 @@ def _invoice_xml(*, unit_code: str = "C62") -> bytes:
     <cac:Item>
       <cbc:Name>Yazlık Ürün</cbc:Name>
       <cac:SellersItemIdentification><cbc:ID>YZL-001</cbc:ID></cac:SellersItemIdentification>
+      <cac:AdditionalItemIdentification><cbc:ID>8680001234567</cbc:ID></cac:AdditionalItemIdentification>
     </cac:Item>
     <cac:Price><cbc:PriceAmount currencyID="TRY">5000.00</cbc:PriceAmount></cac:Price>
   </cac:InvoiceLine>
@@ -163,6 +164,7 @@ def _despatch_xml() -> bytes:
     <cac:Item>
       <cbc:Name>Palet</cbc:Name>
       <cac:SellersItemIdentification><cbc:ID>PLT-9</cbc:ID></cac:SellersItemIdentification>
+      <cac:AdditionalItemIdentification><cbc:ID>8680009876543</cbc:ID></cac:AdditionalItemIdentification>
     </cac:Item>
   </cac:DespatchLine>
 </DespatchAdvice>
@@ -255,6 +257,8 @@ def _assert_invoice(html: str):
     assert "BANKA HESAP BİLGİLERİMİZ" in html
     assert "TR330006100519786457841326" in html
     assert "Stok Kodu" in html
+    assert "Barkod" in html
+    assert "8680001234567" in html
     assert "KDV Tutarı" in html
     assert "white-space:nowrap" in html
     assert ">Adet<" in html
@@ -344,6 +348,8 @@ def test_despatch_html_uses_delivered_quantity_and_placeholders(source):
     assert "IRS2026000000001" in html
     assert "PLT-9" in html
     assert "Palet" in html
+    assert "Barkod" in html
+    assert "8680009876543" in html
     assert ">Adet<" in html
     assert _PNG in html
     assert html.count("Liman Yolu 4") == 1
