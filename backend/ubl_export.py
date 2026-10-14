@@ -504,6 +504,41 @@ def _stable_uuid(inv: Dict[str, Any]) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tamkobi-invoice:{raw}"))
 
 
+def _qr_rate_key(rate: float) -> str:
+    """GİB karekod oran anahtarı: 20.0 → '20', 8.0 → '8'."""
+    try:
+        n = float(rate or 0)
+    except (TypeError, ValueError):
+        n = 0.0
+    if n.is_integer():
+        return str(int(n))
+    return f"{n:g}"
+
+
+def _line_tax_subtotals_by_rate(inv: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
+    """Satır TaxSubtotal karşılığı: oran → (matrah, hesaplanan KDV)."""
+    buckets: Dict[str, Tuple[float, float]] = {}
+    for it in inv.get("items") or []:
+        try:
+            rate = float(it.get("vat_rate") or 0)
+        except (TypeError, ValueError):
+            rate = 0.0
+        try:
+            net = float(it.get("total") or 0)
+        except (TypeError, ValueError):
+            net = 0.0
+        try:
+            vat = float(it.get("vat_amount") or 0)
+        except (TypeError, ValueError):
+            vat = 0.0
+        if vat <= 0 and rate:
+            vat = round(net * rate / 100.0, 2)
+        key = _qr_rate_key(rate)
+        prev_m, prev_k = buckets.get(key, (0.0, 0.0))
+        buckets[key] = (round(prev_m + net, 2), round(prev_k + vat, 2))
+    return buckets
+
+
 def gib_qr_fields(
     inv: Dict[str, Any],
     seller: Dict[str, Any],
@@ -521,6 +556,8 @@ def gib_qr_fields(
 
     XSLT 1.0 bitmap üretemez (ve harici QR servisi GİB görüntülemede yok).
     Bu sözlük PNG'ye çevrilip AdditionalDocumentReference/QRCODE olarak gömülür.
+    Oran bazlı: her KDV oranı için kdvmatrah(<oran>) ve hesaplanankdv(<oran>)
+    satır TaxSubtotal tutarlarından toplanır.
     """
     seller_tax = "".join(ch for ch in str(seller.get("tax_number") or seller.get("tax_id") or "") if ch.isdigit())
     buyer_tax = "".join(
@@ -529,7 +566,7 @@ def gib_qr_fields(
         ) if ch.isdigit()
     )
     inclusive = round(float(subtotal or 0) + float(vat_total or 0), 2)
-    return {
+    fields = {
         "vkntckn": seller_tax,
         "avkntckn": buyer_tax,
         "senaryo": profile or "",
@@ -543,6 +580,12 @@ def gib_qr_fields(
         "vergidahil": f"{inclusive:.2f}",
         "odenecek": f"{float(grand or 0):.2f}",
     }
+    for rate_key, (matrah, kdv) in sorted(
+        _line_tax_subtotals_by_rate(inv).items(), key=lambda kv: -float(kv[0])
+    ):
+        fields[f"kdvmatrah({rate_key})"] = f"{matrah:.2f}"
+        fields[f"hesaplanankdv({rate_key})"] = f"{kdv:.2f}"
+    return fields
 
 
 def _qr_png_b64(payload: str) -> str:
