@@ -1153,7 +1153,7 @@ export default function ProjectsPage({ section } = {}) {
             </div>
             )}
             footer={(
-            <div className="p-4 sm:p-6 space-y-3">
+            <div className="px-3 py-1.5 flex flex-wrap items-center justify-between gap-2">
             {form.kind !== "project" && (
               <LineTotalsFooter
                 subtotal={lineTotals.subtotal}
@@ -1163,8 +1163,8 @@ export default function ProjectsPage({ section } = {}) {
                 currency={form.currency || "TRY"}
               />
             )}
-            <div><label className="block font-semibold mb-1">Notlar</label><textarea value={form.notes || form.description || ""} onChange={(e) => setForm({ ...form, notes: e.target.value, description: e.target.value })} rows={2} className={inputCls} /></div>
-            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pf-save-btn">Kaydet</button></div>
+            {form.kind === "project" && <div className="flex-1 min-w-[12rem]"><textarea value={form.notes || form.description || ""} onChange={(e) => setForm({ ...form, notes: e.target.value, description: e.target.value })} rows={2} placeholder="Notlar" className={inputCls} /></div>}
+            <div className="flex justify-end gap-2 ml-auto"><button type="button" onClick={() => setForm(null)} className="h-8 px-3 border rounded-lg">İptal</button><button type="submit" className="h-8 px-3 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pf-save-btn">Kaydet</button></div>
             </div>
             )}
           >
@@ -1182,6 +1182,10 @@ export default function ProjectsPage({ section } = {}) {
                   testIdPrefix="q-item"
                   defaultVat={20}
                 />
+                <details className="mt-1 rounded-md border border-slate-200 px-2 py-1">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Notlar</summary>
+                  <textarea value={form.notes || form.description || ""} onChange={(e) => setForm({ ...form, notes: e.target.value, description: e.target.value })} rows={2} className={`${inputCls} mt-1`} />
+                </details>
               </div>
             ) : null}
           </DocumentFormModal>

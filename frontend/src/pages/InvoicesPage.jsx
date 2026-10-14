@@ -65,6 +65,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   ChevronDown,
+  CircleHelp,
   FileCheck2, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw, PackagePlus, Loader2 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -423,6 +424,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);
+  const [invoiceInfoOpen, setInvoiceInfoOpen] = useState(true);
+  const [contactFieldsOpen, setContactFieldsOpen] = useState(false);
   const newParam = searchParams.get("new");
   const newContactParam = searchParams.get("contact_id");
   const newProjectParam = searchParams.get("project_id");
@@ -658,6 +661,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         setContacts((prev) => [contact, ...prev]);
       }
       setFormData((fd) => ({ ...fd, ...invoiceFormPatchForRetail(contact, fd) }));
+      setContactFieldsOpen(false);
       toast.success("Perakende (carisiz) seçildi.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Perakende cari oluşturulamadı.");
@@ -1867,11 +1871,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           maxWidthClass="max-w-7xl"
           panelClassName="text-xs"
           header={(
-            <div className="p-4 sm:p-6 pb-3 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 gap-3">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">{editingInvoice ? `Taslak Düzenle · ${editingInvoice.invoice_number}` : "Yeni Fatura Düzenle"}</h2>
-                <p className="text-xs text-slate-500">E-Fatura & E-Arşiv Standartlarına Uygun</p>
+            <div>
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100">
+              <div className="min-w-0 flex items-center gap-2">
+                <h2 className="text-sm font-bold text-slate-900 truncate">{editingInvoice ? `Taslak Düzenle · ${editingInvoice.invoice_number}` : "Yeni Fatura Düzenle"}</h2>
+                <span className="hidden sm:inline text-[10px] text-slate-400 truncate">E-Fatura & E-Arşiv</span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {editingInvoice && (
@@ -1886,14 +1890,40 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </button>
               </div>
             </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Fatura Türü</label>
+            <div className="px-3 py-1.5 space-y-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setInvoiceInfoOpen((v) => !v)}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-700 shrink-0"
+                  data-testid="inv-info-toggle"
+                  aria-expanded={invoiceInfoOpen}
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${invoiceInfoOpen ? "" : "-rotate-90"}`} />
+                  Fatura bilgileri
+                </button>
+                {!invoiceInfoOpen && (
+                  <div className="text-[11px] text-slate-500 truncate" data-testid="inv-info-summary">
+                    {{ sales: "Satış", purchase: "Alış", proforma: "Proforma", return: "İade", dispatch: "İrsaliye" }[formData.invoice_type] || "Fatura"}
+                    {" · "}
+                    {{ e_invoice: "E-Fatura", e_archive: "E-Arşiv", e_export: "e-İhracat", e_dispatch: "E-İrsaliye", paper: "Kağıt" }[formData.e_type] || formData.e_type}
+                    {formData.trade_kind === "export" ? " · İhracat" : formData.trade_kind === "import" ? " · İthalat" : ""}
+                    {" · "}{formData.currency || "TRY"}
+                    {" · "}{(formData.issue_date || "").slice(0, 10)}
+                    {" · "}{(formData.status || "draft") === "draft" ? "Taslak" : "Onaylı"}
+                    {formData.contact_name ? ` · ${formData.contact_name}` : ""}
+                  </div>
+                )}
+              </div>
+              {invoiceInfoOpen && (
+              <div className="space-y-1.5" data-testid="inv-info-panel">
+              <div className="flex flex-wrap items-end gap-1.5">
+                <div className="w-[9.5rem] max-w-full">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Fatura Türü</label>
                   <select
                     value={formData.invoice_type}
                     onChange={(e) => setFormData({ ...formData, invoice_type: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
+                    className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium"
                     data-testid="inv-type-select"
                   >
                     <option value="sales">Satış Faturası</option>
@@ -1903,12 +1933,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <option value="dispatch">İrsaliye (Sevk)</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">E-Belge Türü</label>
+                <div className="w-[10.5rem] max-w-full">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">E-Belge Türü</label>
                   <select
                     value={formData.e_type}
                     onChange={(e) => setFormData({ ...formData, e_type: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
+                    className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium"
                     data-testid="inv-etype-select"
                   >
                     <option value="e_invoice">E-Fatura (GİB Portal)</option>
@@ -1918,8 +1948,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <option value="paper">Kağıt Fatura (Matbu)</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Dış Ticaret</label>
+                <div className="w-[7.5rem] max-w-full">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Dış Ticaret</label>
                   <select
                     value={formData.trade_kind || ""}
                     onChange={(e) => {
@@ -1933,7 +1963,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         items: exportMode ? formData.items.map((it) => ({ ...it, vat_rate: 0 })) : formData.items,
                       });
                     }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
+                    className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium"
                     data-testid="inv-trade-kind"
                   >
                     <option value="">Yurt içi</option>
@@ -1941,19 +1971,39 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <option value="import">İthalat</option>
                   </select>
                 </div>
-                <div>
-                  <FxPicker companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv" rateTestId="inv-fx-rate" />
+                <FxPicker compact companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv-fx" />
+                <div className="min-w-[12rem] flex-1">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Tevkifat</label>
+                  <select value={formData.withholding_rate ? `${formData.withholding_rate}|${formData.withholding_code}` : ""} onChange={(e) => { const [r, c] = e.target.value.split("|"); setFormData({ ...formData, withholding_rate: Number(r || 0), withholding_code: c || "" }); }} className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium" data-testid="inv-withholding-select">
+                    {WITHHOLDING.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
                 </div>
+                <div>
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Kayıt</label>
+                  <div className="flex h-8 rounded-md border border-slate-300 overflow-hidden text-[11px] font-bold">
+                    {[["draft", "Taslak"], ["approved", "Onaylı"]].map(([m, l]) => <button type="button" key={m} title={m === "approved" ? "Onaylı (cariye işle)" : "Taslak"} onClick={() => setFormData({ ...formData, status: m })} className={`px-2 ${(formData.status || "draft") === m ? (m === "draft" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white") : "bg-white text-slate-500"}`} data-testid={`inv-status-${m}`}>{l}</button>)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"
+                  title="KDV’siz / KDV’li birim fiyat, iskonto ve KDV oranı her satırda ayrı düzenlenir; tutarlar otomatik hesaplanır."
+                  aria-label="Satır fiyatları"
+                  data-testid="inv-line-price-hint"
+                >
+                  <CircleHelp className="w-3.5 h-3.5" />
+                  <span className="sr-only">KDV’siz / KDV’li birim fiyat, iskonto ve KDV oranı her satırda ayrı düzenlenir; tutarlar otomatik hesaplanır.</span>
+                </button>
               </div>
               {(formData.trade_kind === "export" || formData.trade_kind === "import") && (
-                <div className="space-y-3 bg-sky-50 border border-sky-100 rounded-xl p-3" data-testid="inv-trade-row">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1.5 bg-sky-50 border border-sky-100 rounded-lg p-2" data-testid="inv-trade-row">
+                  <div className="flex flex-wrap gap-1.5">
                     <div><label className="block font-semibold text-slate-700 mb-1">Teslim şekli</label><select value={formData.incoterm || ""} onChange={(e) => setFormData({ ...formData, incoterm: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-incoterm">{["", "EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"].map((x) => <option key={x || "yok"} value={x}>{x || "Seçin"}</option>)}</select></div>
                     <div><label className="block font-semibold text-slate-700 mb-1">Ülke</label><input value={formData.country || ""} onChange={(e) => setFormData({ ...formData, country: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-country" /></div>
                     <div><label className="block font-semibold text-slate-700 mb-1">Gümrük idaresi</label><input value={formData.customs_office || ""} onChange={(e) => setFormData({ ...formData, customs_office: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-customs" /></div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div><label className="block font-semibold text-slate-700 mb-1">Rejim</label><input value={formData.regime_code || ""} onChange={(e) => setFormData({ ...formData, regime_code: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" placeholder="4000 / 1000" data-testid="inv-regime" /></div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Rejim</label><input value={formData.regime_code || ""} onChange={(e) => setFormData({ ...formData, regime_code: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" placeholder="4000 / 1000" data-testid="inv-regime" /></div>
                     <div><label className="block font-semibold text-slate-700 mb-1">Beyanname no</label><input value={formData.declaration_no || ""} onChange={(e) => setFormData({ ...formData, declaration_no: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-declaration" /></div>
                     <div><label className="block font-semibold text-slate-700 mb-1">Beyanname tarihi</label><input type="date" value={formData.declaration_date || ""} onChange={(e) => setFormData({ ...formData, declaration_date: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-declaration-date" /></div>
                     {formData.trade_kind === "export" && <div><label className="block font-semibold text-slate-700 mb-1">DAB no</label><input value={formData.dab_no || ""} onChange={(e) => setFormData({ ...formData, dab_no: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-dab" /></div>}
@@ -1963,133 +2013,112 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   {formData.trade_file_number && <div className="text-[11px] text-sky-800 font-semibold" data-testid="inv-trade-file">Gümrük dosyası: {formData.trade_file_number}</div>}
                 </div>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3" data-testid="inv-scenario-row">
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Tevkifat (Hizmet Faturası)</label>
-                    <select value={formData.withholding_rate ? `${formData.withholding_rate}|${formData.withholding_code}` : ""} onChange={(e) => { const [r, c] = e.target.value.split("|"); setFormData({ ...formData, withholding_rate: Number(r || 0), withholding_code: c || "" }); }} className="w-full bg-white border border-slate-200 rounded-lg p-2 font-medium" data-testid="inv-withholding-select">
-                      {WITHHOLDING.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Satır fiyatları</label>
-                    <p className="text-[11px] text-slate-500 leading-snug bg-white border border-slate-200 rounded-lg p-2" data-testid="inv-line-price-hint">
-                      KDV’siz / KDV’li birim fiyat, iskonto ve KDV oranı her satırda ayrı düzenlenir; tutarlar otomatik hesaplanır.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Kayıt Durumu</label>
-                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[11px] font-bold">
-                      {[["draft", "Taslak"], ["approved", "Onaylı (cariye işle)"]].map(([m, l]) => <button type="button" key={m} onClick={() => setFormData({ ...formData, status: m })} className={`flex-1 py-2 ${(formData.status || "draft") === m ? (m === "draft" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white") : "bg-white text-slate-500"}`} data-testid={`inv-status-${m}`}>{l}</button>)}
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="flex items-center justify-between font-semibold text-slate-700 mb-1 gap-2 flex-wrap">
-                    <span>Cari Seçin</span>
-                    <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button>
+              <div className="flex flex-wrap items-end gap-1.5" data-testid="inv-scenario-row">
+                <div className="flex-[1.4] min-w-[220px]">
+                  <label className="flex items-center justify-between text-[10px] leading-tight font-semibold text-slate-500 mb-0.5 gap-2">
+                    <span>Cari</span>
+                    <span className="flex items-center gap-2 normal-case">
+                      {(formData.contact_id || formData.contact_name) && (
+                        <button type="button" onClick={() => setContactFieldsOpen((v) => !v)} className="text-slate-500 hover:underline" data-testid="inv-contact-toggle">{contactFieldsOpen ? "Özet" : "Değiştir"}</button>
+                      )}
+                      <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline" data-testid="inv-new-contact-btn">+ Yeni cari</button>
+                    </span>
                   </label>
-                  <ContactSearchSelect
-                    companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
-                    value={formData.contact_id}
-                    valueLabel={formData.contact_name || ""}
-                    placeholder="Cari ara ve seç..."
-                    onChange={(id, c) => setFormData({
-                      ...formData,
-                      contact_id: id,
-                      contact_name: c?.name || "",
-                      contact_tax_id: c?.tax_number_or_id || "",
-                      contact_tax_office: c?.tax_office || "",
-                      shipping_address: c?.address || formData.shipping_address || "",
-                      city: c?.city || formData.city || "",
-                      customer_phone: c?.phone || formData.customer_phone || "",
-                      e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type,
-                    })}
-                    testId="inv-contact-select"
-                    leadingAction={formData.invoice_type !== "purchase" ? {
-                      label: "Perakende (carisiz)",
-                      sub: "Cari seçmeden peşin satış — e-arşiv",
-                      testId: "inv-retail-contact-option",
-                      icon: <Store className="w-4 h-4 shrink-0 text-rose-700" />,
-                      onSelect: pickRetailContact,
-                    } : null}
-                  />
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">VKN / TCKN</label>
-                      <input
-                        value={formData.contact_tax_id || ""}
-                        onChange={(e) => setFormData({ ...formData, contact_tax_id: e.target.value })}
-                        placeholder="Kart boşsa faturadan yazılır"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
-                        data-testid="inv-contact-tax"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-slate-700 mb-1">Vergi dairesi</label>
-                      <input
-                        value={formData.contact_tax_office || ""}
-                        onChange={(e) => setFormData({ ...formData, contact_tax_office: e.target.value })}
-                        placeholder="Kart boşsa faturadan yazılır"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                        data-testid="inv-contact-tax-office"
-                      />
-                    </div>
-                  </div>
-                  {formData.invoice_type !== "purchase" && !formData.contact_id && (
-                    <button
-                      type="button"
-                      onClick={pickRetailContact}
-                      className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-800 hover:bg-rose-100"
-                      data-testid="inv-retail-contact-btn"
-                    >
-                      <Store className="w-3.5 h-3.5" /> Perakende (carisiz) satış
+                  {(contactFieldsOpen || !(formData.contact_id || formData.contact_name)) ? (
+                    <ContactSearchSelect
+                      companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+                      value={formData.contact_id}
+                      valueLabel={formData.contact_name || ""}
+                      placeholder="Cari ara ve seç..."
+                      onChange={(id, c) => {
+                        setContactFieldsOpen(!id);
+                        setFormData({
+                          ...formData,
+                          contact_id: id,
+                          contact_name: c?.name || "",
+                          contact_tax_id: c?.tax_number_or_id || "",
+                          contact_tax_office: c?.tax_office || "",
+                          shipping_address: c?.address || formData.shipping_address || "",
+                          city: c?.city || formData.city || "",
+                          customer_phone: c?.phone || formData.customer_phone || "",
+                          e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type,
+                        });
+                      }}
+                      testId="inv-contact-select"
+                      leadingAction={formData.invoice_type !== "purchase" ? {
+                        label: "Perakende (carisiz)",
+                        sub: "Cari seçmeden peşin satış — e-arşiv",
+                        testId: "inv-retail-contact-option",
+                        icon: <Store className="w-4 h-4 shrink-0 text-rose-700" />,
+                        onSelect: pickRetailContact,
+                      } : null}
+                    />
+                  ) : (
+                    <button type="button" onClick={() => setContactFieldsOpen(true)} className="h-8 w-full truncate rounded-md border border-slate-200 bg-slate-50 px-2 text-left text-xs font-semibold text-slate-800" data-testid="inv-contact-summary">
+                      {formData.contact_name || "Cari"}{formData.contact_tax_id ? ` · ${formData.contact_tax_id}` : ""}{formData.contact_tax_office ? ` · ${formData.contact_tax_office}` : ""}
                     </button>
                   )}
                 </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Proje (opsiyonel)</label>
-                  <select value={formData.project_id || ""} onChange={(e) => { const id = e.target.value; const p = projects.find((x) => x.id === id); setFormData({ ...formData, project_id: id, project_number: p?.project_number || "" }); }} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" data-testid="inv-project-select">
-                    <option value="">— Projesiz —</option>
-                    {projects.map((p) => <option key={p.id} value={p.id}>{p.project_number} · {p.name}</option>)}
-                  </select>
-                </div>
-                {quickContact && (
-                  <div className="sm:col-span-3">
-                    <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
-                      onCreated={(c) => { setContacts((prev) => [c, ...prev]); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
-                  </div>
+                {(contactFieldsOpen || !(formData.contact_id || formData.contact_name)) && (
+                  <>
+                    <div className="w-[8.5rem]">
+                      <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">VKN / TCKN</label>
+                      <input
+                        value={formData.contact_tax_id || ""}
+                        onChange={(e) => setFormData({ ...formData, contact_tax_id: e.target.value })}
+                        placeholder="VKN / TCKN"
+                        className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-mono"
+                        data-testid="inv-contact-tax"
+                      />
+                    </div>
+                    <div className="w-[9.5rem]">
+                      <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Vergi dairesi</label>
+                      <input
+                        value={formData.contact_tax_office || ""}
+                        onChange={(e) => setFormData({ ...formData, contact_tax_office: e.target.value })}
+                        placeholder="Vergi dairesi"
+                        className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs"
+                        data-testid="inv-contact-tax-office"
+                      />
+                    </div>
+                  </>
                 )}
-                <div className="sm:col-span-3">
-                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType, meta) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
-                </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Düzenleme Tarihi</label>
+                {formData.invoice_type !== "purchase" && !formData.contact_id && (
+                  <button
+                    type="button"
+                    onClick={pickRetailContact}
+                    className="h-8 inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 text-[11px] font-bold text-rose-800 hover:bg-rose-100"
+                    data-testid="inv-retail-contact-btn"
+                  >
+                    <Store className="w-3.5 h-3.5" /> Perakende
+                  </button>
+                )}
+                <div className="w-[9.2rem]">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Tarih</label>
                   <input
                     type="date"
                     value={formData.issue_date}
                     onChange={(e) => setFormData({ ...formData, issue_date: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs"
                     data-testid="inv-issue-date"
                   />
                 </div>
-                <div className="sm:col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">Düzenleme Saati</label>
-                  <div className="flex gap-1.5">
+                <div className="w-[12.5rem]">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Saat</label>
+                  <div className="flex gap-1">
                     <TimeInput
                       text24
                       step={1}
                       value={(formData.issue_time || "").slice(0, 8) || ""}
                       onChange={(e) => setFormData({ ...formData, issue_time: e.target.value })}
-                      className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-lg p-2"
+                      className="flex-1 min-w-0 h-8 bg-white border border-slate-200 rounded-md px-2 text-xs"
                       data-testid="inv-issue-time"
                     />
                     <button
                       type="button"
                       title="Şimdiki tarih ve saat"
                       onClick={() => setFormData({ ...formData, ...nowIssueDateTime() })}
-                      className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 font-semibold hover:bg-sky-100"
+                      className="shrink-0 h-8 inline-flex items-center gap-1 px-2 rounded-md border border-sky-200 bg-sky-50 text-sky-800 font-semibold hover:bg-sky-100"
                       data-testid="inv-now-btn"
                     >
                       <CalendarClock className="w-3.5 h-3.5" />
@@ -2097,87 +2126,77 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     </button>
                   </div>
                 </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Vade Tarihi</label>
+                <div className="w-[9.2rem]">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Vade</label>
                   <input
                     type="date"
                     value={formData.due_date}
                     onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs"
                     data-testid="inv-due-date"
                   />
                 </div>
-                <div className="sm:col-span-2">
-                  <FxPicker companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv-fx" />
+                <div className="min-w-[9rem] flex-1">
+                  <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Proje</label>
+                  <select value={formData.project_id || ""} onChange={(e) => { const id = e.target.value; const p = projects.find((x) => x.id === id); setFormData({ ...formData, project_id: id, project_number: p?.project_number || "" }); }} className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium" data-testid="inv-project-select">
+                    <option value="">— Projesiz —</option>
+                    {projects.map((p) => <option key={p.id} value={p.id}>{p.project_number} · {p.name}</option>)}
+                  </select>
                 </div>
               </div>
+              {quickContact && (
+                <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
+                  onCreated={(c) => { setContacts((prev) => [c, ...prev]); setContactFieldsOpen(false); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
+              )}
+              <details className="rounded-md border border-slate-200 bg-white px-2 py-1">
+                <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">GİB’den getir</summary>
+                <div className="pt-1.5">
+                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType, meta) => { setContactFieldsOpen(false); setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
+                </div>
+              </details>
+              </div>
+              )}
+              <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
+                <span className="font-bold text-slate-900">Kalemler</span>
+                <ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle" />
+              </div>
+            </div>
             </div>
           )}
 
           footer={(
-            <div className="p-4 sm:p-6 space-y-3">
-              {/* Totals Summary */}
-              <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
-                <div className="flex justify-between w-full max-w-sm">
-                  <span>Mal / Hizmet Toplamı:</span>
-                  <span className="font-semibold">{money(totals.itemsSum)}</span>
-                </div>
-                {totals.lineDiscount > 0 && <div className="flex justify-between w-full max-w-sm text-rose-600"><span>Satır İskontoları:</span><span>-{money(totals.lineDiscount)}</span></div>}
-                <div className="flex items-center justify-between w-full max-w-sm gap-2" data-testid="general-discount-row">
-                  <span>Genel İskonto:</span>
-                  <div className="flex items-center gap-1">
-                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[10px] font-bold">
-                      <button type="button" onClick={() => setGdMode("percent")} className={`px-2 py-1 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
-                      <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
-                    </div>
-                    <MoneyInput value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(n) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: n ?? "" })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
-                    <span className="text-rose-600 font-semibold w-24 text-right">-{money(totals.gd)}</span>
-                  </div>
-                </div>
-                <div className="flex justify-between w-full max-w-sm border-t border-slate-300 pt-1">
-                  <span>Ara Toplam (İskontolu):</span>
-                  <span className="font-semibold">{money(totals.subtotal)}</span>
-                </div>
-                <div className="flex justify-between w-full max-w-sm">
-                  <span>Toplam KDV:</span>
-                  <span className="font-semibold" data-testid="inv-vat-total">{money(totals.vat)}</span>
-                </div>
-                {totals.withholding > 0 && <div className="flex justify-between w-full max-w-sm text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{money(totals.withholding)}</span></div>}
-                <div className="flex justify-between w-full max-w-sm text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
-                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
-                  <span className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
-                </div>
+            <div className="px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-200 bg-white">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-700 flex-1 min-w-0">
+                <span>Mal/Hizmet <b className="text-slate-900">{money(totals.itemsSum)}</b></span>
+                {totals.lineDiscount > 0 && <span className="text-rose-600">Satır iskonto <b>-{money(totals.lineDiscount)}</b></span>}
+                <span className="inline-flex items-center gap-1" data-testid="general-discount-row">
+                  <span>İskonto</span>
+                  <span className="flex rounded border border-slate-300 overflow-hidden text-[10px] font-bold">
+                    <button type="button" onClick={() => setGdMode("percent")} className={`px-1.5 py-0.5 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
+                    <button type="button" onClick={() => setGdMode("amount")} className={`px-1.5 py-0.5 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
+                  </span>
+                  <MoneyInput value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(n) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: n ?? "" })} placeholder="0" className="w-16 h-7 bg-white border border-rose-200 rounded px-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
+                  <b className="text-rose-600">-{money(totals.gd)}</b>
+                </span>
+                <span>Ara <b>{money(totals.subtotal)}</b></span>
+                <span>KDV <b data-testid="inv-vat-total">{money(totals.vat)}</b></span>
+                {totals.withholding > 0 && <span className="text-indigo-700" data-testid="withholding-row">Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]}) <b>-{money(totals.withholding)}</b></span>}
+                <span className="font-bold text-slate-900">{totals.withholding > 0 ? "Ödenecek" : "Genel Toplam"} <b className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</b></span>
                 {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
-                  <div className="flex justify-between w-full max-w-sm text-slate-500" data-testid="inv-try-equivalent">
-                    <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
-                    <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
-                  </div>
+                  <span className="text-slate-500" data-testid="inv-try-equivalent">TL <b>{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</b></span>
                 )}
               </div>
-
-              <div className="w-full" data-testid="inv-notes-block">
-                <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
-                <textarea
-                  rows={2}
-                  value={formData.notes || ""}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Fatura altına yazılacak not / açıklama…"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
-                  data-testid="inv-notes-input"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center gap-2 shrink-0 ml-auto">
                 <button
                   type="button"
                   onClick={() => setShowNewModal(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-600 hover:bg-slate-100"
+                  className="h-8 px-3 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-100"
                 >
                   İptal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-md shadow-emerald-600/20"
+                  className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold"
                   data-testid="save-invoice-btn"
                 >
                   {(formData.status || "draft") === "draft" ? "Taslak Olarak Kaydet" : "Faturayı Kaydet & Onayla"}
@@ -2186,11 +2205,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             </div>
           )}
         >
-              <div className="px-4 sm:px-6 py-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900">Fatura Kalemleri</span>
-                </div>
-                <div className="flex justify-end"><ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle (kamera)" /></div>
+              <div className="px-2 sm:px-3 py-1">
                 <DocumentLineEditor
                   items={formData.items}
                   onChange={(items) => setFormData({ ...formData, items })}
@@ -2229,6 +2244,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     );
                   }}
                 />
+                <details className="mt-1 rounded-md border border-slate-200 bg-white px-2 py-1" data-testid="inv-notes-block">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Fatura notu{formData.notes ? " · dolu" : ""}</summary>
+                  <textarea
+                    rows={2}
+                    value={formData.notes || ""}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Fatura altına yazılacak not / açıklama…"
+                    className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs text-slate-800"
+                    data-testid="inv-notes-input"
+                  />
+                </details>
               </div>
         </DocumentFormModal>
       )}

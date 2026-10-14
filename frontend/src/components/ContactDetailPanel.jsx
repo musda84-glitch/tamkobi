@@ -1402,15 +1402,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
             )}
             footer={(() => { const t = documentLineTotals(editInv.items || []); const ccy = editInv.currency || "TRY"; return (
-              <div className="p-4 sm:p-5 flex flex-wrap justify-between items-center gap-3">
-                <div className="text-right space-y-0.5 ml-auto sm:ml-0">
-                  <div>KDV Hariç: <b>{fmtMoney(t.subtotal, ccy)}</b></div>
-                  <div>KDV: <b>{fmtMoney(t.vat, ccy)}</b></div>
-                  <div className="font-bold">Genel Toplam (KDV Dahil): {fmtMoney(t.grandTotal, ccy)}</div>
+              <div className="px-3 py-1.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                  <span>Mal/Hizmet <b>{fmtMoney(t.subtotal, ccy)}</b></span>
+                  <span>KDV <b>{fmtMoney(t.vat, ccy)}</b></span>
+                  <span className="font-bold">Genel Toplam <b className="text-emerald-700">{fmtMoney(t.grandTotal, ccy)}</b></span>
                 </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
-                  <button type="button" onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button>
+                <div className="flex gap-2 ml-auto">
+                  <button type="button" onClick={() => setEditInv(null)} className="h-8 px-3 border rounded-lg">İptal</button>
+                  <button type="button" onClick={saveInvoiceEdit} className="h-8 px-3 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button>
                 </div>
               </div>
             ); })()}

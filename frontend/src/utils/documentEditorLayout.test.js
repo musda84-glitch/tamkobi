@@ -1,11 +1,15 @@
 /**
  * @jest-environment jsdom
  */
+import fs from "fs";
+import path from "path";
 import {
   applyDocumentEditorLayout,
   lockBodyScroll,
   planDocumentEditorScroll,
   resetBodyScrollLockForTests,
+  visibleLineCount,
+  DOC_LINE_ROW_PX,
 } from "./documentEditorLayout";
 
 beforeEach(() => {
@@ -77,6 +81,44 @@ test("iç içe kilitler son bırakılınca açılır", () => {
   expect(document.body.style.overflow).toBe("hidden");
   b();
   expect(document.body.style.overflow).toBe("");
+});
+
+test("1080p ekranda 40 kalemde en az 8 satır görünür", () => {
+  const row = DOC_LINE_ROW_PX;
+  const plan = planDocumentEditorScroll({
+    viewport: 1080,
+    gap: 12,
+    headerScroll: 180,
+    footerHeight: 72,
+    linesScroll: 40 * row,
+  });
+  expect(plan.panelMax).toBe(1080 - 12);
+  expect(plan.linesScroll).toBe(true);
+  expect(plan.linesMax).toBeGreaterThanOrEqual(8 * row);
+  expect(visibleLineCount(plan.linesMax, row)).toBeGreaterThanOrEqual(8);
+});
+
+test("1080p ve uzun başlıkta kalem alanı 8 satırın altına inmez", () => {
+  const plan = planDocumentEditorScroll({
+    viewport: 1080,
+    gap: 12,
+    headerScroll: 760,
+    footerHeight: 96,
+    linesScroll: 40 * DOC_LINE_ROW_PX,
+  });
+  expect(plan.headerScrolls).toBe(true);
+  expect(visibleLineCount(plan.linesMax)).toBeGreaterThanOrEqual(8);
+  expect(plan.headerMax + plan.linesMax + 96).toBeLessThanOrEqual(plan.panelMax);
+});
+
+test("kalem bölgesi flex ile kalan yüksekliği alır", () => {
+  const css = fs.readFileSync(path.join(__dirname, "../index.css"), "utf8");
+  expect(css).toContain("100dvh");
+  expect(css).toContain("flex: 1;");
+  expect(css).toContain("min-height: 0;");
+  expect(css).toContain("overflow-y: auto;");
+  expect(css).toContain("height: 44px;");
+  expect(css).toContain("position: sticky;");
 });
 
 test("layout kalem bölgesine overflow-y auto ve max-height yazar", () => {
