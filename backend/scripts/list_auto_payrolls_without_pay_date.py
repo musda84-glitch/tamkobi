@@ -150,13 +150,19 @@ async def _main(company_id: str) -> int:
     except Exception:
         pass
 
-    from mysql_store import MySQLClient
+    from mysql_store import MySQLClient, mysql_settings_from_env
 
-    db = MySQLClient()
-    report = await collect_report(db, company_id)
-    print(f"dry-run: {report['count']} otomatik bordro (pay_start_date boş). Veritabanı değişmedi.")
-    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    return 0
+    # MySQLClient istemcidir; koleksiyonlar client[db_adı] üzerindedir (server.py DB_NAME).
+    client = MySQLClient()
+    try:
+        db_name = str(mysql_settings_from_env().get("db") or "tamkobi")
+        db = client[db_name]
+        report = await collect_report(db, company_id)
+        print(f"dry-run: {report['count']} otomatik bordro (pay_start_date boş). Veritabanı değişmedi.")
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return 0
+    finally:
+        await client.close_async()
 
 
 def main() -> None:
