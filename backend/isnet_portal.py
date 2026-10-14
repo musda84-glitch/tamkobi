@@ -12,6 +12,7 @@ import base64
 import io
 import logging
 import re
+import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -341,9 +342,80 @@ async def _try_download_portal_xml(
     return None, last_hint
 
 
+_TEST_MODES = frozenset({"test", "sandbox", "demo"})
+_LIVE_MODES = frozenset({"live"})
+
+
+def explicit_environment(settings: dict) -> str:
+    """'test', 'live' veya '' (seçilmemiş / geçersiz)."""
+    mode = str((settings or {}).get("mode") or "").strip().lower()
+    if mode in _TEST_MODES:
+        return "test"
+    if mode in _LIVE_MODES:
+        return "live"
+    return ""
+
+
 def is_test_mode(settings: dict) -> bool:
-    mode = (settings.get("mode") or "test").strip().lower()
-    return mode in ("test", "sandbox", "demo")
+    """True yalnız mode açıkça test, sandbox veya demo ise.
+
+    Boş veya geçersiz mode False döner; bu canlı seçildiği anlamına gelmez.
+    Portal çağrıları require_explicit_mode ile 400 olur.
+    """
+    return explicit_environment(settings) == "test"
+
+
+def require_explicit_mode(settings: dict) -> str:
+    env = explicit_environment(settings)
+    if not env:
+        raise HTTPException(status_code=400, detail=isnet_mode_required_detail())
+    return env
+
+
+def isnet_mode_required_detail() -> str:
+    return (
+        "İşNet ortamı (Test/Canlı) seçilmemiş. Ayarlar → e-Fatura'dan ortamı seçip kaydedin."
+    )
+
+
+_login_backoff_until: Dict[str, float] = {}
+_LOGIN_BACKOFF_SECONDS = 900.0
+
+
+def _login_backoff_key(settings: dict) -> str:
+    src = settings or {}
+    return str(
+        src.get("company_id")
+        or src.get("_id")
+        or src.get("username")
+        or _vkn(src)
+        or ""
+    ).strip()
+
+
+def account_login_ready(settings: dict) -> bool:
+    ident = _vkn(settings or {}) or str((settings or {}).get("username") or "").strip()
+    return bool(explicit_environment(settings) and ident)
+
+
+def account_login_blocked(settings: dict) -> bool:
+    key = _login_backoff_key(settings)
+    if not key:
+        return False
+    return time.monotonic() < _login_backoff_until.get(key, 0.0)
+
+
+def note_account_login_401(settings: dict) -> None:
+    key = _login_backoff_key(settings)
+    if not key:
+        return
+    _login_backoff_until[key] = time.monotonic() + _LOGIN_BACKOFF_SECONDS
+
+
+def clear_account_login_backoff(settings: dict) -> None:
+    key = _login_backoff_key(settings)
+    if key:
+        _login_backoff_until.pop(key, None)
 
 
 def portal_base(settings: dict) -> str:
@@ -840,6 +912,17 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
     vkn = _vkn(settings)
     if not vkn or not password:
         raise HTTPException(status_code=400, detail="Portal gelen kutu için VKN/TCKN ve şifre zorunludur.")
+    if not _tried_alt_env:
+        if not account_login_ready(settings):
+            raise HTTPException(
+                status_code=400,
+                detail="İşNet ortam (mode) ayarı yok; Account/Login yapılmadı.",
+            )
+        if account_login_blocked(settings):
+            raise HTTPException(
+                status_code=429,
+                detail="İşNet girişi reddedildi; şirket için yeniden deneme bekleniyor.",
+            )
     corp = str(
         settings.get("corporate_code")
         or settings.get("company_id")
@@ -902,6 +985,7 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
             if not token:
                 last = err or "Mobile Login yanıtında Token yok."
                 continue
+            clear_account_login_backoff(settings)
             companies = data.get("CompanyList") or data.get("companyList") or data.get("Companies") or []
             if not isinstance(companies, list):
                 companies = []
@@ -932,6 +1016,8 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
         except HTTPException:
             pass
 
+    if saw_401:
+        note_account_login_401(settings)
     raise HTTPException(status_code=400, detail=last)
 
 
@@ -992,6 +1078,10 @@ async def advance_outgoing_invoice(
         invoice_number = ""
     if not password:
         return {"ok": False, "skipped": True, "reason": "no_password"}
+    if not account_login_ready(settings):
+        return {"ok": False, "skipped": True, "reason": "mode_missing"}
+    if account_login_blocked(settings):
+        return {"ok": False, "skipped": True, "reason": "login_backoff"}
     try:
         session = await _mobile_login(settings, password)
     except HTTPException as exc:
@@ -1304,6 +1394,7 @@ async def _portal_login_with_fallback(
 
 async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
     """HTML portal + Mobile API birlikte doğrular (gelen kutu Mobile'a bağlı)."""
+    require_explicit_mode(settings)
     used, info, kontor, portal_meta = await _portal_login_with_fallback(settings, password)
     company_id = info.get("company_id")
     mode = portal_meta.get("suggested_mode") or ("test" if is_test_mode(used) else "live")
@@ -1370,6 +1461,7 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
 
 
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
+    require_explicit_mode(settings)
     async with IsnetPortalClient(settings, password) as client:
         await client.login()
         data = await client.lookup_turmob(tax_id)
@@ -1398,6 +1490,7 @@ async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, A
 
 async def _list_incoming_via_portal(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """Mobile API olmadan HTML portal oturumuyla gelen kutuyu çeker."""
+    require_explicit_mode(settings)
     used, info, _kontor, meta = await _portal_login_with_fallback(settings, password)
     if meta.get("mode_switched") and meta.get("suggested_mode"):
         settings["mode"] = meta["suggested_mode"]
@@ -1430,6 +1523,7 @@ async def _list_incoming_via_portal(settings: dict, password: str, days: int = 1
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """Gelen e-faturaları Mobile REST ile listeler; 401'de Web Portal HTML yedek yolu."""
+    require_explicit_mode(settings)
     try:
         session = await _mobile_login(settings, password)
     except HTTPException as e:
@@ -1540,6 +1634,7 @@ async def send_document(
     contact: Optional[dict] = None,
     company: Optional[dict] = None,
 ) -> Dict[str, Any]:
+    require_explicit_mode(settings)
     contact = contact or {}
     async with IsnetPortalClient(settings, password) as client:
         await client.login()

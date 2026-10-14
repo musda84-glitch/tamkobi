@@ -137,9 +137,70 @@ _ARRAY_ITEM_STRUCTURED_ARCHIVE = {
 }
 
 
+# Boş/geçersiz mode ne test ne canlıdır. URL yardımcıları yine LIVE_* döndürebilir;
+# ağ çağrısı yapan her yol require_explicit_mode ile önce reddedilir.
+MODE_REQUIRED_DETAIL = (
+    "İşNet ortamı (Test/Canlı) seçilmemiş. Ayarlar → e-Fatura'dan ortamı seçip kaydedin."
+)
+_TEST_MODES = frozenset({"test", "sandbox", "demo"})
+_LIVE_MODES = frozenset({"live"})
+
+
+def normalized_mode(settings: dict) -> str:
+    return str((settings or {}).get("mode") or "").strip().lower()
+
+
+def explicit_environment(settings: dict) -> str:
+    """'test', 'live' veya '' (seçilmemiş / geçersiz)."""
+    mode = normalized_mode(settings)
+    if mode in _TEST_MODES:
+        return "test"
+    if mode in _LIVE_MODES:
+        return "live"
+    return ""
+
+
 def is_test_mode(settings: dict) -> bool:
-    mode = (settings.get("mode") or "test").strip().lower()
-    return mode in ("test", "sandbox", "demo")
+    """True yalnız mode açıkça test, sandbox veya demo ise.
+
+    Boş veya geçersiz mode False döner; bu canlı seçildiği anlamına gelmez.
+    SOAP gönderim, durum doğrulama, PDF/XML indirme ve portal çağrıları
+    require_explicit_mode ile 400 olur — canlı adrese düşülmez.
+    """
+    return explicit_environment(settings) == "test"
+
+
+def require_explicit_mode(settings: dict) -> str:
+    """Ağ çağrısından ve UBL üretiminden önce. 'test' veya 'live' döner."""
+    env = explicit_environment(settings)
+    if not env:
+        raise HTTPException(status_code=400, detail=MODE_REQUIRED_DETAIL)
+    return env
+
+
+def missing_mode_settings(rows: List[dict], names: Optional[Dict[str, str]] = None) -> List[dict]:
+    """Prod einvoice_settings içinde ortamı boş/geçersiz İşNet kayıtları (salt okunur)."""
+    labels = names or {}
+    out: List[dict] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        provider = str(row.get("provider") or "").strip()
+        if provider not in ("isnet", "isnet_portal"):
+            continue
+        if explicit_environment(row):
+            continue
+        cid = str(row.get("company_id") or "").strip()
+        out.append(
+            {
+                "company_id": cid,
+                "company_name": labels.get(cid) or "",
+                "provider": provider,
+                "status": str(row.get("status") or ""),
+                "mode": str(row.get("mode") or ""),
+            }
+        )
+    return out
 
 
 def api_base(settings: dict) -> str:
@@ -188,6 +249,22 @@ def company_vendor_number(settings: dict) -> str:
 
 # İşNet test/canlı şube serisi: U05… → CompanyVendorNumber "05"
 _VENDOR_FROM_SERIES_RE = re.compile(r"^U(\d{2})\d", re.I)
+_VENDOR_SOAP_FIELDS = (
+    "CompanyVendorNumber",
+    "VendorNumber",
+    "VendorCode",
+    "BranchCode",
+    "BranchNumber",
+    "CompanyBranchNumber",
+    "SubeKodu",
+    "SubeNo",
+)
+_VIEWER_GENERIC_FIELDS = ("Url", "ViewerUrl", "DocumentViewerUrl", "Link")
+_HTTP_KEY_URL_RE = re.compile(r"https?://[^\s<'\"]*key=[^\s<'\"]*", re.I)
+
+# Account/Login 401 — aynı şirket her poll'da payload döngüsünü tekrarlamasın
+_login_backoff_until: Dict[str, float] = {}
+_LOGIN_BACKOFF_SECONDS = 900.0
 
 
 def infer_vendor_from_invoice_number(invoice_number: str = "") -> str:
@@ -196,16 +273,137 @@ def infer_vendor_from_invoice_number(invoice_number: str = "") -> str:
     return m.group(1) if m else ""
 
 
-def with_inferred_vendor(settings: dict, invoice_number: str = "") -> dict:
-    """Ayarlarda vendor yoksa fatura no serisinden CompanyVendorNumber ekle."""
-    if company_vendor_number(settings or {}):
-        return settings or {}
+def invoice_series(invoice_number: str = "") -> str:
+    """MTE2026000000029 → MTE (GİB 3 karakter seri)."""
+    raw = (invoice_number or "").strip().upper()
+    if len(raw) >= 3 and raw[:3].isalnum() and not raw[:3].isdigit():
+        return raw[:3]
+    return ""
+
+
+def series_vendor_map(settings: dict) -> Dict[str, str]:
+    """einvoice_settings.series_vendor_map → {SERI: vendor}."""
+    raw = (settings or {}).get("series_vendor_map")
+    out: Dict[str, str] = {}
+    items: List[Any] = []
+    if isinstance(raw, dict):
+        items = [{"series": k, "vendor": v} for k, v in raw.items()]
+    elif isinstance(raw, list):
+        items = [x for x in raw if isinstance(x, dict)]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if "series" in item or "prefix" in item:
+            key = str(item.get("series") or item.get("prefix") or "").strip().upper()
+            val = item.get("vendor")
+            if val is None:
+                val = item.get("company_vendor_number") or item.get("vendor_number")
+        else:
+            continue
+        if isinstance(val, dict):
+            val = val.get("vendor") or val.get("company_vendor_number") or val.get("vendor_number")
+        vendor = str(val or "").strip()
+        if key and vendor:
+            out[key] = vendor
+    if isinstance(raw, dict):
+        for key, val in raw.items():
+            series = str(key or "").strip().upper()
+            if not series or series in out:
+                continue
+            if isinstance(val, dict):
+                vendor = str(
+                    val.get("vendor") or val.get("company_vendor_number") or val.get("vendor_number") or ""
+                ).strip()
+            else:
+                vendor = str(val or "").strip()
+            if vendor:
+                out[series] = vendor
+    return out
+
+
+def vendor_from_series_map(settings: dict, invoice_number: str = "") -> str:
+    series = invoice_series(invoice_number)
+    if not series:
+        return ""
+    return series_vendor_map(settings).get(series, "")
+
+
+def with_inferred_vendor(settings: dict, invoice_number: str = "", vendor_hint: str = "") -> dict:
+    """CompanyVendorNumber: fatura şubesi, seri eşlemesi, ayar veya U05 serisi.
+
+    Öncelik: gib_vendor_number / vendor_hint → series_vendor_map → ayardaki vendor → U\\d\\d.
+    """
+    base = dict(settings or {})
+    if base.get("_skip_vendor_infer"):
+        return base
+    hint = str(vendor_hint or base.get("gib_vendor_number") or "").strip()
+    mapped = vendor_from_series_map(base, invoice_number)
+    if hint or mapped:
+        base["company_vendor_number"] = hint or mapped
+        return base
+    if company_vendor_number(base):
+        return base
     vendor = infer_vendor_from_invoice_number(invoice_number)
     if not vendor:
-        return settings or {}
+        return base
+    base["company_vendor_number"] = vendor
+    return base
+
+
+def without_vendor(settings: dict) -> dict:
+    """Aynı istek, CompanyVendorNumber olmadan (ikinci deneme)."""
     out = dict(settings or {})
-    out["company_vendor_number"] = vendor
+    for key in ("company_vendor_number", "vendor_number", "branch_code", "gib_vendor_number"):
+        out.pop(key, None)
+    out["_skip_vendor_infer"] = True
     return out
+
+
+def vendor_settings_attempts(
+    settings: dict, invoice_number: str = "", vendor_hint: str = ""
+) -> List[dict]:
+    """Vendor varsa önce onunla, olmazsa vendorsuz dene."""
+    merged = with_inferred_vendor(settings, invoice_number, vendor_hint=vendor_hint)
+    if not company_vendor_number(merged):
+        return [merged]
+    return [merged, without_vendor(merged)]
+
+
+def _login_backoff_key(settings: dict) -> str:
+    src = settings or {}
+    return str(
+        src.get("company_id")
+        or src.get("_id")
+        or src.get("username")
+        or company_tax_code(src)
+        or ""
+    ).strip()
+
+
+def account_login_ready(settings: dict) -> bool:
+    """Ortam (test/live) veya kullanıcı yoksa Account/Login deneme."""
+    username = str((settings or {}).get("username") or "").strip()
+    return bool(explicit_environment(settings) and username)
+
+
+def account_login_blocked(settings: dict) -> bool:
+    key = _login_backoff_key(settings)
+    if not key:
+        return False
+    return time.monotonic() < _login_backoff_until.get(key, 0.0)
+
+
+def note_account_login_401(settings: dict) -> None:
+    key = _login_backoff_key(settings)
+    if not key:
+        return
+    _login_backoff_until[key] = time.monotonic() + _LOGIN_BACKOFF_SECONDS
+
+
+def clear_account_login_backoff(settings: dict) -> None:
+    key = _login_backoff_key(settings)
+    if key:
+        _login_backoff_until.pop(key, None)
 
 
 def _company_request(settings: dict, tax: Optional[str] = None) -> Dict[str, str]:
@@ -241,6 +439,16 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
     username = (settings.get("username") or "").strip()
     if not username or not password:
         raise HTTPException(status_code=400, detail="İşNet kullanıcı adı ve şifre gerekli.")
+    if not account_login_ready(settings):
+        raise HTTPException(
+            status_code=400,
+            detail="İşNet ortam (mode) ayarı yok; Account/Login yapılmadı.",
+        )
+    if account_login_blocked(settings):
+        raise HTTPException(
+            status_code=429,
+            detail="İşNet girişi reddedildi; şirket için yeniden deneme bekleniyor.",
+        )
     url = f"{api_base(settings)}/api/Account/Login"
     payloads = [
         {"IdentificationNumber": username, "Password": password},
@@ -256,6 +464,7 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
                 raise HTTPException(status_code=502, detail=f"İşNet API'ye ulaşılamadı: {e}") from e
             if r.status_code == 401:
                 last_detail = "İşNet kullanıcı adı veya şifre hatalı."
+                note_account_login_401(settings)
                 continue
             if r.status_code >= 400:
                 body = _as_text(getattr(r, "text", "") or "")
@@ -283,6 +492,7 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
                 last_detail = err or "İşNet Login yanıtında Token yok."
                 continue
             companies = data.get("CompanyList") or data.get("CompanyList") or []
+            clear_account_login_backoff(settings)
             return {
                 "ok": True,
                 "token_preview": (token[:8] + "…") if token else "",
@@ -464,16 +674,6 @@ def _soap_unreachable_hint(exc: BaseException) -> str:
     if "timed out" in text.lower() or "timeout" in text.lower():
         return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
     return text[:180]
-    """Timeout / connect hatalarını kısa Türkçe özetle."""
-    name = type(exc).__name__
-    text = str(exc) or name
-    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
-        return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
-    if isinstance(exc, httpx.ConnectError):
-        return f"bağlantı kurulamadı ({text[:120]})"
-    if "timed out" in text.lower() or "timeout" in text.lower():
-        return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
-    return text[:180]
 
 
 async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
@@ -482,6 +682,7 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
     İşNet resmi not: SOAP'ta kullanıcı/şifre yok; kimlik doğrulama IP–VKN.
     Canlıda IP kaydı: efaturadestek@nettefatura.com.tr
     """
+    require_explicit_mode(settings)
     alias = (settings.get("alias") or "").strip()
     tax = company_tax_code(settings)
     if len(tax) not in (10, 11):
@@ -906,6 +1107,11 @@ def _search_row_from_el(inv: ET.Element) -> Dict[str, Any]:
         # Search ResultSet IsHtmlIncluded / IsPdfIncluded (veya IsPDFIncluded)
         "invoice_html": _find_text(inv, "InvoiceHtml", "Html", "InvoiceHTML") or "",
         "invoice_pdf": _find_text(inv, "InvoicePdf", "Pdf", "InvoicePDF") or "",
+        "invoice_xml": _find_text(
+            inv, "InvoiceXML", "ArchiveInvoiceXML", "XMLContent", "InvoiceContent", "XmlData", "UBL"
+        )
+        or "",
+        "vendor_number": _find_text(inv, *_VENDOR_SOAP_FIELDS) or "",
     }
 
 
@@ -1258,6 +1464,7 @@ async def get_company_balance(settings: dict, tax_code: Optional[str] = None) ->
 
 async def lookup_despatch_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
     """GetDespatchTaxPayer — e-İrsaliye mükellefiyet / alias (NetteFatura-API)."""
+    require_explicit_mode(settings)
     _ = password
     tax = re.sub(r"\D", "", str(tax_id or ""))
     if len(tax) not in (10, 11):
@@ -1299,6 +1506,7 @@ async def lookup_despatch_user(settings: dict, password: str, tax_id: str) -> Di
 
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
     """GetTaxPayer — NetteFatura-API addressBook.getTaxPayer() / n11faturam.lookup_user."""
+    require_explicit_mode(settings)
     _ = password
     tax = re.sub(r"\D", "", str(tax_id or ""))
     if len(tax) not in (10, 11):
@@ -1626,6 +1834,7 @@ async def send_structured_invoice(
         "status": _find_text(body, "Status", "State") or "sent",
         "message": message,
         "document_url": _find_text(body, "HtmlUrl", "PdfUrl", "DocumentUrl") or "",
+        "vendor_number": _find_text(body, *_VENDOR_SOAP_FIELDS) or "",
         "via": "structured",
     }
 
@@ -1689,6 +1898,7 @@ def _parse_send_xml_body(body: ET.Element, action: str) -> Dict[str, Any]:
         "status": _find_text(body, "Status", "State") or "sent",
         "message": message,
         "document_url": _find_text(body, "HtmlUrl", "PdfUrl", "DocumentUrl") or "",
+        "vendor_number": _find_text(body, *_VENDOR_SOAP_FIELDS) or "",
         "action": action,
     }
 
@@ -1737,6 +1947,7 @@ async def send_invoice_xml(
     assign_number=True: resmi *WithoutInvoiceNumber (İşNet kayıtlı seriyi atar).
     Metod yoksa SendInvoiceXml / SendArchiveInvoiceXml.
     """
+    require_explicit_mode(settings)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
@@ -1791,6 +2002,7 @@ async def send_despatch_xml(
     receiver_alias: str = "",
 ) -> Dict[str, Any]:
     """SendDespatchAdviceXml — NetteFatura-API invoice.sendDespatchAdviceXml()."""
+    require_explicit_mode(settings)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
@@ -1966,6 +2178,7 @@ async def send_despatch_document(
     company: dict,
 ) -> Dict[str, Any]:
     """e-İrsaliye → SendDespatchAdviceXml (İşNet SOAP)."""
+    require_explicit_mode(settings)
     merged = {**settings}
     seller_vkn = company_tax_code(merged) or company_tax_code(settings, company)
     if not seller_vkn:
@@ -2098,6 +2311,7 @@ async def send_document(
     Numara: Send*XmlWithoutInvoiceNumber → SOAP/portal InvoiceNumber (TKB değil).
     UBL: isnet.build_ubl → ubl_export (IADE/TEVKIFAT); n11faturam değil.
     """
+    require_explicit_mode(settings)
     e_type = invoice.get("e_type") or "e_archive"
     if e_type == "e_dispatch" or invoice.get("invoice_type") == "dispatch":
         return await send_despatch_document(settings, password, invoice, contact, company)
@@ -2351,6 +2565,9 @@ async def send_document(
         "process_status": (verified.get("process_status") or "").strip(),
         "mode": "test" if is_test_mode(merged) else "live",
         "send_mode": send_mode,
+        "vendor_number": (
+            (verified.get("vendor_number") or info.get("vendor_number") or "").strip()
+        ),
     }
 
 
@@ -2374,8 +2591,13 @@ async def search_archive_invoice(
     invoice_number: str = "",
     min_date: str = "",
     max_date: str = "",
+    include_xml: bool = False,
+    fallback_without_vendor: bool = False,
 ) -> List[Dict[str, Any]]:
     """SearchArchiveInvoice — NetteFatura-API invoice.searchArchiveInvoice()."""
+    require_explicit_mode(settings)
+    if not (settings or {}).get("_skip_vendor_infer"):
+        settings = with_inferred_vendor(settings, invoice_number)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
@@ -2395,7 +2617,7 @@ async def search_archive_invoice(
             "IsInvoiceDetailIncluded": True,
             "IsHtmlIncluded": True,
             "IsPdfIncluded": True,
-            "IsXMLIncluded": False,
+            "IsXMLIncluded": bool(include_xml),
         },
     }
     req.update(_search_invoice_filters(ettn=ettn, invoice_number=invoice_number))
@@ -2405,11 +2627,21 @@ async def search_archive_invoice(
         action="SearchArchiveInvoice",
         service_interface="IInvoiceService",
         request=req,
-        timeout=60.0,
+        timeout=90.0 if include_xml else 60.0,
     )
     out: List[Dict[str, Any]] = []
     for inv in _find_all(body, "ArchiveInvoice", "ArchiveInvoiceInfo", "Invoice", "ArchiveInvoiceReturn"):
         out.append(_search_row_from_el(inv))
+    if not out and fallback_without_vendor and company_vendor_number(settings):
+        return await search_archive_invoice(
+            without_vendor(settings),
+            ettn=ettn,
+            invoice_number=invoice_number,
+            min_date=min_date,
+            max_date=max_date,
+            include_xml=include_xml,
+            fallback_without_vendor=False,
+        )
     return out
 
 
@@ -2421,12 +2653,18 @@ async def search_outgoing_invoice(
     min_date: str = "",
     max_date: str = "",
     include_documents: bool = False,
+    include_xml: bool = False,
     direction: str = "Outgoing",
+    fallback_without_vendor: bool = False,
 ) -> List[Dict[str, Any]]:
     """SearchInvoice — giden/gelen e-Fatura arama.
 
     include_documents=True → IsHtmlIncluded + IsPdfIncluded (PDF fallback için).
+    include_xml=True → IsXMLIncluded (UBL fallback).
     """
+    require_explicit_mode(settings)
+    if not (settings or {}).get("_skip_vendor_infer"):
+        settings = with_inferred_vendor(settings, invoice_number)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
@@ -2439,7 +2677,7 @@ async def search_outgoing_invoice(
         "IsAdditionalTaxIncluded": True,
         "IsArchiveIncluded": True,
         "IsInvoiceDetailIncluded": True,
-        "IsXMLIncluded": False,
+        "IsXMLIncluded": bool(include_xml),
     }
     if include_documents:
         result_set["IsHtmlIncluded"] = True
@@ -2461,11 +2699,23 @@ async def search_outgoing_invoice(
         action="SearchInvoice",
         service_interface="IInvoiceService",
         request=req,
-        timeout=90.0 if include_documents else 60.0,
+        timeout=90.0 if (include_documents or include_xml) else 60.0,
     )
     out: List[Dict[str, Any]] = []
     for inv in _find_all(body, "Invoice", "InvoiceInfo", "Document"):
         out.append(_search_row_from_el(inv))
+    if not out and fallback_without_vendor and company_vendor_number(settings):
+        return await search_outgoing_invoice(
+            without_vendor(settings),
+            ettn=ettn,
+            invoice_number=invoice_number,
+            min_date=min_date,
+            max_date=max_date,
+            include_documents=include_documents,
+            include_xml=include_xml,
+            direction=direction,
+            fallback_without_vendor=False,
+        )
     return out
 
 
@@ -2533,6 +2783,7 @@ async def try_verify_outgoing_in_portal(
     wait_for_gib=True: süreç Status=Ziplendi iken DetailStatus (1300…) gelene kadar
     daha uzun poll (NetteFatura testinde imza+GİB iletimi gecikebilir).
     """
+    require_explicit_mode(settings)
     ettn = (ettn or "").strip()
     if not is_ettn_uuid(ettn):
         return {"ok": False, "document_url": "", "via": ""}
@@ -2543,12 +2794,14 @@ async def try_verify_outgoing_in_portal(
         delays = (0.0, 1.0, 2.0, 3.0, 5.0, 8.0, 10.0, 12.0)
     else:
         delays = (0.0, 0.8, 1.6, 3.0)[: max(1, int(retries or 1))]
+    settings = with_inferred_vendor(settings, invoice_number)
     last_url = ""
     found_no = ""
     found_status = ""
     found_code = ""
     found_detail = ""
     found_process = ""
+    found_vendor = ""
     via = ""
     found_rank = -1
 
@@ -2575,10 +2828,13 @@ async def try_verify_outgoing_in_portal(
         return 0
 
     def _apply_row(row: Dict[str, Any]) -> None:
-        nonlocal found_no, found_status, found_code, found_detail, found_process, via, found_rank
+        nonlocal found_no, found_status, found_code, found_detail, found_process, found_vendor, via, found_rank
         row_no = (row.get("invoice_id") or "").strip()
         if row_no:
             found_no = row_no
+        row_vendor = str(row.get("vendor_number") or "").strip()
+        if row_vendor:
+            found_vendor = row_vendor
         rank = _status_rank(row)
         # Daha iyi GİB DetailStatus (1300) süreç Ziplendi'yi ezmesin diye rank
         if rank >= found_rank and (row.get("status") or row.get("status_code") or row.get("detail_status")):
@@ -2604,6 +2860,8 @@ async def try_verify_outgoing_in_portal(
                 settings, ettn, e_type=e_type, invoice_number=invoice_number or found_no
             )
             last_url = (link.get("url") or link.get("html_url") or link.get("pdf_url") or "").strip()
+            if link.get("vendor_number") and not found_vendor:
+                found_vendor = str(link.get("vendor_number") or "").strip()
             if last_url and not via:
                 via = "viewer"
         except HTTPException as e:
@@ -2664,6 +2922,7 @@ async def try_verify_outgoing_in_portal(
                 "status_code": found_code,
                 "detail_status": found_detail,
                 "process_status": found_process,
+                "vendor_number": found_vendor,
                 "attempt": attempt + 1,
             }
         if found_no and last_try:
@@ -2680,6 +2939,7 @@ async def try_verify_outgoing_in_portal(
                 "status_code": found_code,
                 "detail_status": found_detail,
                 "process_status": found_process,
+                "vendor_number": found_vendor,
                 "attempt": attempt + 1,
             }
 
@@ -2694,6 +2954,7 @@ async def try_verify_outgoing_in_portal(
             "status_code": found_code,
             "detail_status": found_detail,
             "process_status": found_process,
+            "vendor_number": found_vendor,
             "attempt": len(delays),
             "pending_gib": _is_pending_process_status(found_process, found_status, found_code)
             and found_rank < 60,
@@ -2708,6 +2969,7 @@ async def try_verify_outgoing_in_portal(
         "status_code": found_code,
         "detail_status": found_detail,
         "process_status": found_process,
+        "vendor_number": found_vendor,
         "pending_gib": True,
     }
 
@@ -2769,7 +3031,53 @@ async def verify_outgoing_in_portal(
     )
 
 
-async def get_document_viewer_link(
+def _soap_body_text(body: Optional[ET.Element]) -> str:
+    if body is None:
+        return ""
+    try:
+        return ET.tostring(body, encoding="unicode")
+    except Exception:
+        return ""
+
+
+def _find_http_key_url(root: Optional[ET.Element]) -> str:
+    """Gövdede key= içeren herhangi bir http(s) adresi."""
+    if root is None:
+        return ""
+    chunks: List[str] = []
+    for el in root.iter():
+        if el.text:
+            chunks.append(str(el.text))
+        if el.tail:
+            chunks.append(str(el.tail))
+        for val in el.attrib.values():
+            chunks.append(str(val))
+    blob = " ".join(chunks)
+    match = _HTTP_KEY_URL_RE.search(blob)
+    if not match:
+        match = _HTTP_KEY_URL_RE.search(_soap_body_text(root))
+    if not match:
+        return ""
+    return match.group(0).rstrip(").,;\"'")
+
+
+def _viewer_urls_from_body(body: Optional[ET.Element]) -> Dict[str, str]:
+    html = _find_text(body, "HtmlUrl", "DocumentUrl") or ""
+    pdf = _find_text(body, "PdfUrl") or ""
+    generic = _find_text(body, *_VIEWER_GENERIC_FIELDS) or ""
+    keyed = ""
+    if not (html or pdf or generic):
+        keyed = _find_http_key_url(body)
+    url = html or pdf or generic or keyed
+    return {
+        "html_url": html,
+        "pdf_url": pdf,
+        "url": url,
+        "vendor_number": _find_text(body, *_VENDOR_SOAP_FIELDS) or "",
+    }
+
+
+async def _get_document_viewer_link_once(
     settings: dict,
     ettn: str,
     *,
@@ -2777,11 +3085,6 @@ async def get_document_viewer_link(
     invoice_number: str = "",
     direction: str = "Outgoing",
 ) -> Dict[str, str]:
-    """GetDocumentViewerLink — NetteFatura-API invoice.getDocumentViewerLink()."""
-    ettn = (ettn or "").strip()
-    if not ettn:
-        raise HTTPException(status_code=400, detail="ETTN gerekli.")
-    direction = "Incoming" if str(direction or "").lower().startswith("in") else "Outgoing"
     req = {
         **_company_request(settings),
         "Ettn": ettn,
@@ -2802,22 +3105,61 @@ async def get_document_viewer_link(
         request=req,
         timeout=45.0,
     )
-    html = _find_text(body, "HtmlUrl", "DocumentUrl") or ""
-    pdf = _find_text(body, "PdfUrl") or ""
-    url = html or pdf
-    if not url:
-        raw = _find_text(body, "Message", "ErrorMessage")
-        if raw:
-            logger.info(
-                "isnet viewer link empty ettn=%s: %s",
-                ettn,
-                mask_sensitive_text(raw)[:2000],
-            )
+    found = _viewer_urls_from_body(body)
+    if not found.get("url"):
+        raw_xml = _soap_body_text(body)
+        logger.info(
+            "isnet viewer link empty ettn=%s: %s",
+            ettn,
+            mask_sensitive_text(raw_xml)[:2000],
+        )
+        message = _find_text(body, "Message", "ErrorMessage")
         raise HTTPException(
             status_code=404,
-            detail=public_provider_detail("İşNet görüntüleme linki dönmedi.", raw),
+            detail=public_provider_detail("İşNet görüntüleme linki dönmedi.", message or raw_xml),
         )
-    return {"html_url": html, "pdf_url": pdf, "url": url}
+    if not found.get("vendor_number"):
+        found["vendor_number"] = company_vendor_number(settings)
+    return found
+
+
+async def get_document_viewer_link(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+    direction: str = "Outgoing",
+) -> Dict[str, str]:
+    """GetDocumentViewerLink — NetteFatura-API invoice.getDocumentViewerLink().
+
+    Vendor varsa CompanyVendorNumber ile, URL yoksa vendorsuz yeniden dener.
+    """
+    require_explicit_mode(settings)
+    ettn = (ettn or "").strip()
+    if not ettn:
+        raise HTTPException(status_code=400, detail="ETTN gerekli.")
+    direction = "Incoming" if str(direction or "").lower().startswith("in") else "Outgoing"
+    attempts = vendor_settings_attempts(settings, invoice_number)
+    last_exc: Optional[HTTPException] = None
+    for idx, cfg in enumerate(attempts):
+        try:
+            return await _get_document_viewer_link_once(
+                cfg,
+                ettn,
+                e_type=e_type,
+                invoice_number=invoice_number,
+                direction=direction,
+            )
+        except HTTPException as exc:
+            last_exc = exc
+            if idx + 1 < len(attempts) and exc.status_code in (404, 502):
+                logger.info("isnet viewer vendor miss ettn=%s — vendorsuz deneniyor", ettn)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise HTTPException(status_code=404, detail="İşNet görüntüleme linki dönmedi.")
 
 
 def extract_viewer_key(key_or_url: str) -> str:
@@ -3039,6 +3381,27 @@ def html_to_pdf_bytes(html: Union[bytes, str], *, timeout: float = 45.0) -> byte
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _note_document_capture(captured: Optional[dict], *, url: str = "", vendor: str = "") -> None:
+    if not isinstance(captured, dict):
+        return
+    if url and not captured.get("url"):
+        captured["url"] = url
+    if vendor and not captured.get("vendor_number"):
+        captured["vendor_number"] = vendor
+
+
+def _match_search_row(rows: List[Dict[str, Any]], ettn: str, inv_no: str) -> Optional[Dict[str, Any]]:
+    needle = (ettn or "").strip().lower()
+    for row in rows:
+        row_ettn = (row.get("ettn") or "").strip().lower()
+        row_no = (row.get("invoice_id") or "").strip()
+        if (needle and row_ettn == needle) or (inv_no and row_no == inv_no):
+            return row
+    if len(rows) == 1 and (ettn or inv_no):
+        return rows[0]
+    return None
+
+
 async def _pdf_from_search_documents(
     settings: dict,
     ettn: str,
@@ -3046,6 +3409,7 @@ async def _pdf_from_search_documents(
     e_type: str = "e_invoice",
     invoice_number: str = "",
     direction: str = "Outgoing",
+    captured: Optional[dict] = None,
 ) -> Optional[bytes]:
     """GetDocumentViewerLink yokken Search* InvoicePdf / InvoiceHtml → PDF."""
     ettn = (ettn or "").strip()
@@ -3057,7 +3421,10 @@ async def _pdf_from_search_documents(
         if e_type == "e_archive":
             # Archive search zaten IsHtml/IsPdf açıyor
             rows = await search_archive_invoice(
-                settings, ettn=ettn, invoice_number=inv_no or ""
+                settings,
+                ettn=ettn,
+                invoice_number=inv_no or "",
+                fallback_without_vendor=True,
             )
         else:
             rows = await search_outgoing_invoice(
@@ -3066,24 +3433,15 @@ async def _pdf_from_search_documents(
                 invoice_number=inv_no or "",
                 include_documents=True,
                 direction=direction,
+                fallback_without_vendor=True,
             )
     except HTTPException as e:
         logger.info("isnet search-doc miss ettn=%s: %s", ettn, e.detail)
         return None
-    needle = ettn.lower()
-    match: Optional[Dict[str, Any]] = None
-    for row in rows:
-        row_ettn = (row.get("ettn") or "").strip().lower()
-        row_no = (row.get("invoice_id") or "").strip()
-        if (needle and row_ettn == needle) or (inv_no and row_no == inv_no):
-            match = row
-            break
-    if not match and rows and (ettn or inv_no):
-        # Tek satır döndüyse kullan
-        if len(rows) == 1:
-            match = rows[0]
+    match = _match_search_row(rows, ettn, inv_no)
     if not match:
         return None
+    _note_document_capture(captured, vendor=str(match.get("vendor_number") or ""))
     pdf_raw = match.get("invoice_pdf") or ""
     if pdf_raw:
         pdf = _decode_maybe_b64(pdf_raw, prefer_pdf=True)
@@ -3107,6 +3465,7 @@ async def download_invoice_pdf(
     invoice_number: str = "",
     viewer_url: str = "",
     direction: str = "Outgoing",
+    captured: Optional[dict] = None,
 ) -> bytes:
     """İşNet resmi e-Fatura/e-Arşiv PDF.
 
@@ -3116,6 +3475,7 @@ async def download_invoice_pdf(
       3) Search* InvoicePdf / InvoiceHtml→Chrome PDF
          (Zarflanmadı / Ziplenmiş iken viewer boş kalabiliyor)
     """
+    require_explicit_mode(settings)
     errors: List[str] = []
     inv_no = str(invoice_number or "").strip()
     settings = with_inferred_vendor(settings, inv_no)
@@ -3140,6 +3500,9 @@ async def download_invoice_pdf(
     if stored:
         out = await _try_key_src(stored, "kayıtlı link")
         if out:
+            _note_document_capture(
+                captured, url=stored, vendor=company_vendor_number(settings)
+            )
             return out
 
     ettn = (ettn or "").strip()
@@ -3185,6 +3548,11 @@ async def download_invoice_pdf(
                 seen_keys.add(k)
                 out = await _try_key_src(src, f"{label}/{et}")
                 if out:
+                    _note_document_capture(
+                        captured,
+                        url=src,
+                        vendor=str(link.get("vendor_number") or "") or company_vendor_number(settings),
+                    )
                     return out
 
     # Viewer yok / Zarflanmadı: Search InvoiceHtml (resmi e-belge içeriği)
@@ -3196,6 +3564,7 @@ async def download_invoice_pdf(
                 e_type=et,
                 invoice_number=inv_no,
                 direction=direction,
+                captured=captured,
             )
             if out:
                 return out
@@ -3220,6 +3589,56 @@ async def download_invoice_pdf(
     )
 
 
+async def _xml_from_search(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_invoice",
+    invoice_number: str = "",
+    direction: str = "Outgoing",
+    captured: Optional[dict] = None,
+) -> Optional[bytes]:
+    """Viewer yokken SearchInvoice / SearchArchiveInvoice IsXMLIncluded → UBL."""
+    ettn = (ettn or "").strip()
+    inv_no = str(invoice_number or "").strip()
+    if not ettn and not inv_no:
+        return None
+    try:
+        if e_type == "e_archive":
+            rows = await search_archive_invoice(
+                settings,
+                ettn=ettn,
+                invoice_number=inv_no,
+                include_xml=True,
+                fallback_without_vendor=True,
+            )
+        else:
+            rows = await search_outgoing_invoice(
+                settings,
+                ettn=ettn,
+                invoice_number=inv_no,
+                include_xml=True,
+                direction=direction,
+                fallback_without_vendor=True,
+            )
+    except HTTPException as e:
+        logger.info("isnet search-xml miss ettn=%s: %s", ettn, e.detail)
+        return None
+    match = _match_search_row(rows, ettn, inv_no)
+    if not match:
+        return None
+    _note_document_capture(captured, vendor=str(match.get("vendor_number") or ""))
+    raw = match.get("invoice_xml") or ""
+    data = _decode_xml_payload(raw) if raw else None
+    if not data:
+        return None
+    head = data[:800].lstrip()
+    if head.startswith(b"<") or b"Invoice" in head or b"Despatch" in head:
+        logger.info("isnet xml via Search ettn=%s bytes=%s", ettn, len(data))
+        return data
+    return None
+
+
 async def download_invoice_xml(
     settings: dict,
     ettn: str,
@@ -3228,12 +3647,17 @@ async def download_invoice_xml(
     invoice_number: str = "",
     viewer_url: str = "",
     direction: str = "Outgoing",
+    captured: Optional[dict] = None,
 ) -> bytes:
     """İşNet DocumentViewer/DownloadXml — resmi UBL-TR (NetteFatura-API).
 
     PDF ile aynı: kayıtlı link stale olabilir; taze viewer + alternatif tip/no dene.
+    Viewer yoksa SearchInvoice (e-Arşivde SearchArchiveInvoice) IsXMLIncluded.
     """
+    require_explicit_mode(settings)
     errors: List[str] = []
+    inv_no = str(invoice_number or "").strip()
+    settings = with_inferred_vendor(settings, inv_no)
 
     async def _try_key_src(key_src: str, label: str) -> Optional[bytes]:
         key = extract_viewer_key(key_src or "")
@@ -3268,25 +3692,28 @@ async def download_invoice_xml(
     if stored:
         out = await _try_key_src(stored, "kayıtlı link")
         if out:
+            _note_document_capture(
+                captured, url=stored, vendor=company_vendor_number(settings)
+            )
             return out
 
     ettn = (ettn or "").strip()
     primary = e_type if e_type in ("e_invoice", "e_archive") else "e_archive"
     alt = "e_archive" if primary == "e_invoice" else "e_invoice"
-    inv_nos = [str(invoice_number or "").strip(), ""]
+    inv_nos = [inv_no, ""]
     seen_nos: List[str] = []
     for n in inv_nos:
         if n not in seen_nos:
             seen_nos.append(n)
 
     for et in [primary, alt]:
-        for inv_no in seen_nos:
+        for try_no in seen_nos:
             try:
                 link = await get_document_viewer_link(
                     settings,
                     ettn,
                     e_type=et,
-                    invoice_number=inv_no,
+                    invoice_number=try_no,
                     direction=direction,
                 )
             except HTTPException as e:
@@ -3312,7 +3739,32 @@ async def download_invoice_xml(
                 seen_keys.add(k)
                 out = await _try_key_src(src, f"{label}/{et}")
                 if out:
+                    _note_document_capture(
+                        captured,
+                        url=src,
+                        vendor=str(link.get("vendor_number") or "") or company_vendor_number(settings),
+                    )
                     return out
+
+    for et in [primary, alt]:
+        try:
+            out = await _xml_from_search(
+                settings,
+                ettn,
+                e_type=et,
+                invoice_number=inv_no,
+                direction=direction,
+                captured=captured,
+            )
+            if out:
+                return out
+        except HTTPException as e:
+            errors.append(f"search-xml({et}): {e.detail}")
+            logger.info(
+                "isnet xml search miss ettn=%s: %s",
+                ettn,
+                mask_sensitive_text(str(e.detail))[:2000],
+            )
 
     joined = "; ".join(errors) if errors else "İşNet XML anahtarı (key) bulunamadı."
     logger.warning("isnet xml failed ettn=%s: %s", ettn, mask_sensitive_text(joined)[:2000])
@@ -3340,6 +3792,7 @@ def _decode_xml_payload(payload: str) -> Optional[bytes]:
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """SearchInvoice (Incoming) — NetteFatura-API invoice.searchInvoice()."""
+    require_explicit_mode(settings)
     _ = password
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
@@ -3442,6 +3895,7 @@ async def _search_despatch_advice_xml(
 
 async def list_incoming_despatch(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """SearchDespatchAdvice (Incoming) — Dolibarr isnetefatura syncDespatch ile aynı operasyon."""
+    require_explicit_mode(settings)
     _ = password
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
@@ -3536,6 +3990,7 @@ async def search_outgoing_despatch(
     max_date: str = "",
 ) -> List[Dict[str, Any]]:
     """SearchDespatchAdvice (Outgoing) — giden e-İrsaliye durum/ETTN."""
+    require_explicit_mode(settings)
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(

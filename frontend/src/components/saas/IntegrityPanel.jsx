@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
@@ -25,9 +25,30 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
   const [scan, setScan] = useState(null);
   const [busy, setBusy] = useState("");
   const [preview, setPreview] = useState(null);
+  const [modeWarning, setModeWarning] = useState(null);
 
   const cid = fixedCompanyId || companyId;
   const base = resolveIntegrityApiBase({ apiBase, scope });
+  const isSystem = base === SYSTEM_INTEGRITY_BASE;
+
+  useEffect(() => {
+    if (!isSystem) {
+      setModeWarning(null);
+      return undefined;
+    }
+    let cancelled = false;
+    axios
+      .get(`${API_URL}${SYSTEM_INTEGRITY_BASE}/isnet-mode`, cred)
+      .then((r) => {
+        if (!cancelled) setModeWarning(r.data || null);
+      })
+      .catch(() => {
+        if (!cancelled) setModeWarning(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSystem]);
 
   const load = useCallback(async () => {
     if (!cid) {
@@ -139,6 +160,27 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
         Prim/bordro/kredi kaynaklı orphan kasa-banka hareketleri, ödenmiş kayıtta eksik hareket ve kasa bakiyesi kaymasını listeler.
         Dry-run hiçbir şeyi değiştirmez.
       </p>
+
+      {isSystem && modeWarning?.count > 0 && (
+        <div
+          className="rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2"
+          data-testid="integrity-isnet-mode-warning"
+        >
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+            <AlertTriangle className="w-4 h-4" /> İşNet ortamı seçilmemiş ({modeWarning.count})
+          </div>
+          <p className="text-xs text-amber-900">{modeWarning.detail}</p>
+          <ul className="text-xs space-y-1 max-h-40 overflow-auto">
+            {(modeWarning.items || []).map((row) => (
+              <li key={`${row.provider}-${row.company_id}`} data-testid="integrity-isnet-mode-row">
+                {row.company_name || row.company_id || "şirket"} · {row.provider}
+                {row.status ? ` · ${row.status}` : ""} · ortam boş
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-amber-800">Salt okunur. Ortamı Ayarlar → e-Fatura’dan seçip kaydedin.</p>
+        </div>
+      )}
 
       {scan && (
         <div className="grid sm:grid-cols-4 gap-3" data-testid="integrity-summary">

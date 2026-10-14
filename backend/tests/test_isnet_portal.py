@@ -8,6 +8,21 @@ import pytest
 from fastapi import HTTPException
 
 import isnet_portal
+
+
+@pytest.fixture(autouse=True)
+def _clear_portal_login_backoff():
+    isnet_portal._login_backoff_until.clear()
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    yield
+    isnet_portal._login_backoff_until.clear()
+
+
 import server
 
 
@@ -429,3 +444,62 @@ def test_try_download_portal_xml_uses_post_incoming_invoice():
     assert err == ""
     assert xml and b"<Invoice" in xml
     assert mock.post.await_count >= 1
+
+
+def test_is_test_mode_missing_mode_is_not_test():
+    assert isnet_portal.is_test_mode({}) is False
+    assert isnet_portal.is_test_mode({"mode": "test"}) is True
+    assert isnet_portal.mobile_api_base({}) == isnet_portal.LIVE_MOBILE_API
+
+
+def test_mobile_login_401_backoff_skips_next_poll():
+    settings = {"username": "9990001112", "mode": "live", "company_id": "co-portal-backoff"}
+
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.post = AsyncMock(return_value=_Resp(status=401, text="Unauthorized"))
+
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock):
+        with pytest.raises(HTTPException) as first:
+            asyncio.run(isnet_portal._mobile_login(settings, "secret"))
+        posts = mock.post.await_count
+        assert posts >= 1
+        with pytest.raises(HTTPException) as second:
+            asyncio.run(isnet_portal._mobile_login(settings, "secret"))
+    assert first.value.status_code == 400
+    assert "401" in str(first.value.detail)
+    assert second.value.status_code == 429
+    assert mock.post.await_count == posts
+
+
+def test_mobile_login_skips_when_mode_missing():
+    settings = {"username": "9990001112", "company_id": "co-no-mode"}
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.post = AsyncMock(return_value=_Resp(status=401, text="Unauthorized"))
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(isnet_portal._mobile_login(settings, "secret"))
+    assert exc.value.status_code == 400
+    assert mock.post.await_count == 0
+
+
+def test_portal_send_document_without_mode_makes_no_call():
+    settings = {"username": "4810173324", "company_id": "co-no-mode"}
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=False)
+    mock.post = AsyncMock()
+    with patch("isnet_portal.httpx.AsyncClient", return_value=mock), patch(
+        "isnet_portal.IsnetPortalClient"
+    ) as client:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                isnet_portal.send_document(settings, "secret", {"e_type": "e_archive"}, {}, {})
+            )
+    assert exc.value.status_code == 400
+    assert "Test/Canlı" in str(exc.value.detail)
+    client.assert_not_called()
+    mock.post.assert_not_called()

@@ -287,6 +287,7 @@ class Invoice(BaseDocument):
     gib_scenario: Optional[str] = None  # TICARIFATURA | TEMELFATURA | EARSIVFATURA
     einvoice_state: Optional[str] = "draft"  # draft | queued | sent | error | cancelled
     gib_document_url: Optional[str] = None
+    gib_vendor_number: Optional[str] = None
     gib_error: Optional[str] = None
     gib_mode: Optional[str] = None  # test | live | simulated
     integrator: Optional[str] = None

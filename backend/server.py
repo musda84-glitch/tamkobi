@@ -395,7 +395,15 @@ async def get_current_user(request: Request) -> dict:
     try:
         import jwt as _jwt
         from auth_utils import get_jwt_secret, JWT_ALGORITHM
-        payload = _jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        # aud host'ta get_user_from_token içinde doğrulanır. Burada yalnız
+        # imp_session okunur; verify_aud açıkken aud'lu token InvalidAudienceError
+        # fırlatıp iptal edilmiş destek oturumunu yutuyordu.
+        payload = _jwt.decode(
+            token,
+            get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_aud": False},
+        )
         sid = payload.get("imp_session")
         if sid:
             import support_access
@@ -1399,6 +1407,7 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         "corporate_code": s.get("corporate_code") or "",
         "company_tax_id": s.get("company_tax_id") or "",
         "company_vendor_number": s.get("company_vendor_number") or "",
+        "series_vendor_map": isnet.series_vendor_map(s),
         "has_password": bool(s.get("password_enc")),
         "has_api_key": bool(s.get("api_key_enc")),
         "status": s.get("status") or "simulated",
@@ -1445,6 +1454,8 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         update["company_tax_id"] = "".join(ch for ch in str(req.get("company_tax_id") or "") if ch.isdigit())
     if "company_vendor_number" in req:
         update["company_vendor_number"] = str(req.get("company_vendor_number") or "").strip()
+    if "series_vendor_map" in req:
+        update["series_vendor_map"] = isnet.series_vendor_map({"series_vendor_map": req.get("series_vendor_map")})
     if "auto_pull" in req:
         update["auto_pull"] = bool(req.get("auto_pull"))
     if "auto_process" in req:
@@ -1577,6 +1588,9 @@ def _isnet_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict
         "client_code": corporate,
         "company_tax_id": company_tax,
         "company_vendor_number": str(req.get("company_vendor_number") if "company_vendor_number" in req else existing.get("company_vendor_number") or "").strip(),
+        "series_vendor_map": isnet.series_vendor_map(
+            {"series_vendor_map": req.get("series_vendor_map") if "series_vendor_map" in req else existing.get("series_vendor_map")}
+        ),
         "e_dispatch_enabled": e_dispatch_enabled,
         "despatch_defaults": despatch_defaults,
     }
@@ -1613,6 +1627,7 @@ async def isnet_save_settings(req: Dict[str, Any]):
         "alias": fields["alias"],
         "company_tax_id": tax,
         "company_vendor_number": fields.get("company_vendor_number") or "",
+        "series_vendor_map": fields.get("series_vendor_map") or isnet.series_vendor_map(existing),
         "e_dispatch_enabled": bool(fields.get("e_dispatch_enabled", True)),
         "despatch_defaults": fields.get("despatch_defaults") or _despatch_defaults_view(existing),
         # Gelen belgeler Bekleyen'de kalsın — otomatik içeri alma kapalı
@@ -1889,6 +1904,13 @@ async def _run_einvoice_inbox_auto_tick() -> None:
             continue
         cid = s.get("company_id")
         if not cid:
+            continue
+        provider = (s.get("provider") or "").strip()
+        if provider in ("isnet", "isnet_portal") and not isnet.explicit_environment(s):
+            logger.info("e-fatura otomatik gelen kutu atlandı %s: ortam (mode) ayarı yok", cid)
+            continue
+        if provider == "isnet_portal" and isnet_portal.account_login_blocked(s):
+            logger.info("e-fatura otomatik gelen kutu atlandı %s: İşNet login backoff", cid)
             continue
         try:
             await pull_einvoice_incoming(cid, days=14, settings=s)

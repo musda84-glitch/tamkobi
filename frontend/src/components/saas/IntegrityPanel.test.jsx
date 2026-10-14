@@ -99,4 +99,30 @@ describe("IntegrityPanel", () => {
       expect.anything(),
     );
   });
+
+  it("lists İşNet settings with no mode on the system panel", async () => {
+    axios.get.mockImplementation((url) => {
+      if (String(url).includes("/isnet-mode")) {
+        return Promise.resolve({
+          data: {
+            readonly: true,
+            count: 1,
+            detail: "İşNet ortamı (Test/Canlı) seçilmemiş. Ayarlar → e-Fatura'dan ortamı seçip kaydedin.",
+            items: [{ company_id: "c9", company_name: "Acme", provider: "isnet", status: "configured", mode: "" }],
+          },
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    await act(async () => {
+      root.render(<IntegrityPanel apiBase="/system/integrity" />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[data-testid="integrity-isnet-mode-warning"]')?.textContent).toContain("Acme");
+    expect(host.querySelector('[data-testid="integrity-isnet-mode-row"]')).not.toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
 });
