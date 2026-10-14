@@ -114,12 +114,8 @@ code {
     }
 }
 
-@media print {
-  body * { visibility: hidden; }
-  #print-area, #print-area * { visibility: visible; }
-  #print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; }
-  .no-print { display: none !important; }
-}
+/* Print page rules live in utils/printPageCss.js (installed on startup).
+   A position:absolute sheet on a viewport-tall shell prints a trailing blank page. */
 
 /* Dedicated print barcode column — readable, scannable size */
 #print-area [data-testid^="print-item-barcode-"] {

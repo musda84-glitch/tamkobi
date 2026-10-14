@@ -8,6 +8,7 @@ import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, 
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 import { resolvePrintPartyAddress, resolvePrintPartyCity, resolvePrintPartyPhone } from "../utils/printPartyAddress";
 import { BarcodeRenderer } from "./BarcodeRenderer";
+import { printPageCss } from "../utils/printPageCss";
 
 export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 
@@ -447,12 +448,12 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             ))}
           </div>
         )}
-          <style>{`@media print{@page{size:${tpl.paper === "A5" ? "A5" : "A4"};margin:10mm}}`}</style>
-          <div className={`${textSize} text-slate-800 print-area flex`} id="print-area">
+          <style>{printPageCss(docType, tpl.paper)}</style>
+          <div className={`${textSize} text-slate-800 print-area flex`} id="print-area" data-doc-type={docType}>
           {isBold && <div className="w-3 shrink-0 self-stretch" style={{ backgroundColor: color }} />}
-          <div className={`flex-1 ${isModern ? "" : "p-10"}`}>
+          <div className={`flex-1 print-sheet-pad ${isModern ? "" : "p-10"}`}>
           {isModern ? (
-            <div className="px-10 py-6 text-white flex justify-between items-start" style={{ backgroundColor: color }}>
+            <div className="px-10 py-6 print-sheet-pad text-white flex justify-between items-start" style={{ backgroundColor: color }}>
               <div className="flex items-center gap-3">
                 {tpl.show_logo && company?.logo_url && <img src={resolveImageUrl(company.logo_url)} alt="logo" className="h-14 object-contain bg-white rounded-lg p-1" />}
                 <div><div className="text-lg font-bold">{company?.name}</div><div className="opacity-80">{company?.address} {company?.city}</div>{tpl.show_tax_info && <div className="opacity-80">VD: {company?.tax_office} • VKN: {company?.tax_number}</div>}<div className="opacity-80">{company?.phone} • {company?.email}</div></div>
@@ -479,7 +480,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             </div>
           </div>
           )}
-          <div className={isModern ? "px-10 pb-10" : ""}>
+          <div className={isModern ? "px-10 pb-10 print-sheet-pad" : ""}>
           {tpl.header_note && <p className="mt-3 text-slate-600 italic">{tpl.header_note}</p>}
           <div className="mt-5 grid grid-cols-2 gap-6" data-testid="print-party-grid">
             <div>
@@ -657,10 +658,17 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
           {(doc.notes || doc.terms) && <div className="mt-6 text-slate-600 whitespace-pre-wrap">{doc.notes}{doc.terms && <div className="mt-2"><b>Şartlar:</b> {doc.terms}</div>}</div>}
           {doc.images?.length > 0 && <div className="mt-6 grid grid-cols-4 gap-2">{doc.images.slice(0, 8).map((img) => <img key={img} src={resolveImageUrl(img)} alt="" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
           {tpl.show_bank_info && company?.iban && <div className="mt-6 text-slate-600"><b>Banka:</b> {company.bank_name} • <b>IBAN:</b> <span className="font-mono">{company.iban}</span></div>}
-          <div className="mt-10 flex justify-between items-end">
-            <div className="text-slate-400 italic">{tpl.footer_note}</div>
-            {tpl.show_signature && <div className="text-center"><div className="w-40 border-b border-slate-300 mb-1"></div><div className="text-slate-500">Kaşe / İmza</div></div>}
-          </div>
+          {(() => {
+            const footerNote = String(tpl.footer_note || "").trim();
+            const showFooter = Boolean(footerNote) || !!tpl.show_signature;
+            if (!showFooter) return <div className="print-footer" />;
+            return (
+              <div className="print-footer mt-10 flex justify-between items-end">
+                <div className="text-slate-400 italic">{footerNote}</div>
+                {tpl.show_signature && <div className="text-center"><div className="w-40 border-b border-slate-300 mb-1"></div><div className="text-slate-500">Kaşe / İmza</div></div>}
+              </div>
+            );
+          })()}
           </div>
           </div>
         </div>
