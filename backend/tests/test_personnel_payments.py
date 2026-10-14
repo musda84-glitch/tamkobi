@@ -689,7 +689,7 @@ def test_reimburse_cash_exit_does_not_touch_salary_advance_or_expense():
     })
     result = _run(
         db, _emp(),
-        [{"kind": "reimburse", "amount": 800, "account_id": "bank", "description": "Yakıt"}],
+        [{"kind": "reimburse", "amount": 800, "account_id": "bank", "description": "Yakıt", "category": "Yakıt"}],
         balance={"remaining": 8000, "unpaid_payroll": 8000},
     )
     assert result["paid"] == ["reimburse"]
@@ -702,23 +702,23 @@ def test_reimburse_cash_exit_does_not_touch_salary_advance_or_expense():
     assert db.bank_accounts.docs[0]["current_balance"] == 49200
     tx = db.bank_transactions.docs[0]
     assert tx["type"] == "outflow" and tx["amount"] == 800
-    assert db.expenses.docs == []
+    assert len(db.expenses.docs) == 1
+    exp = db.expenses.docs[0]
+    assert str(exp.get("expense_number") or "").startswith("MSR-")
+    assert exp["employee_id"] == "e1"
+    assert exp["payment_status"] == "paid"
+    assert exp["category"] == "Yakıt" or exp["category"]
+    assert exp.get("source_type") == "personnel_payment"
     assert len(db.bonus_payments.docs) == 1
     assert db.bonus_payments.docs[0]["amount"] == 500
     assert db.payrolls.docs[0]["paid_amount"] == 1000
     assert db.personnel_receipts.docs[0]["total"] == 800
     rows = personnel_payments.reimbursement_rows(db.personnel_movements.docs)
-    assert rows == [{
-        "id": mov["_id"],
-        "kind": "reimburse",
-        "kind_label": "Masraf ödemesi",
-        "amount": 800,
-        "date": "2026-10-13",
-        "account_name": "Banka",
-        "description": "Yakıt",
-        "expense_number": None,
-        "status": "posted",
-    }]
+    assert rows[0]["kind"] == "reimburse"
+    assert rows[0]["kind_label"] == "Masraf ödemesi"
+    assert rows[0]["amount"] == 800
+    assert rows[0]["expense_number"] == exp["expense_number"]
+    assert rows[0]["charge_to_account"] is False
 
 
 def test_reimburse_partner_is_withdrawal():
@@ -734,7 +734,8 @@ def test_reimburse_partner_is_withdrawal():
     assert db.partner_transactions.docs[0]["type"] == "withdrawal"
     assert db.partner_transactions.docs[0]["amount"] == 300
     assert db.bank_transactions.docs == []
-    assert db.expenses.docs == []
+    assert len(db.expenses.docs) == 1
+    assert db.expenses.docs[0]["payment_status"] == "paid"
     assert "Ortak" in (db.personnel_movements.docs[0]["account_name"] or "")
 
 
@@ -826,13 +827,16 @@ def test_reimburse_by_number_and_rejects_short_foreign_other_and_closed():
     plain.bank_accounts.docs.append(_acc(current_balance=50000))
     plain.expenses.docs.append({
         "_id": "exp", "company_id": "c1", "employee_id": "e1",
-        "total": 40, "payment_status": "unpaid",
+        "expense_number": "MSR-2026-0040", "total": 40, "payment_status": "unpaid",
     })
-    no_debt = _raises(lambda: _run(
+    _run(
         plain, _emp(),
         [{"kind": "reimburse", "amount": 40, "account_id": "bank", "expense_id": "exp"}],
-    ))
-    assert no_debt.status_code == 400 and "açık borç" in str(no_debt.detail)
+        balance={"remaining": 1000},
+    )
+    assert len(plain.expenses.docs) == 1
+    assert plain.expenses.docs[0]["payment_status"] == "paid"
+    assert plain.expenses.docs[0]["expense_number"] == "MSR-2026-0040"
 
 
 def result_remaining_unchanged(db):
@@ -903,3 +907,167 @@ def test_personnel_paid_expense_is_outside_receivable_and_same_rbac():
     move = rbac.module_for_path("/api/personnel/movements/mov1")
     assert settle == "/personnel"
     assert move == settle
+    assert rbac.personnel_expense_forbidden(
+        {"role": "muhasebe", "permissions": {"/personnel": "edit", "/expenses": "view"}},
+    ) == rbac.PERSONNEL_EXPENSE_PERM_MSG
+    assert rbac.personnel_expense_forbidden(
+        {"role": "admin", "permissions": {"/personnel": "view", "/expenses": "view"}},
+    ) is None
+    assert rbac.personnel_expense_forbidden(
+        {"role": "muhasebe", "permissions": {"/personnel": "edit", "/expenses": "edit"}},
+    ) is None
+
+
+def test_reimburse_charge_off_does_not_write_personnel_account():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    result = _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 400, "account_id": "bank", "category": "Kira", "charge_to_account": False}],
+        balance={"remaining": 9000, "unpaid_payroll": 9000},
+    )
+    assert result["remaining_after"] == 9000
+    assert result["overpaid"] is False
+    assert [b.get("type") for b in db.bonus_payments.docs] == []
+    assert db.expenses.docs[0]["category"] == "Kira"
+    assert db.expenses.docs[0]["employee_id"] == "e1"
+    assert db.personnel_movements.docs[0]["charge_to_account"] is False
+
+
+def test_reimburse_charge_debt_writes_borc():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    result = _run(
+        db, _emp(),
+        [{
+            "kind": "reimburse", "amount": 600, "account_id": "bank", "category": "İnternet / Telefon",
+            "charge_to_account": True, "account_effect": "debt",
+        }],
+        balance={"remaining": 9000, "unpaid_payroll": 9000},
+    )
+    assert result["remaining_after"] == 8400
+    assert db.bonus_payments.docs[0]["type"] == "borc"
+    assert db.bonus_payments.docs[0]["amount"] == 600
+    assert db.bonus_payments.docs[0]["type_label"] == personnel_payments.DEBT_LABEL
+    figures = employee_pay.period_figures(
+        _emp(), [], db.bonus_payments.docs, "2026-10",
+        unpaid_payroll=9000, extra_advance=600,
+    )
+    assert figures["deductions"] == 600
+
+
+def test_reimburse_charge_entitlement_writes_bakiye():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    result = _run(
+        db, _emp(),
+        [{
+            "kind": "reimburse", "amount": 350, "account_id": "bank",
+            "charge_to_account": True, "account_effect": "entitlement",
+        }],
+        balance={"remaining": 2000, "unpaid_payroll": 2000},
+    )
+    assert result["remaining_after"] == 1650
+    assert db.bonus_payments.docs[0]["type"] == "bakiye"
+    assert db.bonus_payments.docs[0]["type_label"] == personnel_payments.ENTITLEMENT_LABEL
+    remaining = employee_pay.compose_remaining(unpaid_payroll=2000, bakiye_paid=350)
+    assert remaining == 1650
+
+
+def test_reimburse_empty_amount_is_not_overpay():
+    preview = employee_pay.payment_after(-1200, employee_pay.payment_lines_affecting_balance([
+        {"kind": "reimburse", "amount": 0},
+        {"kind": "reimburse", "amount": "", "charge_to_account": False},
+    ]))
+    assert preview["overpaid"] is False
+    assert preview["message"] is None
+    charged = employee_pay.payment_after(100, employee_pay.payment_lines_affecting_balance([
+        {"kind": "reimburse", "amount": 250, "charge_to_account": True},
+    ]))
+    assert charged["overpaid"] is True
+
+
+def test_reimburse_forbidden_without_expense_edit():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    actor = {"role": "muhasebe", "permissions": {"/personnel": "edit", "/expenses": "view"}}
+    exc = _raises(lambda: asyncio.run(personnel_payments.apply_payment_lines(
+        db, _emp(), {},
+        {"lines": [{"kind": "reimburse", "amount": 80, "account_id": "bank"}], "_actor": actor},
+        balance={"remaining": 0}, pay_date="2026-10-13", period="2026-10",
+    )))
+    assert exc.status_code == 403
+    assert "yetki" in str(exc.detail).lower()
+    assert db.expenses.docs == []
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+
+
+def test_reimburse_recurring_is_idempotent_for_same_month():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    _run(
+        db, _emp(),
+        [{
+            "kind": "reimburse", "amount": 220, "account_id": "bank", "category": "Kira",
+            "recurring": True, "recurring_day": 5, "charge_to_account": True, "account_effect": "debt",
+        }],
+        balance={"remaining": 5000, "unpaid_payroll": 5000},
+        date="2026-10-05",
+    )
+    templates = [e for e in db.expenses.docs if e.get("is_recurring")]
+    assert len(templates) == 1
+    tpl = templates[0]
+    assert tpl["recurrence_day"] == 5
+    assert tpl["source"] == "personnel_reimburse_recurring"
+    first_paid = [e for e in db.expenses.docs if e.get("payment_status") == "paid"]
+    assert len(first_paid) == 1
+    assert first_paid[0].get("recurring_parent_id") == tpl["_id"]
+    again = asyncio.run(personnel_payments.spawn_recurring_reimburse(db, tpl, "2026-10-05"))
+    assert again["reason"] == "already"
+    assert len([e for e in db.expenses.docs if e.get("payment_status") == "paid"]) == 1
+    spawned = asyncio.run(personnel_payments.spawn_recurring_reimburse(db, tpl, "2026-11-05"))
+    assert spawned["status"] == "success"
+    paid = [e for e in db.expenses.docs if e.get("payment_status") == "paid"]
+    assert len(paid) == 2
+    assert all(e.get("recurring_parent_id") == tpl["_id"] for e in paid)
+    assert len([b for b in db.bonus_payments.docs if b.get("type") == "borc"]) == 2
+
+
+def test_reverse_created_reimburse_removes_expense_and_charge():
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    _run(
+        db, _emp(),
+        [{
+            "kind": "reimburse", "amount": 180, "account_id": "bank",
+            "charge_to_account": True, "account_effect": "debt",
+        }],
+        balance={"remaining": 1000, "unpaid_payroll": 1000},
+    )
+    mov = db.personnel_movements.docs[0]
+    assert db.expenses.docs and db.bonus_payments.docs
+    out = _reverse(db, mov, actor=_admin())
+    assert out["status"] == "success"
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+    leftover = [e for e in db.expenses.docs if e.get("source") != "personnel_reimburse_recurring"]
+    assert leftover == []
+    assert db.bonus_payments.docs == []
+
+
+def test_delete_recurring_template_keeps_history():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 90, "account_id": "bank", "recurring": True, "recurring_day": 1}],
+        date="2026-10-01",
+    )
+    tpl = next(e for e in db.expenses.docs if e.get("is_recurring"))
+    paid = [e for e in db.expenses.docs if e.get("payment_status") == "paid"]
+    asyncio.run(personnel_payments.spawn_recurring_reimburse(db, tpl, "2026-11-01"))
+    asyncio.run(db.expenses.delete_one({"_id": tpl["_id"]}))
+    history = [e for e in db.expenses.docs if e.get("payment_status") == "paid"]
+    assert len(history) >= 2
+    assert all(e["_id"] != tpl["_id"] for e in history)
+    assert paid[0]["_id"] in {e["_id"] for e in history}

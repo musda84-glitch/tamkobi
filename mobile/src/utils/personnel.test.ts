@@ -46,6 +46,7 @@ import {
   personnelExpensePayload,
   personnelReimbursePayload,
   expensePersonnelDebtOpen,
+  expenseLinkableForReimburse,
   validateReimburse,
   assignEmployeeToTasks,
   assignedTaskAfterAssign,
@@ -768,7 +769,7 @@ describe("employee card actions", () => {
     expect(reimburse[0].subtitle).toContain("Kaynak: Kasa");
     expect(reimburse[1].linkedMovementId).toBe("mov_sal");
     expect(reimburse[1].subtitle).toContain("Kaynak: Banka");
-    expect(payMoveDeleteConfirm(reimburse[0]).message).toMatch(/çıkışı da silinir/);
+    expect(payMoveDeleteConfirm(reimburse[0]).message).toMatch(/birlikte geri alınır/);
     expect(expensePersonnelDebtOpen({ paid_by_personnel: true })).toBe(true);
     expect(expensePersonnelDebtOpen({ personnel_debt_status: "closed", paid_by_personnel: true })).toBe(false);
     expect(validateReimburse("", "")).toBe("Masraf ödeme tutarı girin.");
@@ -779,11 +780,36 @@ describe("employee card actions", () => {
         kind: "reimburse",
         amount: 250,
         description: "yakıt",
+        category: "Personel Masrafı",
+        charge_to_account: false,
         partner_id: "ort1",
         account_id: null,
         expense_id: "ex1",
       }],
     });
+    expect(personnelReimbursePayload("400", "bank1", "kira", "", "2026-10-14", {
+      category: "Kira",
+      chargeToAccount: true,
+      accountEffect: "debt",
+      recurring: true,
+      recurringDay: 5,
+    })).toEqual({
+      date: "2026-10-14",
+      lines: [{
+        kind: "reimburse",
+        amount: 400,
+        description: "kira",
+        category: "Kira",
+        charge_to_account: true,
+        account_effect: "debt",
+        account_id: "bank1",
+        partner_id: null,
+        recurring: true,
+        recurring_day: 5,
+      }],
+    });
+    expect(expenseLinkableForReimburse({ payment_status: "unpaid" })).toBe(true);
+    expect(expenseLinkableForReimburse({ payment_status: "paid" })).toBe(false);
     const daily = employeePayMoves({
       payrolls: [{ id: "d1", period: "2026-09", status: "pending", pay_type: "daily", worked_days: 12, daily_wage: 1500, final_payable: 18000 }],
     });

@@ -66,6 +66,15 @@ export function employeePayModalStart(initialKind, lines) {
 
 export const REIMBURSE_KIND = "reimburse";
 export const REIMBURSE_LABEL = "Masraf ödemesi";
+export const REIMBURSE_DEFAULT_CATEGORY = "Personel Masrafı";
+export const REIMBURSE_EFFECT_DEBT = "debt";
+export const REIMBURSE_EFFECT_ENTITLEMENT = "entitlement";
+export const REIMBURSE_CATEGORIES = [
+  "Kira", "Elektrik / Su / Doğalgaz", "İnternet / Telefon", "Yakıt", "Yemek",
+  "Yol / Ulaşım", "Ofis Malzemesi", "Personel Masrafı", "Vergi / Harç / SGK",
+  "Bakım / Onarım", "Pazarlama / Reklam", "Yazılım / Abonelik", "Kargo / Nakliye",
+  "Muhasebe / Danışmanlık", "Diğer",
+];
 
 export const PAYMENT_LINE_KINDS = [
   { key: "salary", label: "Maaş" },
@@ -104,6 +113,20 @@ export function expensePersonnelDebtOpen(exp) {
   if (CLOSED_PERSONNEL_DEBT.has(status)) return false;
   if (status === "open") return true;
   return expensePaidByPersonnel(exp);
+}
+
+export function expenseLinkableForReimburse(exp) {
+  if (!exp || typeof exp !== "object") return false;
+  if (String(exp.payment_status || "").trim().toLowerCase() === "template") return false;
+  if (expensePersonnelDebtOpen(exp)) return true;
+  return String(exp.payment_status || "") !== "paid";
+}
+
+export function chargeReimburseToAccount(line) {
+  if (!line || String(line.kind || "").toLowerCase() !== REIMBURSE_KIND) return false;
+  const v = line.charge_to_account ?? line.chargeToAccount;
+  if (v === true || v === 1) return true;
+  return ["1", "true", "yes", "evet"].includes(String(v || "").trim().toLowerCase());
 }
 
 const CASH_TYPES = new Set(["cash", "kasa", "cashbox", "nakit", "cash_box"]);
@@ -210,14 +233,18 @@ export function posSalaryWarning(lines, accounts) {
 }
 
 export function paymentPreview(remaining, lines) {
-  const affecting = (lines || []).filter((l) => String(l?.kind || "").toLowerCase() !== REIMBURSE_KIND);
+  const affecting = (lines || []).filter((l) => {
+    if (String(l?.kind || "").toLowerCase() !== REIMBURSE_KIND) return true;
+    return chargeReimburseToAccount(l);
+  });
   const paying = round2(affecting.reduce((s, l) => s + (Number(l.amount) || 0), 0));
   const after = round2((Number(remaining) || 0) - paying);
+  const over = paying > 0.004 && after < -0.004;
   return {
     paying,
     remainingAfter: after,
-    overpaid: after < -0.004,
-    message: after < -0.004 ? OVERPAY_MSG : "",
+    overpaid: over,
+    message: over ? OVERPAY_MSG : "",
   };
 }
 

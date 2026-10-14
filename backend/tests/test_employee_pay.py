@@ -237,6 +237,18 @@ def test_cash_shortfall_and_overpay_preview():
     assert preview["remaining_after"] == -2000
     assert preview["message"] == "sonraki maaştan düşülecek"
     assert employee_pay.payment_after(5000, [{"amount": 2000}])["message"] is None
+    empty = employee_pay.payment_after(-800, [])
+    assert empty["overpaid"] is False and empty["message"] is None
+    assert employee_pay.payment_after(-800, [{"kind": "reimburse", "amount": ""}])["overpaid"] is False
+    charged = employee_pay.payment_lines_affecting_balance([
+        {"kind": "salary", "amount": 10},
+        {"kind": "reimburse", "amount": 5},
+        {"kind": "reimburse", "amount": 7, "charge_to_account": True},
+    ])
+    assert charged == [
+        {"kind": "salary", "amount": 10},
+        {"kind": "reimburse", "amount": 7, "charge_to_account": True},
+    ]
 
 
 def test_advance_offsets_next_remaining():

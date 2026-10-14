@@ -34,9 +34,15 @@ PAY_KIND_FIELDS = (
 )
 
 REIMBURSE_KIND = "reimburse"
+REIMBURSE_DEFAULT_CATEGORY = "Personel Masrafı"
+REIMBURSE_TEMPLATE_SOURCE = "personnel_reimburse_recurring"
+REIMBURSE_EFFECT_DEBT = "debt"
+REIMBURSE_EFFECT_ENTITLEMENT = "entitlement"
+REIMBURSE_ACCOUNT_EFFECTS = (REIMBURSE_EFFECT_DEBT, REIMBURSE_EFFECT_ENTITLEMENT)
 PERSONNEL_PAYER_VALUES = {"personnel", "employee", "personel", "staff"}
 CLOSED_PERSONNEL_DEBT = {"closed", "reimbursed", "paid"}
 _PERSONNEL_DEBT_TEXT = "personel tarafından ödendi"
+_TEMPLATE_PAYMENT = {"template", "recurring"}
 
 
 def istanbul_today(now: Any = None) -> dt_date:
@@ -398,6 +404,23 @@ async def scheduler_loop(db, generate_payroll_fn=None):
                 log.info("employee allowance scheduler posted %s", r["posted_count"])
         except Exception as exc:  # noqa: BLE001
             log.warning("employee allowance scheduler: %s", exc)
+        try:
+            import expenses as exp_mod
+            cursor = db.employees.find({})
+            employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
+            seen_cid = set()
+            posted_rec = 0
+            for e in employees:
+                cid = e.get("company_id")
+                if not cid or cid in seen_cid:
+                    continue
+                seen_cid.add(cid)
+                rec = await exp_mod.run_recurring_for_company(cid, db=db)
+                posted_rec += len(rec.get("created") or [])
+            if posted_rec:
+                log.info("recurring expenses scheduler posted %s", posted_rec)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("recurring expenses scheduler: %s", exc)
         await asyncio.sleep(3600)
 
 
@@ -680,9 +703,20 @@ def personnel_debt_open(exp: Optional[dict]) -> bool:
     return expense_paid_by_personnel(exp)
 
 
+def expense_is_recurring_template(exp: Optional[dict]) -> bool:
+    """Tekrarlayan şablon satırı hak edişe ve ödenmemiş toplama girmez."""
+    if not isinstance(exp, dict):
+        return False
+    if str(exp.get("source") or "") == REIMBURSE_TEMPLATE_SOURCE:
+        return True
+    return str(exp.get("payment_status") or "").strip().lower() in _TEMPLATE_PAYMENT
+
+
 def expense_counts_in_receivable(exp: Optional[dict]) -> bool:
     """Şirketin personele masraf borcu hak edişe girer. Personel cebinden ödenen girmez."""
     if not isinstance(exp, dict):
+        return False
+    if expense_is_recurring_template(exp):
         return False
     if str(exp.get("payment_status") or "") == "paid":
         return False
@@ -700,18 +734,37 @@ def personnel_debt_amount(exp: Optional[dict]) -> float:
     return round(_amt(raw), 2)
 
 
+def charge_reimburse_to_account(ln: Optional[dict]) -> bool:
+    """Personel hesabına yaz açıksa masraf ödemesi bakiyeyi etkiler."""
+    if not isinstance(ln, dict):
+        return False
+    if str(ln.get("kind") or "").strip().lower() != REIMBURSE_KIND:
+        return False
+    return _truthy_flag(ln.get("charge_to_account") or ln.get("chargeToAccount"))
+
+
+def reimburse_account_effect(ln: Optional[dict]) -> str:
+    raw = str((ln or {}).get("account_effect") or (ln or {}).get("accountEffect") or "").strip().lower()
+    if raw in REIMBURSE_ACCOUNT_EFFECTS:
+        return raw
+    return REIMBURSE_EFFECT_DEBT
+
+
 def payment_lines_affecting_balance(lines: Optional[List[dict]]) -> List[dict]:
-    """Masraf ödemesi maaş, avans ve hak ediş bakiyesinden düşülmez."""
-    return [
-        ln for ln in (lines or [])
-        if str((ln or {}).get("kind") or "").strip().lower() != REIMBURSE_KIND
-    ]
+    """Masraf ödemesi varsayılan olarak bakiyeden düşülmez; hesaba yazılınca düşer."""
+    out: List[dict] = []
+    for ln in lines or []:
+        kind = str((ln or {}).get("kind") or "").strip().lower()
+        if kind == REIMBURSE_KIND and not charge_reimburse_to_account(ln):
+            continue
+        out.append(ln)
+    return out
 
 
 def payment_after(remaining: float, lines: Optional[List[dict]]) -> Dict[str, Any]:
     paying = round(sum(_amt(ln.get("amount")) for ln in (lines or [])), 2)
     after = round(_amt(remaining) - paying, 2)
-    over = after < -0.004
+    over = paying > 0.004 and after < -0.004
     return {
         "paying": paying,
         "remaining_after": after,

@@ -163,6 +163,9 @@ test("ödeme açılışında uuid üretir ve Idempotency-Key gönderir", async (
 
 test("Masraf ödemesi türü bakiyeyi düşürmez ve isteğe bağlı masraf bağlar", async () => {
   axios.get.mockImplementation((url) => {
+    if (String(url).includes("/expenses/categories")) {
+      return Promise.resolve({ data: [{ name: "Kira" }, { name: "Yakıt" }] });
+    }
     if (String(url).includes("/expenses")) {
       return Promise.resolve({ data: { expenses: [
         { id: "ex1", expense_number: "MSR-2026-0007", description: "Market", paid_by_personnel: true, personnel_debt_status: "open" },
@@ -180,20 +183,47 @@ test("Masraf ödemesi türü bakiyeyi düşürmez ve isteğe bağlı masraf bağ
     setNative(kind, "reimburse");
     await Promise.resolve();
   });
-  expect(host.querySelector('[data-testid="emp-pay-line-reimburse-hint-0"]').textContent).toMatch(/düşmez/);
+  expect(host.querySelector('[data-testid="emp-pay-line-reimburse-hint-0"]').textContent).toMatch(/MSR/);
+  expect(host.querySelector('[data-testid="emp-pay-line-category-0"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="emp-pay-line-charge-box-0"]').checked).toBe(false);
   const expense = host.querySelector('[data-testid="emp-pay-line-expense-0"]');
   expect(expense.textContent).toContain("MSR-2026-0007");
-  expect(expense.textContent).not.toContain("MSR-2026-0008");
+  expect(expense.textContent).toContain("MSR-2026-0008");
   act(() => {
     setNative(host.querySelector('[data-testid="emp-pay-line-amount-0"]'), "250");
     setNative(expense, "ex1");
   });
   expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).toContain("33.300,00");
+  expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).not.toMatch(/Fazla ödeme/);
   await act(async () => {
     host.querySelector('[data-testid="emp-pay-submit"]').click();
     await Promise.resolve();
     await Promise.resolve();
   });
   const [, body] = axios.post.mock.calls[0];
-  expect(body.lines[0]).toMatchObject({ kind: "reimburse", amount: 250, expense_id: "ex1", account_id: "bank1" });
+  expect(body.lines[0]).toMatchObject({
+    kind: "reimburse", amount: 250, expense_id: "ex1", account_id: "bank1", charge_to_account: false,
+  });
+});
+
+test("Boş tutarda fazla ödeme uyarısı çıkmaz; hesaba yaz açıkken bakiyeyi düşer", async () => {
+  render(
+    <EmployeePayModal
+      employee={{ id: "e1", full_name: "Ali" }}
+      companyId="c1"
+      accounts={accounts}
+      card={{ balance: { ...card.balance, remaining: -400 } }}
+      initialKind="reimburse"
+      onClose={() => {}}
+    />,
+  );
+  await act(async () => { await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).not.toMatch(/Fazla ödeme/);
+  const charge = host.querySelector('[data-testid="emp-pay-line-charge-box-0"]');
+  act(() => {
+    charge.click();
+    setNative(host.querySelector('[data-testid="emp-pay-line-amount-0"]'), "250");
+  });
+  expect(host.querySelector('[data-testid="emp-pay-line-effect-0"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).toMatch(/Fazla ödeme/);
 });

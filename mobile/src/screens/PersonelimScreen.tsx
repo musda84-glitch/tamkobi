@@ -50,6 +50,7 @@ type PersonelimPayload = {
   payrolls?: { id?: string; _id?: string; period?: string; status?: string; net_salary?: number; final_payable?: number; overtime_pay?: number; overtime_hours?: number; second_salary?: number }[];
   bonuses?: { id?: string; _id?: string; type?: string; amount?: number; status?: string; period?: string; note?: string; source?: string }[];
   reimbursements?: { id?: string; amount?: number; date?: string; account_name?: string; description?: string; expense_number?: string; kind_label?: string }[];
+  recurring_expenses?: { id?: string; amount?: number; category?: string; recurrence_day?: number; next_date?: string; recurring_end?: string; expense_number?: string; is_recurring?: boolean }[];
   receipts?: { id?: string; period?: string; date?: string; total?: number; url?: string }[];
   balance?: {
     remaining?: number;
@@ -495,6 +496,18 @@ export function PersonelimScreen() {
                   const href = fileUrl(client.baseUrl, r.url || `/api/personnel/receipts/${r.id}`);
                   if (href) Linking.openURL(href).catch(() => null);
                 }}
+              />
+            ))}
+          </Card>
+          <Card>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Tekrarlayan masraflar</Text>
+            {!(data?.recurring_expenses || []).length ? <Muted>Tekrarlayan masraf yok.</Muted> : (data?.recurring_expenses || []).map((r) => (
+              <ListRow
+                key={r.id}
+                testID={`personelim-recurring-${r.id}`}
+                title={[r.expense_number, r.category].filter(Boolean).join(" · ") || "Tekrarlayan masraf"}
+                subtitle={[r.recurrence_day ? `her ayın ${r.recurrence_day}'i` : "her ay", r.recurring_end ? `bitiş ${r.recurring_end}` : "süresiz", r.next_date].filter(Boolean).join(" · ")}
+                right={fmtMoney(r.amount)}
               />
             ))}
           </Card>

@@ -1,7 +1,7 @@
 """Masraflar (Expenses) module: categorized expenses, payments via kasa/banka, receipts, recurring expenses."""
 import uuid
 from datetime import datetime, timezone, date, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from bank_guard import assert_manual_allowed, apply_customer_card_owner_effect
@@ -317,10 +317,19 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
     ).to_list(5000)
     recurring_count = await _db.expenses.count_documents({"company_id": company_id, "is_recurring": True})
     by_cat: Dict[str, float] = {}
+
+    def _counts_unpaid(r: Dict[str, Any]) -> bool:
+        st = str(r.get("payment_status") or "")
+        if st in ("paid", "template", "recurring"):
+            return False
+        if r.get("is_recurring") and str(r.get("source") or "") == "personnel_reimburse_recurring":
+            return False
+        return True
+
     for r in rows:
         by_cat[r.get("category", "Diğer")] = round(by_cat.get(r.get("category", "Diğer"), 0) + _try_total(r), 2)
     summary = {"count": len(rows), "total": round(sum(_try_total(r) for r in rows), 2), "vat_total": round(sum(r.get("vat_amount", 0) for r in rows), 2),
-               "unpaid_total": round(sum(_try_total(r) for r in rows if r.get("payment_status") != "paid"), 2), "unpaid_count": sum(1 for r in rows if r.get("payment_status") != "paid"),
+               "unpaid_total": round(sum(_try_total(r) for r in rows if _counts_unpaid(r)), 2), "unpaid_count": sum(1 for r in rows if _counts_unpaid(r)),
                "this_month_total": round(sum(_try_total(r) for r in month_rows), 2),
                "this_month_count": len(month_rows),
                "recurring_count": recurring_count,
@@ -346,8 +355,25 @@ async def create_expense(req: Dict[str, Any]):
            "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"),
            "created_by_name": actor, "paid_by_name": None, "created_at": _now()}
     if req.get("is_recurring"):
+        day = req.get("recurrence_day")
+        try:
+            day_i = int(day) if day not in (None, "") else None
+        except (TypeError, ValueError):
+            day_i = None
+        if day_i:
+            doc["recurrence_day"] = max(1, min(31, day_i))
+        end = str(req.get("recurring_end") or "").strip()[:10]
+        if end:
+            doc["recurring_end"] = end
+        if req.get("charge_to_account") and emp:
+            doc["charge_to_account"] = True
+            doc["account_effect"] = req.get("account_effect") or "debt"
         d = date.fromisoformat(doc["date"])
-        doc["next_date"] = (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()
+        if day_i:
+            import personnel_payments
+            doc["next_date"] = personnel_payments.next_monthly_date(doc["date"], day_i)
+        else:
+            doc["next_date"] = (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()
     await _db.expenses.insert_one(doc)
     pay_acc = req.get("account_id") or None
     pay_partner = req.get("partner_id") or None
@@ -371,9 +397,7 @@ async def create_expense(req: Dict[str, Any]):
 @router.put("/expenses/{expense_id}")
 async def update_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
-    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "currency", "fx_rate", "fx_source") if k in req}
-    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "currency", "fx_rate", "fx_source") if k in req}
-    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id") if k in req}
+    upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "recurrence_day", "recurring_end", "charge_to_account", "account_effect", "next_date") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
     if any(k in upd for k in ("amount", "currency", "fx_rate", "date")) or "vat_rate" in req:
@@ -391,7 +415,24 @@ async def update_expense(expense_id: str, req: Dict[str, Any], user: dict = Depe
         upd["contact_name"] = c["name"] if c else upd.get("contact_name")
     if "project_id" in upd:
         upd["project_id"] = upd["project_id"] or None
+    if "recurrence_day" in upd:
+        try:
+            day_i = int(upd["recurrence_day"]) if upd["recurrence_day"] not in (None, "") else None
+        except (TypeError, ValueError):
+            day_i = None
+        upd["recurrence_day"] = max(1, min(31, day_i)) if day_i else None
+    if "recurring_end" in upd:
+        upd["recurring_end"] = str(upd["recurring_end"] or "").strip()[:10] or None
+    if "charge_to_account" in upd:
+        upd["charge_to_account"] = bool(upd["charge_to_account"])
+        if not upd["charge_to_account"]:
+            upd["account_effect"] = None
     merged = {**exp, **upd}
+    if merged.get("is_recurring") and "next_date" not in req and "recurrence_day" in upd and upd.get("recurrence_day"):
+        import personnel_payments
+        base = str(merged.get("next_date") or merged.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+        upd["next_date"] = personnel_payments._month_day(base, upd["recurrence_day"])
+        merged["next_date"] = upd["next_date"]
     new_acc = req["account_id"] if "account_id" in req else exp.get("account_id")
     new_partner = req["partner_id"] if "partner_id" in req else exp.get("partner_id")
     if new_partner:
@@ -463,19 +504,66 @@ async def delete_expense(expense_id: str, user: dict = Depends(_user_dep)):
     return {"status": "success", "message": msg + "."}
 
 
+def _bump_next_date(src: dict, due: str) -> str:
+    day = src.get("recurrence_day")
+    try:
+        day_i = int(day) if day not in (None, "") else None
+    except (TypeError, ValueError):
+        day_i = None
+    if src.get("source") == "personnel_reimburse_recurring" or day_i:
+        import personnel_payments
+        return personnel_payments.next_monthly_date(due, day_i)
+    d = date.fromisoformat(due)
+    return (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()
+
+
+async def run_recurring_for_company(company_id: str, today: Optional[str] = None, db=None) -> Dict[str, Any]:
+    """Vadesi gelen tekrarlayan masrafları oluşturur. Personel şablonunda ödeme + hesaba yaz da işlenir."""
+    store = db or _db
+    today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    created: List[dict] = []
+    skipped = 0
+    cursor = store.expenses.find({"company_id": company_id, "is_recurring": True, "next_date": {"$lte": today}})
+    rows = await cursor.to_list(500) if hasattr(cursor, "to_list") else list(cursor)
+    for src in rows:
+        due = str(src.get("next_date") or today)[:10]
+        end = str(src.get("recurring_end") or "").strip()[:10]
+        if end and due > end:
+            await store.expenses.update_one({"_id": src["_id"]}, {"$set": {"is_recurring": False, "next_date": None}})
+            skipped += 1
+            continue
+        period = due[:7]
+        parent_id = src["_id"]
+        already = await store.expenses.find_one({
+            "recurring_parent_id": parent_id,
+            "date": {"$regex": f"^{period}"},
+        })
+        nxt = _bump_next_date(src, due)
+        if already:
+            await store.expenses.update_one({"_id": parent_id}, {"$set": {"next_date": nxt}})
+            skipped += 1
+            continue
+        if str(src.get("source") or "") == "personnel_reimburse_recurring":
+            import personnel_payments
+            spawned = await personnel_payments.spawn_recurring_reimburse(store, src, due)
+            if spawned and spawned.get("status") == "success":
+                created.append({"period": period, "parent_id": parent_id, "source": "personnel"})
+            else:
+                skipped += 1
+            await store.expenses.update_one({"_id": parent_id}, {"$set": {"next_date": nxt}})
+            continue
+        new = {**src, "_id": str(uuid.uuid4()), "expense_number": await _next_number(company_id), "date": due, "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None, "is_recurring": False, "receipt_url": None, "recurring_parent_id": parent_id, "created_at": _now()}
+        new.pop("next_date", None)
+        await store.expenses.insert_one(new)
+        await store.expenses.update_one({"_id": parent_id}, {"$set": {"next_date": nxt}})
+        created.append(_clean(new))
+    return {"created": created, "skipped": skipped, "message": f"{len(created)} tekrarlayan masraf oluşturuldu."}
+
+
 @router.post("/expenses/run-recurring")
 async def run_recurring(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    created = []
-    async for src in _db.expenses.find({"company_id": company_id, "is_recurring": True, "next_date": {"$lte": today}}):
-        d = date.fromisoformat(src["next_date"])
-        new = {**src, "_id": str(uuid.uuid4()), "expense_number": await _next_number(company_id), "date": src["next_date"], "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None, "is_recurring": False, "receipt_url": None, "recurring_parent_id": src["_id"], "created_at": _now()}
-        new.pop("next_date", None)
-        await _db.expenses.insert_one(new)
-        await _db.expenses.update_one({"_id": src["_id"]}, {"$set": {"next_date": (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()}})
-        created.append(_clean(new))
-    return {"created": created, "message": f"{len(created)} tekrarlayan masraf oluşturuldu."}
+    return await run_recurring_for_company(company_id)
 
 
 @router.get("/expense-budgets")

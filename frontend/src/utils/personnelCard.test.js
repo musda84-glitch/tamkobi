@@ -30,6 +30,7 @@ import {
   payMoveDeleteConfirm,
   payMoveDeletePath,
   payMovesPeriodHint,
+  recurringExpenseRows,
   presenceTodayOf,
   remainingDue,
   remainingLeaveDays,
@@ -196,7 +197,12 @@ describe("personnelCard", () => {
     expect(reimburse[0].subtitle).toContain("MSR-2026-0007");
     expect(payMoveBadge(reimburse[0])).toEqual({ label: "Masraf ödemesi", kind: "masraf" });
     expect(payMoveBadge({ title: "Avans" }).label).toBe("Çıkış");
-    expect(payMoveDeleteConfirm(reimburse[0]).message).toMatch(/çıkışı da silinir/);
+    expect(payMoveDeleteConfirm(reimburse[0]).message).toMatch(/birlikte geri alınır/);
+    const rec = recurringExpenseRows({
+      recurring_expenses: [{ id: "t1", is_recurring: true, category: "Kira", recurrence_day: 5, expense_number: "MSR-2026-0003", amount: 220 }],
+    });
+    expect(rec[0].title).toBe("Tekrarlayan masraf");
+    expect(rec[0].subtitle).toMatch(/her ayın 5/);
   });
 
   test("collapses a linked advance into the personnel row and names the source", () => {
