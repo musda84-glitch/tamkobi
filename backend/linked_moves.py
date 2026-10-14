@@ -1030,6 +1030,54 @@ async def api_integrity_cleanup(req: Dict[str, Any], user: dict = Depends(_user_
     )
 
 
+async def _require_system_integrity_admin(request: Request) -> dict:
+    """Platform paneli: yalnızca süper admin. /api/system zaten ynt allowlist'inde."""
+    import saas
+    return await saas.require_super_admin(request)
+
+
+async def _system_company_or_404(company_id: str) -> str:
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="company_id gerekli.")
+    if _db is None:
+        raise HTTPException(status_code=500, detail="linked_moves bağlanmadı.")
+    if not await _db.companies.find_one({"_id": cid}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return cid
+
+
+def _cleanup_dry_run(req: Dict[str, Any]) -> bool:
+    dry_run = req.get("dry_run", True)
+    if dry_run is None:
+        dry_run = True
+    return bool(dry_run)
+
+
+@router.get("/system/integrity/orphans")
+async def api_system_integrity_orphans(
+    company_id: str = Query(...),
+    _admin: dict = Depends(_require_system_integrity_admin),
+):
+    cid = await _system_company_or_404(company_id)
+    return await scan_orphans(_db, cid)
+
+
+@router.post("/system/integrity/cleanup")
+async def api_system_integrity_cleanup(
+    req: Dict[str, Any],
+    admin: dict = Depends(_require_system_integrity_admin),
+):
+    cid = await _system_company_or_404(str(req.get("company_id") or ""))
+    return await cleanup_orphans(
+        _db,
+        cid,
+        dry_run=_cleanup_dry_run(req),
+        items=req.get("items") or req.get("targets"),
+        actor=admin,
+    )
+
+
 # Stock helpers used by delete paths
 async def reverse_stock_movements_for(db, *, order_id: Optional[str] = None, work_order_id: Optional[str] = None, reason_prefix: str = "Geri alma") -> int:
     """Üretim/sayım kaynaklı stok hareketlerini tersine çevir (ürün bakiyesi + karşı hareket)."""

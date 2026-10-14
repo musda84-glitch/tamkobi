@@ -25,7 +25,7 @@ describe("IntegrityPanel", () => {
     host.remove();
   });
 
-  it("scans and shows summary; dry-run preview", async () => {
+  async function scanAndPreview(props) {
     axios.get.mockResolvedValue({
       data: {
         summary: { orphan_moves: 2, paid_missing_moves: 1, drift_accounts: 0, heuristic_links: 1 },
@@ -42,7 +42,7 @@ describe("IntegrityPanel", () => {
     });
 
     await act(async () => {
-      root.render(<IntegrityPanel companyId="c1" />);
+      root.render(<IntegrityPanel companyId="c1" {...props} />);
     });
     expect(host.querySelector('[data-testid="integrity-panel"]')).not.toBeNull();
 
@@ -51,10 +51,6 @@ describe("IntegrityPanel", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(axios.get).toHaveBeenCalledWith(
-      expect.stringContaining("/admin/integrity/orphans"),
-      expect.objectContaining({ params: { company_id: "c1" } }),
-    );
     expect(host.querySelector('[data-testid="integrity-summary"]')?.textContent).toContain("2");
 
     await act(async () => {
@@ -62,11 +58,45 @@ describe("IntegrityPanel", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(host.querySelector('[data-testid="integrity-preview"]')).not.toBeNull();
+  }
+
+  it("scans and shows summary; dry-run preview on /admin/integrity", async () => {
+    await scanAndPreview({ apiBase: "/admin/integrity" });
+    expect(axios.get).toHaveBeenCalledWith(
+      expect.stringContaining("/admin/integrity/orphans"),
+      expect.objectContaining({ params: { company_id: "c1" } }),
+    );
     expect(axios.post).toHaveBeenCalledWith(
       expect.stringContaining("/admin/integrity/cleanup"),
       expect.objectContaining({ company_id: "c1", dry_run: true }),
       expect.anything(),
     );
-    expect(host.querySelector('[data-testid="integrity-preview"]')).not.toBeNull();
+  });
+
+  it("uses /system/integrity when apiBase or scope is the platform panel", async () => {
+    await scanAndPreview({ apiBase: "/system/integrity" });
+    expect(axios.get).toHaveBeenCalledWith(
+      expect.stringContaining("/system/integrity/orphans"),
+      expect.objectContaining({ params: { company_id: "c1" } }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(
+      expect.stringContaining("/system/integrity/cleanup"),
+      expect.objectContaining({ company_id: "c1", dry_run: true }),
+      expect.anything(),
+    );
+
+    axios.get.mockClear();
+    axios.post.mockClear();
+    await scanAndPreview({ scope: "system" });
+    expect(axios.get).toHaveBeenCalledWith(
+      expect.stringContaining("/system/integrity/orphans"),
+      expect.anything(),
+    );
+    expect(axios.post).toHaveBeenCalledWith(
+      expect.stringContaining("/system/integrity/cleanup"),
+      expect.objectContaining({ company_id: "c1", dry_run: true }),
+      expect.anything(),
+    );
   });
 });

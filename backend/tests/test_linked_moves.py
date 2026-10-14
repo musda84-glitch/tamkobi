@@ -6,11 +6,17 @@ import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import auth_utils  # noqa: E402
+import host_audience as ha  # noqa: E402
 import linked_moves  # noqa: E402
 import partner_pay  # noqa: E402
+import saas  # noqa: E402
+from auth_utils import create_access_token  # noqa: E402
 
 
 class FakeCursor:
@@ -497,3 +503,189 @@ def test_heuristic_bonus_match_score():
     bad = {"amount": 99, "account_id": "a1", "description": "x", "category": "Diğer"}
     ok2, _ = linked_moves._heuristic_bonus_match(bonus, bad)
     assert not ok2
+
+
+def _integrity_http(monkeypatch):
+    """linked_moves router + gerçek token audience / require_super_admin."""
+    monkeypatch.setenv("JWT_SECRET", "test-system-integrity-jwt-secret-not-default-32b")
+    monkeypatch.setenv("YNT_HOST", "ynt.taiyazilim.com")
+    db = FakeDb()
+    db.users = FakeCollection()
+    db.platform_settings = FakeCollection()
+    db.companies.docs.append({"_id": "c1", "name": "Acme"})
+    db.bank_transactions.docs.append({
+        "_id": "orphan1", "company_id": "c1", "account_id": "acc1", "type": "outflow",
+        "amount": 40, "bonus_id": "gone", "description": "ghost",
+    })
+    db.users.docs.append({
+        "_id": "sa1", "email": "sa@test.com", "name": "SA",
+        "is_super_admin": True, "is_active": True, "role": "admin",
+    })
+    db.users.docs.append({
+        "_id": "admin1", "email": "admin@firma.com", "name": "Firma",
+        "is_super_admin": False, "is_active": True, "role": "admin",
+        "company_ids": ["c1"], "active_company_id": "c1",
+    })
+
+    async def current_user(request: Request):
+        token = auth_utils.session_token(request)
+        if not token:
+            raise HTTPException(status_code=401, detail="Giriş gerekli")
+        return await auth_utils.get_user_from_token(
+            token, db, request=request, path=request.url.path,
+        )
+
+    prev_lm = (linked_moves._db, linked_moves._current_user, linked_moves._reverse_tx_effects)
+    prev_saas = (saas._db, saas._current_user)
+    linked_moves.init(db, get_current_user=current_user)
+    saas.init(db, current_user)
+    app = FastAPI()
+    app.include_router(linked_moves.router)
+    client = TestClient(app)
+
+    def cookie(*, user_id, email, role, sa, aud):
+        tok = create_access_token(user_id, email, role, is_super_admin=sa, mfa=sa, aud=aud)
+        return {"access_token": tok}
+
+    def restore():
+        linked_moves._db, linked_moves._current_user, linked_moves._reverse_tx_effects = prev_lm
+        saas._db, saas._current_user = prev_saas
+        client.close()
+
+    return client, db, cookie, restore
+
+
+def test_system_integrity_paths_stay_on_existing_ynt_prefix():
+    """Yeni uç /api/system altında; allowlist genişletilmeden ynt'ye açık, admin yolu kapalı."""
+    assert ha.is_ynt_allowed_path("/api/system/integrity/orphans")
+    assert ha.is_ynt_allowed_path("/api/system/integrity/cleanup")
+    assert not ha.is_ynt_allowed_path("/api/admin/integrity/orphans")
+    assert not ha.is_ynt_allowed_path("/api/admin/integrity/cleanup")
+    assert "/api/admin" not in ha._YNT_ALLOWED_PREFIXES
+    assert not any("/integrity" in p for p in ha._YNT_ALLOWED_PREFIXES)
+
+
+def test_ynt_sa_system_integrity_200_and_admin_path_403(monkeypatch):
+    client, db, cookie, restore = _integrity_http(monkeypatch)
+    try:
+        headers = {"host": "ynt.taiyazilim.com"}
+        cookies = cookie(user_id="sa1", email="sa@test.com", role="admin", sa=True, aud=ha.AUD_YNT)
+        orphans = client.get(
+            "/api/system/integrity/orphans",
+            params={"company_id": "c1"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert orphans.status_code == 200, orphans.text
+        body = orphans.json()
+        assert body["company_id"] == "c1"
+        assert body["summary"]["orphan_moves"] >= 1
+
+        missing = client.get(
+            "/api/system/integrity/orphans",
+            params={"company_id": "no-such"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert missing.status_code == 404
+
+        preview = client.post(
+            "/api/system/integrity/cleanup",
+            json={"company_id": "c1", "items": [{"source_type": "personnel_bonus", "source_id": "gone"}]},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["dry_run"] is True
+        assert any(t.get("_id") == "orphan1" for t in db.bank_transactions.docs)
+
+        explicit = client.post(
+            "/api/system/integrity/cleanup",
+            json={"company_id": "c1", "dry_run": False, "items": [{"tx_id": "missing-tx"}]},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert explicit.status_code == 200, explicit.text
+        assert explicit.json()["dry_run"] is False
+
+        blocked = client.get(
+            "/api/admin/integrity/orphans",
+            params={"company_id": "c1"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert blocked.status_code == 403
+        assert blocked.json().get("detail") == "Bu uç platform yönetimi oturumunda kullanılamaz"
+        blocked_post = client.post(
+            "/api/admin/integrity/cleanup",
+            json={"company_id": "c1", "dry_run": True},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert blocked_post.status_code == 403
+    finally:
+        restore()
+
+
+def test_system_integrity_non_sa_403(monkeypatch):
+    client, _db, cookie, restore = _integrity_http(monkeypatch)
+    try:
+        cookies = cookie(
+            user_id="admin1", email="admin@firma.com", role="admin", sa=False, aud=ha.AUD_APP,
+        )
+        headers = {"host": "app.tamkobi.com"}
+        r = client.get(
+            "/api/system/integrity/orphans",
+            params={"company_id": "c1"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert r.status_code == 403
+        r2 = client.post(
+            "/api/system/integrity/cleanup",
+            json={"company_id": "c1"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert r2.status_code == 403
+
+        # ynt host + aud=ynt ama sa claim yok → audience 403
+        ynt_cookies = cookie(
+            user_id="admin1", email="admin@firma.com", role="admin", sa=False, aud=ha.AUD_YNT,
+        )
+        r3 = client.get(
+            "/api/system/integrity/orphans",
+            params={"company_id": "c1"},
+            headers={"host": "ynt.taiyazilim.com"},
+            cookies=ynt_cookies,
+        )
+        assert r3.status_code == 403
+    finally:
+        restore()
+
+
+def test_admin_integrity_still_open_for_company_admin(monkeypatch):
+    client, _db, cookie, restore = _integrity_http(monkeypatch)
+    try:
+        cookies = cookie(
+            user_id="admin1", email="admin@firma.com", role="admin", sa=False, aud=ha.AUD_APP,
+        )
+        headers = {"host": "app.tamkobi.com"}
+        r = client.get(
+            "/api/admin/integrity/orphans",
+            params={"company_id": "c1"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["summary"]["orphan_moves"] >= 1
+        preview = client.post(
+            "/api/admin/integrity/cleanup",
+            json={"company_id": "c1"},
+            headers=headers,
+            cookies=cookies,
+        )
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["dry_run"] is True
+    finally:
+        restore()
