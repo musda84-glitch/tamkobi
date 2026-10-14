@@ -746,7 +746,9 @@ def test_kiosk_exit_decision_matches_cashier_lock():
     assert missing["allow"] is False and missing["detail"] == pc.PIN_USER_REQUIRED
     denied = pc.kiosk_exit_decision("1234", sales, "sales", approver_id="u_sales")
     assert denied["allow"] is False and denied["detail"] == "Bu PIN yönetici onayı veremez."
-    assert pc.kiosk_exit_decision("1234", admin, "admin", approver_id="u_admin")["allow"] is True
+    ok = pc.kiosk_exit_decision("1234", admin, "admin", approver_id="u_admin")
+    assert ok["allow"] is True and isinstance(ok["allow"], bool)
+    assert "nonce" not in ok
     assert pc.kiosk_exit_decision(" 123456 ", {}, "manager", approver_id="u_mgr")["allow"] is True
     # Yönetici rolü ham kuralla kapatılamaz (normalize_pos_rules ile aynı).
     forced = pc.kiosk_exit_decision("1234", {"can_approve": False}, "admin", approver_id="u_admin")
@@ -765,4 +767,93 @@ def test_kiosk_exit_decision_matches_cashier_lock():
     open_sess = {**blocked, "rules": {**sales, "can_exit": True}, "exit_granted": False}
     # Çıkış kuralı açık olsa da kiosk, onay yetkisi olmayan kasiyer PIN'ini kabul etmez.
     cashier_open = pc.kiosk_exit_decision("1234", sales, "sales", session=open_sess, approver_id="u_sales")
-    assert cashier_open["allow"] is False
+    assert cashier_open["allow"] is False and isinstance(cashier_open["allow"], bool)
+
+
+def _shell_unlocks(status, body):
+    """Masaüstü kabuğu yalnız HTTP 2xx ve allow is True iken kilidi açar."""
+    return status == 200 and isinstance(body, dict) and body.get("allow") is True
+
+
+def test_desktop_kiosk_exit_unlocks_only_when_allow_is_true():
+    """POST /api/desktop/kiosk-exit: kabuk bu gövdeyi oturum çereziyle çağırır."""
+    db = _init(_seed())
+    station = {
+        "_id": "u_station",
+        "role": "warehouse",
+        "name": "Depo",
+        "company_ids": [CID],
+        "active_company_id": CID,
+    }
+
+    async def go():
+        ctx = _patches(db)
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4]:
+            code, body = await _call(pc.desktop_kiosk_exit(
+                {"company_id": CID, "user_id": "u_mgr", "pin": "9999", "terminal_id": "t-kiosk"},
+                station,
+                _Req("203.0.113.70"),
+            ))
+            assert _shell_unlocks(code, body)
+            assert body["allow"] is True
+            assert body["approver_id"] == "u_mgr"
+            assert body["detail"] == ""
+
+            code, body = await _call(pc.desktop_kiosk_exit(
+                {"company_id": CID, "user_id": "u_sales", "pin": "1234", "terminal_id": "t-kiosk"},
+                station,
+                _Req("203.0.113.71"),
+            ))
+            assert code == 403
+            assert body == "Bu PIN yönetici onayı veremez."
+            assert _shell_unlocks(code, body) is False
+
+            code, body = await _call(pc.desktop_kiosk_exit(
+                {"company_id": CID, "user_id": "u_mgr", "pin": "0000"},
+                station,
+                _Req("203.0.113.72"),
+            ))
+            assert code == 401
+            assert body == pc.PIN_FAIL_MESSAGE
+            assert _shell_unlocks(code, body) is False
+
+            code, body = await _call(pc.desktop_kiosk_exit(
+                {"company_id": CID, "pin": "9999"},
+                station,
+                _Req("203.0.113.73"),
+            ))
+            assert code == 400
+            assert body == pc.PIN_USER_REQUIRED
+            assert _shell_unlocks(code, {"allow": True, "detail": body}) is False
+
+            db.pos_sessions.docs["s-kiosk"] = {
+                "_id": "s-kiosk",
+                "company_id": CID,
+                "terminal_id": "t-self",
+                "cashier_user_id": "u_sales",
+                "exit_granted": False,
+                "rules": pc.default_pos_rules("sales"),
+            }
+            code, body = await _call(pc.desktop_kiosk_exit(
+                {
+                    "company_id": CID,
+                    "approver_user_id": "u_sales",
+                    "pin": "1234",
+                    "terminal_id": "t-self",
+                },
+                station,
+                _Req("203.0.113.74"),
+            ))
+            assert code == 403
+            assert body == pc.SELF_APPROVE_MESSAGE
+            assert _shell_unlocks(code, body) is False
+
+            code, body = await _call(pc.desktop_kiosk_exit(
+                {"company_id": CID, "user_id": "u_mgr", "pin": "9999", "terminal_id": "t-self"},
+                station,
+                _Req("203.0.113.75"),
+            ))
+            assert _shell_unlocks(code, body)
+            assert body["allow"] is True
+
+    _run(go())

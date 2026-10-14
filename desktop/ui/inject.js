@@ -7,7 +7,6 @@
   }
 
   var companyId = "";
-  var currentNonce = "";
   var nativePrint = globalThis.print ? globalThis.print.bind(globalThis) : function () {};
 
   function invoke(cmd, args) {
@@ -100,28 +99,23 @@
       error.textContent = decision.detail;
       return;
     }
-    var response = await fetch("/api/desktop/kiosk-exit", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: approver.id,
+    root.querySelector("input").value = "";
+    try {
+      await invoke("complete_kiosk_exit", {
         pin: String(pin || "").trim(),
-        company_id: companyId,
-        terminal_id: terminalId(),
-      }),
-    });
-    var data = {};
-    try { data = await response.json(); } catch (err) { data = {}; }
-    if (!response.ok || !data.allow) {
-      error.textContent = data.detail || "PIN hatalı.";
-      return;
+        approverId: approver.id,
+        terminalId: terminalId(),
+      });
+      root.style.display = "none";
+    } catch (err) {
+      var message = "PIN hatalı.";
+      if (typeof err === "string" && err) message = err;
+      else if (err && typeof err.message === "string" && err.message) message = err.message;
+      error.textContent = message;
     }
-    await invoke("complete_kiosk_exit", { nonce: currentNonce });
   }
 
-  globalThis.__tamkobiShowKioskExit = function (nonce) {
-    currentNonce = String(nonce || "");
+  globalThis.__tamkobiShowKioskExit = function () {
     var root = overlay();
     root.style.display = "flex";
     root.querySelector("[data-error]").textContent = "";
