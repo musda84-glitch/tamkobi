@@ -5,6 +5,7 @@ import { get } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { colors, radius, spacing } from "../theme";
 import type { Contact } from "../types";
+import { BALANCE_TONE_COLOR, contactBalanceBadge } from "../utils/contactBalance";
 import { CONTACT_SEARCH_DEBOUNCE_MS, contactSearchQuery } from "../utils/contactSearch";
 import { idOf } from "../utils/money";
 import { Muted } from "./kit";
@@ -17,6 +18,15 @@ type SearchPayload = {
 };
 
 const subLine = (c: Contact) => [c.company_title, c.tax_number_or_id, c.phone, c.category].filter(Boolean).join(" · ");
+
+function BalanceMark({ contact, testID }: { contact: Contact; testID?: string }) {
+  const badge = contactBalanceBadge(contact);
+  return (
+    <Text testID={testID} style={{ fontWeight: "800", fontSize: 12, color: BALANCE_TONE_COLOR[badge.tone] }}>
+      {badge.text}
+    </Text>
+  );
+}
 
 /**
  * Banka eşleşmesi, kasa tahsilat/ödeme ve masraf tedarikçisi için aranabilir cari.
@@ -146,10 +156,13 @@ export function ContactSearchSelect({
         onPress={() => choose(c)}
         style={{ paddingHorizontal: 12, paddingVertical: 10, backgroundColor: id === value ? colors.emerald50 : "#fff" }}
       >
-        <Text style={{ fontWeight: "700", color: colors.text }}>
-          {c.name || "Cari"}
-          {suggested ? "  · öneri" : ""}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text numberOfLines={1} style={{ flex: 1, fontWeight: "700", color: colors.text }}>
+            {c.name || "Cari"}
+            {suggested ? "  · öneri" : ""}
+          </Text>
+          <BalanceMark contact={c} testID={testID ? `${testID}-balance-${id}` : undefined} />
+        </View>
         {subLine(c) ? <Text style={{ color: colors.muted, fontSize: 12 }}>{subLine(c)}</Text> : null}
       </Pressable>
     );
@@ -175,6 +188,7 @@ export function ContactSearchSelect({
         }}
       >
         <Text numberOfLines={1} style={{ flex: 1, fontWeight: "700", color: value ? colors.text : colors.muted }}>{title}</Text>
+        {selected ? <BalanceMark contact={selected} testID={testID ? `${testID}-selected-balance` : undefined} /> : null}
         <Ionicons name="chevron-down" size={18} color={colors.indigo} />
       </Pressable>
       {open ? (

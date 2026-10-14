@@ -4173,7 +4173,7 @@ async def list_contacts(
 _CONTACT_SEARCH_PROJ = {
     "name": 1, "company_title": 1, "category": 1, "code": 1, "erp_code": 1, "contact_code": 1,
     "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1,
-    "tax_number_or_id": 1, "tax_office": 1, "balance": 1, "is_active": 1, "is_e_invoice_user": 1,
+    "tax_number_or_id": 1, "tax_office": 1, "balance": 1, "currency": 1, "is_active": 1, "is_e_invoice_user": 1,
     "contact_person": 1, "updated_at": 1, "created_at": 1,
 }
 
@@ -4208,6 +4208,27 @@ async def _recent_contact_ids(company_id: str, cap: int = 80) -> list:
     return recent_ids_from_scored(scored, limit=cap)
 
 
+async def _latest_fx_rates(company_id: str, codes) -> Dict[str, float]:
+    """Sayfadaki dövizler için son kur. Tek sorgu; cari başına kur okunmaz."""
+    wanted = sorted({str(c or "").strip().upper() for c in codes if str(c or "").strip() and str(c).strip().upper() != "TRY"})
+    if not wanted:
+        return {}
+    rows = await db.fx_rates.find(
+        {"company_id": company_id, "currency": {"$in": wanted}},
+        {"currency": 1, "rate": 1, "date": 1},
+    ).sort("date", -1).to_list(400)
+    rates: Dict[str, float] = {}
+    for row in rows:
+        code = str(row.get("currency") or "").strip().upper()
+        if not code or code in rates:
+            continue
+        try:
+            rates[code] = float(row.get("rate") or 0)
+        except (TypeError, ValueError):
+            continue
+    return rates
+
+
 @api_router.get("/contacts/search")
 async def search_contacts_api(
     company_id: Optional[str] = None,
@@ -4237,6 +4258,11 @@ async def search_contacts_api(
         suggest=suggest or "", counterparty=counterparty or "",
         exclude_types=banned or None,
     )
+    page_rows = list(found["items"]) + list(found.get("suggestions") or [])
+    fx_codes = [contact_balance.contact_currency_code(row.get("currency")) for row in page_rows]
+    rates = await _latest_fx_rates(company_id, fx_codes)
+    contact_balance.stamp_search_balances(found["items"], rates)
+    contact_balance.stamp_search_balances(found.get("suggestions") or [], rates)
     return {
         "items": clean_docs(found["items"]),
         "suggestions": clean_docs(found.get("suggestions") or []),

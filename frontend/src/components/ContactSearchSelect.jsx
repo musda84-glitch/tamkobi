@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import axios from "axios";
 import { ChevronDown, Search, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { BALANCE_TONE_CLASS, contactBalanceBadge } from "../utils/contactBalanceBadge";
 
 export const CONTACT_SEARCH_DEBOUNCE_MS = 300;
 export const CONTACT_SEARCH_PAGE_SIZE = 20;
@@ -29,6 +30,19 @@ const placeMenu = (anchor) => {
 };
 
 const optionId = (o) => o?.id ?? o?._id;
+
+const BalanceMark = ({ contact, testId }) => {
+  const badge = contactBalanceBadge(contact);
+  return (
+    <span
+      className={`shrink-0 tabular-nums font-bold ${BALANCE_TONE_CLASS[badge.tone]}`}
+      data-side={badge.tone}
+      data-testid={testId}
+    >
+      {badge.text}
+    </span>
+  );
+};
 
 const contactSub = (c) => {
   const kind = TYPE_LABEL[c?.type] || "Cari";
@@ -277,9 +291,10 @@ export const ContactSearchSelect = ({
         data-testid={testId ? `${testId}-${suggested ? "suggest" : "option"}-${id}` : undefined}
       >
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-slate-900 truncate">
-            {o.name || o.company_title || "Cari"}
-            {suggested ? <span className="ml-1 text-[9px] font-bold uppercase text-violet-700">Öneri</span> : null}
+          <div className="font-semibold text-slate-900 flex items-center gap-2 min-w-0">
+            <span className="truncate min-w-0">{o.name || o.company_title || "Cari"}</span>
+            {suggested ? <span className="shrink-0 text-[9px] font-bold uppercase text-violet-700">Öneri</span> : null}
+            <BalanceMark contact={o} testId={testId ? `${testId}-balance-${id}` : undefined} />
           </div>
           <div className="text-[10px] text-slate-500 truncate">{contactSub(o)}</div>
         </div>
@@ -370,7 +385,10 @@ export const ContactSearchSelect = ({
   return (
     <div ref={ref} className={`relative ${className}`} data-testid={testId}>
       <button type="button" onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1.5 text-left text-xs" data-testid={testId ? `${testId}-trigger` : undefined}>
-        <span className={`flex-1 truncate ${displayLabel ? "font-medium text-slate-900" : "text-slate-400"}`}>{displayLabel || placeholder}</span>
+        <span className="flex-1 min-w-0 flex items-center gap-2">
+          <span className={`truncate ${displayLabel ? "font-medium text-slate-900" : "text-slate-400"}`}>{displayLabel || placeholder}</span>
+          {selected ? <BalanceMark contact={selected} testId={testId ? `${testId}-selected-balance` : undefined} /> : null}
+        </span>
         {clearable && hasValue && (
           <span
             role="button"
