@@ -81,17 +81,18 @@ def test_sync_repairs_legacy_expense_withdrawal_balance():
         "total_profit_share": 0,
     })
     db.partner_transactions.docs.extend([
-        {"_id": "t1", "partner_id": "p1", "type": "capital_in", "amount": 816059.78},
+        {"_id": "t1", "partner_id": "p1", "company_id": "c1", "type": "capital_in", "amount": 816059.78},
         {
             "_id": "t2",
             "partner_id": "p1",
+            "company_id": "c1",
             "type": "withdrawal",
             "amount": 39200.0,
             "expense_id": "exp-1",
             "source": "expense",
         },
         # Gerçek para çekişi — dokunulmaz
-        {"_id": "t3", "partner_id": "p1", "type": "withdrawal", "amount": 5000.0, "description": "Nakit çekim"},
+        {"_id": "t3", "partner_id": "p1", "company_id": "c1", "type": "withdrawal", "amount": 5000.0, "description": "Nakit çekim"},
     ])
     # 816059.78 − masraf 39200 − çekiş 5000 = 771859.78 (tip onarımı sayıyı değiştirmez)
     meta = asyncio.run(sync_partner_from_ledger(db, "p1"))
@@ -116,10 +117,11 @@ def test_sync_repairs_user_reported_gap():
         "total_profit_share": 0,
     })
     db.partner_transactions.docs.extend([
-        {"_id": "a", "partner_id": "5a7cba2b", "type": "capital_in", "amount": 816859.78},
+        {"_id": "a", "partner_id": "5a7cba2b", "company_id": "c1", "type": "capital_in", "amount": 816859.78},
         {
             "_id": "b",
             "partner_id": "5a7cba2b",
+            "company_id": "c1",
             "type": "withdrawal",
             "amount": 39200.0,
             "expense_id": "exp-masraf",

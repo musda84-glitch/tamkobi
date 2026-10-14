@@ -124,6 +124,7 @@ export default function BankingPage() {
   const [stmtFile, setStmtFile] = useState(null);
   const [printTx, setPrintTx] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [txReady, setTxReady] = useState(false);
 
   // Modals
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
@@ -185,7 +186,7 @@ export default function BankingPage() {
   }, [loading, accounts, focusAccountId, focusAccountName]);
 
   useEffect(() => {
-    if (loading || !focusTx) return undefined;
+    if (loading || !txReady || !focusTx) return undefined;
     const tx = transactions.find((t) => (t.id || t._id) === focusTx);
     if (!tx) {
       if (!missingTxToast.current) {
@@ -196,21 +197,31 @@ export default function BankingPage() {
     }
     if (tx.account_id) setSelectedAccountId(tx.account_id);
     return undefined;
-  }, [loading, transactions, focusTx]);
+  }, [loading, txReady, transactions, focusTx]);
 
   const silentReloadRef = useRef(null);
   const loadBankingData = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
-      const [accRes, transactions, contacts, psRes] = await Promise.all([
+      // Hareket ve cari listesi kartı bekletmez: önce önbellek, ağ arkada.
+      const txPromise = cachedList("bank_transactions", companyId, { onCached: setTransactions })
+        .then((rows) => {
+          setTransactions(rows);
+          return rows;
+        })
+        .catch(() => [])
+        .finally(() => setTxReady(true));
+      const contactsPromise = cachedList("contacts", companyId, { onCached: setContacts })
+        .then((rows) => {
+          setContacts(asContactList(rows));
+          return rows;
+        })
+        .catch(() => []);
+      const [accRes, psRes] = await Promise.all([
         axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
-        cachedList("bank_transactions", companyId, { onCached: setTransactions }),
-        cachedList("contacts", companyId, { onCached: setContacts }).catch(() => []),
         axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`).catch(() => ({ data: null }))
       ]);
       setAccounts(accRes.data);
-      setTransactions(transactions);
-      setContacts(asContactList(contacts));
       setPartnerSummary(psRes.data);
       // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Cari URL'den gelirse kaynak olur.
       const manual = accRes.data.filter((a) => !a.is_integrated);
@@ -230,9 +241,10 @@ export default function BankingPage() {
           target_account_id: prev.target_account_id || manual[1].id || manual[1]._id
         }));
       }
+      if (!silent) setLoading(false);
+      await Promise.all([txPromise, contactsPromise]);
     } catch (err) {
       if (!silent) toast.error("Banka verileri yüklenemedi.");
-    } finally {
       if (!silent) setLoading(false);
     }
   }, [companyId, contactVirmanId]);
@@ -246,6 +258,16 @@ export default function BankingPage() {
     return silentReloadRef.current;
   }, [loadBankingData]);
   useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
+  useEffect(() => {
+    if (tab !== "reconciliation") return undefined;
+    let cancelled = false;
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}&with_drift=1`)
+      .then((r) => {
+        if (!cancelled && Array.isArray(r.data)) setAccounts(r.data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [tab, companyId]);
   const bumpCashData = useCallback(async (matchedTx) => {
     // Eşleşince satır listeden düşmesin: hemen matched durumunu yerelde yaz.
     if (matchedTx && (matchedTx.id || matchedTx._id)) {
@@ -479,20 +501,15 @@ export default function BankingPage() {
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
-            onClick={async () => {
-              try {
-                const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
-                const list = Array.isArray(r.data) ? r.data : [];
-                setAccounts(list);
-                const manual = list.filter((a) => !a.is_integrated);
-                if (manual.length >= 2) {
-                  setVirmanForm((prev) => ({
-                    ...prev,
-                    source_account_id: manual[0].id || manual[0]._id,
-                    target_account_id: manual[1].id || manual[1]._id,
-                  }));
-                }
-              } catch { /* stale list ile devam */ }
+            onClick={() => {
+              const manual = accounts.filter((a) => !a.is_integrated);
+              if (manual.length >= 2) {
+                setVirmanForm((prev) => ({
+                  ...prev,
+                  source_account_id: manual[0].id || manual[0]._id,
+                  target_account_id: manual[1].id || manual[1]._id,
+                }));
+              }
               setShowVirmanModal(true);
             }}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-indigo-600/20 transition"

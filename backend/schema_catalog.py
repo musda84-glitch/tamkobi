@@ -15,8 +15,13 @@ PHYSICAL_COLUMNS = {
 # Extra tables/columns that other feature branches may add on a live server.
 # This catalog PR does not create them; tests treat them as optional.
 OPTIONAL_PHYSICAL_TABLES = ("system_logs", "sync_tombstones")
-OPTIONAL_DOCS_COLUMNS = ("company_id",)
-OPTIONAL_DOCS_INDEXES = ("idx_docs_coll_company", "idx_docs_coll_upd")
+OPTIONAL_DOCS_COLUMNS = ("company_id", "account_id", "partner_id")
+OPTIONAL_DOCS_INDEXES = (
+    "idx_docs_coll_company",
+    "idx_docs_coll_company_account",
+    "idx_docs_coll_company_partner",
+    "idx_docs_coll_upd",
+)
 
 CHARSET = "utf8mb4"
 COLLATION = "utf8mb4_unicode_ci"

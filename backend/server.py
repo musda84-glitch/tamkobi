@@ -9822,11 +9822,19 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
 
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
 @api_router.get("/banking/accounts")
-async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01", with_drift: int = 0):
     # Masraf, tahsilat ve virman ekranlarındaki kasa/banka seçicisini bu uç besliyor;
     # eksik dönen bir hesap kullanıcı için "kasam kayboldu" demek.
+    # Salt okunur: kasa bakiyesi cevapta hareket toplamıdır, bank_accounts yazılmaz.
+    # Drift (ledger_balance, balance_drift, bank_balance_drift) yalnız ?with_drift=1.
     accounts = await db.bank_accounts.find({"company_id": company_id}).sort("account_name", 1).to_list(2000)
-    accounts = await account_balance.sync_cash_box_balances(db, accounts)
+    want_drift = bool(int(with_drift or 0))
+    has_cash = any(str(a.get("type") or "") == "cash_box" for a in (accounts or []))
+    txs = None
+    if has_cash or want_drift:
+        txs = await account_balance.fetch_company_bank_txs(db, company_id or "")
+        if has_cash:
+            accounts = await account_balance.sync_cash_box_balances(db, accounts, txs, persist=False)
     conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(2000)}
     out = []
     for a in clean_docs(accounts):
@@ -9842,13 +9850,12 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
             "integration_status": (conn.get("status") if conn else None),
             "connection_id": (conn.get("_id") if conn else None),
         }
-        # Müşteri Kartları havuzu: giriş+çıkış defteri — bakiye her zaman 0
+        # Müşteri Kartları havuzu: giriş+çıkış defteri — bakiye her zaman 0 (yazmadan)
         if row.get("is_customer_card_pool"):
-            if float(row.get("current_balance") or 0) != 0.0:
-                await bank_guard.pin_customer_card_pool_balance(db, row.get("id") or row.get("_id"))
             row["current_balance"] = 0.0
         out.append(row)
-    await account_balance.annotate_listed_accounts(db, company_id, out)
+    if want_drift:
+        await account_balance.annotate_listed_accounts(db, company_id or "", out, txs if txs is not None else [])
     return out
 
 
@@ -10638,16 +10645,31 @@ async def perform_virman(req: Dict[str, Any], request: Request):
 @api_router.get("/banking/partners")
 async def list_partners(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, company_id)
-    await partner_pay.sync_company_partners(db, company_id)
     view = await partner_pay.load_company_partner_view(db, company_id)
     return clean_docs(view["partners"])
 
 @api_router.get("/banking/partners/summary")
 async def partners_summary(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Ortak kartı. Hareketler bir kez okunur; kasa yönü partner_tx_effect ile hesaplanır.
+
+    Onarım ve bakiye yazımı yok — o iş hareket kaydında veya /recalculate ucunda.
+    """
     company_id = tenant_access.resolve_company_id(user, company_id)
-    await partner_pay.sync_company_partners(db, company_id)
     view = await partner_pay.load_company_partner_view(db, company_id)
     return partner_pay.summary_payload(view)
+
+
+@api_router.post("/banking/partners/recalculate")
+async def recalculate_partners(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Eski ortak satırlarını onar ve bakiyeyi hareketlerden yeniden yaz."""
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    repaired = await partner_pay.sync_company_partners(db, company_id)
+    view = await partner_pay.load_company_partner_view(db, company_id)
+    return {
+        "status": "success",
+        "partners": repaired,
+        "summary": partner_pay.summary_payload(view),
+    }
 
 
 @api_router.get("/banking/partners/{partner_id}/ledger")
@@ -10950,6 +10972,7 @@ async def _execute_partner_tx(req: Dict[str, Any]):
 
     await db.partners.update_one({"_id": partner["_id"]}, {"$inc": partner_pay.posting_inc(doc)})
     await db.partner_transactions.insert_one(doc)
+    await partner_pay.repair_company_partner_moves(db, partner.get("company_id") or "")
     return clean_doc(doc)
 
 
@@ -21449,7 +21472,7 @@ async def _restore_bank_tx(doc, _related):
     # Kasa kartı bakiyesini hareket toplamına sabitle (orphan / kayma yok).
     aid = doc.get("account_id")
     if aid:
-        acc = await db.bank_accounts.find_one({"_id": aid}, {"type": 1, "current_balance": 1})
+        acc = await db.bank_accounts.find_one({"_id": aid}, {"type": 1, "current_balance": 1, "company_id": 1, "is_customer_card_pool": 1})
         if acc and str(acc.get("type") or "") == "cash_box":
             await account_balance.sync_cash_box_balances(db, [{**acc, "_id": aid}])
     for cid in {doc.get("contact_id"), doc.get("owner_contact_id")}:

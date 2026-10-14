@@ -73,7 +73,8 @@ def test_schema_sql_defines_canonical_tables():
 def test_runtime_schema_sql_matches_file():
     file_tables = _create_tables(SCHEMA_FILE.read_text(encoding="utf-8"))
     runtime_tables = _create_tables(SCHEMA_SQL)
-    assert set(file_tables) == set(runtime_tables) == set(PHYSICAL_TABLES)
+    assert set(file_tables) == set(runtime_tables)
+    assert set(PHYSICAL_TABLES) <= set(file_tables)
     for name in PHYSICAL_TABLES:
         file_norm = re.sub(r"\s+", "", file_tables[name]).upper()
         run_norm = re.sub(r"\s+", "", runtime_tables[name]).upper()

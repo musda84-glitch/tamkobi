@@ -9,8 +9,20 @@ from mysql_store import schema_upgrade_statements, _simple_eq
 def test_schema_upgrade_adds_company_id():
     stmts = schema_upgrade_statements(set(), set())
     assert any("ADD COLUMN company_id" in s for s in stmts)
-    assert any("idx_docs_coll_company" in s for s in stmts)
-    assert schema_upgrade_statements({"company_id"}, {"idx_docs_coll_company"}) == []
+    assert any("ADD COLUMN account_id" in s for s in stmts)
+    assert any("ADD COLUMN partner_id" in s for s in stmts)
+    assert any("idx_docs_coll_company " in s or "idx_docs_coll_company(" in s.replace(" ", "") or "idx_docs_coll_company " in s for s in stmts)
+    assert any("idx_docs_coll_company_account" in s for s in stmts)
+    assert any("idx_docs_coll_company_partner" in s for s in stmts)
+    assert schema_upgrade_statements(
+        {"company_id", "account_id", "partner_id"},
+        {"idx_docs_coll_company", "idx_docs_coll_company_account", "idx_docs_coll_company_partner"},
+    ) == []
+    # Eski şirket indeksi duruyorsa yalnız eksik account/partner eklenir.
+    partial = schema_upgrade_statements({"company_id"}, {"idx_docs_coll_company"})
+    assert all("company_id VARCHAR" not in s and "idx_docs_coll_company " not in s and not s.endswith("idx_docs_coll_company (collection, company_id)") for s in partial)
+    assert any("account_id" in s for s in partial)
+    assert any("partner_id" in s for s in partial)
 
 
 def test_simple_eq_skips_operators():

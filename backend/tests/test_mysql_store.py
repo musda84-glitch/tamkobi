@@ -151,6 +151,29 @@ def test_database_url_sqlalchemy_style(monkeypatch):
     assert s["db"] == "tamkobi"
 
 
+def test_bank_and_partner_company_queries_hit_generated_columns():
+    """company_id / account_id / partner_id SQL kolon adıdır; JSON_EXTRACT indeks kullanmaz."""
+    bank_sql, bank_params = sql_pushdown("bank_transactions", {"company_id": "co"})
+    assert "JSON_EXTRACT" not in bank_sql
+    assert "company_id=%s" in bank_sql
+    assert bank_params == ["bank_transactions", "co"]
+    acc_sql, acc_params = sql_pushdown(
+        "bank_transactions",
+        {"company_id": "co", "account_id": "cash1"},
+    )
+    assert "account_id = %s" in acc_sql
+    assert "JSON_EXTRACT(doc,'$.account_id')" not in acc_sql
+    assert acc_params == ["bank_transactions", "co", "cash1"]
+    part_sql, part_params = sql_pushdown(
+        "partner_transactions",
+        {"company_id": "co", "partner_id": {"$in": ["p1", "p2"]}},
+    )
+    assert "company_id=%s" in part_sql
+    assert "partner_id IN (%s,%s)" in part_sql
+    assert "JSON_EXTRACT(doc,'$.partner_id')" not in part_sql
+    assert part_params == ["partner_transactions", "co", "p1", "p2"]
+
+
 def test_sql_pushdown_company_and_id():
     sql, params = sql_pushdown("invoices", {"company_id": "c1", "_id": "inv-9"})
     assert sql.startswith("SELECT doc FROM docs WHERE")

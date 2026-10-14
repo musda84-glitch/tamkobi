@@ -42,6 +42,7 @@ jest.mock("../utils/dataSync", () => {
     cachedList: async (collection, _cid, opts) => {
       const rows = collection === "bank_transactions" ? txs : [];
       opts?.onCached?.(rows);
+      if (globalThis.__bankingListGate) await globalThis.__bankingListGate;
       return rows;
     },
     dropCached: async () => {},
@@ -91,7 +92,12 @@ beforeAll(() => {
   };
 });
 
+function accountGets() {
+  return axios.get.mock.calls.filter((c) => String(c[0]).includes("/banking/accounts")).length;
+}
+
 beforeEach(() => {
+  globalThis.__bankingListGate = null;
   host = document.createElement("div");
   document.body.appendChild(host);
   quiet = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -166,6 +172,7 @@ test("account-groups-grid bakiyeleri cash olayında güncellenir", async () => {
         detail: { companyId: "c1", scopes: ["cash"], at: Date.now() },
       }),
     );
+    await new Promise((r) => setTimeout(r, 800));
   });
   await flush(10);
 
@@ -190,4 +197,42 @@ test("hareket bumpCashData sonrası grup bakiyeleri yenilenir", async () => {
 
   expect(grid.textContent.replace(/\s/g, "")).toMatch(/6[.,]216[.,]58/);
   expect(grid.textContent.replace(/\s/g, "")).toMatch(/500[.,]00/);
+});
+
+test("özet kartları hareket ve cari listesi bitmeden görünür", async () => {
+  let releaseLists;
+  globalThis.__bankingListGate = new Promise((resolve) => { releaseLists = resolve; });
+  root = createRoot(host);
+  await act(async () => { root.render(<BankingPage />); });
+  await waitFor(() => host.querySelector('[data-testid="account-groups-grid"]')?.textContent?.includes("Kuveyt"));
+  const grid = host.querySelector('[data-testid="account-groups-grid"]');
+  expect(grid.textContent.replace(/\s/g, "")).toMatch(/6[.,]716[.,]58/);
+  expect(host.textContent).toMatch(/2 Ortak|Ortaklar Hesabı/);
+  await act(async () => { releaseLists(); });
+  await flush(4);
+});
+
+test("virman mevcut hesap listesini kullanır", async () => {
+  await renderPage();
+  const before = accountGets();
+  const btn = host.querySelector('[data-testid="virman-modal-btn"]');
+  await act(async () => { btn.click(); });
+  await flush(4);
+  expect(accountGets()).toBe(before);
+});
+
+test("5 cash olayı tek yenileme tetikler", async () => {
+  await renderPage();
+  const before = accountGets();
+  await act(async () => {
+    for (let i = 0; i < 5; i += 1) {
+      window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT, {
+        detail: { companyId: "c1", scopes: ["cash"], at: Date.now() },
+      }));
+    }
+  });
+  expect(accountGets()).toBe(before);
+  await act(async () => { await new Promise((r) => setTimeout(r, 800)); });
+  await flush(6);
+  expect(accountGets()).toBe(before + 1);
 });
