@@ -4,6 +4,7 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -31,7 +32,7 @@ export function InstallmentsScreen() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [filter, setFilter] = useState<FilterKey>("pending");
   const [q, setQ] = useState("");
-  const [pay, setPay] = useState<{ row: Installment; amount: string; account_id: string } | null>(null);
+  const [pay, setPay] = useState<{ row: Installment; amount: string | number; account_id: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -125,7 +126,7 @@ export function InstallmentsScreen() {
       {pay ? (
         <Card testID="inst-pay-form">
           <Muted>{pay.row.invoice_number || "Taksit"} · {pay.row.label} · kalan {fmtMoney(remainingOf(pay.row))}</Muted>
-          <Field label="Tutar" testID="inst-pay-amount" value={pay.amount} onChangeText={(v) => setPay({ ...pay, amount: v })} keyboardType="decimal-pad" />
+          <MoneyInput label="Tutar" testID="inst-pay-amount" value={pay.amount} onChange={(n) => setPay({ ...pay, amount: n ?? "" })} />
           <GroupedSelect
             label="Kasa / banka / ortak"
             testID="inst-pay-account"

@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { isDailyWage, monthlyLoad } from "../utils/personnelWage";
 import { employeeAllowanceSaveMessage } from "../utils/employeePay";
 import { TimeInput } from "./TimeInput";
+import { MoneyInput } from "./MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
@@ -231,19 +232,19 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
           <button type="button" onClick={() => setPay({ ...pay, pay_type: "daily" })} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold border ${pay.pay_type === "daily" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200"}`} data-testid="emp-pay-daily">Günlük yevmiye</button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Bordro maaşı (brüt, resmi)</label><input type="number" min="0" value={pay.payroll_salary} onChange={(e) => setPay({ ...pay, payroll_salary: e.target.value })} placeholder={`boş = net × 1,4`} className={`${inp} w-full`} data-testid="emp-payroll-salary" /></div>
+          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Bordro maaşı (brüt, resmi)</label><MoneyInput value={pay.payroll_salary} onChange={(n) => setPay({ ...pay, payroll_salary: n ?? "" })} placeholder={`boş = net × 1,4`} className={`${inp} w-full`} data-testid="emp-payroll-salary" /></div>
           {pay.pay_type === "daily" ? (
             <div>
               <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Günlük yevmiye (₺)</label>
-              <input type="number" min="0" value={pay.daily_wage} onChange={(e) => setPay({ ...pay, daily_wage: e.target.value })} className={`${inp} w-full`} data-testid="emp-daily-wage" placeholder="Örn: 1500" />
+              <MoneyInput value={pay.daily_wage} onChange={(n) => setPay({ ...pay, daily_wage: n ?? "" })} className={`${inp} w-full`} data-testid="emp-daily-wage" placeholder="Örn: 1500" />
               <p className="text-[10px] text-slate-400 mt-0.5">Bordro = yevmiye × gelen gün. Tahmini ay: {monthlyLoad({ pay_type: "daily", daily_wage: pay.daily_wage }).toLocaleString("tr-TR")} ₺ (26 gün).</p>
             </div>
           ) : (
-            <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Net maaş (ele geçen)</label><input type="number" min="0" value={pay.salary} onChange={(e) => setPay({ ...pay, salary: e.target.value })} className={`${inp} w-full`} data-testid="emp-net-salary" /></div>
+            <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Net maaş (ele geçen)</label><MoneyInput value={pay.salary} onChange={(n) => setPay({ ...pay, salary: n ?? "" })} className={`${inp} w-full`} data-testid="emp-net-salary" /></div>
           )}
-          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">2. maaş (aylık, gayri resmi)</label><input type="number" min="0" value={pay.second_salary} onChange={(e) => setPay({ ...pay, second_salary: e.target.value })} className={`${inp} w-full`} data-testid="emp-second-salary" /></div>
-          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yemek (aylık, ₺)</label><input type="number" min="0" value={pay.meal_allowance} onChange={(e) => setPay({ ...pay, meal_allowance: e.target.value })} className={`${inp} w-full`} data-testid="emp-meal-allowance" /></div>
-          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yol / ulaşım (aylık, ₺)</label><input type="number" min="0" value={pay.transport_allowance} onChange={(e) => setPay({ ...pay, transport_allowance: e.target.value })} className={`${inp} w-full`} data-testid="emp-transport-allowance" /></div>
+          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">2. maaş (aylık, gayri resmi)</label><MoneyInput value={pay.second_salary} onChange={(n) => setPay({ ...pay, second_salary: n ?? "" })} className={`${inp} w-full`} data-testid="emp-second-salary" /></div>
+          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yemek (aylık, ₺)</label><MoneyInput value={pay.meal_allowance} onChange={(n) => setPay({ ...pay, meal_allowance: n ?? "" })} className={`${inp} w-full`} data-testid="emp-meal-allowance" /></div>
+          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yol / ulaşım (aylık, ₺)</label><MoneyInput value={pay.transport_allowance} onChange={(n) => setPay({ ...pay, transport_allowance: n ?? "" })} className={`${inp} w-full`} data-testid="emp-transport-allowance" /></div>
           <div>
             <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Hak ediş tarihi</label>
             <input type="date" value={pay.pay_start_date || ""} onChange={(e) => setPay({ ...pay, pay_start_date: e.target.value })} className={`${inp} w-full`} data-testid="emp-pay-start-date" />
@@ -254,7 +255,7 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
             Her ay tekrarla
           </label>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Fazla mesai yöntemi</label><select value={pay.overtime_method} onChange={(e) => setPay({ ...pay, overtime_method: e.target.value })} className={`${inp} w-full`} data-testid="emp-ot-method"><option value="">{`Firma varsayılanı (${companySchedule?.overtime_method === "fixed" ? "sabit" : "yasal"})`}</option><option value="legal">Yasal (brüt/225 × katsayı)</option><option value="fixed">Sabit saatlik ücret</option></select></div>
-          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Sabit saatlik mesai ücreti (₺)</label><input type="number" min="0" value={pay.overtime_hourly_rate} onChange={(e) => setPay({ ...pay, overtime_hourly_rate: e.target.value })} className={`${inp} w-full`} data-testid="emp-ot-rate" /></div>
+          <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Sabit saatlik mesai ücreti (₺)</label><MoneyInput value={pay.overtime_hourly_rate} onChange={(n) => setPay({ ...pay, overtime_hourly_rate: n ?? "" })} className={`${inp} w-full`} data-testid="emp-ot-rate" /></div>
           <div className="text-[10px] text-slate-500 self-end pb-1">Yasal saatlik mesai: <b className="text-slate-800">{legalRate.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺</b> (brüt {grossForRate.toLocaleString("tr-TR")} / {companySchedule?.monthly_hours_divisor || 225} × {companySchedule?.overtime_multiplier || 1.5})</div>
         </div>
         <p className="text-[10px] text-slate-500">{pay.pay_type === "daily" || isDailyWage(employee) ? "Yevmiyeli bordro: gelen gün × günlük ücret + mesai + 2. maaş + prim − kesinti − avans." : "Bordro: net + mesai + 2. maaş + prim − kesinti − avans."} Yemek ve yol hak ediş tarihinde maaş gibi alacağa yazılır; her ay tekrarla açıksa sonraki aylarda tekrarlanır.</p>

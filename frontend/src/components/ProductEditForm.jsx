@@ -6,6 +6,7 @@ import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
 import { confirmGenerateBarcode } from "../utils/barcodeFormat";
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
+import { MoneyInput, QuantityInput } from "./MoneyInput";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi } from "../utils/stockUnits";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -138,13 +139,11 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         </p>
         <div className="grid grid-cols-2 gap-2">
           <F label={`1 ${f.unit || "Adet"} =`}>
-            <input
-              type="number"
-              min={0}
-              step="any"
+            <QuantityInput
+              maxFractionDigits={4}
               value={f.unit_content_qty}
-              onChange={(e) => set("unit_content_qty", e.target.value)}
-              placeholder="örn. 2.98"
+              onChange={(n) => set("unit_content_qty", n ?? "")}
+              placeholder="örn. 2,98"
               className={inputCls}
               data-testid="edit-unit-content-qty"
             />
@@ -201,14 +200,14 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         </div>
       </div>
       <div className="grid grid-cols-4 gap-2">
-        <F label={`Alış (${ccyLabel})`}><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} data-testid="edit-purchase-price" /></F>
-        <F label={`Satış (${ccyLabel})`}><input type="number" step="0.01" value={f.sale_price} onChange={(e) => set("sale_price", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-price-input" /></F>
+        <F label={`Alış (${ccyLabel})`}><MoneyInput value={f.purchase_price} onChange={(n) => set("purchase_price", n ?? "")} className={inputCls} data-testid="edit-purchase-price" /></F>
+        <F label={`Satış (${ccyLabel})`}><MoneyInput value={f.sale_price} onChange={(n) => set("sale_price", n ?? "")} className={`${inputCls} font-bold`} data-testid="edit-price-input" /></F>
         <F label="Para Birimi">
           <select value={ccy} onChange={(e) => set("currency", e.target.value)} className={inputCls} data-testid="edit-currency-select">
             {CURRENCIES.map((c) => <option key={c} value={c}>{moneySuffix(c)} · {c}</option>)}
           </select>
         </F>
-        <F label="Kritik Stok"><input type="number" value={f.min_stock_alert} onChange={(e) => set("min_stock_alert", e.target.value)} className={inputCls} /></F>
+        <F label="Kritik Stok"><QuantityInput value={f.min_stock_alert} onChange={(n) => set("min_stock_alert", n ?? "")} className={inputCls} /></F>
       </div>
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2" data-testid="vat-details">
         <div className="font-bold text-slate-700">KDV Detayları</div>
@@ -241,7 +240,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         </div>
         <p className="text-[10px] text-slate-500 mt-1">İlk 3 etiket, Etiket Tasarımı’nda “Etiket 1–3” olarak kullanılabilir.</p>
       </F>
-      {!product.has_variants && <F label="Mevcut Stok (düzeltme)"><input type="number" step="0.01" value={f.stock_quantity} onChange={(e) => set("stock_quantity", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-stock-input" /></F>}
+      {!product.has_variants && <F label="Mevcut Stok (düzeltme)"><QuantityInput value={f.stock_quantity} onChange={(n) => set("stock_quantity", n ?? "")} className={`${inputCls} font-bold`} data-testid="edit-stock-input" /></F>}
       <div className="grid grid-cols-3 gap-2">
         {[["show_in_b2b", "B2B'de göster"], ["track_stock", "Stok takibi"], ["is_active", "Aktif"], ["track_lot", "Lot / parti"], ["track_serial", "Seri no"], ["track_expiry", "SKT / üretim"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer"><input type="checkbox" checked={f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`edit-${k}-checkbox`} /><span className="font-semibold">{l}</span></label>)}
       </div>

@@ -7,6 +7,7 @@ import { X, Factory, Loader2, AlertTriangle, CheckCircle2, ClipboardList } from 
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { QuantityInput } from "./MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
@@ -55,7 +56,7 @@ export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp,
           <>
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-3 sm:col-span-1"><label className="block font-semibold mb-1">Reçete</label><select value={recipeId} onChange={(e) => setRecipeId(e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="po-recipe-select">{recipes.map((r) => <option key={r.id} value={r.id}>{r.name} {!product ? `(${r.finished_product_name})` : ""}</option>)}</select></div>
-              <div><label className="block font-semibold mb-1">Miktar ({recipe?.unit || "Adet"})</label><input type="number" min="0.001" step="any" value={qty} onChange={(e) => setQty(Number(e.target.value))} className="w-full bg-slate-50 border rounded-lg p-2 font-bold" data-testid="po-qty" /></div>
+              <div><label className="block font-semibold mb-1">Miktar ({recipe?.unit || "Adet"})</label><QuantityInput value={qty} onChange={(n) => setQty(n ?? 0)} className="w-full bg-slate-50 border rounded-lg p-2 font-bold" data-testid="po-qty" /></div>
               <div><label className="block font-semibold mb-1">Planlanan Tarih</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="po-date" /></div>
             </div>
             {req && (

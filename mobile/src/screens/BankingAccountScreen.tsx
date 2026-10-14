@@ -6,6 +6,7 @@ import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -21,7 +22,7 @@ export function BankingAccountScreen() {
   const [acc, setAcc] = useState<BankAccount | null>(null);
   const [txs, setTxs] = useState<BankTx[]>([]);
   const [txType, setTxType] = useState<"inflow" | "outflow">("inflow");
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState<string | number>("");
   const [desc, setDesc] = useState("");
   const [contactId, setContactId] = useState("");
   const [contactName, setContactName] = useState("");
@@ -128,7 +129,7 @@ export function BankingAccountScreen() {
             onChange={(cid, c) => { setContactId(cid); setContactName(c?.name || ""); }}
           />
           {txType === "inflow" ? <Muted>Tahsilat için cari seçin; tutar cari bakiyesine işlenir.</Muted> : null}
-          <Field label="Tutar" testID="bank-tx-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
+          <MoneyInput label="Tutar" testID="bank-tx-amount" value={amount} onChange={(n) => setAmount(n ?? "")} />
           <Field label="Açıklama" testID="bank-tx-desc" value={desc} onChangeText={setDesc} />
           <PrimaryButton title={busy ? "Kaydediliyor…" : "Hareketi kaydet"} onPress={saveTx} loading={busy} color={colors.primary} testID="bank-tx-save" />
         </Card>

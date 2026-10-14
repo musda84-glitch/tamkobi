@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { compressImageFile } from "../utils/compressImage";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { notifyDataChanged } from "../utils/dataRefresh";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -339,7 +340,7 @@ function DraftModal({ draft, setDraft, busy, onClose, onSave }) {
             <label key={`${o.kind}-${i}`} className="flex items-center gap-2 text-xs border rounded-lg px-2 py-1.5" data-testid={`acc-tax-draft-line-${i}`}>
               <input type="checkbox" checked={(draft.selected || []).includes(i)} onChange={() => toggle(i)} />
               <span className="flex-1 font-semibold">{o.title || taxKindLabel(o.kind)}</span>
-              <input type="number" step="0.01" value={o.amount} onChange={(e) => setAmt(i, e.target.value)} className="w-28 border rounded-lg px-2 py-1 text-right" />
+              <MoneyInput value={o.amount} onChange={(n) => setAmt(i, n ?? "")} className="w-28 border rounded-lg px-2 py-1 text-right" />
               <span className="text-slate-400 w-24">{o.due_date || ""}</span>
             </label>
           ))}

@@ -8,6 +8,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { DateField } from "../components/DateField";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { LocationConsentCard } from "../components/LocationConsentCard";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -121,7 +122,7 @@ export function PersonelimScreen() {
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [leaveBusy, setLeaveBusy] = useState(false);
-  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceAmount, setAdvanceAmount] = useState<string | number>("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const [advanceOpen, setAdvanceOpen] = useState(false);
@@ -305,7 +306,7 @@ export function PersonelimScreen() {
           </View>
         ) : (
           <>
-            <Field label="Tutar (₺)" testID="personelim-advance-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
+            <MoneyInput label="Tutar (₺)" testID="personelim-advance-amount" value={advanceAmount} onChange={(n) => setAdvanceAmount(n ?? "")} placeholder="Örn: 5000" />
             <Field label="Açıklama" testID="personelim-advance-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="İsteğe bağlı" />
             <PrimaryButton title={advanceBusy ? "Gönderiliyor…" : "Avans talep et"} onPress={submitAdvance} disabled={advanceBusy} color="#D97706" testID="personelim-advance-submit" />
           </>

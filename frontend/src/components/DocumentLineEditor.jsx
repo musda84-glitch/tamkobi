@@ -5,8 +5,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { SearchSelect } from "./SearchSelect";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct, productCardPrice } from "../utils/documentLines";
-import { inputStepForPrice } from "../utils/money";
-import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown } from "../utils/lineNumberDraft";
+import { MoneyInput, QuantityInput } from "./MoneyInput";
 
 const inp = "w-full bg-white border border-slate-200 rounded p-1.5 text-xs";
 const FALLBACK_UNITS = ["Adet", "Metre", "Kg", "Mt", "Paket", "Koli"];
@@ -36,7 +35,6 @@ export function DocumentLineEditor({
   const ccy = currency || "TRY";
   const { activeCompany } = useAuth();
   const [units, setUnits] = useState(FALLBACK_UNITS);
-  const [lineDrafts, setLineDrafts] = useState({});
   const itemsRef = useRef(items);
   itemsRef.current = items;
   useEffect(() => {
@@ -67,31 +65,9 @@ export function DocumentLineEditor({
     setRows(next);
   };
 
-  const shownLine = (index, field, stored) => lineNumberShown(lineDrafts, lineDraftKey(index, field), stored);
-
-  const focusLine = (index, field, stored) => {
-    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: lineNumberOnFocus(stored) }));
-  };
-
-  const selectOnFocus = (e) => {
-    try { e.target.select(); } catch { /* ignore */ }
-  };
-
-  const changeLine = (index, field, raw, emptyFallback) => {
-    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: raw }));
-    const next = lineNumberCommit(raw, emptyFallback);
-    if (next != null) patch(index, field, next);
-  };
-
-  const blurLine = (index, field, emptyFallback) => {
-    const key = lineDraftKey(index, field);
-    const next = lineNumberCommit(lineDrafts[key], emptyFallback);
-    if (next != null) patch(index, field, next);
-    setLineDrafts((m) => {
-      const copy = { ...m };
-      delete copy[key];
-      return copy;
-    });
+  const setLineNumber = (index, field, n) => {
+    if (n == null) return;
+    patch(index, field, n);
   };
 
   const applyProductLine = (index, prod, id) => {
@@ -241,16 +217,11 @@ export function DocumentLineEditor({
                   </div>
                 </td>
                 <td className="px-2 py-1.5">
-                  <input
+                  <QuantityInput
                     disabled={disabled}
-                    type="text"
-                    inputMode="decimal"
-                    min="0"
-                    step="any"
-                    value={shownLine(idx, "quantity", item.quantity)}
-                    onFocus={(e) => { focusLine(idx, "quantity", item.quantity); selectOnFocus(e); }}
-                    onBlur={() => blurLine(idx, "quantity", 1)}
-                    onChange={(e) => changeLine(idx, "quantity", e.target.value, 1)}
+                    selectOnFocus
+                    value={item.quantity}
+                    onChange={(n) => setLineNumber(idx, "quantity", n)}
                     className={`${inp} text-center`}
                     data-testid={kind === "order" ? `new-order-qty-${idx}` : `${testIdPrefix}-qty-${idx}`}
                   />
@@ -269,47 +240,31 @@ export function DocumentLineEditor({
                   </select>
                 </td>
                 <td className="px-2 py-1.5">
-                  <input
+                  <MoneyInput
                     disabled={disabled}
-                    type="text"
-                    inputMode="decimal"
-                    step={inputStepForPrice(item.unit_price)}
-                    min="0"
-                    value={shownLine(idx, "unit_price", item.unit_price)}
-                    onFocus={(e) => { focusLine(idx, "unit_price", item.unit_price); selectOnFocus(e); }}
-                    onBlur={() => blurLine(idx, "unit_price", 0)}
-                    onChange={(e) => changeLine(idx, "unit_price", e.target.value, 0)}
+                    selectOnFocus
+                    value={item.unit_price}
+                    onChange={(n) => setLineNumber(idx, "unit_price", n)}
                     className={`${inp} text-right`}
                     data-testid={kind === "order" ? `new-order-price-${idx}` : testIdPrefix === "inv-item" ? `inv-item-unit-price-${idx}` : `${testIdPrefix}-price-excl-${idx}`}
                   />
                 </td>
                 <td className="px-2 py-1.5">
-                  <input
+                  <MoneyInput
                     disabled={disabled}
-                    type="text"
-                    inputMode="decimal"
-                    step={inputStepForPrice(item.unit_price_incl)}
-                    min="0"
-                    value={shownLine(idx, "unit_price_incl", Math.round((Number(item.unit_price_incl) || 0) * 10000) / 10000)}
-                    onFocus={(e) => { focusLine(idx, "unit_price_incl", Math.round((Number(item.unit_price_incl) || 0) * 10000) / 10000); selectOnFocus(e); }}
-                    onBlur={() => blurLine(idx, "unit_price_incl", 0)}
-                    onChange={(e) => changeLine(idx, "unit_price_incl", e.target.value, 0)}
+                    selectOnFocus
+                    value={item.unit_price_incl}
+                    onChange={(n) => setLineNumber(idx, "unit_price_incl", n)}
                     className={`${inp} text-right`}
                     data-testid={`${testIdPrefix}-price-incl-${idx}`}
                   />
                 </td>
                 <td className="px-2 py-1.5">
-                  <input
+                  <MoneyInput
                     disabled={disabled}
-                    type="text"
-                    inputMode="decimal"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={shownLine(idx, "discount_rate", item.discount_rate || "")}
-                    onFocus={(e) => { focusLine(idx, "discount_rate", item.discount_rate || ""); selectOnFocus(e); }}
-                    onBlur={() => blurLine(idx, "discount_rate", 0)}
-                    onChange={(e) => changeLine(idx, "discount_rate", e.target.value, 0)}
+                    selectOnFocus
+                    value={item.discount_rate || ""}
+                    onChange={(n) => setLineNumber(idx, "discount_rate", n)}
                     className={`${inp} text-center text-rose-700 border-rose-200`}
                     data-testid={kind === "invoice" ? `inv-item-discount-${idx}` : `${testIdPrefix}-discount-${idx}`}
                   />
@@ -331,16 +286,11 @@ export function DocumentLineEditor({
                   {fmtMoney(item.total, ccy)}
                 </td>
                 <td className="px-2 py-1.5">
-                  <input
+                  <MoneyInput
                     disabled={disabled}
-                    type="text"
-                    inputMode="decimal"
-                    min="0"
-                    step={inputStepForPrice(item.total_incl)}
-                    value={shownLine(idx, "total_incl", item.total_incl)}
-                    onFocus={(e) => { focusLine(idx, "total_incl", item.total_incl); selectOnFocus(e); }}
-                    onBlur={() => blurLine(idx, "total_incl", 0)}
-                    onChange={(e) => changeLine(idx, "total_incl", e.target.value, 0)}
+                    selectOnFocus
+                    value={item.total_incl}
+                    onChange={(n) => setLineNumber(idx, "total_incl", n)}
                     className={`${inp} text-right font-bold text-emerald-800`}
                     title="Satır toplamını (KDV dahil) düzenle — birim fiyata yansır"
                     data-testid={`${testIdPrefix}-total-incl-${idx}`}

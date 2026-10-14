@@ -6,6 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { confirmAction, n } from "../components/chips";
+import { QuantityInput } from "../components/MoneyInput";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -43,7 +44,7 @@ export function SevkPickScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string | number>>({});
   const [scanQty, setScanQty] = useState("1");
 
   const load = useCallback(async () => {
@@ -106,7 +107,7 @@ export function SevkPickScreen() {
       delete next[key];
       return next;
     });
-    const parsed = parsePickedQtyDraft(raw, picked, ordered);
+    const parsed = parsePickedQtyDraft(raw == null || raw === "" ? undefined : String(raw), picked, ordered);
     if (parsed == null || Math.abs(parsed - picked) < 1e-9) return;
     if (Number(String(raw || "").trim().replace(",", ".")) > ordered) {
       setError(`${line.product_name || "Kalem"}: siparişte ${ordered} adet var, ${picked} okutuldu.`);
@@ -265,27 +266,27 @@ export function SevkPickScreen() {
                   <PrimaryButton title="−" onPress={() => adjust(line, picked - 1)} disabled={busy || picked <= 0} color={colors.secondary} testID={`sevk-minus-${line.line_index ?? idx}`} />
                 </View>
                 <View style={{ width: 76, alignItems: "center" }}>
-                  <TextInput
+                  <QuantityInput
                     testID={`sevk-qty-${line.line_index ?? idx}`}
-                    accessibilityLabel="Toplanan miktar"
-                    value={qtyDrafts[lineKey(line, idx)] ?? String(picked)}
-                    keyboardType="decimal-pad"
-                    selectTextOnFocus
+                    value={qtyDrafts[lineKey(line, idx)] ?? picked}
                     editable={!busy}
-                    onFocus={() => setQtyDrafts((d) => ({ ...d, [lineKey(line, idx)]: String(picked) }))}
-                    onChangeText={(v) => setQtyDrafts((d) => ({ ...d, [lineKey(line, idx)]: v }))}
+                    dense
+                    containerStyle={{ width: 76 }}
+                    onChange={(n) => setQtyDrafts((d) => ({ ...d, [lineKey(line, idx)]: n ?? "" }))}
                     onBlur={() => commitQty(line, idx)}
-                    onSubmitEditing={() => commitQty(line, idx)}
                     style={{
-                      width: "100%",
+                      width: 76,
                       minHeight: 44,
                       textAlign: "center",
                       fontWeight: "800",
                       fontSize: 18,
                       color: done ? colors.primary : colors.text,
+                      borderWidth: 0,
                       borderBottomWidth: 2,
                       borderBottomColor: colors.border,
-                      padding: 0,
+                      backgroundColor: "transparent",
+                      paddingHorizontal: 0,
+                      paddingVertical: 0,
                     }}
                   />
                 </View>

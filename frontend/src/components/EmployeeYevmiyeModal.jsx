@@ -5,6 +5,7 @@ import { CalendarDays, Trash2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
+import { MoneyInput } from "./MoneyInput";
 import {
   dailyWageOf,
   parseYevmiyeDays,
@@ -102,7 +103,7 @@ export function EmployeeYevmiyeModal({
         </div>
         <div>
           <label className="block font-semibold mb-1">Günlük yevmiye (₺)</label>
-          <input type="number" step="0.01" min="0" value={wage} onChange={(e) => setWage(e.target.value)} className={inputCls} data-testid="emp-yevmiye-wage" />
+          <MoneyInput value={wage} onChange={(n) => setWage(n ?? "")} className={inputCls} data-testid="emp-yevmiye-wage" />
         </div>
         {nDays && nWage ? (
           <p className="text-[11px] text-amber-800" data-testid="emp-yevmiye-total">

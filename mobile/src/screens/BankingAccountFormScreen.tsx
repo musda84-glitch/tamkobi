@@ -4,6 +4,7 @@ import { Text } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
+import { MoneyInput } from "../components/MoneyInput";
 import { ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import {
@@ -82,7 +83,7 @@ export function BankingAccountFormScreen({ accountId }: { accountId?: string }) 
           <Field label="Kart sahibi" testID="bank-card-holder" value={draft.card_holder} onChangeText={(v) => set("card_holder", v)} editable={canEdit} />
           <Field label="Son 4 hane" testID="bank-card-last4" value={draft.card_last4} onChangeText={(v) => set("card_last4", v)} keyboardType="number-pad" editable={canEdit} />
           <Field label="SKT (AA/YY)" testID="bank-card-expiry" value={draft.card_expiry} onChangeText={(v) => set("card_expiry", v)} editable={canEdit} />
-          <Field label="Kart limiti" testID="bank-card-limit" value={draft.card_limit} onChangeText={(v) => set("card_limit", v)} keyboardType="decimal-pad" editable={canEdit} />
+          <MoneyInput label="Kart limiti" testID="bank-card-limit" value={draft.card_limit} onChange={(n) => set("card_limit", n ?? "")} editable={canEdit} />
         </>
       ) : (
         <>
@@ -101,7 +102,7 @@ export function BankingAccountFormScreen({ accountId }: { accountId?: string }) 
         </>
       ) : null}
       {isNew ? (
-        <Field label={draft.type === "credit_card" ? "Borç bakiyesi" : "Açılış bakiyesi"} testID="bank-balance" value={draft.current_balance} onChangeText={(v) => set("current_balance", v)} keyboardType="decimal-pad" editable={canEdit} />
+        <MoneyInput label={draft.type === "credit_card" ? "Borç bakiyesi" : "Açılış bakiyesi"} testID="bank-balance" value={draft.current_balance} onChange={(n) => set("current_balance", n ?? "")} allowNegative editable={canEdit} />
       ) : (
         <Text style={{ color: colors.muted }}>Hareketi olan hesabın bakiyesi buradan değişmez.</Text>
       )}

@@ -36,7 +36,8 @@ import { printThermalReceipt } from "../utils/thermalReceipt";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { fmtMoney } from "../utils/money";
-import { parseBarcodeWithQty, parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
+import { parseBarcodeWithQty, parseScanQtyInput } from "../utils/scanQty";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
 
@@ -834,12 +835,9 @@ export default function QuickSalePage() {
         </div>
         <label className="shrink-0 flex flex-col justify-center">
           <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 leading-none mb-0.5">Adet</span>
-          <input
-            value={scanQtyShown(scanQty)}
-            onChange={(e) => setScanQty(e.target.value.replace(/\D/g, ""))}
-            onFocus={() => setScanQty(scanQtyOnFocus())}
-            onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
-            inputMode="numeric"
+          <QuantityInput
+            value={scanQty}
+            onChange={(n) => setScanQty(n == null || !(n > 0) ? 1 : n)}
             aria-label="Adet çarpan"
             title="Adet çarpan — her okutmada bu kadar ekler (veya 5*barkod yazın)"
             className={`w-14 text-center font-black border border-slate-200 rounded-lg ${btnSize}`}
@@ -928,7 +926,7 @@ export default function QuickSalePage() {
                   <div className="mt-2 flex items-center justify-between">
                     <div className="flex items-center gap-1">
                       <button type="button" onClick={() => bumpQty(l.id, isWeighableUnit(l.unit) ? -0.1 : -1)} className={`rounded-lg border bg-white flex items-center justify-center ${tabletMode ? "w-11 h-11" : "w-8 h-8"}`}><Minus className="w-4 h-4" /></button>
-                      <input type="number" step="any" value={l.quantity} onChange={(e) => setLineQty(l.id, e.target.value)} className={`text-center border rounded-lg py-1 font-semibold ${tabletMode ? "w-20 text-base" : "w-16 text-sm"}`} />
+                      <QuantityInput value={l.quantity} onChange={(n) => setLineQty(l.id, n)} className={`text-center border rounded-lg py-1 font-semibold ${tabletMode ? "w-20 text-base" : "w-16 text-sm"}`} />
                       <button type="button" onClick={() => bumpQty(l.id, isWeighableUnit(l.unit) ? 0.1 : 1)} className={`rounded-lg border bg-white flex items-center justify-center ${tabletMode ? "w-11 h-11" : "w-8 h-8"}`}><Plus className="w-4 h-4" /></button>
                     </div>
                     <div className="font-semibold text-sm">{money(Number(l.quantity) * Number(l.unit_price))}</div>
@@ -1123,10 +1121,10 @@ export default function QuickSalePage() {
             </div>
             <div className="p-4 grid gap-3">
               <label className="text-xs font-semibold text-slate-600">Nakit alınan
-                <input value={tenderedCash} onChange={(e) => setTenderedCash(e.target.value)} className="mt-1 w-full border rounded-lg p-2" inputMode="decimal" data-testid="pos-tendered-cash" placeholder="Para üstü için" />
+                <MoneyInput value={tenderedCash} onChange={(n) => setTenderedCash(n ?? "")} className="mt-1 w-full border rounded-lg p-2" data-testid="pos-tendered-cash" placeholder="Para üstü için" />
               </label>
               <label className="text-xs font-semibold text-slate-600">Karma — nakit payı
-                <input value={mixCash} onChange={(e) => setMixCash(e.target.value)} className="mt-1 w-full border rounded-lg p-2" inputMode="decimal" data-testid="pos-mix-cash" />
+                <MoneyInput value={mixCash} onChange={(n) => setMixCash(n ?? "")} className="mt-1 w-full border rounded-lg p-2" data-testid="pos-mix-cash" />
               </label>
               {PAYMENT_OPTIONS.filter((opt) => opt.value !== "credit" || actionIsFree(posRules, "credit_sale")).map((opt) => {
                 const Icon = opt.icon;
@@ -1232,7 +1230,7 @@ export default function QuickSalePage() {
             }}
           >
             <h3 className="font-bold">Satır fiyatı</h3>
-            <input value={editingPrice.value} onChange={(e) => setEditingPrice({ ...editingPrice, value: e.target.value })} className="w-full border rounded-lg p-2" data-testid="pos-price-input" />
+            <MoneyInput value={editingPrice.value} onChange={(n) => setEditingPrice({ ...editingPrice, value: n ?? "" })} className="w-full border rounded-lg p-2" data-testid="pos-price-input" />
             <div className="flex gap-2">
               <button type="button" onClick={() => setEditingPrice(null)} className="flex-1 border rounded-xl py-2">Vazgeç</button>
               <button type="submit" className="flex-1 bg-emerald-600 text-white rounded-xl py-2 font-bold" data-testid="pos-price-save">Kaydet</button>

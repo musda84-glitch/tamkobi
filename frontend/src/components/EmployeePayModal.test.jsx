@@ -103,7 +103,7 @@ test("Kalanı öde kalan tutarı ilk satıra yazar", () => {
   );
   act(() => host.querySelector('[data-testid="emp-pay-fill-remaining"]').click());
   expect(host.querySelector('[data-testid="emp-pay-line-kind-0"]').value).toBe("salary");
-  expect(host.querySelector('[data-testid="emp-pay-line-amount-0"]').value).toBe("33300");
+  expect(host.querySelector('[data-testid="emp-pay-line-amount-0"]').value).toBe("33.300,00");
   expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).toContain("Ödeme sonrası kalan");
 });
 

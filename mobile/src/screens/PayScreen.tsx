@@ -5,6 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ReceiptScanButtons } from "../components/ReceiptScanButtons";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact } from "../types";
@@ -12,7 +13,7 @@ import { contactPaymentRequest, paymentTargetGroups, validateContactPayment, typ
 import { fmtMoney, idOf } from "../utils/money";
 import { applyReceiptDraft } from "../utils/receiptScan";
 
-type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string; description: string };
+type PayForm = { type: "inflow" | "outflow"; amount: string | number; account_id: string; description: string };
 
 export function PayScreen() {
   const { client, companyId, can } = useAuth();
@@ -154,7 +155,7 @@ export function PayScreen() {
             onHint={(hint) => { setMessage(hint); setError(null); }}
             onError={(msg) => { setError(msg); setMessage(null); }}
           />
-          <Field label="Tutar" testID="pay-amount" value={form.amount} onChangeText={(v) => setForm({ ...form, amount: v })} keyboardType="decimal-pad" />
+          <MoneyInput label="Tutar" testID="pay-amount" value={form.amount} onChange={(n) => setForm({ ...form, amount: n ?? "" })} />
           <Field label="Açıklama" testID="pay-desc" value={form.description} onChangeText={(v) => setForm({ ...form, description: v })} />
           <PrimaryButton title={busy ? "Kaydediliyor…" : "Kaydet"} onPress={save} loading={busy} color={colors.primary} testID="pay-save" />
           <PrimaryButton title="Vazgeç" onPress={() => setPicked(null)} testID="pay-cancel" />

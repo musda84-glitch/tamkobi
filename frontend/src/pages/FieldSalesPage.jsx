@@ -12,6 +12,7 @@ import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 import { formatTrAmount } from "../utils/money";
+import { QuantityInput } from "../components/MoneyInput";
 import {
   Smartphone, Search, Plus, Minus, Trash2, UserPlus, Maximize2, Minimize2,
   RefreshCw, Package, ShoppingCart, CheckCircle2, MapPin, Phone, X,
@@ -334,7 +335,7 @@ export default function FieldSalesPage() {
                 <div className="flex items-center justify-between mt-1">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setQty(i, it.quantity - 1)} className="w-11 h-11 rounded-xl border bg-slate-50 flex items-center justify-center" data-testid={`saha-qty-minus-${i}`}><Minus className="w-4 h-4" /></button>
-                    <input type="number" min="1" value={it.quantity} onChange={(e) => setQty(i, e.target.value)} className="w-14 text-center border rounded-xl py-2 font-bold min-h-11" data-testid={`saha-qty-${i}`} />
+                    <QuantityInput value={it.quantity} onChange={(n) => setQty(i, n ?? "")} className="w-14 text-center border rounded-xl py-2 font-bold min-h-11" data-testid={`saha-qty-${i}`} />
                     <button onClick={() => setQty(i, it.quantity + 1)} className="w-11 h-11 rounded-xl border bg-slate-50 flex items-center justify-center" data-testid={`saha-qty-plus-${i}`}><Plus className="w-4 h-4" /></button>
                   </div>
                   <div className="font-bold">{fmt((Number(it.unit_price_incl) || Number(it.unit_price) * (1 + (Number(it.vat_rate) || 0) / 100) || 0) * Number(it.quantity))} ₺</div>

@@ -5,6 +5,7 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { MoneyInput } from "../components/MoneyInput";
 import { colors } from "../theme";
 import { fmtMoney, todayIso } from "../utils/money";
 import {
@@ -113,11 +114,11 @@ export function PersonnelNewScreen() {
         </Row>
         {draft.pay_type === "daily" ? (
           <>
-            <Field label="Günlük yevmiye (₺)" testID="emp-daily-wage" value={draft.daily_wage} onChangeText={(v) => setDraft({ ...draft, daily_wage: v })} keyboardType="decimal-pad" />
+            <MoneyInput label="Günlük yevmiye (₺)" testID="emp-daily-wage" value={draft.daily_wage} onChange={(n) => setDraft({ ...draft, daily_wage: n ?? "" })} />
             <Muted>Bordro = yevmiye × o ay gelen gün. Tahmini ay: {fmtMoney((Number(draft.daily_wage) || 0) * 26)} (26 gün).</Muted>
           </>
         ) : (
-          <Field label="Net maaş (₺)" testID="emp-salary" value={draft.salary} onChangeText={(v) => setDraft({ ...draft, salary: v })} keyboardType="decimal-pad" />
+          <MoneyInput label="Net maaş (₺)" testID="emp-salary" value={draft.salary} onChange={(n) => setDraft({ ...draft, salary: n ?? "" })} />
         )}
         <Pressable testID="emp-details-toggle" onPress={() => setShowDetails((v) => !v)} style={{ paddingVertical: 6 }}>
           <Text style={{ fontWeight: "700", color: colors.indigo, fontSize: 13 }}>
@@ -130,11 +131,11 @@ export function PersonnelNewScreen() {
             <Pressable testID="emp-sgk-insured" onPress={() => setDraft({ ...draft, sgk_insured: !draft.sgk_insured })} style={{ paddingVertical: 6 }}>
               <Text style={{ fontWeight: "700", color: colors.text }}>{draft.sgk_insured ? "☑ SGK'lı" : "☐ SGK'lı"}</Text>
             </Pressable>
-            <Field label="Resmi maaş (₺)" testID="emp-official-salary" value={draft.official_salary} onChangeText={(v) => setDraft({ ...draft, official_salary: v })} keyboardType="decimal-pad" />
+            <MoneyInput label="Resmi maaş (₺)" testID="emp-official-salary" value={draft.official_salary} onChange={(n) => setDraft({ ...draft, official_salary: n ?? "" })} />
             <Field label="SGK sicil no" testID="emp-sgk" value={draft.sgk_number} onChangeText={(v) => setDraft({ ...draft, sgk_number: v.replace(/\D/g, "").slice(0, 13) })} keyboardType="number-pad" />
             <Field label={(String(draft.sgk_number || "").trim() || draft.sgk_insured) ? "IBAN (zorunlu)" : "IBAN"} testID="emp-iban" value={draft.iban} onChangeText={(v) => setDraft({ ...draft, iban: v })} autoCapitalize="characters" />
-            <Field label="Yemek ücreti (aylık ₺)" testID="emp-meal" value={draft.meal_allowance} onChangeText={(v) => setDraft({ ...draft, meal_allowance: v })} keyboardType="decimal-pad" />
-            <Field label="Yol ödemesi (aylık ₺)" testID="emp-transport" value={draft.transport_allowance} onChangeText={(v) => setDraft({ ...draft, transport_allowance: v })} keyboardType="decimal-pad" />
+            <MoneyInput label="Yemek ücreti (aylık ₺)" testID="emp-meal" value={draft.meal_allowance} onChange={(n) => setDraft({ ...draft, meal_allowance: n ?? "" })} />
+            <MoneyInput label="Yol ödemesi (aylık ₺)" testID="emp-transport" value={draft.transport_allowance} onChange={(n) => setDraft({ ...draft, transport_allowance: n ?? "" })} />
             <Field label="Doğum tarihi" testID="emp-birth" value={draft.birth_date} onChangeText={(v) => setDraft({ ...draft, birth_date: v })} placeholder="YYYY-AA-GG" />
             <Field label="Acil durum iletişim" testID="emp-emergency" value={draft.emergency_contact} onChangeText={(v) => setDraft({ ...draft, emergency_contact: v })} />
             <GroupedSelect

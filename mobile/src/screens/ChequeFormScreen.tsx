@@ -5,6 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ChequeScanButtons } from "../components/ChequeScanButtons";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact } from "../types";
@@ -263,7 +264,7 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
         )}
       </Card>
 
-      <Field label="Tutar (₺)" testID="cheque-amount" value={draft.amount} onChangeText={(v) => !locked && set("amount", v)} keyboardType="decimal-pad" editable={!locked} />
+      <MoneyInput label="Tutar (₺)" testID="cheque-amount" value={draft.amount} onChange={(n) => { if (!locked) set("amount", n ?? ""); }} editable={!locked} />
       <Field label={`${kind} no`} testID="cheque-serial" value={draft.serial_no} onChangeText={(v) => set("serial_no", v)} autoCapitalize="characters" />
       <Field label="Keşide tarihi" testID="cheque-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} placeholder="YYYY-AA-GG" />
       <Field label="Vade" testID="cheque-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} placeholder="YYYY-AA-GG" />

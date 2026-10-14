@@ -9,6 +9,7 @@ import { confirmAction } from "../components/chips";
 import { ImageUploader } from "../components/ImageUploader";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors, spacing } from "../theme";
 import type { Product } from "../types";
@@ -337,13 +338,13 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Kapsama (1 {draft.unit || "Adet"} = ?)</Text>
         <Muted>Reçete M2/Metre hesabı ve kalan fire için. Örn. 1 Adet = 2,98 M2.</Muted>
-        <Field
+        <QuantityInput
           label={`1 ${draft.unit || "Adet"} =`}
           testID="stock-unit-content-qty"
           value={draft.unit_content_qty}
-          onChangeText={(v) => set("unit_content_qty", v)}
-          keyboardType="decimal-pad"
-          placeholder="örn. 2.98"
+          onChange={(n) => set("unit_content_qty", n ?? "")}
+          maxFractionDigits={4}
+          placeholder="örn. 2,98"
           editable={canEdit}
         />
         <GroupedSelect
@@ -355,10 +356,10 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         />
       </Card>
 
-      <Field label="Alış fiyatı (₺)" testID="stock-purchase" value={draft.purchase_price} onChangeText={(v) => set("purchase_price", v)} keyboardType="decimal-pad" editable={canEdit} />
-      <Field label="Satış fiyatı (₺)" testID="stock-sale" value={draft.sale_price} onChangeText={(v) => set("sale_price", v)} keyboardType="decimal-pad" editable={canEdit} />
-      <Field label="Mevcut stok" testID="stock-qty" value={draft.stock_quantity} onChangeText={(v) => set("stock_quantity", v)} keyboardType="decimal-pad" editable={canEdit} />
-      <Field label="Kritik stok" testID="stock-min" value={draft.min_stock_alert} onChangeText={(v) => set("min_stock_alert", v)} keyboardType="decimal-pad" editable={canEdit} />
+      <MoneyInput label="Alış fiyatı (₺)" testID="stock-purchase" value={draft.purchase_price} onChange={(n) => set("purchase_price", n ?? "")} editable={canEdit} />
+      <MoneyInput label="Satış fiyatı (₺)" testID="stock-sale" value={draft.sale_price} onChange={(n) => set("sale_price", n ?? "")} editable={canEdit} />
+      <QuantityInput label="Mevcut stok" testID="stock-qty" value={draft.stock_quantity} onChange={(n) => set("stock_quantity", n ?? "")} editable={canEdit} />
+      <QuantityInput label="Kritik stok" testID="stock-min" value={draft.min_stock_alert} onChange={(n) => set("min_stock_alert", n ?? "")} editable={canEdit} />
 
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>KDV</Text>

@@ -221,12 +221,12 @@ export type AccountDraft = {
   account_number: string;
   iban: string;
   currency: string;
-  current_balance: string;
+  current_balance: string | number;
   pos_commission_rate: string;
   card_holder: string;
   card_last4: string;
   card_expiry: string;
-  card_limit: string;
+  card_limit: string | number;
   okc_brand: string;
   okc_serial: string;
   okc_terminal_id: string;
@@ -273,7 +273,9 @@ export function draftFromAccount(acc: BankAccount): AccountDraft {
   };
 }
 
-function num(v: string): number {
+function num(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (v == null || v === "") return 0;
   const n = Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
@@ -596,7 +598,7 @@ export function splitPaymentTarget(value?: string | null): { partner_id?: string
   return { account_id: v || null, partner_id: null };
 }
 
-export function validateContactPayment(amount: string, accountId: string): string | null {
+export function validateContactPayment(amount: string | number, accountId: string): string | null {
   const amt = Number(String(amount).replace(",", "."));
   if (!(amt > 0)) return "Geçerli bir tutar girin.";
   if (!String(accountId || "").trim()) return "Kasa / banka / ortak seçin.";
@@ -796,7 +798,7 @@ export type ExpenseDraft = {
   date: string;
   category: string;
   description: string;
-  amount: string;
+  amount: string | number;
   vat_rate: string;
   vat_included: boolean;
   account_id: string;
@@ -897,7 +899,7 @@ export function emptyProjectExpenseDraft(today: string): ExpenseDraft {
   return { ...emptyExpenseDraft(today), vat_included: true };
 }
 
-export function validateVirman(sourceId: string, targetId: string, amount: string): string | null {
+export function validateVirman(sourceId: string, targetId: string, amount: string | number): string | null {
   if (!sourceId || !targetId) return "Kaynak ve hedef hesap seçin.";
   if (sourceId.startsWith("integrated:") || targetId.startsWith("integrated:")) {
     return "Entegre banka hesaplar virmana kapalı.";

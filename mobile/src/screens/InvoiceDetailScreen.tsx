@@ -8,6 +8,7 @@ import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
 import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
@@ -59,7 +60,7 @@ export function InvoiceDetailScreen() {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [accountId, setAccountId] = useState("");
-  const [payAmount, setPayAmount] = useState("");
+  const [payAmount, setPayAmount] = useState<string | number>("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -67,10 +68,9 @@ export function InvoiceDetailScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
-  const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string; unit_price: string; vat_rate: number } | null>(null);
-  const [editLineFocus, setEditLineFocus] = useState<{ quantity?: string; unit_price?: string }>({});
+  const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string | number; unit_price: string | number; vat_rate: number } | null>(null);
   const [gdMode, setGdMode] = useState<GdMode>("amount");
-  const [gdValue, setGdValue] = useState("");
+  const [gdValue, setGdValue] = useState<string | number>("");
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
   const [efaturaOpen, setEfaturaOpen] = useState(false);
   const [efaturaPreferred, setEfaturaPreferred] = useState<"e_invoice" | "e_archive" | null>(null);
@@ -158,7 +158,6 @@ export function InvoiceDetailScreen() {
     run(async () => {
       await put(client, `/invoices/${id}`, invoiceDipPayload(next.map((it) => hydrateLine(it)), gdMode, gdNum));
       setMessage(okMsg);
-      setEditLineFocus({});
       setEditLine(null);
       setOpenRow(null);
     }, "Kalemler kaydedilemedi.");
@@ -232,7 +231,6 @@ export function InvoiceDetailScreen() {
     if (!itemsEditable) { blockedItems(); return; }
     const it = lines[index] || {};
     setOpenRow(null);
-    setEditLineFocus({});
     setEditLine({
       index,
       name: String(it.product_name || it.name || ""),
@@ -391,12 +389,11 @@ export function InvoiceDetailScreen() {
               <Chip label="%" active={gdMode === "percent"} onPress={() => setGdMode("percent")} testID="gd-mode-percent" />
               <Chip label="₺" active={gdMode === "amount"} onPress={() => setGdMode("amount")} testID="gd-mode-amount" />
             </Row>
-            <Field
+            <MoneyInput
               label={gdMode === "percent" ? "Genel iskonto %" : "Genel iskonto tutarı"}
               testID="general-discount-input"
               value={gdValue}
-              onChangeText={setGdValue}
-              keyboardType="decimal-pad"
+              onChange={(n) => setGdValue(n ?? "")}
             />
           </>
         ) : (
@@ -515,7 +512,7 @@ export function InvoiceDetailScreen() {
       {canEdit && leftover > 0.01 && !draft && inv.invoice_type !== "dispatch" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Tahsilat / ödeme</Text>
-          <Field label="Tutar" testID="inv-pay-amount" value={payAmount} onChangeText={setPayAmount} keyboardType="decimal-pad" />
+          <MoneyInput label="Tutar" testID="inv-pay-amount" value={payAmount} onChange={(n) => setPayAmount(n ?? "")} />
           {accounts.length || partners.length ? (
             <GroupedSelect
               label={inv.invoice_type === "sales" ? "Kasa / banka / POS / ortak (tahsilat)" : "Kasa / banka / kart / ortak"}
@@ -605,41 +602,21 @@ export function InvoiceDetailScreen() {
         visible={!!editLine}
         title="Kalemi düzenle"
         subtitle={inv.invoice_number}
-        onClose={() => { setEditLineFocus({}); setEditLine(null); }}
+        onClose={() => setEditLine(null)}
         testID="inv-item-edit"
       >
         <Field label="Ad" testID="inv-item-name" value={editLine?.name || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, name: v } : cur))} />
-        <Field
+        <QuantityInput
           label="Miktar"
           testID="inv-item-qty"
-          value={editLineFocus.quantity !== undefined ? editLineFocus.quantity : (editLine?.quantity || "")}
-          onFocus={() => setEditLineFocus((f) => ({ ...f, quantity: "" }))}
-          onBlur={() => setEditLineFocus((f) => {
-            const next = { ...f };
-            delete next.quantity;
-            return next;
-          })}
-          onChangeText={(v) => {
-            setEditLineFocus((f) => ({ ...f, quantity: v }));
-            if (String(v).trim()) setEditLine((cur) => (cur ? { ...cur, quantity: v } : cur));
-          }}
-          keyboardType="decimal-pad"
+          value={editLine?.quantity || ""}
+          onChange={(n) => { if (n != null) setEditLine((cur) => (cur ? { ...cur, quantity: n } : cur)); }}
         />
-        <Field
+        <MoneyInput
           label="Birim fiyat"
           testID="inv-item-price"
-          value={editLineFocus.unit_price !== undefined ? editLineFocus.unit_price : (editLine?.unit_price || "")}
-          onFocus={() => setEditLineFocus((f) => ({ ...f, unit_price: "" }))}
-          onBlur={() => setEditLineFocus((f) => {
-            const next = { ...f };
-            delete next.unit_price;
-            return next;
-          })}
-          onChangeText={(v) => {
-            setEditLineFocus((f) => ({ ...f, unit_price: v }));
-            if (String(v).trim()) setEditLine((cur) => (cur ? { ...cur, unit_price: v } : cur));
-          }}
-          keyboardType="decimal-pad"
+          value={editLine?.unit_price || ""}
+          onChange={(n) => { if (n != null) setEditLine((cur) => (cur ? { ...cur, unit_price: n } : cur)); }}
         />
         <Muted>KDV</Muted>
         <Row>

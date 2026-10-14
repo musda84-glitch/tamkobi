@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { RecipeModal } from "../components/RecipeModal";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { formatTrAmount } from "../utils/money";
+import { QuantityInput } from "../components/MoneyInput";
 import { filterMissingByOrder, missingLinesForOrder } from "../utils/missingOrderLines";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
@@ -395,12 +396,9 @@ export default function ProductionPage() {
                     <td className="px-3 py-2 text-right">{Number(it.stock_quantity)}</td>
                     <td className="px-3 py-2 text-right text-slate-500">{Number(it.open_production_qty) || "—"}</td>
                     <td className="px-3 py-2 text-right">
-                      <input
-                        type="number"
-                        min="0.001"
-                        step="any"
+                      <QuantityInput
                         value={planQty[it.key] ?? it.suggested_qty ?? 1}
-                        onChange={(e) => setPlanQty({ ...planQty, [it.key]: e.target.value })}
+                        onChange={(n) => setPlanQty({ ...planQty, [it.key]: n ?? "" })}
                         className="w-20 bg-slate-50 border rounded-lg p-1.5 text-right font-bold"
                         data-testid={`missing-qty-${it.product_id || it.key}`}
                       />
@@ -475,12 +473,9 @@ export default function ProductionPage() {
                     {canEditPlan ? (
                       <div className="inline-flex flex-col items-end gap-0.5">
                         <div className="inline-flex items-center gap-1 justify-end">
-                          <input
-                            type="number"
-                            min={Math.max(0.001, Number(o.completed_quantity) || 0.001)}
-                            step="any"
+                          <QuantityInput
                             value={draft.qty}
-                            onChange={(e) => setPlanDraft(o, { qty: e.target.value })}
+                            onChange={(n) => setPlanDraft(o, { qty: n ?? "" })}
                             onFocus={() => setPlanDraft(o, {})}
                             className="w-16 bg-slate-50 border border-slate-200 rounded-md p-1 text-right font-bold"
                             title="Plan miktarını değiştir"
@@ -552,7 +547,7 @@ export default function ProductionPage() {
                           )}
                         </button>
                       )}
-                      {o.status === "in_production" && <><input type="number" min="0.001" step="any" value={completeQty[o.id] ?? remaining} onChange={(e) => setCompleteQty({ ...completeQty, [o.id]: e.target.value })} className="w-16 bg-slate-50 border rounded p-1 text-right" title="Tamamlanan miktar (plan üstü girilebilir)" data-testid={`po-complete-qty-${o.order_code}`} /><button onClick={() => act(o.id, "complete", { quantity: Number(completeQty[o.id] ?? remaining), update_cost: true, allow_over: true })} className="px-2 py-1 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`po-complete-${o.order_code}`}>Tamamla</button></>}
+                      {o.status === "in_production" && <><QuantityInput value={completeQty[o.id] ?? remaining} onChange={(n) => setCompleteQty({ ...completeQty, [o.id]: n ?? "" })} className="w-16 bg-slate-50 border rounded p-1 text-right" title="Tamamlanan miktar (plan üstü girilebilir)" data-testid={`po-complete-qty-${o.order_code}`} /><button onClick={() => act(o.id, "complete", { quantity: Number(completeQty[o.id] ?? remaining), update_cost: true, allow_over: true })} className="px-2 py-1 bg-emerald-600 text-white rounded-md font-semibold" data-testid={`po-complete-${o.order_code}`}>Tamamla</button></>}
                       {o.status === "planned" && <button onClick={async () => { if (!window.confirm("Üretim emri silinsin mi?")) return; try { await axios.delete(`${API_URL}/production/orders/${o.id}`); toast.success("Silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md" title="Sil" data-testid={`po-delete-${o.order_code}`}><Trash2 className="w-4 h-4" /></button>}
                       {["planned", "in_production"].includes(o.status) && <button onClick={() => act(o.id, "cancel")} className="p-1 text-rose-500 hover:bg-rose-50 rounded-md" title="İptal" data-testid={`po-cancel-${o.order_code}`}><XCircle className="w-4 h-4" /></button>}
                     </div>

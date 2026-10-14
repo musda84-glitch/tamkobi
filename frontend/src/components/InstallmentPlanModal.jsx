@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { PromissoryPrint } from "./PromissoryPrint";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
@@ -39,7 +40,7 @@ export const PlanForm = ({ total, onSaved, saveLabel = "Taksit Planını Oluştu
     <div className="space-y-3 text-xs">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <F label="Taksit Sayısı"><input type="number" min="1" max="60" value={cfg.count} onChange={(e) => setCfg({ ...cfg, count: Number(e.target.value) || 1 })} className={`${cls} font-bold`} data-testid="plan-count-input" /></F>
-        <F label="Peşinat (₺)"><input type="number" min="0" value={cfg.down_payment} onChange={(e) => setCfg({ ...cfg, down_payment: Number(e.target.value) || 0 })} className={cls} data-testid="plan-down-input" /></F>
+        <F label="Peşinat (₺)"><MoneyInput value={cfg.down_payment} onChange={(n) => setCfg({ ...cfg, down_payment: n ?? 0 })} className={cls} data-testid="plan-down-input" /></F>
         <F label="Periyot"><select value={cfg.interval} onChange={(e) => setCfg({ ...cfg, interval: e.target.value })} className={cls} data-testid="plan-interval-select">{INTERVALS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></F>
         {cfg.interval === "days" ? <F label="Gün"><input type="number" min="1" value={cfg.interval_days} onChange={(e) => setCfg({ ...cfg, interval_days: Number(e.target.value) || 30 })} className={cls} /></F>
           : <F label="İlk Taksit Tarihi"><input type="date" value={cfg.first_due_date} onChange={(e) => setCfg({ ...cfg, first_due_date: e.target.value })} className={cls} data-testid="plan-first-date-input" /></F>}
@@ -111,7 +112,7 @@ export const InstallmentRows = ({ rows, accounts, companyId, onPaid, compact = f
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2" data-testid="installment-pay-form">
           <div className="font-semibold text-emerald-800 flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> {paying.label} — {paying.contact_name}</div>
           <div className="grid grid-cols-2 gap-2">
-            <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 font-bold" data-testid="installment-pay-amount" />
+            <MoneyInput value={amount} onChange={(n) => setAmount(n ?? "")} className="bg-white border border-slate-200 rounded-lg p-2 font-bold" data-testid="installment-pay-amount" />
             <PaymentTargetSelect companyId={companyId} accounts={accounts} value={account} onChange={setAccount} testId="installment-pay-account" className="!bg-white" collectableOnly={paying.direction !== "payable"} />
           </div>
           <div className="flex justify-end gap-2"><button onClick={() => setPaying(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={pay} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="installment-pay-confirm">Kaydet</button></div>

@@ -6,6 +6,7 @@ import { TrendingUp, Link2, ChevronDown, ChevronUp, PackagePlus } from "lucide-r
 import { API_URL } from "../context/AuthContext";
 import { channelTr } from "../utils/labels";
 import { fmtMoney } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const tone = (m) => (m < 10 ? "text-rose-600" : m < 20 ? "text-amber-600" : "text-emerald-600");
@@ -51,7 +52,7 @@ export const ProductProfitPanel = ({ companyId }) => {
                     <select value={sel[u.key] || ""} onChange={(e) => setSel({ ...sel, [u.key]: e.target.value })} className="bg-slate-50 border rounded-lg p-1.5 w-56" data-testid="unmatched-product-select"><option value="">Stok kartı seç…</option>{d.products.map((p) => <option key={p.id} value={p.id}>{p.sku ? `${p.name} (${p.sku})` : p.name}</option>)}</select>
                     <button onClick={() => match(u)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid="unmatched-match-btn">Eşleştir</button>
                     <span className="text-slate-300">|</span>
-                    <input type="number" step="0.01" min="0" placeholder="Alış" value={cost[u.key] || ""} onChange={(e) => setCost({ ...cost, [u.key]: e.target.value })} className="bg-slate-50 border rounded-lg p-1.5 w-20" data-testid="unmatched-cost-input" />
+                    <MoneyInput placeholder="Alış" value={cost[u.key] || ""} onChange={(n) => setCost({ ...cost, [u.key]: n ?? "" })} className="bg-slate-50 border rounded-lg p-1.5 w-20" data-testid="unmatched-cost-input" />
                     <button onClick={() => createCard(u)} disabled={busy === u.key} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" title="Pazaryeri bilgileriyle yeni stok kartı aç ve otomatik eşleştir" data-testid="unmatched-create-btn"><PackagePlus className="w-3.5 h-3.5" /> Stok Kartı Oluştur</button>
                   </div>))}
               </div>

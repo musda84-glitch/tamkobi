@@ -14,6 +14,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { TimeField } from "../components/TimeField";
 import { RequestDecisionButtons } from "../components/RequestDecisionButtons";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { Chip, confirmAction } from "../components/chips";
@@ -334,11 +335,11 @@ export function PersonnelScreen() {
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
   const [advanceEmp, setAdvanceEmp] = useState<Employee | null>(null);
-  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceAmount, setAdvanceAmount] = useState<string | number>("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [allowanceEmp, setAllowanceEmp] = useState<Employee | null>(null);
   const [allowanceKind, setAllowanceKind] = useState<"meal" | "transport">("meal");
-  const [allowanceAmount, setAllowanceAmount] = useState("");
+  const [allowanceAmount, setAllowanceAmount] = useState<string | number>("");
   const [allowanceNote, setAllowanceNote] = useState("");
   const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [movesEmp, setMovesEmp] = useState<Employee | null>(null);
@@ -346,7 +347,7 @@ export function PersonnelScreen() {
   const [movesCard, setMovesCard] = useState<EmployeeCard | null>(null);
   const [otEditOpen, setOtEditOpen] = useState(false);
   const [otEditHours, setOtEditHours] = useState("");
-  const [otEditAmount, setOtEditAmount] = useState("");
+  const [otEditAmount, setOtEditAmount] = useState<string | number>("");
   const [otEditNote, setOtEditNote] = useState("");
   const [movesBusy, setMovesBusy] = useState(false);
   const [otEmp, setOtEmp] = useState<Employee | null>(null);
@@ -367,16 +368,16 @@ export function PersonnelScreen() {
   const [taskTypeId, setTaskTypeId] = useState("");
   const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
-  const [extraAmount, setExtraAmount] = useState("");
+  const [extraAmount, setExtraAmount] = useState<string | number>("");
   const [extraNote, setExtraNote] = useState("");
   const [yevmiyeEmp, setYevmiyeEmp] = useState<Employee | null>(null);
   const [yevmiyeDays, setYevmiyeDays] = useState("");
-  const [yevmiyeWage, setYevmiyeWage] = useState("");
+  const [yevmiyeWage, setYevmiyeWage] = useState<string | number>("");
   const [yevmiyeNote, setYevmiyeNote] = useState("");
   const [yevmiyeHaveDays, setYevmiyeHaveDays] = useState(0);
   const [ledgerEmp, setLedgerEmp] = useState<Employee | null>(null);
   const [ledgerSide, setLedgerSide] = useState<LedgerSide>("alacak");
-  const [ledgerAmount, setLedgerAmount] = useState("");
+  const [ledgerAmount, setLedgerAmount] = useState<string | number>("");
   const [ledgerNote, setLedgerNote] = useState("");
   const [yevmiyeEditId, setYevmiyeEditId] = useState("");
   const [pendingReqs, setPendingReqs] = useState<PendingRequest[]>([]);
@@ -384,10 +385,10 @@ export function PersonnelScreen() {
   const [cards, setCards] = useState<Record<string, EmployeeCard>>({});
   const [photoEmp, setPhotoEmp] = useState<Employee | null>(null);
   const [bonuses, setBonuses] = useState<EmployeeBonus[]>([]);
-  const [bonusForm, setBonusForm] = useState({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
+  const [bonusForm, setBonusForm] = useState<{ employee_id: string; type: string; amount: string | number; period: string; note: string }>({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
   const [settleEmp, setSettleEmp] = useState<Employee | null>(null);
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
-  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState<string | number>("");
   const [expenseNote, setExpenseNote] = useState("");
   const [msgEmp, setMsgEmp] = useState<Employee | null>(null);
   const [msgChannel, setMsgChannel] = useState<"sms" | "whatsapp">("sms");
@@ -2068,7 +2069,7 @@ export function PersonnelScreen() {
               ))}
             </Row>
             <Field label="Dönem" testID="bonus-period" value={bonusForm.period} onChangeText={(v) => setBonusForm({ ...bonusForm, period: v })} placeholder="YYYY-AA" />
-            <Field label="Tutar (₺)" testID="bonus-amount-input" value={bonusForm.amount} onChangeText={(v) => setBonusForm({ ...bonusForm, amount: v })} keyboardType="decimal-pad" />
+            <MoneyInput label="Tutar (₺)" testID="bonus-amount-input" value={bonusForm.amount} onChange={(n) => setBonusForm({ ...bonusForm, amount: n ?? "" })} />
             <GroupedSelect
               label="Ödeme kaynağı"
               testID="bonus-account-select"
@@ -2493,12 +2494,11 @@ export function PersonnelScreen() {
           keyboardType="decimal-pad"
           placeholder="Örn: 2,5"
         />
-        <Field
+        <MoneyInput
           label="Tutar (₺)"
           testID="emp-pay-overtime-edit-amount"
           value={otEditAmount}
-          onChangeText={setOtEditAmount}
-          keyboardType="decimal-pad"
+          onChange={(n) => setOtEditAmount(n ?? "")}
           placeholder="Fazla mesai ücreti"
         />
         <Field
@@ -2621,7 +2621,7 @@ export function PersonnelScreen() {
         onClose={() => setAdvanceEmp(null)}
         testID="advance-pay-sheet"
       >
-        <Field label="Tutar (₺)" testID="quick-pay-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
+        <MoneyInput label="Tutar (₺)" testID="quick-pay-amount" value={advanceAmount} onChange={(n) => setAdvanceAmount(n ?? "")} placeholder="Örn: 5000" />
         <Field label="Açıklama" testID="quick-pay-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="Örn: Maaş avansı" />
         <GroupedSelect
           label="Kasa / Banka / Ortak"
@@ -2641,12 +2641,11 @@ export function PersonnelScreen() {
         onClose={() => setAllowanceEmp(null)}
         testID="allowance-pay-sheet"
       >
-        <Field
+        <MoneyInput
           label="Tutar (₺)"
           testID="allowance-pay-amount"
           value={allowanceAmount}
-          onChangeText={setAllowanceAmount}
-          keyboardType="numeric"
+          onChange={(n) => setAllowanceAmount(n ?? "")}
           placeholder={allowanceKind === "meal" ? "Örn: 5000" : "Örn: 2500"}
         />
         <Field
@@ -2680,7 +2679,7 @@ export function PersonnelScreen() {
         onClose={() => setExpenseEmp(null)}
         testID="emp-expense-sheet"
       >
-        <Field label="Tutar (₺)" testID="emp-expense-amount" value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="numeric" />
+        <MoneyInput label="Tutar (₺)" testID="emp-expense-amount" value={expenseAmount} onChange={(n) => setExpenseAmount(n ?? "")} />
         <Field label="Açıklama" testID="emp-expense-note" value={expenseNote} onChangeText={setExpenseNote} placeholder="Personel masrafı" />
         <GroupedSelect
           label="Kasa / Banka / Ortak"
@@ -2899,12 +2898,11 @@ export function PersonnelScreen() {
           keyboardType="number-pad"
           placeholder="Örn: 6"
         />
-        <Field
+        <MoneyInput
           label="Yevmiye ücreti / gün"
           testID="yevmiye-days-wage"
           value={yevmiyeWage}
-          onChangeText={setYevmiyeWage}
-          keyboardType="decimal-pad"
+          onChange={(n) => setYevmiyeWage(n ?? "")}
           placeholder="Örn: 1500"
         />
         {parseYevmiyeDays(yevmiyeDays) && parseYevmiyeWage(yevmiyeWage) ? (
@@ -2986,12 +2984,11 @@ export function PersonnelScreen() {
             ? "Personel borcunu yazar — kalan alacaktan düşülür."
             : "Kalan alacak bakiyesini öder — personel alacağı düşer."}
         </Muted>
-        <Field
+        <MoneyInput
           label="Tutar (₺)"
           testID="emp-ledger-amount"
           value={ledgerAmount}
-          onChangeText={setLedgerAmount}
-          keyboardType="decimal-pad"
+          onChange={(n) => setLedgerAmount(n ?? "")}
           placeholder="Kalan bakiye"
         />
         <Field
@@ -3024,12 +3021,11 @@ export function PersonnelScreen() {
         onClose={() => setExtraEmp(null)}
         testID="extra-pay-sheet"
       >
-        <Field
+        <MoneyInput
           label="Tutar (₺)"
           testID="extra-pay-amount"
           value={extraAmount}
-          onChangeText={setExtraAmount}
-          keyboardType="numeric"
+          onChange={(n) => setExtraAmount(n ?? "")}
           placeholder={extraKind === "overtime" ? "Fazla mesai ücreti" : "Prim tutarı"}
         />
         <Field

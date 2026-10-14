@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { FileSpreadsheet, Loader2, Sparkles, X, Check, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { QuantityInput } from "./MoneyInput";
 
 /**
  * Shared AI cart / order-line upload (B2B portal + panel Yeni Sipariş).
@@ -97,7 +98,7 @@ export const AiCartUpload = ({
                 <label key={i} className={`flex items-center gap-3 p-2 rounded-lg border ${it.on ? "bg-emerald-50/50 border-emerald-200" : "bg-slate-50 border-slate-200 opacity-60"}`} data-testid={`${testIdPrefix}-item-${i}`}>
                   <input type="checkbox" checked={it.on} onChange={(e) => setRes({ ...res, items: res.items.map((x, j) => (j === i ? { ...x, on: e.target.checked } : x)) })} />
                   <div className="flex-1 min-w-0"><div className="font-semibold text-slate-800 truncate">{it.matched_name}</div><div className="text-[10px] text-slate-500 truncate">Listede: “{it.requested}” · eşleşme %{Math.round(it.confidence * 100)}{it.learned ? " · öğrenilen eşleme" : ""}</div></div>
-                  <input type="number" min={1} value={it.quantity} onChange={(e) => setRes({ ...res, items: res.items.map((x, j) => (j === i ? { ...x, quantity: Math.max(1, Number(e.target.value)) } : x)) })} className="w-16 border rounded-lg p-1 text-center font-bold" data-testid={`${testIdPrefix}-qty-${i}`} />
+                  <QuantityInput value={it.quantity} onChange={(n) => setRes({ ...res, items: res.items.map((x, j) => (j === i ? { ...x, quantity: Math.max(1, n ?? 0) } : x)) })} className="w-16 border rounded-lg p-1 text-center font-bold" data-testid={`${testIdPrefix}-qty-${i}`} />
                   {it.confidence < 0.8 && <AlertTriangle className="w-4 h-4 text-amber-500" title="Düşük eşleşme – kontrol edin" />}
                 </label>))}
               {res.unmatched.length > 0 && (

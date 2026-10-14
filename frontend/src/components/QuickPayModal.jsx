@@ -7,6 +7,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { notifyDataChanged } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -105,7 +106,7 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
           </div>
         ) : (<>
           {isExpense && <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Kategori</label><select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} className={inputCls} data-testid="quick-pay-category">{(cats.some((c) => c.name === f.category) ? cats : [{ name: f.category }, ...cats]).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select></div><div><label className="block font-semibold mb-1">Açıklama</label><input value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Örn: Şehir dışı yol" className={inputCls} data-testid="quick-pay-description" /></div></div>}
-          <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" min="1" required autoFocus value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={`${inputCls} font-bold`} data-testid="quick-pay-amount" /></div>
+          <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput required autoFocus value={f.amount} onChange={(n) => setF({ ...f, amount: n ?? "" })} className={`${inputCls} font-bold`} data-testid="quick-pay-amount" /></div>
           {!isExpense && <div><label className="block font-semibold mb-1">Açıklama</label><input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Örn: Maaş avansı" className={inputCls} /></div>}
         </>)}
         <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={f.account_id} onChange={(v) => setF({ ...f, account_id: v })} testId="quick-pay-account" emptyLabel={isExpense ? "Şimdi ödenmeyecek (borç olarak kaydet)" : "Hesap seçilmedi (sadece kayıt)"} className={inputCls} /></div>

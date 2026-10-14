@@ -18,10 +18,10 @@ export type ContactDraft = {
   location_url: string;
   latitude: string;
   longitude: string;
-  credit_limit: string;
+  credit_limit: string | number;
   payment_term_days: string;
   late_fee_rate: string;
-  default_discount: string;
+  default_discount: string | number;
   currency: string;
   payment_method: string;
   iban: string;
@@ -30,7 +30,7 @@ export type ContactDraft = {
   sales_rep: string;
   risk_status: string;
   b2b_enabled: boolean;
-  b2b_discount: string;
+  b2b_discount: string | number;
   b2b_login_email: string;
   b2b_password: string;
   sms_opt_in: boolean;
@@ -171,7 +171,7 @@ export function validateContactDraft(d: ContactDraft): string | null {
   return null;
 }
 
-function n(v: string): number {
+function n(v: string | number): number {
   const x = Number(String(v).replace(",", "."));
   return Number.isFinite(x) ? x : 0;
 }

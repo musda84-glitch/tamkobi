@@ -13,6 +13,7 @@ import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount, fmtDate } from "../utils/money";
+import { MoneyInput } from "../components/MoneyInput";
 import { expenseListDateLines, fmtDmyTime } from "../utils/dateFormat";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
 import { expenseDateRange } from "../utils/expenseDateRange";
@@ -204,7 +205,7 @@ const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: acc
           <div className="md:col-span-2"><label className="flex justify-between font-semibold mb-1">Kategori <button type="button" onClick={() => setNewCat(!newCat)} className="text-emerald-700 hover:underline">{newCat ? "listeden seç" : "+ yeni kategori"}</button></label>
             {newCat ? <input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} placeholder="Yeni kategori adı" className={inputCls} data-testid="exp-category-new" /> : <select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} className={inputCls} data-testid="exp-category">{categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select>}</div>
           <div className="col-span-2 md:col-span-3"><label className="block font-semibold mb-1">Açıklama *</label><input required value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Örn: Eylül ayı ofis kirası" className={inputCls} data-testid="exp-description" /></div>
-          <div><label className="block font-semibold mb-1">Tutar ({f.currency === "TRY" || !f.currency ? "₺" : f.currency})</label><input type="number" step="0.01" min="0.01" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={`${inputCls} font-bold`} data-testid="exp-amount" /></div>
+          <div><label className="block font-semibold mb-1">Tutar ({f.currency === "TRY" || !f.currency ? "₺" : f.currency})</label><MoneyInput required value={f.amount} onChange={(n) => setF({ ...f, amount: n ?? "" })} className={`${inputCls} font-bold`} data-testid="exp-amount" /></div>
           <div className="col-span-2"><FxPicker companyId={companyId} date={f.date} currency={f.currency} rate={f.fx_rate} source={f.fx_source} onChange={(p) => setF({ ...f, ...p })} testId="exp-fx" /></div>
           <div><label className="block font-semibold mb-1">KDV %</label><select value={f.vat_rate} onChange={(e) => setF({ ...f, vat_rate: e.target.value })} className={inputCls} data-testid="exp-vat-rate">{[0, 1, 10, 20].map((v) => <option key={v} value={v}>{`%${v}`}</option>)}</select></div>
           <div className="flex items-end"><label className="flex items-center gap-2 cursor-pointer bg-slate-50 border rounded-lg p-2 w-full"><input type="checkbox" checked={f.vat_included} onChange={(e) => setF({ ...f, vat_included: e.target.checked })} data-testid="exp-vat-included" /> Tutar KDV dahil</label></div>

@@ -3,6 +3,7 @@ import { Search, ArrowUpDown, X, CalendarDays } from "lucide-react";
 import { ExportButtons } from "./ExportButtons";
 import { InvoicesBulkMenu } from "./InvoicesBulkMenu";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { invoicesForDisplay } from "../utils/invoiceStatus";
 
@@ -109,8 +110,8 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
         <select value={f.preset} onChange={(e) => setPreset(e.target.value)} className={sel} data-testid="inv-date-preset">{PRESETS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         <input type="date" value={f.from} onChange={(e) => setF((s) => ({ ...s, from: e.target.value, preset: "" }))} className={sel} data-testid="inv-date-from" /><span className="text-slate-400">–</span>
         <input type="date" value={f.to} onChange={(e) => setF((s) => ({ ...s, to: e.target.value, preset: "" }))} className={sel} data-testid="inv-date-to" />
-        <input type="number" value={f.min} onChange={(e) => set("min", e.target.value)} placeholder="Min ₺" className={`${sel} w-24`} data-testid="inv-min" />
-        <input type="number" value={f.max} onChange={(e) => set("max", e.target.value)} placeholder="Max ₺" className={`${sel} w-24`} data-testid="inv-max" />
+        <MoneyInput value={f.min} onChange={(n) => set("min", n ?? "")} placeholder="Min ₺" className={`${sel} w-24`} data-testid="inv-min" />
+        <MoneyInput value={f.max} onChange={(n) => set("max", n ?? "")} placeholder="Max ₺" className={`${sel} w-24`} data-testid="inv-max" />
         {active > 0 && <button onClick={() => setF({ ...DEFAULT_FILTERS, sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
         <div className="ml-auto flex items-center gap-3 text-slate-500">
           {onBulkAction && <InvoicesBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}

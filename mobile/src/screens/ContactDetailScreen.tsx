@@ -12,6 +12,7 @@ import { type TabStripItem } from "../components/TabStrip";
 import { ChannelLogo } from "../components/ChannelLogo";
 import { ProjectCardsHost } from "../components/ProjectCard";
 import { ReceiptScanButtons } from "../components/ReceiptScanButtons";
+import { MoneyInput } from "../components/MoneyInput";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
@@ -63,7 +64,7 @@ import { applyReceiptDraft } from "../utils/receiptScan";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
 type PayMethod = "cash" | "cheque" | "promissory";
-type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string; description: string; method: PayMethod; due_date: string; serial_no: string };
+type PayForm = { type: "inflow" | "outflow"; amount: string | number; account_id: string; description: string; method: PayMethod; due_date: string; serial_no: string };
 type MsgChannel = "sms" | "email" | "whatsapp";
 type TabKey = "invoices" | "payments" | "installments" | "orders" | "quotes" | "projects" | "surveys" | "comm" | "cheques";
 type Aging = { total_remaining?: number; total_overdue?: number; total_late_fee?: number; rows?: { invoice_id?: string; invoice_number?: string; due_date?: string; remaining?: number; overdue_days?: number; late_fee?: number }[] };
@@ -126,7 +127,7 @@ export function ContactDetailScreen() {
   const [planOpen, setPlanOpen] = useState(false);
   const [plan, setPlan] = useState<PlanDraft>(emptyPlanDraft());
   const [planBusy, setPlanBusy] = useState(false);
-  const [instPay, setInstPay] = useState<{ row: Installment; amount: string; account_id: string } | null>(null);
+  const [instPay, setInstPay] = useState<{ row: Installment; amount: string | number; account_id: string } | null>(null);
   const [payEdit, setPayEdit] = useState<PaymentEdit | null>(null);
   const [termsOpen, setTermsOpen] = useState(false);
   const [terms, setTerms] = useState<TermsDraft>({ days: "0", late_fee_rate: "0", apply_to_open_invoices: true });
@@ -856,7 +857,7 @@ export function ContactDetailScreen() {
             onHint={(hint) => { setMessage(hint); setError(null); }}
             onError={(msg) => { setError(msg); setMessage(null); }}
           />
-          <Field label="Tutar" testID="collect-amount" value={payForm.amount} onChangeText={(v) => setPayForm({ ...payForm, amount: v })} keyboardType="decimal-pad" />
+          <MoneyInput label="Tutar" testID="collect-amount" value={payForm.amount} onChange={(n) => setPayForm({ ...payForm, amount: n ?? "" })} />
           <Field label="Açıklama" testID="collect-desc" value={payForm.description} onChangeText={(v) => setPayForm({ ...payForm, description: v })} />
           <PrimaryButton title="Kaydet" onPress={savePay} loading={payBusy} color={colors.primary} testID="collect-save" />
           <PrimaryButton title="Vazgeç" onPress={() => setPayForm(null)} testID="collect-cancel" />
@@ -946,7 +947,7 @@ export function ContactDetailScreen() {
           {payEdit ? (
             <Card testID="pay-edit-form">
               <Muted>Hareketi düzenle</Muted>
-              <Field label="Tutar" testID="pay-edit-amount" value={payEdit.amount} onChangeText={(v) => setPayEdit({ ...payEdit, amount: v })} keyboardType="decimal-pad" />
+              <MoneyInput label="Tutar" testID="pay-edit-amount" value={payEdit.amount} onChange={(n) => setPayEdit({ ...payEdit, amount: n ?? "" })} />
               <Field label="Tarih" testID="pay-edit-date" value={payEdit.date} onChangeText={(v) => setPayEdit({ ...payEdit, date: v })} placeholder="YYYY-AA-GG" />
               <Field label="Açıklama" testID="pay-edit-desc" value={payEdit.description} onChangeText={(v) => setPayEdit({ ...payEdit, description: v })} />
               <GroupedSelect
@@ -1061,7 +1062,7 @@ export function ContactDetailScreen() {
             <Card testID="installment-plan-form">
               <Muted>Açık bakiye {fmtMoney(Math.abs(bal))} için plan</Muted>
               <Field label="Taksit sayısı" testID="plan-count-input" value={plan.count} onChangeText={(v) => setPlan({ ...plan, count: v })} keyboardType="number-pad" />
-              <Field label="Peşinat (₺)" testID="plan-down-input" value={plan.down_payment} onChangeText={(v) => setPlan({ ...plan, down_payment: v })} keyboardType="decimal-pad" />
+              <MoneyInput label="Peşinat (₺)" testID="plan-down-input" value={plan.down_payment} onChange={(n) => setPlan({ ...plan, down_payment: n ?? "" })} />
               <Muted>Periyot</Muted>
               <Row style={{ flexWrap: "wrap" }}>
                 {PLAN_INTERVALS.map((i) => (
@@ -1080,7 +1081,7 @@ export function ContactDetailScreen() {
           {instPay ? (
             <Card testID="installment-pay-form">
               <Muted>{instPay.row.label || "Taksit"} · kalan {fmtMoney(remainingOf(instPay.row))}</Muted>
-              <Field label="Tutar" testID="inst-pay-amount" value={instPay.amount} onChangeText={(v) => setInstPay({ ...instPay, amount: v })} keyboardType="decimal-pad" />
+              <MoneyInput label="Tutar" testID="inst-pay-amount" value={instPay.amount} onChange={(n) => setInstPay({ ...instPay, amount: n ?? "" })} />
               <GroupedSelect
                 label="Kasa / banka / ortak"
                 testID="inst-pay-account"

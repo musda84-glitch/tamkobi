@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { readScaleOnce, scaleSupported } from "../utils/scaleBridge";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { formatTrAmount } from "../utils/money";
+import { QuantityInput } from "./MoneyInput";
 
 function money(n) {
   return formatTrAmount(Number(n || 0));
@@ -16,13 +17,17 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"];
  * Manuel tuş takımı + isteğe bağlı Web Serial tartı okuma.
  */
 export function ScalePromptModal({ product, initialKg = "", onCancel, onConfirm }) {
-  const [kg, setKg] = useState(String(initialKg || ""));
+  const [kg, setKg] = useState(() => {
+    if (initialKg === "" || initialKg == null) return "";
+    const n = typeof initialKg === "number" ? initialKg : Number(String(initialKg).replace(",", "."));
+    return Number.isFinite(n) ? n : "";
+  });
   const [reading, setReading] = useState(false);
   const inputRef = useRef(null);
   const unit = product?.unit || "Kg";
   const price = Number(product?.sale_price || 0);
-  const qty = Number(String(kg).replace(",", "."));
-  const valid = Number.isFinite(qty) && qty > 0;
+  const qty = typeof kg === "number" && Number.isFinite(kg) ? kg : 0;
+  const valid = qty > 0;
   const img = resolveImageUrl(product?.image_url);
 
   useEffect(() => {
@@ -31,17 +36,10 @@ export function ScalePromptModal({ product, initialKg = "", onCancel, onConfirm 
 
   const pushKey = (k) => {
     if (k === "⌫") {
-      setKg((s) => s.slice(0, -1));
+      inputRef.current?.backspace();
       return;
     }
-    if (k === ".") {
-      setKg((s) => (s.includes(".") || s.includes(",") ? s : `${s || "0"}.`));
-      return;
-    }
-    setKg((s) => {
-      if (s === "0") return k;
-      return `${s}${k}`;
-    });
+    inputRef.current?.push(k);
   };
 
   const readScale = async () => {
@@ -52,7 +50,11 @@ export function ScalePromptModal({ product, initialKg = "", onCancel, onConfirm 
     setReading(true);
     try {
       const w = await readScaleOnce({});
-      setKg(String(w));
+      const weight = typeof w === "number" ? w : Number(String(w).replace(",", "."));
+      if (Number.isFinite(weight)) {
+        setKg(weight);
+        inputRef.current?.setNumber(weight);
+      }
       toast.success(`Tartı: ${w} ${unit}`);
     } catch (err) {
       toast.error(err?.message || "Tartı okunamadı");
@@ -103,11 +105,11 @@ export function ScalePromptModal({ product, initialKg = "", onCancel, onConfirm 
 
           <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 px-4 py-5 text-center">
             <div className="text-[11px] uppercase tracking-wide font-semibold text-emerald-700 mb-1">Miktar ({unit})</div>
-            <input
+            <QuantityInput
               ref={inputRef}
               value={kg}
-              onChange={(e) => setKg(e.target.value.replace(/[^0-9.,]/g, ""))}
-              inputMode="decimal"
+              onChange={(n) => setKg(n ?? "")}
+              maxFractionDigits={3}
               placeholder="0.000"
               className="w-full text-center text-4xl font-black text-slate-900 bg-transparent outline-none"
               data-testid="pos-scale-kg-input"

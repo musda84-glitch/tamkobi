@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
+import { MoneyInput } from "../components/MoneyInput";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
@@ -1047,7 +1048,7 @@ export default function ProjectsPage({ section } = {}) {
               </div>
             )}
             {form.kind === "quote" && <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Geçerlilik</label><input type="date" value={form.valid_until} onChange={(e) => setForm({ ...form, valid_until: e.target.value })} className={inputCls} /></div></div>}
-            {form.kind === "project" && <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div><label className="block font-semibold mb-1">Bütçe (₺)</label><input type="number" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} className={inputCls} data-testid="pf-budget" /></div><div><label className="block font-semibold mb-1">Başlangıç</label><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Bitiş</label><input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className={inputCls} /></div></div>}
+            {form.kind === "project" && <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div><label className="block font-semibold mb-1">Bütçe (₺)</label><MoneyInput value={form.budget} onChange={(n) => setForm({ ...form, budget: n ?? "" })} className={inputCls} data-testid="pf-budget" /></div><div><label className="block font-semibold mb-1">Başlangıç</label><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Bitiş</label><input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className={inputCls} /></div></div>}
             {form.kind === "project" && (
               <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2" data-testid="pf-production-order-block">
                 <div className="flex items-center gap-1.5 font-bold text-slate-800">

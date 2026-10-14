@@ -8,6 +8,7 @@ import { Chip, confirmAction, n } from "../components/chips";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ExpenseScanButtons } from "../components/ExpenseScanButtons";
+import { MoneyInput } from "../components/MoneyInput";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import {
@@ -229,12 +230,11 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
           />
         ))}
       </Row>
-      <Field
+      <MoneyInput
         label={`Tutar (${moneySuffix(draft.currency)})`}
         testID="exp-amount"
         value={draft.amount}
-        onChangeText={(v) => set("amount", v)}
-        keyboardType="decimal-pad"
+        onChange={(n) => set("amount", n ?? "")}
         editable={canEdit}
         suffix={moneySuffix(draft.currency)}
       />

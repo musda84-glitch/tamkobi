@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { SearchSelect } from "./SearchSelect";
 import { computeLine, emptyLine, fmtMoney, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
+import { MoneyInput, QuantityInput } from "./MoneyInput";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
@@ -232,12 +233,12 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
                   return (
                   <tr key={i} data-testid={`ai-item-${i}`}>
                     <td className="py-1"><input value={it.name} onChange={(e) => setItem(i, "name", e.target.value)} className="w-full border rounded p-1.5" />{it.matched_product && <div className="text-[10px] text-emerald-700">↳ Stok kartı: {it.matched_product}</div>}</td>
-                    <td><input type="number" step="any" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
+                    <td><QuantityInput value={it.quantity} onChange={(n) => setItem(i, "quantity", n ?? "")} className="w-full border rounded p-1.5 text-right" /></td>
                     <td><input value={it.unit} onChange={(e) => setItem(i, "unit", e.target.value)} className="w-full border rounded p-1.5" /></td>
-                    <td><input type="number" step="any" value={it.unit_price} onChange={(e) => setItem(i, "unit_price", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
-                    <td><input type="number" step="any" value={Math.round((line.unit_price_incl || 0) * 10000) / 10000} onChange={(e) => setItem(i, "unit_price_incl", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
+                    <td><MoneyInput value={it.unit_price} onChange={(n) => setItem(i, "unit_price", n ?? "")} className="w-full border rounded p-1.5 text-right" /></td>
+                    <td><MoneyInput value={Math.round((line.unit_price_incl || 0) * 10000) / 10000} onChange={(n) => setItem(i, "unit_price_incl", n ?? "")} className="w-full border rounded p-1.5 text-right" /></td>
                     <td><select value={it.vat_rate} onChange={(e) => setItem(i, "vat_rate", e.target.value)} className="w-full border rounded p-1.5">{VAT_OPTIONS.map((v) => <option key={v} value={v}>%{v}</option>)}</select></td>
-                    <td><input type="number" step="any" value={it.discount_rate || 0} onChange={(e) => setItem(i, "discount_rate", e.target.value)} className="w-full border rounded p-1.5 text-right" /></td>
+                    <td><MoneyInput value={it.discount_rate || 0} onChange={(n) => setItem(i, "discount_rate", n ?? "")} className="w-full border rounded p-1.5 text-right" /></td>
                     <td className="text-right font-semibold">{fmt(line.total)}</td>
                     <td className="text-right font-bold">{fmt(line.total_incl)}</td>
                     <td><button type="button" onClick={() => rmItem(i)} className="p-1 text-rose-600" data-testid={`ai-item-rm-${i}`}><Trash2 className="w-3.5 h-3.5" /></button></td>

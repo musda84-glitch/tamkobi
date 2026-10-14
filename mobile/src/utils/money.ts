@@ -1,4 +1,5 @@
 import { fmtDmy } from "./calendar";
+import { parseTrNumber } from "./trMoneyInput";
 
 /** Same company price precision as the web panel (0–4, default 2 kuruş). */
 let priceDecimals = 2;
@@ -33,11 +34,10 @@ export function sanitizeMoneyInput(raw: string): string {
   return minus + (head || "") + sep + tail.join("").replace(/[^\d]/g, "");
 }
 
-export function parseMoneyInput(raw: string): number {
-  const s = sanitizeMoneyInput(raw).replace(",", ".");
-  if (!s || s === "-" || s === "." || s === "-.") return 0;
-  const x = Number(s);
-  return Number.isFinite(x) ? x : 0;
+export function parseMoneyInput(raw: unknown): number {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : 0;
+  const n = parseTrNumber(raw);
+  return n == null ? 0 : n;
 }
 
 export function formatMoneyInput(v: unknown, decimals = getPriceDecimals()): string {

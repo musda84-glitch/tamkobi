@@ -592,7 +592,7 @@ export function projectPayload(companyId: string, form: {
   name: string;
   contact_id: string;
   contact_name: string;
-  budget: string;
+  budget: string | number;
   start_date: string;
   end_date: string;
   notes: string;

@@ -5,6 +5,7 @@ import { Receipt, Users, Plus, Trash2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { MoneyInput } from "./MoneyInput";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 
@@ -98,7 +99,7 @@ export function ProjectExpenseModal({ project, companyId, onClose, onSaved }) {
           </div>
           <div>
             <label className="block font-semibold mb-1">Tutar (₺)</label>
-            <input type="number" step="0.01" min="0.01" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={`${inputCls} font-bold`} data-testid="proj-exp-amount" />
+            <MoneyInput required value={f.amount} onChange={(n) => setF({ ...f, amount: n ?? "" })} className={`${inputCls} font-bold`} data-testid="proj-exp-amount" />
           </div>
           <div>
             <label className="block font-semibold mb-1">KDV %</label>

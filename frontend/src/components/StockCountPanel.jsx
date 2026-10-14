@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { ScanButton } from "./CameraScanner";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { QuantityInput } from "./MoneyInput";
 
 export const StockCountPanel = ({ companyId, warehouses }) => {
   const [counts, setCounts] = useState([]);
@@ -132,7 +133,7 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
                       <td className="px-4 py-2"><div className="font-semibold text-slate-900">{i.product_name}</div><div className="font-mono text-slate-400">{i.sku}</div></td>
                       <td className="px-4 py-2 font-mono text-slate-600">{i.barcode}</td>
                       <td className="px-4 py-2 text-right font-semibold">{i.expected}</td>
-                      <td className="px-4 py-2 text-right">{active.status === "open" ? <input type="number" value={i.counted} onChange={(e) => setCounted(i, e.target.value)} className="w-20 text-right bg-slate-50 border border-slate-200 rounded-lg p-1 font-bold" data-testid={`count-input-${i.sku}`} /> : <b>{i.counted}</b>}</td>
+                      <td className="px-4 py-2 text-right">{active.status === "open" ? <QuantityInput value={i.counted} onChange={(n) => setCounted(i, n ?? "")} className="w-20 text-right bg-slate-50 border border-slate-200 rounded-lg p-1 font-bold" data-testid={`count-input-${i.sku}`} /> : <b>{i.counted}</b>}</td>
                       <td className={`px-4 py-2 text-right font-bold ${!i.scanned ? "text-slate-300" : diff === 0 ? "text-emerald-600" : "text-rose-600"}`}>{!i.scanned ? "—" : <span className="inline-flex items-center gap-1">{diff !== 0 && <AlertTriangle className="w-3 h-3" />}{diff > 0 ? "+" : ""}{diff}</span>}</td>
                     </tr>
                   ); })}

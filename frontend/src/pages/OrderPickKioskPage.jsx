@@ -11,6 +11,7 @@ import { PickLabelPrintHost } from "../components/PickLabelPrintHost";
 import { canMarkDeliveredFromPick } from "../utils/pickDeliver";
 import { pickLineNote } from "../utils/pickLineNote";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { QuantityInput } from "../components/MoneyInput";
 import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
@@ -397,16 +398,11 @@ export default function OrderPickKioskPage() {
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => bump(it, -1)} className="w-11 h-11 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
                 <div className="w-14 text-center">
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    min={0}
-                    max={it.ordered_qty}
+                  <QuantityInput
                     value={qtyDrafts[idx] ?? it.picked_qty}
                     disabled={busy}
                     onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
-                    onChange={(e) => setQtyDrafts((d) => ({ ...d, [idx]: e.target.value }))}
+                    onChange={(n) => setQtyDrafts((d) => ({ ...d, [idx]: n ?? "" }))}
                     onBlur={() => {
                       if (qtyCancelRef.current) {
                         qtyCancelRef.current = false;

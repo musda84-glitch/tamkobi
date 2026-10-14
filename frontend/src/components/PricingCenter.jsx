@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Calculator, Upload, Save, Loader2, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
@@ -40,8 +41,8 @@ export const PricingCenter = ({ companyId }) => {
           <label>Hedef kâr %<br /><input type="number" step="1" value={rule.margin_pct} onChange={(e) => setR("margin_pct", Number(e.target.value))} className={`${inp} w-20`} data-testid="rule-margin" /></label>
           <label>Kâr tabanı<br /><select value={rule.margin_base} onChange={(e) => setR("margin_base", e.target.value)} className={inp} data-testid="rule-base"><option value="cost">Maliyet üzerinden (kâr = maliyet × %)</option><option value="price">Satış fiyatı üzerinden (kâr = fiyat × %)</option></select></label>
           <label>Yuvarlama<br /><select value={rule.rounding} onChange={(e) => setR("rounding", e.target.value)} className={inp} data-testid="rule-rounding"><option value="0.90">…,90</option><option value="0.99">…,99</option><option value="1">Tam sayı</option><option value="5">5'in katı</option><option value="10">10'un katı</option><option value="none">Yok</option></select></label>
-          <label>Min fiyat<br /><input type="number" value={rule.min_price} onChange={(e) => setR("min_price", Number(e.target.value))} className={`${inp} w-24`} /></label>
-          <label>Max fiyat<br /><input type="number" value={rule.max_price} onChange={(e) => setR("max_price", Number(e.target.value))} className={`${inp} w-24`} /></label>
+          <label>Min fiyat<br /><MoneyInput value={rule.min_price} onChange={(n) => setR("min_price", n ?? 0)} className={`${inp} w-24`} /></label>
+          <label>Max fiyat<br /><MoneyInput value={rule.max_price} onChange={(n) => setR("max_price", n ?? 0)} className={`${inp} w-24`} /></label>
           <label>Liste fiyatı +%<br /><input type="number" value={rule.list_price_markup_pct} onChange={(e) => setR("list_price_markup_pct", Number(e.target.value))} className={`${inp} w-20`} title="İndirimli görünüm için üstü çizili liste fiyatı" /></label>
           <label className="flex items-center gap-1 pb-2"><input type="checkbox" checked={rule.include_service_fee} onChange={(e) => setR("include_service_fee", e.target.checked)} /> Hizmet bedeli dahil</label>
           <label className="flex items-center gap-1 pb-2"><input type="checkbox" checked={rule.include_cargo} onChange={(e) => setR("include_cargo", e.target.checked)} /> Kargo bedeli dahil</label>

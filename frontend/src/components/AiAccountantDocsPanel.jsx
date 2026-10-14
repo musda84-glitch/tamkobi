@@ -13,6 +13,7 @@ import { ACCOUNTANT_AI_KINDS, accountantAiKindById, guessAccountantDocKind } fro
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { notifyDataChanged } from "../utils/dataRefresh";
 import { AiInvoiceImportModal } from "./AiInvoiceImportModal";
+import { MoneyInput } from "./MoneyInput";
 import { CardStatementImport } from "./CardStatementImport";
 import { SearchSelect } from "./SearchSelect";
 
@@ -263,14 +264,14 @@ function ReviewModal({ review, contacts, companyId, onClose, onSaved }) {
               <div><label className="block font-semibold mb-1">Yön</label><select value={f.direction} onChange={(e) => setF({ ...f, direction: e.target.value })} className={inputCls}><option value="received">Alınan</option><option value="issued">Verilen</option></select></div>
               <div><label className="block font-semibold mb-1">Tür</label><select value={f.instrument} onChange={(e) => setF({ ...f, instrument: e.target.value })} className={inputCls}><option value="cheque">Çek</option><option value="promissory">Senet</option></select></div>
               <div className="col-span-2"><label className="block font-semibold mb-1">Cari</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.tax_number_or_id} placeholder="Cari ara…" onChange={(id) => setF({ ...f, contact_id: id })} testId="acc-ai-cheque-contact" /></div>
-              <div><label className="block font-semibold mb-1">Tutar</label><input type="number" step="0.01" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={inputCls} data-testid="acc-ai-cheque-amount" /></div>
+              <div><label className="block font-semibold mb-1">Tutar</label><MoneyInput required value={f.amount} onChange={(n) => setF({ ...f, amount: n ?? "" })} className={inputCls} data-testid="acc-ai-cheque-amount" /></div>
               <div><label className="block font-semibold mb-1">Vade</label><input type="date" required value={f.due_date} onChange={(e) => setF({ ...f, due_date: e.target.value })} className={inputCls} /></div>
               <div className="col-span-2"><label className="block font-semibold mb-1">Çek no / banka</label><input value={f.serial_no} onChange={(e) => setF({ ...f, serial_no: e.target.value })} placeholder="Seri no" className={inputCls} /><input value={f.bank_name} onChange={(e) => setF({ ...f, bank_name: e.target.value })} placeholder="Banka" className={`${inputCls} mt-1`} /></div>
             </>
           ) : (
             <>
               <div><label className="block font-semibold mb-1">Tarih</label><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} className={inputCls} /></div>
-              <div><label className="block font-semibold mb-1">Tutar</label><input type="number" step="0.01" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} className={inputCls} data-testid="acc-ai-exp-amount" /></div>
+              <div><label className="block font-semibold mb-1">Tutar</label><MoneyInput required value={f.amount} onChange={(n) => setF({ ...f, amount: n ?? "" })} className={inputCls} data-testid="acc-ai-exp-amount" /></div>
               <div className="col-span-2"><label className="block font-semibold mb-1">Açıklama</label><input required value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} className={inputCls} data-testid="acc-ai-exp-desc" /></div>
               <div><label className="block font-semibold mb-1">KDV %</label><select value={f.vat_rate} onChange={(e) => setF({ ...f, vat_rate: e.target.value })} className={inputCls}><option value={0}>%0</option><option value={1}>%1</option><option value={10}>%10</option><option value={20}>%20</option></select></div>
               <div className="flex items-end"><label className="flex items-center gap-2 text-[11px]"><input type="checkbox" checked={f.vat_included} onChange={(e) => setF({ ...f, vat_included: e.target.checked })} /> KDV dahil</label></div>

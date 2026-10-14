@@ -8,6 +8,7 @@ import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip } from "../components/chips";
 import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { QuantityInput } from "../components/MoneyInput";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -40,7 +41,7 @@ export function ProductionScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [orderOpen, setOrderOpen] = useState(false);
   const [recipeId, setRecipeId] = useState("");
-  const [qty, setQty] = useState("1");
+  const [qty, setQty] = useState<string | number>("1");
   const [planDate, setPlanDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
   const [req, setReq] = useState<Requirements | null>(null);
@@ -373,15 +374,14 @@ export function ProductionScreen() {
           groups={recipeGroups}
           emptyLabel="Reçete seçin…"
         />
-        <Field
+        <QuantityInput
           label="Miktar"
           testID="prod-order-qty"
           value={qty}
-          onChangeText={(v) => {
-            setQty(v);
-            loadRequirements(recipeId, Number(String(v).replace(",", ".")) || 0);
+          onChange={(n) => {
+            setQty(n ?? "");
+            loadRequirements(recipeId, n || 0);
           }}
-          keyboardType="decimal-pad"
         />
         <DateField label="Planlanan tarih" testID="prod-order-date" value={planDate} onChangeText={setPlanDate} />
         <Field label="Not" testID="prod-order-notes" value={notes} onChangeText={setNotes} placeholder="Operatör, vardiya…" />

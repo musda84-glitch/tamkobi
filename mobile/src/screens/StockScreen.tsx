@@ -6,6 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { QuantityInput } from "../components/MoneyInput";
 import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { ProductThumb } from "../components/ProductThumb";
@@ -36,7 +37,7 @@ export function StockScreen() {
   const [cat, setCat] = useState("all");
   const [scan, setScan] = useState(false);
   const [hit, setHit] = useState<Product | null>(null);
-  const [saleQty, setSaleQty] = useState("1");
+  const [saleQty, setSaleQty] = useState<string | number>("1");
   const [saleBusy, setSaleBusy] = useState(false);
   const [saleMsg, setSaleMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -227,12 +228,11 @@ export function StockScreen() {
         {saleMsg ? <Muted testID="stock-retail-msg">{saleMsg}</Muted> : null}
         {hit && canInvoice ? (
           <View style={{ gap: 8, marginBottom: 8 }} testID="stock-retail-sale">
-            <Field
+            <QuantityInput
               label="Perakende adet"
               testID="stock-retail-qty"
               value={saleQty}
-              onChangeText={setSaleQty}
-              keyboardType="decimal-pad"
+              onChange={(n) => setSaleQty(n ?? "")}
             />
             <PrimaryButton
               title={saleBusy ? "Satılıyor…" : "Perakende satış yap"}

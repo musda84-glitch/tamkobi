@@ -11,6 +11,7 @@ import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { PromissoryPrint } from "../components/PromissoryPrint";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { MoneyInput } from "../components/MoneyInput";
 import { compressImageFile } from "../utils/compressImage";
 import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeScanHint } from "../utils/chequeScan";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -149,7 +150,7 @@ const ChequeModal = ({ companyId, onClose, onSaved }) => {
           </div>
           <div>
             <label className="block font-semibold mb-1">Tutar (₺)</label>
-            <input type="number" step="0.01" min="0.01" required value={d.amount} onChange={(e) => setD({ ...d, amount: e.target.value })} className={`${inputCls} font-bold`} data-testid="cheque-amount" />
+            <MoneyInput required value={d.amount} onChange={(n) => setD({ ...d, amount: n ?? "" })} className={`${inputCls} font-bold`} data-testid="cheque-amount" />
           </div>
           <div>
             <label className="block font-semibold mb-1">Çek / Senet No</label>

@@ -13,6 +13,7 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { formatTrQty } from "../utils/money";
+import { QuantityInput } from "../components/MoneyInput";
 import { useLivePoll } from "../hooks/useLivePoll";
 
 const woId = (w) => String(w?.id || w?._id || "");
@@ -584,9 +585,9 @@ export default function ShopFloorPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold mb-1">Üretilen ({plan.unit})</label>
-                <input type="number" min="0" step="any" value={fin.produced_qty} onChange={(e) => setFin({ ...fin, produced_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center" data-testid="wo-finish-produced" />
+                <QuantityInput value={fin.produced_qty} onChange={(n) => setFin({ ...fin, produced_qty: n ?? "" })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center" data-testid="wo-finish-produced" />
               </div>
-              <div><label className="block text-xs font-semibold mb-1">Fire / Hatalı</label><input type="number" min="0" step="any" value={fin.scrap_qty} onChange={(e) => setFin({ ...fin, scrap_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center text-rose-600" data-testid="wo-finish-scrap" /></div>
+              <div><label className="block text-xs font-semibold mb-1">Fire / Hatalı</label><QuantityInput value={fin.scrap_qty} onChange={(n) => setFin({ ...fin, scrap_qty: n ?? "" })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center text-rose-600" data-testid="wo-finish-scrap" /></div>
             </div>
             {overPlan && (
               <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="wo-finish-over-hint">

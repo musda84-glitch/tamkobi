@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { RefreshCw, Save, Coins } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { FX_CODES, fmtMoney } from "./FxPicker";
+import { MoneyInput } from "./MoneyInput";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono";
 
@@ -66,7 +67,7 @@ export const FxRatesPanel = ({ companyId }) => {
             <tr key={code} data-testid={`fx-row-${code}`}>
               <td className="py-2 font-bold text-slate-800">{code}</td>
               <td className="py-2 text-right text-slate-500">{row.buying != null ? fmtMoney(row.buying) : "—"}</td>
-              <td className="py-2 text-right"><input type="number" step="0.0001" min="0" value={val} onChange={(e) => setDraft({ ...draft, [code]: e.target.value })} className={inputCls + " text-right w-32 ml-auto"} data-testid={`fx-input-${code}`} /></td>
+              <td className="py-2 text-right"><MoneyInput maxFractionDigits={6} value={val} onChange={(n) => setDraft({ ...draft, [code]: n ?? "" })} className={inputCls + " text-right w-32 ml-auto"} data-testid={`fx-input-${code}`} /></td>
               <td className="py-2 pl-3 text-slate-500">{row.source === "manual" ? "Manuel" : row.source === "tcmb" ? "TCMB" : row.source === "kuveyt" ? "Kuveyt" : "—"}</td>
               <td className="py-2 text-right"><button type="button" onClick={() => saveRow(code)} disabled={busy === code} className="px-2 py-1 border rounded-lg font-semibold inline-flex items-center gap-1" data-testid={`fx-save-${code}`}><Save className="w-3 h-3" /> Kaydet</button></td>
             </tr>

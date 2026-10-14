@@ -1199,16 +1199,16 @@ export type EmployeeDraft = {
   position: string;
   phone: string;
   email: string;
-  salary: string;
+  salary: string | number;
   start_date: string;
   pay_type: "monthly" | "daily";
-  daily_wage: string;
+  daily_wage: string | number;
   sgk_number: string;
   sgk_insured: boolean;
-  official_salary: string;
+  official_salary: string | number;
   iban: string;
-  meal_allowance: string;
-  transport_allowance: string;
+  meal_allowance: string | number;
+  transport_allowance: string | number;
   birth_date: string;
   address: string;
   emergency_contact: string;
@@ -1557,8 +1557,8 @@ export function validateEmployee(d: EmployeeDraft): string | null {
   return null;
 }
 
-function num(v: string): number {
-  const n = Number(String(v).replace(",", "."));
+function num(v: string | number): number {
+  const n = Number(String(v ?? "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -1676,13 +1676,13 @@ export function validateYevmiyeDays(raw: string): string | null {
   return parseYevmiyeDays(raw) == null ? "1–31 arası gün sayısı girin." : null;
 }
 
-export function parseYevmiyeWage(raw: string): number | null {
+export function parseYevmiyeWage(raw: string | number): number | null {
   const n = Number(String(raw || "").trim().replace(",", "."));
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.round(n * 100) / 100;
 }
 
-export function validateYevmiyeWage(raw: string): string | null {
+export function validateYevmiyeWage(raw: string | number): string | null {
   return parseYevmiyeWage(raw) == null ? "Yevmiye ücreti girin." : null;
 }
 
@@ -1699,7 +1699,7 @@ export function yevmiyePayPayload(
   period: string,
   accountId: string,
   note: string,
-  wageRaw = "",
+  wageRaw: string | number = "",
 ) {
   const days = parseYevmiyeDays(daysRaw) || 0;
   const wage = parseYevmiyeWage(wageRaw) ?? (Number(emp?.daily_wage) || 0);
@@ -1964,7 +1964,7 @@ export function overtimeAmountFromHours(hours: number, rate: number): number {
   return Math.round(hours * rate * 100) / 100;
 }
 
-export function validateOvertimeEdit(hours: string, amount: string): string | null {
+export function validateOvertimeEdit(hours: string, amount: string | number): string | null {
   const h = num(hours);
   const a = num(amount);
   if (!(a > 0) && !(h > 0)) return "Mesai saati veya tutar girin.";
@@ -1988,7 +1988,7 @@ export function overtimeApprovePayload(employeeId: string, ot: CalculatedOvertim
 export function overtimeEditPayload(
   employeeId: string,
   hours: string,
-  amount: string,
+  amount: string | number,
   period: string,
   note: string,
 ) {
@@ -2094,12 +2094,12 @@ export function employeePayButtonLabel(emp?: { balance?: EmployeeBalance | null 
   return `Öde · ${fmtMoney(due)}`;
 }
 
-export function validateAdvance(amount: string): string | null {
+export function validateAdvance(amount: string | number): string | null {
   if (!(num(amount) > 0)) return "Avans tutarı girin.";
   return null;
 }
 
-export function advanceRequestPayload(amount: string, note: string, period: string) {
+export function advanceRequestPayload(amount: string | number, note: string, period: string) {
   return {
     amount: num(amount),
     note: note.trim(),
@@ -2107,7 +2107,7 @@ export function advanceRequestPayload(amount: string, note: string, period: stri
   };
 }
 
-export function advancePayload(employeeId: string, amount: string, period: string, accountId: string, note: string) {
+export function advancePayload(employeeId: string, amount: string | number, period: string, accountId: string, note: string) {
   return {
     employee_id: employeeId,
     type: "advance" as const,
@@ -2121,7 +2121,7 @@ export function advancePayload(employeeId: string, amount: string, period: strin
 export function bonusPayPayload(
   employeeId: string,
   kind: "bonus" | "overtime",
-  amount: string,
+  amount: string | number,
   period: string,
   accountId: string,
   note: string,
@@ -2142,7 +2142,7 @@ export type LedgerSide = "alacak" | "borc";
 export function ledgerPayPayload(
   employeeId: string,
   side: LedgerSide,
-  amount: string,
+  amount: string | number,
   period: string,
   accountId: string,
   note: string,
@@ -2475,7 +2475,7 @@ export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | 
 export function personnelExpensePayload(
   employeeId: string,
   kind: "meal" | "transport" | "expense",
-  amount: string,
+  amount: string | number,
   accountId: string,
   note: string,
   companyId: string,
@@ -2509,7 +2509,7 @@ export const COMPANY_BONUS_TYPES = [
 export function companyBonusPayload(
   employeeId: string,
   type: string,
-  amount: string,
+  amount: string | number,
   period: string,
   accountId: string,
   note: string,

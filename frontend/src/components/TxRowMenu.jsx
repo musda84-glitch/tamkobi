@@ -8,6 +8,7 @@ import { API_URL } from "../context/AuthContext";
 import { ReceiptPrint } from "./ReceiptPrint";
 import { BankMatchModal } from "./BankMatchModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { MoneyInput } from "./MoneyInput";
 
 export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
 
@@ -251,7 +252,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
             </div>
             <div>
               <label className="block font-semibold mb-1">Tutar (₺)</label>
-              <input type="number" step="0.01" min="0.01" value={editTx.amount} onChange={(e) => setEditTx({ ...editTx, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="tx-edit-amount" />
+              <MoneyInput value={editTx.amount} onChange={(n) => setEditTx({ ...editTx, amount: n ?? "" })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="tx-edit-amount" />
             </div>
             <div>
               <label className="block font-semibold mb-1">Kategori</label>

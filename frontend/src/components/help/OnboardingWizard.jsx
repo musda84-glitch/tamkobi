@@ -5,6 +5,7 @@ import { Check, ChevronRight, ImagePlus, Loader2, X } from "lucide-react";
 import { API_URL, useAuth } from "../../context/AuthContext";
 import { useHelp } from "../../context/HelpContext";
 import { ONBOARDING_STEPS, firstRemainingIndex, invoiceLineTotals, progressLabel } from "../../help/onboarding";
+import { MoneyInput, QuantityInput } from "../MoneyInput";
 
 const inputCls = "w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400/40";
 
@@ -331,7 +332,7 @@ export function OnboardingWizard() {
           <label className="text-xs font-semibold block">Ürün adı<input required className={inputCls} value={product.name} onChange={(e) => setProduct({ ...product, name: e.target.value })} data-testid="onb-product-name" /></label>
           <label className="text-xs font-semibold block">SKU (boşsa üretilir)<input className={inputCls} value={product.sku} onChange={(e) => setProduct({ ...product, sku: e.target.value })} /></label>
           <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs font-semibold">Satış fiyatı<input type="number" step="0.01" className={inputCls} value={product.sale_price} onChange={(e) => setProduct({ ...product, sale_price: e.target.value })} /></label>
+            <label className="text-xs font-semibold">Satış fiyatı<MoneyInput className={inputCls} value={product.sale_price} onChange={(n) => setProduct({ ...product, sale_price: n ?? "" })} /></label>
             <label className="text-xs font-semibold">KDV %<input type="number" className={inputCls} value={product.vat_rate} onChange={(e) => setProduct({ ...product, vat_rate: e.target.value })} /></label>
           </div>
           <button type="submit" disabled={busy} className="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold disabled:opacity-60" data-testid="onb-product-save">Ürünü oluştur</button>
@@ -353,8 +354,8 @@ export function OnboardingWizard() {
           </select>
         </label>
         <div className="grid grid-cols-3 gap-2">
-          <label className="text-xs font-semibold">Miktar<input type="number" className={inputCls} value={invoice.quantity} onChange={(e) => setInvoice({ ...invoice, quantity: e.target.value })} /></label>
-          <label className="text-xs font-semibold">Birim fiyat<input type="number" step="0.01" className={inputCls} value={invoice.unit_price} onChange={(e) => setInvoice({ ...invoice, unit_price: e.target.value })} /></label>
+          <label className="text-xs font-semibold">Miktar<QuantityInput className={inputCls} value={invoice.quantity} onChange={(n) => setInvoice({ ...invoice, quantity: n ?? "" })} /></label>
+          <label className="text-xs font-semibold">Birim fiyat<MoneyInput className={inputCls} value={invoice.unit_price} onChange={(n) => setInvoice({ ...invoice, unit_price: n ?? "" })} /></label>
           <label className="text-xs font-semibold">KDV %<input type="number" className={inputCls} value={invoice.vat_rate} onChange={(e) => setInvoice({ ...invoice, vat_rate: e.target.value })} /></label>
         </div>
         <button type="submit" disabled={busy} className="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold disabled:opacity-60" data-testid="onb-invoice-save">Taslak fatura oluştur</button>
