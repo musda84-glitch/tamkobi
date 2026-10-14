@@ -152,6 +152,7 @@ const UserTab = ({ card, reload, onResetData }) => {
           </select>
           {roleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" /> : null}
         </div>
+        <p className="text-[10px] text-slate-500" data-testid="emp-role-portal-hint">Atölye, sipariş toplama, stok sayımı ve diğer saha ekranları bu rolün Ayarlar → Roller iznine bağlıdır. Varsayılan kapalıdır.</p>
         <div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div>
         <div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
         <div className="text-slate-500 pt-1">Şifre ve aktif/pasif için Firma Ayarları → Kullanıcılar & Roller.</div>

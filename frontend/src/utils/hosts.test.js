@@ -93,6 +93,10 @@ describe("pathAllowedOnHost / preferredHostForPath", () => {
     expect(preferredHostForPath("/mesai")).toBe("ik");
     expect(pathAllowedOnHost("/personelim", "ik")).toBe(true);
     expect(pathAllowedOnHost("/personelim", "app")).toBe(false);
+    expect(pathAllowedOnHost("/atolye", "ik")).toBe(true);
+    expect(pathAllowedOnHost("/sevk", "ik")).toBe(true);
+    expect(pathAllowedOnHost("/sayim", "ik")).toBe(true);
+    expect(pathAllowedOnHost("/saha", "ik")).toBe(true);
   });
 });
 

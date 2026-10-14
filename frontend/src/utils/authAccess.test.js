@@ -39,6 +39,19 @@ describe("authAccess fail-closed", () => {
     expect(authPermPath("/orders")).toBe("/orders");
   });
 
+  test("portal field features are off until granted, including for personel with module edit", () => {
+    const personel = { role: "personel", permissions: { "/atolye": "edit", "/sayim": "none", "/sevk": "none" }, features: {} };
+    expect(canAccessPath(personel, "/atolye")).toBe(false);
+    expect(canAccessPath(personel, "/sayim")).toBe(false);
+    expect(canAccessPath(personel, "/sevk", "edit")).toBe(false);
+    expect(canAccessPath({ ...personel, features: { portal_atolye: true, portal_sayim: true } }, "/atolye", "edit")).toBe(true);
+    expect(canAccessPath({ ...personel, features: { portal_sayim: true } }, "/sayim")).toBe(true);
+    const warehouse = { role: "warehouse", permissions: { "/sayim": "edit" }, features: {} };
+    expect(canAccessPath(warehouse, "/sayim", "edit")).toBe(true);
+    expect(isFeatureEnabled(personel, "portal_pick")).toBe(false);
+    expect(isFeatureEnabled({ role: "admin" }, "portal_atolye")).toBe(true);
+  });
+
   test("feature / module / addon fail closed without user", () => {
     expect(isFeatureEnabled(null, "header_invoice")).toBe(false);
     expect(isFeatureEnabled({ role: "personel", features: { account_companies: false } }, "account_companies")).toBe(false);
