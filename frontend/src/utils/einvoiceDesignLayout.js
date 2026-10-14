@@ -740,6 +740,20 @@ function xsltMoney(path) {
   return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,00', 'tr')"/></xsl:if>`;
 }
 
+function xsltQty(path) {
+  return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,##', 'tr')"/></xsl:if>`;
+}
+
+/** Başlık ve logo: e-Arşiv yalnızca ProfileID=EARSIVFATURA iken. */
+function xsltDocTitleInner(R) {
+  if (R.dispatch) return `<xsl:text>e-İrsaliye</xsl:text>`;
+  return `<xsl:choose><xsl:when test="${R.root}/cbc:ProfileID='EARSIVFATURA'"><xsl:text>e-Arşiv Fatura</xsl:text></xsl:when><xsl:otherwise><xsl:text>e-Fatura</xsl:text></xsl:otherwise></xsl:choose>`;
+}
+
+function xsltDocTitle(R) {
+  return `<div class="inv-doc-title">${xsltDocTitleInner(R)}</div>`;
+}
+
 function xsltMoneyWithCurrency(path, root = "/n1:Invoice") {
   return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,00', 'tr')"/>${xsltCurrencySuffix(path, root)}</xsl:if>`;
 }
@@ -790,11 +804,13 @@ function xsltIbanBlock(L, R) {
       </div>`;
   }
   return `
+      <xsl:if test="normalize-space(${payeeId})!=''">
       <div class="inv-iban">
         <div class="inv-k">${title}</div>
         <div><xsl:value-of select="${payeeId}"/></div>
         <div><xsl:value-of select="${payeeName}"/></div>
-      </div>`;
+      </div>
+      </xsl:if>`;
 }
 
 function lineColXslt(R) {
@@ -809,7 +825,7 @@ function lineColXslt(R) {
       align: "left",
       td: `<td><xsl:value-of select="cac:Item/cac:StandardItemIdentification/cbc:ID"/><xsl:if test="not(cac:Item/cac:StandardItemIdentification/cbc:ID)"><xsl:value-of select="cac:Item/cac:AdditionalItemIdentification/cbc:ID"/></xsl:if></td>`,
     },
-    qty: { align: "right", td: `<td align="right"><xsl:value-of select="${q}"/></td>` },
+    qty: { align: "right", td: `<td align="right">${xsltQty(q)}</td>` },
     unit: { align: "left", nowrap: true, td: `<td class="inv-nowrap" style="white-space:nowrap">${unit()}</td>` },
     net_price: {
       align: "right",
@@ -818,9 +834,9 @@ function lineColXslt(R) {
     price: { align: "right", td: `<td align="right">${xsltMoney("cac:Price/cbc:PriceAmount")}</td>` },
     discount: {
       align: "right",
-      td: `<td align="right"><xsl:choose><xsl:when test="cac:AllowanceCharge/cbc:MultiplierFactorNumeric">%<xsl:value-of select="cac:AllowanceCharge/cbc:MultiplierFactorNumeric * 100"/></xsl:when><xsl:otherwise><xsl:value-of select="cac:AllowanceCharge[cbc:ChargeIndicator='false']/cbc:Amount"/></xsl:otherwise></xsl:choose></td>`,
+      td: `<td align="right"><xsl:choose><xsl:when test="cac:AllowanceCharge/cbc:MultiplierFactorNumeric">%<xsl:value-of select="format-number(cac:AllowanceCharge/cbc:MultiplierFactorNumeric * 100, '#.##0,##', 'tr')"/></xsl:when><xsl:otherwise>${xsltMoney("cac:AllowanceCharge[cbc:ChargeIndicator='false']/cbc:Amount")}</xsl:otherwise></xsl:choose></td>`,
     },
-    vat: { align: "right", td: `<td align="right">%<xsl:value-of select="cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent"/></td>` },
+    vat: { align: "right", td: `<td align="right">%<xsl:value-of select="cac:TaxTotal/cac:TaxSubtotal/cbc:Percent"/></td>` },
     vat_amount: {
       align: "right",
       nowrap: true,
@@ -849,7 +865,7 @@ function xsltLineTable(L, R) {
       return `<xsl:if test="${descTest}"><td><xsl:value-of select="cbc:Note"/><xsl:if test="not(normalize-space(cbc:Note))"><xsl:value-of select="cac:Item/cbc:Description"/></xsl:if></td></xsl:if>`;
     }
     if (c.id === "qty" && !unitOn) {
-      return `<td align="right" style="white-space:nowrap"><xsl:value-of select="${R.qty}"/><xsl:if test="${R.qty}/@unitCode!=''"><xsl:text> </xsl:text>${xsltUnitLabel(`${R.qty}/@unitCode`)}</xsl:if></td>`;
+      return `<td align="right" style="white-space:nowrap">${xsltQty(R.qty)}<xsl:if test="${R.qty}/@unitCode!=''"><xsl:text> </xsl:text>${xsltUnitLabel(`${R.qty}/@unitCode`)}</xsl:if></td>`;
     }
     return cells[c.id]?.td || `<td/>`;
   }).join("");
@@ -938,18 +954,26 @@ function xsltGibSeal(kind) {
       </div>`;
 }
 
-function xsltLogoCluster(L) {
+function xsltLogoAlt(R) {
+  return `<xsl:attribute name="alt">${xsltDocTitleInner(R)}</xsl:attribute>`;
+}
+
+function xsltLogoCluster(L, R) {
   const logoH = asLogoSize(L.logoSize);
   const logoSrc = gibSafeLogoSrc(L.logo);
   const embedded = logoSrc
-    ? `<xsl:otherwise><img alt="logo" height="${logoH}" src="${xmlEscape(logoSrc)}" style="height:${logoH}px;width:auto;border:0;"/></xsl:otherwise>`
+    ? `<xsl:otherwise><img height="${logoH}" src="${xmlEscape(logoSrc)}" style="height:${logoH}px;width:auto;border:0;">${xsltLogoAlt(R)}</img></xsl:otherwise>`
     : "";
-  return `<xsl:choose><xsl:when test="$IsLogoExists='true'"><img alt="Firma Logo" style="height:${logoH}px;width:auto;border:0;" src="data:image/jpeg;base64,firmaLogoImageString"/></xsl:when>${embedded}</xsl:choose><xsl:if test="$IsEimzaLogoExists='true'"><img style="width:91px;" align="bottom" alt="E-Imza Logo" src="data:image/jpeg;base64,firmaImzaImageString"/></xsl:if>`;
+  return `<xsl:choose><xsl:when test="$IsLogoExists='true'"><img style="height:${logoH}px;width:auto;border:0;" src="data:image/jpeg;base64,firmaLogoImageString">${xsltLogoAlt(R)}</img></xsl:when>${embedded}</xsl:choose><xsl:if test="$IsEimzaLogoExists='true'"><img style="width:91px;" align="bottom" alt="E-Imza Logo" src="data:image/jpeg;base64,firmaImzaImageString"/></xsl:if>${xsltDocTitle(R)}`;
 }
 
-function xsltQrImg(L) {
+function xsltQrImg(L, R) {
   const size = asQrSize(L.qrSize);
-  return `<img style="height:${size}px;width:${size}px;" alt="QrCode" src="data:image/jpeg;base64,qrCodeImageString"/>`;
+  const style = `height:${size}px;width:${size}px;`;
+  const bin = `${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='QRCODE' or cbc:DocumentType='KAREKOD' or cbc:DocumentType='QR' or cbc:DocumentTypeCode='QRCODE' or cbc:DocumentTypeCode='KAREKOD']/cac:Attachment/cbc:EmbeddedDocumentBinaryObject`;
+  // XSLT 1.0 QR bitmap üretemez. XML'de gömülü görsel varsa onu bas; yoksa İşNet'in
+  // render anında değiştirdiği yer tutucu kalır. UBL üretimi aynı alanlarla PNG ekler.
+  return `<xsl:choose><xsl:when test="normalize-space(${bin})!=''"><img style="${style}" alt="QrCode"><xsl:attribute name="src"><xsl:text>data:</xsl:text><xsl:choose><xsl:when test="${bin}/@mimeCode!=''"><xsl:value-of select="${bin}/@mimeCode"/></xsl:when><xsl:otherwise><xsl:text>image/png</xsl:text></xsl:otherwise></xsl:choose><xsl:text>;base64,</xsl:text><xsl:value-of select="${bin}"/></xsl:attribute></img></xsl:when><xsl:otherwise><img style="${style}" alt="QrCode" src="data:image/jpeg;base64,qrCodeImageString"/></xsl:otherwise></xsl:choose>`;
 }
 
 function xsltBlocks(L, R) {
@@ -969,8 +993,8 @@ function xsltBlocks(L, R) {
   }).join("");
   const supplier = xsltPartyBox("supplier", R);
   const customer = xsltPartyBox("customer", R);
-  const logo = xsltLogoCluster(L);
-  const qr = xsltQrImg(L);
+  const logo = xsltLogoCluster(L, R);
+  const qr = xsltQrImg(L, R);
 
   return {
     header: classic ? `
@@ -1007,6 +1031,7 @@ function xsltBlocks(L, R) {
     notes: xsltNotesBlock(L, R),
     iban: xsltIbanBlock(L, R),
     balance: `
+      <xsl:if test="normalize-space(${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='BAKIYE' or cbc:DocumentType='CARI_BAKIYE' or cbc:DocumentTypeCode='BAKIYE']/cbc:ID)!=''">
       <div class="inv-balance">
         <div>
           <div class="inv-k">Güncel bakiye</div>
@@ -1014,7 +1039,8 @@ function xsltBlocks(L, R) {
             <xsl:value-of select="${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='BAKIYE' or cbc:DocumentType='CARI_BAKIYE' or cbc:DocumentTypeCode='BAKIYE']/cbc:ID"/>
           </div>
         </div>
-      </div>`,
+      </div>
+      </xsl:if>`,
     qr: `
       <div class="inv-qr" align="right">${qr}</div>`,
     spacer: `<div class="inv-spacer">&#160;</div>`,
@@ -1159,7 +1185,7 @@ export function layoutToXslt(layout, kind) {
     <html>
       <head>
         <meta charset="UTF-8"/>
-        <title><xsl:value-of select="${R.root}/cbc:ID"/></title>
+        <title>${xsltDocTitleInner(R)}</title>
         <style type="text/css">
           body, table, td, th, div, span, h1 { font-family:"${font}", Tahoma, Arial, Helvetica, sans-serif; }
           body { background:${L.paper}; color:${L.text}; font-size:${fs}px; margin:0; padding:16px; }
@@ -1192,6 +1218,7 @@ export function layoutToXslt(layout, kind) {
           .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; font-size:${fs}px; }
           .inv-balance { border:1px solid ${L.accent}; padding:8px 10px; }
           .inv-qr { text-align:right; }
+          .inv-doc-title { font-weight:700; color:${L.primary}; font-size:${no}px; margin:0 0 4px; }
           .inv-spacer { min-height:28px; }
           .inv-gib-seal { text-align:center; }
           .inv-gib-seal h1 { font-size:18px; margin:4px 0 0; color:${L.primary}; }
@@ -1210,6 +1237,9 @@ export function layoutToXslt(layout, kind) {
   // HTML entity (&nbsp; vb.) XSLT parse'ı bozar — yalnız &#160; kullan.
   if (/&nbsp;|&amp;nbsp;/i.test(raw)) {
     throw new Error("XSLT içinde HTML entity (&nbsp;) olamaz; &#160; kullanın.");
+  }
+  if (!/<xsl:stylesheet\b[^>]*\bversion="1\.0"/.test(raw)) {
+    throw new Error("XSLT stylesheet version 1.0 olmalı.");
   }
   return embedLayoutComment(raw, L);
 }

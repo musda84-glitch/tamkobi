@@ -45,6 +45,44 @@ def test_approve_invoice_marks_order_invoiced_and_applies_effects():
     asyncio.run(run())
 
 
+def test_approve_invoice_drops_draft_marker_from_order_note():
+    import server
+
+    inv = {
+        "_id": "inv_taslak",
+        "status": "draft",
+        "order_id": "ord_t",
+        "invoice_number": "SF-010",
+        "contact_id": "c1",
+        "invoice_type": "sales",
+        "grand_total": 10.0,
+        "e_type": "e_archive",
+        "gib_status": "Taslak",
+        "items": [],
+        "notes": "Sipariş No: ORD-100 onayında oluşturuldu (taslak).",
+    }
+    db = MagicMock()
+    db.invoices.find_one = AsyncMock(side_effect=[inv, {**inv, "status": "approved"}])
+    db.invoices.update_one = AsyncMock()
+    db.orders.find_one = AsyncMock(return_value={"_id": "ord_t", "channel": "b2b"})
+    db.orders.update_one = AsyncMock()
+    db.contacts.find_one = AsyncMock(return_value={"_id": "c1"})
+
+    async def run():
+        with patch.object(server, "db", db), patch.object(
+            server, "_apply_invoice_effects", AsyncMock()
+        ), patch.object(
+            server, "_post_marketplace_settlement", AsyncMock(return_value=None)
+        ), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
+            await server.approve_invoice("inv_taslak", user={"is_super_admin": True})
+            note = db.invoices.update_one.await_args[0][1]["$set"]["notes"]
+            assert "(taslak)" not in note.lower()
+            assert "ORD-100" in note
+            assert "oluşturuldu" in note
+
+    asyncio.run(run())
+
+
 def test_finalize_create_result_sets_order_invoiced():
     import e_invoice as ei
 

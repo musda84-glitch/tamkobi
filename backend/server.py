@@ -8492,7 +8492,17 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
             await _mark_order_invoiced_from_invoice(inv)
         return {"status": "success", "message": "Fatura zaten onaylı."}
     await _apply_invoice_effects(inv)
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "effects_applied": True, "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"), "approved_at": datetime.now(timezone.utc).isoformat()}})
+    issued_notes = ubl_export.strip_issued_invoice_note(inv.get("notes"))
+    approved_set = {
+        "status": "approved",
+        "effects_applied": True,
+        "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if issued_notes != (inv.get("notes") or ""):
+        approved_set["notes"] = issued_notes
+        inv["notes"] = issued_notes
+    await db.invoices.update_one({"_id": invoice_id}, {"$set": approved_set})
     inv = await db.invoices.find_one({"_id": invoice_id}) or inv
     await _mark_order_invoiced_from_invoice(inv)
     settlement = None

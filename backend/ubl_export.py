@@ -1,4 +1,7 @@
 """Giden e-Fatura / e-Arşiv UBL-TR XML üretimi (imzasız arşiv kopyası). Gelen parse edocs.parse_ubl ile sınırlıdır."""
+import base64
+import io
+import json
 import re
 import uuid
 import xml.etree.ElementTree as ET
@@ -12,6 +15,17 @@ _TR_TZ = ZoneInfo("Europe/Istanbul")
 def default_issue_time() -> str:
     """GİB IssueTime — boşsa Europe/Istanbul saati (UTC değil)."""
     return datetime.now(_TR_TZ).strftime("%H:%M:%S")
+
+
+_DRAFT_NOTE_MARK = re.compile(r"\s*\(taslak\)", re.IGNORECASE)
+
+
+def strip_issued_invoice_note(notes: Any) -> str:
+    """Sipariş taslağının otomatik notundaki '(taslak)' kesilen faturaya taşınmaz."""
+    text = str(notes or "").strip()
+    if not text or "oluşturuldu" not in text or not re.search(r"\(taslak\)", text, re.IGNORECASE):
+        return text
+    return _DRAFT_NOTE_MARK.sub("", text).strip()
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -490,6 +504,95 @@ def _stable_uuid(inv: Dict[str, Any]) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tamkobi-invoice:{raw}"))
 
 
+def gib_qr_fields(
+    inv: Dict[str, Any],
+    seller: Dict[str, Any],
+    buyer: Dict[str, Any],
+    *,
+    profile: str,
+    currency: str,
+    subtotal: float,
+    vat_total: float,
+    grand: float,
+    issue_date: str,
+    tip: str = "",
+) -> Dict[str, str]:
+    """GİB karekod alanları: satıcı VKN, alıcı VKN, ETTN, tarih, tutarlar.
+
+    XSLT 1.0 bitmap üretemez (ve harici QR servisi GİB görüntülemede yok).
+    Bu sözlük PNG'ye çevrilip AdditionalDocumentReference/QRCODE olarak gömülür.
+    """
+    seller_tax = "".join(ch for ch in str(seller.get("tax_number") or seller.get("tax_id") or "") if ch.isdigit())
+    buyer_tax = "".join(
+        ch for ch in str(
+            buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id") or ""
+        ) if ch.isdigit()
+    )
+    inclusive = round(float(subtotal or 0) + float(vat_total or 0), 2)
+    return {
+        "vkntckn": seller_tax,
+        "avkntckn": buyer_tax,
+        "senaryo": profile or "",
+        "tip": tip or str(inv.get("invoice_type_code") or ""),
+        "tarih": issue_date,
+        "no": str(inv.get("invoice_number") or ""),
+        "ettn": _stable_uuid(inv),
+        "parabirimi": currency or "TRY",
+        "malhizmettoplam": f"{float(subtotal or 0):.2f}",
+        "hesaplanankdv": f"{float(vat_total or 0):.2f}",
+        "vergidahil": f"{inclusive:.2f}",
+        "odenecek": f"{float(grand or 0):.2f}",
+    }
+
+
+def _qr_png_b64(payload: str) -> str:
+    import qrcode
+
+    img = qrcode.make(payload, box_size=4, border=1)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _add_invoice_qr(
+    root,
+    inv: Dict[str, Any],
+    seller: Dict[str, Any],
+    buyer: Dict[str, Any],
+    *,
+    profile: str,
+    currency: str,
+    subtotal: float,
+    vat_total: float,
+    grand: float,
+    issue_date: str,
+    tip: str = "",
+) -> None:
+    fields = gib_qr_fields(
+        inv, seller, buyer,
+        profile=profile, currency=currency, subtotal=subtotal, vat_total=vat_total,
+        grand=grand, issue_date=issue_date, tip=tip,
+    )
+    try:
+        b64 = _qr_png_b64(json.dumps(fields, ensure_ascii=False, separators=(",", ":")))
+    except Exception:
+        return
+    adr = _cac(root, "AdditionalDocumentReference")
+    _cbc(adr, "ID", "QRCODE")
+    _cbc(adr, "IssueDate", issue_date)
+    _cbc(adr, "DocumentTypeCode", "QRCODE")
+    _cbc(adr, "DocumentType", "QRCODE")
+    att = _cac(adr, "Attachment")
+    _cbc(
+        att,
+        "EmbeddedDocumentBinaryObject",
+        b64,
+        mimeCode="image/png",
+        encodingCode="Base64",
+        filename="qr.png",
+    )
+
+
 def attach_xslt_stylesheet(root, xslt: str, issue_date: str, filename: str = "efatura.xslt") -> None:
     """GİB: AdditionalDocumentReference / DocumentType=XSLT (düz Base64, gzip yok)."""
     text = str(xslt or "").strip()
@@ -587,7 +690,7 @@ def build_invoice_ubl(
         issue_time = default_issue_time()
     _cbc(root, "IssueTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
     _cbc(root, "InvoiceTypeCode", type_code)
-    notes = (inv.get("notes") or "").strip()
+    notes = strip_issued_invoice_note(inv.get("notes"))
     if notes:
         _cbc(root, "Note", notes[:500])
     if inv.get("gib_tracking_id"):
@@ -646,6 +749,11 @@ def build_invoice_ubl(
             issue_date,
             filename="earsiv.xslt" if (e_type == "e_archive" or profile == "EARSIVFATURA") else "efatura.xslt",
         )
+    _add_invoice_qr(
+        root, inv, seller, buyer,
+        profile=profile, currency=currency, subtotal=subtotal, vat_total=vat_total,
+        grand=grand, issue_date=issue_date, tip=type_code,
+    )
 
     seller_party = {
         "name": seller.get("name"),
