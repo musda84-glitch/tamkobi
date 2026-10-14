@@ -6,6 +6,7 @@ import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConic
 import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
+import { ContactSearchSelect } from "./ContactSearchSelect";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { matchActorTitle, txCreatedByLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
@@ -617,7 +618,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <p className="text-[11px] text-slate-500">Her manuel eşleştirme otomatik kural olarak öğrenilir. İsterseniz anahtar kelime → cari/kategori kuralı da ekleyebilirsiniz.</p>
             <form onSubmit={addRule} className="flex flex-wrap gap-2 items-center">
               <input value={newRule.pattern} onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })} placeholder="Anahtar kelime (örn: trendyol)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" required data-testid="rule-pattern-input" />
-              <select value={newRule.contact_id} onChange={(e) => setNewRule({ ...newRule, contact_id: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1.5 w-44" data-testid="rule-contact-select"><option value="">Cari (opsiyonel)</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+              <ContactSearchSelect companyId={companyId} value={newRule.contact_id} onChange={(id) => setNewRule({ ...newRule, contact_id: id || "" })} placeholder="Cari (opsiyonel)" emptyLabel="Cari (opsiyonel)" clearable className="w-44" testId="rule-contact-select" />
               <input value={newRule.category} onChange={(e) => setNewRule({ ...newRule, category: e.target.value })} placeholder="Kategori (örn: Pazaryeri Hakediş)" className="bg-white border border-slate-200 rounded-lg p-1.5 w-48" data-testid="rule-category-input" />
               <PaymentTargetSelect companyId={companyId} accounts={accounts.filter((a) => !a.is_integrated)} value={newRule.target_account_id} onChange={(v) => setNewRule({ ...newRule, target_account_id: v })} testId="rule-target-select" excludeIntegrated includePartners emptyLabel="Kasa/Hesap/Ortak virman (ops.)" className="w-52" />              <button type="submit" className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold" data-testid="add-rule-btn">Kural Ekle</button>
             </form>

@@ -1192,7 +1192,7 @@ export default function BankingPage() {
       )}
       {stmtAccount && (
         <CardStatementImport
-          account={stmtAccount}
+          account={{ ...stmtAccount, company_id: stmtAccount.company_id || companyId }}
           contacts={asContactList(contacts)}
           initialFile={stmtFile}
           onClose={() => { setStmtAccount(null); setStmtFile(null); }}

@@ -6,6 +6,7 @@ import { Loader2, Link2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
+import { ContactSearchSelect } from "./ContactSearchSelect";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import {
   BANK_MATCH_MODES,
@@ -129,18 +130,27 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         {mode === "contact" && (
           <div>
             <label className="block font-semibold mb-1">Cari</label>
-            <select
+            <ContactSearchSelect
+              companyId={companyId}
               value={contactId}
-              onChange={(e) => setContactId(e.target.value)}
-              className={sel}
-              data-testid={`tx-match-contact-${txId}`}
-            >
-              <option value="">Cari seçin (boş = sadece onayla)</option>
-              {contacts.map((c) => {
-                const id = c.id || c._id;
-                return <option key={id} value={id}>{c.name}</option>;
-              })}
-            </select>
+              onChange={(id) => setContactId(id || "")}
+              valueLabel={(() => {
+                if (!contactId) return "";
+                const hit = (contacts || []).find((c) => (c.id || c._id) === contactId);
+                if (hit?.name) return hit.name;
+                if (contactId === (tx.suggested_contact_id || tx.contact_id)) {
+                  return tx.suggested_contact_name || tx.contact_name || "";
+                }
+                return "";
+              })()}
+              placeholder="Cari seçin (boş = sadece onayla)"
+              emptyLabel="Cari seçin (boş = sadece onayla)"
+              searchPlaceholder="Cari adı, ünvan, VKN, telefon veya cari kodu"
+              suggestText={tx.description || ""}
+              counterparty={tx.counterparty || ""}
+              clearable
+              testId={`tx-match-contact-${txId}`}
+            />
           </div>
         )}
 

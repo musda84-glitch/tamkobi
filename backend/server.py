@@ -4214,11 +4214,16 @@ async def search_contacts_api(
     q: str = "",
     page: int = 1,
     limit: int = CONTACT_SEARCH_PAGE,
+    suggest: str = "",
+    counterparty: str = "",
+    exclude_type: str = "",
     user: dict = Depends(get_current_user),
 ):
     """Sunucu tarafı cari arama. Müşteri, tedarikçi ve ikisi birden; pasifler gizli.
 
     Boş sorguda son kullanılan cariler. Sayfa boyu 20.
+    suggest açıklamasındaki Firma Adı (ör. MOR PLASTIK ISTANBUL) en yakın
+    carileri suggestions olarak üstte kullanılmak üzere döner.
     """
     company_id = tenant_access.resolve_company_id(user, company_id)
     size = int(limit or CONTACT_SEARCH_PAGE)
@@ -4226,9 +4231,16 @@ async def search_contacts_api(
     recent = []
     if not (q or "").strip():
         recent = await _recent_contact_ids(company_id)
-    found = search_contacts(rows, q or "", page=page, limit=size, recent_ids=recent)
+    banned = [part.strip() for part in (exclude_type or "").split(",") if part.strip()]
+    found = search_contacts(
+        rows, q or "", page=page, limit=size, recent_ids=recent,
+        suggest=suggest or "", counterparty=counterparty or "",
+        exclude_types=banned or None,
+    )
     return {
         "items": clean_docs(found["items"]),
+        "suggestions": clean_docs(found.get("suggestions") or []),
+        "suggest_query": found.get("suggest_query") or "",
         "total": found["total"],
         "page": found["page"],
         "limit": found["limit"],

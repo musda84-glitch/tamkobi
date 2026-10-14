@@ -114,7 +114,10 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
               onChange={(id) => setContactId(id || "")}
               valueLabel={selectedContactName}
               placeholder="Cari seçin (boş = onayla)"
-              searchPlaceholder="Cari adı, VKN veya telefon ara…"
+              emptyLabel="Cari seçin (boş = onayla)"
+              searchPlaceholder="Cari adı, ünvan, VKN, telefon veya cari kodu"
+              suggestText={tx.description || ""}
+              counterparty={tx.counterparty || ""}
               clearable
               className="w-44"
               testId={`match-contact-select-${tx.id}`}

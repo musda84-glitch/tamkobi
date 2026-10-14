@@ -5,11 +5,11 @@ import { Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ExpenseScanButtons } from "../components/ExpenseScanButtons";
-import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import type { Contact } from "../types";
 import {
   draftFromExpense,
   emptyExpenseDraft,
@@ -51,11 +51,10 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const [draft, setDraft] = useState<ExpenseDraft>(() => applyExpensePrefill(emptyExpenseDraft(todayIso()), prefill));
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [projects, setProjects] = useState<ExpenseProject[]>([]);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [addedCats, setAddedCats] = useState<string[]>([]);
-  const [custQ, setCustQ] = useState("");
+  const [contactLabel, setContactLabel] = useState("");
   const [catQ, setCatQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -67,17 +66,15 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [acc, cats, cnt, pars, prjs] = await Promise.all([
+      const [acc, cats, pars, prjs] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
-        get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
         get<ExpenseProject[]>(client, "/projects", { company_id: companyId, light: 1 }).catch(() => []),
       ]);
       setAccounts(acc || []);
       setPartners((pars || []).filter((p) => p.is_active !== false));
       setCategories(cats || []);
-      setContacts((cnt || []).filter((c) => c.type !== "customer"));
       setProjects(asWorkList<ExpenseProject>(prjs));
       if (expenseId) {
         const list = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, q: expenseId });
@@ -91,6 +88,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         }
         if (!exp) { setError("Masraf bulunamadı."); return; }
         setLoaded(exp);
+        setContactLabel(exp.contact_name || "");
         setDraft(draftFromExpense(exp, todayIso()));
         setPayAcc(exp.account_id || "");
       } else if (prefill.account_id) {
@@ -115,9 +113,6 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   };
 
   const totals = expenseCalc(draft);
-  const hits = custQ.trim().length < 2
-    ? []
-    : contacts.filter((c) => c.name.toLowerCase().includes(custQ.trim().toLowerCase())).slice(0, 8);
 
   const save = async () => {
     const invalid = validateExpenseDraft(draft);
@@ -270,11 +265,16 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
           {draft.account_id ? <Muted>Seçili hesapla kaydedince masraf ödenmiş olur.</Muted> : <Muted>Boş bırakırsanız borç olarak kaydedilir.</Muted>}
         </>
       ) : null}
-      <Field label="Tedarikçi ara" value={custQ} onChangeText={setCustQ} placeholder="Cari" />
-      {hits.map((c) => (
-        <ListRow key={idOf(c)} title={c.name} onPress={() => { set("contact_id", idOf(c)); setCustQ(""); }} />
-      ))}
-      {draft.contact_id ? <Muted>Tedarikçi seçildi</Muted> : null}
+      <ContactSearchSelect
+        label="Tedarikçi (opsiyonel)"
+        testID="exp-contact"
+        value={draft.contact_id}
+        valueLabel={contactLabel}
+        excludeType="customer"
+        emptyLabel="Tedarikçi yok"
+        placeholder="Cari adı, ünvan, VKN, telefon veya cari kodu"
+        onChange={(id, c) => { set("contact_id", id); setContactLabel(c?.name || ""); }}
+      />
       <Field label="Belge / fiş no" value={draft.document_no} onChangeText={(v) => set("document_no", v)} editable={canEdit} />
       <Field label="Not" value={draft.notes} onChangeText={(v) => set("notes", v)} editable={canEdit} />
       {draft.is_recurring ? <Muted testID="exp-recurring-note">Bu masraf aylık tekrarlı; tekrar ayarı web panelinden yönetilir.</Muted> : null}

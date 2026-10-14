@@ -51,16 +51,32 @@ export const ContactSearchSelect = ({
   inline = false,
   clearable = false,
   clearLabel = "Seçimi kaldır",
+  /** Menüde her zaman görünen boş seçim (ör. "boş = sadece onayla"). */
+  emptyLabel = "",
+  /** Banka açıklaması; Firma Adı buradan çıkarılıp öneri olarak üstte gelir. */
+  suggestText = "",
+  counterparty = "",
+  /** Örn. "customer" — masraf tedarikçisinde müşteri tipi gizlenir. */
+  excludeType = "",
   leadingAction = null,
 }) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [box, setBox] = useState(null);
   const [items, setItems] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestQuery, setSuggestQuery] = useState("");
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [picked, setPicked] = useState(null);
+  const [active, setActive] = useState(0);
+  const activeRef = useRef(0);
+  const focusRow = (next) => {
+    const value = typeof next === "function" ? next(activeRef.current) : next;
+    activeRef.current = value;
+    setActive(value);
+  };
   const ref = useRef(null);
   const menuRef = useRef(null);
   const reqId = useRef(0);
@@ -95,19 +111,27 @@ export const ContactSearchSelect = ({
     const run = () => {
       const id = ++reqId.current;
       setLoading(true);
+      const params = { company_id: companyId, q: query, page: 1, limit: CONTACT_SEARCH_PAGE_SIZE };
+      if (suggestText) params.suggest = suggestText;
+      if (counterparty) params.counterparty = counterparty;
+      if (excludeType) params.exclude_type = excludeType;
       axios.get(`${API_URL}/contacts/search`, {
-        params: { company_id: companyId, q: query, page: 1, limit: CONTACT_SEARCH_PAGE_SIZE },
+        params,
         signal: ctrl.signal,
       }).then((r) => {
         if (cancelled || id !== reqId.current) return;
         const data = r.data || {};
         setItems(Array.isArray(data.items) ? data.items : []);
+        setSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);
+        setSuggestQuery(String(data.suggest_query || ""));
         setPage(1);
         setHasMore(!!data.has_more);
       }).catch((err) => {
         if (cancelled || ctrl.signal.aborted || err?.code === "ERR_CANCELED" || err?.name === "CanceledError") return;
         if (id !== reqId.current) return;
         setItems([]);
+        setSuggestions([]);
+        setSuggestQuery("");
         setHasMore(false);
       }).finally(() => {
         if (!cancelled && id === reqId.current) setLoading(false);
@@ -120,15 +144,36 @@ export const ContactSearchSelect = ({
       if (timer) clearTimeout(timer);
       ctrl.abort();
     };
-  }, [open, q, companyId]);
+  }, [open, q, companyId, suggestText, counterparty, excludeType]);
+
+  useEffect(() => {
+    if (!open) return;
+    const sugIdx = rows.findIndex((row) => row.kind === "suggest");
+    const selectedIdx = rows.findIndex((row) => row.kind !== "empty" && optionId(row.item) === value);
+    const next = !String(q || "").trim() && selectedIdx >= 0 ? selectedIdx : (sugIdx >= 0 ? sugIdx : 0);
+    activeRef.current = next;
+    setActive(next);
+    // Satırlar öneri/seçim geldikçe güncellenir; ok tuşu konumunu her aramada sıfırlarız.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, q, suggestQuery, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = menuRef.current?.querySelector('[data-active="1"]');
+    el?.scrollIntoView?.({ block: "nearest" });
+  }, [active, open, items, suggestions]);
 
   const loadMore = () => {
     if (!companyId || loading || !hasMore) return;
     const next = page + 1;
     const id = ++reqId.current;
     setLoading(true);
+    const params = { company_id: companyId, q, page: next, limit: CONTACT_SEARCH_PAGE_SIZE };
+    if (suggestText) params.suggest = suggestText;
+    if (counterparty) params.counterparty = counterparty;
+    if (excludeType) params.exclude_type = excludeType;
     axios.get(`${API_URL}/contacts/search`, {
-      params: { company_id: companyId, q, page: next, limit: CONTACT_SEARCH_PAGE_SIZE },
+      params,
     }).then((r) => {
       if (id !== reqId.current) return;
       const data = r.data || {};
@@ -146,7 +191,22 @@ export const ContactSearchSelect = ({
     });
   };
 
-  const selected = items.find((o) => optionId(o) === value) || (picked && optionId(picked) === value ? picked : null);
+  const sugIds = new Set(suggestions.map((c) => optionId(c)).filter(Boolean));
+  const listItems = items.filter((o) => !sugIds.has(optionId(o)));
+  const rows = [];
+  if (emptyLabel) rows.push({ key: "empty", kind: "empty" });
+  suggestions.forEach((item) => {
+    const id = optionId(item);
+    if (!id) return;
+    rows.push({ key: `s-${id}`, kind: "suggest", item });
+  });
+  listItems.forEach((item) => {
+    const id = optionId(item);
+    rows.push({ key: `i-${id || item.name}`, kind: "item", item });
+  });
+  const selected = items.find((o) => optionId(o) === value)
+    || suggestions.find((o) => optionId(o) === value)
+    || (picked && optionId(picked) === value ? picked : null);
   const displayLabel = selected ? (selected.name || selected.company_title || "") : (value && valueLabel ? valueLabel : "");
   const hasValue = Boolean(value);
   const clear = (e) => {
@@ -157,6 +217,75 @@ export const ContactSearchSelect = ({
     setOpen(false);
     setQ("");
   };
+  const choose = (row) => {
+    if (!row || row.kind === "empty") {
+      setPicked(null);
+      onChange("", null);
+    } else {
+      setPicked(row.item);
+      onChange(optionId(row.item), row.item);
+    }
+    setOpen(false);
+    setQ("");
+  };
+  const onSearchKey = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!rows.length) return;
+      focusRow((i) => Math.min(rows.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!rows.length) return;
+      focusRow((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (rows[activeRef.current]) choose(rows[activeRef.current]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+    }
+  };
+  const optionButton = (row, index) => {
+    const highlighted = index === active;
+    if (row.kind === "empty") {
+      return (
+        <button
+          type="button"
+          key={row.key}
+          onMouseEnter={() => focusRow(index)}
+          onClick={() => choose(row)}
+          data-active={highlighted ? "1" : "0"}
+          className={`w-full px-3 py-2 text-left text-xs border-b border-slate-100 ${highlighted ? "bg-violet-50" : "hover:bg-slate-50"} ${!hasValue ? "text-violet-800 font-semibold" : "text-slate-500"}`}
+          data-testid={testId ? `${testId}-empty` : undefined}
+        >
+          {emptyLabel}
+        </button>
+      );
+    }
+    const o = row.item;
+    const id = optionId(o);
+    const suggested = row.kind === "suggest";
+    return (
+      <button
+        type="button"
+        key={row.key}
+        onMouseEnter={() => focusRow(index)}
+        onClick={() => choose(row)}
+        data-active={highlighted ? "1" : "0"}
+        className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-emerald-50 ${highlighted ? "bg-emerald-100" : ""} ${id === value ? "bg-emerald-50/60" : ""}`}
+        data-testid={testId ? `${testId}-${suggested ? "suggest" : "option"}-${id}` : undefined}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-slate-900 truncate">
+            {o.name || o.company_title || "Cari"}
+            {suggested ? <span className="ml-1 text-[9px] font-bold uppercase text-violet-700">Öneri</span> : null}
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">{contactSub(o)}</div>
+        </div>
+      </button>
+    );
+  };
   const panel = (
     <>
       <div className="relative border-b">
@@ -165,6 +294,7 @@ export const ContactSearchSelect = ({
           autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onSearchKey}
           placeholder={searchPlaceholder}
           className="w-full pl-8 p-2 text-xs outline-none"
           data-testid={testId ? `${testId}-search` : undefined}
@@ -203,27 +333,26 @@ export const ContactSearchSelect = ({
         </button>
       )}
       <div className="max-h-48 overflow-y-auto">
-        {loading && items.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Aranıyor…</div>}
-        {!loading && items.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Sonuç yok</div>}
-        {items.map((o) => (
-          <button
-            type="button"
-            key={optionId(o) || o.name}
-            onClick={() => {
-              setPicked(o);
-              onChange(optionId(o), o);
-              setOpen(false);
-              setQ("");
-            }}
-            className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-emerald-50 ${optionId(o) === value ? "bg-emerald-50/60" : ""}`}
-            data-testid={testId ? `${testId}-option-${optionId(o)}` : undefined}
-          >
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-slate-900 truncate">{o.name || o.company_title || "Cari"}</div>
-              <div className="text-[10px] text-slate-500 truncate">{contactSub(o)}</div>
-            </div>
-          </button>
-        ))}
+        {rows.map((row, index) => {
+          const prev = rows[index - 1];
+          const header = row.kind === "suggest" && prev?.kind !== "suggest"
+            ? (
+              <div key="suggest-head" className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-violet-700 bg-violet-50/70" data-testid={testId ? `${testId}-suggest-head` : undefined}>
+                {suggestQuery ? `Firma Adı · ${suggestQuery}` : "Önerilen cariler"}
+              </div>
+            )
+            : row.kind === "item" && suggestions.length > 0 && prev?.kind !== "item"
+              ? <div key="rest-head" className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Diğer cariler</div>
+              : null;
+          return (
+            <React.Fragment key={row.key}>
+              {header}
+              {optionButton(row, index)}
+            </React.Fragment>
+          );
+        })}
+        {loading && items.length === 0 && suggestions.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Aranıyor…</div>}
+        {!loading && rows.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Sonuç yok</div>}
         {hasMore && (
           <button
             type="button"
