@@ -335,8 +335,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             const cikis = summary.total_cash_out != null ? summary.total_cash_out : summary.total_withdrawn;
             return [
               ["net", net.side === "zero" ? "Net bakiye" : `Net ${net.label}`, netAmount, net.amountCls],
-              ["capital", "Ortak lehine", giris, "text-emerald-700"],
-              ["withdrawn", "Ortak aleyhine", cikis, "text-rose-700"],
+              ["capital", "Giriş", giris, "text-emerald-700"],
+              ["withdrawn", "Çıkış", cikis, "text-rose-700"],
             ].map(([id, l, v, c]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>

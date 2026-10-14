@@ -63,20 +63,20 @@ export function partnerTxLabel(tx) {
 }
 
 /**
- * Ortak bakiyesi = cebindeki para (yazma):
- *   artı → Alacaklı (ortağa yazılan / çekilebilir)
- *   eksi → Borçlu (fazla çekmiş)
- * Kartta yalnızca Alacaklı / Borçlu; Alacaklı tutar kasa eksi (−) gösterilir.
+ * Ortak bakiyesi = Giriş − Çıkış:
+ *   artı → Alacaklı
+ *   eksi → Borçlu
+ * Tutar her yerde mutlak; yön yalnız etikettedir.
  */
 export function partnerBalanceMeta(balance) {
   const n = Number(balance);
   const amount = Number.isFinite(n) ? n : 0;
+  const abs = Math.abs(amount);
   if (amount > 0) {
     return {
       amount,
-      abs: amount,
-      /** Kasa görünümü: Alacaklı → eksi tutar */
-      display: -amount,
+      abs,
+      display: abs,
       label: "Alacaklı",
       badge: "Alacaklı",
       hint: "",
@@ -88,8 +88,8 @@ export function partnerBalanceMeta(balance) {
   if (amount < 0) {
     return {
       amount,
-      abs: Math.abs(amount),
-      display: Math.abs(amount),
+      abs,
+      display: abs,
       label: "Borçlu",
       badge: "Borçlu",
       hint: "",
@@ -112,8 +112,8 @@ export function partnerBalanceMeta(balance) {
 }
 
 /**
- * Amber kart: backend present_partner_balance ile aynı sayı.
- * total_card_pocket imzalı ortak bakiyelerinin toplamıdır (kasa neti değil).
+ * Amber kart: backend cash_card_totals neti (Giriş − Çıkış).
+ * total_card_pocket imzalı listedir; gösterilen tutar mutlak.
  */
 export function partnerSummaryCardMeta(summary) {
   if (!summary) return { ...partnerBalanceMeta(0), cashIn: 0, cashOut: 0, fromCash: false };

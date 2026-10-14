@@ -103,7 +103,8 @@ describe("partnerTx", () => {
     expect(br.ledger).toBeCloseTo(776059.78, 2);
     expect(br.drift).toBe(false);
     expect(partnerTxLabel(txs[2])).toBe("Ortak aleyhine");
-    expect(partnerBalanceMeta(776059.78).display).toBeCloseTo(-776059.78, 2);
+    expect(partnerBalanceMeta(776059.78).display).toBeCloseTo(776059.78, 2);
+    expect(partnerBalanceMeta(776059.78).label).toBe("Alacaklı");
   });
 
   it("Ali BAL: kart = Σ liste delta = lehine − aleyhine", () => {
@@ -144,6 +145,14 @@ describe("partnerTx", () => {
     expect(cash.fromCash).toBe(true);
     expect(cash.badge).toBe("Borçlu");
     expect(cash.display).toBeCloseTo(258082.37, 2);
+    const aliCard = partnerSummaryCardMeta({
+      total_card_pocket: ALI_NET,
+      total_cash_in: ALI_LEHINE,
+      total_cash_out: ALI_ALEYHINE,
+    });
+    expect(aliCard.display).toBeCloseTo(ALI_NET, 2);
+    expect(aliCard.badge).toBe("Alacaklı");
+    expect(aliCard.display).toBeCloseTo(aliCard.cashIn - aliCard.cashOut, 2);
   });
 
   it("selector uses Borçlu/Alacaklı instead of a sign", () => {
@@ -155,13 +164,13 @@ describe("partnerTx", () => {
     expect(mus).not.toContain("-");
   });
 
-  it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {
+  it("shows only Alacaklı or Borçlu; amount is absolute", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.label).toBe("Alacaklı");
     expect(credit.badge).toBe("Alacaklı");
     expect(credit.hint).toBe("");
     expect(credit.side).toBe("credit");
-    expect(credit.display).toBe(-1200);
+    expect(credit.display).toBe(1200);
 
     const debit = partnerBalanceMeta(-705389.78);
     expect(debit.badge).toBe("Borçlu");

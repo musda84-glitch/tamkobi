@@ -144,30 +144,30 @@ class TestAliBalPartnerCardMatchesSelector:
         assert mustafa["balance"] != partners[1]["balance"]
         assert mustafa["balance_label"] == "Alacaklı"
         assert mustafa["balance_abs"] == pytest.approx(30257.85)
-        assert mustafa["balance_display"] == pytest.approx(-30257.85)
+        assert mustafa["balance_display"] == pytest.approx(30257.85)
 
         signed_sum = round(ali["balance"] + mustafa["balance"], 2)
-        display_sum = round(ali["balance_display"] + mustafa["balance_display"], 2)
         assert signed_sum == pytest.approx(-258082.37)
         assert view["total_balance"] == pytest.approx(signed_sum)
         assert view["total_balance"] == pytest.approx(sum(row["balance"] for row in view["partners"]))
-        assert view["card_display"] == pytest.approx(display_sum)
-        assert view["card_display"] == pytest.approx(sum(row["balance_display"] for row in view["partners"]))
+        assert view["card_display"] == pytest.approx(258082.37)
         assert view["label"] == "Borçlu"
         assert view["abs"] == pytest.approx(258082.37)
         card = present_partner_balance(view["total_balance"])
         assert view["card_display"] == card["display"]
         assert view["label"] == card["label"]
+        assert card["display"] == pytest.approx(abs(signed_sum))
 
         cash = cash_card_totals(txs)
         assert cash["cash_net"] == pytest.approx(view["total_balance"])
+        assert cash["cash_net"] == pytest.approx(cash["cash_in"] - cash["cash_out"])
         assert tx_is_cash_inflow(ali_txs[2]) is False
 
         payload = summary_payload({**view, "cash": cash, "source_partners": partners})
-        assert payload["total_balance"] == pytest.approx(view["total_balance"])
-        assert payload["total_card_pocket"] == pytest.approx(view["total_balance"])
-        assert payload["total_cash_net"] == pytest.approx(view["card_display"])
+        assert payload["total_balance"] == pytest.approx(cash["cash_net"])
+        assert payload["total_card_pocket"] == pytest.approx(cash["cash_in"] - cash["cash_out"])
+        assert payload["total_cash_net"] == pytest.approx(cash["cash_net"])
         assert payload["balance_label"] == "Borçlu"
         assert payload["total_cash_in"] == pytest.approx(cash["cash_in"])
         assert payload["total_cash_out"] == pytest.approx(cash["cash_out"])
-        assert payload["total_card_pocket"] == pytest.approx(cash["cash_net"])
+        assert present_partner_balance(payload["total_card_pocket"])["display"] == pytest.approx(258082.37)

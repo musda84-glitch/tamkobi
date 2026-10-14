@@ -352,24 +352,23 @@ def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
 def present_partner_balance(balance: Any) -> Dict[str, Any]:
     """Ortak bakiyesinin tek gösterimi.
 
-    Artı bakiye = şirket ortağa borçlu (Alacaklı); ekranda eksi tutar.
-    Eksi bakiye = ortak fazla çekmiş (Borçlu); ekranda artı tutar.
-    Seçici mutlak tutar + etiket kullanır; kart `display` kullanır.
+    Artı net (Giriş − Çıkış > 0) = Alacaklı; eksi net = Borçlu.
+    Tutar her yerde mutlak; yön yalnız etikettedir (seçici, kart, liste).
     """
     try:
         amount = round(float(balance or 0), 2)
     except (TypeError, ValueError):
         amount = 0.0
+    abs_amount = round(abs(amount), 2)
     if amount > 0:
         return {
             "balance": amount,
-            "abs": amount,
-            "display": round(-amount, 2),
+            "abs": abs_amount,
+            "display": abs_amount,
             "label": "Alacaklı",
             "side": "credit",
         }
     if amount < 0:
-        abs_amount = round(abs(amount), 2)
         return {
             "balance": amount,
             "abs": abs_amount,
@@ -387,9 +386,10 @@ def present_partner_balance(balance: Any) -> Dict[str, Any]:
 
 
 def company_partner_balances(partners: List[Dict[str, Any]], txs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Şirket ortak bakiyesi: her ortak hareket defterinden, kart = bu bakiyelerin toplamı.
+    """Şirket ortak bakiyesi: kart = liste Toplam Giriş − Toplam Çıkış (cash_card_totals).
 
-    Kart bakiyesi = Σ partner_tx_effect (lehine − aleyhine); liste aynı deltayı kullanır.
+    Hareket yönü eski kasa mantığıdır (gelen +, çıkan/ödenen −). Seçici ve kart
+    aynı neti kullanır; gösterilen tutar mutlak, etiket Alacaklı/Borçlu.
     """
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for tx in txs or []:
@@ -400,8 +400,8 @@ def company_partner_balances(partners: List[Dict[str, Any]], txs: List[Dict[str,
     total = 0.0
     for partner in partners or []:
         pid = str(partner.get("_id") or partner.get("id") or "")
-        live = ledger_totals(grouped.get(pid, []))
-        view = present_partner_balance(live["balance"])
+        live = cash_card_totals(grouped.get(pid, []))
+        view = present_partner_balance(live["cash_net"])
         total += view["balance"]
         row = dict(partner)
         row["balance"] = view["balance"]
@@ -438,19 +438,23 @@ async def load_company_partner_view(db, company_id: str) -> Dict[str, Any]:
 
 
 def summary_payload(view: Dict[str, Any]) -> Dict[str, Any]:
-    """Ortaklar Hesabı kartı. Tutar, ortak bakiyelerinin toplamıdır.
+    """Ortaklar Hesabı kartı. Büyük rakam = Toplam Giriş − Toplam Çıkış.
 
-    total_cash_in / total_cash_out = lehine / aleyhine (alan adı uyumlu).
+    cash_card_totals tek kaynaktır; web, mobil ve seçiciler aynı neti okur.
     """
     partners = view.get("source_partners") or []
     cash = view.get("cash") or {}
+    net = cash.get("cash_net")
+    if net is None:
+        net = view.get("total_balance") or 0
+    presented = present_partner_balance(net)
     return {
         "partner_count": len(partners),
         "total_share_percent": sum(p.get("share_percent", 0) for p in partners),
-        "total_balance": view.get("total_balance") or 0,
-        "total_card_pocket": view.get("total_balance") or 0,
-        "total_cash_net": view.get("card_display") or 0,
-        "balance_label": view.get("label") or "Denk",
+        "total_balance": net,
+        "total_card_pocket": net,
+        "total_cash_net": net,
+        "balance_label": presented["label"],
         "total_cash_in": cash.get("cash_in") or 0,
         "total_cash_out": cash.get("cash_out") or 0,
         "tx_count": cash.get("tx_count") or 0,

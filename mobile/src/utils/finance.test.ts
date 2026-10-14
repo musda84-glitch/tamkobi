@@ -388,7 +388,7 @@ describe("finance drafts", () => {
   it("partner balance meta matches web Alacaklı/Borçlu display", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.badge).toBe("Alacaklı");
-    expect(credit.display).toBe(-1200);
+    expect(credit.display).toBe(1200);
     const debit = partnerBalanceMeta(-500);
     expect(debit.badge).toBe("Borçlu");
     expect(debit.display).toBe(500);
@@ -401,7 +401,7 @@ describe("finance drafts", () => {
       total_balance: 50,
     });
     expect(card.fromCash).toBe(true);
-    expect(card.display).toBe(-800);
+    expect(card.display).toBe(800);
     expect(card.badge).toBe("Alacaklı");
     expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).toContain("Borçlu");
     expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).not.toContain("-");
@@ -457,5 +457,13 @@ describe("finance drafts", () => {
     const flow = partnerCardCashFlow({ balance: 886189.78 }, txs, undefined);
     expect(flow.giris).toBeCloseTo(1079589.78, 2);
     expect(flow.cikis).toBeCloseTo(-193400, 2);
+    const card = partnerSummaryCardMeta({
+      total_card_pocket: br.ledger,
+      total_cash_in: br.cashIn,
+      total_cash_out: br.cashOut,
+    });
+    expect(card.display).toBeCloseTo(br.cashIn - br.cashOut, 2);
+    expect(card.badge).toBe("Alacaklı");
+    expect(flow.display).toBeCloseTo(886189.78, 2);
   });
 });

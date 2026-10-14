@@ -149,21 +149,22 @@ def test_ali_bal_card_equals_list_delta():
     payload = partner_pay.summary_payload({**view, "cash": cash, "source_partners": view["partners"]})
     assert payload["total_cash_in"] == pytest.approx(cash["cash_in"])
     assert payload["total_cash_out"] == pytest.approx(cash["cash_out"])
+    assert payload["total_card_pocket"] == pytest.approx(cash["cash_in"] - cash["cash_out"])
     assert payload["total_card_pocket"] == pytest.approx(view["total_balance"])
-    # Pozitif net = Alacaklı (etiket yönü değişmez)
-    assert partner_pay.present_partner_balance(cash["cash_net"])["label"] == "Alacaklı"
+    shown = partner_pay.present_partner_balance(payload["total_card_pocket"])
+    assert shown["label"] == "Alacaklı"
+    assert shown["display"] == pytest.approx(886189.78)
 
 
 def test_partner_row_uses_ledger_card_and_shows_stale_cache_drift():
     """Eski işaretle kaydedilmiş partners.balance kartı sapıtmaz; fark önbelleği gösterir.
 
-    Kart bakiyesi = Giriş − Çıkış = ledger_totals (partner_tx_effect toplamı).
+    Kart bakiyesi = Toplam Giriş − Toplam Çıkış (cash_card_totals).
     kayitli_bakiye = partners.balance; fark = kayitli − liste_net. Yazma yok.
     """
     cash = partner_pay.cash_card_totals(ALI_BAL_TXS)
-    ledger = partner_pay.ledger_totals(ALI_BAL_TXS)
     giris, cikis = cash["cash_in"], cash["cash_out"]
-    live = ledger["balance"]
+    live = cash["cash_net"]
     assert live == pytest.approx(giris - cikis)
     assert live == pytest.approx(886189.78)
     stale = round(-live, 2)  # eski işaret: Alacaklı tutar eksi yazılmış
