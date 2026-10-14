@@ -42,9 +42,13 @@ import {
   isMetaField,
   isHeaderField,
   isTotalRow,
+  columnAnchorId,
+  detachFromColumn,
   moveBlock,
   moveVisible,
   normalizeLayout,
+  packBlockRows,
+  stackBlock,
   sampleQrPayload,
   setBlockFont,
   setBlockFontSize,
@@ -600,11 +604,14 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const logoRef = useRef(null);
   const [dragId, setDragId] = useState("");
   const [overId, setOverId] = useState("");
+  const [overStack, setOverStack] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
+  const [placeFor, setPlaceFor] = useState("");
   const [paperMode, setPaperMode] = useState(preferXsltPreview && xsltHtml ? "xslt" : "layout");
   const [realXmlHtml, setRealXmlHtml] = useState("");
   const [realXmlErr, setRealXmlErr] = useState("");
   const visible = L.blocks.filter((b) => !b.hidden);
+  const rows = packBlockRows(L.blocks);
   const hidden = L.blocks.filter((b) => b.hidden);
   const hiddenCols = hiddenLineCols(L);
   const hiddenMeta = hiddenMetaFields(L);
@@ -637,7 +644,25 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     e.dataTransfer.dropEffect = "move";
     setOverId(id);
   };
-  const clearDrag = () => { setDragId(""); setOverId(""); setOverPalette(false); };
+  const clearDrag = () => { setDragId(""); setOverId(""); setOverStack(null); setOverPalette(false); };
+  const isBlockDrag = (from) => from && !isLineCol(from) && !isMetaField(from) && !isHeaderField(from) && !isTotalRow(from);
+  const onDragOverStack = (id, place) => (e) => {
+    if (!isBlockDrag(dragId) || dragId === id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    setOverStack({ id, place });
+    setOverId("");
+  };
+  const onDropStack = (targetId, place) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const from = dragId || e.dataTransfer.getData("text/plain");
+    clearDrag();
+    if (!isBlockDrag(from) || from === targetId) return;
+    const blocks = setBlockHidden(L.blocks, from, false);
+    patchBlocks(stackBlock(blocks, from, targetId, place));
+  };
 
   const applyDrop = (from, targetId, asVisible) => {
     if (!from || from === targetId) return;
@@ -672,6 +697,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     if (isLineCol(targetId) || isMetaField(targetId) || isHeaderField(targetId) || isTotalRow(targetId)) return;
     let blocks = L.blocks;
     if (asVisible) blocks = setBlockHidden(blocks, from, false);
+    blocks = detachFromColumn(blocks, from);
     patchBlocks(moveBlock(blocks, from, targetId));
   };
 
@@ -725,6 +751,151 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
       /* ignore */
     }
   };
+
+  const sharesColumn = (id) => {
+    const anchor = columnAnchorId(L.blocks, id);
+    return L.blocks.some((b) => !b.hidden && b.id !== id && columnAnchorId(L.blocks, b.id) === anchor);
+  };
+
+  const renderBlock = (b, stacked) => (
+    <div
+      key={b.id}
+      draggable
+      onDragStart={onDragStart(b.id)}
+      onDragOver={onDragOverItem(b.id)}
+      onDrop={onDropItem(b.id, true)}
+      onDragEnd={clearDrag}
+      className={`relative rounded-lg p-1.5 ${stacked ? "pt-6" : "pt-6 h-full"} flex flex-col ${stacked ? "" : (SPAN_CLASS[b.span] || "col-span-12")} ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id && overStack?.id !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
+      data-testid={`einvoice-design-block-${b.id}`}
+    >
+      {dragId && dragId !== b.id && isBlockDrag(dragId) ? (
+        <>
+          <div
+            data-testid={`einvoice-design-drop-above-${b.id}`}
+            title="Üstüne yerleştir"
+            onDragOver={onDragOverStack(b.id, "above")}
+            onDrop={onDropStack(b.id, "above")}
+            className={`absolute left-0 right-0 top-0 h-4 z-20 text-[8px] font-bold flex items-center justify-center ${overStack?.id === b.id && overStack.place === "above" ? "bg-emerald-600 text-white" : "bg-emerald-100/90 text-emerald-800"}`}
+          >
+            Üstüne yerleştir
+          </div>
+          <div
+            data-testid={`einvoice-design-drop-below-${b.id}`}
+            title="Altına yerleştir"
+            onDragOver={onDragOverStack(b.id, "below")}
+            onDrop={onDropStack(b.id, "below")}
+            className={`absolute left-0 right-0 bottom-0 h-4 z-20 text-[8px] font-bold flex items-center justify-center ${overStack?.id === b.id && overStack.place === "below" ? "bg-emerald-600 text-white" : "bg-emerald-100/90 text-emerald-800"}`}
+          >
+            Altına yerleştir
+          </div>
+        </>
+      ) : null}
+      <div className="absolute top-0.5 left-1 right-1 z-10 flex items-center gap-0.5 min-w-0">
+        <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab shrink-0" />
+        <span className="text-[9px] font-bold text-slate-400 px-1 cursor-grab truncate">{BLOCK_LABELS[b.id]}</span>
+        <span className="flex-1" />
+        <button
+          type="button"
+          title="Üstüne/altına yerleştir"
+          draggable={false}
+          onMouseDown={stopDrag}
+          onClick={(e) => { e.stopPropagation(); setPlaceFor((cur) => (cur === b.id ? "" : b.id)); }}
+          className="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-200 bg-white text-slate-600"
+          data-testid={`einvoice-design-place-${b.id}`}
+        >
+          Üstüne/altına
+        </button>
+        {SPAN_OPTIONS.map((opt) => (
+          <button
+            key={opt.span}
+            type="button"
+            title={opt.label}
+            onClick={() => patchBlocks(setBlockSpan(L.blocks, b.id, opt.span))}
+            className={`text-[8px] font-bold px-1 py-0.5 rounded ${Number(b.span) === opt.span ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-100"}`}
+            data-testid={`einvoice-design-span-${b.id}-${opt.span}`}
+          >
+            {opt.label}
+          </button>
+        ))}
+        <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, -1))} className="p-0.5" title="Yukarı" data-testid={`einvoice-design-up-${b.id}`}><ArrowUp className="w-3 h-3" /></button>
+        <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, 1))} className="p-0.5" title="Aşağı" data-testid={`einvoice-design-down-${b.id}`}><ArrowDown className="w-3 h-3" /></button>
+        <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, true))} className="p-0.5 text-rose-600" title="Gizle" data-testid={`einvoice-design-hide-${b.id}`}><EyeOff className="w-3 h-3" /></button>
+      </div>
+      {placeFor === b.id ? (
+        <div
+          className="absolute right-1 top-6 z-30 max-h-36 overflow-auto rounded border border-slate-200 bg-white shadow-md p-1 space-y-0.5"
+          data-testid={`einvoice-design-place-menu-${b.id}`}
+          onMouseDown={stopDrag}
+          onClick={stopDrag}
+        >
+          {sharesColumn(b.id) ? (
+            <button
+              type="button"
+              className="block w-full text-left text-[9px] font-bold px-1 py-0.5 rounded hover:bg-slate-100 text-slate-700"
+              data-testid={`einvoice-design-place-${b.id}-detach`}
+              onClick={() => { patchBlocks(detachFromColumn(L.blocks, b.id)); setPlaceFor(""); }}
+            >
+              Kendi sütunu
+            </button>
+          ) : null}
+          {visible.filter((o) => o.id !== b.id).map((o) => (
+            <div key={o.id} className="flex gap-1">
+              <button
+                type="button"
+                className="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-200 hover:bg-emerald-50"
+                data-testid={`einvoice-design-place-${b.id}-above-${o.id}`}
+                onClick={() => { patchBlocks(stackBlock(L.blocks, b.id, o.id, "above")); setPlaceFor(""); }}
+              >
+                {`Üstüne yerleştir: ${BLOCK_LABELS[o.id] || o.id}`}
+              </button>
+              <button
+                type="button"
+                className="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-200 hover:bg-emerald-50"
+                data-testid={`einvoice-design-place-${b.id}-below-${o.id}`}
+                onClick={() => { patchBlocks(stackBlock(L.blocks, b.id, o.id, "below")); setPlaceFor(""); }}
+              >
+                {`Altına yerleştir: ${BLOCK_LABELS[o.id] || o.id}`}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div
+        className={b.id === "iban" || b.id === "balance" ? "flex-1" : undefined}
+        style={blockHasFont(b.id) ? {
+          fontFamily: `"${blockFontFamily(L, b.id)}", Tahoma, sans-serif`,
+          fontSize: `${blockFontSize(L, b.id)}px`,
+        } : undefined}
+      >
+        <PreviewBlock
+          id={b.id}
+          layout={L}
+          onPatch={patch}
+          onPatchCols={patchCols}
+          onPatchMeta={patchMeta}
+          onPatchHeader={patchHeader}
+          onPatchTotals={patchTotals}
+          onQrSize={(size) => patch({ qrSize: size })}
+          onLogoSize={(size) => patch({ logoSize: size })}
+          drag={dragId}
+          onDragStart={onDragStart}
+          onDragOver={onDragOverItem}
+          onDrop={onDropItem}
+          onDragEnd={clearDrag}
+        />
+      </div>
+      <BlockFontBar
+        blockId={b.id}
+        layout={L}
+        onFont={(font) => patchBlocks(setBlockFont(L.blocks, b.id, font))}
+        onFontSize={(size) => {
+          const blocks = setBlockFontSize(L.blocks, b.id, size);
+          if (b.id === "ettn") patch({ blocks, ettnFontSize: size });
+          else patch({ blocks });
+        }}
+      />
+    </div>
+  );
 
   return (
     <div className="space-y-3" data-testid="einvoice-design-canvas">
@@ -866,7 +1037,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
 
         <div className="lg:col-span-9">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri) — en: Tam / 1/2 / 1/3, yan yana için ardışık 1/2</div>
+            <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri) — en: Tam / 1/2 / 1/3. Aynı sütuna yığmak için Üstüne/altına yerleştir veya sürükleyip bırakın.</div>
             <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
               <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
               <button type="button" onClick={onRealXml} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "real" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-preview-real-xml">Önizle (gerçek XML)</button>
@@ -899,76 +1070,31 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
             />
           ) : (
           <div
-            className="rounded-xl border shadow-sm p-4 min-h-[22rem] grid grid-cols-12 gap-2"
+            className="rounded-xl border shadow-sm p-4 min-h-[22rem] flex flex-col gap-2"
             style={{ background: L.paper, color: L.text, fontFamily: `"${L.font}", Tahoma, sans-serif`, fontSize: `${L.fontSize}px` }}
             data-testid="einvoice-design-preview"
           >
-            {visible.length === 0 ? <p className="col-span-12 text-slate-400 text-center py-10">Paletten bölüm ekleyin.</p> : null}
-            {visible.map((b) => (
+            {rows.length === 0 ? <p className="text-slate-400 text-center py-10">Paletten bölüm ekleyin.</p> : null}
+            {rows.map((row, ri) => (
               <div
-                key={b.id}
-                draggable
-                onDragStart={onDragStart(b.id)}
-                onDragOver={onDragOverItem(b.id)}
-                onDrop={onDropItem(b.id, true)}
-                onDragEnd={clearDrag}
-                className={`relative rounded-lg p-1.5 pt-6 flex flex-col h-full ${SPAN_CLASS[b.span] || "col-span-12"} ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
-                data-testid={`einvoice-design-block-${b.id}`}
+                key={row.map((c) => (c.column || [c]).map((m) => m.id).join("+")).join("|")}
+                className="grid grid-cols-12 gap-2 items-stretch"
+                data-testid={`einvoice-design-row-${ri}`}
               >
-                <div className="absolute top-0.5 left-1 right-1 z-10 flex items-center gap-0.5 min-w-0">
-                  <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab shrink-0" />
-                  <span className="text-[9px] font-bold text-slate-400 px-1 cursor-grab truncate">{BLOCK_LABELS[b.id]}</span>
-                  <span className="flex-1" />
-                  {SPAN_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.span}
-                      type="button"
-                      title={opt.label}
-                      onClick={() => patchBlocks(setBlockSpan(L.blocks, b.id, opt.span))}
-                      className={`text-[8px] font-bold px-1 py-0.5 rounded ${Number(b.span) === opt.span ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-100"}`}
-                      data-testid={`einvoice-design-span-${b.id}-${opt.span}`}
+                {row.map((cell) => {
+                  const members = cell.column?.length ? cell.column : [cell];
+                  if (members.length === 1) return renderBlock(members[0], false);
+                  const colKey = members.map((m) => m.id).join("-");
+                  return (
+                    <div
+                      key={colKey}
+                      className={`${SPAN_CLASS[cell.span] || "col-span-12"} flex flex-col gap-1 h-full min-h-0 justify-start`}
+                      data-testid={`einvoice-design-column-${colKey}`}
                     >
-                      {opt.label}
-                    </button>
-                  ))}
-                  <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, -1))} className="p-0.5" title="Yukarı" data-testid={`einvoice-design-up-${b.id}`}><ArrowUp className="w-3 h-3" /></button>
-                  <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, 1))} className="p-0.5" title="Aşağı" data-testid={`einvoice-design-down-${b.id}`}><ArrowDown className="w-3 h-3" /></button>
-                  <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, true))} className="p-0.5 text-rose-600" title="Gizle" data-testid={`einvoice-design-hide-${b.id}`}><EyeOff className="w-3 h-3" /></button>
-                </div>
-                <div
-                  className={b.id === "iban" || b.id === "balance" ? "flex-1" : undefined}
-                  style={blockHasFont(b.id) ? {
-                    fontFamily: `"${blockFontFamily(L, b.id)}", Tahoma, sans-serif`,
-                    fontSize: `${blockFontSize(L, b.id)}px`,
-                  } : undefined}
-                >
-                  <PreviewBlock
-                    id={b.id}
-                    layout={L}
-                    onPatch={patch}
-                    onPatchCols={patchCols}
-                    onPatchMeta={patchMeta}
-                    onPatchHeader={patchHeader}
-                    onPatchTotals={patchTotals}
-                    onQrSize={(size) => patch({ qrSize: size })}
-                    onLogoSize={(size) => patch({ logoSize: size })}
-                    drag={dragId}
-                    onDragStart={onDragStart}
-                    onDragOver={onDragOverItem}
-                    onDrop={onDropItem}
-                    onDragEnd={clearDrag}
-                  />
-                </div>
-                <BlockFontBar
-                  blockId={b.id}
-                  layout={L}
-                  onFont={(font) => patchBlocks(setBlockFont(L.blocks, b.id, font))}
-                  onFontSize={(size) => {
-                    const blocks = setBlockFontSize(L.blocks, b.id, size);
-                    if (b.id === "ettn") patch({ blocks, ettnFontSize: size });
-                    else patch({ blocks });
-                  }}
-                />
+                      {members.map((m) => renderBlock(m, true))}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>

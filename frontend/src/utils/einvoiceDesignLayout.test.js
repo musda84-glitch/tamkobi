@@ -12,6 +12,8 @@ import {
   moveBlock,
   moveVisible,
   normalizeLayout,
+  detachFromColumn,
+  extractLayoutComment,
   packBlockRows,
   previewIban,
   previewNotes,
@@ -20,6 +22,7 @@ import {
   setBlockFontSize,
   setBlockHidden,
   setBlockSpan,
+  stackBlock,
   unitLabel,
   xmlEscape,
 } from "./einvoiceDesignLayout";
@@ -794,4 +797,150 @@ test("stamp image drops http urls and payloads over 150 KB", () => {
   const xslt = layoutToXslt(dropped);
   expect(xslt).not.toContain(huge);
   expect(xslt).not.toContain("https://cdn.example/stamp.png");
+});
+
+function columnIds(rows) {
+  return rows.map((row) => row.map((cell) => (cell.column || [cell]).map((b) => b.id)));
+}
+
+test("old layouts without stack open unchanged", () => {
+  const legacy = {
+    version: 1,
+    kind: "e_invoice",
+    blocks: [
+      { id: "header", span: 12 },
+      { id: "supplier", span: 6 },
+      { id: "customer", span: 6 },
+    ],
+  };
+  const L = normalizeLayout(legacy);
+  expect(L.version).toBe(1);
+  expect(L.blocks.some((b) => Object.prototype.hasOwnProperty.call(b, "stack"))).toBe(false);
+  expect(L.blocks.find((b) => b.id === "supplier")).toEqual({ id: "supplier", hidden: false, span: 6 });
+  expect(L.blocks.find((b) => b.id === "customer")).toEqual({ id: "customer", hidden: false, span: 6 });
+  const plain = layoutToXslt(defaultLayout("e_invoice"));
+  expect(plain).not.toContain('class="inv-stack"');
+});
+
+test("normalizeLayout keeps a stack chain and drops dangling refs", () => {
+  const L = normalizeLayout({
+    blocks: [
+      { id: "gib_seal_archive", hidden: false, span: 4 },
+      { id: "stamp", hidden: false, span: 6, stack: "gib_seal_archive" },
+      { id: "qr", hidden: false, stack: "stamp" },
+      { id: "notes", stack: "yok-boyle-bir-blok" },
+      { id: "spacer", stack: "spacer" },
+    ],
+  });
+  expect(L.version).toBe(1);
+  expect(L.blocks.find((b) => b.id === "gib_seal_archive").stack).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "stamp").stack).toBe("gib_seal_archive");
+  expect(L.blocks.find((b) => b.id === "qr").stack).toBe("gib_seal_archive");
+  expect(L.blocks.find((b) => b.id === "notes").stack).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "spacer").stack).toBeUndefined();
+  const cycled = normalizeLayout({
+    blocks: [
+      { id: "stamp", hidden: false, stack: "gib_seal_archive" },
+      { id: "gib_seal_archive", hidden: false, span: 4, stack: "stamp" },
+    ],
+  });
+  expect(cycled.blocks.find((b) => b.id === "stamp").stack).toBeUndefined();
+  expect(cycled.blocks.find((b) => b.id === "gib_seal_archive").stack).toBe("stamp");
+});
+
+test("stackBlock piles sections in one column and orders above or below", () => {
+  let blocks = [
+    { id: "supplier", span: 4, hidden: false },
+    { id: "gib_seal_archive", span: 4, hidden: false },
+    { id: "customer", span: 4, hidden: false },
+    { id: "stamp", span: 6, hidden: false },
+    { id: "spacer", span: 12, hidden: false },
+  ];
+  blocks = stackBlock(blocks, "stamp", "gib_seal_archive", "below");
+  expect(blocks.find((b) => b.id === "stamp")).toMatchObject({ stack: "gib_seal_archive", span: 4 });
+  expect(blocks.find((b) => b.id === "gib_seal_archive").span).toBe(4);
+  expect(blocks.find((b) => b.id === "supplier").span).toBe(4);
+  let rows = packBlockRows(blocks.filter((b) => b.id !== "spacer"));
+  expect(columnIds(rows)).toEqual([
+    [["supplier"], ["gib_seal_archive", "stamp"], ["customer"]],
+  ]);
+  expect(rows[0][1].span).toBe(4);
+
+  blocks = stackBlock(blocks, "stamp", "gib_seal_archive", "above");
+  rows = packBlockRows(blocks.filter((b) => b.id !== "spacer"));
+  expect(columnIds(rows)).toEqual([
+    [["supplier"], ["stamp", "gib_seal_archive"], ["customer"]],
+  ]);
+
+  blocks = stackBlock(blocks, "stamp", "gib_seal_archive", "below");
+  blocks = stackBlock(blocks, "spacer", "stamp", "below");
+  rows = packBlockRows(blocks);
+  expect(columnIds(rows)).toEqual([
+    [["supplier"], ["gib_seal_archive", "stamp", "spacer"], ["customer"]],
+  ]);
+  expect(rows[0].every((cell) => cell.span === 4)).toBe(true);
+
+  blocks = moveVisible(blocks, "stamp", 1);
+  rows = packBlockRows(blocks);
+  expect(columnIds(rows)[0][1]).toEqual(["gib_seal_archive", "spacer", "stamp"]);
+  expect(blocks.find((b) => b.id === "stamp").stack).toBe("gib_seal_archive");
+
+  blocks = moveVisible(blocks, "gib_seal_archive", -1);
+  expect(blocks.find((b) => b.id === "gib_seal_archive").stack).toBeUndefined();
+  const piled = packBlockRows(blocks).flat().find((cell) => (cell.column || []).some((b) => b.id === "stamp"));
+  expect(piled.column.map((b) => b.id)).toEqual(["spacer", "stamp"]);
+  expect(piled.column.some((b) => b.id === "gib_seal_archive")).toBe(false);
+
+  const detached = detachFromColumn(blocks, "stamp");
+  expect(detached.find((b) => b.id === "stamp").stack).toBeUndefined();
+  expect(packBlockRows(detached).flat().every((cell) => cell.column.length === 1)).toBe(true);
+
+  const widened = setBlockSpan(stackBlock(detached, "stamp", "gib_seal_archive", "below"), "stamp", 6);
+  expect(widened.find((b) => b.id === "stamp").span).toBe(6);
+  expect(widened.find((b) => b.id === "gib_seal_archive").span).toBe(6);
+  expect(widened.find((b) => b.id === "supplier").span).toBe(4);
+});
+
+test("layoutToXslt stacks sections as divs inside one table cell", () => {
+  let L = normalizeLayout({
+    kind: "e_archive",
+    blocks: [
+      { id: "supplier", span: 4, hidden: false },
+      { id: "gib_seal_archive", span: 4, hidden: false },
+      { id: "customer", span: 4, hidden: false },
+      { id: "stamp", span: 6, hidden: false },
+      { id: "header", hidden: true },
+      { id: "meta", hidden: true },
+      { id: "ettn", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+      { id: "notes", hidden: true },
+      { id: "iban", hidden: true },
+    ],
+  }, "e_archive");
+  L = { ...L, blocks: stackBlock(L.blocks, "stamp", "gib_seal_archive", "below") };
+  const xslt = layoutToXslt(L, "e_archive");
+  expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
+  expect(xslt).toContain('class="inv-stack"');
+  expect(xslt).toContain("vertical-align:top");
+  expect(xslt).toContain(".inv-stack + .inv-stack { margin-top:6px; }");
+  const tables = [...xslt.matchAll(/<table class="inv-row"[\s\S]*?<\/table>/g)].map((m) => m[0]);
+  const row = tables.find((table) => table.includes("inv-gib-seal") && table.includes('class="inv-stamp"') && table.includes("SATICI") && table.includes("ALICI"));
+  expect(row).toBeTruthy();
+  expect(row.match(/<td /g)).toHaveLength(3);
+  const cell = row.split(/<td /).find((part) => part.includes("inv-gib-seal") && part.includes('class="inv-stamp"'));
+  expect(cell.startsWith('width="33%" valign="top"')).toBe(true);
+  expect(cell.indexOf("inv-gib-seal")).toBeLessThan(cell.indexOf('class="inv-stamp"'));
+  expect(cell.match(/class="inv-stack"/g)).toHaveLength(2);
+  const restored = normalizeLayout(extractLayoutComment(xslt), "e_archive");
+  expect(restored.blocks.find((b) => b.id === "stamp").stack).toBe("gib_seal_archive");
+  expect(restored.version).toBe(1);
+
+  const above = layoutToXslt({ ...L, blocks: stackBlock(L.blocks, "stamp", "gib_seal_archive", "above") }, "e_archive");
+  const aboveCell = [...above.matchAll(/<table class="inv-row"[\s\S]*?<\/table>/g)]
+    .map((m) => m[0])
+    .find((table) => table.includes("inv-gib-seal") && table.includes('class="inv-stamp"'))
+    .split(/<td /)
+    .find((part) => part.includes("inv-gib-seal") && part.includes('class="inv-stamp"'));
+  expect(aboveCell.indexOf('class="inv-stamp"')).toBeLessThan(aboveCell.indexOf("inv-gib-seal"));
 });
