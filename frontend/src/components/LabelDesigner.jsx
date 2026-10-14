@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
-import { Plus, Save, Trash2, Copy, Star, Printer, X, ArrowUp, ArrowDown, Type, Barcode as BarcodeIcon, QrCode, Image as ImageIcon, Minus, Square, Tag, Search, Wifi, Loader2 } from "lucide-react";
+import { Plus, Save, Trash2, Copy, Star, Printer, X, ArrowUp, ArrowDown, Type, Barcode as BarcodeIcon, QrCode, Image as ImageIcon, Minus, Square, Tag, Search } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { Barcode } from "./BarcodeLabelPrint";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -14,18 +14,6 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { buildLabelPrintDocument, createLabelPrintWindow, embedLabelImages, showLabelPrintDocument } from "../utils/labelPrint";
 import { LABEL_BOX_DEFAULT_STROKE_MM, LABEL_BOX_MIN_STROKE_MM, labelLineThicknessMm, labelStrokePx } from "../utils/labelBoxStroke";
 import { resolveLabelTemplate } from "../utils/resolveLabelTemplate";
-import {
-  PRINTER_PRESETS,
-  applyPrinterPreset,
-  ethernetPrinterConfigError,
-  isBridgeUrlOnPrinterHost,
-  isSerialBaudPort,
-  loadEthernetPrinter,
-  printLabelsEthernet,
-  probeEthernetPrinter,
-  saveEthernetPrinter,
-  suggestedBridgeUrl,
-} from "../utils/ethernetPrinter";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -304,9 +292,6 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
   const [copies, setCopies] = useState(1);
   const [page, setPage] = useState({ mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
   const [targetId, setTargetId] = useState(targets[0]?.id);
-  const [eth, setEth] = useState(() => loadEthernetPrinter());
-  const [ethBusy, setEthBusy] = useState("");
-  const [ethOpen, setEthOpen] = useState(() => !!(loadEthernetPrinter().host || loadEthernetPrinter().enabled));
 
   useEffect(() => {
     axios.get(`${API_URL}/label-templates?company_id=${companyId}`).then((r) => {
@@ -331,46 +316,6 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
     if (!next) return;
     setTpl(next);
     setPage(next.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
-  };
-
-  const patchEth = (patch) => {
-    setEth((prev) => {
-      const next = { ...prev, ...patch };
-      if (isSerialBaudPort(next.port) && Number(patch.port) === Number(next.port)) {
-        toast.message("Port 9600 seri baud’dur; Ethernet için 9100’e çevrildi.");
-      }
-      if (next.mode === "bridge" && isBridgeUrlOnPrinterHost(next)) {
-        toast.message("Köprü URL yazıcı IP olamaz; PC köprüsü (127.0.0.1:19100) ayarlandı.");
-      }
-      return saveEthernetPrinter(next);
-    });
-  };
-
-  const onProbeEth = async () => {
-    setEthBusy("probe");
-    try {
-      const r = await probeEthernetPrinter(eth);
-      toast.success(`Yazıcı erişilebilir: ${r.host || eth.host}:${r.port || eth.port}`);
-    } catch (e) {
-      toast.error(e?.message || "Bağlantı testi başarısız");
-    } finally {
-      setEthBusy("");
-    }
-  };
-
-  const onPrintEth = async () => {
-    if (!target) return;
-    setEthBusy("print");
-    try {
-      const cfg = saveEthernetPrinter({ ...eth, enabled: true });
-      setEth(cfg);
-      await printLabelsEthernet({ product: target, company, tpl, copies, settings: cfg });
-      toast.success(`Ethernet yazıcıya gönderildi (${cfg.brand} ${cfg.model || ""} · ${cfg.host}:${cfg.port})`);
-    } catch (e) {
-      toast.error(e?.message || "Ethernet yazdırma başarısız");
-    } finally {
-      setEthBusy("");
-    }
   };
 
   if (!tpl || !target) return null;
@@ -449,151 +394,6 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
           <button onClick={() => printLabelJobs(tpl, jobs, page, "label-quick-print-source")} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="label-print-btn">
             <Printer className="w-4 h-4" /> Yazdır (Termal / A4)
           </button>
-        </div>
-
-        <div className="border border-slate-200 rounded-xl p-3 space-y-2 bg-slate-50/80" data-testid="ethernet-printer-section">
-          <button
-            type="button"
-            className="w-full flex items-center justify-between gap-2 text-left"
-            onClick={() => setEthOpen((v) => !v)}
-            data-testid="ethernet-printer-toggle"
-          >
-            <span className="font-semibold text-slate-800 flex items-center gap-1.5">
-              <Wifi className="w-3.5 h-3.5 text-sky-600" />
-              Ethernet / IP yazıcı (doğrudan)
-            </span>
-            <span className="text-[10px] text-slate-500">{ethOpen ? "Gizle" : "Aç"} · {eth.host ? `${eth.host}:${eth.port}` : "bağlı değil"}</span>
-          </button>
-          {ethOpen && (
-            <div className="space-y-2 pt-1 border-t border-slate-200">
-              <p className="text-[10px] text-slate-500 leading-snug">
-                XP-490B Ethernet etiketi: <b>Yazıcı IP</b> = yazıcının IP’si (örn. 192.168.1.117), port <b>9100</b>
-                {" "}(etiketteki <b>9600</b> seri baud’dur, Ethernet portu değil).
-                Önce <b>API sunucusu → yazıcı</b> deneyin (TamKobi sunucusu aynı LAN’daysa).
-                Mobil / bulut sunucu için <b>Yerel köprü</b>: PC’de <code className="bg-slate-200 px-1 rounded">python3 scripts/ethernet_print_bridge.py</code>
-                {" "}→ Köprü URL <b>http://PC-IP:19100</b> (yazıcı IP’si değil; 192.168.1.117:19100 yanlış).
-              </p>
-              {ethernetPrinterConfigError(eth) && (
-                <div className="text-[10px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-snug" data-testid="ethernet-bridge-warn">
-                  {ethernetPrinterConfigError(eth)}
-                  {eth.mode === "bridge" && (
-                    <button
-                      type="button"
-                      className="ml-1 underline font-semibold"
-                      data-testid="ethernet-bridge-fix"
-                      onClick={() => patchEth({ bridgeUrl: suggestedBridgeUrl(eth.host) })}
-                    >
-                      {suggestedBridgeUrl(eth.host)} yap
-                    </button>
-                  )}
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <label className="block space-y-1">
-                  <span className="font-semibold text-slate-700">Model şablonu</span>
-                  <select
-                    value={eth.presetId || "xprinter-xp-490b"}
-                    onChange={(e) => setEth(applyPrinterPreset(eth, e.target.value))}
-                    className="w-full border rounded-lg p-2 bg-white"
-                    data-testid="ethernet-printer-preset"
-                  >
-                    {PRINTER_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id}>{p.brand} {p.model}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="font-semibold text-slate-700">Protokol</span>
-                  <select
-                    value={eth.protocol}
-                    onChange={(e) => patchEth({ protocol: e.target.value })}
-                    className="w-full border rounded-lg p-2 bg-white"
-                    data-testid="ethernet-printer-protocol"
-                  >
-                    <option value="tspl">TSPL (Xprinter / TSC)</option>
-                    <option value="escpos">ESC/POS</option>
-                  </select>
-                </label>
-                <label className="block space-y-1 sm:col-span-1">
-                  <span className="font-semibold text-slate-700">Yazıcı IP</span>
-                  <input
-                    value={eth.host}
-                    onChange={(e) => patchEth({ host: e.target.value })}
-                    placeholder="192.168.1.117"
-                    className="w-full border rounded-lg p-2 font-mono bg-white"
-                    data-testid="ethernet-printer-host"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="font-semibold text-slate-700">Port</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="65535"
-                    value={eth.port}
-                    onChange={(e) => patchEth({ port: Number(e.target.value) || 9100 })}
-                    className="w-full border rounded-lg p-2 font-mono bg-white"
-                    data-testid="ethernet-printer-port"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="font-semibold text-slate-700">Gönderim</span>
-                  <select
-                    value={eth.mode}
-                    onChange={(e) => {
-                      const mode = e.target.value;
-                      if (mode === "bridge" && isBridgeUrlOnPrinterHost({ ...eth, mode })) {
-                        patchEth({ mode, bridgeUrl: suggestedBridgeUrl(eth.host) });
-                      } else {
-                        patchEth({ mode });
-                      }
-                    }}
-                    className="w-full border rounded-lg p-2 bg-white"
-                    data-testid="ethernet-printer-mode"
-                  >
-                    <option value="api">API sunucusu → yazıcı (LAN sunucu)</option>
-                    <option value="bridge">Yerel köprü PC:19100 (mobil / bulut)</option>
-                  </select>
-                </label>
-                {eth.mode === "bridge" && (
-                  <label className="block space-y-1">
-                    <span className="font-semibold text-slate-700">Köprü URL (PC, port 19100)</span>
-                    <input
-                      value={eth.bridgeUrl}
-                      onChange={(e) => patchEth({ bridgeUrl: e.target.value })}
-                      placeholder="http://192.168.1.50:19100"
-                      className={`w-full border rounded-lg p-2 font-mono bg-white ${isBridgeUrlOnPrinterHost(eth) ? "border-amber-400" : ""}`}
-                      data-testid="ethernet-printer-bridge"
-                    />
-                  </label>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  disabled={!!ethBusy || !eth.host}
-                  onClick={onProbeEth}
-                  className="px-3 py-1.5 border border-slate-300 rounded-lg font-semibold bg-white disabled:opacity-50"
-                  data-testid="ethernet-printer-probe"
-                >
-                  {ethBusy === "probe" ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : null} Bağlantı testi
-                </button>
-                <button
-                  type="button"
-                  disabled={!!ethBusy || !eth.host}
-                  onClick={onPrintEth}
-                  className="px-3 py-1.5 bg-sky-700 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
-                  data-testid="ethernet-printer-print"
-                >
-                  {ethBusy === "print" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-                  Ethernet yazdır
-                </button>
-                <span className="text-[10px] text-slate-400">
-                  {eth.brand} {eth.model} · {eth.protocol.toUpperCase()} · {eth.dpi || 203} dpi
-                </span>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="bg-slate-50 p-4 rounded-xl flex justify-center overflow-x-auto" data-testid="label-quick-preview">
