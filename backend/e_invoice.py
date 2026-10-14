@@ -1019,6 +1019,16 @@ async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
     label = {"isnet": "İşNet SOAP", "isnet_portal": "İşNet Portal", "n11faturam": "n11 Faturam"}.get(provider, provider)
     try:
         if provider in ("isnet", "isnet_portal"):
+            try:
+                isnet.require_explicit_mode(settings)
+            except HTTPException as e:
+                return {
+                    "company_id": company_id,
+                    "provider": provider,
+                    "balance": None,
+                    "source": provider,
+                    "message": e.detail if isinstance(e.detail, str) else isnet.MODE_REQUIRED_DETAIL,
+                }
             bal = await isnet.get_company_balance(settings)
             src = provider
         else:
