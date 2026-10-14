@@ -163,36 +163,100 @@ async def apply_balance_delta(db, account_id: str, delta: float) -> str:
     return "posted"
 
 
-async def fetch_account_txs(db, account_id: str) -> List[dict]:
-    return await db.bank_transactions.find(
-        {"$or": [{"account_id": account_id}, {"target_account_id": account_id}]},
-    ).to_list(20000)
+# Bakiye işareti için yeterli alanlar. Tam belge (ekstre metni vb.) çekilmez.
+BANK_TX_BALANCE_PROJECTION = {
+    "company_id": 1,
+    "account_id": 1,
+    "target_account_id": 1,
+    "amount": 1,
+    "type": 1,
+    "status": 1,
+    "source": 1,
+    "balance_posted": 1,
+    "customer_card_pool_ledger": 1,
+    "customer_card_account_id": 1,
+    "via_customer_card": 1,
+}
+# Şirket başına tek yükleme. Eski hesap başına 20_000 tavanı burada da korunur;
+# başka şirketin hareketi company_id indeksiyle hiç okunmaz.
+COMPANY_TX_LIMIT = 20000
 
 
-async def recalc_account_balance(db, account_id: str) -> float:
-    acc = None
+def group_txs_by_account(txs: Iterable[dict]) -> Dict[str, List[dict]]:
+    """account_id ve target_account_id kovaları. Aynı hareket iki hesaba birer kez girer."""
+    grouped: Dict[str, List[dict]] = {}
+    for tx in txs or []:
+        if not isinstance(tx, dict):
+            continue
+        seen = set()
+        for key in ("account_id", "target_account_id"):
+            aid = tx.get(key)
+            if not aid:
+                continue
+            sid = str(aid)
+            if sid in seen:
+                continue
+            seen.add(sid)
+            grouped.setdefault(sid, []).append(tx)
+    return grouped
+
+
+async def fetch_company_bank_txs(db, company_id: str) -> List[dict]:
+    """Şirketin banka hareketleri, tek company_id sorgusu (indeks). $or yok."""
+    if not company_id:
+        return []
+    cursor = db.bank_transactions.find({"company_id": company_id}, BANK_TX_BALANCE_PROJECTION)
+    return await cursor.to_list(COMPANY_TX_LIMIT)
+
+
+async def _lookup_company_id(db, account_id: str) -> str:
+    if not account_id:
+        return ""
     try:
-        acc = await db.bank_accounts.find_one({"_id": account_id})
+        doc = await db.bank_accounts.find_one({"_id": account_id}, {"company_id": 1})
+    except TypeError:
+        try:
+            doc = await db.bank_accounts.find_one({"_id": account_id})
+        except Exception:
+            return ""
     except Exception:
-        acc = None
+        return ""
+    if isinstance(doc, dict) and doc.get("company_id"):
+        return str(doc["company_id"])
+    return ""
+
+
+async def fetch_account_txs(db, account_id: str, company_id: Optional[str] = None) -> List[dict]:
+    """Hesabın hareketleri. Sorgu company_id ile tek sefer; gruplama Python'da.
+
+    $or (account_id | target_account_id) tüm şirketleri tarardı. company_id
+    verilmezse hesaptan bir kez okunur; kasa senkronu bu yolu kullanmaz.
+    """
+    cid = str(company_id or "")
+    if not cid:
+        cid = await _lookup_company_id(db, account_id)
+    if not cid:
+        return []
+    grouped = group_txs_by_account(await fetch_company_bank_txs(db, cid))
+    return list(grouped.get(str(account_id), []))
+
+
+async def recalc_account_balance(db, account_id: str, account: Optional[dict] = None) -> float:
+    acc = account if isinstance(account, dict) else None
+    if acc is None:
+        try:
+            found = await db.bank_accounts.find_one({"_id": account_id})
+        except Exception:
+            found = None
+        acc = found if isinstance(found, dict) else None
     if _is_pool_account(acc):
         return 0.0
-    txs = await fetch_account_txs(db, account_id)
+    txs = await fetch_account_txs(db, account_id, company_id=(acc or {}).get("company_id"))
     return movement_balance(txs, account_id, acc)
 
 
-async def annotate_listed_accounts(db, company_id: str, accounts: List[dict]) -> List[dict]:
-    """Liste ucunda bakiye = recalc kontrolü. Kasa dışı hesaplarda yazma yok."""
-    try:
-        txs = await db.bank_transactions.find({"company_id": company_id}).to_list(50000)
-    except Exception:
-        return accounts
-    grouped: Dict[str, List[dict]] = {}
-    for tx in txs or []:
-        for key in ("account_id", "target_account_id"):
-            aid = tx.get(key)
-            if aid:
-                grouped.setdefault(str(aid), []).append(tx)
+def apply_drift_fields(accounts: List[dict], grouped: Dict[str, List[dict]]) -> List[dict]:
+    """ledger_balance / balance_drift / bank_balance_drift. Yazma yok."""
     for acc in accounts or []:
         aid = str(acc.get("id") or acc.get("_id") or "")
         if not aid:
@@ -207,6 +271,16 @@ async def annotate_listed_accounts(db, company_id: str, accounts: List[dict]) ->
         else:
             acc["bank_balance_drift"] = abs(round(_num(reported), 2) - moved) >= 0.01
     return accounts
+
+
+async def annotate_listed_accounts(db, company_id: str, accounts: List[dict], txs: Optional[List[dict]] = None) -> List[dict]:
+    """Drift alanları. txs verilirse ikinci bank_transactions sorgusu açılmaz."""
+    if txs is None:
+        try:
+            txs = await fetch_company_bank_txs(db, company_id)
+        except Exception:
+            return accounts
+    return apply_drift_fields(accounts, group_txs_by_account(txs))
 
 
 def opening_tx_doc(acc: dict, amount: float) -> Optional[Dict[str, Any]]:
@@ -239,17 +313,50 @@ async def ensure_opening_tx(db, acc: dict) -> Optional[dict]:
     return doc
 
 
-async def sync_cash_box_balances(db, accounts: List[dict]) -> List[dict]:
-    """Kasa kartı bakiyesi = hareket toplamı. Hareket yoksa 0 (sahte açılış silinir)."""
+async def _company_id_for_accounts(db, accounts: List[dict]) -> str:
+    for acc in accounts or []:
+        if acc.get("company_id"):
+            return str(acc["company_id"])
+    for acc in accounts or []:
+        aid = acc.get("_id") or acc.get("id")
+        cid = await _lookup_company_id(db, str(aid or ""))
+        if cid:
+            return cid
+    return ""
+
+
+async def sync_cash_box_balances(
+    db,
+    accounts: List[dict],
+    txs: Optional[List[dict]] = None,
+    *,
+    persist: bool = True,
+) -> List[dict]:
+    """Kasa kartı bakiyesi = hareket toplamı. Tüm kasalar tek company sorgusu.
+
+    Kasa başına sorgu ve recalc_account_balance içindeki find_one yok.
+    txs verilirse (liste ucu) aynı yükleme paylaşılır. persist=False salt okur:
+    cevapta bakiye güncellenir, bank_accounts yazılmaz.
+    """
+    cash = []
     for acc in accounts or []:
         if str(acc.get("type") or "") != "cash_box":
             continue
-        aid = acc.get("_id") or acc.get("id")
-        if not aid:
+        if not (acc.get("_id") or acc.get("id")):
             continue
-        moved = await recalc_account_balance(db, aid)
+        cash.append(acc)
+    if not cash:
+        return accounts
+    if txs is None:
+        company_id = await _company_id_for_accounts(db, accounts)
+        txs = await fetch_company_bank_txs(db, company_id) if company_id else []
+    grouped = group_txs_by_account(txs)
+    for acc in cash:
+        aid = str(acc.get("_id") or acc.get("id"))
+        moved = movement_balance(grouped.get(aid, []), aid, acc)
         stored = round(_num(acc.get("current_balance")), 2)
         if abs(moved - stored) >= 0.01:
-            await db.bank_accounts.update_one({"_id": aid}, {"$set": {"current_balance": moved}})
             acc["current_balance"] = moved
+            if persist:
+                await db.bank_accounts.update_one({"_id": aid}, {"$set": {"current_balance": moved}})
     return accounts

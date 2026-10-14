@@ -162,6 +162,19 @@ def has_unique_index(indexes) -> bool:
 _SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DATEISH = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?")
 _PREFIX_RE = re.compile(r"^\^[\w.\-/]+$")
+# Generated STORED columns. SQL must name the column (not JSON_EXTRACT) so
+# idx_docs_coll_company* can be used.
+_INDEXED_DOC_FIELDS = ("account_id", "partner_id")
+_GENERATED_DOC_COLUMNS = (
+    ("company_id", "$.company_id", "VARCHAR(64)"),
+    ("account_id", "$.account_id", "VARCHAR(191)"),
+    ("partner_id", "$.partner_id", "VARCHAR(191)"),
+)
+_GENERATED_DOC_INDEXES = (
+    ("idx_docs_coll_company", "(collection, company_id)"),
+    ("idx_docs_coll_company_account", "(collection, company_id, account_id)"),
+    ("idx_docs_coll_company_partner", "(collection, company_id, partner_id)"),
+)
 
 
 def _json_unquote(field: str) -> str:
@@ -191,7 +204,7 @@ def sql_pushdown(collection: str, query: Optional[dict]) -> Tuple[str, list]:
             clauses.append("company_id=%s")
             params.append(str(v))
             continue
-        expr = _json_unquote(k)
+        expr = k if k in _INDEXED_DOC_FIELDS else _json_unquote(k)
         if not isinstance(v, dict):
             # None ve sayılar SQL'de metne çevrilince eşleşmez (str(None) == "None"),
             # JSON null ile karşılaştırma da yanlış sonuç verir; bunları Python tarafına bırak.
@@ -280,43 +293,48 @@ def sql_count_exact(collection: str, query: Optional[dict]) -> Optional[Tuple[st
     return count_sql, params
 
 
+def _generated_column_sql(name: str, expr: str, sql_type: str) -> str:
+    return (
+        f"ALTER TABLE docs ADD COLUMN {name} {sql_type} "
+        f"GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '{expr}'))) STORED"
+    )
+
+
 def ensure_docs_query_helpers(cur, db_name: str) -> None:
-    """Stored company_id + index so tenant report queries skip other firms."""
-    cur.execute(
-        "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND COLUMN_NAME='company_id'",
-        (db_name,),
-    )
-    if int((cur.fetchone() or [0])[0] or 0) == 0:
+    """Stored company/account/partner ids + indexes so tenant queries skip other firms."""
+    for name, expr, sql_type in _GENERATED_DOC_COLUMNS:
         cur.execute(
-            "ALTER TABLE docs ADD COLUMN company_id VARCHAR(191) "
-            "GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED"
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND COLUMN_NAME=%s",
+            (db_name, name),
         )
-    cur.execute(
-        "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND INDEX_NAME='idx_docs_coll_company'",
-        (db_name,),
-    )
-    if int((cur.fetchone() or [0])[0] or 0) == 0:
-        cur.execute("CREATE INDEX idx_docs_coll_company ON docs (collection, company_id)")
+        if int((cur.fetchone() or [0])[0] or 0) == 0:
+            cur.execute(_generated_column_sql(name, expr, sql_type))
+    for index_name, cols in _GENERATED_DOC_INDEXES:
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND INDEX_NAME=%s",
+            (db_name, index_name),
+        )
+        if int((cur.fetchone() or [0])[0] or 0) == 0:
+            cur.execute(f"CREATE INDEX {index_name} ON docs {cols}")
 
 
 async def ensure_docs_query_helpers_async(cur, db_name: str) -> None:
-    await cur.execute(
-        "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND COLUMN_NAME='company_id'",
-        (db_name,),
-    )
-    row = await cur.fetchone()
-    if int((row or [0])[0] or 0) == 0:
+    for name, expr, sql_type in _GENERATED_DOC_COLUMNS:
         await cur.execute(
-            "ALTER TABLE docs ADD COLUMN company_id VARCHAR(191) "
-            "GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED"
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND COLUMN_NAME=%s",
+            (db_name, name),
         )
-    await cur.execute(
-        "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND INDEX_NAME='idx_docs_coll_company'",
-        (db_name,),
-    )
-    row = await cur.fetchone()
-    if int((row or [0])[0] or 0) == 0:
-        await cur.execute("CREATE INDEX idx_docs_coll_company ON docs (collection, company_id)")
+        row = await cur.fetchone()
+        if int((row or [0])[0] or 0) == 0:
+            await cur.execute(_generated_column_sql(name, expr, sql_type))
+    for index_name, cols in _GENERATED_DOC_INDEXES:
+        await cur.execute(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='docs' AND INDEX_NAME=%s",
+            (db_name, index_name),
+        )
+        row = await cur.fetchone()
+        if int((row or [0])[0] or 0) == 0:
+            await cur.execute(f"CREATE INDEX {index_name} ON docs {cols}")
 
 
 def values_at(doc: Any, path: str) -> List[Any]:
@@ -710,9 +728,13 @@ CREATE TABLE IF NOT EXISTS docs (
   id VARCHAR(191) NOT NULL,
   doc JSON NOT NULL,
   company_id VARCHAR(64) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED,
+  account_id VARCHAR(191) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.account_id'))) STORED,
+  partner_id VARCHAR(191) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.partner_id'))) STORED,
   updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (collection, id),
-  KEY idx_docs_coll_company (collection, company_id)
+  KEY idx_docs_coll_company (collection, company_id),
+  KEY idx_docs_coll_company_account (collection, company_id, account_id),
+  KEY idx_docs_coll_company_partner (collection, company_id, partner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS meta_indexes (
@@ -750,15 +772,14 @@ CREATE TABLE IF NOT EXISTS system_logs (
 
 
 def schema_upgrade_statements(columns: set, indexes: set) -> List[str]:
-    """Idempotent ALTERs for databases created before generated company_id."""
+    """Idempotent ALTERs for generated company_id / account_id / partner_id."""
     stmts: List[str] = []
-    if "company_id" not in columns:
-        stmts.append(
-            "ALTER TABLE docs ADD COLUMN company_id VARCHAR(64) "
-            "GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED"
-        )
-    if "idx_docs_coll_company" not in indexes:
-        stmts.append("ALTER TABLE docs ADD INDEX idx_docs_coll_company (collection, company_id)")
+    for name, expr, sql_type in _GENERATED_DOC_COLUMNS:
+        if name not in columns:
+            stmts.append(_generated_column_sql(name, expr, sql_type))
+    for index_name, cols in _GENERATED_DOC_INDEXES:
+        if index_name not in indexes:
+            stmts.append(f"ALTER TABLE docs ADD INDEX {index_name} {cols}")
     return stmts
 
 

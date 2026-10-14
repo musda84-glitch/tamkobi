@@ -45,21 +45,45 @@ export function scopesOverlap(listenerScopes = ["cash"], eventScopes = ["cash"])
   return listenerScopes.some((s) => eventScopes.includes(s));
 }
 
+/** SSE cash olayları bu pencerede tek yenilemeye iner. */
+export const CASH_EVENT_DEBOUNCE_MS = 700;
+
 /**
  * Sayfa/komponent: cash vb. değişince sessizce yeniden yükle.
  * onRefresh stabil olmalı (useCallback).
+ * cash kapsamı 700 ms debounce: art arda olaylar tek yenileme olur.
  */
-export function useDataRefresh(onRefresh, { companyId, scopes = ["cash"] } = {}) {
+export function useDataRefresh(onRefresh, { companyId, scopes = ["cash"], debounceMs } = {}) {
   const scopesKey = Array.isArray(scopes) ? scopes.join(",") : String(scopes || "");
   useEffect(() => {
     if (typeof onRefresh !== "function") return undefined;
+    const listenerScopes = scopesKey ? scopesKey.split(",") : [];
+    let timer = null;
     const handler = (event) => {
       const detail = event?.detail || {};
       if (companyId && detail.companyId && detail.companyId !== companyId) return;
-      if (!scopesOverlap(scopes, detail.scopes || ["cash"])) return;
-      onRefresh(detail);
+      const eventScopes = detail.scopes || ["cash"];
+      if (!scopesOverlap(listenerScopes, eventScopes)) return;
+      const wait = debounceMs != null
+        ? debounceMs
+        : (eventScopes.includes("cash") ? CASH_EVENT_DEBOUNCE_MS : 0);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (wait <= 0) {
+        onRefresh(detail);
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        onRefresh(detail);
+      }, wait);
     };
     window.addEventListener(DATA_CHANGED_EVENT, handler);
-    return () => window.removeEventListener(DATA_CHANGED_EVENT, handler);
-  }, [onRefresh, companyId, scopesKey]);
+    return () => {
+      window.removeEventListener(DATA_CHANGED_EVENT, handler);
+      if (timer) clearTimeout(timer);
+    };
+  }, [onRefresh, companyId, scopesKey, debounceMs]);
 }

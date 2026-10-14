@@ -78,7 +78,7 @@ class _FakeColl:
     def __init__(self, docs):
         self.docs = docs
 
-    def find(self, q=None):
+    def find(self, q=None, projection=None):
         # Test: sorguyu yok say, tüm dokümanları döndür (repair Python'da tip filtreler)
         rows = self.docs
         if isinstance(q, dict) and "partner_id" in q:

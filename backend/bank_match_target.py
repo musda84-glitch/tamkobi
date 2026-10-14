@@ -35,22 +35,51 @@ def _norm_bank_tx_type(raw: Any) -> str:
     return ""
 
 
-async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = None) -> int:
+async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = None, company_id: Optional[str] = None) -> int:
     """#1089 tersine çevirmesi: banka çıkışı capital_in yazılmışsa withdrawal yap.
 
     Eski (doğru) kural banka yönüyle aynı yazıyordu. #1089 outflow→capital_in yaptı;
     Alacaklı şişti. Doğrusu: outflow→withdrawal, inflow→capital_in.
     Tip düzeltilince sync_partner_from_ledger bakiyeyi hareketlerden yeniden kurar.
+
+    partner_transactions company_id ile tek sorgu. Banka satırı find_one N+1 yerine
+    related_bank_tx_id $in.
     """
+    if partner_id and not company_id:
+        try:
+            company_id = await partner_pay._partner_company_id(db, partner_id)
+        except Exception:
+            company_id = None
     q: Dict[str, Any] = {
         "$or": [
             {"source": "bank_match"},
             {"related_bank_tx_id": {"$exists": True, "$nin": [None, ""]}},
         ]
     }
+    if company_id:
+        q["company_id"] = company_id
     if partner_id:
-        q = {"$and": [q, {"partner_id": partner_id}]}
+        q["partner_id"] = partner_id
     txs = await db.partner_transactions.find(q).to_list(20000)
+    need_bank_ids = []
+    for tx in txs:
+        if tx.get("type") not in ("withdrawal", "capital_in"):
+            continue
+        if _norm_bank_tx_type(tx.get("bank_tx_type")):
+            continue
+        bid = tx.get("related_bank_tx_id")
+        if bid:
+            need_bank_ids.append(bid)
+    bank_by_id: Dict[str, dict] = {}
+    if need_bank_ids:
+        uniq = list(dict.fromkeys(need_bank_ids))
+        brows = await db.bank_transactions.find(
+            {"_id": {"$in": uniq}},
+            {"_id": 1, "type": 1},
+        ).to_list(len(uniq))
+        for row in brows or []:
+            if row.get("_id"):
+                bank_by_id[row["_id"]] = row
     fixed = 0
     now = datetime.now(timezone.utc).isoformat()
     for tx in txs:
@@ -58,7 +87,7 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
             continue
         bank_type = _norm_bank_tx_type(tx.get("bank_tx_type"))
         if not bank_type and tx.get("related_bank_tx_id"):
-            btx = await db.bank_transactions.find_one({"_id": tx["related_bank_tx_id"]})
+            btx = bank_by_id.get(tx["related_bank_tx_id"])
             bank_type = _norm_bank_tx_type((btx or {}).get("type"))
         if not bank_type:
             continue

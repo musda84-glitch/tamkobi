@@ -480,13 +480,35 @@ def is_legacy_expense_withdrawal(tx: Optional[Dict[str, Any]]) -> bool:
     return tx.get("source") == "expense"
 
 
-async def repair_legacy_expense_withdrawals(db, partner_id: Optional[str] = None) -> int:
+async def _partner_company_id(db, partner_id: Optional[str]) -> Optional[str]:
+    if not partner_id:
+        return None
+    try:
+        partner = await db.partners.find_one({"_id": partner_id}, {"company_id": 1})
+    except TypeError:
+        try:
+            partner = await db.partners.find_one({"_id": partner_id})
+        except Exception:
+            return None
+    except Exception:
+        return None
+    if isinstance(partner, dict) and partner.get("company_id"):
+        return str(partner["company_id"])
+    return None
+
+
+async def repair_legacy_expense_withdrawals(db, partner_id: Optional[str] = None, company_id: Optional[str] = None) -> int:
     """Masraf → ortak satırlarını withdrawal→credit çevir (alacak +2× tutar onarımı).
 
     Eski kod şirket masrafını ortaktan `withdraw` ile düşüyordu; doğrusu `credit`
     (şirket ortağa borçlanır). Tip düzeltilmeden ledger sync yanlış bakiyeyi kalıcılaştırır.
+    Sorgu company_id taşır; şirket (veya tek ortak) için tek find.
     """
+    if partner_id and not company_id:
+        company_id = await _partner_company_id(db, partner_id)
     q: Dict[str, Any] = {"type": "withdrawal"}
+    if company_id:
+        q["company_id"] = company_id
     if partner_id:
         q["partner_id"] = partner_id
     txs = await db.partner_transactions.find(q).to_list(20000)
@@ -511,9 +533,13 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
     partner = await db.partners.find_one({"_id": partner_id})
     if not partner:
         return None
-    expense_rows_repaired = await repair_legacy_expense_withdrawals(db, partner_id)
-    bank_match_rows_repaired = await repair_legacy_bank_match_directions(db, partner_id)
-    txs = await db.partner_transactions.find({"partner_id": partner_id}).to_list(20000)
+    company_id = partner.get("company_id")
+    expense_rows_repaired = await repair_legacy_expense_withdrawals(db, partner_id, company_id=company_id)
+    bank_match_rows_repaired = await repair_legacy_bank_match_directions(db, partner_id, company_id=company_id)
+    tx_q: Dict[str, Any] = {"partner_id": partner_id}
+    if company_id:
+        tx_q["company_id"] = company_id
+    txs = await db.partner_transactions.find(tx_q).to_list(20000)
     live = ledger_totals(txs)
     prev = {
         "balance": float(partner.get("balance") or 0),
@@ -540,13 +566,62 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
     }
 
 
+async def repair_company_partner_moves(db, company_id: str) -> Dict[str, int]:
+    """Şirketteki eski ortak satırlarını tek seferde onar. Ortak başına sorgu yok."""
+    from bank_match_target import repair_legacy_bank_match_directions
+
+    if not company_id:
+        return {"expense_rows_repaired": 0, "bank_match_rows_repaired": 0}
+    expense_rows_repaired = await repair_legacy_expense_withdrawals(db, company_id=company_id)
+    bank_match_rows_repaired = await repair_legacy_bank_match_directions(db, company_id=company_id)
+    return {
+        "expense_rows_repaired": expense_rows_repaired,
+        "bank_match_rows_repaired": bank_match_rows_repaired,
+    }
+
+
 async def sync_company_partners(db, company_id: str) -> List[Dict[str, Any]]:
+    """Onarım + bakiye, şirket başına bir kez. Ortak sayısı kadar sorgu açılmaz.
+
+    Özet GET bunu çağırmaz. Hareket yazımı ve yeniden hesapla ucu çağırır.
+    """
+    repaired = await repair_company_partner_moves(db, company_id)
     partners = await db.partners.find({"company_id": company_id}).to_list(200)
+    ids = [p["_id"] for p in partners if p.get("_id")]
+    txs: List[Dict[str, Any]] = []
+    if ids:
+        txs = await db.partner_transactions.find(
+            {"company_id": company_id, "partner_id": {"$in": ids}}
+        ).to_list(20000)
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for tx in txs:
+        pid = str(tx.get("partner_id") or "")
+        if pid:
+            grouped.setdefault(pid, []).append(tx)
+    now = datetime.now(timezone.utc).isoformat()
     out: List[Dict[str, Any]] = []
     for p in partners:
-        meta = await sync_partner_from_ledger(db, p["_id"])
-        if meta:
-            out.append({"partner_id": p["_id"], **meta})
+        live = ledger_totals(grouped.get(str(p["_id"]), []))
+        prev = {
+            "balance": float(p.get("balance") or 0),
+            "total_capital_in": float(p.get("total_capital_in") or 0),
+            "total_withdrawn": float(p.get("total_withdrawn") or 0),
+            "total_profit_share": float(p.get("total_profit_share") or 0),
+        }
+        drifted = any(abs(live[k] - prev[k]) > 0.005 for k in live)
+        if drifted:
+            await db.partners.update_one(
+                {"_id": p["_id"]},
+                {"$set": {**live, "balance_synced_at": now}},
+            )
+        out.append({
+            "partner_id": p["_id"],
+            **live,
+            "previous": prev,
+            "repaired": drifted or repaired["expense_rows_repaired"] > 0 or repaired["bank_match_rows_repaired"] > 0,
+            "expense_rows_repaired": repaired["expense_rows_repaired"],
+            "bank_match_rows_repaired": repaired["bank_match_rows_repaired"],
+        })
     return out
 
 
@@ -578,6 +653,8 @@ async def move(db, company_id: str, partner_id: str, amount: float, tx_type: str
     if extra:
         doc.update({k: v for k, v in extra.items() if v is not None})
     await db.partner_transactions.insert_one(doc)
+    # Eski satır onarımı yazımda bir kez; özet GET'i bunu tekrarlamaz.
+    await repair_company_partner_moves(db, company_id)
     return partner["name"]
 
 

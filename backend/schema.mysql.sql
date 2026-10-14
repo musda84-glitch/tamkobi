@@ -17,9 +17,13 @@ CREATE TABLE IF NOT EXISTS docs (
   id VARCHAR(191) NOT NULL,
   doc JSON NOT NULL,
   company_id VARCHAR(64) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))) STORED,
+  account_id VARCHAR(191) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.account_id'))) STORED,
+  partner_id VARCHAR(191) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc, '$.partner_id'))) STORED,
   updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (collection, id),
-  KEY idx_docs_coll_company (collection, company_id)
+  KEY idx_docs_coll_company (collection, company_id),
+  KEY idx_docs_coll_company_account (collection, company_id, account_id),
+  KEY idx_docs_coll_company_partner (collection, company_id, partner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Application-level unique / lookup indexes (enforced in Python, not as SQL UNIQUE).
