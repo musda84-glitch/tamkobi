@@ -367,3 +367,152 @@ def test_attach_uses_plain_base64_and_rejects_oversize(monkeypatch):
             xslt,
             "2026-10-13",
         )
+
+
+_TICARI = os.path.join(
+    os.path.dirname(__file__),
+    "fixtures",
+    "ubl",
+    "isnet_satis_ticari_UUU2026999464749.xml",
+)
+_UBL = {
+    "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+    "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+}
+
+
+def _q(prefix: str, tag: str) -> str:
+    return f"{{{_UBL[prefix]}}}{tag}"
+
+
+def _ticari_root():
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+    return etree.fromstring(open(_TICARI, "rb").read(), parser)
+
+
+def _sub(parent, prefix, tag, text=None, **attrib):
+    el = etree.SubElement(parent, _q(prefix, tag), attrib)
+    if text is not None:
+        el.text = text
+    return el
+
+
+def test_ticari_ubl_renders_percent_payable_and_skips_empty_iban_balance():
+    """Gerçek TICARIFATURA örneği: satır KDV TaxSubtotal/Percent, ödenecek tutar; IBAN ve bakiye yok."""
+    xslt = _designer_xslt("render")
+    assert re.search(r'<xsl:stylesheet\s+version="1\.0"', xslt)
+    assert 'version="2.0"' not in xslt.split("<xsl:template", 1)[0]
+    html = _transform(xslt, open(_TICARI, "rb").read())
+    assert "e-Fatura" in html
+    assert "e-Arşiv Fatura" not in html
+    assert "%20" in html
+    assert "Ödenecek Tutar" in html
+    assert "1,20" in html
+    assert "BANKA HESAP BİLGİLERİMİZ" not in html
+    assert "Güncel bakiye" not in html
+    assert ".inv-balance { border:1px solid" not in xslt
+    doc = etree.HTML(html)
+    assert not doc.xpath("//*[contains(@class, 'inv-foot')]")
+    assert "UI-3 RESMİ RED TESTİ (hakedis)" in html
+    assert "1.00" not in html
+
+
+def test_ticari_ubl_discount_payment_balance_archive_qr():
+    root = _ticari_root()
+    root.find("cbc:ProfileID", _UBL).text = "EARSIVFATURA"
+    line = root.find("cac:InvoiceLine", _UBL)
+    ac = etree.Element(_q("cac", "AllowanceCharge"))
+    _sub(ac, "cbc", "ChargeIndicator", "false")
+    _sub(ac, "cbc", "MultiplierFactorNumeric", "0.125")
+    _sub(ac, "cbc", "Amount", "0.13", currencyID="TRY")
+    line.find("cac:TaxTotal", _UBL).addprevious(ac)
+
+    pm = etree.Element(_q("cac", "PaymentMeans"))
+    _sub(pm, "cbc", "PaymentMeansCode", "42")
+    acc = _sub(pm, "cac", "PayeeFinancialAccount")
+    _sub(acc, "cbc", "ID", "TR330006100519786457841326")
+    _sub(acc, "cbc", "Name", "İş Bankası")
+    root.find("cac:TaxTotal", _UBL).addprevious(pm)
+
+    bal = etree.Element(_q("cac", "AdditionalDocumentReference"))
+    _sub(bal, "cbc", "ID", "4.567,89 TL")
+    _sub(bal, "cbc", "IssueDate", "2026-09-30")
+    _sub(bal, "cbc", "DocumentTypeCode", "BAKIYE")
+    _sub(bal, "cbc", "DocumentType", "BAKIYE")
+    root.find("cac:AccountingSupplierParty", _UBL).addprevious(bal)
+
+    marker = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+    qr = etree.Element(_q("cac", "AdditionalDocumentReference"))
+    _sub(qr, "cbc", "ID", "QRCODE")
+    _sub(qr, "cbc", "IssueDate", "2026-09-30")
+    _sub(qr, "cbc", "DocumentTypeCode", "QRCODE")
+    _sub(qr, "cbc", "DocumentType", "QRCODE")
+    att = _sub(qr, "cac", "Attachment")
+    _sub(att, "cbc", "EmbeddedDocumentBinaryObject", marker, mimeCode="image/png", filename="qr.png")
+    root.find("cac:AccountingSupplierParty", _UBL).addprevious(qr)
+
+    xslt = _designer_xslt("render")
+    assert "td.inv-foot" in xslt
+    assert ".inv-balance { border:1px solid" not in xslt
+    html = _transform(xslt, etree.tostring(root))
+    assert "e-Arşiv Fatura" in html
+    assert "%12,5" in html
+    assert "BANKA HESAP BİLGİLERİMİZ" in html
+    assert "TR330006100519786457841326" in html
+    assert "İş Bankası" in html
+    assert "Güncel bakiye" in html
+    assert "4.567,89 TL" in html
+    doc = etree.HTML(html)
+    rows = doc.xpath("//tr[contains(., 'BANKA HESAP') and contains(., 'Güncel bakiye')]")
+    assert rows, html
+    cells = rows[0].xpath("./td[contains(@class, 'inv-foot')]")
+    assert len(cells) == 2
+    assert marker in html
+    assert "qrCodeImageString" not in html
+
+
+def test_payment_means_without_payee_account_hides_iban_heading():
+    root = _ticari_root()
+    pm = etree.Element(_q("cac", "PaymentMeans"))
+    _sub(pm, "cbc", "PaymentMeansCode", "1")
+    root.find("cac:TaxTotal", _UBL).addprevious(pm)
+    html = _transform(_designer_xslt("render"), etree.tostring(root))
+    assert "BANKA HESAP BİLGİLERİMİZ" not in html
+
+
+def test_issued_ubl_drops_draft_marker_and_embeds_gib_qr():
+    note = "Sipariş No: ORD-100 onayında oluşturuldu (taslak)."
+    assert ubl_export.strip_issued_invoice_note(note) == "Sipariş No: ORD-100 onayında oluşturuldu."
+    assert "(taslak)" in ubl_export.strip_issued_invoice_note("Müşteri notu (taslak) kalsın")
+    inv = {
+        "_id": "inv_qr_note",
+        "invoice_number": "UUU2026999464749",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TICARIFATURA",
+        "issue_date": "2026-09-30",
+        "notes": note,
+        "items": [{"name": "UI-3", "quantity": 1.5, "unit": "Adet", "unit_price": 1, "vat_rate": 20, "total": 1}],
+        "subtotal": 1,
+        "vat_total": 0.2,
+        "grand_total": 1.2,
+    }
+    seller = {"name": "isnet test", "tax_number": "4810173324"}
+    buyer = {"name": "İş Net", "tax_number_or_id": "6320984412"}
+    xml = ubl_export.build_invoice_ubl(inv, seller, buyer)
+    text = xml.decode("utf-8")
+    assert "(taslak)" not in text
+    assert "oluşturuldu" in text
+    assert "QRCODE" in text
+    assert 'filename="qr.png"' in text
+    fields = ubl_export.gib_qr_fields(
+        inv, seller, buyer,
+        profile="TICARIFATURA", currency="TRY", subtotal=1, vat_total=0.2,
+        grand=1.2, issue_date="2026-09-30", tip="SATIS",
+    )
+    assert fields["vkntckn"] == "4810173324"
+    assert fields["avkntckn"] == "6320984412"
+    assert fields["ettn"]
+    assert fields["tarih"] == "2026-09-30"
+    assert fields["odenecek"] == "1.20"
+    assert fields["senaryo"] == "TICARIFATURA"

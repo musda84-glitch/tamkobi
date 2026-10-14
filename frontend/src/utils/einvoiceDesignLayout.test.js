@@ -149,6 +149,34 @@ test("setBlockSpan and packBlockRows place half-width blocks side by side", () =
   ]);
 });
 
+test("IBAN and balance share a row and the same foot style", () => {
+  const rows = packBlockRows([
+    { id: "notes", span: 6 },
+    { id: "iban", span: 6 },
+    { id: "balance", span: 6 },
+  ]);
+  expect(rows.map((r) => r.map((b) => b.id))).toEqual([["notes"], ["iban", "balance"]]);
+  const xslt = layoutToXslt(normalizeLayout({
+    blocks: [
+      { id: "iban", span: 6 },
+      { id: "balance", span: 6 },
+      { id: "header", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+    ],
+  }));
+  expect(xslt).toContain("td.inv-foot");
+  expect(xslt).toContain('class="inv-cell inv-foot"');
+  expect(xslt).toContain(".inv-iban, .inv-balance { background:transparent; border:0;");
+  expect(xslt).not.toMatch(/\.inv-balance\s*\{[^}]*border:\s*1px solid/);
+  const balAt = xslt.indexOf("Güncel bakiye");
+  const bal = xslt.slice(balAt - 180, balAt + 280);
+  expect(bal).toContain('class="inv-k"');
+  expect(bal).not.toContain("inv-v");
+  expect(xslt).toContain("normalize-space(/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID)!=''");
+  expect(xslt).toContain("DocumentType='BAKIYE'");
+});
+
 test("setBlockHidden toggles a block", () => {
   const next = setBlockHidden(defaultLayout().blocks, "iban", true);
   expect(next.find((b) => b.id === "iban").hidden).toBe(true);
@@ -407,7 +435,8 @@ test("layoutToXslt embeds both GIB seals independently", () => {
   expect(invoice).toContain("E-Fatura Logo");
   expect(invoice).toContain("e-FATURA");
   expect(invoice).toContain("data:image/jpeg;base64,");
-  expect(invoice).not.toContain("e-Arşiv Fatura");
+  expect(invoice).toContain("cbc:ProfileID='EARSIVFATURA'");
+  expect(invoice).toContain("<xsl:text>e-Fatura</xsl:text>");
 
   const archive = layoutToXslt(normalizeLayout({
     kind: "e_archive",
@@ -446,7 +475,9 @@ test("layoutToXslt header is logo only without company title", () => {
       { id: "iban", hidden: true },
     ],
   }));
-  expect(xslt).toContain('alt="logo"');
+  expect(xslt).toContain('name="alt"');
+  expect(xslt).toContain("cbc:ProfileID='EARSIVFATURA'");
+  expect(xslt).toContain("<xsl:text>e-Fatura</xsl:text>");
   expect(xslt).toContain("data:image/png;base64,aaa");
   expect(xslt).toContain("height:72px");
   expect(xslt).not.toContain("Gizleme A.Ş.");
@@ -678,9 +709,34 @@ test("classic İşNet layout places logo and QR and hides an empty description c
     if (kind === "e_dispatch") {
       expect(xslt).toContain("DespatchAdvice");
       expect(xslt).toContain("DeliveredQuantity");
+      expect(xslt).toContain("<xsl:text>e-İrsaliye</xsl:text>");
     } else {
       expect(xslt).toContain("n1:Invoice");
       expect(xslt).toContain("InvoicedQuantity");
+      expect(xslt).toContain("cbc:ProfileID='EARSIVFATURA'");
+      expect(xslt).toContain("<xsl:text>e-Fatura</xsl:text>");
+      expect(xslt).toContain("<xsl:text>e-Arşiv Fatura</xsl:text>");
     }
+    expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
+    expect(xslt).not.toMatch(/<xsl:stylesheet[^>]*version="2\.0"/);
   }
+});
+
+test("line KDV, iskonto and miktar use Turkish XSLT 1.0 paths", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    blocks: [{ id: "lines" }, { id: "totals" }, { id: "iban" }, { id: "balance" }, { id: "qr" }, { id: "header" }],
+    lineCols: [{ id: "qty" }, { id: "discount" }, { id: "vat" }, { id: "total" }],
+    totalRows: [{ id: "grand" }],
+  }));
+  expect(xslt).toContain("cac:TaxTotal/cac:TaxSubtotal/cbc:Percent");
+  expect(xslt).not.toContain("cac:TaxSubtotal/cac:TaxCategory/cbc:Percent");
+  expect(xslt).toContain("format-number(cac:AllowanceCharge/cbc:MultiplierFactorNumeric * 100, '#.##0,##', 'tr')");
+  expect(xslt).toContain("format-number(number(cbc:InvoicedQuantity), '#.##0,##', 'tr')");
+  expect(xslt).toContain("Ödenecek Tutar");
+  expect(xslt).toContain("cac:LegalMonetaryTotal/cbc:PayableAmount");
+  expect(xslt).toContain("normalize-space(/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID)!=''");
+  expect(xslt).toContain("DocumentType='BAKIYE'");
+  expect(xslt).toContain("DocumentTypeCode='QRCODE'");
+  expect(xslt).toContain("qrCodeImageString");
+  expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
 });
