@@ -389,24 +389,136 @@ def test_statement_duplicate_suspect_and_match_conflict():
     _run(overpay())
 
 
-def test_reconciliation_endpoint_is_read_only_for_admin():
+def _role_doc(company_id, code):
+    return {
+        "_id": f"role_{company_id}_{code}",
+        "company_id": company_id,
+        "code": code,
+        "name": code,
+        "is_system": True,
+        "permissions": {},
+    }
+
+
+def _bind_company_roles(monkeypatch, docs):
+    import rbac
+
+    class Col:
+        async def find_one(self, query):
+            for doc in docs:
+                if all(doc.get(k) == v for k, v in (query or {}).items()):
+                    return copy.deepcopy(doc)
+            return None
+
+    class DB:
+        roles = Col()
+
+    async def _noop(_cid):
+        return None
+
+    monkeypatch.setattr(rbac, "_db", DB())
+    monkeypatch.setattr(rbac, "ensure_roles", _noop)
+
+
+def test_reconciliation_endpoint_is_read_only_for_admin(monkeypatch):
     import server
 
+    _bind_company_roles(monkeypatch, [
+        _role_doc("co", "admin"),
+        _role_doc("co", "accountant"),
+        _role_doc("co", "advisor"),
+        _role_doc("co", "sales"),
+        _role_doc("co", "personel"),
+        _role_doc("co", "manager"),
+        _role_doc("other", "admin"),
+        _role_doc("here", "sales"),
+        _role_doc("here", "personel"),
+    ])
     db = MemoryDB()
     db.bank_accounts.docs["a"] = _acc("a", "bank", current_balance=10)
     db.bank_transactions.docs["t"] = {
         "_id": "t", "company_id": "co", "account_id": "a", "type": "inflow", "amount": 10, "source": "manual",
     }
 
-    async def call(user):
+    async def call(user, company_id="co"):
         server.db = db
-        return await server.banking_reconciliation("co", user)
+        return await server.banking_reconciliation(company_id, user)
 
     out = _run(call({"role": "accountant", "company_ids": ["co"], "active_company_id": "co"}))
     assert out["accounts"][0]["fark"] == 0
+    out = _run(call({"role": "advisor", "company_ids": ["co"], "active_company_id": "co"}))
+    assert out["accounts"][0]["fark"] == 0
+    out = _run(call({"role": "owner", "company_ids": ["co"], "active_company_id": "co"}))
+    assert out["accounts"][0]["fark"] == 0
+    out = _run(call({
+        "role": "sales", "is_super_admin": True, "company_ids": ["co"], "active_company_id": "co",
+    }))
+    assert out["summary"]["account_count"] == 1
+    for denied in ("sales", "personel", "manager"):
+        with pytest.raises(HTTPException) as ei:
+            _run(call({"role": denied, "company_ids": ["co"], "active_company_id": "co"}))
+        assert ei.value.status_code == 403
+    # Aynı kullanıcının global rolü admin; diğer şirkette admin belgesi var, burada yok → personel.
+    cross = {
+        "role": "admin",
+        "company_ids": ["other", "here"],
+        "active_company_id": "other",
+    }
+    out = _run(call(cross, "other"))
+    assert out["accounts"] == []
     with pytest.raises(HTTPException) as ei:
-        _run(call({"role": "sales", "company_ids": ["co"], "active_company_id": "co"}))
+        _run(call(cross, "here"))
     assert ei.value.status_code == 403
+
+
+def test_reconciliation_denies_admin_of_another_company(monkeypatch):
+    """Global rol admin olsa da istenen şirkette sales/personel ise 403."""
+    import rbac
+    import server
+
+    db = MemoryDB()
+
+    async def call(user, company_id):
+        server.db = db
+        return await server.banking_reconciliation(company_id, user)
+
+    seen = []
+
+    async def role_for(user, company_id=None):
+        seen.append(company_id)
+        code = (user.get("company_roles") or {}).get(company_id) or user.get("role")
+        return {"code": code, "company_id": company_id, "permissions": {}}
+
+    monkeypatch.setattr(rbac, "role_for", role_for)
+    user = {
+        "role": "admin",
+        "company_ids": ["other", "here"],
+        "active_company_id": "other",
+        "company_roles": {"other": "admin", "here": "sales"},
+    }
+    out = _run(call(user, "other"))
+    assert out["accounts"] == []
+    assert seen == ["other"]
+    for here_role in ("sales", "personel"):
+        seen.clear()
+        user["company_roles"]["here"] = here_role
+        with pytest.raises(HTTPException) as ei:
+            _run(call(user, "here"))
+        assert ei.value.status_code == 403
+        assert seen == ["here"]
+    seen.clear()
+    user["company_roles"]["here"] = "owner"
+    out = _run(call(user, "here"))
+    assert "accounts" in out
+    user["company_roles"]["here"] = "advisor"
+    out = _run(call(user, "here"))
+    assert "accounts" in out
+    seen.clear()
+    outsider = {"role": "admin", "company_ids": ["other"], "active_company_id": "other"}
+    with pytest.raises(HTTPException) as ei:
+        _run(call(outsider, "here"))
+    assert ei.value.status_code == 403
+    assert seen == []
 
 
 def test_script_uses_named_db_and_reads_only(capsys, monkeypatch):

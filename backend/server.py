@@ -9815,17 +9815,27 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
     return out
 
 
-def _can_read_reconciliation(user: dict) -> bool:
-    role = str((user or {}).get("role") or "")
-    return bool((user or {}).get("is_super_admin") or role in ("admin", "owner", "accountant"))
+async def _can_read_reconciliation(user: dict, company_id: Optional[str] = None) -> bool:
+    """İstenen şirketteki rol. Global user['role'] yetki vermez; süper admin her zaman okur."""
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    if (user or {}).get("is_super_admin"):
+        return True
+    role = await rbac.role_for(user, company_id)
+    raw = (role or {}).get("code") if isinstance(role, dict) else None
+    if not raw:
+        return False
+    return rbac.normalize_role_code(raw) in ("admin", "accountant", "advisor")
 
 
 @api_router.get("/banking/reconciliation")
 async def banking_reconciliation(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
-    """Salt-okuma bakiye mutabakatı. Yönetici veya muhasebe."""
-    if not _can_read_reconciliation(user):
-        raise HTTPException(status_code=403, detail="Bakiye mutabakatı için yönetici veya muhasebe yetkisi gerekir.")
+    """Salt-okuma bakiye mutabakatı. İstenen şirkette yönetici, muhasebe veya mali müşavir."""
     company_id = tenant_access.resolve_company_id(user, company_id)
+    if not await _can_read_reconciliation(user, company_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Bakiye mutabakatı için yönetici, muhasebe veya mali müşavir yetkisi gerekir.",
+        )
     import balance_reconciliation as _recon
     return await _recon.build_reconciliation(db, company_id)
 
