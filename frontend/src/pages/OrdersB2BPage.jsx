@@ -640,6 +640,27 @@ export default function OrdersB2BPage() {
     }
   };
   const [editTpl, setEditTpl] = useState(false);
+  const openOrderId = searchParams.get("open") || "";
+  const [openFlash, setOpenFlash] = useState("");
+  useEffect(() => {
+    if (!openOrderId) return undefined;
+    let cancel = false;
+    axios.get(`${API_URL}/orders/${openOrderId}`).then((r) => {
+      if (cancel) return;
+      setOpenFlash(openOrderId);
+      const no = r.data?.order_number || "";
+      if (no) {
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          if (next.get("q") !== no) next.set("q", no);
+          return next;
+        }, { replace: true });
+      }
+    }).catch((err) => {
+      if (!cancel && err?.response?.status === 404) toast.error("Kayıt bulunamadı");
+    });
+    return () => { cancel = true; };
+  }, [openOrderId, setSearchParams]);
   useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
   const closeNewOrder = useCallback(() => {
     setNewOrder(false);
@@ -1822,7 +1843,7 @@ export default function OrdersB2BPage() {
             return (
               <div
                 key={ord.id || ord._id || ord.order_number}
-                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs [content-visibility:auto] [contain-intrinsic-size:auto_120px] ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50" : ""}`}
+                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs [content-visibility:auto] [contain-intrinsic-size:auto_120px] ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50" : ""} ${(ord.id || ord._id) === openFlash ? "ring-2 ring-emerald-500" : ""}`}
                 data-testid={`order-card-mobile-${ord.order_number}`}
               >
                 <div className="flex justify-between gap-2 items-start">
@@ -1977,7 +1998,7 @@ export default function OrdersB2BPage() {
                 {loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-loading">Yükleniyor…</td></tr>}
                 {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {pagedOrders.map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""} ${(ord.id || ord._id) === openFlash ? "ring-2 ring-inset ring-emerald-500 bg-emerald-50" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(orderRowId(ord))} onChange={() => toggleSel(orderRowId(ord))} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
                       <div className="font-bold text-slate-900 font-mono">{ord.held_label || ord.order_number}</div>

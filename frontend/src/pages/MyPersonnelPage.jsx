@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Link, useSearchParams } from "react-router-dom";
@@ -69,6 +69,15 @@ export default function MyPersonnelPage() {
     const t = params.get("tab");
     if (TABS.some((x) => x.id === t)) setTab(t);
   }, [params]);
+  const focusTaskId = params.get("task") || "";
+  const taskWarned = useRef("");
+  useEffect(() => {
+    if (!focusTaskId || !data?.tasks || taskWarned.current === focusTaskId) return;
+    const hit = (data.tasks || []).some((t) => String(t.id) === focusTaskId);
+    taskWarned.current = focusTaskId;
+    if (!hit) toast.error("Kayıt bulunamadı");
+    else setTab("gorevler");
+  }, [focusTaskId, data]);
 
   if (loading && !data) {
     return (
@@ -413,6 +422,7 @@ export default function MyPersonnelPage() {
           ) : (
             <div className="p-3 space-y-3">
               {visibleTasks.map((t, i) => (
+                <div key={t.id || i} className={String(t.id) === focusTaskId ? "rounded-2xl ring-2 ring-emerald-500" : ""} data-testid={String(t.id) === focusTaskId ? "my-pers-task-focus" : undefined}>
                 <AssignedDutyCard
                   key={t.id || i}
                   duty={t}
@@ -432,6 +442,7 @@ export default function MyPersonnelPage() {
                     load();
                   }}
                 />
+                </div>
               ))}
             </div>
           )}

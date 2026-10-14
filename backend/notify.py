@@ -118,6 +118,488 @@ def filter_notifications(rows: Iterable[Dict[str, Any]], user: Optional[Dict[str
     return [n for n in rows if notification_visible(n, user)]
 
 
+MISSING_RECORD = "Kayıt bulunamadı"
+
+_REF_KIND = {
+    "order": "order",
+    "order_batch": "order",
+    "invoice": "invoice",
+    "contact": "contact",
+    "cari": "contact",
+    "payment": "payment",
+    "expense": "payment",
+    "task": "task",
+    "quote": "quote",
+    "project": "project",
+    "survey": "survey",
+    "edoc": "edoc",
+    "edoc_batch": "edoc",
+    "bank": "bank_account",
+    "bank_tx": "bank_tx",
+    "bank_account": "bank_account",
+    "cash_approval": "cash_approval",
+    "pos_approval": "pos_approval",
+    "employee": "employee",
+    "cheque": "cheque",
+    "support": "support",
+    "work_order": "work_order",
+    "production": "work_order",
+    "license": "license",
+    "receivable": "invoice",
+}
+
+_TYPE_KIND = {
+    "bank_sync": "bank_account",
+    "einvoice_incoming": "edoc",
+    "b2b_order": "order",
+    "order_new": "order",
+    "order_pick_missing": "order",
+    "order_pick_production": "order",
+    "quote_response": "quote",
+    "task_assigned": "task",
+    "cash_approval": "cash_approval",
+    "pos_approval": "pos_approval",
+    "pos_approval_decision": "pos_approval",
+    "receivable_overdue": "invoice",
+    "project_photo_pending": "project",
+    "role_assigned": "employee",
+    "staff_message": "staff_message",
+    "staff_announcement": "staff_announcement",
+    "license": "license",
+}
+
+_ID_COLLECTIONS = {
+    "order": "orders",
+    "invoice": "invoices",
+    "contact": "contacts",
+    "payment": "expenses",
+    "quote": "quotes",
+    "project": "projects",
+    "survey": "surveys",
+    "bank_tx": "bank_transactions",
+    "bank_account": "bank_accounts",
+    "cash_approval": "cash_approval_requests",
+    "pos_approval": "pos_approvals",
+    "employee": "employees",
+    "cheque": "cheques",
+    "support": "support_tickets",
+    "license": "companies",
+    "work_order": "work_orders",
+}
+
+_LINK_KIND = (
+    ("/edoc-inbox", "edoc"),
+    ("/orders", "order"),
+    ("/invoices", "invoice"),
+    ("/contacts", "contact"),
+    ("/expenses", "payment"),
+    ("/quotes", "quote"),
+    ("/projects", "project"),
+    ("/surveys", "survey"),
+    ("/cheques", "cheque"),
+    ("/personelim", "task"),
+    ("/personnel", "employee"),
+    ("/banking", "bank_account"),
+    ("/hizli-satis", "pos_approval"),
+    ("/atolye", "work_order"),
+    ("/support", "support"),
+    ("/hesap", "license"),
+)
+
+_ETTN_RE = re.compile(r"ETTN\s+([0-9A-Fa-f-]{8,})", re.I)
+_ACCOUNT_RE = re.compile(r"^([^:\n]{2,80}?):\s+\d+\s+yeni hareket", re.I)
+_ORDER_NO_RE = re.compile(r"\b([A-Z]{1,8}-\d{4}-\d{3,})\b")
+
+
+def _fold(value: Any) -> str:
+    return str(value or "").replace("İ", "i").replace("I", "ı").casefold().strip()
+
+
+def _parse_query(link: str) -> Dict[str, str]:
+    raw = str(link or "")
+    if "?" not in raw:
+        return {}
+    from urllib.parse import parse_qs, urlsplit
+    parsed = parse_qs(urlsplit(raw).query)
+    return {k: v[0] for k, v in parsed.items() if v}
+
+
+def _q(params: Dict[str, Any]) -> str:
+    from urllib.parse import urlencode
+    clean = {k: str(v) for k, v in params.items() if v not in (None, "")}
+    if not clean:
+        return ""
+    return "?" + urlencode(clean)
+
+
+def normalize_target(raw: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    src = raw or {}
+    return {
+        "type": str(src.get("type") or ""),
+        "id": str(src.get("id") or ""),
+        "route": str(src.get("route") or ""),
+    }
+
+
+def _ettn_of(*chunks: str) -> str:
+    for chunk in chunks:
+        match = _ETTN_RE.search(str(chunk or ""))
+        if match:
+            return match.group(1).strip("-")
+    return ""
+
+
+def _account_name_of(message: str, title: str = "") -> str:
+    text = str(message or "").strip()
+    match = _ACCOUNT_RE.search(text)
+    if match:
+        return match.group(1).strip()
+    if text and "₺" not in text and len(text) <= 80 and "\n" not in text and not text.lower().startswith("ettn"):
+        # Eski banka bildirimi: mesajın kendisi hesap adı.
+        if ":" not in text and not re.search(r"\d+\s+yeni", text, re.I):
+            return text.strip(" .")
+    return ""
+
+
+def _kind_of(ntype: str, ref_type: str, link: str) -> str:
+    ref = (ref_type or "").strip().lower()
+    if ref in _REF_KIND:
+        return _REF_KIND[ref]
+    kind = _TYPE_KIND.get((ntype or "").strip())
+    if kind:
+        return kind
+    path = str(link or "").split("?", 1)[0]
+    for prefix, mapped in _LINK_KIND:
+        if path == prefix or path.startswith(prefix + "/"):
+            return mapped
+    return ""
+
+
+def _route_for(
+    kind: str,
+    ref_id: str = "",
+    *,
+    link: str = "",
+    account_id: str = "",
+    account_name: str = "",
+    tx_id: str = "",
+    ettn: str = "",
+    project_id: str = "",
+    pending: bool = False,
+) -> str:
+    rid = str(ref_id or "")
+    if kind == "order":
+        return f"/orders?open={rid}" if rid else (link or "/orders")
+    if kind == "invoice":
+        return f"/invoices?open={rid}" if rid else (link or "/invoices")
+    if kind == "contact":
+        return f"/contacts?contact_id={rid}" if rid else (link or "/contacts")
+    if kind == "payment":
+        return f"/expenses?open={rid}" if rid else (link or "/expenses")
+    if kind == "task":
+        if not rid and not project_id:
+            return link or "/personelim?tab=gorevler"
+        params: Dict[str, Any] = {"tab": "gorevler"}
+        if rid:
+            params["task"] = rid
+        if project_id:
+            params["project"] = project_id
+        return "/personelim" + _q(params)
+    if kind == "quote":
+        return f"/quotes?focus={rid}" if rid else (link or "/quotes")
+    if kind == "project":
+        return f"/projects?focus={rid}" if rid else (link or "/projects")
+    if kind == "survey":
+        return f"/surveys?focus={rid}" if rid else (link or "/surveys")
+    if kind == "edoc":
+        params = {}
+        if ettn:
+            params["ettn"] = ettn
+        if rid:
+            params["id"] = rid
+        if not params:
+            return link or "/edoc-inbox"
+        return "/edoc-inbox" + _q(params)
+    if kind == "bank_tx":
+        params = {}
+        if pending:
+            params["pending"] = "1"
+        if account_id:
+            params["account_id"] = account_id
+        elif account_name:
+            params["account"] = account_name
+        if rid or tx_id:
+            params["tx"] = tx_id or rid
+        if not params:
+            return link or "/banking"
+        return "/banking" + _q(params)
+    if kind == "bank_account":
+        params = {}
+        if pending:
+            params["pending"] = "1"
+        if rid:
+            params["account_id"] = rid
+        elif account_name:
+            params["account"] = account_name
+        if tx_id:
+            params["tx"] = tx_id
+        if not params:
+            return link or "/banking"
+        return "/banking" + _q(params)
+    if kind == "cash_approval":
+        return link or "/banking"
+    if kind == "pos_approval":
+        if link:
+            return link
+        return f"/hizli-satis?onay={rid}" if rid else "/hizli-satis"
+    if kind == "employee":
+        return f"/personnel?employee={rid}" if rid else (link or "/personnel")
+    if kind == "cheque":
+        return f"/cheques?open={rid}" if rid else (link or "/cheques")
+    if kind == "support":
+        return link or ("/support?ticket=" + rid if rid else "/support")
+    if kind == "work_order":
+        return f"/atolye?open={rid}" if rid else (link or "/atolye")
+    if kind == "license":
+        return link or "/hesap"
+    if kind in ("staff_message", "staff_announcement"):
+        return link or "/"
+    return link or ""
+
+
+def bank_movement_target(
+    *,
+    account_id: str = "",
+    tx_id: str = "",
+    account_name: str = "",
+    pending: bool = True,
+) -> Dict[str, str]:
+    """Banka hareketi: ilgili hesap + eşleşme bekleyen satır."""
+    kind = "bank_tx" if tx_id else "bank_account"
+    route = _route_for(
+        kind,
+        tx_id or account_id,
+        account_id=account_id,
+        account_name=account_name,
+        tx_id=tx_id,
+        pending=pending,
+    )
+    return {"type": kind, "id": str(tx_id or account_id or ""), "route": route}
+
+
+def build_notification_target(
+    ntype: str = "",
+    *,
+    title: str = "",
+    message: str = "",
+    link: str = "",
+    ref_type: Optional[str] = None,
+    ref_id: Optional[str] = None,
+    account_id: str = "",
+    account_name: str = "",
+    tx_id: str = "",
+    ettn: str = "",
+    project_id: str = "",
+    pending: Optional[bool] = None,
+) -> Dict[str, str]:
+    """Yeni bildirim için type + id + route. Metindeki ETTN / hesap adı yedek ipucudur."""
+    query = _parse_query(link)
+    kind = _kind_of(ntype, ref_type or "", link)
+    text = f"{title or ''}\n{message or ''}"
+    found_ettn = ettn or query.get("ettn") or _ettn_of(text, link)
+    found_account = account_name or query.get("account") or ""
+    if kind in ("bank_account", "bank_tx") and not found_account:
+        found_account = _account_name_of(message, title)
+    rid = str(ref_id or query.get("id") or query.get("open") or query.get("edit") or query.get("contact_id") or query.get("focus") or query.get("tx") or "")
+    if kind == "bank_tx":
+        rid = str(tx_id or query.get("tx") or ref_id or "")
+    elif kind == "bank_account":
+        rid = str(account_id or query.get("account_id") or (ref_id if (ref_type or "") in ("bank", "bank_account") else "") or "")
+        tx_id = tx_id or query.get("tx") or ""
+    elif kind == "contact":
+        rid = str(query.get("contact_id") or ref_id or "")
+    elif kind == "task":
+        rid = str(query.get("task") or ref_id or "")
+    elif kind == "order" and not rid:
+        numbered = _ORDER_NO_RE.search(text)
+        if numbered:
+            return {"type": "order", "id": "", "route": "/orders?q=" + numbered.group(1)}
+    if pending is None:
+        blob = f"{link} {message}".lower()
+        pending = "tab=match" in blob or "eşleşme bekliyor" in blob or query.get("pending") == "1"
+    route = _route_for(
+        kind,
+        rid,
+        link=link,
+        account_id=account_id or query.get("account_id") or "",
+        account_name=found_account,
+        tx_id=tx_id or (query.get("tx") or ""),
+        ettn=found_ettn,
+        project_id=project_id or query.get("project") or "",
+        pending=bool(pending),
+    )
+    if kind == "bank_tx" and not rid and (account_id or query.get("account_id")):
+        kind = "bank_account"
+        rid = account_id or query.get("account_id") or ""
+    return {"type": kind, "id": rid, "route": route}
+
+
+def infer_notification_target(note: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Kayıtlı target varsa onu kullan; eski bildirimde type + metinden route üret (yazmaz)."""
+    src = note or {}
+    stored = src.get("target")
+    if isinstance(stored, dict) and stored.get("type") and stored.get("route"):
+        return normalize_target(stored)
+    return build_notification_target(
+        str(src.get("type") or ""),
+        title=str(src.get("title") or ""),
+        message=str(src.get("message") or ""),
+        link=str(src.get("link") or ""),
+        ref_type=src.get("ref_type"),
+        ref_id=src.get("ref_id"),
+        account_id=str(src.get("account_id") or ""),
+        account_name=str(src.get("account_name") or ""),
+        tx_id=str(src.get("tx_id") or ""),
+        ettn=str(src.get("ettn") or ""),
+        project_id=str(src.get("project_id") or ""),
+        pending=src.get("pending") if "pending" in src else None,
+    )
+
+
+def present_notification(note: Dict[str, Any]) -> Dict[str, Any]:
+    """Liste yanıtına target ekler; saklanan belgeyi değiştirmez."""
+    out = dict(note or {})
+    out["target"] = infer_notification_target(out)
+    return out
+
+
+async def _find_by_id(db, collection: str, company_id: str, rid: str):
+    col = getattr(db, collection, None)
+    if col is None or not rid:
+        return None
+    if company_id:
+        doc = await col.find_one({"_id": rid, "company_id": company_id})
+        if doc:
+            return doc
+    return await col.find_one({"_id": rid})
+
+
+async def _rows(db, collection: str, company_id: str, limit: int = 400):
+    col = getattr(db, collection, None)
+    if col is None:
+        return None
+    query = {"company_id": company_id} if company_id else {}
+    try:
+        return await col.find(query).to_list(limit)
+    except Exception:
+        return None
+
+
+def _open_result(target: Dict[str, str], exists: bool) -> Dict[str, Any]:
+    return {"target": target, "exists": bool(exists), "message": None if exists else MISSING_RECORD}
+
+
+async def resolve_notification_open(db, note: Dict[str, Any]) -> Dict[str, Any]:
+    """Tıklama anında hedefi netleştirir ve kaydın durup durmadığına bakar. Veritabanına yazmaz."""
+    target = infer_notification_target(note)
+    company_id = str((note or {}).get("company_id") or "")
+    kind = target.get("type") or ""
+    rid = target.get("id") or ""
+    query = _parse_query(target.get("route") or "")
+    if kind in ("", "staff_message", "staff_announcement", "license") and not rid:
+        return _open_result(target, True)
+    if kind == "edoc":
+        rows = await _rows(db, "incoming_edocs", company_id)
+        if rows is None:
+            return _open_result(target, True)
+        needle = (query.get("ettn") or _ettn_of(note.get("message") or "", note.get("title") or "")).lower()
+        found = None
+        for doc in rows:
+            doc_id = str(doc.get("_id") or doc.get("id") or "")
+            uuid = str(doc.get("uuid") or doc.get("ettn") or "").lower()
+            if rid and doc_id == rid:
+                found = doc
+                break
+            if needle and uuid.startswith(needle):
+                found = doc
+                break
+        if not found and (rid or needle):
+            return _open_result(target, False)
+        if not found:
+            return _open_result(target, True)
+        eid = str(found.get("_id") or found.get("id") or rid)
+        refined = {
+            "type": "edoc",
+            "id": eid,
+            "route": _route_for("edoc", eid, ettn=str(found.get("uuid") or found.get("ettn") or needle)),
+        }
+        return _open_result(refined, True)
+    if kind in ("bank_tx", "bank_account"):
+        tx_id = query.get("tx") or (rid if kind == "bank_tx" else "")
+        account_id = query.get("account_id") or (rid if kind == "bank_account" else "")
+        if tx_id:
+            tx = await _find_by_id(db, "bank_transactions", company_id, tx_id)
+            if not tx:
+                return _open_result(target, False)
+            account_id = str(tx.get("account_id") or account_id)
+            pending = query.get("pending") == "1" or tx.get("match_status") == "unmatched"
+            refined = bank_movement_target(account_id=account_id, tx_id=str(tx.get("_id") or tx_id), pending=pending)
+            return _open_result(refined, True)
+        if account_id:
+            acc = await _find_by_id(db, "bank_accounts", company_id, account_id)
+            if not acc:
+                return _open_result(target, False)
+            refined = bank_movement_target(
+                account_id=str(acc.get("_id") or account_id),
+                account_name=str(acc.get("account_name") or ""),
+                pending=query.get("pending") == "1",
+            )
+            return _open_result(refined, True)
+        name = query.get("account") or _account_name_of(str(note.get("message") or ""), str(note.get("title") or ""))
+        if name:
+            rows = await _rows(db, "bank_accounts", company_id, 200)
+            if rows is None:
+                return _open_result(target, True)
+            folded = _fold(name)
+            hits = [a for a in rows if folded and (folded == _fold(a.get("account_name")) or folded in _fold(a.get("account_name")))]
+            if not hits:
+                return _open_result(target, False)
+            acc = hits[0]
+            refined = bank_movement_target(
+                account_id=str(acc.get("_id") or ""),
+                account_name=str(acc.get("account_name") or name),
+                pending=query.get("pending") == "1",
+            )
+            return _open_result(refined, True)
+        return _open_result(target, True)
+    if kind == "task":
+        rows = await _rows(db, "projects", company_id, 300)
+        if rows is None:
+            return _open_result(target, True)
+        project_id = query.get("project") or str(note.get("project_id") or "")
+        task_id = query.get("task") or rid
+        if project_id:
+            proj = next((p for p in rows if str(p.get("_id") or p.get("id") or "") == project_id), None)
+            if not proj:
+                proj = await _find_by_id(db, "projects", company_id, project_id)
+            if not proj:
+                return _open_result(target, False)
+            if task_id and not any(isinstance(t, dict) and str(t.get("id") or "") == task_id for t in (proj.get("tasks") or [])):
+                return _open_result(target, False)
+            return _open_result(target, True)
+        if not task_id:
+            return _open_result(target, True)
+        for proj in rows:
+            if any(isinstance(t, dict) and str(t.get("id") or "") == task_id for t in (proj.get("tasks") or [])):
+                return _open_result(target, True)
+        return _open_result(target, False)
+    collection = _ID_COLLECTIONS.get(kind)
+    if not collection or not rid:
+        return _open_result(target, True)
+    doc = await _find_by_id(db, collection, company_id, rid)
+    return _open_result(target, doc is not None)
+
+
 def notification_can_delete(note: Optional[Dict[str, Any]], user: Optional[Dict[str, Any]] = None) -> bool:
     """Yalnız okunmuş ve kullanıcının görebileceği bildirim silinir."""
     if not note:
@@ -139,8 +621,11 @@ def notification_doc(
     roles: Optional[Iterable[str]] = None,
     ref_type: Optional[str] = None,
     ref_id: Optional[str] = None,
+    target: Optional[Dict[str, Any]] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    extras = dict(extra or {})
+    explicit = target if isinstance(target, dict) else extras.pop("target", None)
     doc: Dict[str, Any] = {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
@@ -156,8 +641,28 @@ def notification_doc(
         "is_read": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    if extra:
-        doc.update(extra)
+    if extras:
+        doc.update(extras)
+    if isinstance(explicit, dict) and explicit.get("type") and explicit.get("route"):
+        built = normalize_target(explicit)
+    else:
+        built = build_notification_target(
+            ntype,
+            title=title,
+            message=message,
+            link=link or "",
+            ref_type=ref_type,
+            ref_id=ref_id,
+            account_id=str(extras.get("account_id") or ""),
+            account_name=str(extras.get("account_name") or ""),
+            tx_id=str(extras.get("tx_id") or ""),
+            ettn=str(extras.get("ettn") or ""),
+            project_id=str(extras.get("project_id") or ""),
+            pending=extras.get("pending") if "pending" in extras else None,
+        )
+    doc["target"] = built
+    if not doc.get("link") and built.get("route"):
+        doc["link"] = built["route"]
     return doc
 
 
@@ -192,12 +697,16 @@ def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict
     """Expo Push API gövdesi — başlık/metin + uygulama içi yönlendirme verisi."""
     title = str(note.get("title") or "TamKobi").strip() or "TamKobi"
     body = str(note.get("message") or note.get("body") or "").strip()
+    target = note.get("target") if isinstance(note.get("target"), dict) else {}
     data = {
         "type": str(note.get("type") or ""),
         "link": str(note.get("link") or ""),
         "ref_type": str(note.get("ref_type") or ""),
         "ref_id": str(note.get("ref_id") or ""),
         "notification_id": str(note.get("_id") or note.get("id") or ""),
+        "target_type": str(target.get("type") or ""),
+        "target_id": str(target.get("id") or ""),
+        "target_route": str(target.get("route") or ""),
     }
     msgs: List[Dict[str, Any]] = []
     seen: set[str] = set()
@@ -474,6 +983,10 @@ async def insert_notification(db, doc: Dict[str, Any]) -> Dict[str, Any]:
         doc["is_read"] = False
     if "roles" not in doc:
         doc["roles"] = roles_for_type(doc.get("type") or "")
+    if not (isinstance(doc.get("target"), dict) and doc["target"].get("type") and doc["target"].get("route")):
+        doc["target"] = infer_notification_target(doc)
+        if not doc.get("link") and doc["target"].get("route"):
+            doc["link"] = doc["target"]["route"]
     await db.notifications.insert_one(doc)
     try:
         await dispatch_push(db, doc)

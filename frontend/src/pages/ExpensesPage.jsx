@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { Plus, Receipt, Wallet, RefreshCw, Trash2, Pencil, Search, CheckCircle2, Clock, Paperclip, X, ArrowUpDown, Repeat, Camera, ImagePlus } from "lucide-react";
@@ -245,7 +246,9 @@ const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: acc
 
 export default function ExpensesPage() {
   const { activeCompany, user } = useAuth();
+  const [searchParams] = useSearchParams();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const openExpenseId = searchParams.get("open") || "";
   const actorName = user?.name || user?.email || "";
   const [data, setData] = useState({ expenses: [], summary: null });
   const [categories, setCategories] = useState([]);
@@ -281,6 +284,19 @@ export default function ExpensesPage() {
     setData(e.data);
   }, [companyId, filters.category, filters.status, filters.from, filters.to, filters.q]);
   useEffect(() => { load().catch(() => toast.error("Masraflar yüklenemedi.")); }, [load]);
+  useEffect(() => {
+    if (!openExpenseId) return undefined;
+    let cancel = false;
+    axios.get(`${API_URL}/expenses`, { params: { company_id: companyId } })
+      .then((r) => {
+        if (cancel) return;
+        const hit = (r.data?.expenses || []).find((x) => (x.id || x._id) === openExpenseId);
+        if (!hit) toast.error("Kayıt bulunamadı");
+        else setModal({ ...EMPTY, ...hit, account_id: hit.account_id || "", project_id: hit.project_id || "" });
+      })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [openExpenseId, companyId]);
   const refreshLoadSilent = useCallback(() => load({ silent: true }), [load]);
   useDataRefresh(refreshLoadSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
   const rows = useMemo(() => { const c = { date_desc: (a, b) => b.date.localeCompare(a.date), date_asc: (a, b) => a.date.localeCompare(b.date), amount_desc: (a, b) => b.total - a.total, amount_asc: (a, b) => a.total - b.total, category: (a, b) => a.category.localeCompare(b.category, "tr") }[filters.sort]; return [...data.expenses].sort(c); }, [data.expenses, filters.sort]);

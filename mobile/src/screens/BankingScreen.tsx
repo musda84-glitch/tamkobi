@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -114,7 +114,11 @@ function bankingTabFromParam(raw?: string | string[] | null): BankingTab | null 
 
 export function BankingScreen() {
   const { client, companyId, can } = useAuth();
-  const params = useLocalSearchParams<{ tab?: string | string[] }>();
+  const params = useLocalSearchParams<{ tab?: string | string[]; account_id?: string | string[]; account?: string | string[]; tx?: string | string[] }>();
+  const firstParam = (value?: string | string[]) => (Array.isArray(value) ? value[0] : value) || "";
+  const focusAccountId = firstParam(params.account_id);
+  const focusAccountName = firstParam(params.account);
+  const focusTxId = firstParam(params.tx);
   const canEdit = can("/banking", "edit");
   const [tab, setTab] = useState<BankingTab>("all");
   const [rows, setRows] = useState<BankAccount[]>([]);
@@ -129,11 +133,13 @@ export function BankingScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [partnerDock, setPartnerDock] = useState<React.ReactNode>(null);
+  const accountsReady = useRef(false);
 
   useEffect(() => {
     const next = bankingTabFromParam(params.tab);
     if (next) setTab(next);
-  }, [params.tab]);
+    else if (focusTxId) setTab("match");
+  }, [params.tab, focusTxId]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -148,6 +154,7 @@ export function BankingScreen() {
         get<PartnerTx[]>(client, "/banking/partners/transactions", { company_id: companyId }).catch(() => []),
       ]);
       setRows(accs || []);
+      accountsReady.current = true;
       setPartners(pts || []);
       setPartnerSummary(ps);
       setApprovals(appr || []);
@@ -163,6 +170,14 @@ export function BankingScreen() {
   }, [client, companyId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => {
+    if (!accountsReady.current || refreshing || !focusAccountName || focusAccountId) return;
+    const needle = focusAccountName.toLocaleLowerCase("tr-TR");
+    const hit = rows.some((a) => String(a.account_name || "").toLocaleLowerCase("tr-TR").includes(needle));
+    if (hit) return;
+    setError("Kayıt bulunamadı");
+  }, [rows, refreshing, focusAccountName, focusAccountId]);
   useLiveRefresh(load, ["cash", "contacts"]);
 
   const pool = useMemo(() => {
@@ -237,7 +252,12 @@ export function BankingScreen() {
       {tab === "partners" ? (
         <BankingPartnersPanel accounts={rows} onChanged={load} onSelectedDock={setPartnerDock} />
       ) : tab === "match" ? (
-        <BankingMatchPanel accounts={rows} onChanged={load} />
+        <BankingMatchPanel
+          accounts={rows}
+          onChanged={load}
+          focusAccountId={focusAccountId || idOf(rows.find((a) => focusAccountName && String(a.account_name || "").toLocaleLowerCase("tr-TR").includes(focusAccountName.toLocaleLowerCase("tr-TR"))))}
+          focusTxId={focusTxId}
+        />
       ) : (
         <>
           {actions.length ? <ActionTiles items={actions} /> : null}

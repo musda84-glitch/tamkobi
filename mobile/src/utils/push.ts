@@ -1,3 +1,4 @@
+import { mobileTargetHref } from "./notifications";
 import { resolveMobilePath } from "./quickMenu";
 
 /** Android kanalı — ses değişince yeni id gerekir (eski kanal kilitlenir). */
@@ -23,8 +24,13 @@ export function shouldAskPushOnOpen(platform: string): boolean {
   return platform === "ios" || platform === "android";
 }
 
-/** Push data.link → mobil rota; yoksa bildirim listesi. */
+/** Push data.link / target_route → mobil rota; yoksa bildirim listesi. */
 export function notificationHref(data?: Record<string, unknown> | null): string {
+  const targetRoute = String(data?.target_route || "").trim();
+  if (targetRoute) {
+    const mapped = mobileTargetHref(targetRoute);
+    if (mapped) return mapped;
+  }
   const link = String(data?.link || "").trim();
   if (link) {
     const [path, query] = link.split("?");

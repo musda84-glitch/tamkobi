@@ -67,6 +67,7 @@ export function ClampExpandText({ text, testId = "tx-card-desc", lines = 2, forc
 
 export function TxMobileCard({
   testId,
+  className = "",
   date,
   party,
   badge,
@@ -79,7 +80,7 @@ export function TxMobileCard({
 }) {
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white p-3 space-y-2 ${TX_NO_OVERFLOW_CLASS} ${TX_WRAP_CLASS}`}
+      className={`rounded-xl border border-slate-200 bg-white p-3 space-y-2 ${TX_NO_OVERFLOW_CLASS} ${TX_WRAP_CLASS} ${className}`}
       data-testid={testId}
       data-tx-mobile-card="1"
       data-tx-wrap="1"

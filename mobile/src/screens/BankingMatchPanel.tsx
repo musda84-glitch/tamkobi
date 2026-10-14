@@ -41,9 +41,13 @@ import { fmtDate, fmtMoney, idOf } from "../utils/money";
 export function BankingMatchPanel({
   accounts,
   onChanged,
+  focusAccountId = "",
+  focusTxId = "",
 }: {
   accounts: BankAccount[];
   onChanged: () => void;
+  focusAccountId?: string;
+  focusTxId?: string;
 }) {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/banking", "edit");
@@ -65,6 +69,8 @@ export function BankingMatchPanel({
   const [ruleContactLabel, setRuleContactLabel] = useState("");
   const [contactLabel, setContactLabel] = useState("");
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [ready, setReady] = useState(false);
+  const openedFocus = React.useRef("");
 
   const load = useCallback(async () => {
     try {
@@ -86,6 +92,7 @@ export function BankingMatchPanel({
       setRules(rl || []);
       setSuggestions(sg || []);
       setPartners(pt || []);
+      setReady(true);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Eşleşme verileri yüklenemedi."));
@@ -93,6 +100,18 @@ export function BankingMatchPanel({
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!ready || !focusTxId || openedFocus.current === focusTxId) return;
+    const hit = unmatched.find((t) => idOf(t) === focusTxId);
+    if (hit) {
+      openedFocus.current = focusTxId;
+      openMatch(hit);
+      return;
+    }
+    openedFocus.current = focusTxId;
+    setError("Kayıt bulunamadı");
+  }, [ready, focusTxId, unmatched]);
 
   const openMatch = (tx: BankMatchTx) => {
     setActive(tx);
@@ -378,12 +397,12 @@ export function BankingMatchPanel({
       </Text>
       {!unmatched.length ? (
         <Empty icon="checkmark-done-outline" title="Eşleştirme bekleyen hareket yok" />
-      ) : unmatched.map((t) => {
+      ) : unmatched.filter((t) => !focusAccountId || String(t.account_id || "") === focusAccountId || idOf(t) === focusTxId).map((t) => {
         const id = idOf(t);
         const inflow = t.type === "inflow";
         return (
+          <View key={id} style={id === focusTxId ? { borderWidth: 2, borderColor: "#f59e0b", borderRadius: 16 } : undefined}>
           <ListRow
-            key={id}
             testID={`unmatched-tx-${id}`}
             title={t.description || "Hareket"}
             subtitle={[fmtDate(t.date), t.account_name, t.is_simulated ? "SİMÜLE" : "", t.suggested_contact_name ? `Öneri: ${t.suggested_contact_name}` : ""].filter(Boolean).join(" · ")}
@@ -392,6 +411,7 @@ export function BankingMatchPanel({
             rightSubColor={colors.indigo}
             onPress={canEdit ? () => openMatch(t) : undefined}
           />
+          </View>
         );
       })}
 

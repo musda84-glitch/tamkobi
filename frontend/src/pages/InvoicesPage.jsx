@@ -424,7 +424,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const newParam = searchParams.get("new");
   const newContactParam = searchParams.get("contact_id");
   const newProjectParam = searchParams.get("project_id");
-  const editParam = searchParams.get("edit");
+  const editParam = searchParams.get("edit") || searchParams.get("open");
   useEffect(() => {
     if (!newParam) return;
     if (newContactParam && contacts.length === 0) return;
@@ -600,10 +600,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);
           next.delete("edit");
+          next.delete("open");
           return next;
         }, { replace: true });
-      } catch {
-        if (!cancelled) toast.error("Taslak fatura açılamadı.");
+      } catch (err) {
+        if (!cancelled) toast.error(err?.response?.status === 404 ? "Kayıt bulunamadı" : "Taslak fatura açılamadı.");
       }
     };
     openFromId();

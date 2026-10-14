@@ -3,6 +3,8 @@ import {
   localizeNotificationText,
   notificationAge,
   notificationLook,
+  mobileTargetHref,
+  notificationOpenPlan,
   notificationRoute,
   notificationText,
   notificationTitle,
@@ -173,6 +175,18 @@ describe("notificationRoute", () => {
     expect(notificationRoute({ ref_type: "pos_approval" })).toBe("/notifications");
     expect(notificationRoute({ link: "/edoc-inbox", ref_type: "edoc" })).toBe("/edoc-inbox");
     expect(notificationRoute({ type: "announcement" })).toBeNull();
+  });
+
+  it("opens the stored target on the matching detail screen", () => {
+    expect(notificationRoute({ target: { type: "order", id: "o1", route: "/orders?open=o1" } })).toBe("/orders/o1");
+    expect(notificationRoute({ target: { type: "invoice", id: "i1", route: "/invoices?open=i1" } })).toBe("/invoices/i1");
+    expect(notificationRoute({ target: { type: "contact", id: "c1", route: "/contacts?contact_id=c1" } })).toBe("/contacts/c1");
+    expect(notificationRoute({ target: { type: "payment", id: "p1", route: "/expenses?open=p1" } })).toBe("/expenses/p1");
+    expect(notificationRoute({ target: { type: "task", id: "t1", route: "/personelim?tab=gorevler&task=t1" } })).toBe("/personelim?tab=gorevler&task=t1");
+    expect(mobileTargetHref("/banking?pending=1&account_id=acc&tx=tx1")).toBe("/banking?tab=match&account_id=acc&tx=tx1");
+    expect(mobileTargetHref("/edoc-inbox?ettn=abcd-1234&id=d1")).toBe("/edoc-inbox?ettn=abcd-1234&id=d1");
+    expect(notificationOpenPlan({ exists: false, message: "Kayıt bulunamadı" }, { link: "/orders" })).toEqual({ href: null, missing: true });
+    expect(notificationOpenPlan({ exists: true, target: { route: "/orders?open=o9" } }, {})).toEqual({ href: "/orders/o9", missing: false });
   });
 });
 

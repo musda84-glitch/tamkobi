@@ -51,6 +51,8 @@ export default function EdocInboxPage() {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const kindFilter = inboxKindFromQuery(searchParams.get("kind"));
+  const focusEttn = (searchParams.get("ettn") || "").replace(/…|\.\.\.$/, "");
+  const focusDocId = searchParams.get("id") || "";
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("pending");
@@ -77,6 +79,26 @@ export default function EdocInboxPage() {
     .catch(() => toast.error("Gelen belgeler yüklenemedi.")), [companyId, status]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!focusEttn && !focusDocId) return undefined;
+    let cancel = false;
+    axios.get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId } })
+      .then((r) => {
+        if (cancel) return;
+        const items = r.data?.items || [];
+        const needle = focusEttn.toLowerCase();
+        const hit = items.find((d) => (focusDocId && d.id === focusDocId) || (needle && String(d.uuid || d.ettn || "").toLowerCase().startsWith(needle)));
+        if (!hit) {
+          toast.error("Kayıt bulunamadı");
+          return;
+        }
+        if (hit.status) setStatus(hit.status);
+        setSel(hit);
+      })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [companyId, focusEttn, focusDocId]);
 
   useEffect(() => {
     axios.get(`${API_URL}/products`, { params: { company_id: companyId } })
@@ -370,7 +392,7 @@ export default function EdocInboxPage() {
           ) : filteredItems.length === 0 ? (
             <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. {integrator} üzerinden çekin veya UBL XML / PDF yükleyin. İçeri alınanlar Faturalar → Gelen e-Fatura’dadır.</div>
           ) : filteredItems.map((d) => (
-            <div key={d.id} className={`flex items-stretch ${sel?.id === d.id ? "bg-indigo-50/60" : "hover:bg-slate-50"}`}>
+            <div key={d.id} className={`flex items-stretch ${sel?.id === d.id ? "bg-indigo-50/60 ring-2 ring-inset ring-indigo-400" : "hover:bg-slate-50"}`}>
               <button type="button" onClick={() => { setSel(d); setXml(null); }} className="flex-1 text-left p-3" data-testid={`edoc-item-${d.id}`}>
                 <div className="flex items-center justify-between gap-2">
                   <b className="text-slate-900 truncate max-w-[180px]">{d.supplier?.name || "Tedarikçi ?"}</b>

@@ -3,12 +3,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { HelpButton } from "./help/HelpButton";
 import { IkNavTabs } from "./IkPortalNav";
+import { NotificationBell } from "./NotificationBell";
 import { ikFieldDenied, portalFeatureKey, visibleIkLinks } from "../utils/portalFields";
 
 /** Minimal self-service shell for ik.tamkobi.com (no MainLayout / panel menu). */
 export default function IkLayout({ children }) {
   const { pathname } = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, activeCompany } = useAuth();
+  const companyId = activeCompany?.id || activeCompany?._id || user?.active_company_id || "";
   const navigate = useNavigate();
   const links = visibleIkLinks(user);
   const denied = ikFieldDenied(pathname, user);
@@ -20,6 +22,7 @@ export default function IkLayout({ children }) {
         <div className="mx-auto flex h-14 max-w-7xl flex-nowrap items-center justify-between gap-3 px-4">
           <span className="shrink-0 font-semibold tracking-tight text-slate-900">TamKobi İK</span>
           <div className="flex shrink-0 items-center gap-2 text-sm text-slate-600">
+            {companyId ? <NotificationBell companyId={companyId} /> : null}
             <HelpButton />
             <span className="hidden max-w-[12rem] truncate sm:inline">{user?.name || user?.email}</span>
             <button

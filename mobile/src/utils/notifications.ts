@@ -219,15 +219,92 @@ const REF_ROUTES: Record<string, string> = {
   staff_announcement: "/",
 };
 
+export const MISSING_RECORD = "Kayıt bulunamadı";
+export const NOTIFICATIONS_READ_ALL_PATH = "/notifications/read-all";
+
+function queryOf(route: string): Record<string, string> {
+  const qs = route.split("?")[1] || "";
+  const out: Record<string, string> = {};
+  if (!qs) return out;
+  for (const part of qs.split("&")) {
+    const [k, v = ""] = part.split("=");
+    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, " "));
+  }
+  return out;
+}
+
+/** Web hedef rotasını mobil ekrana çevirir. */
+export function mobileTargetHref(route?: string | null): string | null {
+  const raw = String(route || "").trim();
+  if (!raw) return null;
+  const [path, qs = ""] = raw.split("?");
+  const params = queryOf(raw);
+  const mapped = resolveMobilePath(path);
+  if (!mapped) return path.startsWith("/") ? raw : null;
+  if (mapped === "/orders" && params.open) return `/orders/${params.open}`;
+  if (mapped === "/invoices" && (params.open || params.edit)) return `/invoices/${params.open || params.edit}`;
+  if (mapped === "/contacts" && (params.contact_id || params.open)) return `/contacts/${params.contact_id || params.open}`;
+  if (mapped === "/expenses" && params.open) return `/expenses/${params.open}`;
+  if (mapped === "/quotes" && params.focus) return `/quotes/${params.focus}`;
+  if (mapped === "/projects" && (params.focus || params.project)) return `/projects/${params.focus || params.project}`;
+  if (mapped === "/surveys" && params.focus) return `/surveys/${params.focus}`;
+  if (mapped === "/cheques" && params.open) return `/cheques/${params.open}`;
+  if (mapped === "/banking") {
+    if (params.tx || params.pending === "1") {
+      const q = new URLSearchParams();
+      q.set("tab", "match");
+      if (params.account_id) q.set("account_id", params.account_id);
+      if (params.account) q.set("account", params.account);
+      if (params.tx) q.set("tx", params.tx);
+      return `/banking?${q.toString()}`;
+    }
+    if (params.account_id && !params.tab) return `/banking/${params.account_id}`;
+    return qs ? `${mapped}?${qs}` : mapped;
+  }
+  if (mapped === "/edoc-inbox") {
+    const q = new URLSearchParams();
+    if (params.ettn) q.set("ettn", params.ettn);
+    const id = params.id || params.open || "";
+    if (id) q.set("id", id);
+    const s = q.toString();
+    return s ? `/edoc-inbox?${s}` : mapped;
+  }
+  if (mapped === "/personelim") {
+    if (!params.tab && !params.task) return mapped;
+    const q = new URLSearchParams();
+    q.set("tab", params.tab || "gorevler");
+    if (params.task) q.set("task", params.task);
+    return `/personelim?${q.toString()}`;
+  }
+  return qs ? `${mapped}?${qs}` : mapped;
+}
+
 /** Web'deki link/ref_type yönlendirmesinin mobilde karşılığı olan rotası. */
+const DETAIL_REFS = new Set(["/orders", "/invoices", "/contacts", "/expenses", "/quotes", "/projects", "/surveys", "/cheques", "/edoc-inbox"]);
+
 export function notificationRoute(n: Notification): string | null {
+  const fromTarget = n.target?.route ? mobileTargetHref(n.target.route) : null;
+  if (fromTarget) return fromTarget;
+  const ref = REF_ROUTES[lower(String(n.ref_type || ""))];
+  if (ref && n.ref_id && DETAIL_REFS.has(ref)) {
+    const deep = mobileTargetHref(`${ref}?open=${encodeURIComponent(String(n.ref_id))}`);
+    if (deep) return deep;
+  }
   const link = String(n.link || "").trim();
   if (link) {
-    const [path, query] = link.split("?");
-    const mapped = resolveMobilePath(path);
-    if (mapped) return query ? `${mapped}?${query}` : mapped;
+    const [path] = link.split("?");
+    if (resolveMobilePath(path)) return mobileTargetHref(link);
   }
-  return REF_ROUTES[lower(String(n.ref_type || ""))] || null;
+  return ref || null;
+}
+
+export function notificationOpenPlan(
+  res: { exists?: boolean; message?: string | null; target?: { route?: string } | null } | null | undefined,
+  note: Notification,
+): { href: string | null; missing: boolean } {
+  if (res && res.exists === false) return { href: null, missing: true };
+  const href = res?.target?.route ? mobileTargetHref(res.target.route) : notificationRoute(note);
+  return { href: href || null, missing: false };
 }
 
 /** Listede tarih yerine "3 sa" gibi kısa yaş bilgisi durur. */

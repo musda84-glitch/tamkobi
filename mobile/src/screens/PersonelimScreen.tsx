@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { fileUrl } from "../api/url";
@@ -111,7 +111,9 @@ function Chip({
 
 export function PersonelimScreen() {
   const { client } = useAuth();
-  const params = useLocalSearchParams<{ tab?: string | string[] }>();
+  const params = useLocalSearchParams<{ tab?: string | string[]; task?: string | string[] }>();
+  const focusTaskId = (Array.isArray(params.task) ? params.task[0] : params.task) || "";
+  const taskWarned = useRef("");
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [tab, setTab] = useState<TabId>("ozet");
   const [data, setData] = useState<PersonelimPayload | null>(null);
@@ -149,7 +151,22 @@ export function PersonelimScreen() {
   useEffect(() => {
     const raw = Array.isArray(params.tab) ? params.tab[0] : params.tab;
     if (TABS.some((t) => t.id === raw)) setTab(raw as TabId);
-  }, [params.tab]);
+    else if (focusTaskId) setTab("gorevler");
+  }, [params.tab, focusTaskId]);
+
+  useEffect(() => {
+    if (!focusTaskId || !data?.tasks || taskWarned.current === focusTaskId) return;
+    const hit = (data.tasks || []).find((t) => String(t.id) === focusTaskId);
+    if (!hit) {
+      taskWarned.current = focusTaskId;
+      setError("Kayıt bulunamadı");
+      return;
+    }
+    if (taskWarned.current === focusTaskId) return;
+    taskWarned.current = focusTaskId;
+    setTab("gorevler");
+    if (archivedAssignedDuties([hit]).length) setShowArchivedTasks(true);
+  }, [focusTaskId, data]);
 
   const emp = data?.employee;
   const bal = data?.balance;
@@ -558,8 +575,11 @@ export function PersonelimScreen() {
               />
             ) : (
               visibleTasks.map((t, i) => (
-                <AssignedDutyCard
+                <View
                   key={t.id || String(i)}
+                  style={String(t.id) === focusTaskId ? { borderWidth: 2, borderColor: "#10b981", borderRadius: 16 } : undefined}
+                >
+                <AssignedDutyCard
                   duty={t}
                   index={i}
                   testID={`personelim-task-${t.id || i}`}
@@ -578,6 +598,7 @@ export function PersonelimScreen() {
                     void load();
                   }}
                 />
+                </View>
               ))
             )}
           </>
