@@ -64,6 +64,9 @@ export function employeePayModalStart(initialKind, lines) {
   return { mode: "all", selected: (lines || []).map((l) => l.key) };
 }
 
+export const REIMBURSE_KIND = "reimburse";
+export const REIMBURSE_LABEL = "Masraf ödemesi";
+
 export const PAYMENT_LINE_KINDS = [
   { key: "salary", label: "Maaş" },
   { key: "remaining", label: "Kalan ödeme" },
@@ -71,7 +74,37 @@ export const PAYMENT_LINE_KINDS = [
   { key: "bonus", label: "Prim" },
   { key: "expense", label: "Masraf iadesi" },
   { key: "meal", label: "Yol/Yemek" },
+  { key: REIMBURSE_KIND, label: REIMBURSE_LABEL },
 ];
+
+const PERSONNEL_PAYER_VALUES = new Set(["personnel", "employee", "personel", "staff"]);
+const CLOSED_PERSONNEL_DEBT = new Set(["closed", "reimbursed", "paid"]);
+
+function truthyFlag(v) {
+  if (v === true || v === 1) return true;
+  return ["1", "true", "yes", "evet"].includes(String(v || "").trim().toLowerCase());
+}
+
+export function expensePaidByPersonnel(exp) {
+  if (!exp || typeof exp !== "object") return false;
+  if (truthyFlag(exp.paid_by_personnel)) return true;
+  for (const key of ["payer", "paid_by_kind", "payment_source", "paid_by"]) {
+    if (PERSONNEL_PAYER_VALUES.has(String(exp[key] || "").trim().toLowerCase())) return true;
+  }
+  const blob = ["note", "notes", "description", "payment_note", "paid_by_label"]
+    .map((k) => String(exp[k] || ""))
+    .join(" ")
+    .toLowerCase();
+  return blob.includes("personel tarafından ödendi");
+}
+
+export function expensePersonnelDebtOpen(exp) {
+  if (!exp || typeof exp !== "object") return false;
+  const status = String(exp.personnel_debt_status || "").trim().toLowerCase();
+  if (CLOSED_PERSONNEL_DEBT.has(status)) return false;
+  if (status === "open") return true;
+  return expensePaidByPersonnel(exp);
+}
 
 const CASH_TYPES = new Set(["cash", "kasa", "cashbox", "nakit", "cash_box"]);
 const POS_TYPES = new Set(["pos", "okc_pos", "credit_card", "customer_credit_card"]);
@@ -177,7 +210,8 @@ export function posSalaryWarning(lines, accounts) {
 }
 
 export function paymentPreview(remaining, lines) {
-  const paying = round2((lines || []).reduce((s, l) => s + (Number(l.amount) || 0), 0));
+  const affecting = (lines || []).filter((l) => String(l?.kind || "").toLowerCase() !== REIMBURSE_KIND);
+  const paying = round2(affecting.reduce((s, l) => s + (Number(l.amount) || 0), 0));
   const after = round2((Number(remaining) || 0) - paying);
   return {
     paying,
@@ -190,6 +224,7 @@ export function paymentPreview(remaining, lines) {
 export function initialPaymentKind(initialKind) {
   if (initialKind === "advance") return "advance";
   if (initialKind === "meal" || initialKind === "transport") return "meal";
+  if (initialKind === REIMBURSE_KIND) return REIMBURSE_KIND;
   if (initialKind === "bonus" || initialKind === "expense" || initialKind === "salary" || initialKind === "remaining") return initialKind;
   if (initialKind === "overtime") return "bonus";
   return "salary";
@@ -198,6 +233,7 @@ export function initialPaymentKind(initialKind) {
 export function employeePayModalTitle(initialKind, emp) {
   const name = emp?.full_name || "";
   if (initialKind === "advance") return name ? `Avans — ${name}` : "Avans";
+  if (initialKind === REIMBURSE_KIND) return name ? `${REIMBURSE_LABEL} — ${name}` : REIMBURSE_LABEL;
   if (PAY_KIND_KEYS.has(initialKind)) {
     const label = employeePayKindLabel(initialKind, emp);
     return name ? `${label} — ${name}` : label;

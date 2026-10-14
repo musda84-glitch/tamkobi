@@ -18,10 +18,12 @@ import {
   defaultPayAccount,
   employeePayModalTitle,
   hasPayStartDate,
+  expensePersonnelDebtOpen,
   initialPaymentKind,
   istanbulPeriod,
   PAY_START_MISSING_MSG,
   paymentPreview,
+  REIMBURSE_KIND,
   posSalaryWarning,
   sgkCashBlocked,
   shiftPeriod,
@@ -37,7 +39,13 @@ function newIdemKey() {
 }
 
 function emptyLine(kind, accountId) {
-  return { key: newIdemKey(), kind: kind || "salary", amount: "", accountId: accountId || "", description: "" };
+  return { key: newIdemKey(), kind: kind || "salary", amount: "", accountId: accountId || "", description: "", expenseId: "" };
+}
+
+function expenseOptionLabel(exp) {
+  const num = exp.expense_number || exp.number || "MSR";
+  const desc = exp.description || exp.category || "";
+  return [num, desc].filter(Boolean).join(" · ");
 }
 
 export const EmployeePayModal = ({ employee, companyId, accounts, card, initialKind, sgkSalaryBankOnly = true, onClose, onDone }) => {
@@ -49,6 +57,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
   const [date, setDate] = useState(() => todayIsoDate());
   const [rows, setRows] = useState(() => [emptyLine(initialPaymentKind(initialKind), "")]);
   const [busy, setBusy] = useState(false);
+  const [openDebts, setOpenDebts] = useState([]);
   const [idemKey] = useState(newIdemKey);
 
   const preferred = useMemo(() => defaultPayAccount(accounts), [accounts]);
@@ -67,6 +76,18 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
       .catch(() => {});
     return () => { cancel = true; };
   }, [empId, month]);
+
+  useEffect(() => {
+    if (!empId || !companyId) return undefined;
+    let cancel = false;
+    axios.get(`${API_URL}/expenses`, { params: { company_id: companyId, employee_id: empId } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.expenses || []);
+        if (!cancel) setOpenDebts(rows.filter(expensePersonnelDebtOpen));
+      })
+      .catch(() => { if (!cancel) setOpenDebts([]); });
+    return () => { cancel = true; };
+  }, [empId, companyId]);
 
   const remaining = Number(summary.remaining) || 0;
   const unpaidPayroll = Number(summary.unpaid_payroll) || 0;
@@ -108,10 +129,11 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
         date,
         period: month,
         idempotency_key: idemKey,
-        lines: lines.map((r) => ({
+          lines: lines.map((r) => ({
           kind: r.kind,
           amount: Number(r.amount),
           description: r.description,
+          ...(r.kind === REIMBURSE_KIND && r.expenseId ? { expense_id: r.expenseId } : {}),
           ...splitPaymentTarget(r.accountId),
         })),
       };
@@ -169,6 +191,20 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
               </div>
               <PaymentTargetSelect companyId={companyId} accounts={accounts} value={row.accountId} onChange={(id) => patch(row.key, "accountId", id)} testId={`emp-pay-line-account-${i}`} emptyLabel="Kasa / banka" className={inputCls} />
               <input value={row.description} onChange={(ev) => patch(row.key, "description", ev.target.value)} className={inputCls} placeholder="Açıklama" data-testid={`emp-pay-line-note-${i}`} />
+              {row.kind === REIMBURSE_KIND ? (
+                <>
+                  <div className="text-[11px] text-slate-500" data-testid={`emp-pay-line-reimburse-hint-${i}`}>
+                    Maaş, avans ve hak ediş bakiyesinden düşmez. Gider olarak yeniden yazılmaz.
+                  </div>
+                  <select value={row.expenseId || ""} onChange={(ev) => patch(row.key, "expenseId", ev.target.value)} className={inputCls} data-testid={`emp-pay-line-expense-${i}`}>
+                    <option value="">Masraf kaydı (isteğe bağlı)</option>
+                    {openDebts.map((exp) => {
+                      const id = exp.id || exp._id;
+                      return <option key={id} value={id}>{expenseOptionLabel(exp)}</option>;
+                    })}
+                  </select>
+                </>
+              ) : null}
               {rows.length > 1 ? (
                 <button type="button" className="text-rose-600" onClick={() => setRows((prev) => prev.filter((r) => r.key !== row.key))}>Satırı sil</button>
               ) : null}

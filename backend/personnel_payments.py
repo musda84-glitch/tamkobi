@@ -24,6 +24,7 @@ KIND_LABELS = {
     "expense": "Masraf iadesi",
     "meal": "Yol/Yemek",
     "transport": "Yol/Yemek",
+    "reimburse": "Masraf ödemesi",
 }
 
 SOURCE = "personnel_payment"
@@ -69,13 +70,21 @@ def normalize_lines(raw: Any) -> List[dict]:
             raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
         if not account_id and not partner_id:
             raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
-        out.append({
+        item = {
             "kind": kind,
             "amount": amount,
             "account_id": account_id,
             "partner_id": partner_id,
             "description": str(row.get("description") or row.get("note") or "").strip()[:300],
-        })
+        }
+        if kind == "reimburse":
+            expense_id = str(row.get("expense_id") or "").strip()
+            expense_number = str(row.get("expense_number") or "").strip()[:40]
+            if expense_id:
+                item["expense_id"] = expense_id
+            if expense_number:
+                item["expense_number"] = expense_number
+        out.append(item)
     if not out:
         raise HTTPException(status_code=400, detail="Ödenecek tutar girin.")
     return out
@@ -439,7 +448,10 @@ async def _cover_bonus(db, emp: dict, amount: float, pay_date: str, *, cx: finan
 async def _cover_expenses(db, emp: dict, amount: float, pay_date: str, *, cx: finance_txn.CompensatingTxn) -> tuple[float, List[dict]]:
     cid = _cid(emp)
     rows = await _rows(db, "expenses", {"employee_id": emp.get("_id"), "company_id": cid})
-    pending = [e for e in rows if e.get("payment_status") != "paid" and _amt(e.get("total")) > 0.004]
+    pending = [
+        e for e in rows
+        if employee_pay.expense_counts_in_receivable(e) and _amt(e.get("total")) > 0.004
+    ]
     return await _mark_amount(
         db, "expenses", pending, amount,
         status_field="payment_status", paid_value="paid", pay_date=pay_date, cid=cid, cx=cx,
@@ -573,6 +585,97 @@ async def _cash_out(
     return acc_name
 
 
+def _debt_snapshot(exp: dict) -> dict:
+    return {
+        "personnel_debt_status": exp.get("personnel_debt_status"),
+        "reimburse_movement_id": exp.get("reimburse_movement_id"),
+        "personnel_reimbursed_at": exp.get("personnel_reimbursed_at"),
+        "reimbursed_amount": exp.get("reimbursed_amount"),
+    }
+
+
+async def _load_reimburse_expense(db, emp: dict, ln: dict) -> Optional[dict]:
+    cid = _cid(emp)
+    expense_id = str(ln.get("expense_id") or "").strip()
+    expense_number = str(ln.get("expense_number") or "").strip()
+    if not expense_id and not expense_number:
+        return None
+    if expense_id:
+        exp = await db.expenses.find_one({"_id": expense_id, "company_id": cid})
+    else:
+        exp = await db.expenses.find_one({"company_id": cid, "expense_number": expense_number})
+    if not exp:
+        raise HTTPException(status_code=404, detail="Masraf kaydı bulunamadı.")
+    return exp
+
+
+async def _close_personnel_debt(
+    db, emp: dict, ln: dict, movement_id: str, pay_date: str, *, cx: finance_txn.CompensatingTxn,
+) -> List[dict]:
+    """MSR kaydındaki personel borcunu kapatır. Masrafın kendisi silinmez, gider yeniden yazılmaz."""
+    exp = await _load_reimburse_expense(db, emp, ln)
+    if not exp:
+        return []
+    if str(exp.get("employee_id") or "") != str(emp.get("_id") or ""):
+        raise HTTPException(status_code=400, detail="Masraf bu personele ait değil.")
+    if employee_pay.personnel_debt_closed(exp):
+        raise HTTPException(status_code=400, detail="Personel masraf borcu zaten kapanmış.")
+    if not employee_pay.personnel_debt_open(exp):
+        raise HTTPException(status_code=400, detail="Bu masrafta personel tarafından ödenen açık borç yok.")
+    debt = employee_pay.personnel_debt_amount(exp)
+    if ln["amount"] + 0.004 < debt:
+        raise HTTPException(status_code=400, detail="Ödeme tutarı personel masraf borcundan az.")
+    prev = _debt_snapshot(exp)
+    eid = exp["_id"]
+    cid = _cid(emp)
+    number = str(exp.get("expense_number") or ln.get("expense_number") or "")
+    ln["expense_id"] = eid
+    if number:
+        ln["expense_number"] = number
+    await db.expenses.update_one(
+        {"_id": eid, "company_id": cid},
+        {"$set": {
+            "personnel_debt_status": "closed",
+            "reimburse_movement_id": movement_id,
+            "personnel_reimbursed_at": pay_date,
+            "reimbursed_amount": ln["amount"],
+        }},
+    )
+
+    async def _undo(eid=eid, prev=prev):
+        await db.expenses.update_one({"_id": eid}, {"$set": prev})
+
+    cx.push("debt", _undo)
+    return [{
+        "collection": "expenses",
+        "id": eid,
+        "action": "reopen_personnel_debt",
+        "prev": prev,
+    }]
+
+
+def reimbursement_rows(movements: Optional[List[dict]]) -> List[dict]:
+    """İK portalı: masraf ödemesi tek satır, rozet metni sabit."""
+    out: List[dict] = []
+    for m in movements or []:
+        if str(m.get("kind") or "") != "reimburse":
+            continue
+        if str(m.get("status") or "posted") in ("reversed", "cancelled"):
+            continue
+        out.append({
+            "id": m.get("id") or m.get("_id"),
+            "kind": "reimburse",
+            "kind_label": KIND_LABELS["reimburse"],
+            "amount": m.get("amount"),
+            "date": m.get("date") or m.get("created_at"),
+            "account_name": m.get("account_name"),
+            "description": m.get("description") or "",
+            "expense_number": m.get("expense_number"),
+            "status": m.get("status") or "posted",
+        })
+    return out
+
+
 async def _apply_payment_lines_body(
     db,
     emp: dict,
@@ -594,7 +697,9 @@ async def _apply_payment_lines_body(
     if cash_err:
         raise HTTPException(status_code=400, detail=cash_err)
 
-    preview = employee_pay.payment_after(balance.get("remaining"), lines)
+    balance_lines = employee_pay.payment_lines_affecting_balance(lines)
+    preview = employee_pay.payment_after(balance.get("remaining"), balance_lines)
+    cash_total = round(sum(ln["amount"] for ln in lines), 2)
     manual_salary = any(ln["kind"] == "salary" for ln in lines) and _amt(balance.get("unpaid_payroll")) <= 0.004
     key = str(payload.get("idempotency_key") or "").strip()[:200]
     receipt_id = f"rcpt_{uuid.uuid4().hex[:10]}"
@@ -632,6 +737,12 @@ async def _apply_payment_lines_body(
                     db, emp, period, ln["amount"], pay_date, balance, movement_id=movement_id, cx=cx,
                 )
                 effects.extend(cov)
+            elif ln["kind"] == "reimburse":
+                if ln.get("expense_id") or ln.get("expense_number"):
+                    effects.extend(await _close_personnel_debt(
+                        db, emp, ln, movement_id, pay_date, cx=cx,
+                    ))
+                excess = 0.0
             if excess > 0.004 and ln["kind"] != "advance":
                 effects.extend(await _insert_advance(
                     db, emp, period, excess, pay_date, "Fazla ödeme", ln.get("account_id"), movement_id, cx,
@@ -654,6 +765,8 @@ async def _apply_payment_lines_body(
                 "partner_id": ln.get("partner_id"),
                 "account_name": account_name,
                 "description": ln.get("description") or "",
+                "expense_id": ln.get("expense_id"),
+                "expense_number": ln.get("expense_number"),
                 "date": pay_date,
                 "idempotency_key": key or None,
                 "receipt_id": receipt_id,
@@ -701,7 +814,7 @@ async def _apply_payment_lines_body(
             "period": period,
             "date": pay_date,
             "lines": saved_lines,
-            "total": preview["paying"],
+            "total": cash_total,
             "remaining_before": result["remaining_before"],
             "remaining_after": result["remaining_after"],
             "overpaid": result["overpaid"],
@@ -755,6 +868,18 @@ async def _undo_effect(db, eff: dict) -> None:
         return
     if action == "insert":
         await store.delete_one({"_id": did})
+        return
+    if action == "reopen_personnel_debt":
+        prev = eff.get("prev") if isinstance(eff.get("prev"), dict) else {}
+        await store.update_one(
+            {"_id": did},
+            {"$set": {
+                "personnel_debt_status": prev.get("personnel_debt_status"),
+                "reimburse_movement_id": prev.get("reimburse_movement_id"),
+                "personnel_reimbursed_at": prev.get("personnel_reimbursed_at"),
+                "reimbursed_amount": prev.get("reimbursed_amount"),
+            }},
+        )
         return
     doc = await store.find_one({"_id": did})
     if not doc:

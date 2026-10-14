@@ -91,6 +91,7 @@ export default function MyPersonnelPage() {
   const payrolls = data?.payrolls || [];
   const bonuses = data?.bonuses || [];
   const receipts = data?.receipts || [];
+  const reimbursements = data?.reimbursements || [];
   const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
 
   const submitAdvance = async (e) => {
@@ -332,6 +333,25 @@ export default function MyPersonnelPage() {
                     <span>{r.date}</span>
                     <span className="font-semibold">{money(r.total)}</span>
                     <a className="ml-auto text-emerald-700 font-semibold" href={`${API_URL}/personnel/receipts/${r.id}`} target="_blank" rel="noreferrer" data-testid={`my-pers-receipt-${r.id}`}>Makbuz PDF</a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden" data-testid="my-personnel-reimbursements">
+            <div className="px-4 py-3 border-b text-xs font-bold text-slate-700">Masraf ödemeleri</div>
+            {reimbursements.length === 0 ? (
+              <div className="p-4 text-xs text-slate-400">Masraf ödemesi yok.</div>
+            ) : (
+              <ul className="divide-y text-xs">
+                {reimbursements.map((r) => (
+                  <li key={r.id} className="px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid={`my-pers-reimburse-${r.id}`}>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700" data-testid={`my-pers-reimburse-badge-${r.id}`}>Masraf ödemesi</span>
+                    <span className="font-semibold">{money(r.amount)}</span>
+                    {r.date && <span className="font-mono text-slate-500">{r.date}</span>}
+                    {r.expense_number && <span className="font-mono text-slate-500">{r.expense_number}</span>}
+                    {r.account_name && <span className="text-slate-500">{r.account_name}</span>}
+                    {r.description && <span className="text-slate-500 truncate max-w-[200px]">{r.description}</span>}
                   </li>
                 ))}
               </ul>

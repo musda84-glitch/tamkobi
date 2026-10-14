@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import employee_pay  # noqa: E402
 import linked_moves  # noqa: E402
 import personnel_payments  # noqa: E402
+import rbac  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 from mysql_store import DuplicateKeyError  # noqa: E402
 
@@ -665,3 +666,240 @@ def test_delete_endpoints_call_linked_payment_reverse():
         start = src.index(name)
         chunk = src[start:start + limit]
         assert "_reverse_personnel_payment_links" in chunk
+
+
+def _raises(fn):
+    try:
+        fn()
+    except HTTPException as exc:
+        return exc
+    raise AssertionError("HTTPException bekleniyordu")
+
+
+def test_reimburse_cash_exit_does_not_touch_salary_advance_or_expense():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "period": "2026-10",
+        "status": "pending", "final_payable": 10000, "paid_amount": 1000,
+    })
+    db.bonus_payments.docs.append({
+        "_id": "adv", "company_id": "c1", "employee_id": "e1", "type": "advance",
+        "amount": 500, "status": "paid",
+    })
+    result = _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 800, "account_id": "bank", "description": "Yakıt"}],
+        balance={"remaining": 8000, "unpaid_payroll": 8000},
+    )
+    assert result["paid"] == ["reimburse"]
+    assert result["remaining_after"] == 8000
+    assert result["overpaid"] is False
+    assert len(db.personnel_movements.docs) == 1
+    mov = db.personnel_movements.docs[0]
+    assert mov["kind"] == "reimburse"
+    assert mov["kind_label"] == "Masraf ödemesi"
+    assert db.bank_accounts.docs[0]["current_balance"] == 49200
+    tx = db.bank_transactions.docs[0]
+    assert tx["type"] == "outflow" and tx["amount"] == 800
+    assert db.expenses.docs == []
+    assert len(db.bonus_payments.docs) == 1
+    assert db.bonus_payments.docs[0]["amount"] == 500
+    assert db.payrolls.docs[0]["paid_amount"] == 1000
+    assert db.personnel_receipts.docs[0]["total"] == 800
+    rows = personnel_payments.reimbursement_rows(db.personnel_movements.docs)
+    assert rows == [{
+        "id": mov["_id"],
+        "kind": "reimburse",
+        "kind_label": "Masraf ödemesi",
+        "amount": 800,
+        "date": "2026-10-13",
+        "account_name": "Banka",
+        "description": "Yakıt",
+        "expense_number": None,
+        "status": "posted",
+    }]
+
+
+def test_reimburse_partner_is_withdrawal():
+    db = FakeDb()
+    db.partners.docs.append({"_id": "ort1", "company_id": "c1", "name": "Ayşe Ortak", "balance": 1000})
+    result = _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 300, "partner_id": "ort1"}],
+        balance={"remaining": 4000, "unpaid_payroll": 4000},
+    )
+    assert result["remaining_after"] == 4000
+    assert db.partners.docs[0]["balance"] == 700
+    assert db.partner_transactions.docs[0]["type"] == "withdrawal"
+    assert db.partner_transactions.docs[0]["amount"] == 300
+    assert db.bank_transactions.docs == []
+    assert db.expenses.docs == []
+    assert "Ortak" in (db.personnel_movements.docs[0]["account_name"] or "")
+
+
+def test_reimburse_closes_personnel_debt_without_rewriting_expense():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.expenses.docs.append({
+        "_id": "ex1", "company_id": "c1", "employee_id": "e1",
+        "expense_number": "MSR-2026-0007", "total": 250, "amount": 250,
+        "payment_status": "unpaid", "paid_by_personnel": True, "personnel_debt_status": "open",
+        "description": "Market",
+    })
+    _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 300, "account_id": "bank", "expense_id": "ex1"}],
+        balance={"remaining": 9000, "unpaid_payroll": 9000, "unpaid_expenses": 0},
+    )
+    assert len(db.expenses.docs) == 1
+    assert db.bonus_payments.docs == []
+    assert db.payrolls.docs == []
+    exp = db.expenses.docs[0]
+    assert exp["personnel_debt_status"] == "closed"
+    assert exp["payment_status"] == "unpaid"
+    assert exp["reimburse_movement_id"] == db.personnel_movements.docs[0]["_id"]
+    assert "personnel_movement_id" not in exp
+    assert exp.get("source_type") != "personnel_payment"
+    assert db.personnel_movements.docs[0]["expense_number"] == "MSR-2026-0007"
+    assert db.personnel_movements.docs[0]["kind_label"] == "Masraf ödemesi"
+    assert db.bank_accounts.docs[0]["current_balance"] == 49700
+    assert result_remaining_unchanged(db)
+
+
+def test_reimburse_by_number_and_rejects_short_foreign_other_and_closed():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.expenses.docs.append({
+        "_id": "ex1", "company_id": "c1", "employee_id": "e1",
+        "expense_number": "MSR-2026-0011", "total": 250,
+        "payment_status": "unpaid", "notes": "Personel tarafından ödendi",
+    })
+    short = _raises(lambda: _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 100, "account_id": "bank", "expense_number": "MSR-2026-0011"}],
+        balance={"remaining": 1000},
+    ))
+    assert short.status_code == 400 and "az" in str(short.detail)
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+    assert db.personnel_movements.docs == []
+    assert db.expenses.docs[0].get("personnel_debt_status") in (None, "")
+
+    foreign = FakeDb()
+    foreign.bank_accounts.docs.append(_acc(current_balance=50000))
+    foreign.expenses.docs.append({
+        "_id": "exf", "company_id": "c2", "employee_id": "e1",
+        "expense_number": "MSR-2026-0099", "total": 40, "paid_by_personnel": True,
+    })
+    missing = _raises(lambda: _run(
+        foreign, _emp(),
+        [{"kind": "reimburse", "amount": 40, "account_id": "bank", "expense_id": "exf"}],
+    ))
+    assert missing.status_code == 404
+    assert foreign.bank_accounts.docs[0]["current_balance"] == 50000
+
+    other = FakeDb()
+    other.bank_accounts.docs.append(_acc(current_balance=50000))
+    other.expenses.docs.append({
+        "_id": "exo", "company_id": "c1", "employee_id": "e2",
+        "expense_number": "MSR-2026-0002", "total": 40, "personnel_debt_status": "open",
+    })
+    wrong = _raises(lambda: _run(
+        other, _emp(),
+        [{"kind": "reimburse", "amount": 40, "account_id": "bank", "expense_id": "exo"}],
+    ))
+    assert wrong.status_code == 400 and "personele" in str(wrong.detail)
+
+    closed = FakeDb()
+    closed.bank_accounts.docs.append(_acc(current_balance=50000))
+    closed.expenses.docs.append({
+        "_id": "exc", "company_id": "c1", "employee_id": "e1",
+        "total": 40, "personnel_debt_status": "closed", "paid_by_personnel": True,
+    })
+    done = _raises(lambda: _run(
+        closed, _emp(),
+        [{"kind": "reimburse", "amount": 40, "account_id": "bank", "expense_id": "exc"}],
+    ))
+    assert done.status_code == 400 and "kapanmış" in str(done.detail)
+
+    plain = FakeDb()
+    plain.bank_accounts.docs.append(_acc(current_balance=50000))
+    plain.expenses.docs.append({
+        "_id": "exp", "company_id": "c1", "employee_id": "e1",
+        "total": 40, "payment_status": "unpaid",
+    })
+    no_debt = _raises(lambda: _run(
+        plain, _emp(),
+        [{"kind": "reimburse", "amount": 40, "account_id": "bank", "expense_id": "exp"}],
+    ))
+    assert no_debt.status_code == 400 and "açık borç" in str(no_debt.detail)
+
+
+def result_remaining_unchanged(db):
+    return db.personnel_receipts.docs[0]["remaining_after"] == db.personnel_receipts.docs[0]["remaining_before"]
+
+
+def test_reverse_reimburse_deletes_bank_exit_and_reopens_debt():
+    db = FakeDb()
+    _init_linked(db)
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.expenses.docs.append({
+        "_id": "ex1", "company_id": "c1", "employee_id": "e1",
+        "expense_number": "MSR-2026-0007", "total": 250,
+        "payment_status": "unpaid", "paid_by_personnel": True,
+    })
+    _run(
+        db, _emp(),
+        [{"kind": "reimburse", "amount": 250, "account_id": "bank", "expense_number": "MSR-2026-0007"}],
+        balance={"remaining": 1000, "unpaid_payroll": 1000},
+    )
+    mov = db.personnel_movements.docs[0]
+    assert db.expenses.docs[0]["personnel_debt_status"] == "closed"
+    out = _reverse(db, mov, actor=_admin())
+    assert out["status"] == "success"
+    assert db.bank_transactions.docs == []
+    assert db.bank_accounts.docs[0]["current_balance"] == 50000
+    assert len(db.expenses.docs) == 1
+    exp = db.expenses.docs[0]
+    assert exp["expense_number"] == "MSR-2026-0007"
+    assert exp["personnel_debt_status"] in (None, "")
+    assert exp.get("reimburse_movement_id") in (None, "")
+    assert exp["payment_status"] == "unpaid"
+    assert db.personnel_movements.docs[0]["status"] == "reversed"
+    hidden = personnel_payments.reimbursement_rows(db.personnel_movements.docs)
+    assert hidden == []
+
+
+def test_expense_refund_does_not_close_personnel_debt():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(current_balance=50000))
+    db.expenses.docs.append({
+        "_id": "ex1", "company_id": "c1", "employee_id": "e1",
+        "total": 200, "payment_status": "unpaid", "paid_by_personnel": True,
+        "personnel_debt_status": "open",
+    })
+    _run(
+        db, _emp(),
+        [{"kind": "expense", "amount": 200, "account_id": "bank"}],
+        balance={"remaining": 0, "unpaid_payroll": 0, "unpaid_expenses": 0},
+    )
+    exp = db.expenses.docs[0]
+    assert exp["payment_status"] == "unpaid"
+    assert exp["personnel_debt_status"] == "open"
+    assert db.bonus_payments.docs and db.bonus_payments.docs[0]["type"] == "advance"
+
+
+def test_personnel_paid_expense_is_outside_receivable_and_same_rbac():
+    assert employee_pay.expense_counts_in_receivable({"payment_status": "unpaid", "total": 10}) is True
+    assert employee_pay.expense_counts_in_receivable({"payment_status": "paid", "total": 10}) is False
+    assert employee_pay.expense_counts_in_receivable({"payment_status": "unpaid", "paid_by_personnel": True}) is False
+    assert employee_pay.personnel_debt_open({"notes": "Personel tarafından ödendi"}) is True
+    assert employee_pay.personnel_debt_open({"personnel_debt_status": "closed", "paid_by_personnel": True}) is False
+    assert employee_pay.payment_lines_affecting_balance([
+        {"kind": "salary", "amount": 10},
+        {"kind": "reimburse", "amount": 5},
+    ]) == [{"kind": "salary", "amount": 10}]
+    settle = rbac.module_for_path("/api/personnel/employees/e1/settle")
+    move = rbac.module_for_path("/api/personnel/movements/mov1")
+    assert settle == "/personnel"
+    assert move == settle

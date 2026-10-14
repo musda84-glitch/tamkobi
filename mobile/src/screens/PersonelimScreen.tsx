@@ -49,6 +49,7 @@ type PersonelimPayload = {
   leave_balance?: { annual?: number; used?: number; remaining?: number; pending?: number } | null;
   payrolls?: { id?: string; _id?: string; period?: string; status?: string; net_salary?: number; final_payable?: number; overtime_pay?: number; overtime_hours?: number; second_salary?: number }[];
   bonuses?: { id?: string; _id?: string; type?: string; amount?: number; status?: string; period?: string; note?: string; source?: string }[];
+  reimbursements?: { id?: string; amount?: number; date?: string; account_name?: string; description?: string; expense_number?: string; kind_label?: string }[];
   receipts?: { id?: string; period?: string; date?: string; total?: number; url?: string }[];
   balance?: {
     remaining?: number;
@@ -478,6 +479,24 @@ export function PersonelimScreen() {
                   if (href) Linking.openURL(href).catch(() => null);
                 }}
               />
+            ))}
+          </Card>
+          <Card>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Masraf ödemeleri</Text>
+            {!(data?.reimbursements || []).length ? <Muted>Masraf ödemesi yok.</Muted> : (data?.reimbursements || []).map((r) => (
+              <View key={r.id} testID={`personelim-reimburse-${r.id}`}>
+                <Text
+                  testID={`personelim-reimburse-badge-${r.id}`}
+                  style={{ alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, overflow: "hidden", backgroundColor: "#EEF2FF", color: "#4338CA", fontSize: 11, fontWeight: "800" }}
+                >
+                  Masraf ödemesi
+                </Text>
+                <ListRow
+                  title={[r.expense_number, r.description].filter(Boolean).join(" · ") || "Masraf ödemesi"}
+                  subtitle={[r.date, r.account_name].filter(Boolean).join(" · ") || undefined}
+                  right={fmtMoney(r.amount)}
+                />
+              </View>
             ))}
           </Card>
           <Card>
