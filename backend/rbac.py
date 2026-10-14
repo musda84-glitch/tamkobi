@@ -151,12 +151,15 @@ PORTAL_AREAS = (
     ("/api/vehicles", "portal_vehicles", "/vehicles"),
 )
 # Yöntem + yol şablonu. Özellik yalnız bu saha işlemlerinde mutation_allowed atlar.
-# {id} tek yol parçasıdır. DELETE, *-settings, trash-completed, admin-trash, decide
-# ve araç oluşturma/düzenleme/silme bu listede yoktur.
+# {id} tek yol parçasıdır. DELETE, ayar yazma (PUT/POST *-settings), trash-completed,
+# admin-trash, decide ve araç oluşturma/düzenleme/silme bu listede yoktur.
+# shopfloor-settings ve performance yalnız GET olarak listelenir.
 PORTAL_API_RULES = (
     ("GET", "/api/production/work-orders", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/stations", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/pause-policy", "portal_atolye", "/atolye"),
+    ("GET", "/api/production/work-orders/performance", "portal_atolye", "/atolye"),
+    ("GET", "/api/production/work-orders/shopfloor-settings", "portal_atolye", "/atolye"),
     # Operatör şifresi. Start/pause/finish bu doğrulama olmadan tabletten çalışmaz.
     ("POST", "/api/production/work-orders/shopfloor-unlock", "portal_atolye", "/atolye"),
     ("PUT", "/api/production/work-orders/{id}/assign", "portal_atolye", "/atolye"),
@@ -336,6 +339,33 @@ def portal_feature_grant(user: Optional[dict], role: Optional[dict], feature_key
 def portal_denial_detail(feature_key: str) -> str:
     label = PORTAL_FEATURE_LABELS.get(feature_key) or feature_key
     return f"Bu özellik için yetkiniz yok ({label})."
+
+
+# İK ekranlarının liste dışı yardımcı okumaları. Yalnız GET/HEAD; yazma yok.
+# Özellik kapalıysa ik hostunda 403. app hostundaki modül davranışı değişmez.
+_IK_HELPER_READS = (
+    ("/api/warehouses", "portal_sayim"),
+    ("/api/personnel/employees", "portal_atolye"),
+)
+
+
+def ik_helper_read_feature(path: str, method: str = "GET") -> Optional[str]:
+    """Yardımcı okuma ise ilgili portal_* anahtarı; değilse None.
+
+    Eşleşme tam yoldur. /api/warehouses/stock-counts saha kuralıdır, depo listesi değil.
+    /api/companies/{id}/work-parks atölye istasyonları içindir.
+    """
+    method_u = str(method or "GET").upper()
+    if method_u not in ("GET", "HEAD"):
+        return None
+    p = _portal_norm_path(path)
+    for exact, feat in _IK_HELPER_READS:
+        if p == exact:
+            return feat
+    parts = p.strip("/").split("/")
+    if len(parts) == 4 and parts[0] == "api" and parts[1] == "companies" and parts[3] == "work-parks" and parts[2]:
+        return "portal_atolye"
+    return None
 
 
 MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "unit_price_incl", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "total_incl", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
@@ -847,10 +877,16 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             pass
         portal_grant = False
         if user and not user.get("is_super_admin") and normalize_role_code(user.get("role")) != "admin":
+            import host_audience as _ha
+            helper_feat = None
+            if _ha.host_kind(request) == _ha.KIND_IK:
+                helper_feat = ik_helper_read_feature(path, request.method)
             rule = portal_area_for_path(path)
             saha_post = request.method == "POST" and path.rstrip("/") == "/api/orders"
-            if rule or (saha_post and normalize_role_code(user.get("role")) == "personel"):
+            if helper_feat or rule or (saha_post and normalize_role_code(user.get("role")) == "personel"):
                 role = await role_for(user, cid)
+                if helper_feat and not role_features(role).get(helper_feat):
+                    return JSONResponse({"detail": portal_denial_detail(helper_feat)}, status_code=403)
                 if rule:
                     _prefix, feat, mod = rule
                     if not portal_field_allowed(user, role, feat, mod, path, request.method):

@@ -177,6 +177,27 @@ def is_employee_user(user: dict) -> bool:
     return bool(eid) and role == "personel"
 
 
+def is_ik_allowed_api_path(path: str, method: str = "GET") -> bool:
+    """İK /api geçidi: self-servis, PORTAL_API_RULES satırı veya yardımcı GET.
+
+    Saha uçlarında yöntem+yol rbac.PORTAL_API_RULES ile birebir eşleşmezse reddedilir;
+    özellik (portal_*) kararı burada verilmez, rbac middleware verir. Böylece ik
+    hostuna kurallarda olmayan yazma (PUT ayar, trash-completed, depo POST) açılmaz.
+    Yardımcı okumalar yalnız GET/HEAD olarak geçer; özellik kapalıysa rbac 403 döner.
+    """
+    if is_ik_self_service_path(path):
+        return True
+    p = (path or "").split("?", 1)[0]
+    if not p.startswith("/api"):
+        return True
+    import rbac
+    if rbac.portal_rule_for_path(p, method):
+        return True
+    if rbac.ik_helper_read_feature(p, method):
+        return True
+    return False
+
+
 def is_ik_self_service_path(path: str) -> bool:
     p = (path or "").split("?", 1)[0]
     for pref in _IK_SELF_SERVICE_PREFIXES:
