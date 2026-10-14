@@ -101,6 +101,7 @@ export default function MyPersonnelPage() {
   const bonuses = data?.bonuses || [];
   const receipts = data?.receipts || [];
   const reimbursements = data?.reimbursements || [];
+  const recurringExpenses = data?.recurring_expenses || [];
   const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
 
   const submitAdvance = async (e) => {
@@ -342,6 +343,25 @@ export default function MyPersonnelPage() {
                     <span>{r.date}</span>
                     <span className="font-semibold">{money(r.total)}</span>
                     <a className="ml-auto text-emerald-700 font-semibold" href={`${API_URL}/personnel/receipts/${r.id}`} target="_blank" rel="noreferrer" data-testid={`my-pers-receipt-${r.id}`}>Makbuz PDF</a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section className="bg-white border border-slate-200 rounded-2xl overflow-hidden" data-testid="my-personnel-recurring">
+            <div className="px-4 py-3 border-b text-xs font-bold text-slate-700">Tekrarlayan masraflar</div>
+            {recurringExpenses.length === 0 ? (
+              <div className="p-4 text-xs text-slate-400">Tekrarlayan masraf yok.</div>
+            ) : (
+              <ul className="divide-y text-xs">
+                {recurringExpenses.map((r) => (
+                  <li key={r.id} className="px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid={`my-pers-recurring-${r.id}`}>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">Tekrarlayan</span>
+                    <span className="font-semibold">{money(r.amount)}</span>
+                    {r.category && <span className="text-slate-500">{r.category}</span>}
+                    {r.recurrence_day && <span className="text-slate-500">her ayın {r.recurrence_day}&apos;i</span>}
+                    {r.next_date && <span className="font-mono text-slate-400">sonraki {r.next_date}</span>}
+                    {r.recurring_end ? <span className="text-slate-400">bitiş {r.recurring_end}</span> : <span className="text-slate-400">süresiz</span>}
                   </li>
                 ))}
               </ul>

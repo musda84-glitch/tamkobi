@@ -321,6 +321,7 @@ export type EmployeeCard = {
   payrolls?: Payroll[];
   bonuses?: EmployeeBonus[];
   movements?: PersonnelMovement[];
+  recurring_expenses?: Record<string, unknown>[];
   balance?: EmployeeBalance;
   overtime?: {
     hours?: number;
@@ -1226,7 +1227,7 @@ export function payMoveDeleteConfirm(row?: { title?: string; kind?: string; payK
   if (row?.payKind === "reimburse" || row?.title === REIMBURSE_LABEL) {
     return {
       title: "Masraf ödemesini sil",
-      message: "Bu masraf ödemesi silinsin mi? Bağlı kasa, banka veya ortak çıkışı da silinir. Masraf kaydının personel borcu yeniden açılır.",
+      message: "Bu masraf ödemesi silinsin mi? Bağlı masraf kaydı, kasa/banka/ortak çıkışı ve personel hesabı etkisi birlikte geri alınır. Tekrarlayan şablon silinmez.",
     };
   }
   const name = String(row?.title || "Kayıt").trim() || "Kayıt";
@@ -2662,6 +2663,35 @@ export function expensePersonnelDebtOpen(exp?: Record<string, unknown> | null): 
   return blob.includes("personel tarafından ödendi");
 }
 
+export const REIMBURSE_DEFAULT_CATEGORY = "Personel Masrafı";
+export const REIMBURSE_EFFECT_DEBT = "debt";
+export const REIMBURSE_EFFECT_ENTITLEMENT = "entitlement";
+export const REIMBURSE_CATEGORIES = [
+  "Kira", "Elektrik / Su / Doğalgaz", "İnternet / Telefon", "Yakıt", "Yemek",
+  "Yol / Ulaşım", "Ofis Malzemesi", "Personel Masrafı", "Vergi / Harç / SGK",
+  "Bakım / Onarım", "Pazarlama / Reklam", "Yazılım / Abonelik", "Kargo / Nakliye",
+  "Muhasebe / Danışmanlık", "Diğer",
+];
+
+export function recurringExpenseRows(card?: { recurring_expenses?: Record<string, unknown>[] } | null) {
+  return (card?.recurring_expenses || []).filter((e) => e && e.is_recurring !== false).map((e) => ({
+    id: String(e.id || e._id || ""),
+    kind: "recurring_expense",
+    title: "Tekrarlayan masraf",
+    subtitle: [e.expense_number, e.category, e.recurrence_day ? `her ayın ${e.recurrence_day}'i` : "her ay", e.recurring_end ? `bitiş ${e.recurring_end}` : "süresiz"].filter(Boolean).join(" · "),
+    amount: Number(e.amount || e.total) || 0,
+    date: String(e.next_date || e.date || ""),
+    is_recurring: true,
+  }));
+}
+
+export function expenseLinkableForReimburse(exp?: Record<string, unknown> | null): boolean {
+  if (!exp) return false;
+  if (String(exp.payment_status || "").trim().toLowerCase() === "template") return false;
+  if (expensePersonnelDebtOpen(exp)) return true;
+  return String(exp.payment_status || "") !== "paid";
+}
+
 export function validateReimburse(amount: string | number, accountId: string): string | null {
   if (!(num(amount) > 0)) return "Masraf ödeme tutarı girin.";
   if (!String(accountId || "").trim()) return "Kasa / banka / ortak seçin.";
@@ -2674,15 +2704,32 @@ export function personnelReimbursePayload(
   note: string,
   expenseId = "",
   date = "",
+  extra: {
+    category?: string;
+    chargeToAccount?: boolean;
+    accountEffect?: string;
+    recurring?: boolean;
+    recurringDay?: string | number;
+    recurringEnd?: string;
+  } = {},
 ) {
   const line: Record<string, unknown> = {
     kind: REIMBURSE_KIND,
     amount: num(amount),
     description: note.trim(),
+    category: extra.category || REIMBURSE_DEFAULT_CATEGORY,
+    charge_to_account: !!extra.chargeToAccount,
     ...splitPaymentTarget(accountId),
   };
+  if (extra.chargeToAccount) line.account_effect = extra.accountEffect || REIMBURSE_EFFECT_DEBT;
   const eid = String(expenseId || "").trim();
   if (eid) line.expense_id = eid;
+  if (extra.recurring) {
+    line.recurring = true;
+    const day = Number(extra.recurringDay);
+    if (day >= 1 && day <= 31) line.recurring_day = day;
+    if (extra.recurringEnd) line.recurring_end = extra.recurringEnd;
+  }
   return {
     date: (date || new Date().toISOString().slice(0, 10)).slice(0, 10),
     lines: [line],

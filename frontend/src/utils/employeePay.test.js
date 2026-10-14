@@ -13,6 +13,7 @@ import {
   PAY_START_MISSING_MSG,
   payDayOf,
   paymentPreview,
+  expenseLinkableForReimburse,
   sgkCashBlocked,
 } from "./employeePay";
 
@@ -87,7 +88,16 @@ describe("employeePay", () => {
       paying: 0, remainingAfter: 5000, overpaid: false,
     });
     expect(paymentPreview(5000, [{ amount: 1000 }, { kind: "reimburse", amount: 7000 }]).remainingAfter).toBe(4000);
+    expect(paymentPreview(-800, [{ kind: "reimburse", amount: "" }])).toMatchObject({
+      paying: 0, overpaid: false, message: "",
+    });
+    expect(paymentPreview(5000, [{ kind: "reimburse", amount: 7000, charge_to_account: true }])).toMatchObject({
+      paying: 7000, remainingAfter: -2000, overpaid: true,
+    });
     expect(istanbulPeriod(new Date("2026-09-30T21:30:00Z"))).toBe("2026-10");
+    expect(expenseLinkableForReimburse({ payment_status: "unpaid" })).toBe(true);
+    expect(expenseLinkableForReimburse({ payment_status: "paid" })).toBe(false);
+    expect(expenseLinkableForReimburse({ paid_by_personnel: true, personnel_debt_status: "open" })).toBe(true);
   });
 
   it("formats yemek/yol hak ediş save toast like partner salary", () => {

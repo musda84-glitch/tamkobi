@@ -116,6 +116,25 @@ def level_allows(have: Optional[str], need: str) -> bool:
     return LEVEL_RANK.get(have or "none", 0) >= LEVEL_RANK.get(need, 0)
 
 
+PERSONNEL_EXPENSE_PERM_MSG = "Masraf oluşturma ve personel ödeme yetkisi birlikte gerekli."
+_ADMIN_ROLE_CODES = {"admin", "owner"}
+
+
+def personnel_expense_forbidden(user: Optional[dict], perms: Optional[dict] = None) -> Optional[str]:
+    """Masraf ödemesi: /expenses edit + /personnel edit. Sistem/yönetici serbest."""
+    if user is None:
+        return None
+    if user.get("is_super_admin"):
+        return None
+    role = normalize_role_code(user.get("role"))
+    if role in _ADMIN_ROLE_CODES:
+        return None
+    have = perms if perms is not None else (user.get("permissions") or {})
+    if not level_allows(have.get("/personnel"), "edit") or not level_allows(have.get("/expenses"), "edit"):
+        return PERSONNEL_EXPENSE_PERM_MSG
+    return None
+
+
 FEATURES = [
     ("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
     ("header_barcode", "Üst bar: Hızlı barkod tarama", "Web üst çubuğundaki Barkod Oku kısayolu. Kapalıysa buton gizlenir."),

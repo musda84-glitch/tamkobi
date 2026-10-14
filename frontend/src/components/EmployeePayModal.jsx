@@ -18,11 +18,15 @@ import {
   defaultPayAccount,
   employeePayModalTitle,
   hasPayStartDate,
-  expensePersonnelDebtOpen,
+  expenseLinkableForReimburse,
   initialPaymentKind,
   istanbulPeriod,
   PAY_START_MISSING_MSG,
   paymentPreview,
+  REIMBURSE_CATEGORIES,
+  REIMBURSE_DEFAULT_CATEGORY,
+  REIMBURSE_EFFECT_DEBT,
+  REIMBURSE_EFFECT_ENTITLEMENT,
   REIMBURSE_KIND,
   posSalaryWarning,
   sgkCashBlocked,
@@ -39,7 +43,20 @@ function newIdemKey() {
 }
 
 function emptyLine(kind, accountId) {
-  return { key: newIdemKey(), kind: kind || "salary", amount: "", accountId: accountId || "", description: "", expenseId: "" };
+  return {
+    key: newIdemKey(),
+    kind: kind || "salary",
+    amount: "",
+    accountId: accountId || "",
+    description: "",
+    expenseId: "",
+    category: REIMBURSE_DEFAULT_CATEGORY,
+    chargeToAccount: false,
+    accountEffect: REIMBURSE_EFFECT_DEBT,
+    recurring: false,
+    recurringDay: "",
+    recurringEnd: "",
+  };
 }
 
 function expenseOptionLabel(exp) {
@@ -58,6 +75,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
   const [rows, setRows] = useState(() => [emptyLine(initialPaymentKind(initialKind), "")]);
   const [busy, setBusy] = useState(false);
   const [openDebts, setOpenDebts] = useState([]);
+  const [categories, setCategories] = useState(REIMBURSE_CATEGORIES);
   const [idemKey] = useState(newIdemKey);
 
   const preferred = useMemo(() => defaultPayAccount(accounts), [accounts]);
@@ -83,9 +101,16 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
     axios.get(`${API_URL}/expenses`, { params: { company_id: companyId, employee_id: empId } })
       .then((r) => {
         const rows = Array.isArray(r.data) ? r.data : (r.data?.expenses || []);
-        if (!cancel) setOpenDebts(rows.filter(expensePersonnelDebtOpen));
+        if (!cancel) setOpenDebts(rows.filter(expenseLinkableForReimburse));
       })
       .catch(() => { if (!cancel) setOpenDebts([]); });
+    axios.get(`${API_URL}/expenses/categories`, { params: { company_id: companyId } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : [];
+        const names = rows.map((c) => c.name || c).filter(Boolean);
+        if (!cancel && names.length) setCategories([...new Set([...REIMBURSE_CATEGORIES, ...names])]);
+      })
+      .catch(() => {});
     return () => { cancel = true; };
   }, [empId, companyId]);
 
@@ -133,7 +158,17 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
           kind: r.kind,
           amount: Number(r.amount),
           description: r.description,
-          ...(r.kind === REIMBURSE_KIND && r.expenseId ? { expense_id: r.expenseId } : {}),
+          ...(r.kind === REIMBURSE_KIND ? {
+            category: r.category || REIMBURSE_DEFAULT_CATEGORY,
+            charge_to_account: !!r.chargeToAccount,
+            ...(r.chargeToAccount ? { account_effect: r.accountEffect || REIMBURSE_EFFECT_DEBT } : {}),
+            ...(r.expenseId ? { expense_id: r.expenseId } : {}),
+            ...(r.recurring ? {
+              recurring: true,
+              recurring_day: Number(r.recurringDay) || undefined,
+              recurring_end: r.recurringEnd || undefined,
+            } : {}),
+          } : {}),
           ...splitPaymentTarget(r.accountId),
         })),
       };
@@ -194,15 +229,46 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
               {row.kind === REIMBURSE_KIND ? (
                 <>
                   <div className="text-[11px] text-slate-500" data-testid={`emp-pay-line-reimburse-hint-${i}`}>
-                    Maaş, avans ve hak ediş bakiyesinden düşmez. Gider olarak yeniden yazılmaz.
+                    Şirketin personel için yaptığı masraf (kira, telefon, yol, yemek). Masraflar modülünde MSR kaydı oluşur; kaynak hesap Çıkış (−) yazar.
                   </div>
+                  <select value={row.category || REIMBURSE_DEFAULT_CATEGORY} onChange={(ev) => patch(row.key, "category", ev.target.value)} className={inputCls} data-testid={`emp-pay-line-category-${i}`}>
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
                   <select value={row.expenseId || ""} onChange={(ev) => patch(row.key, "expenseId", ev.target.value)} className={inputCls} data-testid={`emp-pay-line-expense-${i}`}>
-                    <option value="">Masraf kaydı (isteğe bağlı)</option>
+                    <option value="">Yeni masraf kaydı aç</option>
                     {openDebts.map((exp) => {
                       const id = exp.id || exp._id;
                       return <option key={id} value={id}>{expenseOptionLabel(exp)}</option>;
                     })}
                   </select>
+                  <label className="flex items-center gap-2 text-slate-700" data-testid={`emp-pay-line-charge-${i}`}>
+                    <input type="checkbox" checked={!!row.chargeToAccount} onChange={(ev) => patch(row.key, "chargeToAccount", ev.target.checked)} data-testid={`emp-pay-line-charge-box-${i}`} />
+                    Personel hesabına yaz
+                  </label>
+                  {row.chargeToAccount ? (
+                    <div className="grid grid-cols-1 gap-1" data-testid={`emp-pay-line-effect-${i}`}>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name={`effect-${row.key}`} checked={(row.accountEffect || REIMBURSE_EFFECT_DEBT) === REIMBURSE_EFFECT_DEBT} onChange={() => patch(row.key, "accountEffect", REIMBURSE_EFFECT_DEBT)} data-testid={`emp-pay-line-effect-debt-${i}`} />
+                        Maaştan düşülecek (personel borcu)
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name={`effect-${row.key}`} checked={row.accountEffect === REIMBURSE_EFFECT_ENTITLEMENT} onChange={() => patch(row.key, "accountEffect", REIMBURSE_EFFECT_ENTITLEMENT)} data-testid={`emp-pay-line-effect-entitlement-${i}`} />
+                        Personele ek ödeme / hak ediş
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-400">Kapalıysa yalnızca şirket gideri olur; maaş, avans ve hak ediş etkilenmez.</div>
+                  )}
+                  <label className="flex items-center gap-2 text-slate-700" data-testid={`emp-pay-line-recurring-${i}`}>
+                    <input type="checkbox" checked={!!row.recurring} onChange={(ev) => patch(row.key, "recurring", ev.target.checked)} data-testid={`emp-pay-line-recurring-box-${i}`} />
+                    Her ay tekrarla
+                  </label>
+                  {row.recurring ? (
+                    <div className="grid grid-cols-2 gap-2" data-testid={`emp-pay-line-recurring-fields-${i}`}>
+                      <input type="number" min="1" max="31" value={row.recurringDay} onChange={(ev) => patch(row.key, "recurringDay", ev.target.value)} className={inputCls} placeholder="Gün (1–31)" data-testid={`emp-pay-line-recurring-day-${i}`} />
+                      <input type="date" value={row.recurringEnd || ""} onChange={(ev) => patch(row.key, "recurringEnd", ev.target.value)} className={inputCls} title="Bitiş (boş = süresiz)" data-testid={`emp-pay-line-recurring-end-${i}`} />
+                    </div>
+                  ) : null}
                 </>
               ) : null}
               {rows.length > 1 ? (

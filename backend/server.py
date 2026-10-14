@@ -19649,6 +19649,7 @@ async def employee_card(emp_id: str, month: Optional[str] = None, user: dict = D
     invite_payload = clean_doc(invite) if invite else None
     if invite_payload:
         invite_payload["role_name"] = role_names.get(invite_payload.get("role"), invite_payload.get("role"))
+    import personnel_payments
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
             "movements": movements,
             "leave_balance": leave_bal,
@@ -19662,7 +19663,10 @@ async def employee_card(emp_id: str, month: Optional[str] = None, user: dict = D
             "user": user_payload,
             "pending_invite": invite_payload,
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
-            "balance": await _employee_receivable({**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]}, payrolls, bonuses, month)}
+            "balance": await _employee_receivable({**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]}, payrolls, bonuses, month),
+            "recurring_expenses": personnel_payments.recurring_expense_rows(
+                clean_docs(await db.expenses.find({**pay_q, "is_recurring": True}).to_list(100))
+            )}
 
 
 @api_router.post("/personnel/employees/{emp_id}/settle")
@@ -19693,8 +19697,13 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
         body = dict(payload)
         if not body.get("idempotency_key") and request is not None:
             body["idempotency_key"] = idempotency.header_key(request)
+        if any(str((ln or {}).get("kind") or "").strip().lower() == "reimburse" for ln in (body.get("lines") or [])):
+            role = await rbac.role_for(user, emp.get("company_id"))
+            err = rbac.personnel_expense_forbidden(user, (role or {}).get("permissions"))
+            if err:
+                raise HTTPException(status_code=403, detail=err)
         return await personnel_payments.apply_payment_lines(
-            db, emp, company, body, balance=balance, pay_date=pay_date, period=month, request=request,
+            db, emp, company, body, balance=balance, pay_date=pay_date, period=month, request=request, actor=user,
         )
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
     ot = await attendance.overtime_pay_for_period(company, emp, month)
@@ -19997,6 +20006,9 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "payrolls": payroll_public,
         "bonuses": bonus_public,
         "reimbursements": personnel_payments.reimbursement_rows(reimburse_rows),
+        "recurring_expenses": personnel_payments.recurring_expense_rows(
+            clean_docs(await db.expenses.find({**pay_q, "is_recurring": True}).to_list(100))
+        ),
         "balance": await _employee_receivable(emp, payrolls, bonuses, month),
         "receipts": await _employee_receipts(emp_id),
         "tasks": tasks,

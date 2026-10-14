@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, Request
@@ -14,6 +14,7 @@ import idempotency
 import linked_moves
 import partner_pay
 import pay_claim
+import rbac
 import tenant_access
 
 KIND_LABELS = {
@@ -28,6 +29,9 @@ KIND_LABELS = {
 }
 
 SOURCE = "personnel_payment"
+REIMBURSE_TEMPLATE_SOURCE = employee_pay.REIMBURSE_TEMPLATE_SOURCE
+DEBT_LABEL = "Maaştan düşülecek (personel borcu)"
+ENTITLEMENT_LABEL = "Personele ek ödeme / hak ediş"
 
 
 def _now() -> str:
@@ -40,6 +44,36 @@ def _amt(v: Any) -> float:
 
 def _cid(emp: dict) -> str:
     return str(emp.get("company_id") or "")
+
+
+def _truthy(v: Any) -> bool:
+    return employee_pay._truthy_flag(v)
+
+
+def _fill_reimburse_line(item: dict, row: dict) -> None:
+    expense_id = str(row.get("expense_id") or "").strip()
+    expense_number = str(row.get("expense_number") or "").strip()[:40]
+    if expense_id:
+        item["expense_id"] = expense_id
+    if expense_number:
+        item["expense_number"] = expense_number
+    cat = str(row.get("category") or employee_pay.REIMBURSE_DEFAULT_CATEGORY).strip()[:80]
+    item["category"] = cat or employee_pay.REIMBURSE_DEFAULT_CATEGORY
+    item["charge_to_account"] = _truthy(row.get("charge_to_account") or row.get("chargeToAccount"))
+    if item["charge_to_account"]:
+        item["account_effect"] = employee_pay.reimburse_account_effect(row)
+    item["recurring"] = _truthy(row.get("recurring") or row.get("is_recurring"))
+    if item["recurring"]:
+        try:
+            day = int(row.get("recurring_day") or row.get("recurrence_day") or 0)
+        except (TypeError, ValueError):
+            day = 0
+        item["recurring_day"] = min(31, max(1, day)) if day else None
+        end = str(row.get("recurring_end") or row.get("recurrence_end") or "").strip()[:10]
+        item["recurring_end"] = end or None
+    parent = str(row.get("recurring_parent_id") or "").strip()
+    if parent:
+        item["recurring_parent_id"] = parent
 
 
 def _link(movement_id: str) -> Dict[str, Any]:
@@ -78,12 +112,7 @@ def normalize_lines(raw: Any) -> List[dict]:
             "description": str(row.get("description") or row.get("note") or "").strip()[:300],
         }
         if kind == "reimburse":
-            expense_id = str(row.get("expense_id") or "").strip()
-            expense_number = str(row.get("expense_number") or "").strip()[:40]
-            if expense_id:
-                item["expense_id"] = expense_id
-            if expense_number:
-                item["expense_number"] = expense_number
+            _fill_reimburse_line(item, row)
         out.append(item)
     if not out:
         raise HTTPException(status_code=400, detail="Ödenecek tutar girin.")
@@ -609,15 +638,48 @@ async def _load_reimburse_expense(db, emp: dict, ln: dict) -> Optional[dict]:
     return exp
 
 
+async def _next_msr(db, company_id: str) -> str:
+    year = datetime.now(timezone.utc).strftime("%Y")
+    prefix = f"MSR-{year}-"
+    rows = await _rows(db, "expenses", {"company_id": company_id}, limit=8000)
+    n = 1 + sum(1 for r in rows if str(r.get("expense_number") or "").startswith(prefix))
+    return f"{prefix}{n:04d}"
+
+
+def _month_day(pay_date: str, day: Optional[int]) -> str:
+    import calendar
+    raw = (pay_date or "")[:10]
+    try:
+        y, m, d = [int(x) for x in raw.split("-")]
+        base = date(y, m, d)
+    except (TypeError, ValueError):
+        base = employee_pay.istanbul_today()
+    use = int(day) if day else base.day
+    last = calendar.monthrange(base.year, base.month)[1]
+    return date(base.year, base.month, min(max(1, use), last)).isoformat()
+
+
+def next_monthly_date(pay_date: str, day: Optional[int] = None) -> str:
+    import calendar
+    raw = (pay_date or "")[:10]
+    try:
+        y, m, d0 = [int(x) for x in raw.split("-")]
+        cur = date(y, m, d0)
+    except (TypeError, ValueError):
+        cur = employee_pay.istanbul_today()
+    use = int(day) if day else cur.day
+    if cur.month == 12:
+        nxt = date(cur.year + 1, 1, 1)
+    else:
+        nxt = date(cur.year, cur.month + 1, 1)
+    last = calendar.monthrange(nxt.year, nxt.month)[1]
+    return date(nxt.year, nxt.month, min(max(1, use), last)).isoformat()
+
+
 async def _close_personnel_debt(
-    db, emp: dict, ln: dict, movement_id: str, pay_date: str, *, cx: finance_txn.CompensatingTxn,
+    db, emp: dict, exp: dict, ln: dict, movement_id: str, pay_date: str, *, cx: finance_txn.CompensatingTxn,
 ) -> List[dict]:
     """MSR kaydındaki personel borcunu kapatır. Masrafın kendisi silinmez, gider yeniden yazılmaz."""
-    exp = await _load_reimburse_expense(db, emp, ln)
-    if not exp:
-        return []
-    if str(exp.get("employee_id") or "") != str(emp.get("_id") or ""):
-        raise HTTPException(status_code=400, detail="Masraf bu personele ait değil.")
     if employee_pay.personnel_debt_closed(exp):
         raise HTTPException(status_code=400, detail="Personel masraf borcu zaten kapanmış.")
     if not employee_pay.personnel_debt_open(exp):
@@ -654,6 +716,230 @@ async def _close_personnel_debt(
     }]
 
 
+async def _mark_linked_expense_paid(
+    db, emp: dict, exp: dict, ln: dict, movement_id: str, pay_date: str, account_name: Optional[str],
+    *, cx: finance_txn.CompensatingTxn,
+) -> List[dict]:
+    """Mevcut ödenmemiş masrafı bu ödeme ile kapatır; yeni MSR açılmaz."""
+    if str(exp.get("payment_status") or "") == "paid":
+        raise HTTPException(status_code=400, detail="Bu masraf zaten ödenmiş.")
+    eid = exp["_id"]
+    cid = _cid(emp)
+    prev = {
+        "payment_status": exp.get("payment_status"),
+        "account_id": exp.get("account_id"),
+        "partner_id": exp.get("partner_id"),
+        "account_name": exp.get("account_name"),
+        "paid_date": exp.get("paid_date"),
+        "reimburse_movement_id": exp.get("reimburse_movement_id"),
+    }
+    patch = {
+        "payment_status": "paid",
+        "account_id": None if ln.get("partner_id") else ln.get("account_id"),
+        "partner_id": ln.get("partner_id"),
+        "account_name": account_name,
+        "paid_date": pay_date,
+        "reimburse_movement_id": movement_id,
+    }
+    await db.expenses.update_one({"_id": eid, "company_id": cid}, {"$set": patch})
+    ln["expense_id"] = eid
+    number = str(exp.get("expense_number") or "")
+    if number:
+        ln["expense_number"] = number
+
+    async def _undo(eid=eid, prev=prev):
+        await db.expenses.update_one({"_id": eid}, {"$set": prev})
+
+    cx.push("exp_pay", _undo)
+    return [{"collection": "expenses", "id": eid, "action": "unpay", "prev": prev}]
+
+
+async def _insert_reimburse_expense(
+    db, emp: dict, ln: dict, movement_id: str, pay_date: str, account_name: Optional[str],
+    *, cx: finance_txn.CompensatingTxn, template: bool = False,
+) -> dict:
+    cid = _cid(emp)
+    amount = round(ln["amount"], 2)
+    number = await _next_msr(db, cid)
+    desc = ln.get("description") or f"{emp.get('full_name')} · {ln.get('category') or employee_pay.REIMBURSE_DEFAULT_CATEGORY}"
+    link = _link(movement_id) if not template else {}
+    eid = f"{'rexp' if template else 'pexp'}_{uuid.uuid4().hex[:10]}"
+    doc = {
+        "_id": eid,
+        "company_id": cid,
+        "expense_number": number,
+        "date": pay_date,
+        "category": ln.get("category") or employee_pay.REIMBURSE_DEFAULT_CATEGORY,
+        "description": desc[:200],
+        "amount": amount,
+        "vat_rate": 0,
+        "vat_amount": 0,
+        "total": amount,
+        "currency": "TRY",
+        "fx_rate": 1,
+        "local_total": amount,
+        "payment_status": "template" if template else "paid",
+        "account_id": None if ln.get("partner_id") else ln.get("account_id"),
+        "partner_id": ln.get("partner_id"),
+        "account_name": None if template else account_name,
+        "paid_date": None if template else pay_date,
+        "employee_id": emp.get("_id"),
+        "employee_name": emp.get("full_name"),
+        "notes": "Tekrarlayan personel masraf şablonu" if template else (ln.get("description") or "Personel masraf ödemesi"),
+        "is_recurring": bool(template),
+        "recurrence": "monthly",
+        "source": REIMBURSE_TEMPLATE_SOURCE if template else SOURCE,
+        "charge_to_account": bool(ln.get("charge_to_account")),
+        "account_effect": ln.get("account_effect") if ln.get("charge_to_account") else None,
+        "created_at": _now(),
+    }
+    if template:
+        day = ln.get("recurring_day")
+        doc["recurrence_day"] = day
+        doc["recurring_end"] = ln.get("recurring_end")
+        doc["next_date"] = next_monthly_date(pay_date, day)
+        doc["date"] = _month_day(pay_date, day)
+    else:
+        doc.update(link)
+        doc["personnel_movement_id"] = movement_id
+        if ln.get("recurring_parent_id"):
+            doc["recurring_parent_id"] = ln["recurring_parent_id"]
+    await db.expenses.insert_one(doc)
+    cx.push("exp_ins", lambda eid=eid: db.expenses.delete_one({"_id": eid}))
+    if not template:
+        ln["expense_id"] = eid
+        ln["expense_number"] = number
+    return doc
+
+
+async def _charge_personnel_account(
+    db, emp: dict, ln: dict, period: str, pay_date: str, movement_id: str, cx: finance_txn.CompensatingTxn,
+) -> List[dict]:
+    """Hesaba yaz: borç = maaştan düşülecek; hak ediş = ek ödeme (kalan borç güncellenir)."""
+    amount = round(ln["amount"], 2)
+    if amount <= 0.004 or not ln.get("charge_to_account"):
+        return []
+    effect = employee_pay.reimburse_account_effect(ln)
+    if effect == employee_pay.REIMBURSE_EFFECT_ENTITLEMENT:
+        btype, label = "bakiye", ENTITLEMENT_LABEL
+    else:
+        btype, label = "borc", DEBT_LABEL
+    bid = str(uuid.uuid4())
+    doc = {
+        "_id": bid,
+        "company_id": emp.get("company_id"),
+        "employee_id": emp.get("_id"),
+        "employee_name": emp.get("full_name"),
+        "type": btype,
+        "type_label": label,
+        "period": period,
+        "amount": amount,
+        "status": "paid",
+        "note": ln.get("description") or label,
+        "date": pay_date,
+        "paid_at": pay_date,
+        "account_id": ln.get("account_id"),
+        "source": SOURCE,
+        "movement_id": movement_id,
+        "created_at": _now(),
+    }
+    doc.update(_link(movement_id))
+    await db.bonus_payments.insert_one(doc)
+    cx.push("bonus_ins", lambda bid=bid: db.bonus_payments.delete_one({"_id": bid}))
+    return [{"collection": "bonus_payments", "id": bid, "action": "insert", "paid_delta": amount}]
+
+
+async def _ensure_reimburse_template(
+    db, emp: dict, ln: dict, pay_date: str, *, cx: finance_txn.CompensatingTxn,
+) -> Optional[str]:
+    if not ln.get("recurring"):
+        return ln.get("recurring_parent_id")
+    day = ln.get("recurring_day")
+    period = (pay_date or "")[:7]
+    existing = await db.expenses.find_one({
+        "company_id": _cid(emp),
+        "employee_id": emp.get("_id"),
+        "source": REIMBURSE_TEMPLATE_SOURCE,
+        "is_recurring": True,
+        "account_id": ln.get("account_id"),
+        "partner_id": ln.get("partner_id"),
+        "category": ln.get("category"),
+        "charge_to_account": bool(ln.get("charge_to_account")),
+        "account_effect": ln.get("account_effect") if ln.get("charge_to_account") else None,
+        "date": {"$regex": f"^{period}"},
+    })
+    if existing:
+        ln["recurring_parent_id"] = existing["_id"]
+        return existing["_id"]
+    tpl = await _insert_reimburse_expense(db, emp, ln, "", pay_date, None, cx=cx, template=True)
+    if day and not tpl.get("recurrence_day"):
+        await db.expenses.update_one({"_id": tpl["_id"]}, {"$set": {"recurrence_day": day}})
+    ln["recurring_parent_id"] = tpl["_id"]
+    return tpl["_id"]
+
+
+async def _apply_reimburse(
+    db, emp: dict, ln: dict, movement_id: str, pay_date: str, period: str, account_name: Optional[str],
+    *, cx: finance_txn.CompensatingTxn,
+) -> List[dict]:
+    """Yeni MSR aç veya mevcut kayda bağla; isteğe bağlı personel hesabı + tekrar."""
+    effects: List[dict] = []
+    existing = await _load_reimburse_expense(db, emp, ln)
+    if existing:
+        if str(existing.get("employee_id") or "") != str(emp.get("_id") or ""):
+            raise HTTPException(status_code=400, detail="Masraf bu personele ait değil.")
+        if employee_pay.expense_is_recurring_template(existing):
+            raise HTTPException(status_code=400, detail="Tekrarlayan şablona bağlanamaz.")
+        if employee_pay.personnel_debt_open(existing):
+            effects.extend(await _close_personnel_debt(db, emp, existing, ln, movement_id, pay_date, cx=cx))
+        elif employee_pay.personnel_debt_closed(existing):
+            raise HTTPException(status_code=400, detail="Personel masraf borcu zaten kapanmış.")
+        else:
+            effects.extend(await _mark_linked_expense_paid(
+                db, emp, existing, ln, movement_id, pay_date, account_name, cx=cx,
+            ))
+    else:
+        created = await _insert_reimburse_expense(
+            db, emp, ln, movement_id, pay_date, account_name, cx=cx, template=False,
+        )
+        effects.append({"collection": "expenses", "id": created["_id"], "action": "insert"})
+    if ln.get("charge_to_account"):
+        effects.extend(await _charge_personnel_account(db, emp, ln, period, pay_date, movement_id, cx))
+    if ln.get("recurring"):
+        await _ensure_reimburse_template(db, emp, ln, pay_date, cx=cx)
+        if ln.get("recurring_parent_id") and ln.get("expense_id"):
+            await db.expenses.update_one(
+                {"_id": ln["expense_id"]},
+                {"$set": {"recurring_parent_id": ln["recurring_parent_id"]}},
+            )
+    return effects
+
+
+def recurring_expense_rows(expenses: Optional[List[dict]]) -> List[dict]:
+    """Personel kartı / İK: durdurulabilir tekrarlayan masraf şablonları."""
+    out: List[dict] = []
+    for e in expenses or []:
+        if not e.get("is_recurring"):
+            continue
+        out.append({
+            "id": e.get("id") or e.get("_id"),
+            "expense_number": e.get("expense_number"),
+            "category": e.get("category"),
+            "description": e.get("description") or "",
+            "amount": e.get("total") if e.get("total") not in (None, "") else e.get("amount"),
+            "recurrence_day": e.get("recurrence_day"),
+            "recurring_end": e.get("recurring_end"),
+            "next_date": e.get("next_date"),
+            "charge_to_account": bool(e.get("charge_to_account")),
+            "account_effect": e.get("account_effect"),
+            "account_name": e.get("account_name"),
+            "is_recurring": True,
+            "employee_id": e.get("employee_id"),
+            "source": e.get("source"),
+        })
+    return out
+
+
 def reimbursement_rows(movements: Optional[List[dict]]) -> List[dict]:
     """İK portalı: masraf ödemesi tek satır, rozet metni sabit."""
     out: List[dict] = []
@@ -671,6 +957,9 @@ def reimbursement_rows(movements: Optional[List[dict]]) -> List[dict]:
             "account_name": m.get("account_name"),
             "description": m.get("description") or "",
             "expense_number": m.get("expense_number"),
+            "category": m.get("category"),
+            "charge_to_account": bool(m.get("charge_to_account")),
+            "account_effect": m.get("account_effect"),
             "status": m.get("status") or "posted",
         })
     return out
@@ -689,6 +978,11 @@ async def _apply_payment_lines_body(
     payload = payload or {}
     balance = balance or {}
     lines = normalize_lines(payload.get("lines"))
+    actor = payload.get("_actor")
+    if any(ln["kind"] == "reimburse" for ln in lines):
+        err = rbac.personnel_expense_forbidden(actor, (actor or {}).get("permissions"))
+        if err:
+            raise HTTPException(status_code=403, detail=err)
     accounts = await _load_accounts(db, lines, emp)
     sgk_err = employee_pay.validate_sgk_lines(emp, company, lines, accounts)
     if sgk_err:
@@ -738,10 +1032,9 @@ async def _apply_payment_lines_body(
                 )
                 effects.extend(cov)
             elif ln["kind"] == "reimburse":
-                if ln.get("expense_id") or ln.get("expense_number"):
-                    effects.extend(await _close_personnel_debt(
-                        db, emp, ln, movement_id, pay_date, cx=cx,
-                    ))
+                effects.extend(await _apply_reimburse(
+                    db, emp, ln, movement_id, pay_date, period, account_name, cx=cx,
+                ))
                 excess = 0.0
             if excess > 0.004 and ln["kind"] != "advance":
                 effects.extend(await _insert_advance(
@@ -767,6 +1060,10 @@ async def _apply_payment_lines_body(
                 "description": ln.get("description") or "",
                 "expense_id": ln.get("expense_id"),
                 "expense_number": ln.get("expense_number"),
+                "category": ln.get("category"),
+                "charge_to_account": bool(ln.get("charge_to_account")),
+                "account_effect": ln.get("account_effect"),
+                "recurring_parent_id": ln.get("recurring_parent_id"),
                 "date": pay_date,
                 "idempotency_key": key or None,
                 "receipt_id": receipt_id,
@@ -839,12 +1136,15 @@ async def apply_payment_lines(
     pay_date: str,
     period: str,
     request: Optional[Request] = None,
+    actor: Optional[dict] = None,
 ) -> dict:
     payload = payload or {}
     header = idempotency.header_key(request) if request is not None else ""
     key = header or str(payload.get("idempotency_key") or "").strip()[:200]
     if key and not payload.get("idempotency_key"):
         payload = {**payload, "idempotency_key": key}
+    if actor is not None and not payload.get("_actor"):
+        payload = {**payload, "_actor": actor}
     req = request if request is not None else (_Hdr(key) if key else None)
 
     async def _go():
@@ -880,6 +1180,10 @@ async def _undo_effect(db, eff: dict) -> None:
                 "reimbursed_amount": prev.get("reimbursed_amount"),
             }},
         )
+        return
+    if action == "unpay":
+        prev = eff.get("prev") if isinstance(eff.get("prev"), dict) else {}
+        await store.update_one({"_id": did}, {"$set": prev})
         return
     doc = await store.find_one({"_id": did})
     if not doc:
@@ -1015,6 +1319,72 @@ async def movements_linked_to(db, doc: dict, collection: str) -> List[dict]:
         for mov in await _rows(db, "personnel_movements", q, limit=500):
             _keep(mov)
     return out
+
+
+async def month_occurrence_exists(db, parent_id: str, period: str, cid: str) -> bool:
+    if not parent_id or not period:
+        return False
+    q_exp: Dict[str, Any] = {
+        "recurring_parent_id": parent_id,
+        "date": {"$regex": f"^{period}"},
+    }
+    if cid:
+        q_exp["company_id"] = cid
+    if await db.expenses.find_one(q_exp):
+        return True
+    q_mov: Dict[str, Any] = {
+        "recurring_parent_id": parent_id,
+        "period": period,
+        "kind": "reimburse",
+        "status": {"$nin": list(_CLOSED_MOVE)},
+    }
+    if cid:
+        q_mov["company_id"] = cid
+    return bool(await db.personnel_movements.find_one(q_mov))
+
+
+async def spawn_recurring_reimburse(db, template: dict, pay_date: str) -> Optional[dict]:
+    """Tekrarlayan şablondan bir ay oluşur; aynı ay ikinci kez yazılmaz."""
+    if not template or not template.get("is_recurring"):
+        return None
+    end = str(template.get("recurring_end") or "").strip()[:10]
+    if end and pay_date > end:
+        return None
+    cid = str(template.get("company_id") or "")
+    period = (pay_date or "")[:7]
+    parent_id = str(template.get("_id") or template.get("id") or "")
+    if await month_occurrence_exists(db, parent_id, period, cid):
+        return {"status": "skipped", "reason": "already", "period": period}
+    emp = await db.employees.find_one({"_id": template.get("employee_id"), "company_id": cid})
+    if not emp:
+        if not template.get("employee_id"):
+            return None
+        emp = {
+            "_id": template.get("employee_id"),
+            "company_id": cid,
+            "full_name": template.get("employee_name") or "",
+        }
+    amount = round(_amt(template.get("total") if template.get("total") not in (None, "") else template.get("amount")), 2)
+    if amount <= 0.004:
+        return None
+    line = {
+        "kind": "reimburse",
+        "amount": amount,
+        "account_id": template.get("account_id"),
+        "partner_id": template.get("partner_id"),
+        "category": template.get("category") or employee_pay.REIMBURSE_DEFAULT_CATEGORY,
+        "description": template.get("description") or "",
+        "charge_to_account": bool(template.get("charge_to_account")),
+        "recurring_parent_id": parent_id,
+    }
+    if line["charge_to_account"]:
+        line["account_effect"] = employee_pay.reimburse_account_effect(template)
+    if not line.get("account_id") and not line.get("partner_id"):
+        return None
+    balance = {"remaining": 0.0, "unpaid_payroll": 0.0, "meal_due": 0.0, "transport_due": 0.0}
+    return await apply_payment_lines(
+        db, emp, {}, {"lines": [line]}, balance=balance, pay_date=pay_date, period=period,
+    )
 
 
 async def reverse_linked_personnel_payments(

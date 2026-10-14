@@ -102,9 +102,14 @@ import {
   validateOvertimeEdit,
   personnelExpensePayload,
   personnelReimbursePayload,
-  expensePersonnelDebtOpen,
+  expenseLinkableForReimburse,
   validateReimburse,
+  REIMBURSE_CATEGORIES,
+  REIMBURSE_DEFAULT_CATEGORY,
+  REIMBURSE_EFFECT_DEBT,
+  REIMBURSE_EFFECT_ENTITLEMENT,
   REIMBURSE_LABEL,
+  recurringExpenseRows,
   assignEmployeeToTasks,
   assignedTaskAfterAssign,
   employeeDutyBoard,
@@ -349,6 +354,7 @@ export function PersonnelScreen() {
   const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [movesEmp, setMovesEmp] = useState<Employee | null>(null);
   const [moves, setMoves] = useState<EmployeePayMove[]>([]);
+  const [movesRecurring, setMovesRecurring] = useState<{ id: string; title: string; subtitle: string; amount: number }[]>([]);
   const [movesCard, setMovesCard] = useState<EmployeeCard | null>(null);
   const [otEditOpen, setOtEditOpen] = useState(false);
   const [otEditHours, setOtEditHours] = useState("");
@@ -397,7 +403,14 @@ export function PersonnelScreen() {
   const [reimburseAmount, setReimburseAmount] = useState<string | number>("");
   const [reimburseNote, setReimburseNote] = useState("");
   const [reimburseExpenseId, setReimburseExpenseId] = useState("");
+  const [reimburseCategory, setReimburseCategory] = useState(REIMBURSE_DEFAULT_CATEGORY);
+  const [reimburseCharge, setReimburseCharge] = useState(false);
+  const [reimburseEffect, setReimburseEffect] = useState(REIMBURSE_EFFECT_DEBT);
+  const [reimburseRecurring, setReimburseRecurring] = useState(false);
+  const [reimburseRecurringDay, setReimburseRecurringDay] = useState("");
+  const [reimburseRecurringEnd, setReimburseRecurringEnd] = useState("");
   const [reimburseDebts, setReimburseDebts] = useState<{ value: string; label: string }[]>([]);
+  const [reimburseRecurringRows, setReimburseRecurringRows] = useState<{ id: string; title: string; subtitle: string; amount: number }[]>([]);
   const [expenseAmount, setExpenseAmount] = useState<string | number>("");
   const [expenseNote, setExpenseNote] = useState("");
   const [msgEmp, setMsgEmp] = useState<Employee | null>(null);
@@ -741,7 +754,7 @@ export function PersonnelScreen() {
       setMessage(row.payKind === "reimburse" ? "Masraf ödemesi silindi." : "Yevmiye / ödeme kaydı silindi.");
       if (movesEmp) {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(movesEmp)}/card`);
-        setMoves(employeePayMoves(card));
+        applyMovesCard(card);
       }
       await load();
     } catch (err) {
@@ -859,6 +872,12 @@ export function PersonnelScreen() {
     setReimburseAmount("");
     setReimburseNote("");
     setReimburseExpenseId("");
+    setReimburseCategory(REIMBURSE_DEFAULT_CATEGORY);
+    setReimburseCharge(false);
+    setReimburseEffect(REIMBURSE_EFFECT_DEBT);
+    setReimburseRecurring(false);
+    setReimburseRecurringDay("");
+    setReimburseRecurringEnd("");
     setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : ""));
     get<Partner[]>(client, "/banking/partners", { company_id: companyId })
       .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
@@ -866,12 +885,13 @@ export function PersonnelScreen() {
     get<{ expenses?: Record<string, unknown>[] }>(client, "/expenses", { company_id: companyId, employee_id: idOf(emp) })
       .then((res) => {
         const rows = Array.isArray(res?.expenses) ? res.expenses : [];
-        setReimburseDebts(rows.filter(expensePersonnelDebtOpen).map((exp) => ({
+        setReimburseDebts(rows.filter(expenseLinkableForReimburse).map((exp) => ({
           value: String(exp.id || exp._id || ""),
           label: [exp.expense_number, exp.description].filter(Boolean).map(String).join(" · ") || "Masraf",
         })).filter((row) => row.value));
+        setReimburseRecurringRows(recurringExpenseRows({ recurring_expenses: rows.filter((e) => e.is_recurring) }));
       })
-      .catch(() => setReimburseDebts([]));
+      .catch(() => { setReimburseDebts([]); setReimburseRecurringRows([]); });
   }
 
   const saveReimburse = async () => {
@@ -886,12 +906,22 @@ export function PersonnelScreen() {
         reimburseNote,
         reimburseExpenseId,
         todayIso(),
+        {
+          category: reimburseCategory,
+          chargeToAccount: reimburseCharge,
+          accountEffect: reimburseEffect,
+          recurring: reimburseRecurring,
+          recurringDay: reimburseRecurringDay,
+          recurringEnd: reimburseRecurringEnd,
+        },
       ));
       setMessage(`${reimburseEmp.full_name} için masraf ödemesi kaydedildi.`);
       setReimburseEmp(null);
       setReimburseAmount("");
       setReimburseNote("");
       setReimburseExpenseId("");
+      setReimburseCharge(false);
+      setReimburseRecurring(false);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Masraf ödemesi kaydedilemedi."));
@@ -1122,6 +1152,7 @@ export function PersonnelScreen() {
   const applyMovesCard = (card: EmployeeCard) => {
     setMovesCard(card);
     setMoves(employeePayMoves(card));
+    setMovesRecurring(recurringExpenseRows(card));
   };
 
   const loadMovesOvertime = async (emp: Employee, card: EmployeeCard, periodYm: string) => {
@@ -2456,6 +2487,31 @@ export function PersonnelScreen() {
           );
         })()}
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
+        {movesRecurring.length ? (
+          <View testID="emp-pay-recurring">
+            <Muted>Tekrarlayan masraflar</Muted>
+            {movesRecurring.map((row) => (
+              <ListRow
+                key={row.id}
+                testID={`emp-pay-recurring-${row.id}`}
+                title={row.title}
+                subtitle={row.subtitle}
+                right={`${row.amount} ₺`}
+                onPress={canEdit ? () => {
+                  confirmAction("Tekrarlayan masrafı durdur", "Geçmiş kayıtlar kalır.", async () => {
+                    try {
+                      await put(client, `/expenses/${row.id}`, { is_recurring: false });
+                      setMovesRecurring((prev) => prev.filter((r) => r.id !== row.id));
+                      setMessage("Tekrarlayan masraf durduruldu.");
+                    } catch (err) {
+                      setError(apiErrorMessage(err, "Durdurulamadı."));
+                    }
+                  });
+                } : undefined}
+              />
+            ))}
+          </View>
+        ) : null}
         {!movesBusy && !filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length ? <Muted>Bu dönemde ödeme hareketi yok.</Muted> : null}
         {filterPayMoves(moves, movesPeriod, new Date(), movesMonth).map((row) => (
           <View
@@ -2683,12 +2739,20 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!reimburseEmp}
         title="Masraf ödemesi"
-        subtitle={reimburseEmp ? `${reimburseEmp.full_name} · hak ediş, maaş ve avanstan düşmez` : undefined}
+        subtitle={reimburseEmp ? `${reimburseEmp.full_name} · şirket masrafı (kira, telefon, yol, yemek)` : undefined}
         onClose={() => setReimburseEmp(null)}
         testID="reimburse-pay-sheet"
       >
         <MoneyInput label="Tutar (₺)" testID="reimburse-pay-amount" value={reimburseAmount} onChange={(n) => setReimburseAmount(n ?? "")} placeholder="Örn: 250" />
-        <Field label="Açıklama" testID="reimburse-pay-note" value={reimburseNote} onChangeText={setReimburseNote} placeholder="Cebinden ödenen masraf" />
+        <Field label="Açıklama" testID="reimburse-pay-note" value={reimburseNote} onChangeText={setReimburseNote} placeholder="Kira, telefon, yol…" />
+        <GroupedSelect
+          label="Kategori"
+          testID="reimburse-pay-category"
+          value={reimburseCategory}
+          onChange={setReimburseCategory}
+          groups={[{ label: "Kategori", options: REIMBURSE_CATEGORIES.map((c) => ({ value: c, label: c })) }]}
+          emptyLabel="Kategori"
+        />
         <GroupedSelect
           label="Kasa / Banka / Ortak"
           testID="reimburse-pay-account"
@@ -2698,14 +2762,66 @@ export function PersonnelScreen() {
           emptyLabel="Hesap seçin"
         />
         <GroupedSelect
-          label="Masraf kaydı (isteğe bağlı)"
+          label="Mevcut masraf (isteğe bağlı)"
           testID="reimburse-pay-expense"
           value={reimburseExpenseId}
           onChange={setReimburseExpenseId}
-          groups={reimburseDebts.length ? [{ label: "Açık personel borçları", options: reimburseDebts }] : []}
-          emptyLabel="Bağlama"
+          groups={reimburseDebts.length ? [{ label: "Mevcut kayıtlar", options: reimburseDebts }] : []}
+          emptyLabel="Yeni masraf kaydı aç"
         />
-        <Muted>Kaynak hesaptan çıkış yazılır. Gider olarak yeniden kaydedilmez.</Muted>
+        <Pressable onPress={() => setReimburseCharge((v) => !v)} testID="reimburse-pay-charge" style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 }}>
+          <Ionicons name={reimburseCharge ? "checkbox" : "square-outline"} size={20} color="#4338CA" />
+          <Text style={{ fontWeight: "700", color: colors.text }}>Personel hesabına yaz</Text>
+        </Pressable>
+        {reimburseCharge ? (
+          <View testID="reimburse-pay-effect">
+            <Pressable onPress={() => setReimburseEffect(REIMBURSE_EFFECT_DEBT)} testID="reimburse-pay-effect-debt" style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 }}>
+              <Ionicons name={reimburseEffect === REIMBURSE_EFFECT_DEBT ? "radio-button-on" : "radio-button-off"} size={18} color="#4338CA" />
+              <Text>Maaştan düşülecek (personel borcu)</Text>
+            </Pressable>
+            <Pressable onPress={() => setReimburseEffect(REIMBURSE_EFFECT_ENTITLEMENT)} testID="reimburse-pay-effect-entitlement" style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 }}>
+              <Ionicons name={reimburseEffect === REIMBURSE_EFFECT_ENTITLEMENT ? "radio-button-on" : "radio-button-off"} size={18} color="#4338CA" />
+              <Text>Personele ek ödeme / hak ediş</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Muted>Kapalıysa yalnızca şirket gideri olur; maaş ve avans etkilenmez.</Muted>
+        )}
+        <Pressable onPress={() => setReimburseRecurring((v) => !v)} testID="reimburse-pay-recurring" style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 }}>
+          <Ionicons name={reimburseRecurring ? "checkbox" : "square-outline"} size={20} color="#4338CA" />
+          <Text style={{ fontWeight: "700", color: colors.text }}>Her ay tekrarla</Text>
+        </Pressable>
+        {reimburseRecurring ? (
+          <View testID="reimburse-pay-recurring-fields">
+            <Field label="Gün (1–31)" testID="reimburse-pay-recurring-day" value={reimburseRecurringDay} onChangeText={setReimburseRecurringDay} placeholder="Örn: 5" keyboardType="number-pad" />
+            <Field label="Bitiş tarihi (boş = süresiz)" testID="reimburse-pay-recurring-end" value={reimburseRecurringEnd} onChangeText={setReimburseRecurringEnd} placeholder="YYYY-AA-GG" />
+          </View>
+        ) : null}
+        {reimburseRecurringRows.length ? (
+          <View testID="reimburse-pay-recurring-list">
+            <Muted>Kayıtlı tekrarlayan masraflar</Muted>
+            {reimburseRecurringRows.map((row) => (
+              <ListRow
+                key={row.id}
+                title={row.title}
+                subtitle={row.subtitle}
+                right={`${row.amount} ₺`}
+                onPress={() => {
+                  confirmAction("Tekrarlayan masrafı durdur", "Geçmiş kayıtlar kalır.", async () => {
+                    try {
+                      await put(client, `/expenses/${row.id}`, { is_recurring: false });
+                      setReimburseRecurringRows((prev) => prev.filter((r) => r.id !== row.id));
+                      setMessage("Tekrarlayan masraf durduruldu.");
+                    } catch (err) {
+                      setError(apiErrorMessage(err, "Durdurulamadı."));
+                    }
+                  });
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
+        <Muted>Kaynak hesaptan Çıkış (−) yazılır. Masraflar modülünde MSR kaydı oluşur.</Muted>
         <PrimaryButton title="Masraf ödemesini kaydet" testID="reimburse-pay-submit" color="#4338CA" loading={busy} onPress={saveReimburse} />
       </B2BSheet>
 

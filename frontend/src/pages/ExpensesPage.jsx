@@ -58,7 +58,7 @@ const ExpensePartyCell = ({ x }) => {
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
 const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
-const EMPTY = { date: new Date().toISOString().slice(0, 10), category: "Diğer", description: "", amount: "", vat_rate: 20, vat_included: false, account_id: "", contact_id: "", employee_id: "", project_id: "", document_no: "", notes: "", is_recurring: false, receipt_url: "", currency: "TRY", fx_rate: 1, fx_source: "try" };
+const EMPTY = { date: new Date().toISOString().slice(0, 10), category: "Diğer", description: "", amount: "", vat_rate: 20, vat_included: false, account_id: "", contact_id: "", employee_id: "", project_id: "", document_no: "", notes: "", is_recurring: false, recurrence_day: "", recurring_end: "", charge_to_account: false, account_effect: "debt", receipt_url: "", currency: "TRY", fx_rate: 1, fx_source: "try" };
 const projectLabel = (p) => [p.project_number, p.name].filter(Boolean).join(" · ") || "Proje";
 const projectIdOf = (p) => String(p?.id || p?._id || "");
 const PRESETS = [["", "Tüm zamanlar"], ["month", "Bu ay"], ["last_month", "Geçen ay"], ["quarter", "Bu çeyrek"], ["year", "Bu yıl"]];
@@ -236,6 +236,26 @@ const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: acc
           <div><label className="block font-semibold mb-1">Belge / Fiş No</label><input value={f.document_no} onChange={(e) => setF({ ...f, document_no: e.target.value })} className={inputCls} /></div>
           <div className="md:col-span-2"><label className="block font-semibold mb-1">Not</label><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={inputCls} /></div>
           <label className="col-span-2 md:col-span-2 flex items-center gap-2 cursor-pointer bg-violet-50 border border-violet-200 rounded-lg p-2 text-violet-800"><input type="checkbox" checked={f.is_recurring} onChange={(e) => setF({ ...f, is_recurring: e.target.checked })} data-testid="exp-recurring" /><Repeat className="w-3.5 h-3.5" /> Her ay tekrarlansın (kira, abonelik vb.)</label>
+          {f.is_recurring ? (
+            <div className="col-span-2 md:col-span-3 grid grid-cols-2 gap-3" data-testid="exp-recurring-fields">
+              <div><label className="block font-semibold mb-1">Ayın günü (1–31)</label><input type="number" min="1" max="31" value={f.recurrence_day || ""} onChange={(e) => setF({ ...f, recurrence_day: e.target.value })} className={inputCls} placeholder="Örn: 5" data-testid="exp-recurring-day" /></div>
+              <div><label className="block font-semibold mb-1">Bitiş (boş = süresiz)</label><input type="date" value={f.recurring_end || ""} onChange={(e) => setF({ ...f, recurring_end: e.target.value })} className={inputCls} data-testid="exp-recurring-end" /></div>
+            </div>
+          ) : null}
+          {f.source === "personnel_reimburse_recurring" || (f.employee_id && f.is_recurring) ? (
+            <div className="col-span-2 md:col-span-3 space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/50 p-2" data-testid="exp-personnel-charge">
+              <label className="flex items-center gap-2 text-indigo-900 cursor-pointer">
+                <input type="checkbox" checked={!!f.charge_to_account} onChange={(e) => setF({ ...f, charge_to_account: e.target.checked })} data-testid="exp-charge-account" />
+                Personel hesabına yaz
+              </label>
+              {f.charge_to_account ? (
+                <div className="grid grid-cols-1 gap-1 text-indigo-900">
+                  <label className="flex items-center gap-2"><input type="radio" name="exp-account-effect" checked={(f.account_effect || "debt") === "debt"} onChange={() => setF({ ...f, account_effect: "debt" })} data-testid="exp-effect-debt" /> Maaştan düşülecek (personel borcu)</label>
+                  <label className="flex items-center gap-2"><input type="radio" name="exp-account-effect" checked={f.account_effect === "entitlement"} onChange={() => setF({ ...f, account_effect: "entitlement" })} data-testid="exp-effect-entitlement" /> Personele ek ödeme / hak ediş</label>
+                </div>
+              ) : <div className="text-[11px] text-indigo-700">Kapalıysa yalnızca şirket gideri olur.</div>}
+            </div>
+          ) : null}
           <label className="flex items-center gap-2 cursor-pointer border border-dashed rounded-lg p-2 text-slate-600 hover:bg-slate-50"><Paperclip className="w-3.5 h-3.5" /> {f.receipt_url ? "Fiş ekli ✓ (değiştir)" : "Fiş / fatura ekle"}<input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="exp-receipt" /></label>
         </div>
         <div className="flex justify-end gap-2 pt-3 border-t"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg text-xs">İptal</button><button type="submit" disabled={busy} className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold" data-testid="exp-save">{busy ? "Kaydediliyor…" : isEdit ? "Güncelle" : f.account_id ? "Kaydet & Öde" : "Kaydet"}</button></div>
@@ -310,7 +330,19 @@ export default function ExpensesPage() {
     setFilters((f) => ({ ...f, q: "", category: "all", status: "all", preset: "month", from, to }));
     requestAnimationFrame(() => document.querySelector("[data-testid='exp-table']")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
-  const del = async (x) => { if (!window.confirm(`${x.expense_number} silinsin mi?`)) return; try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const del = async (x) => {
+    const extra = x.is_recurring ? " Tekrarlayan şablon silinir; geçmiş aylık kayıtlar kalır." : "";
+    if (!window.confirm(`${x.expense_number} silinsin mi?${extra}`)) return;
+    try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
+  const stopRecurring = async (x) => {
+    if (!window.confirm(`${x.expense_number} tekrarlayan şablonu durdurulsun mu? Geçmiş kayıtlar kalır.`)) return;
+    try {
+      await axios.put(`${API_URL}/expenses/${x.id}`, { is_recurring: false });
+      toast.success("Tekrarlayan masraf durduruldu.");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Durdurulamadı."); }
+  };
   const pay = async () => {
     try {
       await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc), paid_by_name: actorName || undefined });
@@ -373,7 +405,7 @@ export default function ExpensesPage() {
                   <div className="text-slate-500" data-testid={`exp-date-${x.expense_number}`}>
                     {dateLines.date}
                     {x.is_recurring && (
-                      <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1 rounded" title={`Sonraki: ${fmtDate(x.next_date)}`}>AYLIK</span>
+                      <button type="button" className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1 rounded" title={`Sonraki: ${fmtDate(x.next_date)} — durdurmak için tıklayın`} onClick={() => stopRecurring(x)} data-testid={`exp-recurring-stop-${x.expense_number}`}>AYLIK · Durdur</button>
                     )}
                   </div>
                   {dateLines.txn ? (

@@ -569,6 +569,20 @@ export function payMoveDeletePath(row) {
 
 export const REIMBURSE_BADGE = "Masraf ödemesi";
 
+export function recurringExpenseRows(card) {
+  return (card?.recurring_expenses || []).filter((e) => e && e.is_recurring !== false).map((e) => ({
+    id: e.id || e._id,
+    kind: "recurring_expense",
+    title: "Tekrarlayan masraf",
+    subtitle: [e.expense_number, e.category, e.recurrence_day ? `her ayın ${e.recurrence_day}'i` : "her ay", e.recurring_end ? `bitiş ${e.recurring_end}` : "süresiz"].filter(Boolean).join(" · "),
+    amount: Number(e.amount || e.total) || 0,
+    date: e.next_date || e.date || "",
+    expense_number: e.expense_number,
+    is_recurring: true,
+    charge_to_account: !!e.charge_to_account,
+  }));
+}
+
 export function payMoveBadge(row) {
   if (row?.payKind === "reimburse" || row?.title === REIMBURSE_BADGE) {
     return { label: REIMBURSE_BADGE, kind: "masraf" };
@@ -583,7 +597,7 @@ export function payMoveDeleteConfirm(row) {
     if (row?.payKind === "reimburse" || row?.title === REIMBURSE_BADGE) {
       return {
         title: "Masraf ödemesini sil",
-        message: "Bu masraf ödemesi silinsin mi? Bağlı kasa, banka veya ortak çıkışı da silinir. Masraf kaydının personel borcu yeniden açılır.",
+        message: "Bu masraf ödemesi silinsin mi? Bağlı masraf kaydı, kasa/banka/ortak çıkışı ve personel hesabı etkisi birlikte geri alınır. Tekrarlayan şablon silinmez.",
       };
     }
     return {

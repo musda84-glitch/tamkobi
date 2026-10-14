@@ -32,6 +32,7 @@ import {
   payMoveDeletePath,
   payMovesPeriodHint,
   payMovesPeriodLabel,
+  recurringExpenseRows,
 } from "../utils/personnelCard";
 import {
   sortTaskMoves,
@@ -62,6 +63,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
   const [period, setPeriod] = useState("30d");
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [moves, setMoves] = useState([]);
+  const [recurring, setRecurring] = useState([]);
   const [locMoves, setLocMoves] = useState([]);
   const [otMoves, setOtMoves] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -82,6 +84,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
     try {
       const card = (await axios.get(`${API_URL}/personnel/employees/${empId}/card`)).data;
       setMoves(employeePayMoves(card));
+      setRecurring(recurringExpenseRows(card));
     } catch (err) {
       toast.error(err.response?.data?.detail || "Ödeme hareketleri yüklenemedi.");
       setMoves([]);
@@ -554,6 +557,44 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
           ) : (
             <>
               {busy ? <div className="text-slate-400">Yükleniyor…</div> : null}
+              {recurring.length ? (
+                <div className="mb-3 space-y-2" data-testid="emp-pay-recurring">
+                  <div className="text-[10px] uppercase font-bold text-violet-700">Tekrarlayan masraflar</div>
+                  {recurring.map((row) => (
+                    <div key={row.id} className="rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 flex items-start gap-2" data-testid={`emp-pay-recurring-${row.id}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-slate-800">{row.title}</div>
+                        <div className="text-slate-500">{row.subtitle}</div>
+                        <div className="font-bold text-rose-700">{fmtPayMoveAmount(row.amount)}</div>
+                      </div>
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          className="px-2 py-1 rounded-md border border-violet-200 bg-white text-[10px] font-bold text-violet-700"
+                          data-testid={`emp-pay-recurring-stop-${row.id}`}
+                          disabled={!!payBusyId}
+                          onClick={async () => {
+                            if (!window.confirm("Bu tekrarlayan masraf durdurulsun mu? Geçmiş kayıtlar kalır.")) return;
+                            setPayBusyId(row.id);
+                            try {
+                              await axios.put(`${API_URL}/expenses/${row.id}`, { is_recurring: false });
+                              toast.success("Tekrarlayan masraf durduruldu.");
+                              await loadPay();
+                              onChanged?.();
+                            } catch (err) {
+                              toast.error(err.response?.data?.detail || "Durdurulamadı.");
+                            } finally {
+                              setPayBusyId("");
+                            }
+                          }}
+                        >
+                          Durdur
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {!busy && !shownPay.length ? <div className="text-slate-400">Bu dönemde ödeme hareketi yok.</div> : null}
               {shownPay.map((row) => (
                 <TxMobileCard
