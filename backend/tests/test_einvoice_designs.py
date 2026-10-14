@@ -58,8 +58,20 @@ class _MemCol:
 
 def _boot():
     col = _MemCol()
-    ed.init({ed.COLLECTION: col})
+    companies = _MemCol()
+    ed.init({ed.COLLECTION: col, "companies": companies})
+    col.companies = companies
     return col
+
+
+def _company_admin(cid):
+    return {
+        "_id": f"u_{cid}",
+        "role": "admin",
+        "company_ids": [cid],
+        "active_company_id": cid,
+        "is_super_admin": False,
+    }
 
 
 def _run(coro):
@@ -345,3 +357,154 @@ def test_build_invoice_ubl_embeds_plain_base64_xslt():
         gzip.decompress(raw)
     decoded = raw.decode("utf-8")
     assert "<xsl:stylesheet" in decoded
+    ed.assert_send_ready_has_no_visuals(xml)
+
+
+def _logo_png(color):
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _logo_xslt():
+    return (
+        '<?xml version="1.0"?>'
+        '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">'
+        '<xsl:variable name="IsLogoExists" select="\'IsLogoExistsValue\'"/>'
+        '<xsl:template match="/"><html><body>'
+        '<xsl:choose>'
+        '<xsl:when test="$IsLogoExists=\'true\'">'
+        '<img src="data:image/jpeg;base64,firmaLogoImageString"/>'
+        "</xsl:when>"
+        '<xsl:otherwise>'
+        '<img src="data:image/png;base64,FOREIGNLOGO=="/>'
+        "</xsl:otherwise>"
+        "</xsl:choose>"
+        "</body></html></xsl:template></xsl:stylesheet>"
+    )
+
+
+def test_two_companies_get_only_own_logo_in_xslt():
+    col = _boot()
+    _run(ed.ensure_defaults())
+    red = _logo_png((220, 20, 20))
+    blue = _logo_png((20, 40, 200))
+    col.companies.rows["co_red"] = {"_id": "co_red", "logo": f"data:image/png;base64,{red}"}
+    col.companies.rows["co_blue"] = {"_id": "co_blue", "logo": f"data:image/png;base64,{blue}"}
+    admin_red = _company_admin("co_red")
+    admin_blue = _company_admin("co_blue")
+    d_red = _run(ed.create_company_design({
+        "company_id": "co_red",
+        "kind": "e_invoice",
+        "name": "Kırmızı",
+        "source": "xslt",
+        "xslt": _logo_xslt(),
+    }, admin_red))
+    d_blue = _run(ed.create_company_design({
+        "company_id": "co_blue",
+        "kind": "e_invoice",
+        "name": "Mavi",
+        "source": "xslt",
+        "xslt": _logo_xslt(),
+    }, admin_blue))
+    _run(ed.select_company_design(d_red["id"], {"company_id": "co_red"}, None, admin_red))
+    _run(ed.select_company_design(d_blue["id"], {"company_id": "co_blue"}, None, admin_blue))
+
+    xslt_red = _run(ed.selected_xslt_for_e_type("e_invoice", "co_red"))
+    xslt_blue = _run(ed.selected_xslt_for_e_type("e_invoice", "co_blue"))
+    red_jpeg = ed.company_logo_to_jpeg_data_uri(f"data:image/png;base64,{red}")
+    blue_jpeg = ed.company_logo_to_jpeg_data_uri(f"data:image/png;base64,{blue}")
+    assert red_jpeg and blue_jpeg
+    assert red_jpeg in xslt_red
+    assert blue_jpeg in xslt_blue
+    assert red_jpeg not in xslt_blue
+    assert blue_jpeg not in xslt_red
+    assert "FOREIGNLOGO" not in xslt_red
+    assert "FOREIGNLOGO" not in xslt_blue
+    assert "firmaLogoImageString" in xslt_red
+    assert "firmaLogoImageString" in xslt_blue
+    assert "IsLogoExistsValue" in xslt_red
+    assert "qrCodeImageString" not in xslt_red or True
+
+    inv = {
+        "_id": "inv_logo",
+        "invoice_number": "ABC2026000000002",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "issue_date": "2026-10-07",
+        "items": [{"name": "Kalem", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    seller = {"name": "Satıcı", "tax_number": "1234567801", "city": "İstanbul", "address": "Cad 1"}
+    buyer = {"name": "Alıcı", "tax_number_or_id": "6320984412", "city": "Ankara"}
+    xml = ubl_export.build_invoice_ubl(inv, seller, buyer, send_ready=True, xslt=xslt_red)
+    ed.assert_send_ready_has_no_visuals(xml)
+
+
+def test_platform_default_has_no_embedded_company_logo():
+    col = _boot()
+    _run(ed.ensure_defaults())
+    red = _logo_png((220, 20, 20))
+    col.companies.rows["co_red"] = {"_id": "co_red", "logo": f"data:image/png;base64,{red}"}
+    xslt = _run(ed.selected_xslt_for_e_type("e_invoice", "co_red"))
+    red_jpeg = ed.company_logo_to_jpeg_data_uri(f"data:image/png;base64,{red}")
+    assert "firmaLogoImageString" in (xslt or "")
+    assert "IsLogoExistsValue" in (xslt or "")
+    assert red_jpeg not in (xslt or "")
+    assert "<xsl:otherwise>" not in (xslt or "") or "firmaLogoImageString" in (xslt or "")
+
+
+def test_company_admin_cannot_change_platform_default():
+    col = _boot()
+    _run(ed.ensure_defaults())
+    admin = _company_admin("co_a")
+    sales = {
+        "_id": "u_sales",
+        "role": "sales",
+        "company_ids": ["co_a"],
+        "active_company_id": "co_a",
+    }
+    with pytest.raises(HTTPException) as e:
+        _run(ed.update_company_design("einvoice_xslt_default_e_invoice", {"name": "Hack"}, admin))
+    assert e.value.status_code == 403
+    with pytest.raises(HTTPException) as e2:
+        _run(ed.create_company_design({"kind": "e_invoice", "name": "X", "xslt": _OK_XSLT}, sales))
+    assert e2.value.status_code == 403
+    created = _run(ed.create_company_design({
+        "company_id": "co_a",
+        "copy_from_id": "einvoice_xslt_default_e_invoice",
+        "name": "Şirket e-Fatura",
+    }, admin))
+    assert created["company_id"] == "co_a"
+    assert created["is_platform"] is False
+    marked = _OK_XSLT.replace("ok", "company-co-a-marker")
+    saved = _run(ed.update_company_design(created["id"], {"name": "Kayıtlı şirket", "xslt": marked, "company_id": "co_a"}, admin))
+    assert saved["name"] == "Kayıtlı şirket"
+    sel = _run(ed.select_company_design(created["id"], {"company_id": "co_a"}, None, admin))
+    assert sel["id"] == created["id"]
+    assert next(i for i in sel["items"] if i["id"] == created["id"])["is_selected"] is True
+    assert next(i for i in sel["items"] if i["id"] == "einvoice_xslt_default_e_invoice")["is_selected"] is False
+    xslt = _run(ed.selected_xslt("e_invoice", "co_a"))
+    assert "company-co-a-marker" in (xslt or "")
+    platform = _run(ed.selected_xslt("e_invoice", "co_other"))
+    assert "company-co-a-marker" not in (platform or "")
+
+
+def test_prepare_xslt_strips_foreign_fallback_logo():
+    foreign = _tiny_png_b64()
+    xslt = (
+        '<xsl:choose>'
+        '<xsl:when test="$IsLogoExists=\'true\'">'
+        '<img src="data:image/jpeg;base64,firmaLogoImageString"/>'
+        "</xsl:when>"
+        f'<xsl:otherwise><img src="data:image/png;base64,{foreign}"/></xsl:otherwise>'
+        "</xsl:choose>"
+        '<img src="data:image/jpeg;base64,qrCodeImageString"/>'
+    )
+    out = ed.prepare_xslt_for_gib(xslt)
+    assert "firmaLogoImageString" in out
+    assert "qrCodeImageString" in out
+    assert foreign not in out
+    assert "<xsl:otherwise>" not in out

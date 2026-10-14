@@ -21426,7 +21426,7 @@ mail_service.init(db)
 import event_notify
 event_notify.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send}, get_current_user)
 mail_accounts.init(db, get_current_user, _public_base_url)
-einvoice_designs.init(db)
+einvoice_designs.init(db, get_current_user)
 addons.init(db)
 support_tickets.init(db, get_current_user)
 staff_messages.init(db, get_current_user)

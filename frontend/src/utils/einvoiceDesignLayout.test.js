@@ -488,7 +488,8 @@ test("layoutToXslt header is logo only without company title", () => {
   expect(xslt).toContain('name="alt"');
   expect(xslt).toContain("cbc:ProfileID='EARSIVFATURA'");
   expect(xslt).toContain("<xsl:text>e-Fatura</xsl:text>");
-  expect(xslt).toContain("data:image/png;base64,aaa");
+  expect(xslt).toContain("firmaLogoImageString");
+  expect(xslt).not.toContain("data:image/png;base64,aaa");
   expect(xslt).toContain("height:72px");
   expect(xslt).not.toContain("Gizleme A.Ş.");
   expect(xslt).not.toContain("AccountingSupplierParty");
@@ -567,6 +568,17 @@ test("layoutToXslt writes inline body font size and skips http logos", () => {
   expect(withHttp).toMatch(/<body style="[^"]*font-size:14px/);
   expect(withHttp).toContain("Arial");
   expect(withHttp).not.toContain("https://cdn.example/logo.png");
+});
+
+test("layoutToXslt never embeds canvas logo in XSLT", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    logo: "data:image/png;base64,aaa",
+    blocks: [{ id: "header" }],
+  }));
+  expect(xslt).toContain("firmaLogoImageString");
+  expect(xslt).toContain("$IsLogoExists='true'");
+  expect(xslt).not.toContain("data:image/png;base64,aaa");
+  expect(xslt).not.toContain('src="data:image/png;base64,aaa"');
 });
 
 test("layoutToXslt uses selected logo height", () => {

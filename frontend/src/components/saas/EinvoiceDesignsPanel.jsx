@@ -37,7 +37,7 @@ const slugName = (name, kind, ext) => {
   return base.toLowerCase().endsWith(ext) ? base : `${base}${ext}`;
 };
 
-export const EinvoiceDesignsPanel = () => {
+export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   const [d, setD] = useState(null);
   const [kind, setKind] = useState("e_invoice");
   const [openId, setOpenId] = useState("");
@@ -49,12 +49,24 @@ export const EinvoiceDesignsPanel = () => {
   const [previewErr, setPreviewErr] = useState("");
   const fileRef = useRef(null);
   const importRef = useRef(null);
+  const isCompany = mode === "company" && !!companyId;
+  const listUrl = isCompany
+    ? `${API_URL}/einvoice/designs?company_id=${encodeURIComponent(companyId)}`
+    : `${API_URL}/system/einvoice-designs`;
+  const itemUrl = (id, suffix = "") => {
+    const base = isCompany ? `${API_URL}/einvoice/designs/${id}${suffix}` : `${API_URL}/system/einvoice-designs/${id}${suffix}`;
+    if (!isCompany) return base;
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}company_id=${encodeURIComponent(companyId)}`;
+  };
+  const collectionUrl = isCompany ? `${API_URL}/einvoice/designs` : `${API_URL}/system/einvoice-designs`;
+  const withCompany = (body) => (isCompany ? { ...body, company_id: companyId } : body);
 
   const load = useCallback(async () => {
-    const r = await axios.get(`${API_URL}/system/einvoice-designs`, cred);
+    const r = await axios.get(listUrl, cred);
     setD(r.data);
     return r.data;
-  }, []);
+  }, [listUrl]);
 
   useEffect(() => {
     load().catch((e) => toast.error(e.response?.data?.detail || "Tasarımlar yüklenemedi."));
@@ -89,7 +101,7 @@ export const EinvoiceDesignsPanel = () => {
   const openDesign = async (id) => {
     setBusy(`open-${id}`);
     try {
-      const r = await axios.get(`${API_URL}/system/einvoice-designs/${id}`, cred);
+      const r = await axios.get(itemUrl(id), cred);
       setOpenId(id);
       applyLoaded(r.data, kind);
       setTab("visual");
@@ -115,7 +127,7 @@ export const EinvoiceDesignsPanel = () => {
       const body = source === "xslt"
         ? { name: form.name, source: "xslt", xslt, layout: null }
         : { name: form.name, source: "visual", xslt, layout };
-      const r = await axios.put(`${API_URL}/system/einvoice-designs/${openId}`, body, cred);
+      const r = await axios.put(itemUrl(openId), withCompany(body), cred);
       applyLoaded(r.data, kind);
       await load();
       toast.success("Tasarım kaydedildi.");
@@ -129,7 +141,7 @@ export const EinvoiceDesignsPanel = () => {
   const selectIt = async (id) => {
     setBusy(`sel-${id}`);
     try {
-      const r = await axios.post(`${API_URL}/system/einvoice-designs/${id}/select`, {}, cred);
+      const r = await axios.post(itemUrl(id, "/select"), withCompany({}), cred);
       setD((prev) => ({ ...prev, items: r.data.items, selected: { ...(prev?.selected || {}), [kind]: id } }));
       toast.success("Bu tasarım seçildi.");
     } catch (e) {
@@ -142,7 +154,7 @@ export const EinvoiceDesignsPanel = () => {
   const duplicate = async (id) => {
     setBusy(`dup-${id}`);
     try {
-      const r = await axios.post(`${API_URL}/system/einvoice-designs`, { copy_from_id: id }, cred);
+      const r = await axios.post(collectionUrl, withCompany({ copy_from_id: id }), cred);
       await load();
       setOpenId(r.data.id);
       applyLoaded(r.data, kind);
@@ -159,7 +171,7 @@ export const EinvoiceDesignsPanel = () => {
     if (!window.confirm("Bu tasarım silinsin mi?")) return;
     setBusy(`del-${id}`);
     try {
-      const r = await axios.delete(`${API_URL}/system/einvoice-designs/${id}`, cred);
+      const r = await axios.delete(itemUrl(id), cred);
       setD((prev) => ({ ...prev, items: r.data.items }));
       if (openId === id) {
         setOpenId("");
@@ -177,7 +189,7 @@ export const EinvoiceDesignsPanel = () => {
   const downloadServer = async (row) => {
     setBusy(`dl-${row.id}`);
     try {
-      const r = await axios.get(`${API_URL}/system/einvoice-designs/${row.id}/download`, { ...cred, responseType: "blob" });
+      const r = await axios.get(itemUrl(row.id, "/download"), { ...cred, responseType: "blob" });
       downloadBlob(r.data, slugName(row.name || row.kind, row.kind, ".xslt"));
     } catch (e) {
       toast.error(e.response?.data?.detail || "İndirilemedi.");
@@ -195,7 +207,7 @@ export const EinvoiceDesignsPanel = () => {
         return;
       }
       if (!dirty && fmt === "tkdesign") {
-        const r = await axios.get(`${API_URL}/system/einvoice-designs/${openId}/export`, { ...cred, responseType: "blob" });
+        const r = await axios.get(itemUrl(openId, "/export"), { ...cred, responseType: "blob" });
         downloadBlob(r.data, slugName(form.name || kind, kind, ".tkdesign.json"));
         return;
       }
@@ -234,12 +246,12 @@ export const EinvoiceDesignsPanel = () => {
     setBusy("upload");
     try {
       const text = await file.text();
-      const r = await axios.post(`${API_URL}/system/einvoice-designs`, {
+      const r = await axios.post(collectionUrl, withCompany({
         kind,
         name: file.name.replace(/\.xslt?$/i, "") || `Yüklenen ${kind}`,
         xslt: text,
         source: "xslt",
-      }, cred);
+      }), cred);
       await load();
       setOpenId(r.data.id);
       applyLoaded(r.data, kind);
@@ -271,7 +283,7 @@ export const EinvoiceDesignsPanel = () => {
       } else {
         body = { content: text, name: file.name.replace(/\.xslt?$/i, "") || "İçe aktarılan", kind };
       }
-      const r = await axios.post(`${API_URL}/system/einvoice-designs/import`, body, cred);
+      const r = await axios.post(`${collectionUrl}/import`, withCompany(body), cred);
       await load();
       setKind(r.data.kind || kind);
       setOpenId(r.data.id);
@@ -300,6 +312,12 @@ export const EinvoiceDesignsPanel = () => {
             Kaydedince XSLT üretilir. Ham XSLT sekmesi gelişmiş kullanım içindir.
             .tkdesign.json ile dışa/içe aktarın. Varsayılan GİB şablonları yüklüdür — görsel kaydetmek onları bu düzene çevirir; orijinali korumak için kopyalayın.
           </p>
+          {isCompany ? (
+            <p className="text-[11px] text-slate-600 mt-1.5 max-w-2xl" data-testid="einvoice-isnet-logo-hint">
+              İşNet portalında kayıtlı logo varsa o kullanılır; değiştirmek için NetteFatura portalında güncelleyin.
+              Şirket logosu (Ayarlar → Şirket) yalnızca portal logosu yokken yedek olarak basılır; başka firmanın logosu faturaya gömülmez.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <input ref={fileRef} type="file" accept=".xslt,.xsl,text/xml" className="hidden" onChange={onUpload} data-testid="einvoice-design-upload-input" />
@@ -351,7 +369,7 @@ export const EinvoiceDesignsPanel = () => {
                   <Download className="w-3 h-3" /> İndir
                 </button>
                 <button type="button" onClick={() => duplicate(row.id)} disabled={!!busy} className="px-2 py-1 border rounded-lg font-semibold" data-testid={`einvoice-design-copy-${row.id}`}>Kopyala</button>
-                {!row.is_builtin && !row.is_selected ? (
+                {!row.is_builtin && !row.is_selected && !(isCompany && row.is_platform) ? (
                   <button type="button" onClick={() => remove(row.id)} disabled={!!busy} className="px-2 py-1 border border-rose-200 text-rose-700 rounded-lg font-semibold inline-flex items-center gap-1" data-testid={`einvoice-design-delete-${row.id}`}>
                     <Trash2 className="w-3 h-3" /> Sil
                   </button>
@@ -391,9 +409,11 @@ export const EinvoiceDesignsPanel = () => {
                   <button type="button" onClick={() => setTab("xslt")} className={`px-3 py-1.5 rounded-lg font-semibold ${tab === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-tab-xslt">XSLT</button>
                 </div>
               </div>
-              {openRow?.is_builtin && tab === "visual" ? (
+              {(openRow?.is_builtin || (isCompany && openRow?.is_platform)) && tab === "visual" ? (
                 <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5" data-testid="einvoice-design-builtin-hint">
-                  Varsayılan GİB şablonu. Görsel kaydetmek XSLT’yi bu düzene çevirir. Orijinali saklamak için önce kopyalayın.
+                  {isCompany && openRow?.is_platform
+                    ? "Platform varsayılanı. Değiştirmek için kopyalayıp kendi şirket tasarımınızı kaydedin."
+                    : "Varsayılan GİB şablonu. Görsel kaydetmek XSLT’yi bu düzene çevirir. Orijinali saklamak için önce kopyalayın."}
                 </p>
               ) : null}
               {previewErr ? (
@@ -428,7 +448,7 @@ export const EinvoiceDesignsPanel = () => {
                 <button type="button" onClick={() => downloadEditor("tkdesign")} disabled={!!busy} className="px-3 py-1.5 border rounded-xl font-semibold inline-flex items-center gap-1.5" data-testid="einvoice-design-export-tkdesign">
                   <Download className="w-3.5 h-3.5" /> .tkdesign
                 </button>
-                <button type="button" onClick={save} disabled={!!busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-xl font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="einvoice-design-save">
+                <button type="button" onClick={save} disabled={!!busy || (isCompany && openRow?.is_platform)} className="px-4 py-1.5 bg-emerald-600 text-white rounded-xl font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="einvoice-design-save">
                   {busy === "save" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Kaydet
                 </button>
               </div>

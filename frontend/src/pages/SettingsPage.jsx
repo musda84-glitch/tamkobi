@@ -25,6 +25,7 @@ import { IntegrityPanel } from "../components/saas/IntegrityPanel";
 import IsnetIntegrationPanel from "../components/IsnetIntegrationPanel";
 import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { EinvoicePull30dButton } from "../components/EinvoicePull30dButton";
+import { EinvoiceDesignsPanel } from "../components/saas/EinvoiceDesignsPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 import { NotifyPrefsPanel } from "../components/NotifyPrefsPanel";
@@ -111,9 +112,13 @@ const EInvoiceSettings = ({ companyId }) => {
           <p className="text-[10px] text-slate-500 mt-1" data-testid="einvoice-isnet-scope">
             e-Fatura · e-Arşiv · e-İrsaliye. VKN, GİB etiketi ve portal girişi burada; SOAP ortamı / IP / e-İrsaliye varsayılanları Sistem → Şirket ayarlarından.
           </p>
+          <p className="text-[11px] text-slate-600" data-testid="einvoice-isnet-logo-hint">
+            İşNet portalında kayıtlı logo varsa o kullanılır; değiştirmek için NetteFatura portalında güncelleyin
+          </p>
           <EinvoicePull30dButton companyId={companyId} />
         </div>
         <IsnetIntegrationPanel companyId={companyId} variant="company" />
+        <EinvoiceDesignsPanel mode="company" companyId={companyId} />
       </div>
     );
   }
@@ -123,9 +128,13 @@ const EInvoiceSettings = ({ companyId }) => {
         <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs max-w-xl space-y-2" data-testid="einvoice-assigned-provider">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
           <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || "İşNet Net-e Fatura — Web Portal"}</div>
+          <p className="text-[11px] text-slate-600" data-testid="einvoice-isnet-logo-hint">
+            İşNet portalında kayıtlı logo varsa o kullanılır; değiştirmek için NetteFatura portalında güncelleyin
+          </p>
           <EinvoicePull30dButton companyId={companyId} />
         </div>
         <IsnetPortalPanel companyId={companyId} />
+        <EinvoiceDesignsPanel mode="company" companyId={companyId} />
       </div>
     );
   }
@@ -153,6 +162,7 @@ const EInvoiceSettings = ({ companyId }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Bağlantı denemesi başarısız."); } finally { setTesting(false); }
   };
   return (
+    <div className="space-y-4">
     <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 text-xs max-w-xl" data-testid="einvoice-settings">
       <div className="flex items-center justify-between"><h3 className="text-sm font-bold">E-Fatura bağlantısı</h3><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${s.status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="einvoice-status">{s.status === "configured" ? "YAPILANDIRILDI" : "SİMÜLE"}</span></div>
       {!s.assigned ? (
@@ -165,6 +175,9 @@ const EInvoiceSettings = ({ companyId }) => {
             <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || s.provider}</div>
             {s.hint ? <p className="text-[11px] text-slate-500 mt-1">{s.hint}</p> : null}
             {s.docs ? <a href={s.docs} target="_blank" rel="noreferrer" className="text-[10px] text-emerald-700 font-semibold">Dokümantasyon</a> : null}
+            <p className="text-[11px] text-slate-600" data-testid="einvoice-isnet-logo-hint">
+              İşNet portalında kayıtlı logo varsa o kullanılır; değiştirmek için NetteFatura portalında güncelleyin
+            </p>
             <EinvoicePull30dButton companyId={companyId} />
           </div>
           <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setS({ ...s, mode: "test" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "test" ? "bg-amber-500 text-white border-amber-500" : ""}`} data-testid="einvoice-mode-test">Test Ortamı</button><button type="button" onClick={() => setS({ ...s, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="einvoice-mode-live">Canlı</button></div>
@@ -207,6 +220,8 @@ const EInvoiceSettings = ({ companyId }) => {
         </>
       )}
     </form>
+    <EinvoiceDesignsPanel mode="company" companyId={companyId} />
+    </div>
   );
 };
 

@@ -1989,7 +1989,10 @@ async def send_despatch_document(
     xslt = None
     try:
         import einvoice_designs as _ed
-        xslt = await _ed.selected_xslt_for_e_type("e_dispatch")
+        xslt = await _ed.selected_xslt_for_e_type(
+            "e_dispatch",
+            (company or {}).get("_id") or (company or {}).get("id") or (invoice or {}).get("company_id"),
+        )
     except Exception:
         logger.exception("isnet despatch selected xslt load failed")
     if not xslt:
@@ -2184,7 +2187,10 @@ async def send_document(
     try:
         import einvoice_designs as _ed
 
-        xslt = await _ed.selected_xslt_for_e_type(e_type)
+        xslt = await _ed.selected_xslt_for_e_type(
+            e_type,
+            (company or {}).get("_id") or (company or {}).get("id") or (invoice or {}).get("company_id"),
+        )
     except Exception:
         logger.exception("isnet selected xslt load failed")
     try:

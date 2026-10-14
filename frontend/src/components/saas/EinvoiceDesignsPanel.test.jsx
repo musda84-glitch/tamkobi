@@ -114,3 +114,35 @@ test("save from xslt source omits layout payload", async () => {
   expect(body.layout).toBeNull();
   expect(body.xslt).toBeTruthy();
 });
+
+test("company mode lists via tenant endpoint and shows İşNet logo hint", async () => {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/einvoice/designs?")) {
+      return Promise.resolve({
+        data: {
+          ...LIST,
+          items: LIST.items.map((i) => ({ ...i, is_platform: i.is_builtin, company_id: null })),
+        },
+      });
+    }
+    return Promise.resolve({
+      data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null, source: "xslt", is_platform: true },
+    });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<EinvoiceDesignsPanel mode="company" companyId="co_a" />);
+  });
+  await act(async () => { await Promise.resolve(); });
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/einvoice/designs?company_id=co_a"))).toBe(true);
+  expect(host.querySelector('[data-testid="einvoice-isnet-logo-hint"]')?.textContent).toMatch(/NetteFatura/);
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-select-einvoice_xslt_custom"]').click();
+  });
+  await act(async () => { await Promise.resolve(); });
+  expect(axios.post).toHaveBeenCalled();
+  const selectUrl = String(axios.post.mock.calls[0][0]);
+  expect(selectUrl).toContain("/einvoice/designs/einvoice_xslt_custom/select");
+  expect(selectUrl).toContain("company_id=co_a");
+});
