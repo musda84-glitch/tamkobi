@@ -11,6 +11,7 @@ import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { cachedList, productFilter, patchCached } from "../utils/dataSync";
+import { useDataRefresh } from "../utils/dataRefresh";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -388,10 +389,11 @@ export default function StockBarcodePage() {
     package_count: 1,
   });
 
-  const loadProducts = useCallback(async () => {
+  const loadProducts = useCallback(async (opts) => {
+    const silent = Boolean(opts && opts.silent);
     const gen = ++loadGenRef.current;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       loadCategories();
       axios.get(`${API_URL}/products/units?company_id=${cid}`).then((r) => { if (gen === loadGenRef.current) setUnits(r.data); }).catch(() => {});
@@ -404,10 +406,12 @@ export default function StockBarcodePage() {
     } catch (err) {
       if (gen === loadGenRef.current) toast.error("Ürünler yüklenemedi.");
     } finally {
-      if (gen === loadGenRef.current) setLoading(false);
+      if (!silent && gen === loadGenRef.current) setLoading(false);
     }
   }, [activeCompany, filterCategory, loadCategories]);
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  const refreshStockSilent = useCallback(() => loadProducts({ silent: true }), [loadProducts]);
+  useDataRefresh(refreshStockSilent, { companyId: activeCompany?.id || activeCompany?._id, scopes: ["stock", "orders"] });
 
   const handleSaveProduct = async (e) => {
     e.preventDefault();

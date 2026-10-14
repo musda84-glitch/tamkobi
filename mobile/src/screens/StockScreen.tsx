@@ -10,6 +10,7 @@ import { QuantityInput } from "../components/MoneyInput";
 import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { ProductThumb } from "../components/ProductThumb";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact, Product } from "../types";
@@ -94,6 +95,7 @@ export function StockScreen() {
   }, [applyRows, client, companyId]);
 
   useFocusEffect(useCallback(() => { load(false); }, [load]));
+  useLiveRefresh(() => { load(true); }, ["stock", "orders"]);
 
   const lookup = async (code: string) => {
     try {

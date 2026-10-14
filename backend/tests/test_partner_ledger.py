@@ -11,8 +11,11 @@ from partner_pay import (  # noqa: E402
     MUTABLE_TYPES,
     balance_inc,
     cash_card_totals,
+    company_partner_balances,
     ledger_totals,
+    present_partner_balance,
     profit_share_inc,
+    summary_payload,
     tx_balance_delta,
     tx_is_cash_inflow,
 )
@@ -91,3 +94,84 @@ class TestPartnerCashCardTotals:
         ledger = ledger_totals(shaped)
         assert ledger["balance"] == pytest.approx(697659.78)
         assert cash["cash_net"] != ledger["balance"]
+
+
+class TestAliBalPartnerCardMatchesSelector:
+    """Ali BAL hareketleri: kart toplamı = ortak bakiyelerinin toplamı.
+
+    Seçicideki imzalı defter (Ali −288.340,22 + Mustafa +30.257,85) ile
+    kasa Giriş/Çıkış neti birbirinden sapar. Kart, kasa netini değil
+    present_partner_balance(toplam defter) sonucunu gösterir.
+    """
+
+    def test_ali_bal_movements_card_equals_sum_of_partner_balances(self):
+        ali_txs = [
+            {"partner_id": "ali", "type": "credit", "amount": 100000},
+            {"partner_id": "ali", "type": "withdrawal", "amount": 366271.84},
+            {
+                "partner_id": "ali",
+                "type": "withdrawal",
+                "amount": 22068.38,
+                "source": "bank_match",
+                "bank_tx_type": "outflow",
+            },
+        ]
+        mustafa_txs = [
+            {"partner_id": "mustafa", "type": "capital_in", "amount": 30257.85},
+        ]
+        txs = ali_txs + mustafa_txs
+        # Kayıtlı bakiye bayat; ekran bunu değil hareket defterini kullanır.
+        partners = [
+            {"_id": "ali", "name": "Ali BAL", "share_percent": 50, "balance": 0},
+            {"_id": "mustafa", "name": "Mustafa Bal", "share_percent": 50, "balance": 999},
+        ]
+
+        ali_ledger = ledger_totals(ali_txs)
+        assert ali_ledger["balance"] == pytest.approx(-288340.22)
+        mustafa_ledger = ledger_totals(mustafa_txs)
+        assert mustafa_ledger["balance"] == pytest.approx(30257.85)
+
+        view = company_partner_balances(partners, txs)
+        by_id = {row["_id"]: row for row in view["partners"]}
+        ali = by_id["ali"]
+        mustafa = by_id["mustafa"]
+
+        assert ali["balance"] == pytest.approx(-288340.22)
+        assert ali["balance"] != partners[0]["balance"]
+        ali_view = present_partner_balance(ali["balance"])
+        assert ali["balance_label"] == "Borçlu"
+        assert ali["balance_abs"] == pytest.approx(288340.22)
+        assert ali["balance_display"] == pytest.approx(ali_view["display"])
+        assert ali["balance_display"] == pytest.approx(288340.22)
+
+        assert mustafa["balance"] == pytest.approx(30257.85)
+        assert mustafa["balance"] != partners[1]["balance"]
+        assert mustafa["balance_label"] == "Alacaklı"
+        assert mustafa["balance_abs"] == pytest.approx(30257.85)
+        assert mustafa["balance_display"] == pytest.approx(-30257.85)
+
+        signed_sum = round(ali["balance"] + mustafa["balance"], 2)
+        display_sum = round(ali["balance_display"] + mustafa["balance_display"], 2)
+        assert signed_sum == pytest.approx(-258082.37)
+        assert view["total_balance"] == pytest.approx(signed_sum)
+        assert view["total_balance"] == pytest.approx(sum(row["balance"] for row in view["partners"]))
+        assert view["card_display"] == pytest.approx(display_sum)
+        assert view["card_display"] == pytest.approx(sum(row["balance_display"] for row in view["partners"]))
+        assert view["label"] == "Borçlu"
+        assert view["abs"] == pytest.approx(258082.37)
+        card = present_partner_balance(view["total_balance"])
+        assert view["card_display"] == card["display"]
+        assert view["label"] == card["label"]
+
+        cash = cash_card_totals(txs)
+        assert cash["cash_net"] != pytest.approx(view["total_balance"])
+        assert cash["cash_net"] != pytest.approx(view["card_display"])
+        # Banka çıkış eşleşmesi kasada giriş, defterde çekimdir; kart kasa netini kullanmaz.
+        assert tx_is_cash_inflow(ali_txs[2]) is True
+
+        payload = summary_payload({**view, "cash": cash, "source_partners": partners})
+        assert payload["total_balance"] == pytest.approx(view["total_balance"])
+        assert payload["total_card_pocket"] == pytest.approx(view["total_balance"])
+        assert payload["total_cash_net"] == pytest.approx(view["card_display"])
+        assert payload["balance_label"] == "Borçlu"
+        assert payload["total_card_pocket"] != pytest.approx(cash["cash_net"])

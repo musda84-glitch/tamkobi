@@ -34,6 +34,7 @@ import {
   partnerMovementNotice,
   partnerTxLabel,
   partnerBalanceMeta,
+  partnerOptionLabel,
   partnerSummaryCardMeta,
   partnerCardCashFlow,
   partnerCardTone,
@@ -380,7 +381,7 @@ describe("finance drafts", () => {
     expect(partnerBalanceMeta(0).badge).toBe("Denk");
     const card = partnerSummaryCardMeta({
       total_card_pocket: 800,
-      total_cash_net: -800,
+      total_cash_net: 236013.99,
       total_cash_in: 1000,
       total_cash_out: 1800,
       total_balance: 50,
@@ -388,6 +389,9 @@ describe("finance drafts", () => {
     expect(card.fromCash).toBe(true);
     expect(card.display).toBe(-800);
     expect(card.badge).toBe("Alacaklı");
+    expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).toContain("Borçlu");
+    expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).not.toContain("-");
+    expect(partnerOptionLabel({ name: "Mustafa Bal", share_percent: 50, balance: 30257.85 })).toContain("Alacaklı");
   });
 
   it("partner card cash flow uses tx kasa yönü like web ledger", () => {
@@ -408,7 +412,7 @@ describe("finance drafts", () => {
     // capital_in Giriş; withdrawal+credit Çıkış (web partnerTxIsCashInflow)
     expect(flow.giris).toBe(50000);
     expect(flow.cikis).toBe(-(20000 + 5000));
-    expect(flow.display).toBe(50000 - 25000);
+    expect(flow.display).toBe(382340.22);
     expect(flow.badge).toBe("Borçlu");
   });
 });

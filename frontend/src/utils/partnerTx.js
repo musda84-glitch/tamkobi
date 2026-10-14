@@ -100,25 +100,33 @@ export function partnerBalanceMeta(balance) {
 }
 
 /**
- * Amber kart / net özet: API kasa neti (total_card_pocket / total_cash_net) öncelikli.
- * Eski yanıtta yalnızca total_balance varsa ledger cebi kullanılır.
+ * Amber kart: backend present_partner_balance ile aynı sayı.
+ * total_card_pocket imzalı ortak bakiyelerinin toplamıdır (kasa neti değil).
  */
 export function partnerSummaryCardMeta(summary) {
-  if (!summary) return partnerBalanceMeta(0);
-  const pocketRaw = summary.total_card_pocket;
-  if (pocketRaw != null && pocketRaw !== "") {
-    const meta = partnerBalanceMeta(pocketRaw);
-    const cashNet = Number(summary.total_cash_net);
-    return {
-      ...meta,
-      display: Number.isFinite(cashNet) ? cashNet : meta.display,
-      cashIn: Number(summary.total_cash_in) || 0,
-      cashOut: Number(summary.total_cash_out) || 0,
-      fromCash: true,
-    };
-  }
-  const meta = partnerBalanceMeta(summary.total_balance);
-  return { ...meta, cashIn: 0, cashOut: 0, fromCash: false };
+  if (!summary) return { ...partnerBalanceMeta(0), cashIn: 0, cashOut: 0, fromCash: false };
+  const hasPocket = summary.total_card_pocket != null && summary.total_card_pocket !== "";
+  const pocket = hasPocket ? summary.total_card_pocket : summary.total_balance;
+  const meta = partnerBalanceMeta(pocket);
+  return {
+    ...meta,
+    cashIn: Number(summary.total_cash_in) || 0,
+    cashOut: Number(summary.total_cash_out) || 0,
+    fromCash: hasPocket,
+  };
+}
+
+/** Seçici: işaret yok, mutlak tutar + Borçlu/Alacaklı, Türkçe biçim. */
+export function partnerOptionLabel(partner) {
+  const meta = partnerBalanceMeta(partner?.balance);
+  const absRaw = partner?.balance_abs != null && partner.balance_abs !== "" ? Number(partner.balance_abs) : meta.abs;
+  const abs = Number.isFinite(absRaw) ? absRaw : 0;
+  const label = partner?.balance_label || meta.label;
+  const share = partner?.share_percent ?? 0;
+  const name = partner?.name || "Ortak";
+  const amount = abs.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const tag = label && label !== "Denk" ? ` ${label}` : "";
+  return `${name} (Ortak • %${share} · ${amount} ₺${tag})`;
 }
 /** Artı: ortak alacağı artar (para koy / alacak fişi / maaş / tahakkuk kâr payı). */
 export function partnerTxIncreasesBalance(type, tx) {

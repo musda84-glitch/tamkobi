@@ -1,5 +1,6 @@
 import type { Contact, Invoice } from "../types";
 import type { BankAccount, BankTx, ExpenseCategory, Partner } from "./finance";
+import { partnerOptionLabel } from "./finance";
 import { fmtMoney, idOf } from "./money";
 
 export const MATCH_MODES = [
@@ -245,7 +246,7 @@ export function transferSelectGroups(accounts: BankAccount[], partners: Partner[
       label: "Ortaklar Hesabı",
       options: active.map((p) => ({
         value: `partner:${idOf(p)}`,
-        label: `${p.name || "Ortak"} (Ortak · %${p.share_percent ?? 0} · ${fmtMoney(p.balance)})`,
+        label: partnerOptionLabel(p),
       })),
     });
   }

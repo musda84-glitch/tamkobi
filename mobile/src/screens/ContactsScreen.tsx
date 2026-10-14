@@ -5,6 +5,7 @@ import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
 import { Badge, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact } from "../types";
@@ -83,6 +84,7 @@ export function ContactsScreen() {
   }, [client, companyId, loadFlags]);
 
   useFocusEffect(useCallback(() => { load(false); }, [load]));
+  useLiveRefresh(() => { load(true); }, ["contacts", "cash", "invoices"]);
 
   const amountOf = useCallback(
     (c: Contact) => contactDisplayBalance(c, null, flags[idOf(c)]),

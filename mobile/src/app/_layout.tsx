@@ -6,6 +6,7 @@ import { ConfirmHost } from "@/components/ConfirmDialog";
 import { LocationBgBridge } from "@/components/LocationBgBridge";
 import { MesaimLockBridge } from "@/components/MesaimLockBridge";
 import { PushBridge } from "@/components/PushBridge";
+import { CompanyEventBridge } from "@/live/CompanyEventBridge";
 import { HeaderBack } from "@/components/StackHeader";
 import { colors } from "@/theme";
 import { typeface } from "@/theme/softFont";
@@ -120,6 +121,7 @@ export default function RootLayout() {
         <MesaimGateProvider>
           <StatusBar style="auto" />
           <PushBridge />
+          <CompanyEventBridge />
           <LocationBgBridge />
           <MesaimLockBridge />
           <ConfirmHost />

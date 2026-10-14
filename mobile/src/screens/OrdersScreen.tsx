@@ -6,6 +6,7 @@ import { OrderActions } from "../components/OrderActions";
 import { ChannelLogo } from "../components/ChannelLogo";
 import { TabStrip } from "../components/TabStrip";
 import { Empty, ErrorBanner, Field, ListRow, Muted, Screen, Badge, Row } from "../components/kit";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { go } from "../nav";
 import type { Order } from "../types";
 import { orderNumberLabel, statusTr, marketplaceStatusTr } from "../utils/labels";
@@ -45,6 +46,7 @@ export function OrdersScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+  useLiveRefresh(load, ["orders", "invoices", "stock"]);
   const counts = useMemo(() => orderListFilterCounts(rows), [rows]);
   const filtered = useMemo(() => filterOrders(rows, filter, q), [filter, q, rows]);
   const tabs = useMemo(
