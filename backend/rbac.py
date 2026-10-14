@@ -131,13 +131,31 @@ FEATURES = [
     ("account_companies", "Hesap: Şirketlerim", "Sol menü Hesap açılır listesindeki Şirketlerim alanı ve şirket değiştirme. Kapalıysa personel yalnız aktif firmayı görür; şirket listesi/geçiş gizlenir."),
     ("export_personal_data", "Kişisel verilerimi ZIP indir", "Kenar çubuğundaki kişisel veri ZIP indirme ve Hesap → Profil veri dışa aktarımı. Kapalıysa buton gizlenir; API de engeller."),
     ("company_audit", "İşlem geçmişini görebilir", "Sistem menüsündeki İşlem Geçmişi. Kapalıysa kullanıcı ve personel bu ekranı açamaz. Firma yöneticisi her zaman görür ve buradan yetki verir."),
+    # Personel portalı (ik) ve mobil saha — aç/kapa, varsayılan kapalı. Yönetici her zaman açık.
+    ("portal_atolye", "Atölye (üretim / iş emri)", "İK portalı ve mobil menüde Atölye. Kapalıysa personel iş emri uçlarında 403 alır. Diğer rollerde mevcut modül yetkisi durur. Varsayılan kapalı."),
+    ("portal_pick", "Sipariş Toplama", "İK portalı ve mobil menüde sipariş toplama. Kapalıysa personel toplama uçlarında 403 alır. Varsayılan kapalı."),
+    ("portal_sayim", "Stok Sayımı", "İK portalı ve mobil menüde stok sayımı. Kapalıysa personel sayım uçlarında 403 alır. Varsayılan kapalı."),
+    ("portal_saha", "Saha Sipariş", "İK portalı ve mobil menüde saha siparişi. Kapalıysa personel saha siparişi oluşturamaz. Varsayılan kapalı."),
+    ("portal_vehicles", "Araçlarım", "İK portalı ve mobil menüde araçlar. Kapalıysa personel araç uçlarında 403 alır. Varsayılan kapalı."),
 ]
 FEATURE_DEFAULTS: Dict[str, bool] = {k: True for k, _, _ in FEATURES}
+# Saha özellikleri: kayıtlı değilse kapalı (admin role_features içinde her zaman açık).
+PORTAL_FEATURE_KEYS = frozenset({
+    "portal_atolye", "portal_pick", "portal_sayim", "portal_saha", "portal_vehicles",
+})
+# API öneki -> (özellik anahtarı, modül). En uzun önek kazanır.
+PORTAL_API_RULES = (
+    ("/api/production/work-orders", "portal_atolye", "/atolye"),
+    ("/api/order-picks", "portal_pick", "/sevk"),
+    ("/api/warehouses/stock-counts", "portal_sayim", "/sayim"),
+    ("/api/vehicles", "portal_vehicles", "/vehicles"),
+)
+PORTAL_FEATURE_LABELS = {k: label for k, label, _ in FEATURES if k in PORTAL_FEATURE_KEYS}
 
 
 def feature_default(code: str, key: str) -> bool:
     """Per-role defaults when a feature key was never saved on the role doc."""
-    if key == "company_audit":
+    if key == "company_audit" or key in PORTAL_FEATURE_KEYS:
         return False
     if code == "admin":
         return True
@@ -158,6 +176,69 @@ def role_features(role: dict) -> Dict[str, bool]:
         return {k: True for k, _, _ in FEATURES}
     f = role.get("features") or {}
     return {k: bool(f.get(k, feature_default(code, k))) for k, _, _ in FEATURES}
+
+
+def portal_rule_for_path(path: str):
+    """Saha API kuralı: (prefix, feature_key, module_key) veya None."""
+    p = (path or "").split("?", 1)[0].rstrip("/") or "/"
+    best = None
+    for prefix, feat, mod in PORTAL_API_RULES:
+        if p == prefix or p.startswith(prefix + "/"):
+            if best is None or len(prefix) > len(best[0]):
+                best = (prefix, feat, mod)
+    return best
+
+
+def _portal_module_allows(role: dict, module_key: str, path: str, method: str) -> bool:
+    """Personel dışı roller: mevcut modül matrisi (GET dahil) erişimi sürdürür."""
+    perms = (role or {}).get("permissions") or {}
+    method_u = str(method or "GET").upper()
+    if method_u in ("GET", "HEAD"):
+        if level_allows(perms.get(module_key), "view"):
+            return True
+        # Üretim ekranı iş emirlerini /production ile de okur.
+        if module_key == "/atolye" and level_allows(perms.get("/production"), "view"):
+            return True
+        return False
+    if mutation_allowed(module_key, path, perms, method_u):
+        return True
+    if module_key == "/atolye" and level_allows(perms.get("/production"), "edit"):
+        return method_u != "DELETE"
+    return False
+
+
+def portal_field_allowed(user: Optional[dict], role: Optional[dict], feature_key: str, module_key: str, path: str, method: str = "GET") -> bool:
+    """Saha ucu.
+
+    Açık özellik her role yeter (modül none olsa da).
+    Personelde modül mirası yetmez — özellik kapalıysa 403.
+    Diğer rollerde kapalı özellik mevcut modül davranışını bozmaz (GET açık kalır).
+    """
+    if not user:
+        return False
+    if user.get("is_super_admin") or normalize_role_code(user.get("role")) == "admin":
+        return True
+    feats = role_features(role or {"code": user.get("role") or "", "features": {}})
+    if feats.get(feature_key):
+        return True
+    if normalize_role_code(user.get("role")) == "personel":
+        return False
+    method_u = str(method or "GET").upper()
+    if method_u in ("GET", "HEAD"):
+        return True
+    return _portal_module_allows(role or {}, module_key, path, method_u)
+
+
+def portal_feature_grant(user: Optional[dict], role: Optional[dict], feature_key: str) -> bool:
+    """Özellik açıkça açıksa modül mutation kontrolü bu uçta atlanır (personel modülü none olabilir)."""
+    if not user or user.get("is_super_admin") or normalize_role_code(user.get("role")) == "admin":
+        return False
+    return bool(role_features(role or {"code": user.get("role") or "", "features": {}}).get(feature_key))
+
+
+def portal_denial_detail(feature_key: str) -> str:
+    label = PORTAL_FEATURE_LABELS.get(feature_key) or feature_key
+    return f"Bu özellik için yetkiniz yok ({label})."
 
 
 MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "unit_price_incl", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "total_incl", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
@@ -630,6 +711,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 await company_audit.safe_commit(request, _db, user, getattr(response, "status_code", 500))
             return response
 
+        cid = None
         if user and not user.get("is_super_admin"):
             cid = request.query_params.get("company_id")
             if not cid:
@@ -665,6 +747,23 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 return addon_block
         except Exception:
             pass
+        portal_grant = False
+        if user and not user.get("is_super_admin") and normalize_role_code(user.get("role")) != "admin":
+            rule = portal_rule_for_path(path)
+            saha_post = request.method == "POST" and path.rstrip("/") == "/api/orders"
+            if rule or (saha_post and normalize_role_code(user.get("role")) == "personel"):
+                role = await role_for(user, cid)
+                if rule:
+                    _prefix, feat, mod = rule
+                    if not portal_field_allowed(user, role, feat, mod, path, request.method):
+                        return JSONResponse({"detail": portal_denial_detail(feat)}, status_code=403)
+                    if portal_feature_grant(user, role, feat):
+                        portal_grant = True
+                # Saha siparişi ortak /orders ucunu kullanır; personelde özellik açıkça gerekir.
+                if saha_post and normalize_role_code(user.get("role")) == "personel":
+                    if not role_features(role).get("portal_saha"):
+                        return JSONResponse({"detail": portal_denial_detail("portal_saha")}, status_code=403)
+                    portal_grant = True
         if request.method == "GET" or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
             response = await call_next(request)
             if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
@@ -678,7 +777,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                         return await _audit_done(JSONResponse(content=None, status_code=response.status_code))
                     return await _audit_done(JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"}))
             return await _audit_done(response)
-        if user and user.get("role") != "admin" and module:
+        if user and user.get("role") != "admin" and module and not portal_grant:
             role = await role_for(user)
             perms = role.get("permissions", {})
             if not mutation_allowed(module, path, perms, request.method):
@@ -723,7 +822,15 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
         "modules": [{"key": k, "label": l, "help": MODULE_HELP.get(k, "")} for k, l in MODULES],
         "levels": list(LEVELS),
         "level_meta": list(LEVEL_META),
-        "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES],
+        "features": [
+            {
+                "key": k,
+                "label": l,
+                "help": h,
+                "group": "portal" if k in PORTAL_FEATURE_KEYS else "detail",
+            }
+            for k, l, h in FEATURES
+        ],
         "policies": policies,
         "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles],
     }

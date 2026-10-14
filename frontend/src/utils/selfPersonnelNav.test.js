@@ -39,7 +39,11 @@ describe("selfPersonnelNav", () => {
     expect(isPersonelRole(p)).toBe(true);
     expect(personelMenuPathAllowed("/mesai", p)).toBe(true);
     expect(personelMenuPathAllowed("/personelim", p)).toBe(true);
-    expect(personelMenuPathAllowed("/atolye", p)).toBe(true);
+    expect(personelMenuPathAllowed("/atolye", p)).toBe(false);
+    expect(personelMenuPathAllowed("/sayim", p)).toBe(false);
+    expect(personelMenuPathAllowed("/sevk", p)).toBe(false);
+    expect(personelMenuPathAllowed("/atolye", { ...p, features: { portal_atolye: true } })).toBe(true);
+    expect(personelMenuPathAllowed("/sevk", { ...p, features: { portal_pick: true } })).toBe(true);
     expect(personelMenuPathAllowed("/hesap", p)).toBe(true);
     expect(personelMenuPathAllowed("/yardim", p)).toBe(true);
     expect(personelMenuPathAllowed("/invoices", p)).toBe(false);

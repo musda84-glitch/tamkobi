@@ -243,6 +243,18 @@ def diff_summary(before: Optional[dict], after: Optional[dict], limit: int = 4) 
         a, b = old.get(key), new.get(key)
         if a == b:
             continue
+        if key == "features":
+            code = str((new or {}).get("code") or (old or {}).get("code") or "")
+            before_f = rbac.role_features({"code": code, "features": a if isinstance(a, dict) else {}})
+            after_f = rbac.role_features({"code": code, "features": b if isinstance(b, dict) else {}})
+            labels = {fk: lab for fk, lab, _ in rbac.FEATURES}
+            for fk, lab in labels.items():
+                if bool(before_f.get(fk)) == bool(after_f.get(fk)):
+                    continue
+                parts.append(f"{lab} {'açıldı' if after_f.get(fk) else 'kapatıldı'}")
+                if len(parts) >= limit:
+                    break
+            continue
         if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
             if a != b:
                 parts.append(f"{_FIELD_LABELS.get(key, key)} güncellendi")

@@ -138,6 +138,25 @@ describe("permissions", () => {
     expect(visibleModules({ role: "admin" }, null).some((m) => m.key === "sayim")).toBe(true);
   });
 
+  it("hides field modules from personel until the portal feature is on", () => {
+    const personel = { role: "personel", permissions: { "/atolye": "edit", "/sevk": "edit", "/sayim": "edit", "/saha": "view", "/vehicles": "edit" }, features: {} };
+    expect(can(personel, "/atolye")).toBe(false);
+    expect(can(personel, "/sevk", "edit")).toBe(false);
+    expect(can(personel, "/sayim")).toBe(false);
+    expect(isMoreLinkVisible({ path: "/atolye" }, personel, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/sayim" }, personel, null)).toBe(false);
+    expect(visibleModules(personel, null).map((m) => m.key)).not.toContain("atolye");
+    expect(visibleModules(personel, null).map((m) => m.key)).not.toContain("saha");
+    const granted = { ...personel, features: { portal_atolye: true, portal_pick: true, portal_saha: true } };
+    expect(can(granted, "/atolye", "edit")).toBe(true);
+    expect(can(granted, "/sevk")).toBe(true);
+    expect(can(granted, "/sayim")).toBe(false);
+    expect(isMoreLinkVisible({ path: "/atolye" }, granted, null)).toBe(true);
+    expect(visibleModules(granted, null).map((m) => m.key)).toContain("atolye");
+    expect(visibleModules(granted, null).map((m) => m.key)).toContain("saha");
+    expect(visibleModules(granted, null).map((m) => m.key)).not.toContain("sayim");
+  });
+
   it("shows Üretim Atölye for the production role and hides it when licensed off", () => {
     const production = { role: "production", permissions: { "/atolye": "edit", "/production": "edit" } };
     const accountant = { role: "accountant", permissions: { "/atolye": "none" } };

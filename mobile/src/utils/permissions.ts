@@ -14,6 +14,27 @@ export type License = {
 
 const LICENSE_KEY: Record<string, string> = { "/panel": "/", "/personelim": "/mesai" };
 
+/** İK portalı / mobil saha. Backend FEATURES ile aynı; kayıt yoksa kapalı. */
+export const PORTAL_FIELD_BY_PATH: Record<string, string> = {
+  "/atolye": "portal_atolye",
+  "/sevk": "portal_pick",
+  "/sayim": "portal_sayim",
+  "/saha": "portal_saha",
+  "/vehicles": "portal_vehicles",
+};
+
+const PORTAL_FEATURE_KEYS = new Set(Object.values(PORTAL_FIELD_BY_PATH));
+
+function isPersonelRole(user: SessionUser): boolean {
+  return String(user?.role || "").trim().toLowerCase() === "personel";
+}
+
+export function hasPortalFeature(user: SessionUser, key: string): boolean {
+  if (!user || !key) return false;
+  if (user.role === "admin") return true;
+  return user.features?.[key] === true;
+}
+
 export function permPath(path: string): string {
   return LICENSE_KEY[path] || path;
 }
@@ -43,6 +64,9 @@ function levelAllows(value: PermissionLevel | undefined, level: "view" | "edit" 
 
 export function can(user: SessionUser, path: string, level: "view" | "edit" | "delete" = "view"): boolean {
   if (user?.role === "admin") return true;
+  const portalKey = PORTAL_FIELD_BY_PATH[permPath(path)];
+  if (portalKey && hasPortalFeature(user, portalKey)) return true;
+  if (portalKey && isPersonelRole(user)) return false;
   if (path === "/personnel") {
     if (level === "view") return hasPersonnelAccess(user);
     return levelAllows(permissionLevel(user, path), level);
@@ -74,6 +98,7 @@ export function feature(user: SessionUser, key: string): boolean {
   }
   if (key === "view_prices" && (role === "personel" || role === "production")) return false;
   if ((key === "account_companies" || key === "export_personal_data") && role === "personel") return false;
+  if (PORTAL_FEATURE_KEYS.has(key)) return false;
   return true;
 }
 

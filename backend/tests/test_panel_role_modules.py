@@ -149,7 +149,7 @@ def test_personel_and_production_cannot_open_stock_cards():
 
 
 def test_auth_license_key_keeps_first_class_modules():
-    text = Path("/workspace/frontend/src/context/AuthContext.jsx").read_text()
+    text = Path("/workspace/frontend/src/utils/authAccess.js").read_text()
     block = text.split("LICENSE_KEY")[1].split(";")[0]
     assert '"/edoc-inbox"' not in block
     assert '"/saha"' not in block
@@ -178,7 +178,8 @@ def test_backfill_purchase_orders_inherits_stock():
 def test_saas_catalog_covers_non_core_modules():
     non_core = {k for k, _ in MODULES if k not in CORE_MODULES}
     assert set(CATEGORIES) == non_core
-    assert set(DESCRIPTIONS) == non_core
+    # MODULE_HELP also documents core screens; the sellable catalog is the non-core set.
+    assert set(DESCRIPTIONS) - CORE_MODULES == non_core
     assert set(DEFAULT_MODULE_PRICES) == non_core
 
 

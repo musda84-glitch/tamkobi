@@ -1,14 +1,14 @@
+import { hasPortalFeature, portalFeatureKey } from "./portalFields";
+
 /** Self-servis İK menüleri (Benim Sayfam / Mesaim). */
 export const SELF_PERSONNEL_PATHS = ["/personelim", "/mesai"];
 
-/** Personel rolünün web menüsünde görebileceği alanlar (mobil sekme / More ile uyumlu). */
+/** Personel rolünün web menüsünde görebileceği alanlar. Saha modülleri özellik iznine bağlıdır. */
 export const PERSONEL_MENU_PATHS = [
   "/",
   "/panel",
   "/mesai",
   "/personelim",
-  "/atolye",
-  "/saha",
   "/communication",
   "/support",
   "/yardim",
@@ -43,6 +43,8 @@ export function personelMenuPathAllowed(path, user) {
   const p = String(path || "").split("?")[0];
   if (p === "/hesap" || p.startsWith("/hesap/")) return true;
   if (p === "/yardim" || p.startsWith("/yardim/")) return true;
+  const fieldKey = portalFeatureKey(p);
+  if (fieldKey) return hasPortalFeature(user, fieldKey);
   return PERSONEL_MENU_PATHS.includes(p);
 }
 

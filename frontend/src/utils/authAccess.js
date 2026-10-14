@@ -1,3 +1,5 @@
+import { hasPortalFeature, isPersonelRoleCode, portalFeatureKey } from "./portalFields";
+
 /** Path aliases used for both permission and license module keys. */
 export const AUTH_LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai" };
 
@@ -12,6 +14,11 @@ export function authPermPath(path) {
 export function canAccessPath(user, path, level = "view", resolvePath = authPermPath) {
   if (!user) return false;
   if (user.role === "admin") return true;
+  const featureKey = portalFeatureKey(resolvePath(path));
+  // Açık saha özelliği modül none olsa da bu ekranı açar.
+  if (featureKey && hasPortalFeature(user, featureKey)) return true;
+  // Personelde modül mirası yetmez; özellik kapalıysa menüde yok.
+  if (featureKey && isPersonelRoleCode(user)) return false;
   const perms = user.permissions;
   if (!perms) return false;
   const value = perms[resolvePath(path)];
@@ -25,6 +32,7 @@ export function canAccessPath(user, path, level = "view", resolvePath = authPerm
 export function isFeatureEnabled(user, key) {
   if (!user) return false;
   if (user.role === "admin") return true;
+  if (String(key || "").startsWith("portal_")) return hasPortalFeature(user, key);
   if (!user.features) return true;
   return user.features[key] !== false;
 }

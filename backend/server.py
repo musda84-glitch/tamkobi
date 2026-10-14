@@ -16470,6 +16470,10 @@ async def _mark_sales_order_sent_to_production(
 @api_router.post("/orders")
 async def create_order(order: Order, user: dict = Depends(get_current_user)):
     order.company_id = tenant_access.resolve_company_id(user, order.company_id)
+    if rbac.normalize_role_code(user.get("role")) == "personel" and not user.get("is_super_admin"):
+        role = await rbac.role_for(user, order.company_id)
+        if (order.channel or "") != "saha" or not rbac.role_features(role).get("portal_saha"):
+            raise HTTPException(status_code=403, detail=rbac.portal_denial_detail("portal_saha"))
     await _fill_stock_codes(order.company_id, order.items)
     if not order.order_number:
         order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
