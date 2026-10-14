@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { EyeOff, GripVertical, ImagePlus, Plus, ArrowDown, ArrowUp } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { compressImageFile } from "../../utils/compressImage";
+import { prepareStampFile } from "../../utils/einvoiceStampImage";
+import { transformXsltToHtml } from "../../utils/einvoiceXsltPreview";
 import {
   BLOCK_LABELS,
   BLOCK_FONT_SIZE_OPTIONS,
@@ -19,7 +21,12 @@ import {
   SPAN_OPTIONS,
   QR_SIZE_OPTIONS,
   LOGO_SIZE_OPTIONS,
+  STAMP_ALIGN_OPTIONS,
+  STAMP_SIZE_OPTIONS,
   TOTAL_ROW_LABELS,
+  asStampAlign,
+  asStampSize,
+  layoutToXslt,
   blockFontFamily,
   blockFontSize,
   blockHasFont,
@@ -188,6 +195,104 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
 );
 
 const stopDrag = (e) => e.stopPropagation();
+
+const STAMP_ALIGN_CLASS = {
+  left: "items-start text-left",
+  center: "items-center text-center",
+  right: "items-end text-right",
+};
+
+const StampBlock = ({ layout, onPatch }) => {
+  const fileRef = useRef(null);
+  const [warn, setWarn] = useState("");
+  const [busy, setBusy] = useState(false);
+  const size = asStampSize(layout.stampSize);
+  const align = asStampAlign(layout.stampAlign);
+  const onFile = async (e) => {
+    const raw = e.target.files?.[0];
+    e.target.value = "";
+    if (!raw) return;
+    setBusy(true);
+    try {
+      const out = await prepareStampFile(raw, { knockoutWhite: !!layout.stampKnockoutWhite });
+      if (!out || out.warning || !out.dataUrl) {
+        setWarn(out?.warning || "Görsel eklenemedi.");
+        return;
+      }
+      setWarn("");
+      onPatch({ stampImage: out.dataUrl });
+    } catch {
+      setWarn("Görsel işlenemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={`flex flex-col gap-1.5 ${STAMP_ALIGN_CLASS[align] || STAMP_ALIGN_CLASS.right}`} data-testid="einvoice-design-stamp">
+      {layout.stampImage ? (
+        <img
+          src={layout.stampImage}
+          alt="Kaşe / İmza"
+          className="object-contain"
+          style={{ width: size, height: "auto", maxWidth: "100%" }}
+          data-testid="einvoice-design-stamp-img"
+        />
+      ) : (
+        <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-3 py-4">Kaşe / İmza</div>
+      )}
+      <div className="flex flex-wrap items-center gap-1" onMouseDown={stopDrag} onClick={stopDrag}>
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" className="hidden" onChange={onFile} data-testid="einvoice-design-stamp-input" />
+        <button type="button" disabled={busy} onClick={() => fileRef.current?.click()} className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-slate-200 text-slate-700 hover:bg-slate-100 inline-flex items-center gap-1" data-testid="einvoice-design-stamp-upload">
+          <ImagePlus className="w-3 h-3" /> {busy ? "İşleniyor…" : "Resim yükle"}
+        </button>
+        {layout.stampImage ? (
+          <button type="button" onClick={() => { setWarn(""); onPatch({ stampImage: "" }); }} className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-100" data-testid="einvoice-design-stamp-clear">
+            Resmi kaldır
+          </button>
+        ) : null}
+        <label className="inline-flex items-center gap-1 text-[9px] font-semibold text-slate-600" data-testid="einvoice-design-stamp-knockout-label">
+          <input
+            type="checkbox"
+            checked={!!layout.stampKnockoutWhite}
+            onChange={(e) => onPatch({ stampKnockoutWhite: e.target.checked })}
+            data-testid="einvoice-design-stamp-knockout"
+          />
+          Beyazı şeffaf yap
+        </label>
+      </div>
+      <div className="flex items-center flex-wrap gap-1" data-testid="einvoice-design-stamp-sizes" onMouseDown={stopDrag}>
+        <span className="text-[9px] font-bold text-slate-500">Boyut</span>
+        {STAMP_SIZE_OPTIONS.map((opt) => (
+          <button
+            key={opt.size}
+            type="button"
+            title={`${opt.size} px`}
+            onClick={(e) => { e.stopPropagation(); onPatch({ stampSize: opt.size }); }}
+            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${size === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
+            data-testid={`einvoice-design-stamp-size-${opt.size}`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center flex-wrap gap-1" data-testid="einvoice-design-stamp-aligns" onMouseDown={stopDrag}>
+        <span className="text-[9px] font-bold text-slate-500">Hiza</span>
+        {STAMP_ALIGN_OPTIONS.map((opt) => (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onPatch({ stampAlign: opt.id }); }}
+            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${align === opt.id ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
+            data-testid={`einvoice-design-stamp-align-${opt.id}`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {warn ? <p className="text-[10px] text-rose-700" data-testid="einvoice-design-stamp-warn">{warn}</p> : null}
+    </div>
+  );
+};
 
 const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
@@ -448,6 +553,9 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
       </div>
     );
   }
+  if (id === "stamp") {
+    return <StampBlock layout={layout} onPatch={onPatch} />;
+  }
   if (id === "qr") {
     const qrSize = Number(layout.qrSize) || 96;
     return (
@@ -494,6 +602,8 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const [overId, setOverId] = useState("");
   const [overPalette, setOverPalette] = useState(false);
   const [paperMode, setPaperMode] = useState(preferXsltPreview && xsltHtml ? "xslt" : "layout");
+  const [realXmlHtml, setRealXmlHtml] = useState("");
+  const [realXmlErr, setRealXmlErr] = useState("");
   const visible = L.blocks.filter((b) => !b.hidden);
   const hidden = L.blocks.filter((b) => b.hidden);
   const hiddenCols = hiddenLineCols(L);
@@ -582,6 +692,25 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     else if (isHeaderField(from)) patchHeader(setBlockHidden(L.headerFields, from, true));
     else if (isTotalRow(from)) patchTotals(setBlockHidden(L.totalRows, from, true));
     else patchBlocks(setBlockHidden(L.blocks, from, true));
+  };
+
+  const onRealXml = () => {
+    try {
+      const xslt = layoutToXslt(L, kind);
+      const html = transformXsltToHtml(xslt);
+      if (!html) {
+        setRealXmlHtml("");
+        setRealXmlErr("Gerçek XML önizlemesi bu tarayıcıda üretilemedi.");
+      } else {
+        setRealXmlErr("");
+        setRealXmlHtml(html);
+      }
+      setPaperMode("real");
+    } catch (err) {
+      setRealXmlHtml("");
+      setRealXmlErr(err?.message || "XSLT üretilemedi.");
+      setPaperMode("real");
+    }
   };
 
   const onLogo = async (e) => {
@@ -738,14 +867,29 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
         <div className="lg:col-span-9">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
             <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri) — en: Tam / 1/2 / 1/3, yan yana için ardışık 1/2</div>
-            {xsltHtml ? (
-              <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
-                <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
+              <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
+              <button type="button" onClick={onRealXml} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "real" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-preview-real-xml">Önizle (gerçek XML)</button>
+              {xsltHtml ? (
                 <button type="button" onClick={() => setPaperMode("xslt")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-xslt">Yüklenen XSLT</button>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
-          {paperMode === "xslt" && xsltHtml ? (
+          {paperMode === "real" ? (
+            realXmlHtml ? (
+              <iframe
+                title="Gerçek XML önizleme"
+                srcDoc={realXmlHtml}
+                sandbox="allow-same-origin"
+                className="w-full min-h-[22rem] h-[36rem] rounded-xl border shadow-sm bg-white"
+                data-testid="einvoice-design-preview"
+              />
+            ) : (
+              <p className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5" data-testid="einvoice-design-real-xml-error">
+                {realXmlErr || "Gerçek XML önizlemesi üretilemedi."}
+              </p>
+            )
+          ) : paperMode === "xslt" && xsltHtml ? (
             <iframe
               title="Yüklenen XSLT önizleme"
               srcDoc={xsltHtml}

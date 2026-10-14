@@ -3,17 +3,36 @@ import { createRoot } from "react-dom/client";
 import { act } from "react";
 import { EinvoiceDesignCanvas } from "./EinvoiceDesignCanvas";
 import { defaultLayout, normalizeLayout } from "../../utils/einvoiceDesignLayout";
+import { prepareStampFile } from "../../utils/einvoiceStampImage";
 
 jest.mock("../../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
 jest.mock("qrcode.react", () => ({ QRCodeSVG: () => <svg data-testid="einvoice-design-qr-svg" /> }));
+jest.mock("../../utils/einvoiceStampImage", () => {
+  const actual = jest.requireActual("../../utils/einvoiceStampImage");
+  return {
+    ...actual,
+    prepareStampFile: jest.fn(),
+  };
+});
+jest.mock("../../utils/einvoiceXsltPreview", () => ({
+  transformXsltToHtml: (xslt) => {
+    const text = String(xslt || "");
+    const m = text.match(/<div class="inv-stamp"[\s\S]*?<\/div>/);
+    return `<html><body><div id="real-xml">${m ? m[0] : "NO-STAMP"}</div></body></html>`;
+  },
+}));
 
 let host;
 let last;
+
+const STAMP_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   last = defaultLayout("e_invoice");
+  prepareStampFile.mockReset();
+  prepareStampFile.mockImplementation(async () => ({ dataUrl: STAMP_PNG, warning: "" }));
 });
 
 afterEach(() => {
@@ -443,4 +462,119 @@ test("each block has its own font size; global toolbar stays the paper default",
   });
   expect(last.fontSize).toBe(9);
   expect(last.blocks.find((b) => b.id === "meta").fontSize).toBe(8);
+});
+
+async function showStamp() {
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-stamp"]').click();
+  });
+}
+
+async function chooseStampFile() {
+  const input = host.querySelector('[data-testid="einvoice-design-stamp-input"]');
+  const file = new File([new Uint8Array([1, 2, 3])], "kase.png", { type: "image/png" });
+  await act(async () => {
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+test("stamp section is added from hidden blocks and supports width, order and hide", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-block-stamp"]')).toBeNull();
+  const palette = host.querySelector('[data-testid="einvoice-design-palette-stamp"]');
+  expect(palette?.textContent).toContain("Kaşe / İmza");
+  expect(palette?.textContent).toContain("Ekle");
+  await showStamp();
+  expect(last.blocks.find((b) => b.id === "stamp").hidden).toBe(false);
+  expect(host.querySelector('[data-testid="einvoice-design-stamp"]')?.textContent).toContain("Kaşe / İmza");
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-upload"]')?.textContent).toContain("Resim yükle");
+  expect(host.querySelector('[data-testid="einvoice-design-block-font-stamp"]')).toBeNull();
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-span-stamp-4"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "stamp").span).toBe(4);
+  expect(host.querySelector('[data-testid="einvoice-design-block-stamp"]').className).toContain("col-span-4");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-span-stamp-12"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "stamp").span).toBe(12);
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-span-stamp-6"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "stamp").span).toBe(6);
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-up-stamp"]').click();
+  });
+  expect(last.blocks.findIndex((b) => b.id === "stamp")).toBeLessThan(last.blocks.findIndex((b) => b.id === "iban"));
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-hide-stamp"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "stamp").hidden).toBe(true);
+  expect(host.querySelector('[data-testid="einvoice-design-palette-stamp"]')).not.toBeNull();
+});
+
+test("stamp upload embeds the image, size and align, and warns past the limit", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  await showStamp();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-stamp-knockout"]').click();
+  });
+  expect(last.stampKnockoutWhite).toBe(true);
+  await chooseStampFile();
+  expect(prepareStampFile).toHaveBeenCalled();
+  const opts = prepareStampFile.mock.calls[prepareStampFile.mock.calls.length - 1][1];
+  expect(opts.knockoutWhite).toBe(true);
+  expect(last.stampImage).toBe(STAMP_PNG);
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-img"]')?.getAttribute("src")).toBe(STAMP_PNG);
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-clear"]')?.textContent).toContain("Resmi kaldır");
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-stamp-size-200"]').click();
+  });
+  expect(last.stampSize).toBe(200);
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-img"]')?.style.width).toBe("200px");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-stamp-align-left"]').click();
+  });
+  expect(last.stampAlign).toBe("left");
+  expect(host.querySelector('[data-testid="einvoice-design-stamp"]').className).toContain("items-start");
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-preview-real-xml"]').click();
+  });
+  const frame = host.querySelector('[data-testid="einvoice-design-preview"]');
+  expect(frame?.tagName).toBe("IFRAME");
+  const srcdoc = frame?.getAttribute("srcdoc") || frame?.srcdoc || "";
+  expect(srcdoc).toContain(STAMP_PNG);
+  expect(srcdoc).toContain('alt="Kaşe / İmza"');
+  expect(srcdoc).toContain("width:200px");
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-paper-layout"]').click();
+  });
+  prepareStampFile.mockResolvedValueOnce({
+    dataUrl: "",
+    warning: "Kaşe görseli 150 KB sınırını aşıyor. Daha küçük bir PNG veya JPG seçin.",
+  });
+  await chooseStampFile();
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-warn"]')?.textContent).toMatch(/150 KB/);
+  expect(last.stampImage).toBe(STAMP_PNG);
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-stamp-clear"]').click();
+  });
+  expect(last.stampImage).toBe("");
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-img"]')).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-stamp-clear"]')).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-stamp"]')?.textContent).toContain("Resim yükle");
 });

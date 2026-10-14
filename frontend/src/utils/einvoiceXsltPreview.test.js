@@ -1,5 +1,6 @@
 import {
   buildXsltPreview,
+  extractXsltLogo,
   layoutFromXslt,
   parseXsltHints,
   prepareXsltForBrowser,
@@ -59,6 +60,13 @@ test("buildXsltPreview shows uploaded stylesheet, not the generic editor", () =>
 test("tiny stylesheet has no xslt paper preview", () => {
   const prev = buildXsltPreview("<xsl:stylesheet/>", "e_invoice");
   expect(prev.html).toBe("");
+});
+
+test("extractXsltLogo ignores the stamp image", () => {
+  const stamp = `data:image/png;base64,${"A".repeat(80)}`;
+  const logo = `data:image/png;base64,${"B".repeat(40)}`;
+  const xslt = `<div class="inv-stamp" align="right"><img alt="Kaşe / İmza" src="${stamp}"/></div><img src="${logo}"/>`;
+  expect(extractXsltLogo(xslt)).toBe(logo);
 });
 
 test("xsltFallbackPreviewHtml uses extracted style", () => {

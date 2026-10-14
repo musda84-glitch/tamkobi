@@ -1,12 +1,13 @@
 /** e-Fatura / e-Arşiv görsel tasarım düzeni → canlı önizleme + XSLT. */
 
 import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock } from "./einvoiceGibSeal";
+import { STAMP_MAX_BYTES, stampPayloadBytes } from "./einvoiceStampImage";
 
 export { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock };
 
 export const BLOCK_IDS = [
   "header", "supplier", "customer", "meta", "ettn", "lines", "totals",
-  "notes", "iban", "balance", "qr", "gib_seal_invoice", "gib_seal_archive", "spacer",
+  "notes", "iban", "balance", "stamp", "qr", "gib_seal_invoice", "gib_seal_archive", "spacer",
 ];
 
 export const BLOCK_LABELS = {
@@ -22,6 +23,7 @@ export const BLOCK_LABELS = {
   notes: "Notlar",
   iban: "IBAN / ödeme",
   balance: "Güncel bakiye",
+  stamp: "Kaşe / İmza",
   qr: "GİB karekod",
   spacer: "Boş alan",
 };
@@ -35,7 +37,7 @@ export const SPAN_OPTIONS = [
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
 const BLOCK_HIDDEN_BY_DEFAULT = {
-  ettn: false, gib_seal_invoice: true, gib_seal_archive: true, balance: true, qr: true, spacer: true,
+  ettn: false, gib_seal_invoice: true, gib_seal_archive: true, balance: true, stamp: true, qr: true, spacer: true,
 };
 const BLOCK_SPAN_BY_DEFAULT = {
   ettn: 12,
@@ -46,6 +48,7 @@ const BLOCK_SPAN_BY_DEFAULT = {
   customer: 6,
   iban: 6,
   balance: 6,
+  stamp: 6,
   qr: 6,
 };
 
@@ -91,6 +94,30 @@ export const LOGO_SIZE_OPTIONS = [
 export function asLogoSize(value, fallback = 72) {
   const n = Number(value);
   return LOGO_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
+/** Kaşe / imza görünen genişliği (px). Kaynak dosya ayrıca 400 px'e sıkıştırılır. */
+export const STAMP_SIZE_OPTIONS = [
+  { size: 96, label: "96" },
+  { size: 128, label: "128" },
+  { size: 160, label: "160" },
+  { size: 200, label: "200" },
+];
+
+export const STAMP_ALIGN_OPTIONS = [
+  { id: "left", label: "Sol" },
+  { id: "center", label: "Orta" },
+  { id: "right", label: "Sağ" },
+];
+
+export function asStampSize(value, fallback = 128) {
+  const n = Number(value);
+  return STAMP_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
+export function asStampAlign(value, fallback = "right") {
+  const s = String(value || "");
+  return STAMP_ALIGN_OPTIONS.some((o) => o.id === s) ? s : fallback;
 }
 
 export function asSpan(value, fallback = 12) {
@@ -430,6 +457,10 @@ export function defaultLayout(kind = "e_invoice") {
     logo: "",
     companyTitle: "",
     logoSize: 72,
+    stampImage: "",
+    stampSize: 128,
+    stampAlign: "right",
+    stampKnockoutWhite: false,
     qrSize: 96,
     ettnFontSize: 18,
     noteText: "",
@@ -463,6 +494,14 @@ export function gibSafeLogoSrc(value) {
   return "";
 }
 
+/** Kaşe görseli: yalnız data URI, gövde en fazla ~150 KB. Aşan veya http değer düşer. */
+export function asStampImage(value) {
+  const safe = gibSafeLogoSrc(value);
+  if (!safe) return "";
+  if (stampPayloadBytes(safe) > STAMP_MAX_BYTES) return "";
+  return safe;
+}
+
 export function normalizeLayout(raw, kind) {
   const base = defaultLayout(kind);
   if (!raw || typeof raw !== "object") return base;
@@ -480,6 +519,10 @@ export function normalizeLayout(raw, kind) {
   out.muted = asColor(raw.muted, base.muted);
   out.logo = asLogo(raw.logo);
   out.logoSize = asLogoSize(raw.logoSize, base.logoSize);
+  out.stampImage = asStampImage(raw.stampImage);
+  out.stampSize = asStampSize(raw.stampSize, base.stampSize);
+  out.stampAlign = asStampAlign(raw.stampAlign, base.stampAlign);
+  out.stampKnockoutWhite = !!raw.stampKnockoutWhite;
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   out.ettnFontSize = asEttnFontSize(raw.ettnFontSize, base.ettnFontSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
@@ -978,6 +1021,16 @@ function xsltLogoCluster(L, R) {
   return `<xsl:choose><xsl:when test="$IsLogoExists='true'"><img style="height:${logoH}px;width:auto;border:0;" src="data:image/jpeg;base64,firmaLogoImageString">${xsltLogoAlt(R)}</img></xsl:when>${embedded}</xsl:choose><xsl:if test="$IsEimzaLogoExists='true'"><img style="width:91px;" align="bottom" alt="E-Imza Logo" src="data:image/jpeg;base64,firmaImzaImageString"/></xsl:if>${xsltDocTitle(R)}`;
 }
 
+function xsltStamp(L) {
+  const size = asStampSize(L.stampSize);
+  const align = asStampAlign(L.stampAlign);
+  const src = asStampImage(L.stampImage);
+  const img = src
+    ? `<img alt="Kaşe / İmza" src="${xmlEscape(src)}" style="width:${size}px;height:auto;border:0;"/>`
+    : "&#160;";
+  return `<div class="inv-stamp" align="${align}" style="text-align:${align}">${img}</div>`;
+}
+
 function xsltQrImg(L, R) {
   const size = asQrSize(L.qrSize);
   const style = `height:${size}px;width:${size}px;`;
@@ -1046,6 +1099,7 @@ function xsltBlocks(L, R) {
         <div class="inv-k">Güncel bakiye</div>
         <div><xsl:value-of select="${balanceRefId(R)}"/></div>
       </div>`,
+    stamp: xsltStamp(L),
     qr: `
       <div class="inv-qr" align="right">${qr}</div>`,
     spacer: `<div class="inv-spacer">&#160;</div>`,
@@ -1231,6 +1285,8 @@ export function layoutToXslt(layout, kind) {
           .inv-notes, td.inv-foot { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; font-size:${fs}px; background:transparent; vertical-align:top; }
           .inv-iban, .inv-balance { background:transparent; border:0; padding:0; color:inherit; font-size:inherit; height:100%; }
           .inv-qr { text-align:right; }
+          .inv-stamp { margin:4px 0; }
+          .inv-stamp img { border:0; height:auto; }
           .inv-doc-title { font-weight:700; color:${L.primary}; font-size:${no}px; margin:0 0 4px; }
           .inv-spacer { min-height:28px; }
           .inv-gib-seal { text-align:center; }
