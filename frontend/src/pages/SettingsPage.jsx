@@ -750,7 +750,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "pos_rules" && <PosRulesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}
-          {tab === "integrity" && <IntegrityPanel companyId={companyId} compact />}
+          {tab === "integrity" && <IntegrityPanel companyId={companyId} compact apiBase="/admin/integrity" />}
           {tab === "summary" && <MorningSummarySettings companyId={companyId} />}
           {tab === "modules" && <div className="space-y-4"><ModuleOrder /><RadialSlotsEditor /></div>}
         </div>

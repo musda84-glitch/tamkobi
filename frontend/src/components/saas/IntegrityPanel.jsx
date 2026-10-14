@@ -8,14 +8,26 @@ import { inputCls } from "./saasUi";
 const cred = { withCredentials: true };
 const tl = (n) => Number(n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** Firma ayarları (şirket admin) ve platform paneli (süper admin) yolları. API_URL zaten /api içerir. */
+export const ADMIN_INTEGRITY_BASE = "/admin/integrity";
+export const SYSTEM_INTEGRITY_BASE = "/system/integrity";
+
+export function resolveIntegrityApiBase({ apiBase, scope } = {}) {
+  const explicit = String(apiBase || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  if (scope === "system") return SYSTEM_INTEGRITY_BASE;
+  return ADMIN_INTEGRITY_BASE;
+}
+
 /** Sistem paneli veya firma ayarları: orphan hareket / kasa kayması tarama + cleanup. */
-export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], compact = false }) {
+export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], compact = false, apiBase, scope }) {
   const [companyId, setCompanyId] = useState(fixedCompanyId || "");
   const [scan, setScan] = useState(null);
   const [busy, setBusy] = useState("");
   const [preview, setPreview] = useState(null);
 
   const cid = fixedCompanyId || companyId;
+  const base = resolveIntegrityApiBase({ apiBase, scope });
 
   const load = useCallback(async () => {
     if (!cid) {
@@ -25,7 +37,7 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
     setBusy("scan");
     setPreview(null);
     try {
-      const r = await axios.get(`${API_URL}/admin/integrity/orphans`, { ...cred, params: { company_id: cid } });
+      const r = await axios.get(`${API_URL}${base}/orphans`, { ...cred, params: { company_id: cid } });
       setScan(r.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Tarama başarısız.");
@@ -33,7 +45,7 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
     } finally {
       setBusy("");
     }
-  }, [cid]);
+  }, [cid, base]);
 
   const runCleanup = async (dryRun) => {
     if (!cid) return;
@@ -41,7 +53,7 @@ export function IntegrityPanel({ companyId: fixedCompanyId, companies = [], comp
     setBusy(dryRun ? "preview" : "apply");
     try {
       const r = await axios.post(
-        `${API_URL}/admin/integrity/cleanup`,
+        `${API_URL}${base}/cleanup`,
         { company_id: cid, dry_run: dryRun },
         cred,
       );
