@@ -17,6 +17,7 @@ import { ExpenseSlipPrint } from "../components/ExpenseSlipPrint";
 import { SearchSelect } from "../components/SearchSelect";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
+import { DocumentFormModal } from "../components/DocumentFormModal";
 import { MoneyInput } from "../components/MoneyInput";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS, toggleInvoiceSort, invoiceSortCol, invoiceSortDir } from "../components/InvoiceToolbar";
@@ -1849,8 +1850,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
       {/* NEW INVOICE MODAL */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-7xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto" data-testid="new-invoice-modal">
+        <DocumentFormModal
+          as="form"
+          onSubmit={handleCreateInvoice}
+          testId="new-invoice-modal"
+          maxWidthClass="max-w-7xl"
+          panelClassName="text-xs"
+          header={(
+            <div className="p-4 sm:p-6 pb-3 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 gap-3">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">{editingInvoice ? `Taslak Düzenle · ${editingInvoice.invoice_number}` : "Yeni Fatura Düzenle"}</h2>
@@ -1864,13 +1871,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     onCopied={onInvoiceCopied}
                   />
                 )}
-                <button onClick={() => setShowNewModal(false)} className="text-slate-400 hover:text-slate-600">
+                <button type="button" onClick={() => setShowNewModal(false)} className="text-slate-400 hover:text-slate-600">
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            <form onSubmit={handleCreateInvoice} className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Fatura Türü</label>
@@ -2095,9 +2101,82 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <FxPicker companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv-fx" />
                 </div>
               </div>
+            </div>
+          )}
 
-              {/* Items Section */}
-              <div className="space-y-2 pt-2 border-t border-slate-100">
+          footer={(
+            <div className="p-4 sm:p-6 space-y-3">
+              {/* Totals Summary */}
+              <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
+                <div className="flex justify-between w-full max-w-sm">
+                  <span>Mal / Hizmet Toplamı:</span>
+                  <span className="font-semibold">{money(totals.itemsSum)}</span>
+                </div>
+                {totals.lineDiscount > 0 && <div className="flex justify-between w-full max-w-sm text-rose-600"><span>Satır İskontoları:</span><span>-{money(totals.lineDiscount)}</span></div>}
+                <div className="flex items-center justify-between w-full max-w-sm gap-2" data-testid="general-discount-row">
+                  <span>Genel İskonto:</span>
+                  <div className="flex items-center gap-1">
+                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[10px] font-bold">
+                      <button type="button" onClick={() => setGdMode("percent")} className={`px-2 py-1 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
+                      <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
+                    </div>
+                    <MoneyInput value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(n) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: n ?? "" })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
+                    <span className="text-rose-600 font-semibold w-24 text-right">-{money(totals.gd)}</span>
+                  </div>
+                </div>
+                <div className="flex justify-between w-full max-w-sm border-t border-slate-300 pt-1">
+                  <span>Ara Toplam (İskontolu):</span>
+                  <span className="font-semibold">{money(totals.subtotal)}</span>
+                </div>
+                <div className="flex justify-between w-full max-w-sm">
+                  <span>Toplam KDV:</span>
+                  <span className="font-semibold" data-testid="inv-vat-total">{money(totals.vat)}</span>
+                </div>
+                {totals.withholding > 0 && <div className="flex justify-between w-full max-w-sm text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{money(totals.withholding)}</span></div>}
+                <div className="flex justify-between w-full max-w-sm text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
+                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
+                  <span className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
+                </div>
+                {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
+                  <div className="flex justify-between w-full max-w-sm text-slate-500" data-testid="inv-try-equivalent">
+                    <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
+                    <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="w-full" data-testid="inv-notes-block">
+                <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
+                <textarea
+                  rows={2}
+                  value={formData.notes || ""}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Fatura altına yazılacak not / açıklama…"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
+                  data-testid="inv-notes-input"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowNewModal(false)}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-600 hover:bg-slate-100"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-md shadow-emerald-600/20"
+                  data-testid="save-invoice-btn"
+                >
+                  {(formData.status || "draft") === "draft" ? "Taslak Olarak Kaydet" : "Faturayı Kaydet & Onayla"}
+                </button>
+              </div>
+            </div>
+          )}
+        >
+              <div className="px-4 sm:px-6 py-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-900">Fatura Kalemleri</span>
                 </div>
@@ -2141,77 +2220,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   }}
                 />
               </div>
-
-              {/* Totals Summary */}
-              <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
-                <div className="flex justify-between w-80">
-                  <span>Mal / Hizmet Toplamı:</span>
-                  <span className="font-semibold">{money(totals.itemsSum)}</span>
-                </div>
-                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{money(totals.lineDiscount)}</span></div>}
-                <div className="flex items-center justify-between w-80 gap-2" data-testid="general-discount-row">
-                  <span>Genel İskonto:</span>
-                  <div className="flex items-center gap-1">
-                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[10px] font-bold">
-                      <button type="button" onClick={() => setGdMode("percent")} className={`px-2 py-1 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
-                      <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
-                    </div>
-                    <MoneyInput value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(n) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: n ?? "" })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
-                    <span className="text-rose-600 font-semibold w-24 text-right">-{money(totals.gd)}</span>
-                  </div>
-                </div>
-                <div className="flex justify-between w-80 border-t border-slate-300 pt-1">
-                  <span>Ara Toplam (İskontolu):</span>
-                  <span className="font-semibold">{money(totals.subtotal)}</span>
-                </div>
-                <div className="flex justify-between w-80">
-                  <span>Toplam KDV:</span>
-                  <span className="font-semibold" data-testid="inv-vat-total">{money(totals.vat)}</span>
-                </div>
-                {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{money(totals.withholding)}</span></div>}
-                <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
-                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
-                  <span className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
-                </div>
-                {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
-                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-try-equivalent">
-                    <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
-                    <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="w-full" data-testid="inv-notes-block">
-                <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
-                <textarea
-                  rows={2}
-                  value={formData.notes || ""}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Fatura altına yazılacak not / açıklama…"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
-                  data-testid="inv-notes-input"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowNewModal(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-600 hover:bg-slate-100"
-                >
-                  İptal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-md shadow-emerald-600/20"
-                  data-testid="save-invoice-btn"
-                >
-                  {(formData.status || "draft") === "draft" ? "Taslak Olarak Kaydet" : "Faturayı Kaydet & Onayla"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        </DocumentFormModal>
       )}
 
       {/* OFFICIAL E-INVOICE PREVIEW MODAL */}

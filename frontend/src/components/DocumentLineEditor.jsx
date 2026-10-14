@@ -132,9 +132,9 @@ export function DocumentLineEditor({
 
   return (
     <div className="space-y-2" data-testid={`${testIdPrefix}-editor`}>
-      <div className="overflow-x-auto border border-slate-200 rounded-xl">
+      <div className="border border-slate-200 rounded-xl min-w-0" data-line-table>
         <table className="w-full min-w-[1080px] text-xs">
-          <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+          <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0 z-[1] [&_th]:bg-slate-50">
             <tr>
               <th className="px-2 py-2 text-left min-w-[220px]">Stok adı / Hizmet</th>
               <th className="px-2 py-2 text-center w-20">Miktar</th>
@@ -198,7 +198,6 @@ export function DocumentLineEditor({
                             onChange={(id, p) => pickProduct(idx, id, p)}
                             clearable
                             clearLabel="Ürün seçimini kaldır"
-                            inline
                             testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
                           />
                           {!item.product_id && (

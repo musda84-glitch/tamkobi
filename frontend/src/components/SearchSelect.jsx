@@ -155,7 +155,7 @@ export const SearchSelect = ({
       {open && !inline && box && typeof document !== "undefined" && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[200] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden"
+          className="fixed z-[280] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden"
           style={{ top: box.top, bottom: box.bottom, left: box.left, width: box.width, maxHeight: box.maxHeight }}
           data-testid={testId ? `${testId}-menu` : undefined}
         >

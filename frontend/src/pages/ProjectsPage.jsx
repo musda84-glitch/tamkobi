@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
+import { DocumentFormModal } from "../components/DocumentFormModal";
 import { MoneyInput } from "../components/MoneyInput";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -1024,8 +1025,14 @@ export default function ProjectsPage({ section } = {}) {
       )}
 
       {form && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <form onSubmit={save} className={`bg-white rounded-t-2xl sm:rounded-2xl w-full p-4 sm:p-6 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto ${form.kind === "project" ? "max-w-2xl" : "max-w-6xl"}`} data-testid={`${form.kind}-form`}>
+          <DocumentFormModal
+            as="form"
+            onSubmit={save}
+            testId={`${form.kind}-form`}
+            maxWidthClass={form.kind === "project" ? "max-w-2xl" : "max-w-6xl"}
+            panelClassName="text-xs"
+            header={(
+            <div className="p-4 sm:p-6 pb-3 space-y-3">
             <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? (form.id ? "Projeyi Düzenle" : "Yeni Proje") : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             {form.kind === "quote" && form.project_number && <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-1.5" data-testid="pf-project-link">Bu teklif {form.project_number} projesine bağlanacak. Cari ve adres projeden geldi.</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1131,8 +1138,26 @@ export default function ProjectsPage({ section } = {}) {
               </div>
               {form.latitude && <div className="text-[10px] text-emerald-700 font-mono">Konum: {form.latitude}, {form.longitude} · {normalizeRadiusM(form.radius_m)} m <a href={form.location_url} target="_blank" rel="noreferrer" className="underline">haritada aç</a></div>}
             </div>}
+            </div>
+            )}
+            footer={(
+            <div className="p-4 sm:p-6 space-y-3">
             {form.kind !== "project" && (
-              <div className="space-y-2">
+              <LineTotalsFooter
+                subtotal={lineTotals.subtotal}
+                vat={lineTotals.vat}
+                lineDiscount={lineTotals.lineDiscount}
+                grandTotal={lineTotals.grandTotal}
+                currency={form.currency || "TRY"}
+              />
+            )}
+            <div><label className="block font-semibold mb-1">Notlar</label><textarea value={form.notes || form.description || ""} onChange={(e) => setForm({ ...form, notes: e.target.value, description: e.target.value })} rows={2} className={inputCls} /></div>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pf-save-btn">Kaydet</button></div>
+            </div>
+            )}
+          >
+            {form.kind !== "project" ? (
+              <div className="px-4 sm:px-6 py-3 space-y-2">
                 <label className="block font-semibold">{form.kind === "quote" ? "Kalemler" : "Ölçüler / Kalemler (isteğe bağlı fiyat)"}</label>
                 <DocumentLineEditor
                   items={items}
@@ -1145,19 +1170,9 @@ export default function ProjectsPage({ section } = {}) {
                   testIdPrefix="q-item"
                   defaultVat={20}
                 />
-                <LineTotalsFooter
-                  subtotal={lineTotals.subtotal}
-                  vat={lineTotals.vat}
-                  lineDiscount={lineTotals.lineDiscount}
-                  grandTotal={lineTotals.grandTotal}
-                  currency={form.currency || "TRY"}
-                />
               </div>
-            )}
-            <div><label className="block font-semibold mb-1">Notlar</label><textarea value={form.notes || form.description || ""} onChange={(e) => setForm({ ...form, notes: e.target.value, description: e.target.value })} rows={2} className={inputCls} /></div>
-            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pf-save-btn">Kaydet</button></div>
-          </form>
-        </div>
+            ) : null}
+          </DocumentFormModal>
       )}
       {approvalQuote && <QuoteSendApprovalModal quote={approvalQuote} contact={contacts.find((c) => c.id === approvalQuote.contact_id)} onClose={() => setApprovalQuote(null)} onSent={load} />}
       {trackingProject && <ProjectTrackingModal project={trackingProject} contact={contacts.find((c) => c.id === trackingProject.contact_id)} onClose={() => setTrackingProject(null)} onSent={load} />}
