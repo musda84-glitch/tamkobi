@@ -18,7 +18,8 @@ jest.mock("../../utils/einvoiceXsltPreview", () => ({
   transformXsltToHtml: (xslt) => {
     const text = String(xslt || "");
     const m = text.match(/<div class="inv-stamp"[\s\S]*?<\/div>/);
-    return `<html><body><div id="real-xml">${m ? m[0] : "NO-STAMP"}</div></body></html>`;
+    const stack = text.includes('class="inv-stack"') ? "inv-stack" : "";
+    return `<html><body><div id="real-xml">${stack}${m ? m[0] : "NO-STAMP"}</div></body></html>`;
   },
 }));
 
@@ -577,4 +578,64 @@ test("stamp upload embeds the image, size and align, and warns past the limit", 
   expect(host.querySelector('[data-testid="einvoice-design-stamp-img"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-stamp-clear"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-stamp"]')?.textContent).toContain("Resim yükle");
+});
+
+test("Kaşe stacks under GİB e-Arşiv and the real XML preview matches", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("ETTN");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-gib_seal_archive"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-stamp"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-place-stamp"]').click();
+  });
+  const below = host.querySelector('[data-testid="einvoice-design-place-stamp-below-gib_seal_archive"]');
+  const above = host.querySelector('[data-testid="einvoice-design-place-stamp-above-gib_seal_archive"]');
+  expect(below?.textContent).toContain("Altına yerleştir");
+  expect(above?.textContent).toContain("Üstüne yerleştir");
+  await act(async () => {
+    below.click();
+  });
+  expect(last.blocks.find((b) => b.id === "stamp").stack).toBe("gib_seal_archive");
+  expect(last.blocks.find((b) => b.id === "stamp").span).toBe(4);
+  const col = host.querySelector('[data-testid="einvoice-design-column-gib_seal_archive-stamp"]');
+  expect(col).not.toBeNull();
+  expect(col.className).toContain("col-span-4");
+  expect(col.className).toContain("h-full");
+  expect(col.className).toContain("justify-start");
+  expect(col.parentElement?.className).toContain("items-stretch");
+  const stackedIds = [...col.children]
+    .map((el) => el.getAttribute("data-testid"))
+    .filter((id) => id && id.startsWith("einvoice-design-block-"));
+  expect(stackedIds).toEqual([
+    "einvoice-design-block-gib_seal_archive",
+    "einvoice-design-block-stamp",
+  ]);
+  expect(host.querySelector('[data-testid="einvoice-design-block-stamp"]').className).not.toContain("col-span-");
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-up-stamp"]').click();
+  });
+  const flipped = host.querySelector('[data-testid="einvoice-design-column-stamp-gib_seal_archive"]');
+  expect(flipped).not.toBeNull();
+  const flippedIds = [...flipped.children]
+    .map((el) => el.getAttribute("data-testid"))
+    .filter((id) => id && id.startsWith("einvoice-design-block-"));
+  expect(flippedIds[0]).toBe("einvoice-design-block-stamp");
+  expect(flippedIds[1]).toBe("einvoice-design-block-gib_seal_archive");
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-preview-real-xml"]').click();
+  });
+  const srcdoc = host.querySelector('[data-testid="einvoice-design-preview"]')?.getAttribute("srcdoc")
+    || host.querySelector('[data-testid="einvoice-design-preview"]')?.srcdoc
+    || "";
+  expect(srcdoc).toContain("inv-stack");
+  expect(srcdoc).toContain('class="inv-stamp"');
 });

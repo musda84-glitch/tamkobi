@@ -399,12 +399,15 @@ function normalizeBlocks(raw, kind, layoutFontHints = {}) {
       const legacy = asEttnFontSize(layoutFontHints.ettnFontSize, null);
       if (legacy != null) fonts.fontSize = legacy;
     }
-    out.push({
+    const item = {
       id,
       hidden: !!b.hidden,
       span: asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[id] || 12),
       ...fonts,
-    });
+    };
+    const stack = String(b?.stack || "").trim();
+    if (stack && stack !== id) item.stack = stack;
+    out.push(item);
   }
   for (const id of BLOCK_IDS) {
     if (seen.has(id)) continue;
@@ -420,7 +423,7 @@ function normalizeBlocks(raw, kind, layoutFontHints = {}) {
       ...fonts,
     });
   }
-  return out;
+  return normalizeColumnStacks(out);
 }
 
 function defaultBlocks() {
@@ -564,7 +567,14 @@ export function setBlockHidden(blocks, id, hidden) {
 
 export function setBlockSpan(blocks, id, span) {
   const s = asSpan(span, 12);
-  return (blocks || []).map((b) => (b.id === id ? { ...b, span: s } : { ...b }));
+  const anchor = columnAnchorId(blocks, id);
+  const inColumn = new Set(
+    (blocks || [])
+      .filter((b) => columnAnchorId(blocks, b.id) === anchor)
+      .map((b) => b.id),
+  );
+  if (!inColumn.size) inColumn.add(id);
+  return (blocks || []).map((b) => (inColumn.has(b.id) ? { ...b, span: s } : { ...b }));
 }
 
 export function setBlockFontSize(blocks, id, size) {
@@ -607,16 +617,99 @@ export function blockFontFamily(layout, blockId) {
   return asBlockFont(L.font, "Tahoma");
 }
 
+function stackRef(block) {
+  const s = String(block?.stack || "").trim();
+  if (!s || s === block?.id) return "";
+  return s;
+}
+
+function withoutStack(block) {
+  if (!block || block.stack == null || block.stack === "") return { ...block };
+  const { stack: _drop, ...rest } = block;
+  return rest;
+}
+
+/** Sütun çapası. `stack` zinciri düzleşir; döngüde belgedeki ilk bölüm çapa olur. */
+export function columnAnchorId(blocks, id) {
+  const list = blocks || [];
+  const byId = new Map(list.map((b) => [b.id, b]));
+  const order = new Map(list.map((b, i) => [b.id, i]));
+  let cur = String(id || "");
+  const seen = [];
+  while (cur && byId.has(cur) && !seen.includes(cur)) {
+    seen.push(cur);
+    const next = stackRef(byId.get(cur));
+    if (!next || !byId.has(next)) break;
+    if (seen.includes(next)) {
+      seen.push(next);
+      break;
+    }
+    cur = next;
+  }
+  if (!seen.length) return String(id || "");
+  const last = seen[seen.length - 1];
+  const lastRef = stackRef(byId.get(last) || {});
+  if (lastRef && seen.includes(lastRef) && lastRef !== last) {
+    const cycle = seen.filter((x, i) => seen.indexOf(x) === i);
+    return cycle.slice().sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))[0];
+  }
+  return last;
+}
+
+function normalizeColumnStacks(blocks) {
+  const list = blocks || [];
+  const byId = new Map(list.map((b) => [b.id, b]));
+  return list.map((b) => {
+    const anchor = columnAnchorId(list, b.id);
+    const next = withoutStack(b);
+    if (anchor && anchor !== b.id && byId.has(anchor)) next.stack = anchor;
+    return next;
+  });
+}
+
+function columnSpan(blocks, anchorId, fallbackBlock) {
+  const anchor = (blocks || []).find((b) => b.id === anchorId);
+  const src = anchor || fallbackBlock || {};
+  return asSpan(src.span, BLOCK_SPAN_BY_DEFAULT[src.id] || 12);
+}
+
+/** Görünür bölümleri aynı sütunda üst üste gruplar. Sütun, belgedeki ilk üyenin yerine oturur. */
+function visibleColumns(blocks) {
+  const list = blocks || [];
+  const vis = list.filter((b) => !b.hidden);
+  const index = new Map(list.map((b, i) => [b.id, i]));
+  const groups = new Map();
+  const order = [];
+  for (const b of vis) {
+    const key = columnAnchorId(list, b.id);
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key).push(b);
+  }
+  return order.map((key) => {
+    const members = groups.get(key).slice().sort((a, b) => (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0));
+    const span = columnSpan(list, key, members[0]);
+    const top = members[0];
+    return {
+      ...top,
+      span,
+      column: members.map((m) => ({ ...m, span })),
+    };
+  });
+}
+
 export function packBlockRows(blocks) {
-  const vis = (blocks || []).filter((b) => !b.hidden);
+  const columns = visibleColumns(blocks);
   const rows = [];
   let row = [];
   let used = 0;
   const spanOf = (b) => asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12);
-  for (let i = 0; i < vis.length; i += 1) {
-    const b = vis[i];
+  for (let i = 0; i < columns.length; i += 1) {
+    const b = columns[i];
     const span = spanOf(b);
-    const next = vis[i + 1];
+    const next = columns[i + 1];
     // IBAN ve güncel bakiye aynı satırda kalsın; önceki yarım blok onları ayırmasın.
     const keepWithBalance = b.id === "iban" && next?.id === "balance" && span + spanOf(next) <= 12;
     if (row.length && (used + span > 12 || (keepWithBalance && used + span + spanOf(next) > 12))) {
@@ -636,12 +729,62 @@ export function packBlockRows(blocks) {
   return rows;
 }
 
+/** Bölümü sütundan çıkarır. Çapa ayrılırsa kalanlar yeni çapada durur. */
+export function detachFromColumn(blocks, id) {
+  const list = (blocks || []).map((b) => ({ ...b }));
+  const block = list.find((b) => b.id === id);
+  if (!block) return list;
+  const anchor = columnAnchorId(list, id);
+  const followers = list.filter((b) => b.id !== anchor && columnAnchorId(list, b.id) === anchor);
+  if (stackRef(block) || (anchor === id && !followers.length)) return list.map((b) => (b.id === id ? withoutStack(b) : b));
+  if (anchor === id) {
+    const promoted = (followers.find((b) => !b.hidden) || followers[0]).id;
+    return list.map((b) => {
+      if (b.id === id || b.id === promoted) return withoutStack(b);
+      if (columnAnchorId(list, b.id) === id) return { ...withoutStack(b), stack: promoted };
+      return b;
+    });
+  }
+  return list.map((b) => (b.id === id ? withoutStack(b) : b));
+}
+
+/**
+ * `id` bölümünü `targetId` ile aynı sütuna, hedefin üstüne veya altına koyar.
+ * Sütun genişliği çapanın span'ıdır; satır yüksekliği en uzun sütuna kalır.
+ */
+export function stackBlock(blocks, id, targetId, place = "below") {
+  if (!id || !targetId || id === targetId) return (blocks || []).map((b) => ({ ...b }));
+  const list = detachFromColumn(blocks, id);
+  if (!list.some((b) => b.id === id) || !list.some((b) => b.id === targetId)) return list;
+  const anchor = columnAnchorId(list, targetId);
+  if (!anchor || anchor === id) return list;
+  const span = columnSpan(list, anchor, list.find((b) => b.id === targetId));
+  const from = list.findIndex((b) => b.id === id);
+  const [moved] = list.splice(from, 1);
+  const placed = withoutStack(moved);
+  placed.stack = anchor;
+  placed.span = span;
+  const tIdx = list.findIndex((b) => b.id === targetId);
+  const insertAt = place === "above" ? tIdx : tIdx + 1;
+  list.splice(Math.max(0, insertAt), 0, placed);
+  return list.map((b) => (columnAnchorId(list, b.id) === anchor ? { ...b, span } : b));
+}
+
 export function moveVisible(blocks, id, dir) {
-  const vis = (blocks || []).filter((b) => !b.hidden).map((b) => b.id);
+  const list = blocks || [];
+  const anchor = columnAnchorId(list, id);
+  const members = list.filter((b) => !b.hidden && columnAnchorId(list, b.id) === anchor);
+  if (members.length > 1) {
+    const idx = members.findIndex((b) => b.id === id);
+    const sibling = members[idx + Number(dir)];
+    if (sibling) return moveBlock(list, id, sibling.id);
+    return moveVisible(detachFromColumn(list, id), id, dir);
+  }
+  const vis = list.filter((b) => !b.hidden).map((b) => b.id);
   const i = vis.indexOf(id);
   const j = i + Number(dir);
-  if (i < 0 || j < 0 || j >= vis.length) return blocks || [];
-  return moveBlock(blocks, id, vis[j]);
+  if (i < 0 || j < 0 || j >= vis.length) return list;
+  return moveBlock(list, id, vis[j]);
 }
 
 export const isLineCol = (id) => LINE_COL_IDS.includes(id);
@@ -1172,19 +1315,35 @@ function xsltBlockFontRules(L) {
   }).join("\n          ");
 }
 
+function xsltCellInner(block, map) {
+  const inner = map[block.id] || "";
+  return blockHasFont(block.id) ? `<div class="inv-blk-${block.id}">${inner}</div>` : inner;
+}
+
 function xsltPackedBody(L, R) {
   const map = xsltBlocks(L, R);
   return packBlockRows(L.blocks).map((row) => {
-    const parts = row.map((b) => {
-      const pct = Math.round((asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12) / 12) * 100);
-      const inner = map[b.id] || "";
-      const wrapped = blockHasFont(b.id)
-        ? `<div class="inv-blk-${b.id}">${inner}</div>`
-        : inner;
-      const foot = b.id === "iban" || b.id === "balance" ? " inv-foot" : "";
-      const td = `<td width="${pct}%" valign="top" class="inv-cell${foot}">${wrapped}</td>`;
-      const test = blockPresenceTest(b.id, L, R);
-      return { td: test ? `<xsl:if test="${test}">${td}</xsl:if>` : td, test };
+    const parts = row.map((cell) => {
+      const members = Array.isArray(cell.column) && cell.column.length ? cell.column : [cell];
+      const pct = Math.round((asSpan(cell.span, BLOCK_SPAN_BY_DEFAULT[members[0].id] || 12) / 12) * 100);
+      if (members.length === 1) {
+        const b = members[0];
+        const wrapped = xsltCellInner(b, map);
+        const foot = b.id === "iban" || b.id === "balance" ? " inv-foot" : "";
+        const td = `<td width="${pct}%" valign="top" class="inv-cell${foot}">${wrapped}</td>`;
+        const test = blockPresenceTest(b.id, L, R);
+        return { td: test ? `<xsl:if test="${test}">${td}</xsl:if>` : td, test };
+      }
+      const pieces = members.map((b) => {
+        const body = `<div class="inv-stack">${xsltCellInner(b, map)}</div>`;
+        const test = blockPresenceTest(b.id, L, R);
+        return { html: test ? `<xsl:if test="${test}">${body}</xsl:if>` : body, test };
+      });
+      const foot = members.every((b) => b.id === "iban" || b.id === "balance") ? " inv-foot" : "";
+      const td = `<td width="${pct}%" valign="top" class="inv-cell${foot}">${pieces.map((p) => p.html).join("")}</td>`;
+      const pieceTests = pieces.map((p) => p.test);
+      const allTest = pieceTests.every(Boolean) ? pieceTests.join(" or ") : "";
+      return { td: allTest ? `<xsl:if test="${allTest}">${td}</xsl:if>` : td, test: allTest };
     });
     const table = `<table class="inv-row" width="100%" cellpadding="4" cellspacing="0"><tr>${parts.map((p) => p.td).join("")}</tr></table>`;
     const tests = parts.map((p) => p.test);
@@ -1260,7 +1419,9 @@ export function layoutToXslt(layout, kind) {
           h1 { font-size:${no}px; color:${L.primary}; margin:8px 0 0; }
           .inv-wrap { max-width:900px; margin:0 auto; }
           .inv-row { margin:0 0 8px; }
-          .inv-cell { padding:2px 4px; font-size:${fs}px; }
+          .inv-cell { padding:2px 4px; font-size:${fs}px; vertical-align:top; }
+          .inv-stack { display:block; }
+          .inv-stack + .inv-stack { margin-top:6px; }
           .inv-header { border-bottom:3px solid ${L.accent}; padding-bottom:10px; }
           .inv-brand-name { font-size:${no}px; margin:6px 0 2px; color:${L.primary}; }
           .inv-brand-addr, .inv-brand-vkn { font-size:${k}px; }
