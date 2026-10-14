@@ -15,6 +15,8 @@ describe("stackHeaderFallback", () => {
     expect(stackHeaderFallback("contacts/index")).toBe("/");
     expect(stackHeaderFallback("search")).toBe("/");
     expect(stackHeaderFallback("settings")).toBe("/");
+    expect(stackHeaderFallback("settings/index")).toBe("/");
+    expect(stackHeaderFallback("settings/printers")).toBe("/settings");
     expect(stackHeaderFallback("edoc-inbox/index")).toBe("/");
   });
 

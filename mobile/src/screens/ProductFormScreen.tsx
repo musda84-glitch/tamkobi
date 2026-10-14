@@ -8,6 +8,7 @@ import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { confirmAction } from "../components/chips";
 import { ImageUploader } from "../components/ImageUploader";
 import { B2BSheet } from "../components/b2b/B2BSheet";
+import { LabelPrintSheet } from "../components/LabelPrintSheet";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -28,6 +29,7 @@ import {
   type ProductDraft,
 } from "../utils/productDraft";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi, unitSelectGroups } from "../utils/stockUnits";
+import { loadLabelPrinter, printProductLabel } from "../utils/labelPrinter";
 import {
   PRINTER_PRESETS,
   defaultEthernetPrinter,
@@ -133,6 +135,9 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
   /** null | menu (Etiket yazdır) | pick (yazıcı seç) | settings (yazıcı ayarları) */
   const [labelSheet, setLabelSheet] = useState<"menu" | "pick" | "settings" | null>(null);
+  const [tcpPrint, setTcpPrint] = useState(false);
+  const [tcpBusy, setTcpBusy] = useState(false);
+  const [tcpError, setTcpError] = useState<string | null>(null);
   const ethCfg = eth || defaultEthernetPrinter();
 
   const runDiscover = async () => {
@@ -412,6 +417,15 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
           onPress={() => setLabelSheet("menu")}
         />
       ) : null}
+      {!isNew ? (
+        <PrimaryButton
+          testID="stock-label-tcp"
+          title="Etiket bas"
+          icon="print"
+          color={colors.primary}
+          onPress={() => { setTcpError(null); setTcpPrint(true); }}
+        />
+      ) : null}
 
       {canEdit ? (
         <PrimaryButton
@@ -643,6 +657,44 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         />
         <PrimaryButton title="Geri" color={colors.secondary} testID="stock-label-settings-back" onPress={() => setLabelSheet("menu")} />
       </B2BSheet>
+
+      <LabelPrintSheet
+        visible={tcpPrint}
+        title="Etiket bas"
+        subtitle="Ürün etiketi · ağ yazıcısı"
+        busy={tcpBusy}
+        error={tcpError}
+        allowPrice={draft.sale_price !== "" && draft.sale_price != null}
+        testID="stock-tcp-sheet"
+        onClose={() => setTcpPrint(false)}
+        onPrint={async (copies, opts) => {
+          setTcpBusy(true);
+          setTcpError(null);
+          try {
+            const settings = await loadLabelPrinter(companyId);
+            await printProductLabel({
+              settings,
+              copies,
+              product: {
+                name: draft.name,
+                sku: draft.sku,
+                barcode: draft.barcode || draft.sku,
+                price: Number(draft.sale_price) || null,
+                includePrice: opts.includePrice,
+              },
+            });
+            setMessage(`Etiket basıldı (${copies} adet, ${settings.host}:${settings.port}).`);
+            setError(null);
+            setTcpPrint(false);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+            setTcpError(msg);
+            setError(msg);
+          } finally {
+            setTcpBusy(false);
+          }
+        }}
+      />
     </Screen>
   );
 }

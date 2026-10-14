@@ -7,6 +7,7 @@ import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { QuantityInput } from "../components/MoneyInput";
+import { LabelPrintSheet } from "../components/LabelPrintSheet";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
 import { archivedAssignedDuties, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
@@ -38,6 +39,8 @@ import {
   type PausePolicy,
   type WorkOrder,
 } from "../utils/shopFloor";
+import { loadLabelPrinter, printWorkOrderLabel } from "../utils/labelPrinter";
+import { formatMeasure, workOrderQr } from "../utils/tspl";
 import { stationNamesFromParks } from "../utils/workParks";
 
 function WoCard({
@@ -52,6 +55,7 @@ function WoCard({
   onPause,
   onFinish,
   onTrash,
+  onLabel,
 }: {
   w: WorkOrder;
   operator: string;
@@ -64,6 +68,7 @@ function WoCard({
   onPause: () => void;
   onFinish: () => void;
   onTrash?: () => void;
+  onLabel: () => void;
 }) {
   const key = woCardKey(w);
   const border = shopFloorCardBorder(w.status);
@@ -174,6 +179,7 @@ function WoCard({
         ].filter(Boolean).join(" · ")}
       </Muted>
       {w.notes ? <Muted>{w.notes}</Muted> : null}
+      <PrimaryButton title="Etiket bas" icon="print" onPress={onLabel} color={colors.indigo} testID={`wo-label-${key}`} />
       {w.status === "ready" || w.status === "waiting" ? (
         <>
           <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy || startLocked} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
@@ -239,6 +245,9 @@ export function AtolyeScreen() {
   const [trashReqBusy, setTrashReqBusy] = useState(false);
   const [trashReqErr, setTrashReqErr] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [labelFor, setLabelFor] = useState<WorkOrder | null>(null);
+  const [labelBusy, setLabelBusy] = useState(false);
+  const [labelError, setLabelError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -433,6 +442,11 @@ export function AtolyeScreen() {
     const plan = workOrderFinishPlan(w);
     setFinishing(w);
     setFin({ produced_qty: String(plan.qty ?? 0), scrap_qty: "0", notes: "" });
+  };
+
+  const openLabel = (w: WorkOrder) => {
+    setLabelError(null);
+    setLabelFor(w);
   };
 
   const confirmFinish = () => {
@@ -728,6 +742,7 @@ export function AtolyeScreen() {
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
               onTrash={() => openTrashRequest(w)}
+              onLabel={() => openLabel(w)}
             />
           ))}
         </View>
@@ -750,6 +765,7 @@ export function AtolyeScreen() {
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
           onTrash={() => openTrashRequest(w)}
+          onLabel={() => openLabel(w)}
         />
       ))}
 
@@ -768,6 +784,7 @@ export function AtolyeScreen() {
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
               onTrash={() => openTrashRequest(w)}
+              onLabel={() => openLabel(w)}
             />
           ))}
         </View>
@@ -938,6 +955,43 @@ export function AtolyeScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      <LabelPrintSheet
+        visible={!!labelFor}
+        title="Etiket bas"
+        subtitle={[labelFor?.order_code, labelFor?.product_name || labelFor?.step_name].filter(Boolean).join(" · ")}
+        busy={labelBusy}
+        error={labelError}
+        testID="wo-label-sheet"
+        onClose={() => setLabelFor(null)}
+        onPrint={async (copies) => {
+          if (!labelFor) return;
+          setLabelBusy(true);
+          setLabelError(null);
+          try {
+            const settings = await loadLabelPrinter(companyId);
+            await printWorkOrderLabel({
+              settings,
+              copies,
+              order: {
+                workOrderNo: labelFor.order_code,
+                customer: labelFor.customer_name || labelFor.contact_name,
+                partName: labelFor.product_name || labelFor.step_name,
+                measure: formatMeasure(labelFor),
+                qr: workOrderQr(labelFor.order_code, idOf(labelFor)),
+              },
+            });
+            setNotice(`İş emri etiketi basıldı (${copies} adet).`);
+            setError(null);
+            setLabelFor(null);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+            setLabelError(msg);
+            setError(msg);
+          } finally {
+            setLabelBusy(false);
+          }
+        }}
+      />
     </Screen>
   );
 }

@@ -136,7 +136,8 @@ def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
     r = recipe or {}
     job = str(r.get("job_file_name") or "").strip() or None
     name = str(r.get("name") or "").strip() or None
-    return {"job_file_name": job, "recipe_name": name}
+    customer = str(r.get("contact_name") or "").strip() or None
+    return {"job_file_name": job, "recipe_name": name, "customer_name": customer}
 
 
 def recipe_materials_for_qty(
@@ -594,6 +595,8 @@ def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = 
         row["job_file_name"] = m["job_file_name"]
     if not row.get("recipe_name") and m.get("recipe_name"):
         row["recipe_name"] = m["recipe_name"]
+    if not str(row.get("customer_name") or "").strip() and m.get("customer_name"):
+        row["customer_name"] = m["customer_name"]
     if m.get("station") and (not row.get("station") or str(row.get("station")).strip().casefold() == "genel"):
         row["station"] = m["station"]
     elif not row.get("station"):

@@ -6,6 +6,15 @@ export type WorkOrder = {
   _id?: string;
   order_id?: string;
   order_code?: string;
+  customer_name?: string;
+  contact_name?: string;
+  dimensions?: string;
+  measure?: string;
+  size?: string;
+  olcu?: string;
+  length?: number;
+  width?: number;
+  height?: number;
   step_no?: number;
   step_count?: number;
   step_name?: string;

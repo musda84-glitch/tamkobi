@@ -18003,6 +18003,7 @@ async def _generate_work_orders(
                      "images": pwo.sanitize_step_images(st.get("images")),
                      "step_note": str(st.get("note") or "").strip(),
                      "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
+                     "customer_name": job_meta.get("customer_name"),
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
     if docs:
@@ -18058,7 +18059,7 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     recipes = (
         await db.recipes.find(
             {"_id": {"$in": recipe_ids}},
-            {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1, "target_quantity": 1},
+            {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1, "target_quantity": 1, "contact_name": 1},
         ).to_list(len(recipe_ids) or 1)
         if recipe_ids
         else []
@@ -21345,6 +21346,8 @@ import mobile_logs
 mobile_logs.init(db, get_current_user)
 import network_printers
 network_printers.init(get_current_user)
+import label_printer_settings
+label_printer_settings.init(db, get_current_user)
 migration.init(db, get_current_user)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)}, get_current_user)
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
@@ -21540,6 +21543,7 @@ app.include_router(attendance.router)
 app.include_router(trash.router)
 app.include_router(mobile_logs.router)
 app.include_router(network_printers.router)
+app.include_router(label_printer_settings.router)
 app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)

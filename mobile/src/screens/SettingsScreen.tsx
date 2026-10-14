@@ -24,6 +24,7 @@ import {
 import { idOf } from "../utils/money";
 import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
+import { go } from "../nav";
 import { savePunchPin } from "../utils/punchAuth";
 
 type MeEmployee = {
@@ -213,6 +214,12 @@ export function SettingsScreen() {
       <Muted>{user?.email} · {user?.role_name || user?.role}</Muted>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
+
+      <Card testID="settings-printers">
+        <Text style={{ fontWeight: "800", color: colors.text }}>Yazıcılar</Text>
+        <Muted>Ağ etiket yazıcısı (Xprinter XP-490B, TSPL, port 9100).</Muted>
+        <PrimaryButton title="Yazıcılar" testID="settings-open-printers" icon="print" onPress={() => go("Printers")} color={colors.indigo} />
+      </Card>
 
       <Card testID="settings-profile">
         <Text style={{ fontWeight: "800", color: colors.text }}>Profilim</Text>

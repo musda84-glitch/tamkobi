@@ -17,9 +17,11 @@ def test_recipe_job_fields():
     assert recipe_job_fields({"name": " Dolap ", "job_file_name": " AHM-014 "}) == {
         "job_file_name": "AHM-014",
         "recipe_name": "Dolap",
+        "customer_name": None,
     }
-    assert recipe_job_fields({}) == {"job_file_name": None, "recipe_name": None}
-    assert recipe_job_fields(None) == {"job_file_name": None, "recipe_name": None}
+    assert recipe_job_fields({"contact_name": " Ayşe "})["customer_name"] == "Ayşe"
+    assert recipe_job_fields({}) == {"job_file_name": None, "recipe_name": None, "customer_name": None}
+    assert recipe_job_fields(None) == {"job_file_name": None, "recipe_name": None, "customer_name": None}
 
 
 def test_flatten_recipe_steps_material_then_recipe():
@@ -204,9 +206,10 @@ def test_group_work_orders_for_display_keeps_step_no():
 
 def test_enrich_work_order_row_fills_missing():
     row = {"station": None, "order_code": "URT-1"}
-    enrich_work_order_row(row, {"job_file_name": "DOSYA-1", "recipe_name": "Reçete A"})
+    enrich_work_order_row(row, {"job_file_name": "DOSYA-1", "recipe_name": "Reçete A", "customer_name": "Ayşe"})
     assert row["job_file_name"] == "DOSYA-1"
     assert row["recipe_name"] == "Reçete A"
+    assert row["customer_name"] == "Ayşe"
     assert row["station"] == "Genel"
 
 

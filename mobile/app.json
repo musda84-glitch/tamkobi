@@ -16,6 +16,7 @@
         "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Uygulama kapalıyken veya arka plandayken de mesai konumunuz kaydedilir.",
         "NSLocationAlwaysUsageDescription": "Uygulama kapalıyken de mesai konumunuz kaydedilir.",
+        "NSLocalNetworkUsageDescription": "Etiket yazıcısına (Xprinter vb.) yerel ağ üzerinden bağlanmak için yerel ağ erişimi gerekir.",
         "UIBackgroundModes": [
           "remote-notification",
           "location"
@@ -97,7 +98,8 @@
       "expo-image",
       "expo-status-bar",
       "expo-web-browser",
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/withLabelPrinter"
     ],
     "experiments": {
       "typedRoutes": true,

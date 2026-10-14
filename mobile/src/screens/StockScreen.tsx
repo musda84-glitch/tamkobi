@@ -7,7 +7,8 @@ import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { QuantityInput } from "../components/MoneyInput";
-import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
+import { LabelPrintSheet } from "../components/LabelPrintSheet";
+import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { ProductThumb } from "../components/ProductThumb";
 import { useLiveRefresh } from "../live/useLiveRefresh";
@@ -25,6 +26,7 @@ import { listRowText } from "../utils/listRow";
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
+import { loadLabelPrinter, printProductLabel } from "../utils/labelPrinter";
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
 export function StockScreen() {
@@ -47,6 +49,9 @@ export function StockScreen() {
   const [moves, setMoves] = useState<StockMove[]>([]);
   const [movesBusy, setMovesBusy] = useState(false);
   const [shown, setShown] = useState(LIST_INITIAL_ROWS);
+  const [printFor, setPrintFor] = useState<Product | null>(null);
+  const [printBusy, setPrintBusy] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
 
   const applyRows = useCallback((raw: unknown) => {
     try {
@@ -265,7 +270,20 @@ export function StockScreen() {
                 rightTestID={`stock-qty-${idOf(p)}`}
                 onPress={canEdit ? () => go("StockDetail", { id: idOf(p), name }) : undefined}
               />
-              <PrimaryButton title="Hareketler" onPress={() => openMoves(p)} color={colors.secondary} testID={`stock-moves-${idOf(p)}`} />
+              <Row>
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton title="Hareketler" onPress={() => openMoves(p)} color={colors.secondary} testID={`stock-moves-${idOf(p)}`} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton
+                    title="Etiket bas"
+                    icon="print"
+                    onPress={() => { setPrintError(null); setPrintFor(p); }}
+                    color={colors.indigo}
+                    testID={`stock-label-${idOf(p)}`}
+                  />
+                </View>
+              </Row>
             </View>
           );
         })}
@@ -311,6 +329,44 @@ export function StockScreen() {
           })}
         </B2BSheet>
         ) : null}
+        <LabelPrintSheet
+          visible={!!printFor}
+          title="Etiket bas"
+          subtitle={printFor ? listRowText(printFor.name) : undefined}
+          busy={printBusy}
+          error={printError}
+          allowPrice={printFor?.sale_price != null}
+          testID="stock-list-label-sheet"
+          onClose={() => setPrintFor(null)}
+          onPrint={async (copies, opts) => {
+            if (!printFor) return;
+            setPrintBusy(true);
+            setPrintError(null);
+            try {
+              const settings = await loadLabelPrinter(companyId);
+              await printProductLabel({
+                settings,
+                copies,
+                product: {
+                  name: printFor.name,
+                  sku: printFor.sku,
+                  barcode: printFor.barcode || printFor.sku,
+                  price: printFor.sale_price ?? null,
+                  includePrice: opts.includePrice,
+                },
+              });
+              setError(null);
+              setSaleMsg(`Etiket basıldı (${copies} adet).`);
+              setPrintFor(null);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+              setPrintError(msg);
+              setError(msg);
+            } finally {
+              setPrintBusy(false);
+            }
+          }}
+        />
     </Screen>
   );
 }

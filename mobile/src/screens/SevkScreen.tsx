@@ -4,11 +4,13 @@ import { Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
+import { LabelPrintSheet } from "../components/LabelPrintSheet";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { fmtDate, idOf } from "../utils/money";
-import { pickPercent, pickStatusTone, pickStatusTr, pickSummaryText, type PickRow } from "../utils/orderPick";
+import { loadLabelPrinter, printShipmentLabels } from "../utils/labelPrinter";
+import { pickPercent, pickStatusTone, pickStatusTr, pickSummaryText, type PickRow, type PickSession } from "../utils/orderPick";
 
 export function ProgressBar({ percent }: { percent: number }) {
   return (
@@ -24,6 +26,9 @@ export function SevkScreen() {
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [printFor, setPrintFor] = useState<PickRow | null>(null);
+  const [printBusy, setPrintBusy] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -85,11 +90,57 @@ export function SevkScreen() {
               columns={3}
               items={[
                 { key: "pick", label: "Topla", icon: "scan", tone: "emerald", testID: `sevk-open-${idOf(r)}`, onPress: () => go("SevkPick", { id: idOf(r), name: r.order_number }) },
+                { key: "label", label: "Etiket bas", icon: "print", tone: "indigo", testID: `sevk-label-${idOf(r)}`, onPress: () => { setPrintError(null); setPrintFor(r); } },
               ]}
             />
           </Card>
         );
       })}
+      <LabelPrintSheet
+        visible={!!printFor}
+        title="Etiket bas"
+        subtitle={printFor?.order_number || "Koli etiketi"}
+        quantityLabel="Koli adedi"
+        hint="Her koli için ayrı etiket basılır (1/n … n/n)."
+        busy={printBusy}
+        error={printError}
+        testID="sevk-label-sheet"
+        onClose={() => setPrintFor(null)}
+        onPrint={async (copies) => {
+          if (!printFor) return;
+          setPrintBusy(true);
+          setPrintError(null);
+          try {
+            let address = String(printFor.city || "").trim();
+            let customer = printFor.customer_name || "";
+            try {
+              const session = await get<PickSession>(client, `/order-picks/${idOf(printFor)}`);
+              address = String(session.shipping_address || address || session.city || "").trim();
+              customer = session.customer_name || customer;
+            } catch {
+              /* listedeki müşteri ve şehir yeter */
+            }
+            const settings = await loadLabelPrinter(companyId);
+            await printShipmentLabels({
+              settings,
+              shipment: {
+                orderNo: printFor.order_number,
+                customer,
+                address,
+                packageTotal: copies,
+              },
+            });
+            setError(null);
+            setPrintFor(null);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+            setPrintError(msg);
+            setError(msg);
+          } finally {
+            setPrintBusy(false);
+          }
+        }}
+      />
     </Screen>
   );
 }
