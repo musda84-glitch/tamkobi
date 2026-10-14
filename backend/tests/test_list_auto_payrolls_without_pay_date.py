@@ -113,3 +113,59 @@ def test_collect_report_does_not_mutate_db():
     assert report["rows"][0]["suggested_personnel_movement_id"] == "m1"
     assert db.payrolls.writes == 0
     assert os.path.basename(SCRIPT) == "list_auto_payrolls_without_pay_date.py"
+
+
+def test_main_real_mysql_client_has_payrolls_and_closes(monkeypatch):
+    """_main MySQLClient'ı db sanmaz: client[ad].payrolls vardır, bağlantı kapanır.
+
+    Sahte veritabanı yok. Sorgu MySQL'e gitmez; koleksiyon nesnesi gerçek istemciden gelir.
+    """
+    import asyncio
+
+    from mysql_store import MySQLClient, MySQLCollection, MySQLDatabase, mysql_settings_from_env
+
+    mod = _load()
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *_a, **_k: False)
+    import setup_state
+
+    monkeypatch.setattr(setup_state, "apply_saved_secrets", lambda: None)
+
+    seen = {}
+    closed = []
+    orig_close = MySQLClient.close_async
+
+    async def track_close(self):
+        closed.append(self)
+        await orig_close(self)
+
+    def observe_find(self, query=None, projection=None):
+        seen["collection"] = self
+        seen["db"] = self._db
+
+        class _Cur:
+            async def to_list(self, _n):
+                return []
+
+        return _Cur()
+
+    monkeypatch.setattr(MySQLClient, "close_async", track_close)
+    monkeypatch.setattr(MySQLCollection, "find", observe_find)
+
+    assert asyncio.run(mod._main("co_real_client")) == 0
+
+    db_name = str(mysql_settings_from_env().get("db") or "tamkobi")
+    assert len(closed) == 1
+    client = closed[0]
+    database = client[db_name]
+    assert isinstance(database, MySQLDatabase)
+    assert database is seen["db"]
+    assert isinstance(database.payrolls, MySQLCollection)
+    assert database.payrolls.name == "payrolls"
+    assert seen["collection"].name == "payrolls"
+    assert seen["collection"]._db is database
+    try:
+        client.payrolls
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("MySQLClient.payrolls AttributeError vermeli")
