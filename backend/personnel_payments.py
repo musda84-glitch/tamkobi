@@ -243,7 +243,11 @@ async def _cover_salary(
     other_rows = [p for p in open_rows if p not in period_rows]
     targets = list(period_rows)
     effects: List[dict] = []
-    if not period_rows and not employee_pay.month_blocks_salary_fallback(rows, per):
+    if (
+        not period_rows
+        and not employee_pay.month_blocks_salary_fallback(rows, per)
+        and employee_pay.has_pay_start_date(emp)
+    ):
         entitled = employee_pay.unpaid_salary_amount(emp, rows, per, pay_date)
         if entitled > 0.004:
             doc = _insert_payroll(emp, per, entitled, manual=False)

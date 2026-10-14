@@ -76,6 +76,13 @@ const render = (node) => {
   return root;
 };
 
+test("hak ediş tarihi yoksa kartta uyarı gösterir", async () => {
+  render(<EmployeeCardModal employee={{ id: "emp_1", full_name: "Ali" }} companyId="c1" onClose={() => {}} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="emp-card-no-pay-start"]')?.textContent).toBe("Hak ediş tarihi tanımlı değil");
+  expect(host.querySelector('[data-testid="emp-stat-remaining"]')?.parentElement?.textContent).toContain("Hak ediş tarihi tanımlı değil");
+});
+
 test("ödemeler tablosunda ödenen maaşa sil koyar", async () => {
   render(<EmployeeCardModal employee={{ id: "emp_1", full_name: "Ali" }} companyId="c1" onClose={() => {}} />);
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });

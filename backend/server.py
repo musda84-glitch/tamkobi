@@ -19087,6 +19087,7 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         "deductions": figures["deductions"], "previous_payments": figures["previous_payments"],
         "sgk_insured": employee_pay.employee_is_sgk(emp),
         "official_salary": employee_pay.official_salary_of(emp),
+        "pay_start_defined": employee_pay.has_pay_start_date(emp),
     }
 
 

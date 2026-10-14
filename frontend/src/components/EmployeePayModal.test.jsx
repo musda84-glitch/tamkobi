@@ -94,6 +94,7 @@ test("Öde modalı dönem özetini ve kalan alacağı gösterir", () => {
   expect(host.querySelector('[data-testid="emp-pay-date"]').value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   expect(host.querySelector('[data-testid="emp-pay-line-account-0"]').value).toBe("bank1");
   expect(host.textContent).not.toMatch(/Her ay tekrarla/);
+  expect(host.textContent).not.toContain("Hak ediş tarihi tanımlı değil");
 });
 
 test("Kalanı öde kalan tutarı ilk satıra yazar", () => {
@@ -120,6 +121,7 @@ test("tahakkuk yokken maaş elle girilir ve fazla ödeme uyarılır", () => {
   act(() => setNative(amount, "2500"));
   expect(host.querySelector('[data-testid="emp-pay-manual-salary"]').textContent).toContain("tahakkuk yok");
   expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).toContain("sonraki maaştan düşülecek");
+  expect(host.querySelector('[data-testid="emp-pay-no-start"]').textContent).toBe("Hak ediş tarihi tanımlı değil");
 });
 
 test("SGK'lı personelde kasa resmi maaşı engeller", () => {

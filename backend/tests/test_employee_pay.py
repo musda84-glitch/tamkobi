@@ -157,9 +157,28 @@ def test_istanbul_day_makes_salary_due_before_utc_midnight():
     assert employee_pay.unpaid_salary_amount(emp, [], "2026-10", date(2026, 10, 12)) == 0
 
 
-def test_start_date_anchors_salary_when_pay_start_missing():
+def test_missing_pay_start_does_not_estimate_salary():
     emp = {"salary": 12000, "start_date": "2026-01-01", "pay_type": "monthly", "pay_recurring": True}
+    assert employee_pay.has_pay_start_date(emp) is False
+    assert employee_pay.entitlement_slot_partner(emp, "2026-10") is None
+    assert employee_pay.unpaid_salary_amount(emp, [], "2026-10", date(2026, 10, 13)) == 0
+    no_hire = {"salary": 15000, "pay_type": "monthly", "pay_recurring": True}
+    assert employee_pay.entitlement_slot_partner(no_hire, "2026-10") is None
+    assert employee_pay.unpaid_salary_amount(no_hire, [], "2026-10", date(2026, 10, 13)) == 0
+    figs = employee_pay.period_figures(emp, [], [], "2026-10", unpaid_payroll=12000)
+    assert figs["salary_earned"] == 0
+
+
+def test_pay_start_keeps_salary_entitlement():
+    emp = {
+        "salary": 12000, "pay_start_date": "2026-01-01", "pay_type": "monthly", "pay_recurring": True,
+    }
+    assert employee_pay.has_pay_start_date(emp) is True
+    partner = employee_pay.entitlement_slot_partner(emp, "2026-10")
+    assert partner and partner["salary_start_date"] == "2026-01-01"
     assert employee_pay.unpaid_salary_amount(emp, [], "2026-10", date(2026, 10, 13)) == 12000
+    figs = employee_pay.period_figures(emp, [], [], "2026-10", unpaid_payroll=12000)
+    assert figs["salary_earned"] == 12000
 
 
 def test_rejected_payroll_does_not_hide_or_inflate_salary():

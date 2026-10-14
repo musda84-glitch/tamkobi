@@ -172,6 +172,21 @@ def _run(db, emp, lines, *, balance=None, company=None, key=None, date="2026-10-
     ))
 
 
+def test_salary_without_pay_start_does_not_create_payroll():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc())
+    emp = _emp()
+    emp.pop("pay_start_date", None)
+    result = _run(
+        db, emp, [{"kind": "salary", "amount": 10000, "account_id": "bank"}],
+        balance={"remaining": 0, "unpaid_payroll": 0},
+    )
+    assert db.payrolls.docs == []
+    assert result["manual_salary"] is True
+    assert db.bonus_payments.docs and db.bonus_payments.docs[0]["type"] == "advance"
+    assert db.personnel_movements.docs[0]["kind"] == "salary"
+
+
 def test_salary_payment_writes_movement_and_bank():
     db = FakeDb()
     db.bank_accounts.docs.append(_acc())

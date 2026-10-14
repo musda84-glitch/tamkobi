@@ -432,16 +432,19 @@ def month_blocks_salary_fallback(payrolls: Optional[List[dict]], month: str) -> 
     return False
 
 
+def has_pay_start_date(emp: Optional[Dict[str, Any]]) -> bool:
+    """Hak ediş yalnızca pay_start_date dolu personelde hesaplanır."""
+    return bool(str((emp or {}).get("pay_start_date") or "").strip())
+
+
 def entitlement_slot_partner(emp: Dict[str, Any], month: str) -> Optional[Dict[str, Any]]:
-    """pay_start_date yoksa işe giriş, o da yoksa dönem başı hak ediş çapasını kurar."""
-    start = emp.get("pay_start_date") or emp.get("start_date")
-    if not start and _amt(emp.get("salary")) > 0.004 and len(str(month or "")) >= 7:
-        start = f"{str(month)[:7]}-01"
-    if not start:
+    """pay_start_date yoksa hak ediş çapasını kurmaz (işe giriş / ay başı yedeği yok)."""
+    if not has_pay_start_date(emp):
         return None
+    start = str(emp.get("pay_start_date") or "").strip()
     rec = emp.get("pay_recurring")
     return {
-        "salary_start_date": str(start)[:10],
+        "salary_start_date": start[:10],
         "salary_day": emp.get("pay_day"),
         "salary_recurring": True if rec is None else bool(rec),
     }
@@ -456,7 +459,7 @@ def unpaid_salary_amount(
     """Açık bordro kalanı; yoksa İstanbul gününe göre hak edilmiş maaş.
 
     Reddedilen / iptal bordro alacağı şişirmez ve hak edişi de gizlemez.
-    Kısmi `paid_amount` düşülür. pay_start_date boşsa start_date çapa olur.
+    Kısmi `paid_amount` düşülür. pay_start_date yoksa tahmini maaş 0'dır.
     """
     total = round(sum(payroll_open_remainder(p) for p in (payrolls or [])), 2)
     if total > 0.004:
@@ -508,7 +511,7 @@ def period_figures(
         earned += payable
         deductions += _amt(p.get("deduction"))
         previous += payroll_paid_amount(p)
-    if not saw and unpaid_payroll > 0.004:
+    if not saw and unpaid_payroll > 0.004 and has_pay_start_date(emp):
         earned = _amt((emp or {}).get("salary"))
     for b in bonuses or []:
         in_period = str(b.get("period") or "")[:7] == per or str(b.get("date") or "").startswith(per)

@@ -8,7 +8,9 @@ import {
   employeePayModalStart,
   employeePayModalTitle,
   employeePayTotal,
+  hasPayStartDate,
   istanbulPeriod,
+  PAY_START_MISSING_MSG,
   payDayOf,
   paymentPreview,
   sgkCashBlocked,
@@ -44,6 +46,10 @@ describe("employeePay", () => {
   it("reads hak ediş günü from pay_start_date", () => {
     expect(payDayOf({ pay_start_date: "2026-11-01" })).toBe(1);
     expect(payDayOf({ pay_day: 15 })).toBe(15);
+    expect(hasPayStartDate({ pay_start_date: "2026-11-01" })).toBe(true);
+    expect(hasPayStartDate({ pay_start_date: "" })).toBe(false);
+    expect(hasPayStartDate({})).toBe(false);
+    expect(PAY_START_MISSING_MSG).toBe("Hak ediş tarihi tanımlı değil");
   });
 
   it("starts list pay buttons in split mode for a single kind", () => {

@@ -13,6 +13,7 @@ import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { EmployeeMovesModal } from "./EmployeeMovesModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone, parseAnnualLeaveDays, annualLeaveDaysError, annualLeaveDaysPayload } from "../utils/employeeCardSummary";
+import { hasPayStartDate, PAY_START_MISSING_MSG } from "../utils/employeePay";
 import { bonusPaidDate, employeePayButtonLabel, employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, empDataResetConfirm, empDataResetPath } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
@@ -340,7 +341,13 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               return presence ? (
                 <span data-testid="emp-presence-modal" className="ml-1.5 align-middle text-[10px] font-bold px-1.5 py-0.5 rounded-full border" style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}>{presence.label}</span>
               ) : null;
-            })()}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">İşe giriş: {formatTrDate(e.start_date)}{e.end_date ? ` · Ayrılış: ${formatTrDate(e.end_date)}` : ""} · TCKN: {e.tc_kimlik}</div></div>
+            })()}</h3>
+            <div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div>
+            <div className="text-[11px] text-slate-400">İşe giriş: {formatTrDate(e.start_date)}{e.end_date ? ` · Ayrılış: ${formatTrDate(e.end_date)}` : ""} · TCKN: {e.tc_kimlik}</div>
+            {!hasPayStartDate(e) ? (
+              <div className="mt-1 text-[11px] font-semibold text-amber-800" data-testid="emp-card-no-pay-start">{PAY_START_MISSING_MSG}</div>
+            ) : null}
+            </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1 shrink-0" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
         </div>
@@ -377,7 +384,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <Stat label={isDailyWage(e) ? "Yevmiye" : "Net Maaş"} value={isDailyWage(e) ? `${fmt(e.daily_wage)} ₺ / gün` : `${fmt(e.salary)} ₺`} sub={isDailyWage(e) ? `${card.attendance.days_present || 0} gün = ${fmt(periodWage(e, card.attendance.days_present))} ₺ · tahmini ay ${fmt(monthlyLoad(e))} ₺` : `Bordro brüt ${fmt(e.payroll_salary || e.salary * 1.4)} ₺${e.second_salary ? ` · 2. maaş ${fmt(e.second_salary)} ₺` : ""}`} testid="emp-stat-salary" /><Stat label="Kalan İzin" value={`${card.leave_balance.remaining} / ${card.leave_balance.annual} gün`} testid="emp-stat-leave" />
                   <Stat label="Bu Ay Çalışma" value={`${card.attendance.days_present} gün · ${card.attendance.total_hours} sa`} testid="emp-stat-att" /><Stat label="Toplam Prim/Avans" value={`${fmt(card.totals.bonus_total)} ₺`} testid="emp-stat-bonus" />
-                  <Stat label="Kalan Alacak" value={`${fmt(remaining)} ₺`} sub={card.balance?.month ? `Dönem ${card.balance.month}` : undefined} testid="emp-stat-remaining" valueClass={TONE[remainingTone(remaining)]} />
+                  <Stat label="Kalan Alacak" value={`${fmt(remaining)} ₺`} sub={!hasPayStartDate(e) ? PAY_START_MISSING_MSG : (card.balance?.month ? `Dönem ${card.balance.month}` : undefined)} testid="emp-stat-remaining" valueClass={TONE[remainingTone(remaining)]} />
                   <Stat label="Fazla Mesai" value={`${(Number(ot.hours || card.attendance.overtime_hours) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 })} sa`} sub={`Ücret ${fmt(card.balance?.overtime_due ?? ot.amount ?? 0)} ₺${Number(ot.weekday_hours) || Number(ot.holiday_hours) ? ` · HF ${ot.weekday_hours || 0} / tatil ${ot.holiday_hours || 0}` : ""}`} testid="emp-stat-overtime" />
                   {(() => {
                     const unpaidYev = (card.bonuses || []).filter((b) => b.type === "yevmiye" && b.status !== "paid");
@@ -542,6 +549,9 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                       · Açık avans −{fmt(card.balance.advances)} ₺
                       <span className="font-medium text-slate-500"> (hakedişte mahsup)</span>
                     </span>
+                  ) : null}
+                  {!hasPayStartDate(e) ? (
+                    <span className="text-[11px] font-semibold text-amber-800" data-testid="emp-pay-no-start">{PAY_START_MISSING_MSG}</span>
                   ) : null}
                 </div>
                 <TxResponsiveList

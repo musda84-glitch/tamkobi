@@ -26,6 +26,7 @@ import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
 import { isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
 import { BLOOD_TYPE_OPTIONS, hasExtraEmployeeDetails, MARITAL_STATUS_OPTIONS } from "../utils/employeeDetails";
 import { annualLeaveDaysError, parseAnnualLeaveDays } from "../utils/employeeCardSummary";
+import { hasPayStartDate, PAY_START_MISSING_MSG } from "../utils/employeePay";
 import { workplaceShort } from "../utils/workplace";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "../components/TxMobileCard";
@@ -765,6 +766,9 @@ export default function PersonnelPage() {
                     </span>
                     {emp.balance?.advances ? (
                       <span className="text-amber-800 font-extrabold"> · Avans {fmtCardMoney(emp.balance.advances)}</span>
+                    ) : null}
+                    {!hasPayStartDate(emp) ? (
+                      <span className="block text-amber-800 font-semibold" data-testid={`employee-no-pay-start-${emp.tc_kimlik || empKey}`}>{PAY_START_MISSING_MSG}</span>
                     ) : null}
                   </div>
                   {emp.workplace?.kind === "task" ? (
