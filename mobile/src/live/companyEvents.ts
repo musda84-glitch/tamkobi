@@ -57,6 +57,23 @@ export function shouldRefreshOnForeground(state: string): boolean {
   return state === "active";
 }
 
+function apiHostname(baseUrl?: string | null): string {
+  const raw = String(baseUrl || "").trim();
+  if (!raw) return "";
+  try {
+    const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    return new URL(withProto).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** ik ve ynt API hostu olay akışında 403 döner; köprü bağlanmasın. */
+export function companyEventStreamEnabled(baseUrl?: string | null): boolean {
+  const label = apiHostname(baseUrl).split(".")[0];
+  return label !== "ik" && label !== "ynt";
+}
+
 type Listener = (scopes: string[]) => void;
 const listeners = new Set<Listener>();
 

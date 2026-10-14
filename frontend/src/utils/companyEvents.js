@@ -69,3 +69,8 @@ export function nextRetryDelay(attempt) {
   const n = Number(attempt) || 0;
   return Math.min(15000, 1000 * (2 ** Math.min(n, 4)));
 }
+
+/** ik ve ynt oturumu /api/events/stream'de 403 alır; yeniden deneme döngüsü açılmasın. */
+export function companyEventStreamEnabled(kind) {
+  return kind !== "ik" && kind !== "ynt";
+}

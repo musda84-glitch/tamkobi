@@ -1,4 +1,4 @@
-import { createChangeBuffer, nextRetryDelay, parseSseBlock, scopesForEventType } from "./companyEvents";
+import { companyEventStreamEnabled, createChangeBuffer, nextRetryDelay, parseSseBlock, scopesForEventType } from "./companyEvents";
 
 test("scopesForEventType maps finance entities and falls back to all", () => {
   expect(scopesForEventType("invoice")).toEqual(["invoices", "contacts", "cash"]);
@@ -38,4 +38,12 @@ test("flushNow refreshes immediately and reconnect delay backs off", () => {
   expect(nextRetryDelay(0)).toBe(1000);
   expect(nextRetryDelay(4)).toBe(15000);
   expect(nextRetryDelay(8)).toBe(15000);
+});
+
+test("ik and ynt hosts do not open the company event stream", () => {
+  expect(companyEventStreamEnabled("ik")).toBe(false);
+  expect(companyEventStreamEnabled("ynt")).toBe(false);
+  expect(companyEventStreamEnabled("app")).toBe(true);
+  expect(companyEventStreamEnabled("b2b")).toBe(true);
+  expect(companyEventStreamEnabled("site")).toBe(true);
 });

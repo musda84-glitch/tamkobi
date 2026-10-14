@@ -223,3 +223,108 @@ class TestStreamAuth:
         assert res.headers.get("x-accel-buffering") == "no"
         assert "no-cache" in (res.headers.get("cache-control") or "")
         assert ": ok" in res.text
+
+
+class _FindCol:
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+        self.calls = 0
+
+    def find(self, *_a, **_k):
+        self.calls += 1
+        rows = list(self.rows)
+
+        class _Cursor:
+            async def to_list(_self, _n):
+                return rows
+
+        return _Cursor()
+
+
+class TestWorkerFanout:
+    def teardown_method(self):
+        company_events.reset_for_tests()
+
+    def test_poll_interval_and_single_worker_skips_db(self, monkeypatch):
+        assert company_events.POLL_SEC == 1.5
+        monkeypatch.setattr(company_events, "_cmdline", lambda _pid: "")
+        monkeypatch.delenv("TAMKOBI_WORKERS", raising=False)
+        monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
+        assert company_events.worker_count() == 1
+        col = _FindCol([{"company_id": "co_a", "type": "stock", "id": "s1", "created_at": "2099-01-01T00:00:00+00:00"}])
+        company_events.reset_for_tests()
+        company_events.init(type("Db", (), {"company_events": col})(), None)
+        rows = asyncio.run(company_events._poll("co_a", "2020-01-01T00:00:00+00:00"))
+        assert rows == []
+        assert col.calls == 0
+
+    def test_worker_count_prefers_process_flag_then_env(self, monkeypatch):
+        monkeypatch.setattr(
+            company_events,
+            "_cmdline",
+            lambda pid: "uvicorn server:app --workers 2" if pid == os.getppid() else "",
+        )
+        monkeypatch.setenv("TAMKOBI_WORKERS", "1")
+        assert company_events.worker_count() == 2
+        monkeypatch.setattr(company_events, "_cmdline", lambda _pid: "")
+        monkeypatch.delenv("TAMKOBI_WORKERS", raising=False)
+        monkeypatch.setenv("WEB_CONCURRENCY", "3")
+        assert company_events.worker_count() == 3
+
+    def test_single_worker_stream_uses_memory(self, monkeypatch):
+        monkeypatch.setattr(company_events, "worker_count", lambda: 1)
+        company_events.reset_for_tests()
+        col = _FindCol([{"company_id": "co_a", "type": "stock", "id": "from-db", "created_at": "2099-01-01T00:00:00+00:00", "_id": "db1"}])
+        company_events.init(type("Db", (), {"company_events": col})(), None)
+
+        class _Req:
+            def __init__(self):
+                self.n = 0
+
+            async def is_disconnected(self):
+                self.n += 1
+                if self.n == 1:
+                    company_events.note_change("invoices", {"_id": "inv1", "company_id": "co_a"})
+                    return False
+                return True
+
+        async def _collect():
+            chunks = []
+            async for chunk in company_events.iter_company_events("co_a", _Req()):
+                chunks.append(chunk)
+            return chunks
+
+        body = "".join(asyncio.run(_collect()))
+        assert '"type":"invoice","id":"inv1"' in body
+        assert "from-db" not in body
+        assert col.calls == 0
+
+    def test_multi_worker_stream_reads_db(self, monkeypatch):
+        monkeypatch.setattr(company_events, "worker_count", lambda: 2)
+        company_events.reset_for_tests()
+        col = _FindCol([{
+            "company_id": "co_a",
+            "type": "stock",
+            "id": "s9",
+            "created_at": "2099-01-01T00:00:00+00:00",
+            "_id": "ev9",
+        }])
+        company_events.init(type("Db", (), {"company_events": col})(), None)
+
+        class _Req:
+            def __init__(self):
+                self.n = 0
+
+            async def is_disconnected(self):
+                self.n += 1
+                return self.n > 1
+
+        async def _collect():
+            chunks = []
+            async for chunk in company_events.iter_company_events("co_a", _Req()):
+                chunks.append(chunk)
+            return chunks
+
+        body = "".join(asyncio.run(_collect()))
+        assert col.calls >= 1
+        assert '"type":"stock","id":"s9"' in body

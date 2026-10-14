@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import { useAuth } from "@/auth/AuthContext";
 import { API_BASE_HEADER, requestTarget } from "@/api/url";
 import {
+  companyEventStreamEnabled,
   emitLiveRefresh,
   nextRetryDelay,
   parseSseChunk,
@@ -20,9 +21,10 @@ export function CompanyEventBridge() {
   const { user, client, companyId } = useAuth();
   const scopesRef = useRef(new Set<string>());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamEnabled = companyEventStreamEnabled(client?.baseUrl);
 
   useEffect(() => {
-    if (!user || !companyId || !client?.baseUrl) return undefined;
+    if (!streamEnabled || !user || !companyId || !client?.baseUrl) return undefined;
     let closed = false;
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -103,7 +105,7 @@ export function CompanyEventBridge() {
       }
       sub.remove();
     };
-  }, [user, client, companyId]);
+  }, [streamEnabled, user, client, companyId]);
 
   return null;
 }

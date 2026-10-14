@@ -1,4 +1,5 @@
 import {
+  companyEventStreamEnabled,
   emitLiveRefresh,
   nextRetryDelay,
   parseSseChunk,
@@ -28,6 +29,14 @@ test("foreground and retry", () => {
   expect(shouldRefreshOnForeground("background")).toBe(false);
   expect(nextRetryDelay(0)).toBe(1000);
   expect(nextRetryDelay(6)).toBe(15000);
+});
+
+test("ik and ynt hosts do not open the company event stream", () => {
+  expect(companyEventStreamEnabled("https://ik.tamkobi.com")).toBe(false);
+  expect(companyEventStreamEnabled("https://ynt.taiyazilim.com")).toBe(false);
+  expect(companyEventStreamEnabled("https://app.tamkobi.com")).toBe(true);
+  expect(companyEventStreamEnabled("https://tamkobi.com")).toBe(true);
+  expect(companyEventStreamEnabled("")).toBe(true);
 });
 
 test("emitLiveRefresh reaches subscribers", () => {

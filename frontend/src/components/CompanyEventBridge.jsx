@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { getHostKind } from "../utils/hosts";
 import { notifyDataChanged } from "../utils/dataRefresh";
-import { createChangeBuffer, nextRetryDelay } from "../utils/companyEvents";
+import { companyEventStreamEnabled, createChangeBuffer, nextRetryDelay } from "../utils/companyEvents";
 
 /**
  * Şirket SSE kanalı: ilgili sorguları yeniler, kopunca yeniden bağlanır,
@@ -10,9 +11,10 @@ import { createChangeBuffer, nextRetryDelay } from "../utils/companyEvents";
 export function CompanyEventBridge() {
   const { authenticated, activeCompany } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "";
+  const streamEnabled = companyEventStreamEnabled(getHostKind());
 
   useEffect(() => {
-    if (!authenticated || !companyId || typeof window === "undefined" || typeof EventSource === "undefined") {
+    if (!streamEnabled || !authenticated || !companyId || typeof window === "undefined" || typeof EventSource === "undefined") {
       return undefined;
     }
     let closed = false;
@@ -69,7 +71,7 @@ export function CompanyEventBridge() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [authenticated, companyId]);
+  }, [authenticated, companyId, streamEnabled]);
 
   return null;
 }
