@@ -229,6 +229,7 @@ const CardStatementImportBody = ({ account, contacts = [], initialFile = null, o
                         {t.description}
                         {t.installment && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded">{t.installment}</span>}
                         {t.duplicate && <span className="ml-1 text-[9px] text-slate-400">(zaten var)</span>}
+                        {t.duplicate_suspect && !t.duplicate && <span className="ml-1 text-[9px] text-amber-700">(muhtemel çift kayıt)</span>}
                         {t.suggested_contact_name && <div className="text-[10px] text-emerald-700">Öneri: {t.suggested_contact_name}</div>}
                       </td>
                       <td>

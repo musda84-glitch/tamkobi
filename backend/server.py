@@ -7425,14 +7425,19 @@ async def _pos_do_cancel_sale(payload: Dict[str, Any]):
         "name": payload.get("cashier_name") or "POS",
     }
     result = await _cancel_invoice_core(inv["_id"], {"reason": "POS satış iptali"}, actor)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now_iso = datetime.now(timezone.utc).isoformat()
     for tx in await db.bank_transactions.find({"invoice_id": inv["_id"], "source": "pos_quick"}).to_list(20):
-        amt = float(tx.get("amount") or 0)
-        aid = tx.get("account_id")
-        if aid and tx.get("type") == "inflow":
-            await db.bank_accounts.update_one({"_id": aid}, {"$inc": {"current_balance": -amt}})
-        await db.bank_transactions.update_one(
-            {"_id": tx["_id"]},
-            {"$set": {"category": "POS satış iptali", "updated_at": datetime.now(timezone.utc).isoformat()}},
+        already = await db.bank_transactions.find_one({"source": "pos_cancel", "related_bank_tx_id": tx.get("_id")})
+        if already:
+            continue
+        cancel_doc = account_balance.pos_cancel_outflow_doc(tx, now_iso=now_iso, today=today)
+        if not cancel_doc:
+            continue
+        await db.bank_transactions.insert_one(cancel_doc)
+        await db.bank_accounts.update_one(
+            {"_id": cancel_doc["account_id"]},
+            {"$inc": {"current_balance": -float(cancel_doc["amount"])}},
         )
     return result
 
@@ -9806,7 +9811,34 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
                 await bank_guard.pin_customer_card_pool_balance(db, row.get("id") or row.get("_id"))
             row["current_balance"] = 0.0
         out.append(row)
+    await account_balance.annotate_listed_accounts(db, company_id, out)
     return out
+
+
+async def _can_read_reconciliation(user: dict, company_id: Optional[str] = None) -> bool:
+    """İstenen şirketteki rol. Global user['role'] yetki vermez; süper admin her zaman okur."""
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    if (user or {}).get("is_super_admin"):
+        return True
+    role = await rbac.role_for(user, company_id)
+    raw = (role or {}).get("code") if isinstance(role, dict) else None
+    if not raw:
+        return False
+    return rbac.normalize_role_code(raw) in ("admin", "accountant", "advisor")
+
+
+@api_router.get("/banking/reconciliation")
+async def banking_reconciliation(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Salt-okuma bakiye mutabakatı. İstenen şirkette yönetici, muhasebe veya mali müşavir."""
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    if not await _can_read_reconciliation(user, company_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Bakiye mutabakatı için yönetici, muhasebe veya mali müşavir yetkisi gerekir.",
+        )
+    import balance_reconciliation as _recon
+    return await _recon.build_reconciliation(db, company_id)
+
 
 async def _resolve_card_owner_fields(company_id: str, payload: Dict[str, Any], *, existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """credit_card + card_owner=customer ise linked_contact zorunlu (havuz hariç)."""
@@ -9911,7 +9943,8 @@ async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01
     if account_id:
         query["$or"] = [{"account_id": account_id}, {"target_account_id": account_id}]
     txs = await db.bank_transactions.find(query).sort("date", -1).to_list(2000)
-    return clean_docs(txs)
+    annotated = [account_balance.annotate_bank_tx(t, account_id) for t in txs]
+    return clean_docs(annotated)
 
 @api_router.post("/banking/transactions")
 async def create_bank_transaction(tx: BankTransaction):
@@ -9938,30 +9971,33 @@ async def create_bank_transaction(tx: BankTransaction):
     return clean_doc(doc)
 
 async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
-    """sign=-1 geri alır, sign=+1 uygular."""
+    """sign=-1 geri alır, sign=+1 uygular.
+
+    Hesap $inc'i account_balance.skips_account_balance ile tx_signed_amount'un
+    sıfır kurallarına bağlıdır (ledger, havuz, ekstre, beklenen hakediş, iptal).
+    """
     amt = float(tx.get("amount", 0)) * sign
+
+    async def _touch_account(aid: Optional[str], delta: float) -> None:
+        if not aid:
+            return
+        acc_meta = await db.bank_accounts.find_one({"_id": aid}, {"is_customer_card_pool": 1, "type": 1})
+        if account_balance.skips_account_balance(tx, acc_meta, aid):
+            if tx.get("customer_card_pool_ledger") or tx.get("via_customer_card") or bank_guard.is_customer_card_pool(acc_meta):
+                await bank_guard.pin_customer_card_pool_balance(db, aid)
+            return
+        await db.bank_accounts.update_one({"_id": aid}, {"$inc": {"current_balance": delta}})
+
     if tx.get("type") == "transfer":
-        await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": -amt}})
+        await _touch_account(tx.get("account_id"), -amt)
         if tx.get("target_account_id"):
-            await db.bank_accounts.update_one({"_id": tx["target_account_id"]}, {"$inc": {"current_balance": amt}})
+            await _touch_account(tx["target_account_id"], amt)
         if tx.get("owner_contact_id"):
             # Müşteri kartı virmanında create −amount yazmıştı; sign=-1 → geri al.
             await db.contacts.update_one({"_id": tx["owner_contact_id"]}, {"$inc": {"balance": -amt}})
         return
     change = amt if tx.get("type") == "inflow" else -amt
-    # Müşteri Kartları havuzu defter: giriş/çıkış eşlenik, bakiye her zaman 0 — $inc yapma.
-    skip_account_bal = bool(tx.get("customer_card_pool_ledger")) or (
-        tx.get("via_customer_card") and tx.get("account_id") and tx.get("account_id") == tx.get("customer_card_account_id")
-    )
-    if tx.get("account_id") and tx.get("source") != "ledger" and not skip_account_bal:
-        acc_meta = await db.bank_accounts.find_one({"_id": tx["account_id"]}, {"is_customer_card_pool": 1, "type": 1})
-        if bank_guard.is_customer_card_pool(acc_meta):
-            skip_account_bal = True
-            await bank_guard.pin_customer_card_pool_balance(db, tx["account_id"])
-        else:
-            await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
-    elif skip_account_bal and tx.get("account_id"):
-        await bank_guard.pin_customer_card_pool_balance(db, tx["account_id"])
+    await _touch_account(tx.get("account_id"), change)
     # Masraf / havuz ayna satırı: oluştururken cariye yazılmaz; geri alırken de dokunma.
     # Her cari virman satırı yalnız kendi contact_id bakiyesini taşır (eş satır ayrı reverse edilir).
     if tx.get("source") in ("virman_card_mirror", "expense"):
@@ -10607,7 +10643,7 @@ async def partner_ledger_check(partner_id: str, user: dict = Depends(get_current
         },
         "by_type": by_type,
         "tx_count": len(txs),
-        "transactions": clean_docs(txs),
+        "transactions": clean_docs([partner_pay.annotate_partner_tx(t) for t in txs]),
     }
 
 @api_router.post("/banking/partners")
@@ -10691,7 +10727,7 @@ async def list_partner_transactions(company_id: Optional[str] = None, partner_id
     # Sync ile aynı tavan — kart kasa neti eksik hareketle sapmasın
     # En yeni işlem tarihi üstte (UI banka/kasa listeleriyle aynı)
     txs = await db.partner_transactions.find(query).sort([("date", -1), ("created_at", -1)]).to_list(20000)
-    return clean_docs(txs)
+    return clean_docs([partner_pay.annotate_partner_tx(t) for t in txs])
 
 PARTNER_TX_LABELS = partner_pay.TX_LABELS
 PARTNER_CASH_TYPES = partner_pay.CASH_TYPES
@@ -11325,13 +11361,17 @@ async def _sync_bank_connection_core(
     bank_balance = result.get("balance")
     if bank_balance is not None:
         try:
-            acc_patch["current_balance"] = float(bank_balance)
+            acc_patch["bank_reported_balance"] = float(bank_balance)
+            acc_patch["bank_reported_at"] = datetime.now(timezone.utc).isoformat()
         except (TypeError, ValueError):
             bank_balance = None
-    if bank_balance is None and balance_delta:
+    # Görünen bakiye hareket $inc'i ile yürür; bankanın bildirdiği ayrı alanda kalır.
+    if balance_delta:
         await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": balance_delta}})
-    elif acc_patch:
+    if acc_patch:
         await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$set": acc_patch})
+    for fresh in new_txs:
+        await _consume_expected_settlement(fresh)
 
     auto_matched = 0
     if doc.get("auto_match"):
@@ -11361,7 +11401,7 @@ async def _sync_bank_connection_core(
     })
     bal_note = ""
     if bank_balance is not None:
-        bal_note = f" Güncel bakiye: {float(bank_balance):,.2f} ₺."
+        bal_note = f" Bankanın bildirdiği bakiye: {float(bank_balance):,.2f} ₺."
     elif balance_delta:
         bal_note = f" Bakiye farkı: {balance_delta:+,.2f} ₺."
     if inserted:
@@ -11537,7 +11577,7 @@ async def _apply_personnel_bank_match(tx: dict, emp: dict, kind: str, amount: fl
     return "Personel Maaş Ödemesi"
 
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None, personnel_pay_kind: Optional[str] = None) -> dict:
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None, personnel_pay_kind: Optional[str] = None, link_existing_id: Optional[str] = None) -> dict:
     from bank_auto_match import match_actor_fields
     from bank_match_desc import append_match_suffix, match_phrase, strip_match_suffix
     update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
@@ -11553,18 +11593,59 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
             raise HTTPException(status_code=400, detail="Masraf eşleştirmesi yalnızca çıkış (ödeme) hareketlerinde yapılabilir.")
         if invoice_id or target_account_id:
             raise HTTPException(status_code=400, detail="Masraf eşleştirmesinde fatura veya virman hedefi seçilemez.")
-    if invoice_id:
+    import duplicate_guard
+    link_existing = None
+    if link_existing_id:
+        link_existing = await db.bank_transactions.find_one({"_id": link_existing_id})
+        if not link_existing:
+            raise HTTPException(status_code=404, detail="Bağlanacak kayıt bulunamadı.")
+        contact_id = contact_id or link_existing.get("contact_id")
+    if invoice_id and not link_existing:
         inv = await db.invoices.find_one({"_id": invoice_id})
         if not inv:
             raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+        if duplicate_guard.invoice_payment_exceeds(inv, amount):
+            raise HTTPException(status_code=400, detail="Ödeme fatura tutarını (grand_total) aşıyor.")
         new_paid = inv.get("paid_amount", 0) + amount
         payment_status = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid"
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"paid_amount": new_paid, "payment_status": payment_status}})
         update["related_invoice_id"] = invoice_id
         update["related_invoice_number"] = inv.get("invoice_number")
         contact_id = contact_id or inv.get("contact_id")
+    elif invoice_id and link_existing:
+        inv = await db.invoices.find_one({"_id": invoice_id})
+        if inv:
+            update["related_invoice_id"] = invoice_id
+            update["related_invoice_number"] = inv.get("invoice_number")
+            contact_id = contact_id or inv.get("contact_id")
     contact_name = None
-    if contact_id:
+    if contact_id and not link_existing:
+        same_account = await db.bank_transactions.find({"account_id": tx.get("account_id"), "contact_id": contact_id}).to_list(2000)
+        dup = duplicate_guard.find_duplicate_candidate(
+            same_account,
+            account_id=tx.get("account_id"),
+            contact_id=contact_id,
+            amount=amount,
+            date=tx.get("date"),
+            tx_type="inflow" if is_inflow else "outflow",
+            exclude_id=tx.get("_id"),
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail={
+                "code": "duplicate_contact_movement",
+                "message": "Aynı cari, tutar ve tarih aralığında tahsilat/ödeme zaten kayıtlı.",
+                "action": "mevcut kayda bağla",
+                "existing_tx_id": dup.get("_id") or dup.get("id"),
+            })
+    if link_existing:
+        update["related_manual_tx_id"] = link_existing.get("_id")
+        update["linked_existing"] = True
+        contact_id = contact_id or link_existing.get("contact_id")
+        contact_name = link_existing.get("contact_name")
+        if contact_id:
+            update["contact_id"] = contact_id
+            update["contact_name"] = contact_name
+    elif contact_id:
         contact = await db.contacts.find_one({"_id": contact_id})
         if not contact:
             raise HTTPException(status_code=404, detail="Cari bulunamadı.")
@@ -11895,6 +11976,7 @@ async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, An
         as_expense=bool(req.get("as_expense")),
         employee_id=req.get("employee_id") or None,
         personnel_pay_kind=req.get("personnel_pay_kind") or None,
+        link_existing_id=req.get("link_existing_id") or req.get("existing_tx_id") or None,
     )
 
 @api_router.post("/banking/transactions/{tx_id}/unmatch")
@@ -14410,6 +14492,53 @@ async def _ensure_marketplace_contact(company_id: str, channel: str) -> Optional
     await db.contacts.insert_one(c)
     return c
 
+async def _consume_expected_settlement(bank_tx: dict) -> bool:
+    """Entegre hesaba düşen banka satırını bekleyen hakediş kaydına bağlar. Bakiye yazmaz."""
+    if not bank_tx or bank_tx.get("type") != "inflow" or not bank_tx.get("account_id"):
+        return False
+    try:
+        amt = float(bank_tx.get("amount") or 0)
+    except (TypeError, ValueError):
+        return False
+    rows = await db.bank_transactions.find({
+        "account_id": bank_tx["account_id"],
+        "source": "marketplace_settlement_expected",
+        "match_status": "expected",
+    }).to_list(100)
+    hit = None
+    for row in rows:
+        try:
+            if abs(float(row.get("amount") or 0) - amt) < 0.02:
+                hit = row
+                break
+        except (TypeError, ValueError):
+            continue
+    if not hit:
+        return False
+    await db.bank_transactions.update_one({"_id": hit["_id"]}, {"$set": {
+        "match_status": "matched",
+        "linked_bank_tx_id": bank_tx.get("_id"),
+    }})
+    await db.bank_transactions.update_one({"_id": bank_tx["_id"]}, {"$set": {
+        "match_status": "matched",
+        "matched_via": "marketplace_settlement",
+        "related_expected_tx_id": hit.get("_id"),
+        "contact_id": hit.get("contact_id"),
+        "contact_name": hit.get("contact_name"),
+        "related_invoice_id": hit.get("related_invoice_id"),
+        "related_invoice_number": hit.get("related_invoice_number"),
+        "order_id": hit.get("order_id"),
+        "category": hit.get("category") or bank_tx.get("category"),
+    }})
+    bank_tx.update({
+        "match_status": "matched",
+        "matched_via": "marketplace_settlement",
+        "contact_id": hit.get("contact_id"),
+        "order_id": hit.get("order_id"),
+    })
+    return True
+
+
 async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
     """Kanal için hakediş hesabı seçiliyse: net tutar hesaba tahsilat, müşteri carisine ödeme, kesinti pazaryeri carisine."""
     channel = (order.get("channel") or "").lower()
@@ -14459,8 +14588,15 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
         "date": today,
         "created_at": now,
     }
-    await db.bank_transactions.insert_one(tx)
-    await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": net}})
+    integrated = await account_balance.account_is_integrated(db, acc["_id"])
+    if integrated:
+        tx["source"] = "marketplace_settlement_expected"
+        tx["match_status"] = "expected"
+        tx["balance_posted"] = False
+        await db.bank_transactions.insert_one(tx)
+    else:
+        await db.bank_transactions.insert_one(tx)
+        await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": net}})
     # Net tahsilat → müşteri carisi (fatura alacağının net kısmı)
     if cust_id and abs(net) > 0.005:
         await db.contacts.update_one({"_id": cust_id}, {"$inc": {"balance": -net}})
@@ -14592,8 +14728,13 @@ async def _reverse_marketplace_settlement(order: dict) -> Optional[dict]:
     reversed_net = 0.0
     for tx in txs:
         amt = float(tx.get("amount") or 0)
-        # Kasa/banka: ledger kaynaklı satırlar hesap bakiyesine yazılmaz.
-        if tx.get("account_id") and tx.get("source") != "ledger":
+        # Kasa/banka: ledger ve bakiyeye yazılmamış beklenen hakediş geri alınırken $inc yok.
+        posted_to_balance = (
+            tx.get("account_id")
+            and tx.get("source") not in ("ledger", "marketplace_settlement_expected")
+            and tx.get("balance_posted") is not False
+        )
+        if posted_to_balance:
             change = -amt if tx.get("type") == "inflow" else amt
             await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
             if tx.get("type") == "inflow":

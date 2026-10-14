@@ -161,21 +161,41 @@ async def _existing_statement_keys(account_id: str, *, all_sources: bool = False
     return {_tx_key(b) for b in rows}
 
 
-async def _enrich_statement_lines(company_id: str, txs: List[Dict[str, Any]], *, is_card: bool = True) -> List[Dict[str, Any]]:
+async def _enrich_statement_lines(company_id: str, txs: List[Dict[str, Any]], *, is_card: bool = True, account_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    import duplicate_guard
     contacts = await _db.contacts.find({"company_id": company_id}).to_list(10000)
+    manual_rows: List[Dict[str, Any]] = []
+    if account_id:
+        try:
+            manual_rows = await _db.bank_transactions.find({"account_id": account_id}).to_list(5000)
+        except Exception:
+            manual_rows = []
     out = []
     for t in txs:
         blob = " ".join(filter(None, [t.get("description"), t.get("merchant")]))
         hit = match_statement_contact(blob, contacts)
         kind = _kind_for_line(t.get("amount") or 0, hit, is_card=is_card)
+        contact_id = hit.get("_id") if hit else (t.get("contact_id") or None)
+        suspect = None
+        if account_id and contact_id and not t.get("duplicate"):
+            suspect = duplicate_guard.find_duplicate_candidate(
+                manual_rows,
+                account_id=account_id,
+                contact_id=contact_id,
+                amount=abs(float(t.get("amount") or 0)),
+                date=t.get("date"),
+                tx_type=duplicate_guard.statement_tx_type(t.get("amount") or 0, is_card=is_card),
+            )
         out.append({
             **t,
             "kind": kind,
             "suggested_contact_id": hit.get("_id") if hit else None,
             "suggested_contact_name": hit.get("name") if hit else None,
-            "contact_id": hit.get("_id") if hit else None,
-            "contact_name": hit.get("name") if hit else None,
-            "included": (not t.get("duplicate")) and float(t.get("amount") or 0) != 0,
+            "contact_id": contact_id,
+            "contact_name": (hit.get("name") if hit else None) or t.get("contact_name"),
+            "duplicate_suspect": bool(suspect),
+            "duplicate_of": (suspect.get("_id") if suspect else None),
+            "included": (not t.get("duplicate")) and (not suspect) and float(t.get("amount") or 0) != 0,
         })
     return out
 
@@ -438,7 +458,7 @@ async def import_statement(account_id: str, file: UploadFile = File(...), dry_ru
     existing = await _existing_statement_keys(account_id, all_sources=not is_card)
     for t in txs:
         t["duplicate"] = _tx_key(t) in existing
-    txs = await _enrich_statement_lines(acc["company_id"], txs, is_card=is_card)
+    txs = await _enrich_statement_lines(acc["company_id"], txs, is_card=is_card, account_id=account_id)
     if is_card:
         statement = {k: d.get(k) for k in ("bank", "card_last4", "statement_date", "due_date", "total_debt", "minimum_payment", "limit", "confidence")}
     else:

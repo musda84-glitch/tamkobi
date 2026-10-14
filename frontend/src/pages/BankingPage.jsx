@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { PartnersPanel } from "../components/PartnersPanel";
+import { ReconciliationPanel } from "../components/ReconciliationPanel";
 import { cachedList } from "../utils/dataSync";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
@@ -21,6 +22,7 @@ import { MoneyInput } from "../components/MoneyInput";
 
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { partnerSummaryCardMeta } from "../utils/partnerTx";
+import { shownAccountBalance, sumShownBalances, totalLiquidity as sumLiquidity } from "../utils/accountTotals";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   Landmark,
@@ -39,12 +41,14 @@ import {
   Pencil,
   Trash2,
   Sparkles,
-  Printer
+  Printer,
+  Scale
 } from "lucide-react";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
   { key: "partners", label: "Ortaklar Hesabı", icon: Users },
+  { key: "reconciliation", label: "Mutabakat", icon: Scale },
   { key: "connections", label: "Banka Entegrasyonu (Canlı Veri)", icon: Link2 }
 ];
 
@@ -366,12 +370,12 @@ export default function BankingPage() {
     }
   };
 
-  const totalLiquidity = accounts.filter((a) => a.type !== "credit_card").reduce((sum, a) => sum + (a.current_balance || 0), 0);
+  const totalLiquidity = sumLiquidity(accounts);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
-  const accountDisplayBalance = (a) => (a?.is_customer_card_pool ? 0 : (Number(a?.current_balance) || 0));
+  const accountDisplayBalance = shownAccountBalance;
   const grouped = ACCOUNT_GROUPS.map((g) => {
     const items = accounts.filter((a) => accountGroupType(a) === g.type);
-    return { ...g, items, total: items.reduce((s, a) => s + accountDisplayBalance(a), 0) };
+    return { ...g, items, total: sumShownBalances(items) };
   }).filter((g) => g.items.length > 0);
   const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
   const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
@@ -469,6 +473,7 @@ export default function BankingPage() {
       </div>
 
       {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={bumpCashData} />}
+      {tab === "reconciliation" && <ReconciliationPanel companyId={companyId} />}
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={bumpCashData} />}
 
       {tab === "accounts" && (<>
@@ -483,7 +488,7 @@ export default function BankingPage() {
               </div>
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">{partnerSummary.partner_count} Ortak</h3>
-                <div className="text-xs text-slate-500">Giriş: {(partnerSummary.total_cash_in ?? partnerSummary.total_capital_in).toLocaleString('tr-TR')} ₺ • Çıkış: {(partnerSummary.total_cash_out ?? partnerSummary.total_withdrawn).toLocaleString('tr-TR')} ₺</div>
+                <div className="text-xs text-slate-500">Ortak lehine: {(partnerSummary.total_cash_in ?? partnerSummary.total_capital_in).toLocaleString('tr-TR')} ₺ • Ortak aleyhine: {(partnerSummary.total_cash_out ?? partnerSummary.total_withdrawn).toLocaleString('tr-TR')} ₺</div>
               </div>
             </div>
             <div className="pt-3 border-t border-amber-200/60">
@@ -599,6 +604,11 @@ export default function BankingPage() {
                         <Link2 className="w-3 h-3" />
                         ENTEGRE · {acc.integration_provider || "Banka API"}
                         {acc.integration_status === "connected" ? " · CANLI" : acc.integration_status === "error" ? " · HATA" : acc.integration_status === "simulated" ? " · SİMÜLE" : ""}
+                      </div>
+                    )}
+                    {acc.bank_balance_drift && (
+                      <div className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5 w-fit" data-testid={`balance-drift-${accId}`}>
+                        Banka bakiyesi defterden farklı
                       </div>
                     )}
                     {isCard && (

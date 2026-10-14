@@ -70,9 +70,7 @@ class TestProfitShareBalance:
 
 
 class TestPartnerCashCardTotals:
-    def test_cash_net_differs_from_ledger_when_credit_and_bank_outflow(self):
-        # Ledger: credit +909959.78 − withdrawal 39200 − bank withdrawal 173100 = 697659.78
-        # Kasa: Giriş 173100 (bank outflow etiketi) − Çıkış (credit+withdrawal) = −776059.78
+    def test_lehine_minus_aleyhine_equals_ledger(self):
         shaped = [
             {"type": "credit", "amount": 909959.78},
             {"type": "withdrawal", "amount": 39200},
@@ -83,25 +81,23 @@ class TestPartnerCashCardTotals:
                 "bank_tx_type": "outflow",
             },
         ]
-        assert tx_is_cash_inflow(shaped[0]) is False
+        assert tx_is_cash_inflow(shaped[0]) is True
         assert tx_is_cash_inflow(shaped[1]) is False
-        assert tx_is_cash_inflow(shaped[2]) is True
+        assert tx_is_cash_inflow(shaped[2]) is False
         cash = cash_card_totals(shaped)
-        assert cash["cash_in"] == 173100
-        assert cash["cash_out"] == pytest.approx(909959.78 + 39200)
-        assert cash["cash_net"] == pytest.approx(-776059.78)
-        assert cash["card_pocket"] == pytest.approx(776059.78)
         ledger = ledger_totals(shaped)
+        assert cash["cash_in"] == pytest.approx(909959.78)
+        assert cash["cash_out"] == pytest.approx(39200 + 173100)
+        assert cash["cash_net"] == pytest.approx(ledger["balance"])
+        assert cash["card_pocket"] == pytest.approx(cash["cash_net"])
         assert ledger["balance"] == pytest.approx(697659.78)
-        assert cash["cash_net"] != ledger["balance"]
 
 
 class TestAliBalPartnerCardMatchesSelector:
     """Ali BAL hareketleri: kart toplamı = ortak bakiyelerinin toplamı.
 
-    Seçicideki imzalı defter (Ali −288.340,22 + Mustafa +30.257,85) ile
-    kasa Giriş/Çıkış neti birbirinden sapar. Kart, kasa netini değil
-    present_partner_balance(toplam defter) sonucunu gösterir.
+    Seçicideki imzalı defter (Ali −288.340,22 + Mustafa +30.257,85)
+    liste lehine − aleyhine ile aynıdır. Kart bu toplamı gösterir.
     """
 
     def test_ali_bal_movements_card_equals_sum_of_partner_balances(self):
@@ -164,14 +160,14 @@ class TestAliBalPartnerCardMatchesSelector:
         assert view["label"] == card["label"]
 
         cash = cash_card_totals(txs)
-        assert cash["cash_net"] != pytest.approx(view["total_balance"])
-        assert cash["cash_net"] != pytest.approx(view["card_display"])
-        # Banka çıkış eşleşmesi kasada giriş, defterde çekimdir; kart kasa netini kullanmaz.
-        assert tx_is_cash_inflow(ali_txs[2]) is True
+        assert cash["cash_net"] == pytest.approx(view["total_balance"])
+        assert tx_is_cash_inflow(ali_txs[2]) is False
 
         payload = summary_payload({**view, "cash": cash, "source_partners": partners})
         assert payload["total_balance"] == pytest.approx(view["total_balance"])
         assert payload["total_card_pocket"] == pytest.approx(view["total_balance"])
         assert payload["total_cash_net"] == pytest.approx(view["card_display"])
         assert payload["balance_label"] == "Borçlu"
-        assert payload["total_card_pocket"] != pytest.approx(cash["cash_net"])
+        assert payload["total_cash_in"] == pytest.approx(cash["cash_in"])
+        assert payload["total_cash_out"] == pytest.approx(cash["cash_out"])
+        assert payload["total_card_pocket"] == pytest.approx(cash["cash_net"])

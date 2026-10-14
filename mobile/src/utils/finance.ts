@@ -71,6 +71,7 @@ export type BankAccount = {
   is_integrated?: boolean;
   integration_provider?: string;
   integration_status?: string;
+  is_customer_card_pool?: boolean;
 };
 
 export type BankTx = {
@@ -223,6 +224,8 @@ export type PartnerTx = {
   contact_id?: string;
   related_bank_tx_id?: string;
   bank_tx_type?: string;
+  balance_delta?: number;
+  side?: string;
 };
 
 export type AccountDraft = {
@@ -291,8 +294,23 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function accountBalance(a?: { current_balance?: number; balance?: number } | null): number {
-  return Number(a?.current_balance ?? a?.balance ?? 0) || 0;
+/** Web shownAccountBalance: havuz 0, diğerlerinde görünen bakiye. */
+export function shownAccountBalance(account?: { current_balance?: number; balance?: number; is_customer_card_pool?: boolean; type?: string | null } | null): number {
+  if (!account || account.is_customer_card_pool) return 0;
+  const n = Number(account.current_balance ?? account.balance ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function isLiquidityAccount(account?: { type?: string | null; is_customer_card_pool?: boolean } | null): boolean {
+  return Boolean(account) && normalizeAccountType(account?.type) !== "credit_card" && !account?.is_customer_card_pool;
+}
+
+export function sumShownBalances<T extends { current_balance?: number; balance?: number; is_customer_card_pool?: boolean; type?: string | null }>(accounts: T[] | null | undefined): number {
+  return (accounts || []).reduce((sum, account) => sum + shownAccountBalance(account), 0);
+}
+
+export function accountBalance(a?: { current_balance?: number; balance?: number; is_customer_card_pool?: boolean } | null): number {
+  return shownAccountBalance(a);
 }
 
 export type AccountGroupTone = {
@@ -370,6 +388,38 @@ export function isPartnerExpenseTx(tx?: PartnerTx | null): boolean {
   return Boolean(tx?.expense_id || tx?.source === "expense");
 }
 
+function effectOf(delta: number): { delta: number; side: "lehine" | "aleyhine" | "zero" } {
+  const rounded = Math.round(Number(delta) * 100) / 100;
+  if (!Number.isFinite(rounded) || rounded === 0) return { delta: 0, side: "zero" };
+  return { delta: rounded, side: rounded > 0 ? "lehine" : "aleyhine" };
+}
+
+/** Web/backend partnerTxEffect. API balance_delta+side varsa onu kullanır. */
+export function partnerTxEffect(tx?: PartnerTx | null): { delta: number; side: "lehine" | "aleyhine" | "zero" } {
+  if (!tx) return { delta: 0, side: "zero" };
+  if (tx.balance_delta != null && tx.balance_delta !== ("" as unknown) && tx.side) {
+    const delta = Number(tx.balance_delta);
+    const side = tx.side === "lehine" || tx.side === "aleyhine" || tx.side === "zero"
+      ? tx.side
+      : (delta > 0 ? "lehine" : delta < 0 ? "aleyhine" : "zero");
+    return { delta: Number.isFinite(delta) ? Math.round(delta * 100) / 100 : 0, side };
+  }
+  const amt = Number(tx.amount);
+  const amount = Number.isFinite(amt) ? Math.abs(amt) : 0;
+  if (tx.type === "profit_share") return effectOf(tx.is_paid ? 0 : amount);
+  if (isPartnerExpenseTx(tx)) return effectOf(amount);
+  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
+    const bankType = String(tx.bank_tx_type || "").toLowerCase();
+    if (bankType === "inflow" || bankType === "credit") return effectOf(amount);
+    if (bankType === "outflow" || bankType === "debit") return effectOf(-amount);
+  }
+  if (tx.contact_id && tx.type === "capital_in") return effectOf(amount);
+  if (tx.contact_id && tx.type === "withdrawal") return effectOf(-amount);
+  if (tx.type === "capital_in" || tx.type === "credit" || tx.type === "salary") return effectOf(amount);
+  if (tx.type === "withdrawal" || tx.type === "debit") return effectOf(-amount);
+  return effectOf(0);
+}
+
 /** Ortak bakiyesini artırır mı (web partnerTxIncreasesBalance). */
 export function partnerTxIncreasesBalance(type?: string | null, tx?: PartnerTx | null): boolean {
   if (tx && isPartnerExpenseTx(tx)) return true;
@@ -378,58 +428,86 @@ export function partnerTxIncreasesBalance(type?: string | null, tx?: PartnerTx |
   return false;
 }
 
-/** Kasa yönü Giriş mi (web partnerTxIsCashInflow). */
+/** Liste işareti: ortak lehine (pozitif delta). */
 export function partnerTxIsCashInflow(tx?: PartnerTx | null): boolean {
-  if (!tx) return false;
-  if (isPartnerExpenseTx(tx)) return false;
-  if (tx.type === "credit" || tx.type === "salary") return false;
-  if (tx.contact_id && tx.type === "withdrawal") return true;
-  if (tx.contact_id && tx.type === "capital_in") return false;
-  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
-    const bankType = String(tx.bank_tx_type || "").toLowerCase();
-    if (bankType === "outflow" || bankType === "debit") return true;
-    if (bankType === "inflow" || bankType === "credit") return false;
-  }
-  return partnerTxIncreasesBalance(tx.type, tx);
+  return partnerTxEffect(tx).side === "lehine";
 }
 
-/** Ortak işlem: Giriş/Çıkış = kasa yönü (web partnerTxIsCashInflow). */
+/** Liste etiketi: Ortak lehine / Ortak aleyhine. */
 export function partnerTxLabel(tx?: PartnerTx | null): string {
   if (!tx) return "";
-  return partnerTxIsCashInflow(tx) ? "Giriş" : "Çıkış";
+  const { side } = partnerTxEffect(tx);
+  if (side === "lehine") return "Ortak lehine";
+  if (side === "aleyhine") return "Ortak aleyhine";
+  return "Denk";
+}
+
+export function partnerTxSign(type?: string | null, tx?: PartnerTx | null): string {
+  if (tx && typeof tx === "object") {
+    const { delta, side } = partnerTxEffect({ ...tx, type: type || tx.type });
+    if (side === "lehine" || delta > 0) return "+";
+    if (side === "aleyhine" || delta < 0) return "-";
+    return "";
+  }
+  return partnerTxIncreasesBalance(type, tx) ? "+" : "-";
+}
+
+export function partnerTxBalanceDelta(tx?: PartnerTx | null): number {
+  return partnerTxEffect(tx).delta;
 }
 
 /**
- * Web partnerLedgerBreakdown — kart = Giriş + Çıkış (kasa neti).
- * count=0 iken giriş/çıkış 0; tutar kayıtlı bakiyeden (capital_in kullanılmaz).
+ * Web partnerLedgerBreakdown — kart = Σ delta = lehine − aleyhine.
  */
 export function partnerLedgerBreakdown(
   txs: PartnerTx[] | null | undefined,
   storedBalance?: number | null,
 ): {
   count: number;
+  ledger: number;
+  stored: number;
+  drift: boolean;
+  cashIn: number;
+  cashOut: number;
   girisDisplay: number;
   cikisDisplay: number;
+  netDisplay: number;
   cardDisplay: number;
   cardPocket: number;
+  netMatchesCard: boolean;
 } {
   const rows = Array.isArray(txs) ? txs : [];
+  let ledger = 0;
   let cashIn = 0;
   let cashOut = 0;
   for (const tx of rows) {
-    const amt = Number(tx.amount);
-    const n = Number.isFinite(amt) ? amt : 0;
-    if (partnerTxIsCashInflow(tx)) cashIn += n;
-    else cashOut += n;
+    const delta = partnerTxBalanceDelta(tx);
+    ledger += delta;
+    if (delta > 0) cashIn += delta;
+    else if (delta < 0) cashOut += -delta;
   }
+  ledger = Math.round(ledger * 100) / 100;
+  const stored = Number(storedBalance);
+  const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
   cashIn = Math.round(cashIn * 100) / 100;
   cashOut = Math.round(cashOut * 100) / 100;
   const girisDisplay = cashIn;
   const cikisDisplay = Math.round(-cashOut * 100) / 100;
-  const cardDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
-  const cardPocket = Math.round(-cardDisplay * 100) / 100;
-  void storedBalance;
-  return { count: rows.length, girisDisplay, cikisDisplay, cardDisplay, cardPocket };
+  const netDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
+  return {
+    count: rows.length,
+    ledger,
+    stored: storedN,
+    drift: Math.abs(ledger - storedN) > 0.005,
+    cashIn,
+    cashOut,
+    girisDisplay,
+    cikisDisplay,
+    netDisplay,
+    cardDisplay: netDisplay,
+    cardPocket: netDisplay,
+    netMatchesCard: Math.abs(netDisplay - ledger) < 0.02,
+  };
 }
 
 /**
@@ -689,10 +767,9 @@ export function accountCashTxRequest(opts: {
   };
 }
 
+/** Kredi kartı ve müşteri kart havuzu hariç. Web totalLiquidity ile aynı. */
 export function totalLiquidity(accounts: BankAccount[]): number {
-  return (accounts || [])
-    .filter((a) => normalizeAccountType(a.type) !== "credit_card")
-    .reduce((s, a) => s + accountBalance(a), 0);
+  return sumShownBalances((accounts || []).filter(isLiquidityAccount));
 }
 
 export function validateAccountDraft(d: AccountDraft): string | null {
@@ -972,12 +1049,11 @@ export function bankMovementNotice(tx: BankTx, accounts: { id?: string; _id?: st
 }
 
 export function partnerMovementNotice(tx: PartnerTx): GroupMovementNotice {
-  const amt = Number(tx.amount || 0);
   const label = partnerTxLabel(tx);
   return {
     id: idOf(tx),
     title: String(tx.description || label),
     detail: [label, tx.partner_name, tx.account_name].filter(Boolean).join(" · "),
-    signed: tx.type === "withdrawal" ? -amt : amt,
+    signed: partnerTxBalanceDelta(tx),
   };
 }
