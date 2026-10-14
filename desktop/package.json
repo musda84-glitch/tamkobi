@@ -1,0 +1,15 @@
+{
+  "name": "tamkobi-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TamKobi Windows masaüstü kabuğu",
+  "scripts": {
+    "test": "node --test ui/policy.test.js",
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build --bundles nsis,msi"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5"
+  }
+}

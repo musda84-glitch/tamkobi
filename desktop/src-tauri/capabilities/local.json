@@ -1,0 +1,23 @@
+{
+  "identifier": "local",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-set-decorations",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "allow-get-shell-state",
+    "allow-shell-ready",
+    "allow-set-prefs",
+    "allow-list-printers",
+    "allow-open-login",
+    "allow-open-mode",
+    "allow-report-session",
+    "allow-request-kiosk-exit",
+    "allow-complete-kiosk-exit",
+    "allow-silent-print",
+    "allow-check-update",
+    "allow-install-update"
+  ]
+}

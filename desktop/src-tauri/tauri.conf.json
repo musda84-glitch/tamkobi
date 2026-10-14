@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TamKobi",
+  "version": "0.1.0",
+  "identifier": "com.tamkobi.desktop",
+  "build": {
+    "frontendDist": "../ui",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "python3 -m http.server 1420 --bind 127.0.0.1 --directory ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
+    "publisher": "TamKobi",
+    "shortDescription": "TamKobi masaüstü kabuğu",
+    "longDescription": "app.tamkobi.com için Windows kiosk kabuğu.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWSzyjTuLMJ3aqk+oQLsyiibQ2v1V+m5CRzBhgD+gfCtNtOwUYdI9yPd",
+      "endpoints": [
+        "https://github.com/musda84-glitch/tamkobi/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

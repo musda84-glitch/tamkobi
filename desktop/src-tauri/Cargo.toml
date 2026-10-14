@@ -1,0 +1,60 @@
+[package]
+name = "tamkobi-desktop"
+version = "0.1.0"
+description = "TamKobi Windows masaüstü kabuğu"
+authors = ["TamKobi"]
+edition = "2021"
+rust-version = "1.83"
+
+[lib]
+name = "tamkobi_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+# Eklentilerin build script'i ^2.5 istediği için 2.7 (edition 2024) seçilmesin.
+tauri-plugin = "=2.6.3"
+
+[dependencies]
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "=2.11.6" }
+tauri-plugin-opener = "=2.5.5"
+tauri-plugin-process = "=2.3.1"
+tauri-plugin-updater = "=2.12.0"
+url = "2"
+
+# Cargo 1.83 rust-version'a bakmadan en yeni sürümü seçer. Tauri 2.12 ve
+# bazı geçişli kasalar edition 2024 istediği için 1.83 ile derlenen son
+# sürümlere sabitlenir. Bu kasalar doğrudan kullanılmaz.
+tauri-runtime = "=2.11.3"
+tauri-runtime-wry = "=2.11.4"
+tauri-utils = "=2.9.3"
+wry = "=0.55.1"
+tao = "=0.35.3"
+muda = "=0.19.3"
+reqwest = { version = "=0.13.3", default-features = false }
+# Updater `rustls-no-provider` kullanır. Kiosk çıkışı kendi istemcisini kurmadan
+# önce ring sağlayıcısını yükler; sürüm kilitteki kasayla aynı kalır.
+rustls = { version = "=0.23.45", default-features = false, features = ["ring"] }
+serde_with = "=3.17.0"
+time = "=0.3.45"
+tray-icon = "=0.24.2"
+dirs = "=6.0.0"
+deranged = "=0.5.5"
+
+[target.'cfg(unix)'.dependencies]
+# Linux kabuğu bu kasaları kullanır; Windows hedefinde derlenmezler.
+zbus = "=5.12.0"
+gtk = "=0.18.2"
+dlopen2 = "=0.8.0"
+dlopen2_derive = "=0.4.1"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "=0.38.0"
+windows-core = "0.61"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

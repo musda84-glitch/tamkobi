@@ -1,0 +1,4 @@
+# Cargo 1.84+ MSRV çözücüsü. rust-version 1.77.2'den yeni kasalar
+# (çoğu edition 2024) seçilmesin; Cargo.lock bu seçimi sabitler.
+[resolver]
+incompatible-rust-versions = "fallback"

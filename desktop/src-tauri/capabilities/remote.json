@@ -1,0 +1,15 @@
+{
+  "identifier": "tamkobi-remote",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "https://app.tamkobi.com/*"
+    ]
+  },
+  "permissions": [
+    "allow-report-session",
+    "allow-request-kiosk-exit",
+    "allow-complete-kiosk-exit",
+    "allow-silent-print"
+  ]
+}
