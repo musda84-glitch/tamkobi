@@ -19,7 +19,9 @@ import {
   partnerCardCashFlow,
   partnerCardTone,
   partnerSummaryCardMeta,
+  partnerTxEffect,
   partnerTxLabel,
+  partnerTxSign,
   sortBankTransactions,
   validateExpenseDraft,
   type BankAccount,
@@ -62,9 +64,10 @@ function PartnerCard({
           key={idOf(tx)}
           testID={`partner-tx-${idOf(tx)}`}
           title={partnerTxLabel(tx)}
+          titleColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
           subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
-          right={fmtMoney(tx.amount)}
-          rightColor={tx.type === "withdrawal" ? colors.danger : colors.primary}
+          right={`${partnerTxSign(tx.type, tx)}${fmtMoney(tx.amount)}`}
+          rightColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
         />
       ))}
     </View>
@@ -242,8 +245,8 @@ export function BankingPartnersPanel({
             testID="partners-summary"
             items={[
               { key: "balance", label: card.badge, value: fmtMoney(card.display) },
-              { key: "capital", label: "Giriş", value: fmtMoney(card.fromCash ? card.cashIn : summary.total_capital_in) },
-              { key: "withdrawn", label: "Çıkış", value: fmtMoney(card.fromCash ? card.cashOut : summary.total_withdrawn) },
+              { key: "capital", label: "Toplam Giriş", value: fmtMoney(card.fromCash ? card.cashIn : summary.total_capital_in) },
+              { key: "withdrawn", label: "Toplam Çıkış", value: fmtMoney(card.fromCash ? card.cashOut : summary.total_withdrawn) },
             ]}
           />
         );
@@ -273,8 +276,10 @@ export function BankingPartnersPanel({
             <ListRow
               key={idOf(tx)}
               title={`${partnerTxLabel(tx)} · ${tx.partner_name || ""}`}
+              titleColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
               subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
-              right={fmtMoney(tx.amount)}
+              right={`${partnerTxSign(tx.type, tx)}${fmtMoney(tx.amount)}`}
+              rightColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
             />
           ))}
         </>

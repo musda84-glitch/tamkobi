@@ -50,8 +50,8 @@ class FakeDb:
         self.partner_transactions = FakeCollection()
 
 
-def test_expense_credit_increases_partner_claim():
-    assert balance_inc("credit", 4000) == {"balance": 4000}
+def test_expense_credit_is_cikis():
+    assert balance_inc("credit", 4000) == {"balance": -4000}
     assert balance_inc("withdrawal", 4000) == {"balance": -4000, "total_withdrawn": 4000}
 
 
@@ -69,7 +69,7 @@ def test_legacy_expense_withdrawal_detected():
 
 
 def test_sync_repairs_legacy_expense_withdrawal_balance():
-    """withdrawal masraf → credit: bakiyeye +2× tutar (39.200 → +78.400 → 856.059,78)."""
+    """Masraf withdrawal→credit tipi düzelir; kasa yönü ikisinde de Çıkış olduğu için tutar değişmez."""
     db = FakeDb()
     db.partners.docs.append({
         "_id": "p1",
@@ -93,20 +93,18 @@ def test_sync_repairs_legacy_expense_withdrawal_balance():
         # Gerçek para çekişi — dokunulmaz
         {"_id": "t3", "partner_id": "p1", "type": "withdrawal", "amount": 5000.0, "description": "Nakit çekim"},
     ])
-    # Yanlış ledger: 816059.78 - 39200 - 5000 = 771859.78
-    # Onarım sonrası: 816059.78 + 39200 - 5000 = 850259.78 (+78.400)
+    # 816059.78 − masraf 39200 − çekiş 5000 = 771859.78 (tip onarımı sayıyı değiştirmez)
     meta = asyncio.run(sync_partner_from_ledger(db, "p1"))
     assert meta["expense_rows_repaired"] == 1
     assert db.partner_transactions.docs[1]["type"] == "credit"
     assert db.partner_transactions.docs[2]["type"] == "withdrawal"
-    assert meta["balance"] == 850259.78
-    assert round(meta["balance"] - 771859.78, 2) == 78400.0
-    assert db.partners.docs[0]["balance"] == 850259.78
+    assert meta["balance"] == 771859.78
+    assert db.partners.docs[0]["balance"] == 771859.78
     assert meta["total_withdrawn"] == 5000.0
 
 
 def test_sync_repairs_user_reported_gap():
-    """Kart −777.659,78 → −856.059,78 (saklanan +78.400 alacak)."""
+    """Masraf satırı credit olur; bakiye 816859.78 − 39200 = 777659.78 kalır."""
     db = FakeDb()
     db.partners.docs.append({
         "_id": "5a7cba2b",
@@ -130,8 +128,6 @@ def test_sync_repairs_user_reported_gap():
     ])
     meta = asyncio.run(sync_partner_from_ledger(db, "5a7cba2b"))
     assert meta["expense_rows_repaired"] == 1
-    # Yanlış: 816859.78 - 39200 = 777659.78 → kart −777.659,78
-    # Doğru:  816859.78 + 39200 = 856059.78 → kart −856.059,78
-    assert meta["balance"] == 856059.78
+    assert meta["balance"] == 777659.78
     assert meta["previous"]["balance"] == 777659.78
-    assert round(meta["balance"] - meta["previous"]["balance"], 2) == 78400.0
+    assert round(meta["balance"] - meta["previous"]["balance"], 2) == 0.0

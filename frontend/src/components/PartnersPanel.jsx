@@ -335,8 +335,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             const cikis = summary.total_cash_out != null ? summary.total_cash_out : summary.total_withdrawn;
             return [
               ["net", net.side === "zero" ? "Net bakiye" : `Net ${net.label}`, netAmount, net.amountCls],
-              ["capital", "Ortak lehine", giris, "text-emerald-700"],
-              ["withdrawn", "Ortak aleyhine", cikis, "text-rose-700"],
+              ["capital", "Toplam Giriş", giris, "text-emerald-700"],
+              ["withdrawn", "Toplam Çıkış", cikis, "text-rose-700"],
             ].map(([id, l, v, c]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>
@@ -398,7 +398,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             {(() => {
               const bm = partnerBalanceMeta(p.balance);
               const badge = p.balance_label || bm.badge;
-              const amount = p.balance_display != null && p.balance_display !== "" ? Number(p.balance_display) : bm.display;
+              const rawAmount = p.balance_display != null && p.balance_display !== "" ? Number(p.balance_display) : bm.display;
+              const amount = Math.abs(Number.isFinite(rawAmount) ? rawAmount : 0);
               return (
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`}>
               <div className="min-w-0">
@@ -428,8 +429,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               const c = br ? br.cikisDisplay : 0;
               return (
             <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
-              <div>Ortak lehine: <b className={g < 0 ? "text-rose-700" : "text-emerald-700"} data-testid={`partner-card-giris-${p.id}`}>{fmt(g)}</b></div>
-              <div>Ortak aleyhine: <b className={c < 0 ? "text-rose-700" : "text-emerald-700"} data-testid={`partner-card-cikis-${p.id}`}>{c > 0 ? `+${fmt(c)}` : fmt(c)}</b></div>
+              <div>Giriş: <b className="text-emerald-700" data-testid={`partner-card-giris-${p.id}`}>{fmt(Math.abs(g))}</b></div>
+              <div>Çıkış: <b className="text-rose-700" data-testid={`partner-card-cikis-${p.id}`}>{fmt(Math.abs(c))}</b></div>
             </div>
               );
             })()}
@@ -471,12 +472,12 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </div>
             <div className="grid grid-cols-2 gap-2" data-testid="partner-ledger-buckets">
               <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">Ortak lehine</div>
-                <div className={`font-bold ${selectedLedger.girisDisplay < 0 ? "text-rose-700" : "text-emerald-700"}`} data-testid="partner-ledger-inflow">{fmt(selectedLedger.girisDisplay)} ₺</div>
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">Toplam Giriş</div>
+                <div className="font-bold text-emerald-700" data-testid="partner-ledger-inflow">{fmt(Math.abs(selectedLedger.girisDisplay))} ₺</div>
               </div>
               <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">Ortak aleyhine</div>
-                <div className={`font-bold ${selectedLedger.cikisDisplay < 0 ? "text-rose-700" : "text-emerald-700"}`} data-testid="partner-ledger-outflow">{selectedLedger.cikisDisplay > 0 ? `+${fmt(selectedLedger.cikisDisplay)}` : fmt(selectedLedger.cikisDisplay)} ₺</div>
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">Toplam Çıkış</div>
+                <div className="font-bold text-rose-700" data-testid="partner-ledger-outflow">{fmt(Math.abs(selectedLedger.cikisDisplay))} ₺</div>
               </div>
             </div>
           </div>
@@ -550,14 +551,14 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "capital_in" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "capital_in" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="partner-tx-type-in"><ArrowDownRight className="w-4 h-4" /> Para Koy</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "withdrawal" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "withdrawal" ? "bg-rose-600 text-white border-rose-600" : "bg-white"}`} data-testid="partner-tx-type-out"><ArrowUpRight className="w-4 h-4" /> Para Çek</button>
-              <button type="button" onClick={() => setTxForm({ ...txForm, type: "credit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "credit" ? "bg-rose-700 text-white border-rose-700" : "bg-white"}`} data-testid="partner-tx-type-credit" title="Ortak alacak fişi — listede Ortak lehine (+) görünür">Alacaklandır</button>
+              <button type="button" onClick={() => setTxForm({ ...txForm, type: "credit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "credit" ? "bg-rose-700 text-white border-rose-700" : "bg-white"}`} data-testid="partner-tx-type-credit" title="Alacak fişi — listede Çıkış (−) görünür">Alacaklandır</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "debit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "debit" ? "bg-rose-700 text-white border-rose-700" : "bg-white"}`} data-testid="partner-tx-type-debit" title="Kasa/bankaya dokunmadan ortak bakiyesini düşürür">Borçlandır</button>
             </div>
             {isPartnerCashType(txForm.type) ? (
               <div><label className="block font-semibold mb-1">{txForm.type === "capital_in" ? "Kasa / Banka Hesabı" : "Kasa / Banka / Kart"}</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} collectableOnly={txForm.type === "capital_in"} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>
             ) : (
               <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2" data-testid="partner-tx-ledger-hint">
-                {txForm.type === "credit" ? "Alacak fişi ortak alacağını artırır; listede Ortak lehine (+) görünür." : "Borç fişi ortak bakiyesini düşürür (Ortak aleyhine)." }
+                {txForm.type === "credit" ? "Alacak fişi Ortaklar Hesabı'ndan çıkış yazılır; listede Çıkış (−) görünür." : "Borç fişi Ortaklar Hesabı'ndan çıkış yazılır; listede Çıkış (−) görünür." }
                 {" "}Kasa/banka bakiyesi değişmez. Firma politikası açıksa diğer yöneticinin onayı gerekir.
               </p>
             )}

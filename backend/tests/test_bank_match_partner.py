@@ -213,24 +213,22 @@ def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():
     assert "legacy_bank_match_outflow_credit_undone_at" in ptxs.docs[0]
 
 
-def test_ali_bal_856059_minus_80000_equals_776059():
-    """Masraf onarımı sonrası 856059.78 − banka 80k ödeme = 776059.78 Alacaklı."""
-    # Baseline (#1086): capital_in 816859.78 + expense masraf 39200 = 856059.78
-    # #1089 yanlış: 80k banka çıkışı capital_in → +80000 (şişik)
-    # Doğru: 80k withdrawal → 856059.78 - 80000 = 776059.78
+def test_ali_bal_bank_outflow_stays_giris_after_type_repair():
+    """Banka çıkışı Giriş (+). Tip capital_in→withdrawal olsa da bank_tx_type outflow işareti değiştirmez."""
+    # 816859.78 − masraf 39200 + banka çıkışı 80000 = 857659.78
     txs = [
         {"type": "capital_in", "amount": 816859.78},
         {"type": "credit", "amount": 39200.0, "expense_id": "exp", "source": "expense"},
         {
-            "type": "capital_in",  # #1089 yanlış tipi
+            "type": "capital_in",  # eski yanlış tip
             "amount": 80000.0,
             "source": "bank_match",
             "bank_tx_type": "outflow",
             "related_bank_tx_id": "btx-ali",
         },
     ]
-    wrong = ledger_totals(txs)
-    assert wrong["balance"] == 936059.78  # 856059.78 + 80000
+    before = ledger_totals(txs)
+    assert before["balance"] == 857659.78
 
     ptxs = _FakeColl([
         {"_id": "a", "partner_id": "5a7cba2b", **txs[0]},
@@ -254,6 +252,5 @@ def test_ali_bal_856059_minus_80000_equals_776059():
     meta = _run(sync_partner_from_ledger(db, "5a7cba2b"))
     assert meta["bank_match_rows_repaired"] == 1
     assert ptxs.docs[2]["type"] == "withdrawal"
-    assert meta["balance"] == 776059.78
-    assert round(856059.78 - 80000.0, 2) == 776059.78
-    assert partners.docs[0]["balance"] == 776059.78
+    assert meta["balance"] == 857659.78
+    assert partners.docs[0]["balance"] == 857659.78

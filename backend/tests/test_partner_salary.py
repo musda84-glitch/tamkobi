@@ -71,14 +71,14 @@ def test_accrue_writes_receivable_once():
     r1 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", period="2026-10"))
     assert r1["posted_count"] == 1
     assert r1["posted"][0]["amount"] == 10000
-    assert db.partners.docs[0]["balance"] == 10000
+    assert db.partners.docs[0]["balance"] == -10000
     tx = db.partner_transactions.docs[0]
     assert tx["type"] == "salary" and tx["salary_period"] == "2026-10"
     assert "Ekim 2026" in tx["description"]
     r2 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", period="2026-10"))
     assert r2["posted_count"] == 0
     assert len(db.partner_transactions.docs) == 1
-    assert db.partners.docs[0]["balance"] == 10000
+    assert db.partners.docs[0]["balance"] == -10000
 
 
 def test_accrue_skips_zero_and_inactive():
@@ -96,7 +96,7 @@ def test_accrue_other_month_is_separate():
     asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", period="2026-10"))
     r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", period="2026-11"))
     assert r["posted_count"] == 1
-    assert db.partners.docs[0]["balance"] == 20000
+    assert db.partners.docs[0]["balance"] == -20000
     assert {t["salary_period"] for t in db.partner_transactions.docs} == {"2026-10", "2026-11"}
 
 
@@ -178,7 +178,7 @@ def test_future_entitlement_waits_until_due_date():
     r2 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-11-01"))
     assert r2["posted_count"] == 1
     assert db.partner_transactions.docs[0]["date"] == "2026-11-01"
-    assert db.partners.docs[0]["balance"] == 10000
+    assert db.partners.docs[0]["balance"] == -10000
 
 
 def test_force_start_posts_future_entitlement():
