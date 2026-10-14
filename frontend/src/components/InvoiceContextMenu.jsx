@@ -317,7 +317,7 @@ export function canDeleteInvoice(inv) {
   return true;
 }
 
-/** Satış kağıt / onaylı fatura GİB'e kesilebilir. Taslak e-Fatura/e-Arşiv kesilmez. Alış faturaları GİB'e kesilmez (satıcı keser). */
+/** Satış kağıt / onaylı fatura GİB'e kesilebilir. Taslak e-Fatura/e-Arşiv toplu kesime girmez (Faturalaştır). Alış faturaları GİB'e kesilmez (satıcı keser). */
 export function canIssueInvoice(inv) {
   if (!inv) return false;
   if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
@@ -330,6 +330,21 @@ export function canIssueInvoice(inv) {
   if (inv.status === "draft") return false;
   if (inv.e_type === "paper") return true;
   return !isGibIssued(inv);
+}
+
+/** Taslak satış faturası — siparişteki Faturalaştır gibi tür seçilip kesilir. */
+export function canFaturalastirDraftInvoice(inv) {
+  if (!inv) return false;
+  if (inv.status !== "draft") return false;
+  if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.e_type === "expense_slip") return false;
+  if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") return false;
+  return !isGibIssued(inv);
+}
+
+/** Elektronik Fatura Onayı / send-to-gib: onaylı kesim veya taslak Faturalaştır. */
+export function canRunInvoiceIssueFlow(inv) {
+  return canIssueInvoice(inv) || canFaturalastirDraftInvoice(inv);
 }
 
 /** e-İrsaliye taslağı İşNet'e gönderilebilir mi? */
@@ -430,11 +445,12 @@ export function canIssueExpenseSlip(inv) {
   return true;
 }
 
-const ISSUE_OPTIONS = [
+export const INVOICE_ISSUE_TYPE_OPTIONS = [
   { key: "auto", label: "E-Fatura / E-Arşiv (GİB)", sub: "Mükellef ise e-Fatura, değilse e-Arşiv", icon: FileCheck2, color: "text-emerald-600" },
   { key: "e_export", label: "e-İhracat olarak kes", sub: "GİB e-İhracat · GTIP / teslim şekli", icon: Globe, color: "text-sky-600" },
-  { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" },
+  { key: "paper", label: "GİB'e gönderilmeyen / kağıt fatura", sub: "Matbu / elden — GİB'e gitmez", icon: FileText, color: "text-amber-600" },
 ];
+const ISSUE_OPTIONS = INVOICE_ISSUE_TYPE_OPTIONS;
 
 /** GİB lookup sonucu → kesilecek belge türü. */
 export function suggestedIssueTypeFromGib(lookup) {
@@ -483,7 +499,7 @@ export const InvoiceContextMenu = (props) => {
     };
   }, [menu, onClose]);
   useEffect(() => {
-    if (!menu?.inv || !canIssueInvoice(menu.inv) || isIncomingPurchaseInvoice(menu.inv)) {
+    if (!menu?.inv || !canRunInvoiceIssueFlow(menu.inv) || isIncomingPurchaseInvoice(menu.inv)) {
       setGibLookup(null);
       setGibBusy(false);
       return undefined;
@@ -531,6 +547,8 @@ export const InvoiceContextMenu = (props) => {
   const issued = isGibIssued(inv);
   const isDispatch = isDispatchDocument(inv);
   const canIssue = canIssueInvoice(inv);
+  const canFaturalastirDraft = canFaturalastirDraftInvoice(inv);
+  const showIssueTypes = canFaturalastirDraft || (canIssue && !isDispatch);
   const isPurchase = inv.invoice_type === "purchase";
   const showGibDownloads = canDownloadGibDocuments(inv);
   const deletable = canDeleteInvoice(inv);
@@ -613,21 +631,19 @@ export const InvoiceContextMenu = (props) => {
             <p className="px-3 pb-2 text-[10px] text-amber-700">İşNet e-İrsaliye yapılandırılmamış veya kapalı.</p>
           )}
         </div>
-      ) : inv.status === "draft" && !isPurchase && !incoming ? (
-        <div className="border-b border-slate-100 pb-1" data-testid="ctx-draft-no-gib">
+      ) : showIssueTypes ? (
+        <div className="border-b border-slate-100 pb-1" data-testid={canFaturalastirDraft ? "ctx-draft-faturalastir" : "ctx-issue-types"}>
           {onEdit && editable && (
             <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
           )}
-          <p className="px-3 py-2 text-[10px] text-slate-500" data-testid="ctx-draft-no-gib-note">
-            Taslak fatura GİB e-Fatura / e-Arşiv kesilmez. Önce onaylayın (Faturalaştırın).
-          </p>
-        </div>
-      ) : canIssue ? (
-        <div className="border-b border-slate-100 pb-1">
-          {onEdit && editable && (
-            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">
+            {canFaturalastirDraft ? "TASLAĞI FATURALAŞTIR" : "FATURAYI KES"}
+          </div>
+          {canFaturalastirDraft && (
+            <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-faturalastir-note">
+              Belge türünü seçin. E-Fatura / E-Arşiv için tarih, saat ve not siparişteki onay penceresinde kontrol edilir.
+            </p>
           )}
-          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">FATURAYI KES</div>
           {inv.e_type === "paper" && (
             <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-paper-info">Kağıt fatura (matbu) — GİB e-belgesi değildir; buradan kesilebilir.</p>
           )}

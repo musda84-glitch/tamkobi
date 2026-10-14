@@ -13,6 +13,7 @@ import { ChannelLogo } from "../components/ChannelLogo";
 import { ProjectCardsHost } from "../components/ProjectCard";
 import { ReceiptScanButtons } from "../components/ReceiptScanButtons";
 import { MoneyInput } from "../components/MoneyInput";
+import { DraftInvoiceFaturalastir } from "../components/DraftInvoiceFaturalastir";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { useLiveRefresh } from "../live/useLiveRefresh";
@@ -59,6 +60,7 @@ import { normalizeProjectStages, type ProjectStage } from "../utils/projectStage
 import { mergeContactProjects, projectsForContact, type ProjectDoc } from "../utils/workDocs";
 import type { BankAccount } from "../utils/finance";
 import { canDeleteInvoice, canEditInvoiceItems, invoiceRowDangerAction } from "../utils/invoiceDraft";
+import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
 import { printPaymentReceipt } from "../utils/chequeShare";
 import { applyReceiptDraft } from "../utils/receiptScan";
@@ -918,8 +920,8 @@ export function ContactDetailScreen() {
           const danger = invoiceRowDangerAction(inv);
           const allowDelete = (danger === "delete" && canDeleteInvoicePerm) || (danger === "cancel" && canInvoice);
           return (
+            <View key={iid} style={{ gap: 4 }}>
             <SwipeRevealRow
-              key={iid}
               rowKey={iid}
               openKey={openInvRow}
               onOpen={setOpenInvRow}
@@ -938,6 +940,16 @@ export function ContactDetailScreen() {
                 showChevron
               />
             </SwipeRevealRow>
+            {canInvoice && canFaturalastirDraftInvoice(inv) ? (
+              <DraftInvoiceFaturalastir
+                invoice={inv}
+                allowed={canInvoice}
+                testID={`detail-faturalastir-${iid}`}
+                onIssued={() => { setError(null); load(); }}
+                onError={setError}
+              />
+            ) : null}
+            </View>
           );
         })}
         </>

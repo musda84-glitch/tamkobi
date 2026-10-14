@@ -4,6 +4,9 @@ import {
   canIssueExpenseSlip,
   canEditInvoice,
   canIssueInvoice,
+  canFaturalastirDraftInvoice,
+  canRunInvoiceIssueFlow,
+  INVOICE_ISSUE_TYPE_OPTIONS,
   canDownloadGibDocuments,
   canDeleteInvoice,
   displayInvoiceNumber,
@@ -215,6 +218,31 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
       invoice_type: "sales",
       e_type: "paper",
     })).toBe(false);
+  });
+
+  test("sales drafts can use Faturalaştır type chooser", () => {
+    const draft = { status: "draft", invoice_type: "sales", e_type: "e_archive" };
+    expect(canFaturalastirDraftInvoice(draft)).toBe(true);
+    expect(canRunInvoiceIssueFlow(draft)).toBe(true);
+    expect(canFaturalastirDraftInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
+    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "purchase", e_type: "paper" })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "sales",
+      e_type: "e_invoice",
+      einvoice_state: "sent",
+      gib_uuid: "u1",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "dispatch",
+      e_type: "e_dispatch",
+    })).toBe(false);
+  });
+
+  test("Faturalaştır type options include GİB and paper", () => {
+    expect(INVOICE_ISSUE_TYPE_OPTIONS.map((o) => o.key)).toEqual(["auto", "e_export", "paper"]);
+    expect(INVOICE_ISSUE_TYPE_OPTIONS.find((o) => o.key === "paper")?.label).toMatch(/kağıt/i);
   });
 
   test("posted paper sales invoices can still issue GİB e-belge", () => {

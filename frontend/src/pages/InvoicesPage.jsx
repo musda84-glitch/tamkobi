@@ -3,7 +3,8 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
+import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -64,7 +65,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   ChevronDown,
-  FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw, PackagePlus, Loader2 } from "lucide-react";
+  FileCheck2, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw, PackagePlus, Loader2 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const typeBadge = (inv) => {
@@ -124,6 +125,7 @@ const purchaseCostText = (p) => {
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
   const { activeCompany, addonOn, can } = useAuth();
   const canDeleteInv = can("/invoices", "delete");
+  const canIssueInv = can("/invoices", "edit");
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -1231,7 +1233,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           </div>
         )}
         <div className="flex items-center gap-1.5 px-4 py-2 bg-slate-50/70 border-b border-slate-100 text-[11px] text-slate-500" data-testid="ctx-hint">
-          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış faturasını satırdaki <b>⋮</b> menüden E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır. Boş alana sağ tık hızlı menüyü açar.
+          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Taslaklarda <b>Taslağı faturalaştır</b> ile belge türü seçilir (siparişteki gibi). Kesilmiş satış faturasını satırdaki <b>⋮</b> menüden E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır.
         </div>
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-left text-xs text-slate-600">
@@ -1483,10 +1485,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           );
                         }
                         return (
-                      <div className="grid grid-cols-[repeat(8,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
-                        {inv.status === "draft" ? (
-                          <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
-                        ) : <span className="w-7 h-7" aria-hidden="true" />}
+                      <div className="flex flex-col items-center gap-1 mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                        {canIssueInv && canFaturalastirDraftInvoice(inv) ? (
+                          <DraftInvoiceFaturalastirButton
+                            inv={inv}
+                            onIssue={handleIssueFromMenu}
+                            testId={`draft-faturalastir-btn-${inv.invoice_number}`}
+                            chooserTestId={`draft-faturalastir-chooser-${inv.invoice_number}`}
+                          />
+                        ) : null}
+                        <div className="grid grid-cols-[repeat(6,1.75rem)] gap-1 justify-center justify-items-center items-center">
                         <button
                           onClick={() => setPreviewInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -1526,6 +1534,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <RefreshCw className="w-4 h-4" />
                           </button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
+                        </div>
                       </div>
                         );
                       })()}
@@ -1744,7 +1753,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
             for (const inv of docs) {
               const invId = inv.id || inv._id;
-              if (!invId || !canIssueInvoice(inv) || isIncomingPurchaseInvoice(inv)) {
+              if (!invId || !canRunInvoiceIssueFlow(inv) || isIncomingPurchaseInvoice(inv)) {
                 skipped++;
                 if (invId) ctx?.setItem?.(invId, { status: "skipped", detail: "Gönderime uygun değil" });
                 continue;
