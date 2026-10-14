@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TamKobi</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="brand">
+      <div class="mark">T</div>
+      <h1>TamKobi</h1>
+      <p>Atölye, depo, sayım ve hızlı satış için Windows kabuğu. İşlemler app.tamkobi.com üzerinde kalır.</p>
+    </aside>
+    <main class="main">
+      <p class="hello" id="hello">Oturum kontrol ediliyor</p>
+      <h2>Mod seçin</h2>
+      <div class="modes" id="modes"></div>
+      <p class="error" id="error" hidden></p>
+      <div class="row">
+        <button class="primary" id="open" type="button" disabled>Bu modda aç</button>
+        <button class="ghost" id="login" type="button">Giriş ekranı</button>
+      </div>
+      <section class="settings">
+        <label><input id="kiosk" type="checkbox" /> Kiosk / tam ekran (çıkış yönetici PIN’i ister)</label>
+        <label>Fiş / etiket yazıcısı
+          <select id="printer"><option value="">Windows varsayılan yazıcı</option></select>
+        </label>
+        <p class="note" id="printer-note">USB barkod okuyucu klavye gibi çalışır; kabuk tuşları yutmaz. Sessiz yazdırma seçilen yazıcıya gider.</p>
+      </section>
+      <div class="update" id="update" hidden>
+        <span id="update-text"></span>
+        <button class="primary" id="update-btn" type="button">Güncelle</button>
+      </div>
+    </main>
+  </div>
+  <script src="policy.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

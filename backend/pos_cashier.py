@@ -209,6 +209,35 @@ def refresh_keeps_lock(session: Optional[dict], timeout_sec: int = DEFAULT_IDLE_
     return exit_is_blocked(session)
 
 
+def kiosk_exit_decision(
+    pin: Any,
+    approver_rules: Optional[dict],
+    approver_role: str,
+    *,
+    session: Optional[dict] = None,
+    approver_id: str = "",
+) -> Dict[str, Any]:
+    """Masaüstü kiosk çıkışı.
+
+    PIN biçimi Hızlı Satış ile aynıdır (4-6 rakam). Çıkış, yönetici onayı
+    verebilen bir PIN ister (`can_approve`). Kilitli kasiyer kendi çıkışını
+    onaylayamaz. Hash kontrolü çağıran uçtadır; bu fonksiyon kural kararını verir.
+    """
+    raw = str(pin or "").strip()
+    if not PIN_RE.fullmatch(raw):
+        return {"allow": False, "detail": "PIN 4-6 haneli rakam olmalı."}
+    aid = str(approver_id or "").strip()
+    if not aid:
+        return {"allow": False, "detail": PIN_USER_REQUIRED}
+    rules = normalize_pos_rules(approver_rules, approver_role)
+    cashier_id = str((session or {}).get("cashier_user_id") or "").strip()
+    if cashier_id and aid == cashier_id and exit_is_blocked(session):
+        return {"allow": False, "detail": SELF_APPROVE_MESSAGE}
+    if not rules.get("can_approve"):
+        return {"allow": False, "detail": "Bu PIN yönetici onayı veremez."}
+    return {"allow": True, "detail": ""}
+
+
 def catalog_unit_price(product: dict) -> float:
     return float(product.get("sale_price") or 0)
 
@@ -1334,6 +1363,43 @@ async def session_exit(req: Dict[str, Any], user: dict = Depends(_user_dep), req
     }})
     await _write_event(cid, kind="exit", summary=f"Çıkış: {sess.get('cashier_name')}", user=user)
     return {"status": "exited", "message": "Hızlı Satış kilitlendi, çıkış verildi."}
+
+
+@router.post("/desktop/kiosk-exit")
+async def desktop_kiosk_exit(req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
+    """Masaüstü kabuğu kiosk çıkışı. Kasiyer PIN hash'i ve can_approve kapısı.
+
+    İstasyon kullanıcısı (atölye / depo dahil) çağırır; yetki seçilen onaylayanın
+    kuralındadır. Oturum açılmaz, sepet değişmez.
+    """
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    approver_id = _req_user_id(req)
+    ident = await _guard_pin_attempts(cid, request, user_id=approver_id or None)
+    try:
+        approver = await _find_user_by_pin(cid, req.get("pin") or req.get("password"), user_id=approver_id)
+    except HTTPException as exc:
+        if exc.status_code != 429:
+            await _fail_pin_attempt(ident)
+        raise
+    await _clear_pin_attempt(ident)
+    rules = await rules_for_user(approver, cid)
+    tid = _terminal_of(req, request)
+    sess = await _session_by_terminal(cid, tid) if tid else None
+    decision = kiosk_exit_decision(
+        req.get("pin"),
+        rules,
+        _role_code(approver),
+        session=sess,
+        approver_id=str(approver.get("_id") or ""),
+    )
+    if not decision["allow"]:
+        raise HTTPException(status_code=403, detail=decision["detail"])
+    return {
+        "allow": True,
+        "detail": "",
+        "approver_id": str(approver.get("_id") or ""),
+        "approver_name": approver.get("name") or approver.get("email") or "",
+    }
 
 
 @router.put("/pos/session/cart")

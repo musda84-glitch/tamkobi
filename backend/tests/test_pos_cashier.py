@@ -733,3 +733,36 @@ def test_manager_pin_approve_and_requester_cannot_self_approve():
             assert opened["session"]["cashier_user_id"] == "u_sales2"
 
     _run(go())
+
+
+def test_kiosk_exit_decision_matches_cashier_lock():
+    """Masaüstü kiosk çıkışı: biçim, kullanıcı ve yönetici PIN kapısı."""
+    sales = pc.default_pos_rules("sales")
+    admin = pc.default_pos_rules("admin")
+    assert pc.kiosk_exit_decision("123", admin, "admin", approver_id="a")["detail"] == "PIN 4-6 haneli rakam olmalı."
+    assert pc.kiosk_exit_decision("12ab", admin, "admin", approver_id="a")["allow"] is False
+    assert pc.kiosk_exit_decision("1234567", admin, "admin", approver_id="a")["allow"] is False
+    missing = pc.kiosk_exit_decision("1234", admin, "admin", approver_id="")
+    assert missing["allow"] is False and missing["detail"] == pc.PIN_USER_REQUIRED
+    denied = pc.kiosk_exit_decision("1234", sales, "sales", approver_id="u_sales")
+    assert denied["allow"] is False and denied["detail"] == "Bu PIN yönetici onayı veremez."
+    assert pc.kiosk_exit_decision("1234", admin, "admin", approver_id="u_admin")["allow"] is True
+    assert pc.kiosk_exit_decision(" 123456 ", {}, "manager", approver_id="u_mgr")["allow"] is True
+    # Yönetici rolü ham kuralla kapatılamaz (normalize_pos_rules ile aynı).
+    forced = pc.kiosk_exit_decision("1234", {"can_approve": False}, "admin", approver_id="u_admin")
+    assert forced["allow"] is True
+    custom = pc.kiosk_exit_decision("1234", {"can_approve": True}, "sales", approver_id="u_lead")
+    assert custom["allow"] is True
+    blocked = {
+        "cashier_user_id": "u_sales",
+        "exit_granted": False,
+        "rules": sales,
+    }
+    own = pc.kiosk_exit_decision("1234", admin, "admin", session=blocked, approver_id="u_sales")
+    assert own["allow"] is False and own["detail"] == pc.SELF_APPROVE_MESSAGE
+    other = pc.kiosk_exit_decision("1234", admin, "admin", session=blocked, approver_id="u_admin")
+    assert other["allow"] is True
+    open_sess = {**blocked, "rules": {**sales, "can_exit": True}, "exit_granted": False}
+    # Çıkış kuralı açık olsa da kiosk, onay yetkisi olmayan kasiyer PIN'ini kabul etmez.
+    cashier_open = pc.kiosk_exit_decision("1234", sales, "sales", session=open_sess, approver_id="u_sales")
+    assert cashier_open["allow"] is False
