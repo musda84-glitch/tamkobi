@@ -1,12 +1,19 @@
-"""GİB karekod alanları — oran bazlı kdvmatrah / hesaplanankdv."""
+"""GİB karekod alanları — oran bazlı kdvmatrah / hesaplanankdv.
+
+İşNet görseli UBL ekine gömmez; karekod XSLT içindeki qrCodeImageString ile gider.
+"""
 from __future__ import annotations
 
+import base64
 import os
 import sys
 import xml.etree.ElementTree as ET
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import ubl_export  # noqa: E402
+from einvoice_classic_xslt import classic_isnet_xslt  # noqa: E402
 
 CAC = "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}"
 CBC = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
@@ -149,3 +156,194 @@ def test_gib_qr_rate_key_integer_format():
     assert ubl_export._qr_rate_key(20.0) == "20"
     assert ubl_export._qr_rate_key(8) == "8"
     assert ubl_export._qr_rate_key(10.5) == "10.5"
+
+
+_NS = {
+    "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+    "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+}
+_VISUAL = {"QRCODE", "KAREKOD", "LOGO", "IMZA"}
+_XSLT = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">'
+    '<xsl:template match="/"><html><img alt="QrCode" src="data:image/jpeg;base64,qrCodeImageString"/>'
+    '<img alt="Firma Logo" src="data:image/jpeg;base64,firmaLogoImageString"/>'
+    '<img alt="E-Imza Logo" src="data:image/jpeg;base64,firmaImzaImageString"/>'
+    "</html></xsl:template></xsl:stylesheet>"
+)
+
+
+def _fold(value: str) -> str:
+    return "".join((value or "").strip().upper().replace("İ", "I").split())
+
+
+def _assert_xslt_only(xml: bytes, filename: str) -> None:
+    root = ET.fromstring(xml)
+    blobs = []
+    for adr in root.findall("cac:AdditionalDocumentReference", _NS):
+        for tag in ("DocumentType", "DocumentTypeCode", "ID"):
+            token = _fold(adr.findtext(f"cbc:{tag}", default="", namespaces=_NS) or "")
+            assert token not in _VISUAL, token
+        blob = adr.find("cac:Attachment/cbc:EmbeddedDocumentBinaryObject", _NS)
+        if blob is None:
+            continue
+        blobs.append(blob)
+        mime = (blob.get("mimeCode") or "").lower()
+        assert not mime.startswith("image/"), mime
+        assert mime == "application/xml"
+        assert (blob.get("filename") or "").lower().endswith(".xslt")
+    assert len(blobs) == 1
+    assert blobs[0].get("filename") == filename
+    raw = base64.b64decode(blobs[0].text or "")
+    assert b"qrCodeImageString" in raw
+    assert b"firmaLogoImageString" in raw
+    assert b"firmaImzaImageString" in raw
+    assert b"<xsl:stylesheet" in raw
+
+
+def _sales(**extra):
+    inv = _inv()
+    inv.update(extra)
+    return inv
+
+
+@pytest.mark.parametrize(
+    "e_type,profile,filename",
+    [
+        ("e_invoice", "TICARIFATURA", "efatura.xslt"),
+        ("e_archive", "EARSIVFATURA", "earsiv.xslt"),
+    ],
+)
+def test_send_ready_ubl_embeds_xslt_not_images(e_type, profile, filename):
+    xml = ubl_export.build_invoice_ubl(
+        _sales(e_type=e_type, gib_scenario=profile),
+        _seller(),
+        _buyer(),
+        send_ready=True,
+        xslt=_XSLT,
+    )
+    text = xml.decode("utf-8")
+    assert "QRCODE" not in text
+    assert "qr.png" not in text
+    assert 'mimeCode="image/' not in text
+    _assert_xslt_only(xml, filename)
+    ubl_export.assert_send_ready_has_no_visuals(ET.fromstring(xml))
+
+
+def test_send_ready_invoice_without_xslt_has_no_embedded_object():
+    xml = ubl_export.build_invoice_ubl(_sales(), _seller(), _buyer(), send_ready=True)
+    root = ET.fromstring(xml)
+    assert root.findall(".//cbc:EmbeddedDocumentBinaryObject", _NS) == []
+    assert "QRCODE" not in xml.decode("utf-8")
+    ubl_export.assert_send_ready_has_no_visuals(root)
+
+
+def test_send_ready_despatch_embeds_xslt_not_images():
+    inv = _sales(
+        invoice_number="IRS2026000000001",
+        e_type="e_dispatch",
+        despatch_plate="34ABC123",
+    )
+    xml = ubl_export.build_despatch_ubl(
+        inv, _seller(), _buyer(), send_ready=True, xslt=classic_isnet_xslt("e_dispatch"),
+    )
+    _assert_xslt_only(xml, "eirsaliye.xslt")
+    text = xml.decode("utf-8")
+    assert "QRCODE" not in text
+    assert 'mimeCode="image/' not in text
+    ubl_export.assert_send_ready_has_no_visuals(ET.fromstring(xml))
+
+
+def _adr(root, *, doc_type="", doc_code="", doc_id="EK-1", mime=None, filename=None):
+    adr = ET.SubElement(root, f"{{{_NS['cac']}}}AdditionalDocumentReference")
+    ET.SubElement(adr, f"{{{_NS['cbc']}}}ID").text = doc_id
+    if doc_type:
+        ET.SubElement(adr, f"{{{_NS['cbc']}}}DocumentType").text = doc_type
+    if doc_code:
+        ET.SubElement(adr, f"{{{_NS['cbc']}}}DocumentTypeCode").text = doc_code
+    if mime is not None:
+        att = ET.SubElement(adr, f"{{{_NS['cac']}}}Attachment")
+        blob = ET.SubElement(att, f"{{{_NS['cbc']}}}EmbeddedDocumentBinaryObject")
+        blob.set("mimeCode", mime)
+        if filename:
+            blob.set("filename", filename)
+        blob.text = "AAAA"
+    return adr
+
+
+def test_send_ready_guard_rejects_visual_references():
+    cases = [
+        dict(doc_type="QRCODE", mime="image/png", filename="qr.png"),
+        dict(doc_type="KAREKOD"),
+        dict(doc_type="Logo"),
+        dict(doc_type="İmza"),
+        dict(doc_code="QRCODE", doc_id="ek"),
+        dict(doc_id="QRCODE", doc_type="EK"),
+        dict(doc_type="EK", mime="image/jpeg", filename="logo.jpg"),
+        dict(doc_type="EK", mime="application/pdf", filename="ek.pdf"),
+        dict(doc_type="XSLT", mime="application/xml", filename="stil.xml"),
+        dict(doc_type="XSLT", mime="text/xml", filename="efatura.xslt"),
+        dict(doc_type="EK", mime="application/xml", filename="efatura.xslt"),
+    ]
+    for case in cases:
+        root = ET.Element("Invoice")
+        _adr(root, **case)
+        with pytest.raises(ValueError, match="XSLT şablonu"):
+            ubl_export.assert_send_ready_has_no_visuals(root)
+
+
+def test_send_ready_guard_allows_xslt_and_plain_references():
+    root = ET.Element("Invoice")
+    _adr(root, doc_type="GONDERIMSEKLI", doc_id="11111111-1111-1111-1111-111111111111")
+    _adr(root, doc_type="İrsaliye", doc_code="IRSALIYE", doc_id="IRS1")
+    _adr(
+        root,
+        doc_type="XSLT",
+        doc_id="22222222-2222-2222-2222-222222222222",
+        mime="application/xml",
+        filename="efatura.xslt",
+    )
+    ubl_export.assert_send_ready_has_no_visuals(root)
+
+
+def test_build_invoice_ubl_send_ready_blocks_injected_qr(monkeypatch):
+    real = ubl_export.attach_xslt_stylesheet
+
+    def wrapped(root, xslt, issue_date, filename="efatura.xslt"):
+        real(root, xslt, issue_date, filename=filename)
+        adr = ubl_export._cac(root, "AdditionalDocumentReference")
+        ubl_export._cbc(adr, "ID", "QRCODE")
+        ubl_export._cbc(adr, "DocumentTypeCode", "QRCODE")
+        ubl_export._cbc(adr, "DocumentType", "QRCODE")
+        att = ubl_export._cac(adr, "Attachment")
+        ubl_export._cbc(
+            att, "EmbeddedDocumentBinaryObject", "AAAA",
+            mimeCode="image/png", filename="qr.png",
+        )
+
+    monkeypatch.setattr(ubl_export, "attach_xslt_stylesheet", wrapped)
+    with pytest.raises(ValueError, match="görsel"):
+        ubl_export.build_invoice_ubl(
+            _sales(), _seller(), _buyer(), send_ready=True, xslt=_XSLT,
+        )
+
+
+def test_build_despatch_ubl_send_ready_blocks_injected_logo(monkeypatch):
+    real = ubl_export.attach_xslt_stylesheet
+
+    def wrapped(root, xslt, issue_date, filename="efatura.xslt"):
+        real(root, xslt, issue_date, filename=filename)
+        adr = ubl_export._cac(root, "AdditionalDocumentReference")
+        ubl_export._cbc(adr, "DocumentType", "LOGO")
+        att = ubl_export._cac(adr, "Attachment")
+        ubl_export._cbc(
+            att, "EmbeddedDocumentBinaryObject", "AAAA",
+            mimeCode="image/jpeg", filename="logo.jpg",
+        )
+
+    monkeypatch.setattr(ubl_export, "attach_xslt_stylesheet", wrapped)
+    inv = _sales(invoice_number="IRS2026000000002", despatch_plate="06XYZ789")
+    with pytest.raises(ValueError, match="XSLT"):
+        ubl_export.build_despatch_ubl(
+            inv, _seller(), _buyer(), send_ready=True, xslt=_XSLT,
+        )

@@ -702,9 +702,12 @@ test("classic İşNet layout places logo and QR and hides an empty description c
     expect(CLASSIC_ISNET_NAME).toBe("Klasik (İşNet örneği)");
     expect(xslt.trimStart().startsWith("<?xml")).toBe(true);
     expect(xslt.indexOf("<?xml")).toBeLessThan(xslt.indexOf("TAMKOBI_LAYOUT"));
-    expect(xslt).toContain("qrCodeImageString");
+    expect(xslt).toContain('src="data:image/jpeg;base64,qrCodeImageString"');
     expect(xslt).toContain("firmaLogoImageString");
     expect(xslt).toContain("firmaImzaImageString");
+    expect(xslt).not.toContain("DocumentType='QRCODE'");
+    expect(xslt).not.toContain("DocumentTypeCode='QRCODE'");
+    expect(xslt).not.toContain("EmbeddedDocumentBinaryObject");
     expect(xslt).toContain("IsLogoExistsValue");
     expect(xslt).toContain("IsEimzaLogoExistsValue");
     expect(xslt).toContain("Stok Kodu");
@@ -747,8 +750,12 @@ test("line KDV, iskonto and miktar use Turkish XSLT 1.0 paths", () => {
   expect(xslt).toContain("cac:LegalMonetaryTotal/cbc:PayableAmount");
   expect(xslt).toContain("normalize-space(/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID)!=''");
   expect(xslt).toContain("DocumentType='BAKIYE'");
-  expect(xslt).toContain("DocumentTypeCode='QRCODE'");
-  expect(xslt).toContain("qrCodeImageString");
+  expect(xslt).not.toContain("DocumentTypeCode='QRCODE'");
+  expect(xslt).not.toContain("DocumentType='QRCODE'");
+  expect(xslt).not.toContain("EmbeddedDocumentBinaryObject");
+  expect(xslt).toContain('src="data:image/jpeg;base64,qrCodeImageString"');
+  expect(xslt).toContain("firmaLogoImageString");
+  expect(xslt).toContain("firmaImzaImageString");
   expect(xslt).toMatch(/<xsl:stylesheet\s+version="1\.0"/);
 });
 

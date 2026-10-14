@@ -1174,13 +1174,11 @@ function xsltStamp(L) {
   return `<div class="inv-stamp" align="${align}" style="text-align:${align}">${img}</div>`;
 }
 
-function xsltQrImg(L, R) {
+function xsltQrImg(L) {
   const size = asQrSize(L.qrSize);
   const style = `height:${size}px;width:${size}px;`;
-  const bin = `${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='QRCODE' or cbc:DocumentType='KAREKOD' or cbc:DocumentType='QR' or cbc:DocumentTypeCode='QRCODE' or cbc:DocumentTypeCode='KAREKOD']/cac:Attachment/cbc:EmbeddedDocumentBinaryObject`;
-  // XSLT 1.0 QR bitmap üretemez. XML'de gömülü görsel varsa onu bas; yoksa İşNet'in
-  // render anında değiştirdiği yer tutucu kalır. UBL üretimi aynı alanlarla PNG ekler.
-  return `<xsl:choose><xsl:when test="normalize-space(${bin})!=''"><img style="${style}" alt="QrCode"><xsl:attribute name="src"><xsl:text>data:</xsl:text><xsl:choose><xsl:when test="${bin}/@mimeCode!=''"><xsl:value-of select="${bin}/@mimeCode"/></xsl:when><xsl:otherwise><xsl:text>image/png</xsl:text></xsl:otherwise></xsl:choose><xsl:text>;base64,</xsl:text><xsl:value-of select="${bin}"/></xsl:attribute></img></xsl:when><xsl:otherwise><img style="${style}" alt="QrCode" src="data:image/jpeg;base64,qrCodeImageString"/></xsl:otherwise></xsl:choose>`;
+  // İşNet karekodu dönüşümde qrCodeImageString yer tutucusundan basar.
+  return `<img style="${style}" alt="QrCode" src="data:image/jpeg;base64,qrCodeImageString"/>`;
 }
 
 function xsltBlocks(L, R) {
@@ -1201,7 +1199,7 @@ function xsltBlocks(L, R) {
   const supplier = xsltPartyBox("supplier", R);
   const customer = xsltPartyBox("customer", R);
   const logo = xsltLogoCluster(L, R);
-  const qr = xsltQrImg(L, R);
+  const qr = xsltQrImg(L);
 
   return {
     header: classic ? `
