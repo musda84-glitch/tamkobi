@@ -412,7 +412,7 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
   if (id === "iban") {
     const pay = previewIban(layout, s);
     return (
-      <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
+      <div className="h-full pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted, background: "transparent" }}>
         <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>{layout.ibanTitle || "IBAN / ödeme"}</div>
         <div className="font-mono">{pay.iban}</div>
         {pay.name ? <div>{pay.name}</div> : null}
@@ -442,9 +442,9 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
   }
   if (id === "balance") {
     return (
-      <div className="flex items-center justify-between rounded-lg px-2.5 py-2" style={{ border: `1px solid ${layout.accent}` }}>
-        <span className="font-bold uppercase" style={{ color: layout.muted, fontSize: "0.85em" }}>Güncel bakiye</span>
-        <span className="font-bold" style={{ color: layout.primary }}>{s.balance}</span>
+      <div className="h-full pt-2" data-testid="einvoice-design-balance" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted, background: "transparent" }}>
+        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>Güncel bakiye</div>
+        <div>{s.balance}</div>
       </div>
     );
   }
@@ -768,7 +768,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                 onDragOver={onDragOverItem(b.id)}
                 onDrop={onDropItem(b.id, true)}
                 onDragEnd={clearDrag}
-                className={`relative rounded-lg p-1.5 pt-6 ${SPAN_CLASS[b.span] || "col-span-12"} ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
+                className={`relative rounded-lg p-1.5 pt-6 flex flex-col h-full ${SPAN_CLASS[b.span] || "col-span-12"} ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
                 data-testid={`einvoice-design-block-${b.id}`}
               >
                 <div className="absolute top-0.5 left-1 right-1 z-10 flex items-center gap-0.5 min-w-0">
@@ -792,6 +792,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, true))} className="p-0.5 text-rose-600" title="Gizle" data-testid={`einvoice-design-hide-${b.id}`}><EyeOff className="w-3 h-3" /></button>
                 </div>
                 <div
+                  className={b.id === "iban" || b.id === "balance" ? "flex-1" : undefined}
                   style={blockHasFont(b.id) ? {
                     fontFamily: `"${blockFontFamily(L, b.id)}", Tahoma, sans-serif`,
                     fontSize: `${blockFontSize(L, b.id)}px`,

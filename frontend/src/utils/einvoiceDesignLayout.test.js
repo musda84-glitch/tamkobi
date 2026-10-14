@@ -149,6 +149,34 @@ test("setBlockSpan and packBlockRows place half-width blocks side by side", () =
   ]);
 });
 
+test("IBAN and balance share a row and the same foot style", () => {
+  const rows = packBlockRows([
+    { id: "notes", span: 6 },
+    { id: "iban", span: 6 },
+    { id: "balance", span: 6 },
+  ]);
+  expect(rows.map((r) => r.map((b) => b.id))).toEqual([["notes"], ["iban", "balance"]]);
+  const xslt = layoutToXslt(normalizeLayout({
+    blocks: [
+      { id: "iban", span: 6 },
+      { id: "balance", span: 6 },
+      { id: "header", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+    ],
+  }));
+  expect(xslt).toContain("td.inv-foot");
+  expect(xslt).toContain('class="inv-cell inv-foot"');
+  expect(xslt).toContain(".inv-iban, .inv-balance { background:transparent; border:0;");
+  expect(xslt).not.toMatch(/\.inv-balance\s*\{[^}]*border:\s*1px solid/);
+  const balAt = xslt.indexOf("Güncel bakiye");
+  const bal = xslt.slice(balAt - 180, balAt + 280);
+  expect(bal).toContain('class="inv-k"');
+  expect(bal).not.toContain("inv-v");
+  expect(xslt).toContain("normalize-space(/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID)!=''");
+  expect(xslt).toContain("DocumentType='BAKIYE'");
+});
+
 test("setBlockHidden toggles a block", () => {
   const next = setBlockHidden(defaultLayout().blocks, "iban", true);
   expect(next.find((b) => b.id === "iban").hidden).toBe(true);

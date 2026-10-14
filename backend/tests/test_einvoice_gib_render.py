@@ -410,6 +410,9 @@ def test_ticari_ubl_renders_percent_payable_and_skips_empty_iban_balance():
     assert "1,20" in html
     assert "BANKA HESAP BİLGİLERİMİZ" not in html
     assert "Güncel bakiye" not in html
+    assert ".inv-balance { border:1px solid" not in xslt
+    doc = etree.HTML(html)
+    assert not doc.xpath("//*[contains(@class, 'inv-foot')]")
     assert "UI-3 RESMİ RED TESTİ (hakedis)" in html
     assert "1.00" not in html
 
@@ -448,7 +451,10 @@ def test_ticari_ubl_discount_payment_balance_archive_qr():
     _sub(att, "cbc", "EmbeddedDocumentBinaryObject", marker, mimeCode="image/png", filename="qr.png")
     root.find("cac:AccountingSupplierParty", _UBL).addprevious(qr)
 
-    html = _transform(_designer_xslt("render"), etree.tostring(root))
+    xslt = _designer_xslt("render")
+    assert "td.inv-foot" in xslt
+    assert ".inv-balance { border:1px solid" not in xslt
+    html = _transform(xslt, etree.tostring(root))
     assert "e-Arşiv Fatura" in html
     assert "%12,5" in html
     assert "BANKA HESAP BİLGİLERİMİZ" in html
@@ -456,6 +462,11 @@ def test_ticari_ubl_discount_payment_balance_archive_qr():
     assert "İş Bankası" in html
     assert "Güncel bakiye" in html
     assert "4.567,89 TL" in html
+    doc = etree.HTML(html)
+    rows = doc.xpath("//tr[contains(., 'BANKA HESAP') and contains(., 'Güncel bakiye')]")
+    assert rows, html
+    cells = rows[0].xpath("./td[contains(@class, 'inv-foot')]")
+    assert len(cells) == 2
     assert marker in html
     assert "qrCodeImageString" not in html
 

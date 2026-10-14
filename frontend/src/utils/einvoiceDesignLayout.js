@@ -569,9 +569,14 @@ export function packBlockRows(blocks) {
   const rows = [];
   let row = [];
   let used = 0;
-  for (const b of vis) {
-    const span = asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12);
-    if (row.length && used + span > 12) {
+  const spanOf = (b) => asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12);
+  for (let i = 0; i < vis.length; i += 1) {
+    const b = vis[i];
+    const span = spanOf(b);
+    const next = vis[i + 1];
+    // IBAN ve güncel bakiye aynı satırda kalsın; önceki yarım blok onları ayırmasın.
+    const keepWithBalance = b.id === "iban" && next?.id === "balance" && span + spanOf(next) <= 12;
+    if (row.length && (used + span > 12 || (keepWithBalance && used + span + spanOf(next) > 12))) {
       rows.push(row);
       row = [];
       used = 0;
@@ -789,28 +794,34 @@ function xsltNotesBlock(L, R) {
       </div>`;
 }
 
+function payeeAccountId(R) {
+  return `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID`;
+}
+
+function balanceRefId(R) {
+  return `${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='BAKIYE' or cbc:DocumentType='CARI_BAKIYE' or cbc:DocumentTypeCode='BAKIYE']/cbc:ID`;
+}
+
+/** Boş IBAN / bakiye hücresi basılmaz. Sabit IBAN metni her zaman görünür. */
+function blockPresenceTest(id, L, R) {
+  if (id === "balance") return `normalize-space(${balanceRefId(R)})!=''`;
+  if (id === "iban" && !String(L.ibanText || "").trim()) return `normalize-space(${payeeAccountId(R)})!=''`;
+  return "";
+}
+
 function xsltIbanBlock(L, R) {
   const iban = String(L.ibanText || "").trim();
   const name = String(L.ibanName || "").trim();
   const title = blockTitle(L.ibanTitle, "IBAN / ödeme");
-  const payeeId = `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID`;
   const payeeName = `${R.root}/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:Name`;
-  if (iban) {
-    return `
-      <div class="inv-iban">
-        <div class="inv-k">${title}</div>
-        <div>${xmlEscape(iban)}</div>
-        ${name ? `<div>${xmlEscape(name)}</div>` : ""}
-      </div>`;
-  }
+  const body = iban
+    ? `<div>${xmlEscape(iban)}</div>${name ? `<div>${xmlEscape(name)}</div>` : ""}`
+    : `<div><xsl:value-of select="${payeeAccountId(R)}"/></div><div><xsl:value-of select="${payeeName}"/></div>`;
   return `
-      <xsl:if test="normalize-space(${payeeId})!=''">
       <div class="inv-iban">
         <div class="inv-k">${title}</div>
-        <div><xsl:value-of select="${payeeId}"/></div>
-        <div><xsl:value-of select="${payeeName}"/></div>
-      </div>
-      </xsl:if>`;
+        ${body}
+      </div>`;
 }
 
 function lineColXslt(R) {
@@ -1031,16 +1042,10 @@ function xsltBlocks(L, R) {
     notes: xsltNotesBlock(L, R),
     iban: xsltIbanBlock(L, R),
     balance: `
-      <xsl:if test="normalize-space(${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='BAKIYE' or cbc:DocumentType='CARI_BAKIYE' or cbc:DocumentTypeCode='BAKIYE']/cbc:ID)!=''">
       <div class="inv-balance">
-        <div>
-          <div class="inv-k">Güncel bakiye</div>
-          <div class="inv-v">
-            <xsl:value-of select="${R.root}/cac:AdditionalDocumentReference[cbc:DocumentType='BAKIYE' or cbc:DocumentType='CARI_BAKIYE' or cbc:DocumentTypeCode='BAKIYE']/cbc:ID"/>
-          </div>
-        </div>
-      </div>
-      </xsl:if>`,
+        <div class="inv-k">Güncel bakiye</div>
+        <div><xsl:value-of select="${balanceRefId(R)}"/></div>
+      </div>`,
     qr: `
       <div class="inv-qr" align="right">${qr}</div>`,
     spacer: `<div class="inv-spacer">&#160;</div>`,
@@ -1106,8 +1111,8 @@ function xsltBlockFontRules(L) {
     if (id === "header") {
       return `${base}\n          .inv-blk-header .inv-brand-name { font-size:${no}px; }\n          .inv-blk-header .inv-brand-addr, .inv-blk-header .inv-brand-vkn { font-size:${k}px; }`;
     }
-    if (id === "notes" || id === "iban") {
-      return `${base}\n          .inv-blk-${id}.inv-notes, .inv-blk-${id}.inv-iban, .inv-blk-${id} { font-size:${size}px; }`;
+    if (id === "notes" || id === "iban" || id === "balance") {
+      return `${base}\n          .inv-blk-${id}.inv-notes, .inv-blk-${id}.inv-iban, .inv-blk-${id}.inv-balance, .inv-blk-${id} { font-size:${size}px; }`;
     }
     return base;
   }).join("\n          ");
@@ -1116,15 +1121,23 @@ function xsltBlockFontRules(L) {
 function xsltPackedBody(L, R) {
   const map = xsltBlocks(L, R);
   return packBlockRows(L.blocks).map((row) => {
-    const cells = row.map((b) => {
+    const parts = row.map((b) => {
       const pct = Math.round((asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12) / 12) * 100);
       const inner = map[b.id] || "";
       const wrapped = blockHasFont(b.id)
         ? `<div class="inv-blk-${b.id}">${inner}</div>`
         : inner;
-      return `<td width="${pct}%" valign="top" class="inv-cell">${wrapped}</td>`;
-    }).join("");
-    return `<table class="inv-row" width="100%" cellpadding="4" cellspacing="0"><tr>${cells}</tr></table>`;
+      const foot = b.id === "iban" || b.id === "balance" ? " inv-foot" : "";
+      const td = `<td width="${pct}%" valign="top" class="inv-cell${foot}">${wrapped}</td>`;
+      const test = blockPresenceTest(b.id, L, R);
+      return { td: test ? `<xsl:if test="${test}">${td}</xsl:if>` : td, test };
+    });
+    const table = `<table class="inv-row" width="100%" cellpadding="4" cellspacing="0"><tr>${parts.map((p) => p.td).join("")}</tr></table>`;
+    const tests = parts.map((p) => p.test);
+    if (tests.length && tests.every(Boolean)) {
+      return `<xsl:if test="${tests.join(" or ")}">${table}</xsl:if>`;
+    }
+    return table;
   }).join("\n");
 }
 
@@ -1215,8 +1228,8 @@ export function layoutToXslt(layout, kind) {
           .inv-brand-right { text-align:right; white-space:nowrap; }
           .inv-totals { min-width:260px; margin-top:8px; }
           .inv-grand td { font-weight:700; color:${L.primary}; font-size:${fs + 1}px; border-top:2px solid ${L.accent}; }
-          .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; font-size:${fs}px; }
-          .inv-balance { border:1px solid ${L.accent}; padding:8px 10px; }
+          .inv-notes, td.inv-foot { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; font-size:${fs}px; background:transparent; vertical-align:top; }
+          .inv-iban, .inv-balance { background:transparent; border:0; padding:0; color:inherit; font-size:inherit; height:100%; }
           .inv-qr { text-align:right; }
           .inv-doc-title { font-weight:700; color:${L.primary}; font-size:${no}px; margin:0 0 4px; }
           .inv-spacer { min-height:28px; }

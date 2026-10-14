@@ -255,7 +255,10 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(last.qrSize).toBe(160);
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')?.parentElement?.textContent).not.toContain("550e8400");
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')?.parentElement?.textContent).not.toMatch(/GİB KAREKOD/i);
-  expect(host.querySelector('[data-testid="einvoice-design-block-balance"]')?.textContent).toContain("18.450,00 TL Borç");
+  const balanceBlock = host.querySelector('[data-testid="einvoice-design-block-balance"]');
+  expect(balanceBlock?.textContent).toContain("18.450,00 TL Borç");
+  expect(balanceBlock?.innerHTML).not.toMatch(/1px solid/);
+  expect(host.querySelector('[data-testid="einvoice-design-balance"]')?.getAttribute("style")).toMatch(/dashed/);
 
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-gib_seal_invoice"]').click();
