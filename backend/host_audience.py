@@ -59,7 +59,8 @@ _YNT_ALLOWED_PREFIXES = (
     "/api/einvoice/test",
     "/api/integrations/isnet/",
     "/api/integrations/isnet-portal/",
-    # Şirket çekmecesi SMS sekmesi (firma operatör ayarları)
+    # Şirket SMS uçları allowlist'te kalır ki ynt yazması handler'da 403 + audit olsun.
+    # Özet: GET /api/system/companies/{id}/sms (şifre ve düzenleme yok).
     "/api/comm/sms/",
     "/api/files/upload",
     "/api/public/plans",

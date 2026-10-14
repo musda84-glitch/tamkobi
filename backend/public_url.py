@@ -6,6 +6,7 @@ Yeni: public_base_url_for(db, context) → site|app|b2b|ik.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -24,6 +25,15 @@ CONTEXT_APP = "app"
 CONTEXT_B2B = "b2b"
 CONTEXT_IK = "ik"
 CONTEXT_YNT = "ynt"
+
+# SMS / e-posta metnindeki fatura PDF (ve e-belge) linki. Yalnız loopback kök değişir.
+_LOOPBACK_DOC_RE = re.compile(
+    r"https?://"
+    r"(?:127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])"
+    r"(?::\d+)?"
+    r"(/api/(?:invoices|e-invoice)/[^\s<>\"']+)",
+    re.IGNORECASE,
+)
 
 
 def is_invalid_public_base(url: Optional[str]) -> bool:
@@ -160,6 +170,34 @@ async def public_base_url(
         platform_public_url=platform_url,
         explicit=(explicit or "").strip() or None,
     )
+
+
+def rewrite_loopback_doc_urls(text: Optional[str], public_base: str) -> str:
+    """Fatura PDF linkindeki loopback kökü public app URL ile değiştirir.
+
+    İstek Host / window.location (http://127.0.0.1) müşteri metnine yazılmaz.
+    Başka adreslere dokunmaz.
+    """
+    raw = text or ""
+    base = normalize_public_base(public_base)
+    if not raw or not base:
+        return raw
+    return _LOOPBACK_DOC_RE.sub(lambda m: f"{base}{m.group(1)}", raw)
+
+
+async def rewrite_outbound_doc_text(db: Any, text: Optional[str]) -> str:
+    """Giden SMS/e-posta metnindeki fatura linklerini public app URL'sine çeker.
+
+    Metinde loopback fatura linki yoksa veritabanına bakmaz.
+    """
+    raw = text or ""
+    if not raw or not _LOOPBACK_DOC_RE.search(raw):
+        return raw
+    try:
+        base = await public_base_url_for(db, CONTEXT_APP)
+    except Exception:
+        base = resolve_public_base_url_for(CONTEXT_APP)
+    return rewrite_loopback_doc_urls(raw, base)
 
 
 async def public_base_url_for(

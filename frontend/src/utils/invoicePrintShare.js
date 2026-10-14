@@ -75,31 +75,42 @@ export function invoicePrintShareMessage(ord, { pdfUrl, companyName } = {}) {
   return lines.join("\n");
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+
+/** İstek host'u / loopback müşteri fatura linkine yazılmaz. */
+export function isLoopbackDocUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return true;
+  try {
+    const host = new URL(raw).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost");
+  } catch {
+    return true;
+  }
+}
+
 /** Public PDF URL. `shareToken` (?t= HMAC) yoksa oturumsuz açılmaz — paylaşım için fetchInvoicePdfShareUrl kullanın. */
 export function invoicePdfPublicUrl(origin, invoiceId, shareToken) {
   const base = String(origin || "").replace(/\/+$/, "");
   const id = String(invoiceId || "").trim();
-  if (!base || !id) return "";
+  if (!base || !id || isLoopbackDocUrl(base)) return "";
   const url = `${base}/api/invoices/${id}/pdf`;
   const t = String(shareToken || "").trim();
   return t ? `${url}?t=${encodeURIComponent(t)}` : url;
 }
 
-/** Oturumlu istek: imzalı paylaşım URL'si (90 gün varsayılan). Başarısızsa hata fırlatır — imzasız link dönmez. */
-export async function fetchInvoicePdfShareUrl(axiosClient, apiUrl, invoiceId, { origin } = {}) {
+/** Oturumlu istek: imzalı paylaşım URL'si (90 gün varsayılan). Başarısızsa hata fırlatır — imzasız veya loopback link dönmez. */
+export async function fetchInvoicePdfShareUrl(axiosClient, apiUrl, invoiceId) {
   const id = String(invoiceId || "").trim();
   if (!axiosClient || !apiUrl || !id) throw new Error("Fatura paylaşım linki alınamadı.");
   const r = await axiosClient.get(`${apiUrl}/invoices/${id}/share-link`, {
     params: { kind: "pdf" },
   });
-  const url = r?.data?.url || "";
-  if (url) return url;
-  const token = r?.data?.token || "";
-  if (!token) throw new Error("İmzalı fatura linki alınamadı.");
-  const base = String(origin || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
-  const built = invoicePdfPublicUrl(base, id, token);
-  if (!built || !built.includes("t=")) throw new Error("İmzalı fatura linki alınamadı.");
-  return built;
+  const url = String(r?.data?.url || "").trim();
+  if (!url || isLoopbackDocUrl(url) || !url.includes("t=")) {
+    throw new Error("İmzalı fatura linki alınamadı.");
+  }
+  return url;
 }
 
 /** TR cep → WhatsApp uluslararası (90…). */

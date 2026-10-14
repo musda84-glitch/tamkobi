@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { MessageSquare, Settings, Send, Loader2, Wallet, CheckCircle2, AlertCircle, FlaskConical, ShieldCheck } from "lucide-react";
 import { contextTr } from "../utils/labels";
-import { API_URL } from "../context/AuthContext";
+import { API_URL, useAuth } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
@@ -21,6 +21,8 @@ const mergeSettings = (prev, next) => {
 };
 
 export const SmsCenter = ({ companyId, contacts = [] }) => {
+  const auth = useAuth();
+  const canEditSettings = typeof auth?.can === "function" ? auth.can("/settings", "edit") : false;
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState({ provider: "netgsm", usercode: "", password: "", msgheader: "", is_active: true });
   const [balance, setBalance] = useState(null);
@@ -211,7 +213,7 @@ export const SmsCenter = ({ companyId, contacts = [] }) => {
         <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-sm">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Settings className="w-4 h-4 text-slate-500" /> SMS Ayarları</h3>
-            {connected ? (
+            {canEditSettings && connected ? (
               <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md px-2 py-0.5" data-testid="sms-status-connected"><CheckCircle2 className="w-3 h-3" /> BAĞLI</span>
             ) : configured ? (
               <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md px-2 py-0.5" data-testid="sms-status-saved"><AlertCircle className="w-3 h-3" /> KAYITLI</span>
@@ -219,6 +221,8 @@ export const SmsCenter = ({ companyId, contacts = [] }) => {
               <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded-md px-2 py-0.5" data-testid="sms-status-simulate"><FlaskConical className="w-3 h-3" /> SİMÜLE</span>
             )}
           </div>
+          {canEditSettings ? (
+          <>
           <form onSubmit={saveSettings} className="space-y-2 text-xs">
             <div>
               <label className="block font-semibold mb-1">SMS Operatörü</label>
@@ -286,6 +290,12 @@ export const SmsCenter = ({ companyId, contacts = [] }) => {
           )}
           {balance && <div className={`text-[11px] rounded-lg p-2 ${balance.ok ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`} data-testid="sms-balance-result">{balance.ok ? JSON.stringify(balance.data) : (balance.message || "Bakiye alınamadı")}</div>}
           <p className="text-[10px] text-slate-400">{meta?.help || `${providerName} paneline API yetkisi verin. «BAĞLI» yalnızca Doğrula başarılıysa görünür.`}</p>
+          </>
+          ) : (
+            <p className="text-[11px] text-slate-500" data-testid="sms-settings-locked">
+              Operatör kullanıcı adı, şifre ve gönderici başlığını yalnızca firma yöneticisi değiştirebilir (Ayarlar → SMS).
+            </p>
+          )}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-sm">

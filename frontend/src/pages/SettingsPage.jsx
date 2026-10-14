@@ -730,7 +730,15 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "plan" && <MyPlanPanel companyId={companyId} />}
           {tab === "print" && <PrintSettings companyId={companyId} />}
           {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
-          {tab === "sms" && <SmsCenter companyId={companyId} contacts={contacts} />}
+          {tab === "sms" && (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">
+                Şirketinizin SMS operatörü (Netgsm, İleti Merkezi, Verimor) bu ekrandan yönetilir.
+                Kullanıcı adı, şifre ve gönderici başlığı yalnızca firma yöneticisine aittir.
+              </p>
+              <SmsCenter companyId={companyId} contacts={contacts} />
+            </div>
+          )}
           {tab === "mail" && <MailClient companyId={companyId} />}
           {tab === "bank" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} />}
           {tab === "fx" && <FxRatesPanel companyId={companyId} />}

@@ -2,7 +2,9 @@ import { describe, expect, it } from "@jest/globals";
 import {
   INVOICE_PRINT_SHARE_HINT,
   fetchInvoicePdfFile,
+  fetchInvoicePdfShareUrl,
   invoicePdfPublicUrl,
+  isLoopbackDocUrl,
   invoicePrintShareDocFromOrder,
   invoicePrintShareKindLabel,
   invoicePrintShareMessage,
@@ -76,6 +78,22 @@ describe("invoicePrintShare", () => {
     expect(invoicePdfPublicUrl("https://app.example/", "inv-1", "123.abc")).toBe(
       "https://app.example/api/invoices/inv-1/pdf?t=123.abc",
     );
+    expect(invoicePdfPublicUrl("http://127.0.0.1:3000", "inv-1", "tok")).toBe("");
+    expect(isLoopbackDocUrl("http://127.0.0.1/api/invoices/inv-1/pdf?t=1")).toBe(true);
+  });
+
+  it("share link uses the API public app URL and ignores loopback", async () => {
+    const publicUrl = "https://app.tamkobi.com/api/invoices/inv-1/pdf?t=sig";
+    const axiosClient = {
+      get: jest.fn(async () => ({ data: { url: publicUrl, token: "sig" } })),
+    };
+    const url = await fetchInvoicePdfShareUrl(axiosClient, "/api", "inv-1");
+    expect(url).toBe(publicUrl);
+    expect(url).not.toContain("127.0.0.1");
+    const loopback = {
+      get: jest.fn(async () => ({ data: { url: "http://127.0.0.1/api/invoices/inv-1/pdf?t=sig" } })),
+    };
+    await expect(fetchInvoicePdfShareUrl(loopback, "/api", "inv-1")).rejects.toThrow(/İmzalı fatura linki/);
   });
 
   it("fetchInvoicePdfFile wraps blob as File", async () => {

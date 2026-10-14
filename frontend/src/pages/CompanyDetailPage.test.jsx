@@ -25,7 +25,7 @@ jest.mock("../components/saas/SystemLayout", () => ({
 }));
 
 jest.mock("../components/IsnetIntegrationPanel", () => () => <div data-testid="isnet-stub" />);
-jest.mock("../components/SmsCenter", () => ({ SmsCenter: () => <div data-testid="sms-stub" /> }));
+jest.mock("../components/saas/CompanySmsSummary", () => () => <div data-testid="company-sms-summary" />);
 
 import CompanyDetailPage from "./CompanyDetailPage";
 

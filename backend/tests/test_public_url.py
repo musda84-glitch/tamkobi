@@ -82,6 +82,79 @@ def test_async_public_base_url_reads_db():
     assert out == "https://tamkobi.com"
 
 
+def test_rewrite_loopback_invoice_pdf_uses_public_app_url():
+    """12.10.2026 MTE2026000000025: SMS/e-posta metnindeki 127.0.0.1 fatura linki app URL olur."""
+    raw = (
+        "Sayın müşterimiz,\n\n"
+        "MTE2026000000025 numaralı faturanız hazırdır.\n"
+        "PDF: http://127.0.0.1/api/invoices/mte25/pdf?t=sig.1\n"
+        "Ayrıca http://127.0.0.1:8000/api/e-invoice/mte25/pdf?t=sig.2"
+    )
+    out = pu.rewrite_loopback_doc_urls(raw, "https://app.tamkobi.com")
+    assert "127.0.0.1" not in out
+    assert "https://app.tamkobi.com/api/invoices/mte25/pdf?t=sig.1" in out
+    assert "https://app.tamkobi.com/api/e-invoice/mte25/pdf?t=sig.2" in out
+    assert "MTE2026000000025" in out
+    untouched = pu.rewrite_loopback_doc_urls(
+        "PDF: https://app.tamkobi.com/api/invoices/mte25/pdf?t=ok",
+        "https://app.tamkobi.com",
+    )
+    assert untouched == "PDF: https://app.tamkobi.com/api/invoices/mte25/pdf?t=ok"
+
+
+def test_rewrite_outbound_ignores_request_host():
+    fake_db = MagicMock()
+    fake_db.platform_settings.find_one = AsyncMock(
+        return_value={"_id": "platform", "public_url": "https://tamkobi.com"}
+    )
+    text = "PDF: http://localhost:3000/api/invoices/mte25/pdf?t=abc MTE2026000000025"
+
+    async def run():
+        with patch.dict(
+            os.environ,
+            {"PUBLIC_APP_URL": "", "PUBLIC_APP_HOST_URL": "http://127.0.0.1:3000"},
+            clear=False,
+        ):
+            return await pu.rewrite_outbound_doc_text(fake_db, text)
+
+    out = asyncio.run(run())
+    assert out.startswith("PDF: https://app.tamkobi.com/api/invoices/mte25/pdf?t=abc")
+    assert "127.0.0.1" not in out
+    assert "localhost" not in out
+
+
+def test_mail_customer_copy_rewrites_loopback_pdf():
+    import mail_accounts
+
+    fake_db = MagicMock()
+    fake_db.platform_settings.find_one = AsyncMock(
+        return_value={"_id": "platform", "public_url": "https://tamkobi.com"}
+    )
+    prev = mail_accounts._db
+    mail_accounts._db = fake_db
+    body = (
+        "MTE2026000000025\n"
+        "PDF: http://127.0.0.1/api/invoices/mte25/pdf?t=tok"
+    )
+    html = '<a href="http://127.0.0.1:8000/api/invoices/mte25/pdf?t=tok">PDF</a>'
+
+    async def run():
+        with patch.dict(os.environ, {"PUBLIC_APP_URL": "", "PUBLIC_APP_HOST_URL": ""}, clear=False):
+            plain = await mail_accounts._rewrite_customer_copy(body)
+            rich = await mail_accounts._rewrite_customer_copy(html)
+            same = await mail_accounts._rewrite_customer_copy("şifre sıfırlama kodunuz 1234")
+            return plain, rich, same
+
+    try:
+        plain, rich, same = asyncio.run(run())
+    finally:
+        mail_accounts._db = prev
+    assert "https://app.tamkobi.com/api/invoices/mte25/pdf?t=tok" in plain
+    assert "127.0.0.1" not in plain and "127.0.0.1" not in rich
+    assert 'href="https://app.tamkobi.com/api/invoices/mte25/pdf?t=tok"' in rich
+    assert same == "şifre sıfırlama kodunuz 1234"
+
+
 def test_invoice_share_link_rejects_loopback_platform_url():
     import saas_docs
     import signed_links
