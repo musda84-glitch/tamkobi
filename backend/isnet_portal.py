@@ -12,6 +12,7 @@ import base64
 import io
 import logging
 import re
+import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -342,8 +343,50 @@ async def _try_download_portal_xml(
 
 
 def is_test_mode(settings: dict) -> bool:
-    mode = (settings.get("mode") or "test").strip().lower()
+    """mode yoksa test sayma — eksik ayar test Account/Login denemesine düşmesin."""
+    mode = str((settings or {}).get("mode") or "").strip().lower()
     return mode in ("test", "sandbox", "demo")
+
+
+_login_backoff_until: Dict[str, float] = {}
+_LOGIN_BACKOFF_SECONDS = 900.0
+
+
+def _login_backoff_key(settings: dict) -> str:
+    src = settings or {}
+    return str(
+        src.get("company_id")
+        or src.get("_id")
+        or src.get("username")
+        or _vkn(src)
+        or ""
+    ).strip()
+
+
+def account_login_ready(settings: dict) -> bool:
+    mode = str((settings or {}).get("mode") or "").strip()
+    ident = _vkn(settings or {}) or str((settings or {}).get("username") or "").strip()
+    return bool(mode and ident)
+
+
+def account_login_blocked(settings: dict) -> bool:
+    key = _login_backoff_key(settings)
+    if not key:
+        return False
+    return time.monotonic() < _login_backoff_until.get(key, 0.0)
+
+
+def note_account_login_401(settings: dict) -> None:
+    key = _login_backoff_key(settings)
+    if not key:
+        return
+    _login_backoff_until[key] = time.monotonic() + _LOGIN_BACKOFF_SECONDS
+
+
+def clear_account_login_backoff(settings: dict) -> None:
+    key = _login_backoff_key(settings)
+    if key:
+        _login_backoff_until.pop(key, None)
 
 
 def portal_base(settings: dict) -> str:
@@ -840,6 +883,17 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
     vkn = _vkn(settings)
     if not vkn or not password:
         raise HTTPException(status_code=400, detail="Portal gelen kutu için VKN/TCKN ve şifre zorunludur.")
+    if not _tried_alt_env:
+        if not account_login_ready(settings):
+            raise HTTPException(
+                status_code=400,
+                detail="İşNet ortam (mode) ayarı yok; Account/Login yapılmadı.",
+            )
+        if account_login_blocked(settings):
+            raise HTTPException(
+                status_code=429,
+                detail="İşNet girişi reddedildi; şirket için yeniden deneme bekleniyor.",
+            )
     corp = str(
         settings.get("corporate_code")
         or settings.get("company_id")
@@ -902,6 +956,7 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
             if not token:
                 last = err or "Mobile Login yanıtında Token yok."
                 continue
+            clear_account_login_backoff(settings)
             companies = data.get("CompanyList") or data.get("companyList") or data.get("Companies") or []
             if not isinstance(companies, list):
                 companies = []
@@ -932,6 +987,8 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
         except HTTPException:
             pass
 
+    if saw_401:
+        note_account_login_401(settings)
     raise HTTPException(status_code=400, detail=last)
 
 
@@ -992,6 +1049,10 @@ async def advance_outgoing_invoice(
         invoice_number = ""
     if not password:
         return {"ok": False, "skipped": True, "reason": "no_password"}
+    if not account_login_ready(settings):
+        return {"ok": False, "skipped": True, "reason": "mode_missing"}
+    if account_login_blocked(settings):
+        return {"ok": False, "skipped": True, "reason": "login_backoff"}
     try:
         session = await _mobile_login(settings, password)
     except HTTPException as exc:

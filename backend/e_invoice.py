@@ -120,6 +120,9 @@ def _portal_password_for_advance(settings: dict) -> tuple:
             pwd = ""
     merged = dict(settings or {})
     if pwd:
+        # mode yoksa test varsayılmaz ve arka plan Account/Login yapılmaz
+        if not str(merged.get("mode") or "").strip():
+            return "", merged
         return pwd, merged
     if isnet.is_test_mode(merged):
         merged.setdefault("mobile_username", isnet.TEST_PORTAL_USER)
@@ -823,6 +826,9 @@ async def issue_invoice(
             "issued_at": _now(),
             "buyer_tax_id": buyer["tax_id"],
         }
+        sent_vendor = str(sent.get("vendor_number") or "").strip()
+        if sent_vendor:
+            patch["gib_vendor_number"] = sent_vendor
         # GİB / NetteFatura fatura numarası geldiyse liste numarası da onu göstersin
         if gib_no:
             if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
@@ -1133,6 +1139,7 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     provider = (inv.get("integrator") or settings.get("provider") or "").strip()
     if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return {"updated": False, "invoice": inv}
+    settings = _isnet_settings_for_invoice(settings, inv)
     e_type = inv.get("e_type") or "e_archive"
     hint_no = str(inv.get("gib_invoice_id") or inv.get("local_invoice_number") or inv.get("invoice_number") or "")
     pending_zip = isnet.is_outbound_gib_pending(
@@ -1173,6 +1180,9 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     url = (info.get("document_url") or "").strip()
     if url:
         patch["gib_document_url"] = url
+    vendor_no = str(info.get("vendor_number") or "").strip()
+    if vendor_no and vendor_no != str(inv.get("gib_vendor_number") or "").strip():
+        patch["gib_vendor_number"] = vendor_no
     gib_no = (info.get("invoice_id") or "").strip()
     if not gib_no:
         gib_no = await isnet.resolve_invoice_number_from_xml(
@@ -1381,15 +1391,20 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
         if _is_http_url(stored) and not _is_n11_document_url(stored):
             return {"url": stored, "provider": provider or "stored", "source": "stored"}
         if provider == "isnet" and ettn and settings.get("status") == "configured":
+            doc_settings = _isnet_settings_for_invoice(settings, inv)
             info = await isnet.get_document_viewer_link(
-                settings,
+                doc_settings,
                 ettn,
                 e_type=e_type,
                 invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
             )
             url = info.get("url") or ""
             if url:
-                await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"gib_document_url": url}})
+                patch = {"gib_document_url": url}
+                vendor_no = str(info.get("vendor_number") or "").strip()
+                if vendor_no:
+                    patch["gib_vendor_number"] = vendor_no
+                await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
                 return {"url": url, "provider": "isnet", "source": "viewer_link"}
 
     if _is_http_url(stored) and not (provider in ("isnet", "isnet_portal") and _is_n11_document_url(stored)):
@@ -1439,6 +1454,32 @@ def _invoice_soap_direction(inv: dict) -> str:
     return "Incoming" if _is_incoming_invoice(inv) else "Outgoing"
 
 
+def _isnet_settings_for_invoice(settings: dict, inv: dict) -> dict:
+    """PDF/XML/viewer/search: kayıtlı şube veya seri eşlemesi CompanyVendorNumber olsun."""
+    hint = str((inv or {}).get("gib_vendor_number") or "").strip()
+    number = str((inv or {}).get("gib_invoice_id") or (inv or {}).get("invoice_number") or "")
+    merged = dict(settings or {})
+    if hint:
+        merged["gib_vendor_number"] = hint
+    return isnet.with_inferred_vendor(merged, number, vendor_hint=hint)
+
+
+async def _remember_isnet_document(invoice_id: str, inv: dict, captured: Optional[dict]) -> None:
+    """Başarılı viewer linki ve şube kodunu faturaya yaz — sonraki indirme tek çağrı."""
+    if not isinstance(captured, dict) or _db is None:
+        return
+    patch: Dict[str, Any] = {}
+    url = str(captured.get("url") or "").strip()
+    stored = str((inv or {}).get("gib_document_url") or "").strip()
+    if url and _is_http_url(url) and not _is_n11_document_url(url) and url != stored:
+        patch["gib_document_url"] = url
+    vendor = str(captured.get("vendor_number") or "").strip()
+    if vendor and vendor != str((inv or {}).get("gib_vendor_number") or "").strip():
+        patch["gib_vendor_number"] = vendor
+    if patch:
+        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+
+
 async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
     """GİB e-belge PDF (İşNet). Gelen faturalarda InvoiceDirection=Incoming."""
     inv = await _db.invoices.find_one({"_id": invoice_id})
@@ -1463,6 +1504,7 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
     provider = _invoice_provider(inv, settings)
     if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return None
+    settings = _isnet_settings_for_invoice(settings, inv)
     viewer = ""
     stored = (inv.get("gib_document_url") or "").strip()
     if _is_http_url(stored) and not _is_n11_document_url(stored):
@@ -1470,15 +1512,19 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
     # İşNet fatura no: önce GİB'den dönen numara, sonra yerel
     inv_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "").strip()
     direction = _invoice_soap_direction(inv)
+    captured: Dict[str, Any] = {}
     try:
-        return await isnet.download_invoice_pdf(
+        data = await isnet.download_invoice_pdf(
             settings,
             ettn,
             e_type=et or "e_archive",
             invoice_number=inv_no,
             viewer_url=viewer,
             direction=direction,
+            captured=captured,
         )
+        await _remember_isnet_document(invoice_id, inv, captured)
+        return data
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         logger.warning(
@@ -1511,21 +1557,26 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
     provider = _invoice_provider(inv, settings)
     if provider != "isnet" or settings.get("status") != "configured":
         return None
+    settings = _isnet_settings_for_invoice(settings, inv)
     viewer = ""
     stored = (inv.get("gib_document_url") or "").strip()
     if _is_http_url(stored) and not _is_n11_document_url(stored):
         viewer = stored
     inv_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "").strip()
     direction = _invoice_soap_direction(inv)
+    captured: Dict[str, Any] = {}
     try:
-        return await isnet.download_invoice_xml(
+        data = await isnet.download_invoice_xml(
             settings,
             ettn,
             e_type=et or "e_archive",
             invoice_number=inv_no,
             viewer_url=viewer,
             direction=direction,
+            captured=captured,
         )
+        await _remember_isnet_document(invoice_id, inv, captured)
+        return data
     except HTTPException as exc:
         logger.info("fetch_integrator_xml: %s → %s", invoice_id, getattr(exc, "detail", exc))
         return None
@@ -1593,6 +1644,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             continue
         if not isnet.is_ettn_uuid(ettn):
             continue
+        settings = _isnet_settings_for_invoice(settings, inv)
 
         pending_zip = isnet.is_outbound_gib_pending(
             gib_status=str(inv.get("gib_status") or ""),
@@ -1640,6 +1692,9 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
         url = (info.get("document_url") or "").strip()
         if url and url != (inv.get("gib_document_url") or ""):
             patch["gib_document_url"] = url
+        vendor_no = str(info.get("vendor_number") or "").strip()
+        if vendor_no and vendor_no != str(inv.get("gib_vendor_number") or "").strip():
+            patch["gib_vendor_number"] = vendor_no
 
         gib_no = (info.get("invoice_id") or "").strip()
         if not gib_no:

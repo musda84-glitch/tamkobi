@@ -13,6 +13,19 @@ from fastapi import HTTPException
 import isnet
 
 
+@pytest.fixture(autouse=True)
+def _clear_isnet_login_backoff():
+    isnet._login_backoff_until.clear()
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    yield
+    isnet._login_backoff_until.clear()
+
+
 def test_resolve_gib_transmission_status_prefers_detail_1300():
     out = isnet.resolve_gib_transmission_status(
         detail_status="Basariyla_Tamamlandi",
@@ -1755,3 +1768,238 @@ def test_build_despatch_ubl_includes_invoice_document_reference():
     assert adr is not None
     assert adr.find("cbc:ID", ns).text == "TA202600000013"
     assert adr.find("cbc:DocumentTypeCode", ns).text == "FATURA"
+
+
+def test_is_test_mode_does_not_assume_test_when_mode_missing():
+    assert isnet.is_test_mode({}) is False
+    assert isnet.is_test_mode({"mode": ""}) is False
+    assert isnet.is_test_mode({"mode": "live"}) is False
+    assert isnet.is_test_mode({"mode": "test"}) is True
+    assert isnet.api_base({}) == isnet.LIVE_API
+    assert isnet.soap_url({}) == isnet.LIVE_SOAP
+
+
+def test_get_document_viewer_link_accepts_alternate_url_fields():
+    """HtmlUrl dışında ViewerUrl ve gövdede key= içeren http adresi."""
+    settings = {"company_tax_id": "4810173324", "mode": "live"}
+    viewer = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:ViewerUrl>https://view.example/doc?key=fromViewer</ein:ViewerUrl>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=viewer)):
+        info = asyncio.run(
+            isnet.get_document_viewer_link(settings, "f0ad3b22-88d6-49d3-97a4-f738fe213505")
+        )
+    assert info["url"] == "https://view.example/doc?key=fromViewer"
+    assert isnet.extract_viewer_key(info["url"]) == "fromViewer"
+
+    keyed = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:Note>belge https://portal.example/v?ID=1&amp;key=looseKey hazır</ein:Note>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=keyed)):
+        info = asyncio.run(
+            isnet.get_document_viewer_link(settings, "f0ad3b22-88d6-49d3-97a4-f738fe213505")
+        )
+    assert "key=looseKey" in info["url"]
+    assert info["url"].startswith("https://portal.example/v")
+
+
+def test_get_document_viewer_link_empty_body_logs_masked(caplog):
+    import logging
+
+    settings = {"company_tax_id": "4810173324", "mode": "live"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>false</ein:IsSucceded>"
+        "<ein:Password>super-secret-pass</ein:Password>"
+        "</Body>"
+    )
+    caplog.set_level(logging.INFO, logger="isnet")
+    with patch("isnet._soap_call", AsyncMock(return_value=body)):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                isnet.get_document_viewer_link(settings, "f0ad3b22-88d6-49d3-97a4-f738fe213505")
+            )
+    assert exc.value.status_code == 404
+    assert "viewer link empty" in caplog.text
+    assert "super-secret-pass" not in caplog.text
+    assert "[mask]" in caplog.text
+
+
+def test_series_vendor_map_puts_company_vendor_number_on_request():
+    settings = {
+        "company_tax_id": "4810173324",
+        "mode": "live",
+        "series_vendor_map": {"MTE": "17"},
+    }
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:DocumentViewerUrl>https://view.example/mte?key=mteKey</ein:DocumentViewerUrl>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        info = asyncio.run(
+            isnet.get_document_viewer_link(
+                settings,
+                "f0ad3b22-88d6-49d3-97a4-f738fe213505",
+                invoice_number="MTE2026000000029",
+                e_type="e_invoice",
+            )
+        )
+    assert info["url"].endswith("key=mteKey")
+    req = mock_call.await_args.kwargs["request"]
+    assert req["CompanyVendorNumber"] == "17"
+    assert req["InvoiceNumber"] == "MTE2026000000029"
+
+
+def test_viewer_link_retries_without_vendor_after_miss():
+    settings = {
+        "company_tax_id": "4810173324",
+        "mode": "live",
+        "series_vendor_map": {"MTE": "17"},
+    }
+    empty = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "</Body>"
+    )
+    ok = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:Link>https://view.example/plain?key=second</ein:Link>"
+        "</Body>"
+    )
+    mock_call = AsyncMock(side_effect=[empty, ok])
+    with patch("isnet._soap_call", mock_call):
+        info = asyncio.run(
+            isnet.get_document_viewer_link(
+                settings,
+                "f0ad3b22-88d6-49d3-97a4-f738fe213505",
+                invoice_number="MTE2026000000029",
+            )
+        )
+    assert "key=second" in info["url"]
+    first = mock_call.await_args_list[0].kwargs["request"]
+    second = mock_call.await_args_list[1].kwargs["request"]
+    assert first.get("CompanyVendorNumber") == "17"
+    assert "CompanyVendorNumber" not in second
+
+
+def test_download_invoice_xml_falls_back_to_search_invoice():
+    settings = {
+        "company_tax_id": "4810173324",
+        "mode": "live",
+        "series_vendor_map": {"MTE": "17"},
+    }
+    ubl = (
+        '<?xml version="1.0"?>'
+        '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2">'
+        "<ID>MTE2026000000029</ID></Invoice>"
+    )
+    search = AsyncMock(
+        return_value=[
+            {
+                "ettn": "f0ad3b22-88d6-49d3-97a4-f738fe213505",
+                "invoice_id": "MTE2026000000029",
+                "invoice_xml": ubl,
+                "vendor_number": "17",
+            }
+        ]
+    )
+    captured = {}
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="viewer yok")),
+    ), patch("isnet.search_outgoing_invoice", search):
+        data = asyncio.run(
+            isnet.download_invoice_xml(
+                settings,
+                "f0ad3b22-88d6-49d3-97a4-f738fe213505",
+                e_type="e_invoice",
+                invoice_number="MTE2026000000029",
+                captured=captured,
+            )
+        )
+    assert b"MTE2026000000029" in data
+    assert search.await_args.kwargs.get("include_xml") is True
+    assert search.await_args.kwargs.get("fallback_without_vendor") is True
+    assert search.await_args.kwargs.get("invoice_number") == "MTE2026000000029"
+    assert search.await_args.args[0].get("company_vendor_number") == "17"
+    assert captured.get("vendor_number") == "17"
+
+
+def test_download_invoice_xml_archive_uses_search_archive():
+    settings = {"company_tax_id": "4810173324", "mode": "live", "company_vendor_number": "3"}
+    ubl = "<Invoice><ID>EA1</ID></Invoice>"
+    search = AsyncMock(
+        return_value=[
+            {
+                "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "invoice_id": "EA2026000000001",
+                "invoice_xml": ubl,
+            }
+        ]
+    )
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="viewer yok")),
+    ), patch("isnet.search_archive_invoice", search):
+        data = asyncio.run(
+            isnet.download_invoice_xml(
+                settings,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                e_type="e_archive",
+                invoice_number="EA2026000000001",
+            )
+        )
+    assert b"<Invoice>" in data
+    assert search.await_args.kwargs.get("include_xml") is True
+
+
+def test_login_without_mode_does_not_call_account_login():
+    class _Resp:
+        status_code = 401
+        content = b""
+        text = ""
+
+        def json(self):
+            return {}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=_Resp())
+    with patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(isnet.login({"username": "123", "company_id": "c-nomode"}, "secret"))
+    assert exc.value.status_code == 400
+    assert mock_client.post.await_count == 0
+
+
+def test_login_401_backoff_skips_next_payload_loop():
+    class _Resp:
+        status_code = 401
+        content = b""
+        text = ""
+
+        def json(self):
+            return {}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=_Resp())
+    settings = {"username": "backoff-user", "mode": "live", "company_id": "co-backoff"}
+    with patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(HTTPException) as first:
+            asyncio.run(isnet.login(settings, "bad"))
+        posts = mock_client.post.await_count
+        assert posts >= 1
+        with pytest.raises(HTTPException) as second:
+            asyncio.run(isnet.login(settings, "bad"))
+    assert first.value.status_code == 400
+    assert second.value.status_code == 429
+    assert mock_client.post.await_count == posts
