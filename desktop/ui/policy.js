@@ -1,7 +1,9 @@
 /* TamKobi masaüstü kabuğu.
- * Mod yönlendirmesi, alan adı kısıtı ve kiosk çıkış kararı.
- * Kiosk PIN kapısı backend/pos_cashier.kiosk_exit_decision ile aynı mesajları kullanır.
- * Oturum çerezi burada tutulmaz; hash kontrolü sunucudadır.
+ * Mod yönlendirmesi, alan adı kısıtı ve kiosk çıkış ön kontrolü.
+ * Mesajlar backend/pos_cashier.kiosk_exit_decision ile aynıdır.
+ * Sayfa kilidi açmaz ve çıkış nonce'unu görmez. Kabuk PIN ile
+ * POST /api/desktop/kiosk-exit çağırır; yalnız allow === true kilidi açar.
+ * Oturum çerezi burada tutulmaz.
  */
 (function (root, factory) {
   var api = factory();

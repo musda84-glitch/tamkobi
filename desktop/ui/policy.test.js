@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -163,4 +164,43 @@ test("kiosk çıkış PIN'i kasiyer kilidi ile aynı kapıyı kullanır", () => 
   assert.equal(policy.isKioskExitChord({ key: "l", ctrlKey: true, shiftKey: true }), true);
   assert.equal(policy.isKioskExitChord({ key: "Enter", ctrlKey: false, shiftKey: false }), false);
   assert.equal(policy.isKioskExitChord({ key: "5" }), false);
+  const granted = policy.kioskExitDecision({ pin: "1234", approver: admin });
+  assert.equal(Object.hasOwn(granted, "nonce"), false);
+  assert.equal(typeof granted.allow, "boolean");
+});
+
+test("uzak kabuk komutları yalnız app.tamkobi.com adresine açıktır", () => {
+  const remote = JSON.parse(readFileSync(new URL("../src-tauri/capabilities/remote.json", import.meta.url), "utf8"));
+  assert.deepEqual(remote.remote.urls, ["https://app.tamkobi.com/*"]);
+  for (const url of remote.remote.urls) {
+    assert.equal(url.includes("*."), false);
+    assert.equal(policy.classifyNavigation(url.replace("*", "atolye"), { dev: false }), "allow");
+  }
+});
+
+test("kiosk çıkış nonce'u sayfaya verilmez; isteği kabuk yapar", () => {
+  const inject = readFileSync(new URL("./inject.js", import.meta.url), "utf8");
+  const shell = readFileSync(new URL("../src-tauri/src/shell.rs", import.meta.url), "utf8");
+  assert.equal(inject.includes("nonce"), false);
+  assert.equal(inject.includes("/api/desktop/kiosk-exit"), false);
+  assert.match(inject, /complete_kiosk_exit/);
+  assert.match(inject, /approverId/);
+  assert.match(shell, /window\.__tamkobiShowKioskExit&&window\.__tamkobiShowKioskExit\(\)/);
+  assert.doesNotMatch(shell, /__tamkobiShowKioskExit\(\{[^)]*\}\)/);
+  assert.match(shell, /https:\/\/app\.tamkobi\.com\/api\/desktop\/kiosk-exit/);
+  assert.match(shell, /access_token/);
+  assert.match(shell, /parsed\.get\("allow"\)/);
+});
+
+test("updater pubkey yer tutucusu README'de signer generate ile değiştirilir", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  const conf = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
+  const pubkey = conf.plugins.updater.pubkey;
+  assert.equal(typeof pubkey, "string");
+  assert.ok(pubkey.length > 20);
+  assert.match(readme, /Uyarı — updater pubkey/);
+  assert.match(readme, /signer generate/);
+  assert.match(readme, /plugins\.updater\.pubkey/);
+  assert.ok(readme.includes(pubkey));
+  assert.match(readme, /tamkobi\.key/);
 });

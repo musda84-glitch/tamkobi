@@ -35,6 +35,9 @@ wry = "=0.55.1"
 tao = "=0.35.3"
 muda = "=0.19.3"
 reqwest = { version = "=0.13.3", default-features = false }
+# Updater `rustls-no-provider` kullanır. Kiosk çıkışı kendi istemcisini kurmadan
+# önce ring sağlayıcısını yükler; sürüm kilitteki kasayla aynı kalır.
+rustls = { version = "=0.23.45", default-features = false, features = ["ring"] }
 serde_with = "=3.17.0"
 time = "=0.3.45"
 tray-icon = "=0.24.2"

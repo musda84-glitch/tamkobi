@@ -3,8 +3,7 @@
   "windows": ["main"],
   "remote": {
     "urls": [
-      "https://*.tamkobi.com/*",
-      "https://tamkobi.com/*"
+      "https://app.tamkobi.com/*"
     ]
   },
   "permissions": [

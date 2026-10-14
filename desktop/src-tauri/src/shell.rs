@@ -1,4 +1,6 @@
-//! Kabuk durumu: kayıtlı mod, kiosk kilidi, oturum özeti. Çerez burada tutulmaz.
+//! Kabuk durumu: kayıtlı mod, kiosk kilidi, oturum özeti.
+//! Oturum çerezi diske yazılmaz. Kiosk çıkışı WebView çerezini okuyup
+//! `POST /api/desktop/kiosk-exit` çağrısını kendisi yapar; nonce sayfaya verilmez.
 
 use std::collections::HashMap;
 use std::fs;
@@ -116,14 +118,95 @@ fn go_shell(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+const KIOSK_EXIT_URL: &str = "https://app.tamkobi.com/api/desktop/kiosk-exit";
+
+fn exit_pending(app: &AppHandle) -> Result<bool, String> {
+    let state = app.state::<ShellState>();
+    let slot = state.exit_nonce.lock().map_err(|_| "kilit".to_string())?;
+    Ok(slot.as_deref().map(|nonce| !nonce.is_empty()).unwrap_or(false))
+}
+
 fn show_kiosk_exit(app: &AppHandle) -> Result<(), String> {
     let nonce = fresh_nonce();
-    *app.state::<ShellState>().exit_nonce.lock().map_err(|_| "kilit")? = Some(nonce.clone());
+    if nonce.is_empty() {
+        return Err("Kiosk çıkışı doğrulanamadı.".into());
+    }
+    *app.state::<ShellState>().exit_nonce.lock().map_err(|_| "kilit")? = Some(nonce);
     let window = main_window(app)?;
-    let quoted = serde_json::to_string(&nonce).map_err(|err| err.to_string())?;
     window
-        .eval(format!("window.__tamkobiShowKioskExit&&window.__tamkobiShowKioskExit({quoted})"))
+        .eval("window.__tamkobiShowKioskExit&&window.__tamkobiShowKioskExit()")
         .map_err(|err| err.to_string())
+}
+
+fn cookie_text_unsafe(text: &str) -> bool {
+    text.chars().any(|ch| matches!(ch, '\r' | '\n' | ';' | ' '))
+}
+
+fn push_cookie(parts: &mut Vec<String>, token: &mut Option<String>, name: &str, value: &str) {
+    if name.is_empty() || name.contains('=') || cookie_text_unsafe(name) || cookie_text_unsafe(value) {
+        return;
+    }
+    if name == "access_token" && token.is_none() && !value.is_empty() {
+        *token = Some(value.to_string());
+    }
+    parts.push(format!("{name}={value}"));
+}
+
+fn kiosk_response_allows(status: u16, body: &[u8]) -> Result<(), String> {
+    let parsed: serde_json::Value = serde_json::from_slice(body).unwrap_or(serde_json::Value::Null);
+    if (200..300).contains(&status) && parsed.get("allow").and_then(|value| value.as_bool()) == Some(true) {
+        return Ok(());
+    }
+    let detail = parsed.get("detail").and_then(|value| value.as_str()).map(str::trim).filter(|text| !text.is_empty());
+    Err(detail.unwrap_or("Kiosk çıkışı reddedildi.").to_string())
+}
+
+async fn read_session_credentials(window: WebviewWindow) -> Result<(String, Option<String>), String> {
+    let url = Url::parse(KIOSK_EXIT_URL).map_err(|err| err.to_string())?;
+    let cookies = tauri::async_runtime::spawn_blocking(move || window.cookies_for_url(url))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())?;
+    let mut parts = Vec::new();
+    let mut token = None;
+    for item in cookies {
+        push_cookie(&mut parts, &mut token, item.name(), item.value());
+    }
+    if parts.is_empty() && token.is_none() {
+        return Err("Oturum çerezi bulunamadı.".into());
+    }
+    Ok((parts.join("; "), token))
+}
+
+fn ensure_tls_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
+async fn post_kiosk_exit(cookie_header: String, token: Option<String>, body: serde_json::Value) -> Result<(), String> {
+    ensure_tls_provider();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|_| "Kiosk çıkışı doğrulanamadı.".to_string())?;
+    let bytes = serde_json::to_vec(&body).map_err(|err| err.to_string())?;
+    let mut request = client
+        .post(KIOSK_EXIT_URL)
+        .header("accept", "application/json")
+        .header("content-type", "application/json")
+        .body(bytes);
+    if !cookie_header.is_empty() {
+        request = request.header("cookie", cookie_header);
+    }
+    if let Some(token) = token.filter(|value| !value.is_empty()) {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    let response = request.send().await.map_err(|_| "Kiosk çıkışı doğrulanamadı.".to_string())?;
+    let status = response.status().as_u16();
+    let bytes = response.bytes().await.map_err(|_| "Kiosk çıkışı doğrulanamadı.".to_string())?;
+    kiosk_response_allows(status, &bytes)
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,17 +412,46 @@ fn request_kiosk_exit(app: AppHandle, state: tauri::State<'_, ShellState>) -> Re
 }
 
 #[tauri::command]
-fn complete_kiosk_exit(app: AppHandle, state: tauri::State<'_, ShellState>, nonce: String) -> Result<(), String> {
-    let mut slot = state.exit_nonce.lock().map_err(|_| "kilit")?;
-    match slot.as_deref() {
-        Some(expected) if expected == nonce && !nonce.is_empty() => {
-            *slot = None;
-        }
-        _ => return Err("Kiosk çıkışı doğrulanamadı.".into()),
+async fn complete_kiosk_exit(app: AppHandle, pin: String, approver_id: String, terminal_id: Option<String>) -> Result<(), String> {
+    let pin = pin.trim().to_string();
+    let approver_id = approver_id.trim().to_string();
+    if pin.is_empty() || approver_id.is_empty() || !exit_pending(&app)? {
+        return Err("Kiosk çıkışı doğrulanamadı.".into());
     }
-    drop(slot);
-    state.return_to_picker.store(true, Ordering::Relaxed);
-    go_shell(&app)
+    let company_id = {
+        let state = app.state::<ShellState>();
+        let session = state.session.lock().map_err(|_| "kilit")?;
+        session.as_ref().map(|row| row.company_id.clone()).unwrap_or_default()
+    };
+    let mut payload = serde_json::Map::new();
+    payload.insert("pin".into(), serde_json::Value::String(pin));
+    payload.insert("user_id".into(), serde_json::Value::String(approver_id.clone()));
+    payload.insert("approver_user_id".into(), serde_json::Value::String(approver_id));
+    if !company_id.trim().is_empty() {
+        payload.insert("company_id".into(), serde_json::Value::String(company_id));
+    }
+    if let Some(terminal_id) = terminal_id.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+        payload.insert("terminal_id".into(), serde_json::Value::String(terminal_id));
+    }
+    let window = main_window(&app)?;
+    let (cookie_header, token) = read_session_credentials(window).await?;
+    if !exit_pending(&app)? {
+        return Err("Kiosk çıkışı doğrulanamadı.".into());
+    }
+    post_kiosk_exit(cookie_header, token, serde_json::Value::Object(payload)).await?;
+    if !exit_pending(&app)? {
+        return Err("Kiosk çıkışı doğrulanamadı.".into());
+    }
+    {
+        let state = app.state::<ShellState>();
+        state.return_to_picker.store(true, Ordering::Relaxed);
+    }
+    go_shell(&app)?;
+    {
+        let state = app.state::<ShellState>();
+        *state.exit_nonce.lock().map_err(|_| "kilit")? = None;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -455,4 +567,35 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         check_update,
         install_update,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{kiosk_response_allows, push_cookie};
+
+    #[test]
+    fn unlocks_only_when_allow_is_boolean_true() {
+        assert!(kiosk_response_allows(200, br#"{"allow":true}"#).is_ok());
+        assert!(kiosk_response_allows(200, br#"{"allow":true,"detail":""}"#).is_ok());
+        assert!(kiosk_response_allows(200, "{\"allow\":false,\"detail\":\"Bu PIN yonetici onayi veremez.\"}".as_bytes()).is_err());
+        assert!(kiosk_response_allows(200, br#"{"allow":"true"}"#).is_err());
+        assert!(kiosk_response_allows(403, br#"{"allow":true}"#).is_err());
+        assert_eq!(
+            kiosk_response_allows(401, "{\"detail\":\"PIN hatali.\"}".as_bytes()).unwrap_err(),
+            "PIN hatali."
+        );
+        assert_eq!(kiosk_response_allows(500, b"not-json").unwrap_err(), "Kiosk çıkışı reddedildi.");
+    }
+
+    #[test]
+    fn session_header_uses_cookie_and_access_token() {
+        let mut parts = Vec::new();
+        let mut token = None;
+        push_cookie(&mut parts, &mut token, "access_token", "abc.def");
+        push_cookie(&mut parts, &mut token, "other", "1");
+        push_cookie(&mut parts, &mut token, "bad name", "x");
+        push_cookie(&mut parts, &mut token, "broken", "a\nb");
+        assert_eq!(parts.join("; "), "access_token=abc.def; other=1");
+        assert_eq!(token.as_deref(), Some("abc.def"));
+    }
 }

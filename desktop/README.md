@@ -5,11 +5,11 @@
 ## Ne yapar
 
 - Açılışta, oturumdaki rolün görebildiği modları listeler. Son seçim bu bilgisayarda hatırlanır. İzni `none` olan veya lisansı kapalı mod menüde görünmez.
-- Kiosk / tam ekran. Çıkış (`Ctrl+Shift+L` veya pencereyi kapatma) `POST /api/desktop/kiosk-exit` ile doğrulanır. PIN 4-6 rakamdır; karar Hızlı Satış kasiyer kilidindeki `can_approve` kapısıyla aynıdır. Kasiyer kendi kilitli çıkışını onaylayamaz.
+- Kiosk / tam ekran. Çıkış (`Ctrl+Shift+L` veya pencereyi kapatma) kabuğun kendi `POST https://app.tamkobi.com/api/desktop/kiosk-exit` çağrısıyla doğrulanır. Sayfa yalnız PIN ve onaylayan kimliğini verir; çıkış nonce'u sayfaya yazılmaz. Kabuk isteği WebView oturum çerezi ve `access_token` ile yapar. Yanıtta `allow` tam olarak `true` değilse kilit açılmaz. PIN 4-6 rakamdır; karar Hızlı Satış kasiyer kilidindeki `can_approve` kapısıyla aynıdır. Kasiyer kendi kilitli çıkışını onaylayamaz.
 - USB barkod okuyucu klavye gibi yazar. Kabuk yalnızca kiosk çıkış kısayolunu yakalar.
 - Fiş ve etiket için sessiz yazdırma. Listeden bir Windows yazıcısı seçilir; boş bırakılırsa Windows varsayılan yazıcısı kullanılır.
 - Oturum çerezi WebView2 profilinde, `%LOCALAPPDATA%\com.tamkobi.desktop\webview` altında kalır. Kabuk PIN veya erişim jetonu yazmaz.
-- Yalnızca `https://tamkobi.com` ve `https://*.tamkobi.com` kabukta açılır. Diğer `http(s)` adresler sistem tarayıcısına gider.
+- Yalnızca `https://tamkobi.com` ve `https://*.tamkobi.com` pencerede açılır. Diğer `http(s)` adresler sistem tarayıcısına gider. Kabuk komutları (kiosk çıkışı dahil) yalnız `https://app.tamkobi.com/*` sayfalarına verilir.
 
 ## Geliştirme
 
@@ -51,7 +51,7 @@ Güncelleme imzası (`.sig`) ancak `TAURI_SIGNING_PRIVATE_KEY` doluysa üretilir
 
 `https://github.com/musda84-glitch/tamkobi/releases/latest/download/latest.json`
 
-Repodaki açık anahtar yer tutucudur; özel anahtarı yoktur. Yayınlamadan önce kendi çiftinizi üretin ve açık anahtarı `plugins.updater.pubkey` alanına yazın:
+> **Uyarı — updater pubkey'i değiştirin.** `src-tauri/tauri.conf.json` içindeki `plugins.updater.pubkey` değeri (`RWSzyjTuLMJ3aqk+oQLsyiibQ2v1V+m5CRzBhgD+gfCtNtOwUYdI9yPd`) yer tutucudur. Güncelleme imzası bu anahtarla doğrulanır. Yayınlamadan önce aşağıdaki `signer generate` komutunu çalıştırın ve komutun ürettiği açık anahtarı bu alanın yerine yazın. Yer tutucuyu bırakmayın. Özel anahtar dosyasını (`tamkobi.key`) depoya, imaja veya günlüğe koymayın.
 
 ```powershell
 npm run tauri -- signer generate -w $env:USERPROFILE\.tauri\tamkobi.key
