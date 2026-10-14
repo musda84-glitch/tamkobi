@@ -132,6 +132,9 @@ export function metaGridColsClass(_span, _fieldCount) {
 
 export const LINE_COL_IDS = ["no", "sku", "name", "desc", "barcode", "qty", "unit", "net_price", "price", "discount", "vat", "vat_amount", "total"];
 
+/** UBL-TR barkod: AdditionalItemIdentification birincil; StandardItemIdentification geri uyumluluk. */
+export const BARCODE_XSLT_CELL = `<xsl:value-of select="cac:Item/cac:AdditionalItemIdentification/cbc:ID"/><xsl:if test="not(cac:Item/cac:AdditionalItemIdentification/cbc:ID)"><xsl:value-of select="cac:Item/cac:StandardItemIdentification/cbc:ID"/></xsl:if>`;
+
 export const LINE_COL_LABELS = {
   no: "Sıra",
   sku: "Stok Kodu",
@@ -1020,7 +1023,7 @@ function lineColXslt(R) {
     desc: { align: "left", td: "" },
     barcode: {
       align: "left",
-      td: `<td><xsl:value-of select="cac:Item/cac:StandardItemIdentification/cbc:ID"/><xsl:if test="not(cac:Item/cac:StandardItemIdentification/cbc:ID)"><xsl:value-of select="cac:Item/cac:AdditionalItemIdentification/cbc:ID"/></xsl:if></td>`,
+      td: `<td>${BARCODE_XSLT_CELL}</td>`,
     },
     qty: { align: "right", td: `<td align="right">${xsltQty(q)}</td>` },
     unit: { align: "left", nowrap: true, td: `<td class="inv-nowrap" style="white-space:nowrap">${unit()}</td>` },
@@ -1381,7 +1384,7 @@ export function classicIsnetLayout(kind = "e_invoice") {
     hidden: !show.has(b.id),
     span: (b.id === "notes" || b.id === "iban" || b.id === "supplier" || b.id === "customer") ? 6 : (BLOCK_SPAN_BY_DEFAULT[b.id] || 12),
   }));
-  const showCols = new Set(["no", "sku", "name", "desc", "qty", "unit", "price", "vat_amount", "total"]);
+  const showCols = new Set(["no", "sku", "name", "desc", "barcode", "qty", "unit", "price", "vat_amount", "total"]);
   L.lineCols = L.lineCols.map((c) => ({ ...c, hidden: !showCols.has(c.id) }));
   return L;
 }

@@ -143,6 +143,7 @@ def classic_isnet_xslt(kind: str = "e_invoice") -> str:
             <th>Stok Kodu</th>
             <th>Mal / Hizmet</th>
             <xsl:if test="{desc_test}"><th>Açıklama</th></xsl:if>
+            <th>Barkod</th>
             <th>Miktar</th>
             <th class="inv-nowrap" style="white-space:nowrap">Birim</th>
             <th class="inv-nowrap" style="white-space:nowrap">KDV Tutarı</th>
@@ -160,6 +161,7 @@ def classic_isnet_xslt(kind: str = "e_invoice") -> str:
                     <xsl:if test="not(normalize-space(cbc:Note))"><xsl:value-of select="cac:Item/cbc:Description"/></xsl:if>
                   </td>
                 </xsl:if>
+                <td><xsl:value-of select="cac:Item/cac:AdditionalItemIdentification/cbc:ID"/><xsl:if test="not(cac:Item/cac:AdditionalItemIdentification/cbc:ID)"><xsl:value-of select="cac:Item/cac:StandardItemIdentification/cbc:ID"/></xsl:if></td>
                 <td align="right"><xsl:value-of select="{qty}"/></td>
                 <td class="inv-nowrap" style="white-space:nowrap">
                   <xsl:call-template name="unitLabel"><xsl:with-param name="code" select="{qty}/@unitCode"/></xsl:call-template>

@@ -1851,6 +1851,29 @@ def is_provisional_invoice_number(number: str, local_ubl: str = "") -> bool:
     return bool(loc and no == loc)
 
 
+def _apply_invoice_stock_codes(inv: dict) -> None:
+    """Fill missing line barcodes from invoice['_products'] (sync; UBL öncesi)."""
+    from stock_codes import apply_stock_codes
+
+    products = inv.pop("_products", None)
+    if products:
+        apply_stock_codes(inv.get("items") or [], products)
+
+
+async def _fill_invoice_stock_codes(inv: dict) -> None:
+    """Load product/variant barcodes onto lines before isnet.build_ubl."""
+    try:
+        from stock_codes import fill_stock_codes
+        import e_invoice as _einv
+
+        db = getattr(_einv, "_db", None)
+        if db is None:
+            return
+        await fill_stock_codes(db, inv.get("company_id"), inv.get("items") or [])
+    except Exception:
+        logger.exception("isnet stock code fill failed")
+
+
 def build_ubl(
     invoice: dict,
     company: dict,
@@ -1866,6 +1889,7 @@ def build_ubl(
     import ubl_export
 
     inv = dict(invoice or {})
+    _apply_invoice_stock_codes(inv)
     if ettn:
         inv["gib_uuid"] = str(ettn).upper()
     seller = {
@@ -1906,6 +1930,7 @@ def build_despatch_ubl(
     import ubl_export
 
     inv = dict(invoice or {})
+    _apply_invoice_stock_codes(inv)
     if ettn:
         inv["gib_uuid"] = str(ettn).upper()
     seller = {
@@ -2004,6 +2029,7 @@ async def send_despatch_document(
         nested = inv_for_ubl.get("despatch_defaults") if isinstance(inv_for_ubl.get("despatch_defaults"), dict) else {}
         inv_for_ubl["despatch_defaults"] = {**defaults, **nested}
     try:
+        await _fill_invoice_stock_codes(inv_for_ubl)
         xml, _local_ettn, inv_id = build_despatch_ubl(inv_for_ubl, company_for_ubl, contact, xslt=xslt)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -2188,6 +2214,7 @@ async def send_document(
     except Exception:
         logger.exception("isnet selected xslt load failed")
     try:
+        await _fill_invoice_stock_codes(inv_for_ubl)
         xml, _local_ettn, inv_id = build_ubl(inv_for_ubl, company_for_ubl, contact, xslt=xslt)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

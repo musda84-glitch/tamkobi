@@ -486,6 +486,11 @@ async def build_and_store_xml(invoice: dict, company: dict, contact: Optional[di
     if scenario in ("TEMELFATURA", "TICARIFATURA"):
         inv["e_type"] = "e_invoice"
         inv["_profile_override"] = scenario
+    try:
+        from stock_codes import fill_stock_codes
+        await fill_stock_codes(_db, inv.get("company_id"), inv.get("items") or [])
+    except Exception:
+        logger.exception("e-invoice stock code fill failed")
     seller = {
         "name": company.get("name"),
         "tax_number": company.get("tax_number") or company.get("tax_id"),

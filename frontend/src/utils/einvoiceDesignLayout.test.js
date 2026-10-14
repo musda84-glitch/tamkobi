@@ -1,4 +1,5 @@
 import {
+  BARCODE_XSLT_CELL,
   BLOCK_IDS,
   CLASSIC_ISNET_NAME,
   blockFontFamily,
@@ -248,6 +249,9 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("Stok Kodu");
   expect(xslt).toContain("SellersItemIdentification");
   expect(xslt).toContain("Barkod");
+  expect(xslt).toContain(BARCODE_XSLT_CELL);
+  expect(xslt).toContain("cac:Item/cac:AdditionalItemIdentification/cbc:ID");
+  expect(xslt.indexOf("AdditionalItemIdentification")).toBeLessThan(xslt.indexOf("StandardItemIdentification"));
   expect(xslt).toContain("İskonto");
   expect(xslt).toContain("KDV");
   expect(xslt).toContain("KDV'siz fiyat");
@@ -256,6 +260,21 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("qrCodeImageString");
   expect(xslt).toContain("height:160px;width:160px");
   expect(xslt).not.toMatch(/inv-k">GİB karekod/);
+});
+
+test("Barkod XPath reads AdditionalItemIdentification first", () => {
+  expect(BARCODE_XSLT_CELL).toContain("cac:Item/cac:AdditionalItemIdentification/cbc:ID");
+  expect(BARCODE_XSLT_CELL).toContain("cac:Item/cac:StandardItemIdentification/cbc:ID");
+  expect(BARCODE_XSLT_CELL.indexOf("AdditionalItemIdentification")).toBeLessThan(
+    BARCODE_XSLT_CELL.indexOf("StandardItemIdentification"),
+  );
+  const defaultXslt = layoutToXslt(normalizeLayout({
+    blocks: [{ id: "lines" }],
+    lineCols: [{ id: "name" }, { id: "barcode" }],
+  }));
+  expect(defaultXslt).toContain(BARCODE_XSLT_CELL);
+  const classicXslt = layoutToXslt(classicIsnetLayout("e_invoice"), "e_invoice");
+  expect(classicXslt).toContain(BARCODE_XSLT_CELL);
 });
 
 test("layoutToXslt maps C62 unitCode to Adet in the Birim column", () => {
@@ -694,6 +713,7 @@ test("classic İşNet layout places logo and QR and hides an empty description c
     expect(layout.notesTitle).toBe("AÇIKLAMALAR");
     expect(layout.ibanTitle).toBe("BANKA HESAP BİLGİLERİMİZ");
     expect(layout.lineCols.find((c) => c.id === "sku").hidden).toBe(false);
+    expect(layout.lineCols.find((c) => c.id === "barcode").hidden).toBe(false);
     expect(layout.lineCols.find((c) => c.id === "desc").hidden).toBe(false);
     expect(layout.lineCols.find((c) => c.id === "unit").hidden).toBe(false);
     expect(layout.lineCols.find((c) => c.id === "vat_amount").hidden).toBe(false);
@@ -711,6 +731,9 @@ test("classic İşNet layout places logo and QR and hides an empty description c
     expect(xslt).toContain("IsLogoExistsValue");
     expect(xslt).toContain("IsEimzaLogoExistsValue");
     expect(xslt).toContain("Stok Kodu");
+    expect(xslt).toContain("Barkod");
+    expect(xslt).toContain(BARCODE_XSLT_CELL);
+    expect(xslt.indexOf("AdditionalItemIdentification")).toBeLessThan(xslt.indexOf("StandardItemIdentification"));
     expect(xslt).toContain("AÇIKLAMALAR");
     expect(xslt).toContain("BANKA HESAP BİLGİLERİMİZ");
     expect(xslt).toContain("KDV Tutarı");

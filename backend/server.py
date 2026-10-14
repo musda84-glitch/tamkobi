@@ -62,7 +62,6 @@ from invoice_numbers import SALES_INVOICE_PREFIX, format_sales_invoice_number
 from line_totals import (
     enrich_line,
     enrich_items,
-    drop_stale_inclusive_markup,
     invoice_document_totals,
     order_document_totals,
     order_items_to_invoice_items,
@@ -71,6 +70,7 @@ from line_totals import (
     ORDER_ITEM_FIELDS,
     pick_fields,
 )
+from stock_codes import fill_stock_codes as _fill_stock_codes_impl
 from auth_utils import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
@@ -7898,65 +7898,9 @@ async def quick_stock_adjust(req: Dict[str, Any]):
 
     return {"status": "success", "new_stock": new_qty, "new_variant_stock": new_variant_stock}
 
-def _line_get(it, key, default=""):
-    if isinstance(it, dict):
-        val = it.get(key)
-    else:
-        val = getattr(it, key, None)
-    return val if val not in (None, "") else default
-
-def _line_set(it, key, val):
-    if isinstance(it, dict):
-        it[key] = val
-        return
-    try:
-        setattr(it, key, val)
-    except (ValueError, TypeError, AttributeError):
-        # Pydantic v2: modelde olmayan alan (ör. eski InvoiceItem) — sessizce atla
-        try:
-            object.__setattr__(it, key, val)
-        except Exception:
-            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
-
 async def _fill_stock_codes(company_id: str, items: list):
-    """Copy product SKU / barcode onto document lines when missing (print + scan)."""
-    if not items:
-        return items
-    pids = []
-    for it in items:
-        pid = _line_get(it, "product_id")
-        if pid:
-            pids.append(pid)
-    products = {p["_id"]: p for p in await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 10)} if pids else {}
-    for it in items:
-        p = products.get(_line_get(it, "product_id"))
-        if not p:
-            continue
-        sku = _line_get(it, "sku")
-        barcode = _line_get(it, "barcode")
-        src = p
-        name = _line_get(it, "name") or _line_get(it, "product_name")
-        for v in p.get("variants") or []:
-            if (sku and v.get("sku") == sku) or (barcode and v.get("barcode") == barcode) or (sku and v.get("barcode") == sku):
-                src = v
-                break
-            if name and v.get("sku") and v.get("sku") in name:
-                src = v
-                break
-        if not sku:
-            _line_set(it, "sku", src.get("sku") or p.get("sku") or "")
-        if not barcode:
-            _line_set(it, "barcode", src.get("barcode") or p.get("barcode") or "")
-        if p.get("price_includes_vat"):
-            _line_set(it, "price_includes_vat", True)
-            if isinstance(it, dict):
-                drop_stale_inclusive_markup(it, p)
-            else:
-                d = {k: _line_get(it, k) for k in ("unit_price", "unit_price_incl", "price_includes_vat", "vat_rate")}
-                drop_stale_inclusive_markup(d, p)
-                if d.get("unit_price_incl") in (None, ""):
-                    _line_set(it, "unit_price_incl", None)
-    return items
+    """Copy product SKU / barcode onto document lines when missing (print + scan + UBL)."""
+    return await _fill_stock_codes_impl(db, company_id, items)
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
