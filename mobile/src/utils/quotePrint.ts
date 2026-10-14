@@ -1,6 +1,7 @@
 import type { Order } from "../types";
 import { fmtDate, fmtMoney } from "./money";
 import {
+  a4DocumentCss,
   mergePrintTemplate,
   orderFormHtml,
   type OrderFormOptions,
@@ -36,7 +37,7 @@ export function quotePrintDocument(title: string, bodyHtml: string, paper: "A4" 
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")}</title>
-<style>@page{size:${size};margin:10mm}html,body{margin:0;padding:0;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}</style>
+<style>${a4DocumentCss(size)}</style>
 </head><body>${bodyHtml}</body></html>`;
 }
 

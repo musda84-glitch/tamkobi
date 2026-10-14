@@ -305,7 +305,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
       ${extras.dueDate ? `<div style="color:${isModern ? "rgba(255,255,255,.8)" : "#64748b"}">Vade: ${esc(extras.dueDate)}</div>` : ""}
     </div>`;
   const header = isModern
-    ? `<div style="padding:24px 40px;color:#fff;display:flex;justify-content:space-between;align-items:flex-start;background:${color}">
+    ? `<div style="padding:6mm 8mm;color:#fff;display:flex;justify-content:space-between;align-items:flex-start;background:${color}">
         <div style="display:flex;align-items:center;gap:12px">${logo}${companyMeta}</div>${headerRight}
       </div>`
     : `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;${isMinimal ? "border-bottom:1px solid #0f172a" : `border-bottom:4px solid ${color}`}">
@@ -473,20 +473,23 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const gallery = docImages.length
     ? `<div style="margin-top:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${docImages.map((img) => `<img src="${esc(printThumbUrl(String(img), mediaBase))}" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0"/>`).join("")}</div>`
     : "";
-  const footer = `<div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end">
-    <div style="color:#94a3b8;font-style:italic">${esc(tpl.footer_note || "")}</div>
+  const footerNote = String(tpl.footer_note || "").trim();
+  const footer = (footerNote || tpl.show_signature)
+    ? `<div class="print-footer" style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end">
+    <div style="color:#94a3b8;font-style:italic">${esc(footerNote)}</div>
     ${tpl.show_signature ? `<div style="text-align:center"><div style="width:160px;border-bottom:1px solid #cbd5e1;margin-bottom:4px"></div><div style="color:#64748b">Kaşe / İmza</div></div>` : ""}
-  </div>`;
+  </div>`
+    : `<div class="print-footer"></div>`;
 
   const subjectBox = extras.subject
     ? `<div style="text-align:right"><div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Konu</div><div style="font-weight:600">${esc(extras.subject)}</div></div>`
     : "";
 
-  return `<div data-print="${docType}" data-print-paper="${esc(tpl.paper || "A4")}" style="font-size:${fontSize};color:#1e293b;display:flex;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif">
+  return `<div data-print="${docType}" data-print-paper="${esc(tpl.paper || "A4")}" style="font-size:${fontSize};color:#1e293b;display:flex;height:auto;min-height:0;box-sizing:border-box;font-family:-apple-system,Roboto,'Segoe UI','Noto Sans','Liberation Sans',Arial,Helvetica,sans-serif">
     ${isBold ? `<div style="width:12px;align-self:stretch;background:${color}"></div>` : ""}
-    <div style="flex:1;${isModern ? "" : "padding:40px"}">
+    <div class="print-sheet-pad" style="flex:1;height:auto;min-height:0;box-sizing:border-box;${isModern ? "" : "padding:8mm"}">
       ${header}
-      <div style="${isModern ? "padding:0 40px 40px" : ""}">
+      <div style="${isModern ? "padding:0 8mm 8mm" : ""}">
         ${tpl.header_note ? `<p style="margin:12px 0 0;color:#475569;font-style:italic">${esc(tpl.header_note)}</p>` : ""}
         <div style="margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:24px">
           <div>
@@ -630,13 +633,28 @@ export function printDocumentHtml(
     </head><body>${bodyHtml}</body></html>`;
 }
 
+/** A4/A5 document shell. Page margin plus sheet padding stays inside the sheet; no fixed page height. */
+export function a4DocumentCss(paper?: PrintPaper | null): string {
+  const size = printPageSize(paper);
+  const margin = 10;
+  const pad = 8;
+  return `@page{size:${size};margin:${margin}mm}
+html,body{margin:0;padding:0;height:auto;min-height:0;background:#fff;font-family:Arial,Helvetica,sans-serif;color:#0f172a}
+:root{--print-page-margin:${margin}mm;--print-content-pad:${pad}mm}
+:last-child{break-after:auto;page-break-after:auto}
+.print-footer:empty{display:none;height:0;margin:0;padding:0}
+.print-sheet-pad{box-sizing:border-box}
+@media print{
+  html,body{height:auto !important;min-height:0 !important;margin:0 !important;padding:0 !important}
+  :last-child{break-after:auto;page-break-after:auto}
+  .print-footer:empty{display:none !important;height:0 !important;margin:0 !important;padding:0 !important}
+}`;
+}
+
 function documentCss(page: PrintPageKind, paper?: PrintPaper | null): string {
   if (page === "thermal") return thermalLabelCss();
-  if (page === "a4") {
-    const size = printPageSize(paper);
-    return `@page{size:${size};margin:10mm}html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}@media print{body{padding:0}}`;
-  }
-  return `body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;padding:16px;margin:0}@media print{body{padding:8px}}`;
+  if (page === "a4") return a4DocumentCss(paper);
+  return `body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;padding:16px;margin:0;height:auto;min-height:0}@media print{html,body{height:auto !important;min-height:0 !important;padding:8px;margin:0}:last-child{break-after:auto;page-break-after:auto}.print-footer:empty{display:none;height:0;margin:0;padding:0}}`;
 }
 
 function printHtmlIframe(html: string): boolean {

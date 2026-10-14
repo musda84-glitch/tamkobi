@@ -8,9 +8,11 @@ import {
   orderFormHtml,
   orderFormText,
   orderPdfFilename,
+  a4DocumentCss,
   printDocumentHtml,
   thermalLabelCss,
 } from "./orderPrint";
+import { receiptPrintHtml } from "./receiptPrint";
 
 const order = {
   order_number: "11573451170",
@@ -144,6 +146,37 @@ describe("orderPrint", () => {
     expect(label).toContain("100mm 150mm");
     expect(label).toContain('class="label"');
     expect(label).not.toContain("window.print");
+  });
+
+  it("keeps one-page order, quote, dispatch, invoice and receipt prints on one page", () => {
+    const kinds = ["order", "quote", "dispatch", "invoice", "receipt"] as const;
+    for (const kind of kinds) {
+      const paper = kind === "dispatch" ? "A5" : "A4";
+      const css = a4DocumentCss(paper);
+      const body = kind === "receipt"
+        ? receiptPrintHtml({ id: "r1", type: "inflow", amount: 10, description: "Tahsilat" })
+        : orderFormHtml(order, { name: "Matek" }, { docType: kind === "quote" ? "quote" : kind === "invoice" ? "invoice" : kind === "dispatch" ? "dispatch" : "order" });
+      const doc = printDocumentHtml(kind, body, "a4", paper);
+      expect(doc).toContain(css);
+      expect(css).toContain("height:auto");
+      expect(css).toContain("min-height:0");
+      expect(css).not.toContain("100vh");
+      expect(css).not.toContain("297mm");
+      expect(css).toContain(":last-child{break-after:auto;page-break-after:auto}");
+      expect(css).toContain(".print-footer:empty{display:none;height:0;margin:0;padding:0}");
+      expect(css).toContain("margin:10mm");
+      expect(css).toContain("--print-content-pad:8mm");
+      expect((10 + 8) * 2).toBeLessThan(297);
+      expect(doc).not.toContain("100vh");
+      expect(doc).not.toContain("297mm");
+      if (kind !== "receipt") {
+        expect(body).toContain("height:auto");
+        expect(body).toContain("min-height:0");
+        expect(body).toContain("print-footer");
+      } else {
+        expect(doc).toContain("TAHSİLAT MAKBUZU");
+      }
+    }
   });
 
   it("names pdf files after the order number", () => {

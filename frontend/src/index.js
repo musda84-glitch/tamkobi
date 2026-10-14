@@ -6,8 +6,10 @@ import "@/index.css";
 import App from "@/App";
 import { canonicalizeLocalOrigin } from "@/canonicalizeLocal";
 import { stripStaticRhTags } from "@/stripStaticRhTags";
+import { installPrintPageCss } from "@/utils/printPageCss";
 
 canonicalizeLocalOrigin();
+installPrintPageCss();
 // Bot meta index.html’de kalsın; JS ortamında çift etiket olmasın.
 stripStaticRhTags();
 

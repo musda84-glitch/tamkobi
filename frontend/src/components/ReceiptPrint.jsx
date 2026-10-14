@@ -1,6 +1,7 @@
 import React from "react";
 import { X, Printer } from "lucide-react";
 import { fmtMoney, fmtDate } from "../utils/money";
+import { printPageCss } from "../utils/printPageCss";
 
 export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
   const isLedger = tx?.source === "ledger" || tx?.purpose === "balance_fix" || tx?.purpose === "ledger_slip";
@@ -28,7 +29,8 @@ export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="receipt-close-btn"><X className="w-5 h-5" /></button>
           </div>
         </div>
-        <div id="print-area" className="p-8 text-xs text-slate-900">
+        <style>{printPageCss("receipt")}</style>
+        <div id="print-area" data-doc-type="receipt" className="p-8 text-xs text-slate-900">
           <div className="border-2 border-slate-900 rounded-lg p-6 space-y-4">
             <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
               <div><div className="text-base font-black">{company?.name}</div><div className="text-slate-500">{company?.address} {company?.city}</div><div className="text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number} • {company?.phone}</div></div>

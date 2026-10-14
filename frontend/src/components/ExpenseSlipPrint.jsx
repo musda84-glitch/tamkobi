@@ -78,6 +78,7 @@ export function ExpenseSlipPrint({ doc, company, onClose, onPrinted }) {
           }
         `}</style>
 
+        <div id="print-area" data-doc-type="expense_slip">
         {[1, 2].map((copy) => (
           <div key={copy} className={`expense-slip-copy p-8 text-[11px] text-slate-900 ${copy === 2 ? "border-t-2 border-dashed border-slate-300 print:border-0" : ""}`} data-testid={`expense-slip-copy-${copy}`}>
             <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3 mb-4">
@@ -195,6 +196,7 @@ export function ExpenseSlipPrint({ doc, company, onClose, onPrinted }) {
             </p>
           </div>
         ))}
+        </div>
       </div>
     </div>
   );

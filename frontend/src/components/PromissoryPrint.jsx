@@ -75,7 +75,7 @@ export const PromissoryPrint = ({ notes = [], contact, company, onClose }) => {
           })}
         </div>
       </div>
-      <style>{`@media print { body * { visibility: hidden !important; } #print-area, #print-area * { visibility: visible !important; } #print-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } .promissory-sheet { border: 2px solid #000 !important; } }`}</style>
+      <style>{`@media print { .promissory-sheet { border: 2px solid #000 !important; } }`}</style>
     </div>
   );
 };
