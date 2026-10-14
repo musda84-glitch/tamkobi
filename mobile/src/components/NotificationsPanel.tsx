@@ -28,6 +28,7 @@ export function NotificationsPanel({
   onOpenItem,
   onDeleteItem,
   onClearAll,
+  onMarkAllRead,
 }: {
   items: Notification[];
   unread: number;
@@ -38,6 +39,7 @@ export function NotificationsPanel({
   onOpenItem: (n: Notification) => void;
   onDeleteItem?: (n: Notification) => void;
   onClearAll?: () => void;
+  onMarkAllRead?: () => void;
 }) {
   const tone = QUICK_TONE_COLORS.rose;
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -93,6 +95,26 @@ export function NotificationsPanel({
           <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "800" }}>Tümü</Text>
           <Ionicons name="chevron-forward" size={14} color={tone.fg} />
         </Pressable>
+        {onMarkAllRead ? (
+          <Pressable
+            testID="home-notifications-read-all"
+            onPress={onMarkAllRead}
+            disabled={!unread}
+            accessibilityRole="button"
+            accessibilityLabel="Tümünü okundu işaretle"
+            style={({ pressed }) => ({
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: unread ? colors.primary : tone.border,
+              backgroundColor: unread ? "#fff" : "transparent",
+              opacity: !unread ? 0.45 : pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={{ color: unread ? colors.primary : colors.muted, fontSize: 10, fontWeight: "800" }}>Okundu</Text>
+          </Pressable>
+        ) : null}
         {onClearAll ? (
           <Pressable
             testID="home-notifications-clear-all"
@@ -157,31 +179,37 @@ function NotificationRow({ item, onPress, bare }: { item: Notification; onPress?
       testID={bare ? undefined : `home-notification-${idOf(item)}`}
       onPress={onPress}
       style={({ pressed }) => ({
-        backgroundColor: colors.surface,
         borderRadius: 14,
         paddingVertical: 7,
         paddingHorizontal: 9,
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
-        opacity: pressed ? 0.75 : item.is_read ? 0.72 : 1,
+        opacity: pressed ? 0.75 : 1,
+        borderWidth: item.is_read ? 0 : 1,
+        borderColor: item.is_read ? "transparent" : "#6ee7b7",
+        backgroundColor: item.is_read ? "#f8fafc" : "#ecfdf5",
       })}
     >
-      <Ionicons name={look.icon} size={18} color={lookTone.solid} />
+      <Ionicons name={look.icon} size={18} color={item.is_read ? colors.muted : lookTone.solid} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12 }} numberOfLines={1}>
+        <Text style={{ fontWeight: item.is_read ? "600" : "800", color: item.is_read ? colors.muted : colors.text, fontSize: 12 }} numberOfLines={1}>
           {notificationTitle(item)}
         </Text>
         {body ? (
-          <Text style={{ color: colors.muted, fontSize: 11, marginTop: 1 }} numberOfLines={1}>
+          <Text style={{ color: item.is_read ? "#94a3b8" : colors.muted, fontSize: 11, marginTop: 1 }} numberOfLines={1}>
             {body}
           </Text>
         ) : null}
       </View>
       {age ? <Text style={{ color: colors.muted, fontSize: 10, fontWeight: "700" }}>{age}</Text> : null}
       {!item.is_read ? (
-        <View style={{ width: 7, height: 7, borderRadius: 999, backgroundColor: colors.danger }} />
-      ) : null}
+        <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.danger }}>
+          <Text style={{ color: "#fff", fontSize: 9, fontWeight: "800" }}>Yeni</Text>
+        </View>
+      ) : (
+        <Text style={{ color: "#94a3b8", fontSize: 9, fontWeight: "700" }}>Okundu</Text>
+      )}
     </Pressable>
   );
 }

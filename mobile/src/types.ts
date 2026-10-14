@@ -316,6 +316,7 @@ export type Notification = {
   roles?: string[] | null;
   user_id?: string | null;
   employee_id?: string | null;
+  target?: { type?: string; id?: string; route?: string } | null;
 };
 
 export type SessionKind = "erp" | "b2b";

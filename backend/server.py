@@ -2357,12 +2357,42 @@ async def list_notifications(request: Request, company_id: Optional[str] = "comp
     except Exception:
         user = None
     import notify as _notify
-    return clean_docs(_notify.filter_notifications(rows, user))
+    return clean_docs([_notify.present_notification(n) for n in _notify.filter_notifications(rows, user)])
 
 @api_router.post("/notifications/{notif_id}/read")
 async def read_notification(notif_id: str):
     await db.notifications.update_one({"_id": notif_id}, {"$set": {"is_read": True}})
     return {"status": "success"}
+
+@api_router.post("/notifications/read-all")
+async def read_all_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
+    """Kullanıcının gördüğü okunmamış bildirimleri okundu işaretler."""
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        user = None
+    import notify as _notify
+    rows = await db.notifications.find({"company_id": company_id, "is_read": {"$ne": True}}).to_list(500)
+    visible = _notify.filter_notifications(rows, user)
+    ids = [n["_id"] for n in visible if n.get("_id")]
+    if ids:
+        await db.notifications.update_many({"_id": {"$in": ids}}, {"$set": {"is_read": True}})
+    return {"status": "success", "updated": len(ids)}
+
+@api_router.get("/notifications/{notif_id}/target")
+async def notification_target_status(notif_id: str, request: Request):
+    """Hedefi okuma anında çözer. Eski kaydı güncellemez; silinmişse Kayıt bulunamadı."""
+    rec = await db.notifications.find_one({"_id": notif_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        user = None
+    import notify as _notify
+    if user is not None and not _notify.notification_visible(rec, user):
+        raise HTTPException(status_code=403, detail="Bu bildirimi açamazsınız.")
+    return await _notify.resolve_notification_open(db, rec)
 
 @api_router.post("/notifications/clear")
 async def clear_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
@@ -5407,17 +5437,21 @@ async def _notify_new_task_assignees(project: Dict[str, Any], previous_tasks: Li
         seen.add(emp_id)
         emp = await db.employees.find_one({"_id": emp_id}) or {}
         title = (t.get("title") or t.get("name") or "Görev").strip()
+        task_id = str(t.get("id") or "")
+        proj_id = str(project.get("_id") or project.get("id") or "")
+        task_link = "/personelim?tab=gorevler" + (f"&task={task_id}" if task_id else "") + (f"&project={proj_id}" if proj_id else "")
         await _notify.insert_notification(db, _notify.notification_doc(
             project.get("company_id"), "task_assigned",
             f"Göreve atandı: {title}",
             f"{emp.get('full_name') or t.get('assignee_name') or 'Personel'} · {project.get('name') or 'Proje'}"
             + (f" · {project.get('project_number')}" if project.get("project_number") else ""),
-            link="/personelim",
+            link=task_link,
             user_id=emp.get("user_id"),
             employee_id=emp_id,
             roles=[],
-            ref_type="project",
-            ref_id=project.get("_id") or project.get("id"),
+            ref_type="task",
+            ref_id=task_id or proj_id,
+            extra={"project_id": proj_id} if proj_id else None,
         ))
 
 @api_router.get("/public/b2b/{token}")
@@ -11415,13 +11449,31 @@ async def _sync_bank_connection_core(
             + (f" ({still_open} eşleşme bekliyor)" if still_open else " (otomatik eşleşti)")
             + f".{bal_note}"
         )
+        focus_tx = ""
+        new_ids = [str(t.get("_id")) for t in new_txs if t.get("_id")]
+        if new_ids:
+            if still_open:
+                focus = await db.bank_transactions.find_one({
+                    "_id": {"$in": new_ids},
+                    "match_status": "unmatched",
+                })
+                focus_tx = str((focus or {}).get("_id") or new_ids[-1])
+            else:
+                focus_tx = new_ids[-1]
+        movement = _notify.bank_movement_target(
+            account_id=str(acc.get("_id") or ""),
+            tx_id=focus_tx,
+            account_name=str(acc.get("account_name") or ""),
+            pending=bool(still_open),
+        )
         await _notify.insert_notification(db, _notify.notification_doc(
             doc["company_id"], "bank_sync",
             f"{inserted} yeni banka hareketi",
             detail,
-            link="/banking?tab=match" if still_open else "/banking",
-            ref_type="bank",
-            ref_id=str(acc.get("_id") or ""),
+            link=movement["route"],
+            ref_type=movement["type"],
+            ref_id=movement["id"],
+            target=movement,
         ))
     # Platform CRM e-postası şirket hareketine yazılmışsa temizle (Matek vb.)
     try:

@@ -33,6 +33,8 @@ export type EdocInboxItem = {
   matched_lines?: number;
   invoice_id?: string;
   source?: string;
+  uuid?: string;
+  ettn?: string;
 };
 
 export type EdocInboxCounts = { pending?: number; approved?: number; rejected?: number; ignored?: number };

@@ -108,7 +108,12 @@ export default function BankingPage() {
   const [searchParams] = useSearchParams();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const contactVirmanId = searchParams.get("contact_id") || "";
-  const [tab, setTab] = useState(searchParams.get("tab") || "accounts");
+  const focusAccountId = searchParams.get("account_id") || "";
+  const focusAccountName = searchParams.get("account") || "";
+  const focusTx = searchParams.get("tx") || "";
+  const focusPending = searchParams.get("pending") === "1";
+  const missingTxToast = useRef(false);
+  const [tab, setTab] = useState(searchParams.get("tab") === "match" ? "accounts" : (searchParams.get("tab") || "accounts"));
   const [contacts, setContacts] = useState([]);
   const [partnerSummary, setPartnerSummary] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -154,6 +159,44 @@ export default function BankingPage() {
     description: "Hesaplar arası transfer (Virman)",
     via_customer_card: false,
   });
+
+  useEffect(() => {
+    if (loading) return undefined;
+    if (focusAccountId) {
+      const acc = accounts.find((a) => (a.id || a._id) === focusAccountId);
+      if (acc) setSelectedAccountId(focusAccountId);
+      else if (!missingTxToast.current) {
+        missingTxToast.current = true;
+        toast.error("Kayıt bulunamadı");
+      }
+      return undefined;
+    }
+    if (focusAccountName) {
+      const needle = focusAccountName.toLocaleLowerCase("tr-TR");
+      const acc = accounts.find((a) => String(a.account_name || "").toLocaleLowerCase("tr-TR") === needle)
+        || accounts.find((a) => String(a.account_name || "").toLocaleLowerCase("tr-TR").includes(needle));
+      if (acc) setSelectedAccountId(acc.id || acc._id);
+      else if (!missingTxToast.current) {
+        missingTxToast.current = true;
+        toast.error("Kayıt bulunamadı");
+      }
+    }
+    return undefined;
+  }, [loading, accounts, focusAccountId, focusAccountName]);
+
+  useEffect(() => {
+    if (loading || !focusTx) return undefined;
+    const tx = transactions.find((t) => (t.id || t._id) === focusTx);
+    if (!tx) {
+      if (!missingTxToast.current) {
+        missingTxToast.current = true;
+        toast.error("Kayıt bulunamadı");
+      }
+      return undefined;
+    }
+    if (tx.account_id) setSelectedAccountId(tx.account_id);
+    return undefined;
+  }, [loading, transactions, focusTx]);
 
   const silentReloadRef = useRef(null);
   const loadBankingData = useCallback(async ({ silent = false } = {}) => {
@@ -380,10 +423,16 @@ export default function BankingPage() {
   const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
   const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
   // Eşleşmiş bank_sync satırları da hesap hareketlerinde kalır (match_status filtresi yok).
-  const visibleTx = filterAccountTransactions(transactions, {
+  const accountTx = filterAccountTransactions(transactions, {
     accountId: selectedAccountId || null,
     groupIds: selectedAccountId ? null : groupIds,
   });
+  const pendingTx = focusPending
+    ? accountTx.filter((tx) => (tx.source === "bank_sync" && tx.match_status === "unmatched") || (focusTx && (tx.id || tx._id) === focusTx))
+    : accountTx;
+  const visibleTx = focusTx
+    ? [...pendingTx].sort((a, b) => ((a.id || a._id) === focusTx ? -1 : (b.id || b._id) === focusTx ? 1 : 0))
+    : pendingTx;
   const simulatedVisible = visibleTx.filter((tx) => tx.source === "bank_sync" && tx.is_simulated);
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
@@ -729,6 +778,7 @@ export default function BankingPage() {
                 <TxMobileCard
                   key={`card-${id}`}
                   testId={`tx-card-${id}`}
+                  className={(tx.id || tx._id) === focusTx ? "ring-2 ring-amber-400 bg-amber-50" : ""}
                   date={fmtDate(tx.date)}
                   party={txAccountLabel(tx)}
                   badge={<TxTypeBadge label={bankKind(tx)} kind={tx.type} />}
@@ -761,7 +811,7 @@ export default function BankingPage() {
                 </tr>
               ) : (
                 pagedTx.map((tx) => (
-                  <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-testid={`tx-row-${tx.id || tx._id}`}>
+                  <tr key={tx.id || tx._id} className={`hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px] ${(tx.id || tx._id) === focusTx ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`} data-testid={`tx-row-${tx.id || tx._id}`}>
                     <td className="px-4 py-2.5 text-slate-500 font-mono" data-testid={`tx-date-${tx.id || tx._id}`}>{fmtDate(tx.date)}</td>
                     <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx)}</td>
                     <td className="px-4 py-2.5">

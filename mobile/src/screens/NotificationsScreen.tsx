@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
@@ -12,11 +12,14 @@ import type { Notification } from "../types";
 import { requestConfirm } from "../utils/confirmDialog";
 import { fmtDate, idOf } from "../utils/money";
 import {
+  MISSING_RECORD,
   NOTIFICATIONS_CLEAR_PATH,
+  NOTIFICATIONS_READ_ALL_PATH,
   notificationCanDelete,
   notificationClearableCount,
   notificationDeletePath,
   notificationLook,
+  notificationOpenPlan,
   notificationRoute,
   notificationText,
   notificationTitle,
@@ -45,14 +48,39 @@ export function NotificationsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const open = (n: Notification) => {
+  const open = async (n: Notification) => {
     const id = idOf(n);
     if (id && !n.is_read) {
       setRows((prev) => prev.map((x) => (idOf(x) === id ? { ...x, is_read: true } : x)));
       post(client, `/notifications/${id}/read`, {}).then(() => refreshBadges()).catch(() => { /* okundu işareti kritik değil */ });
     }
-    const route = notificationRoute(n);
+    let plan = notificationOpenPlan(null, n);
+    if (id) {
+      try {
+        const res = await get<{ exists?: boolean; target?: { route?: string } }>(client, `/notifications/${id}/target`);
+        plan = notificationOpenPlan(res, n);
+      } catch {
+        /* yerel rota */
+      }
+    }
+    if (plan.missing) {
+      Alert.alert(MISSING_RECORD);
+      return;
+    }
+    const route = plan.href || notificationRoute(n);
     if (route) goHref(route);
+  };
+
+  const markAllRead = async () => {
+    if (!rows.some((n) => !n.is_read)) return;
+    setRows((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await post(client, NOTIFICATIONS_READ_ALL_PATH, {}, { company_id: companyId });
+      refreshBadges();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Bildirimler okundu işaretlenemedi."));
+      await load();
+    }
   };
 
   const remove = async (n: Notification) => {
@@ -99,7 +127,22 @@ export function NotificationsScreen() {
     <Screen onRefresh={load}>
       <ErrorBanner message={error} />
       {rows.length ? (
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: 4 }}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, marginBottom: 4 }}>
+          <Pressable
+            testID="notifications-read-all"
+            onPress={() => { void markAllRead(); }}
+            style={({ pressed }) => ({
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: colors.primary,
+              backgroundColor: "#fff",
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "800" }}>Tümünü okundu işaretle</Text>
+          </Pressable>
           <Pressable
             testID="notifications-clear-all"
             onPress={() => { void clearAll(); }}
@@ -127,7 +170,8 @@ export function NotificationsScreen() {
           <ListRow
             title={notificationTitle(n)}
             subtitle={`${notificationText(n)} · ${fmtDate(n.created_at)}`}
-            right={n.is_read ? "" : "Yeni"}
+            right={n.is_read ? "Okundu" : "Yeni"}
+            rightColor={n.is_read ? colors.muted : colors.danger}
             leading={<Ionicons name={look.icon} size={20} color={QUICK_TONE_COLORS[look.tone].solid} />}
             onPress={notificationCanDelete(n) ? undefined : () => open(n)}
           />

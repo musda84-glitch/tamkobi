@@ -25,6 +25,8 @@ describe("push helpers", () => {
     expect(notificationHref({ link: "/stock" })).toBe("/stok");
     expect(notificationHref({ link: "/personnel?tab=attendance" })).toBe("/personnel?tab=attendance");
     expect(notificationHref({})).toBe("/notifications");
+    expect(notificationHref({ link: "/orders", target_route: "/orders?open=o1" })).toBe("/orders/o1");
+    expect(notificationHref({ target_route: "/banking?pending=1&account_id=a1&tx=t1" })).toBe("/banking?tab=match&account_id=a1&tx=t1");
   });
 
   it("uses the TamKobi chime on a fresh Android channel", () => {

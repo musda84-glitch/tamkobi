@@ -108,7 +108,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   onCloseRef.current = onClose;
   const load = useCallback(async () => {
     try { const r = await axios.get(`${API_URL}/contacts/${contactId}/overview`); setData(r.data); }
-    catch { toast.error("Cari detayı yüklenemedi."); onCloseRef.current(); }
+    catch (err) {
+      toast.error(err?.response?.status === 404 ? "Kayıt bulunamadı" : "Cari detayı yüklenemedi.");
+      onCloseRef.current();
+    }
   }, [contactId]);
   useEffect(() => { load(); }, [load]);
   useDataRefresh(load, { companyId: data?.contact?.company_id, scopes: ["cash", "contacts", "invoices", "orders"] });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -273,6 +273,7 @@ export default function ProjectsPage({ section } = {}) {
   useEffect(() => { setTab(pathTab); }, [pathTab]);
   const focusId = searchParams.get("focus") || searchParams.get("project") || "";
   const [focusFlash, setFocusFlash] = useState("");
+  const focusWarned = useRef("");
   const [quotes, setQuotes] = useState([]); const [projects, setProjects] = useState([]); const [surveys, setSurveys] = useState([]);
   const [contacts, setContacts] = useState([]); const [products, setProducts] = useState([]);
   const [productionOrders, setProductionOrders] = useState([]);
@@ -709,6 +710,17 @@ export default function ProjectsPage({ section } = {}) {
     return () => { window.clearTimeout(t); window.clearTimeout(clear); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per focus id when list ready
   }, [focusId, listLoading, projects]);
+
+  useEffect(() => {
+    if (!focusId || listLoading || focusWarned.current === focusId) return;
+    const pools = [...projects, ...quotes, ...surveys];
+    const hit = pools.some((p) => String(p.id || p._id) === String(focusId)
+      || String(p.project_number || p.quote_number || p.survey_number || "") === String(focusId));
+    if (!hit) {
+      focusWarned.current = focusId;
+      toast.error("Kayıt bulunamadı");
+    }
+  }, [focusId, listLoading, projects, quotes, surveys]);
 
   return (
     <div className="space-y-6" data-testid="projects-page">

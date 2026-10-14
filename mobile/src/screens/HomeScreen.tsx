@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
@@ -29,9 +29,12 @@ import {
 import { fmtMoney, idOf } from "../utils/money";
 import {
   latestNotifications,
+  MISSING_RECORD,
   NOTIFICATIONS_CLEAR_PATH,
+  NOTIFICATIONS_READ_ALL_PATH,
   notificationClearableCount,
   notificationDeletePath,
+  notificationOpenPlan,
   notificationRoute,
   tileBadges,
   unreadCount,
@@ -147,15 +150,39 @@ export function HomeScreen() {
     load();
   }, [load]));
 
-  const openNotification = useCallback((n: Notification) => {
+  const openNotification = useCallback(async (n: Notification) => {
     const id = idOf(n);
     if (id && !n.is_read) {
       setNotes((prev) => prev.map((x) => (idOf(x) === id ? { ...x, is_read: true } : x)));
       post(client, `/notifications/${id}/read`, {}).catch(() => { /* okundu işareti kritik değil */ });
       refreshBadges();
     }
-    goHref(notificationRoute(n) || "/notifications");
+    let plan = notificationOpenPlan(null, n);
+    if (id) {
+      try {
+        const res = await get<{ exists?: boolean; target?: { route?: string } }>(client, `/notifications/${id}/target`);
+        plan = notificationOpenPlan(res, n);
+      } catch {
+        /* yerel rota */
+      }
+    }
+    if (plan.missing) {
+      Alert.alert(MISSING_RECORD);
+      return;
+    }
+    goHref(plan.href || notificationRoute(n) || "/notifications");
   }, [client, refreshBadges]);
+
+  const markAllRead = useCallback(async () => {
+    if (!unreadCount(notes)) return;
+    setNotes((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await post(client, NOTIFICATIONS_READ_ALL_PATH, {}, { company_id: companyId });
+      refreshBadges();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Bildirimler okundu işaretlenemedi."));
+    }
+  }, [client, companyId, notes, refreshBadges]);
 
   const deleteNotification = useCallback(async (n: Notification) => {
     const path = notificationDeletePath(n);
@@ -232,9 +259,10 @@ export function HomeScreen() {
               totalCount={notes.length}
               clearing={clearingNotes}
               onOpenAll={() => goHref(notifications.href)}
-              onOpenItem={openNotification}
+              onOpenItem={(n) => { void openNotification(n); }}
               onDeleteItem={(n) => { void deleteNotification(n); }}
               onClearAll={() => { void clearAllNotifications(); }}
+              onMarkAllRead={() => { void markAllRead(); }}
             />
           </View>
         ) : null}

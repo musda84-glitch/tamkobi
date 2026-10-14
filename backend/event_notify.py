@@ -487,11 +487,19 @@ async def notify_einvoice_batch(company_id: str, docs: List[dict]) -> dict:
         if ettn:
             parts.append(f"ETTN {ettn[:13]}…") if len(ettn) > 14 else parts.append(f"ETTN {ettn}")
         message = " · ".join(parts)
+        doc_id = str(d.get("id") or d.get("_id") or "")
+        from urllib.parse import urlencode
+        q = {}
+        if ettn:
+            q["ettn"] = ettn
+        if doc_id:
+            q["id"] = doc_id
+        link = "/edoc-inbox" + (("?" + urlencode(q)) if q else "")
         last = await notify_event(
             company_id, "einvoice_incoming", title, message,
-            link="/edoc-inbox",
+            link=link,
             ref_type="edoc",
-            ref_id=str(d.get("id") or d.get("_id") or ""),
+            ref_id=doc_id,
             dedupe_key=f"einv:{ettn}" if ettn else f"einv:id:{d.get('id') or d.get('_id')}",
         )
     return {"status": "ok", "count": len(items), "last": last}

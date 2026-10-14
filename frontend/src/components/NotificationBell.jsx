@@ -3,11 +3,13 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { Bell, CheckCircle2, Trash2, Volume2, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { localizeNotificationText } from "../utils/notificationText";
 import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { notificationCanDelete, notificationDeletePath, swipeDeleteOutcome, NOTIFY_SWIPE_W } from "../utils/notificationSwipe";
+import { MISSING_RECORD, notificationTarget } from "../utils/notificationTarget";
 
 export const NotificationBell = ({ companyId }) => {
   const [items, setItems] = useState([]);
@@ -37,20 +39,35 @@ export const NotificationBell = ({ companyId }) => {
   }, []);
   const unread = items.filter((n) => !n.is_read).length;
   const openItem = async (n) => {
-    if (!n.is_read) { await axios.post(`${API_URL}/notifications/${n.id}/read`).catch(() => {}); load(); }
+    const id = n.id || n._id;
+    if (!n.is_read && id) {
+      await axios.post(`${API_URL}/notifications/${id}/read`).catch(() => {});
+      load();
+    }
     setOpen(false);
-    if (n.link) navigate(n.link);
-    else if (n.ref_type === "quote") navigate("/quotes");
-    if (n.ref_type === "survey") navigate("/surveys");
-    if (n.ref_type === "project") navigate("/projects");
-    if (n.ref_type === "order") navigate("/orders");
-    if (n.ref_type === "quote") navigate("/quotes");
-    if (n.ref_type === "survey") navigate("/surveys");
-    if (n.ref_type === "project") navigate("/projects");
-    if (n.ref_type === "quote") navigate("/projects");
-    if (n.ref_type === "order") navigate("/orders");
-    else if (n.ref_type === "quote") navigate("/projects");
-    if (n.ref_type === "support") navigate("/support");
+    let target = notificationTarget(n);
+    if (id) {
+      try {
+        const r = await axios.get(`${API_URL}/notifications/${id}/target`);
+        if (r.data && r.data.exists === false) {
+          toast.error(r.data.message || MISSING_RECORD);
+          return;
+        }
+        if (r.data?.target?.route) target = r.data.target;
+      } catch {
+        /* kayıtlı hedef yoksa yerel tahmin */
+      }
+    }
+    if (target?.route) navigate(target.route);
+  };
+  const markAllRead = async () => {
+    if (!unread) return;
+    setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await axios.post(`${API_URL}/notifications/read-all`, null, { params: { company_id: companyId } });
+    } catch {
+      load();
+    }
   };
   const deleteItem = async (n) => {
     const path = notificationDeletePath(n);
@@ -71,7 +88,7 @@ export const NotificationBell = ({ companyId }) => {
       </button>
       {open && (
         <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden" data-testid="notification-panel">
-          <div className="px-4 py-2.5 border-b text-xs font-bold text-slate-700 flex justify-between items-center">
+          <div className="px-4 py-2.5 border-b text-xs font-bold text-slate-700 flex justify-between items-center gap-2">
             <span>Bildirimler</span>
             <span className="flex items-center gap-2">
               <button
@@ -86,6 +103,16 @@ export const NotificationBell = ({ companyId }) => {
               <span className="text-slate-400">{unread} okunmamış</span>
             </span>
           </div>
+          {unread > 0 && (
+            <button
+              type="button"
+              onClick={markAllRead}
+              className="w-full px-4 py-1.5 text-left text-[11px] font-bold text-emerald-700 bg-emerald-50 border-b border-emerald-100 hover:bg-emerald-100"
+              data-testid="notification-read-all"
+            >
+              Tümünü okundu işaretle
+            </button>
+          )}
           <div className="max-h-96 overflow-y-auto divide-y divide-slate-100">
             {items.length === 0 && <div className="p-6 text-center text-xs text-slate-400">Bildirim yok.</div>}
             {items.map((n) => (
@@ -120,11 +147,12 @@ function SwipeNoteRow({ note, onOpen, onDelete, onDecide }) {
     <button
       type="button"
       onClick={canDelete ? undefined : onOpen}
-      className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 flex gap-2 bg-white ${note.is_read ? "opacity-60" : ""}`}
+      className={`w-full text-left px-4 py-2.5 flex gap-2 ${note.is_read ? "bg-slate-50 hover:bg-slate-100" : "bg-emerald-50/80 hover:bg-emerald-50 border-l-4 border-emerald-500"}`}
       data-testid={`notification-item-${note.id || note._id}`}
+      data-read={note.is_read ? "1" : "0"}
     >
-      {note.title?.includes("ONAYLANDI") ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />}
-      <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{note.title}</span><span className="block text-[11px] text-slate-600">{localizeNotificationText(note.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(note.created_at).toLocaleString("tr-TR")}</span>
+      {note.title?.includes("ONAYLANDI") ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className={`w-4 h-4 shrink-0 mt-0.5 ${note.is_read ? "text-slate-300" : "text-rose-600"}`} />}
+      <span className="min-w-0"><span className={`block text-xs truncate ${note.is_read ? "font-medium text-slate-500" : "font-extrabold text-slate-900"}`}>{note.title}</span>{!note.is_read && <span className="inline-block mt-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">Yeni</span>}<span className={`block text-[11px] ${note.is_read ? "text-slate-400" : "text-slate-700"}`}>{localizeNotificationText(note.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(note.created_at).toLocaleString("tr-TR")}</span>
         {note.ref_type === "pos_approval" && !note.is_read && onDecide ? (
           <span className="mt-1 flex gap-1">
             <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onDecide("approve"); }} onKeyDown={(e) => e.key === "Enter" && onDecide("approve")} className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold" data-testid={`pos-notify-approve-${note.ref_id}`}>Onayla</span>

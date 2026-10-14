@@ -1,5 +1,6 @@
-import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
@@ -24,6 +25,9 @@ const PROCESS_OPTS = { update_stock: true, update_cost: true, allow_unmatched: t
 
 export function EdocInboxScreen() {
   const { client, companyId, can } = useAuth();
+  const params = useLocalSearchParams<{ ettn?: string | string[]; id?: string | string[] }>();
+  const focusEttn = (Array.isArray(params.ettn) ? params.ettn[0] : params.ettn || "").replace(/…|\.\.\.$/, "");
+  const focusId = Array.isArray(params.id) ? params.id[0] : params.id || "";
   const canEdit = can("/edoc-inbox", "edit") || can("/invoices", "edit");
   const [data, setData] = useState<EdocInboxList | null>(null);
   const [status, setStatus] = useState("pending");
@@ -32,6 +36,7 @@ export function EdocInboxScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const focusTried = useRef(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -52,6 +57,26 @@ export function EdocInboxScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const items = data?.items || [];
+
+  useEffect(() => {
+    if (!focusEttn && !focusId || !data) return;
+    const needle = focusEttn.toLowerCase();
+    const hit = items.find((d) => (
+      (focusId && edocId(d) === focusId)
+      || (needle && String(d.uuid || d.ettn || "").toLowerCase().startsWith(needle))
+    ));
+    if (!hit) {
+      if (status && !focusTried.current) {
+        focusTried.current = true;
+        setStatus("");
+        return;
+      }
+      setError("Kayıt bulunamadı");
+      return;
+    }
+    const nextQ = hit.number || hit.supplier?.name || "";
+    setQ((prev) => (prev === nextQ ? prev : nextQ));
+  }, [items, data, focusEttn, focusId, status]);
   const pending = pendingEdocCount(data?.counts);
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -129,8 +154,12 @@ export function EdocInboxScreen() {
       ) : filtered.map((doc) => {
         const id = edocId(doc);
         const processable = canEdit && isEdocProcessable(doc);
+        const focused = Boolean(
+          (focusId && id === focusId)
+          || (focusEttn && String(doc.uuid || doc.ettn || "").toLowerCase().startsWith(focusEttn.toLowerCase())),
+        );
         return (
-          <React.Fragment key={id}>
+          <View key={id} style={focused ? { borderWidth: 2, borderColor: "#6366f1", borderRadius: 16 } : undefined}>
             <ListRow
               testID={`edoc-row-${id}`}
               title={edocRowTitle(doc)}
@@ -145,7 +174,7 @@ export function EdocInboxScreen() {
                 <Chip testID={`edoc-reject-${id}`} label="Reddet" active={false} onPress={() => rejectOne(doc)} />
               </Row>
             ) : null}
-          </React.Fragment>
+          </View>
         );
       })}
     </Screen>
