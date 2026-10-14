@@ -329,30 +329,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           {(() => {
-            // Önce API kasa neti (tam hareket seti); yoksa istemci kırılımı / ledger
-            let net;
-            let netAmount;
-            if (summary.total_card_pocket != null || summary.total_cash_net != null) {
-              net = partnerSummaryCardMeta(summary);
-              netAmount = net.display;
-            } else {
-              let cashNet = 0;
-              let usedCash = false;
-              for (const p of partners) {
-                const br = partnerLedgers[p.id];
-                if (br && br.count > 0) {
-                  cashNet += br.cardDisplay;
-                  usedCash = true;
-                } else {
-                  cashNet += partnerBalanceMeta(p.balance).display;
-                }
-              }
-              cashNet = Math.round(cashNet * 100) / 100;
-              net = usedCash
-                ? partnerBalanceMeta(-cashNet)
-                : partnerBalanceMeta(summary.total_balance);
-              netAmount = usedCash ? cashNet : net.display;
-            }
+            const net = partnerSummaryCardMeta(summary);
+            const netAmount = net.display;
             const giris = summary.total_cash_in != null ? summary.total_cash_in : summary.total_capital_in;
             const cikis = summary.total_cash_out != null ? summary.total_cash_out : summary.total_withdrawn;
             return [
@@ -418,16 +396,13 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               </div>
             </div>
             {(() => {
-              const br = partnerLedgers[p.id];
-              // Kart = Giriş + Çıkış; rozet kasa netinden (eksi → Alacaklı)
-              const bm = br && br.count > 0
-                ? partnerBalanceMeta(br.cardPocket)
-                : partnerBalanceMeta(p.balance);
-              const amount = br && br.count > 0 ? br.cardDisplay : bm.display;
+              const bm = partnerBalanceMeta(p.balance);
+              const badge = p.balance_label || bm.badge;
+              const amount = p.balance_display != null && p.balance_display !== "" ? Number(p.balance_display) : bm.display;
               return (
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`}>
               <div className="min-w-0">
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{badge}</span>
                 <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(amount)} ₺</div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600 shrink-0" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
@@ -490,10 +465,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               <div className="font-bold text-slate-800">Bakiye kontrolü</div>
               <div className={selectedLedger.drift || !selectedLedger.netMatchesCard ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"} data-testid="partner-ledger-match">
                 {selectedLedger.drift
-                  ? `Sapma: kayıtlı ${fmt(partnerBalanceMeta(selectedLedger.stored).display)} ₺ ≠ hareket ${fmt(selectedLedger.cardDisplay)} ₺`
-                  : selectedLedger.netMatchesCard
-                    ? `Kart = Giriş + Çıkış (${fmt(selectedLedger.netDisplay)} ₺ · ${selectedLedger.count} kayıt)`
-                    : `Kart ${fmt(selectedLedger.cardDisplay)} ₺ · Giriş+Çıkış ${fmt(selectedLedger.netDisplay)} ₺ (${selectedLedger.count} kayıt)`}
+                  ? `Sapma: kayıtlı ${fmt(partnerBalanceMeta(selectedLedger.stored).display)} ₺ ≠ hareket ${fmt(partnerBalanceMeta(selectedLedger.ledger).display)} ₺`
+                  : `Bakiye hareketlerle uyumlu (${fmt(partnerBalanceMeta(selectedLedger.ledger).display)} ₺ ${partnerBalanceMeta(selectedLedger.ledger).label} · ${selectedLedger.count} kayıt)`}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2" data-testid="partner-ledger-buckets">

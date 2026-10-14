@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerOptionLabel, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels txs by cash direction (masraf=Çıkış, tahsilat=Giriş)", () => {
@@ -114,23 +114,31 @@ describe("partnerTx", () => {
     expect(br.drift).toBe(false); // tip kovası = kayıtlı (ikisi de eski)
   });
 
-  it("amber card prefers API cash net over ledger total_balance", () => {
-    // Ledger −199822.37 → eski amber BORÇLU 199822; kasa neti −776059.78 → Alacaklı −776059.78
+  it("amber card uses the same balance presentation as partner balances", () => {
     const legacy = partnerSummaryCardMeta({ total_balance: -199822.37 });
     expect(legacy.badge).toBe("Borçlu");
     expect(legacy.display).toBeCloseTo(199822.37, 2);
     expect(legacy.fromCash).toBe(false);
 
     const cash = partnerSummaryCardMeta({
-      total_balance: -199822.37,
-      total_card_pocket: 776059.78,
-      total_cash_net: -776059.78,
+      total_balance: -258082.37,
+      total_card_pocket: -258082.37,
+      total_cash_net: 236013.99,
       total_cash_in: 173100,
       total_cash_out: 949159.78,
     });
     expect(cash.fromCash).toBe(true);
-    expect(cash.badge).toBe("Alacaklı");
-    expect(cash.display).toBeCloseTo(-776059.78, 2);
+    expect(cash.badge).toBe("Borçlu");
+    expect(cash.display).toBeCloseTo(258082.37, 2);
+  });
+
+  it("selector uses Borçlu/Alacaklı instead of a sign", () => {
+    const ali = partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 });
+    const mus = partnerOptionLabel({ name: "Mustafa Bal", share_percent: 50, balance: 30257.85 });
+    expect(ali).toBe("Ali BAL (Ortak • %50 · 288.340,22 ₺ Borçlu)");
+    expect(mus).toBe("Mustafa Bal (Ortak • %50 · 30.257,85 ₺ Alacaklı)");
+    expect(ali).not.toContain("-");
+    expect(mus).not.toContain("-");
   });
 
   it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {

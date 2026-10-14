@@ -823,6 +823,17 @@ class MySQLCursor:
         return d
 
 
+def _emit_company_change(collection: str, doc) -> None:
+    """İş olayı: tür + id. Yazmayı asla bozmaz."""
+    if not isinstance(doc, dict):
+        return
+    try:
+        import company_events
+        company_events.note_change(collection, doc)
+    except Exception:
+        return
+
+
 class MySQLCollection:
     def __init__(self, db: "MySQLDatabase", name: str):
         self._db = db
@@ -881,6 +892,7 @@ class MySQLCollection:
             doc["_id"] = str(uuid.uuid4())
         await self._check_unique(doc, exclude_id=None)
         await self._replace_rows([(self.name, str(doc["_id"]), dumps(doc))])
+        _emit_company_change(self.name, doc)
 
     async def _delete_ids(self, ids: Sequence[str]) -> int:
         if not ids:
@@ -943,6 +955,7 @@ class MySQLCollection:
                         raise DuplicateKeyError(str(e)) from e
                     raise
         _audit_sql("INSERT", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
+        _emit_company_change(self.name, doc)
         return InsertOneResult(doc["_id"])
 
     async def insert_many(self, docs: Iterable[dict], ordered: bool = True):
@@ -1018,6 +1031,8 @@ class MySQLCollection:
                         "UPDATE_ATOMIC", self.name, doc_id=doc_id,
                         duration_ms=(time.perf_counter() - t0) * 1000,
                     )
+                    if changed:
+                        _emit_company_change(self.name, new_doc)
                     return UpdateResult(1, 1 if changed else 0, None)
             except Exception:
                 try:
@@ -1046,6 +1061,8 @@ class MySQLCollection:
                     doc["_id"] = str(uuid.uuid4())
                 rows.append((self.name, str(doc["_id"]), dumps(doc)))
             await self._replace_rows(rows)
+            for doc in changed:
+                _emit_company_change(self.name, doc)
         return UpdateResult(len(docs), len(changed), None)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
@@ -1083,12 +1100,17 @@ class MySQLCollection:
             return DeleteResult(0)
         await self._record_tombstones(docs[:1])
         n = await self._delete_ids([docs[0]["_id"]])
+        if n:
+            _emit_company_change(self.name, docs[0])
         return DeleteResult(n)
 
     async def delete_many(self, query: dict):
         docs = await self._load_filtered(query)
         await self._record_tombstones(docs)
         n = await self._delete_ids([d["_id"] for d in docs if d.get("_id") is not None])
+        if n:
+            for doc in docs:
+                _emit_company_change(self.name, doc)
         return DeleteResult(n)
 
     async def _record_tombstones(self, docs: Sequence[dict]):

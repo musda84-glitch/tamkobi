@@ -22,6 +22,7 @@ from mysql_store import MySQLClient, chunk_list, DuplicateKeyError
 from order_time import ensure_utc_iso
 from client_ip import request_ip
 import partner_pay
+import company_events
 import employee_pay
 import employee_data_reset
 from employee_sgk import norm_iban as _norm_iban, sgk_iban_update_error
@@ -277,6 +278,7 @@ async def startup_event():
     try:
         await db._ensure()
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
+        company_events.init(db, get_current_user)
         try:
             import platform_lease as _pl
             await _pl.ensure_table(db)
@@ -10564,37 +10566,15 @@ async def perform_virman(req: Dict[str, Any], request: Request):
 async def list_partners(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, company_id)
     await partner_pay.sync_company_partners(db, company_id)
-    partners = await db.partners.find({"company_id": company_id}).sort("created_at", 1).to_list(100)
-    return clean_docs(partners)
+    view = await partner_pay.load_company_partner_view(db, company_id)
+    return clean_docs(view["partners"])
 
 @api_router.get("/banking/partners/summary")
 async def partners_summary(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, company_id)
     await partner_pay.sync_company_partners(db, company_id)
-    partners = await db.partners.find({"company_id": company_id}).to_list(100)
-    partner_ids = [p["_id"] for p in partners]
-    # Yalnızca mevcut ortakların hareketleri — silinmiş ortaktan kalan satırlar neti şişirmesin
-    txs = await db.partner_transactions.find(
-        {"company_id": company_id, "partner_id": {"$in": partner_ids or ["__none__"]}}
-    ).to_list(20000) if partner_ids else []
-    cash = partner_pay.cash_card_totals(txs)
-    ledger_balance = round(sum(float(p.get("balance") or 0) for p in partners), 2)
-    # Kart / amber özet: hareket varsa kasa neti; yoksa kayıtlı ledger
-    card_pocket = cash["card_pocket"] if cash["tx_count"] > 0 else ledger_balance
-    cash_net = cash["cash_net"] if cash["tx_count"] > 0 else round(-ledger_balance, 2)
-    return {
-        "partner_count": len(partners),
-        "total_share_percent": sum(p.get("share_percent", 0) for p in partners),
-        "total_balance": ledger_balance,
-        "total_card_pocket": card_pocket,
-        "total_cash_net": cash_net,
-        "total_cash_in": cash["cash_in"],
-        "total_cash_out": cash["cash_out"],
-        "tx_count": cash["tx_count"],
-        "total_capital_in": sum(p.get("total_capital_in", 0) for p in partners),
-        "total_withdrawn": sum(p.get("total_withdrawn", 0) for p in partners),
-        "total_profit_share": sum(p.get("total_profit_share", 0) for p in partners),
-    }
+    view = await partner_pay.load_company_partner_view(db, company_id)
+    return partner_pay.summary_payload(view)
 
 
 @api_router.get("/banking/partners/{partner_id}/ledger")
@@ -21402,6 +21382,7 @@ for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", 
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)
+app.include_router(company_events.router)
 app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)

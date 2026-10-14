@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
+import { partnerOptionLabel } from "../utils/partnerTx";
 
-const fmt = (n) => (n || 0).toLocaleString("tr-TR");
+const fmt = (n) => formatTrAmount(n || 0);
 const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", okc_pos: "ÖKC POS", credit_card: "Kredi Kartı", customer_credit_card: "Müşteri Kredi Kartı" };
 const CONTACT_TYPE_LABEL = { customer: "Müşteri", supplier: "Tedarikçi", both: "Cari" };
 /** Tahsilatta kredi kartı yok (backend reddeder); ödemede kart + ortaklar açık. */
@@ -100,7 +102,7 @@ export const PaymentTargetSelect = ({
     reloadPartners();
     reloadContacts();
   }, [reloadAccounts, reloadPartners, reloadContacts]);
-  useDataRefresh(refreshLive, { companyId, scopes: ["cash"] });
+  useDataRefresh(refreshLive, { companyId, scopes: ["cash", "contacts"] });
 
   const typeOrder = typeFilter
     ? (typeFilter.includes("credit_card") && !typeFilter.includes("customer_credit_card")
@@ -134,7 +136,7 @@ export const PaymentTargetSelect = ({
       )}
       {partnersAllowed && partners.length > 0 && (
         <optgroup label="Ortaklar Hesabı">
-          {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak • %{p.share_percent ?? 0} · {fmt(p.balance)} ₺)</option>)}
+          {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{partnerOptionLabel(p)}</option>)}
         </optgroup>
       )}
       {contactsAllowed && contacts.length > 0 && (

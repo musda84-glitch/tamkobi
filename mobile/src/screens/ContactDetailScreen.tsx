@@ -15,6 +15,7 @@ import { ReceiptScanButtons } from "../components/ReceiptScanButtons";
 import { MoneyInput } from "../components/MoneyInput";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr, trUpper } from "../utils/labels";
@@ -180,6 +181,7 @@ export function ContactDetailScreen() {
   }, [client, companyId, id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useLiveRefresh(() => { load(); loadCash(); }, ["cash", "contacts", "invoices", "orders"]);
 
   useFocusEffect(useCallback(() => {
     if (tab !== "projects") return;

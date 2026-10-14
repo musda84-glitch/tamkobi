@@ -305,7 +305,7 @@ def tx_is_cash_inflow(tx: Optional[Dict[str, Any]]) -> bool:
 
 
 def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Kart tutarı = Giriş − Çıkış; card_pocket = Alacaklı/Borçlu rozeti kaynağı."""
+    """Giriş/Çıkış sayaçları (kasa yönü). Bakiye kartı bunu kullanmaz — present_partner_balance."""
     cash_in = 0.0
     cash_out = 0.0
     for tx in txs or []:
@@ -324,6 +324,114 @@ def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
         "cash_out": round(cash_out, 2),
         "cash_net": cash_net,
         "card_pocket": round(-cash_net, 2),
+    }
+
+
+def present_partner_balance(balance: Any) -> Dict[str, Any]:
+    """Ortak bakiyesinin tek gösterimi.
+
+    Artı bakiye = şirket ortağa borçlu (Alacaklı); ekranda eksi tutar.
+    Eksi bakiye = ortak fazla çekmiş (Borçlu); ekranda artı tutar.
+    Seçici mutlak tutar + etiket kullanır; kart `display` kullanır.
+    """
+    try:
+        amount = round(float(balance or 0), 2)
+    except (TypeError, ValueError):
+        amount = 0.0
+    if amount > 0:
+        return {
+            "balance": amount,
+            "abs": amount,
+            "display": round(-amount, 2),
+            "label": "Alacaklı",
+            "side": "credit",
+        }
+    if amount < 0:
+        abs_amount = round(abs(amount), 2)
+        return {
+            "balance": amount,
+            "abs": abs_amount,
+            "display": abs_amount,
+            "label": "Borçlu",
+            "side": "debit",
+        }
+    return {
+        "balance": 0.0,
+        "abs": 0.0,
+        "display": 0.0,
+        "label": "Denk",
+        "side": "zero",
+    }
+
+
+def company_partner_balances(partners: List[Dict[str, Any]], txs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Şirket ortak bakiyesi: her ortak hareket defterinden, kart = bu bakiyelerin toplamı.
+
+    Kasa Giriş/Çıkış yönü (banka eşleşmesi, masraf) defterden sapabilir; kart onu kullanmaz.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for tx in txs or []:
+        pid = str(tx.get("partner_id") or "")
+        if pid:
+            grouped.setdefault(pid, []).append(tx)
+    rows: List[Dict[str, Any]] = []
+    total = 0.0
+    for partner in partners or []:
+        pid = str(partner.get("_id") or partner.get("id") or "")
+        live = ledger_totals(grouped.get(pid, []))
+        view = present_partner_balance(live["balance"])
+        total += view["balance"]
+        row = dict(partner)
+        row["balance"] = view["balance"]
+        row["balance_abs"] = view["abs"]
+        row["balance_display"] = view["display"]
+        row["balance_label"] = view["label"]
+        rows.append(row)
+    total = round(total, 2)
+    card = present_partner_balance(total)
+    return {
+        "partners": rows,
+        "total_balance": total,
+        "card_display": card["display"],
+        "label": card["label"],
+        "abs": card["abs"],
+        "side": card["side"],
+    }
+
+
+async def load_company_partner_view(db, company_id: str) -> Dict[str, Any]:
+    """Sync sonrası ortak listesi + hareketlerden tek bakiye görünümü."""
+    partners = await db.partners.find({"company_id": company_id}).sort("created_at", 1).to_list(200)
+    ids = [p["_id"] for p in partners if p.get("_id")]
+    txs: List[Dict[str, Any]] = []
+    if ids:
+        txs = await db.partner_transactions.find(
+            {"company_id": company_id, "partner_id": {"$in": ids}}
+        ).to_list(20000)
+    view = company_partner_balances(partners, txs)
+    cash = cash_card_totals(txs)
+    view["cash"] = cash
+    view["source_partners"] = partners
+    return view
+
+
+def summary_payload(view: Dict[str, Any]) -> Dict[str, Any]:
+    """Ortaklar Hesabı kartı. Tutar, ortak bakiyelerinin toplamıdır."""
+    partners = view.get("source_partners") or []
+    cash = view.get("cash") or {}
+    return {
+        "partner_count": len(partners),
+        "total_share_percent": sum(p.get("share_percent", 0) for p in partners),
+        "total_balance": view.get("total_balance") or 0,
+        "total_card_pocket": view.get("total_balance") or 0,
+        "total_cash_net": view.get("card_display") or 0,
+        "balance_label": view.get("label") or "Denk",
+        "total_cash_in": cash.get("cash_in") or 0,
+        "total_cash_out": cash.get("cash_out") or 0,
+        "tx_count": cash.get("tx_count") or 0,
+        "total_capital_in": sum(p.get("total_capital_in", 0) for p in partners),
+        "total_withdrawn": sum(p.get("total_withdrawn", 0) for p in partners),
+        "total_profit_share": sum(p.get("total_profit_share", 0) for p in partners),
     }
 
 

@@ -1,7 +1,7 @@
 import { dateSortKey } from "./calendar";
 import { txUserColumnLabel } from "./bankMatchLabel";
 import { collectableAccounts } from "./contactDraft";
-import { fmtMoney, idOf } from "./money";
+import { fmtMoney, formatTrAmount, idOf } from "./money";
 
 export const ACCOUNT_TYPES = [
   { key: "bank", label: "Banka" },
@@ -120,6 +120,9 @@ export type Partner = {
   phone?: string;
   email?: string;
   balance?: number;
+  balance_abs?: number;
+  balance_display?: number;
+  balance_label?: string;
   total_capital_in?: number;
   total_withdrawn?: number;
   total_profit_share?: number;
@@ -166,7 +169,7 @@ export function partnerBalanceMeta(balance?: number | null): {
   return { amount: 0, abs: 0, display: 0, label: "Denk", badge: "Denk", side: "zero" };
 }
 
-/** Amber kart / net özet: API kasa neti (total_card_pocket / total_cash_net) öncelikli. */
+/** Amber kart: backend present_partner_balance (imzalı bakiye toplamı). */
 export function partnerSummaryCardMeta(summary?: PartnerSummary | null): {
   amount: number;
   abs: number;
@@ -179,20 +182,28 @@ export function partnerSummaryCardMeta(summary?: PartnerSummary | null): {
   fromCash: boolean;
 } {
   if (!summary) return { ...partnerBalanceMeta(0), cashIn: 0, cashOut: 0, fromCash: false };
-  const pocketRaw = summary.total_card_pocket;
-  if (pocketRaw != null && pocketRaw !== ("" as unknown)) {
-    const meta = partnerBalanceMeta(pocketRaw);
-    const cashNet = Number(summary.total_cash_net);
-    return {
-      ...meta,
-      display: Number.isFinite(cashNet) ? cashNet : meta.display,
-      cashIn: Number(summary.total_cash_in) || 0,
-      cashOut: Number(summary.total_cash_out) || 0,
-      fromCash: true,
-    };
-  }
-  const meta = partnerBalanceMeta(summary.total_balance);
-  return { ...meta, cashIn: 0, cashOut: 0, fromCash: false };
+  const hasPocket = summary.total_card_pocket != null && summary.total_card_pocket !== ("" as unknown);
+  const pocket = hasPocket ? summary.total_card_pocket : summary.total_balance;
+  const meta = partnerBalanceMeta(pocket);
+  return {
+    ...meta,
+    cashIn: Number(summary.total_cash_in) || 0,
+    cashOut: Number(summary.total_cash_out) || 0,
+    fromCash: hasPocket,
+  };
+}
+
+/** Seçici: işaret yok, mutlak tutar + Borçlu/Alacaklı, Türkçe biçim. */
+export function partnerOptionLabel(p: Pick<Partner, "name" | "share_percent" | "balance" | "balance_abs" | "balance_label">): string {
+  const meta = partnerBalanceMeta(p?.balance);
+  const absRaw = p?.balance_abs != null ? Number(p.balance_abs) : meta.abs;
+  const abs = Number.isFinite(absRaw) ? absRaw : 0;
+  const label = p?.balance_label || meta.label;
+  const share = p?.share_percent ?? 0;
+  const name = p?.name || "Ortak";
+  const amount = formatTrAmount(abs);
+  const tag = label && label !== "Denk" ? ` ${label}` : "";
+  return `${name} (Ortak · %${share} · ${amount} ₺${tag})`;
 }
 
 export type PartnerTx = {
@@ -422,11 +433,10 @@ export function partnerLedgerBreakdown(
 }
 
 /**
- * Ortak kartı satırı — web PartnersPanel ile aynı kaynak.
- * Hareket varsa kasa neti; yoksa kayıtlı bakiye + giriş/çıkış 0.
+ * Ortak kartı: bakiye present_partner_balance, giriş/çıkış hareket yönü.
  */
 export function partnerCardCashFlow(
-  partner: Pick<Partner, "balance" | "total_capital_in" | "total_withdrawn"> | null | undefined,
+  partner: Pick<Partner, "balance" | "balance_display" | "balance_label" | "total_capital_in" | "total_withdrawn"> | null | undefined,
   txs: PartnerTx[] | null | undefined,
   partnerId?: string | null,
 ): {
@@ -438,23 +448,14 @@ export function partnerCardCashFlow(
 } {
   const mine = filterPartnerTxs(txs, partnerId);
   const br = partnerLedgerBreakdown(mine, partner?.balance);
-  if (br.count > 0) {
-    const bm = partnerBalanceMeta(br.cardPocket);
-    return {
-      giris: br.girisDisplay,
-      cikis: br.cikisDisplay,
-      badge: bm.badge,
-      display: br.cardDisplay,
-      fromTx: true,
-    };
-  }
   const bm = partnerBalanceMeta(partner?.balance);
+  const display = partner?.balance_display != null ? Number(partner.balance_display) : bm.display;
   return {
-    giris: 0,
-    cikis: 0,
-    badge: bm.badge,
-    display: bm.display,
-    fromTx: false,
+    giris: br.count > 0 ? br.girisDisplay : 0,
+    cikis: br.count > 0 ? br.cikisDisplay : 0,
+    badge: partner?.balance_label || bm.badge,
+    display: Number.isFinite(display) ? display : bm.display,
+    fromTx: br.count > 0,
   };
 }
 
@@ -533,7 +534,7 @@ function partnerTargetGroup(partners: Partner[]): PaymentTargetGroup {
     label: "Ortaklar Hesabı",
     options: partners.map((p) => ({
       value: `partner:${idOf(p)}`,
-      label: `${p.name || "Ortak"} (Ortak · %${p.share_percent ?? 0} · ${fmtMoney(p.balance)})`,
+      label: partnerOptionLabel(p),
     })),
   };
 }

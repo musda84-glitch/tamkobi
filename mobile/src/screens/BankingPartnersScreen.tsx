@@ -8,6 +8,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
 import { PartnerAvatar } from "../components/PartnerAvatar";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { colors } from "../theme";
 import {
   emptyProjectExpenseDraft,
@@ -175,6 +176,7 @@ export function BankingPartnersPanel({
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+  useLiveRefresh(load, ["cash"]);
 
   const openPartnerExpense = useCallback((pid: string, name: string) => {
     if (!canExp || !pid) return;

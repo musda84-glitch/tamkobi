@@ -11,6 +11,7 @@ import HostRouteGuard from "./components/HostRouteGuard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SetupGuard from "./components/SetupGuard";
 import { PlatformNoticesHost } from "./components/PlatformNoticesHost";
+import { CompanyEventBridge } from "./components/CompanyEventBridge";
 
 /** İlk boyamada gereken hafif sayfalar — geri kalanı route bazlı chunk. */
 import LoginPage from "./pages/LoginPage";
@@ -102,6 +103,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <CompanyEventBridge />
         <HelpProvider>
         <PosSessionProvider>
         <MesaimGateProvider>

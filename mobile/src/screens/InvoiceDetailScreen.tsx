@@ -11,6 +11,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice, Product } from "../types";
@@ -115,6 +116,7 @@ export function InvoiceDetailScreen() {
   }, [client, companyId]);
 
   useFocusEffect(useCallback(() => { load(); loadAccounts(); }, [load, loadAccounts]));
+  useLiveRefresh(() => { load(); loadAccounts(); }, ["invoices", "cash", "contacts", "orders"]);
 
   useEffect(() => {
     const ids = lineProductIds((inv?.items || []) as Array<Record<string, unknown>>);

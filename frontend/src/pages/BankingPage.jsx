@@ -488,7 +488,7 @@ export default function BankingPage() {
             </div>
             <div className="pt-3 border-t border-amber-200/60">
               {(() => {
-                // Ortak kartlarıyla aynı kaynak: kasa neti (API total_card_pocket / total_cash_net)
+                // Ortak kartlarıyla aynı kaynak: present_partner_balance (total_card_pocket)
                 const meta = partnerSummaryCardMeta(partnerSummary);
                 return (
                   <>

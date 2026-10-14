@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Text } from "react-native";
 import { get, post } from "../api/client";
+import { useLiveRefresh } from "../live/useLiveRefresh";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
@@ -45,6 +46,7 @@ export function PayScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+  useLiveRefresh(load, ["cash", "contacts"]);
 
   const hits = useMemo(() => {
     const s = q.trim().toLowerCase();
