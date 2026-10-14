@@ -15,6 +15,8 @@ import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row
 import { ImageUploader } from "../components/ImageUploader";
 import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
+import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
+import { LineProductNameField } from "../components/LineProductNameField";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
@@ -41,6 +43,17 @@ import {
   uploadedImageUrl,
 } from "../utils/formDataFile";
 import { filterProducts } from "../utils/productDisplay";
+import {
+  applyLineNameDraft,
+  fetchLineProductHits,
+  fillWorkItemFromProduct,
+  findCatalogByScan,
+  findCatalogProduct,
+  lineBarcodeLookupRequest,
+  lineProductDetailRequest,
+  lineProductNeedsHydrate,
+  type LineProductHit,
+} from "../utils/lineProductSearch";
 import {
   emptyProjectExpenseDraft,
   expenseCalc,
@@ -219,6 +232,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [expDraft, setExpDraft] = useState<ExpenseDraft>(emptyProjectExpenseDraft(todayIso()));
   const [expCats, setExpCats] = useState<ExpenseCategory[]>([]);
   const [expBusy, setExpBusy] = useState(false);
+  const [scanLine, setScanLine] = useState<number | null>(null);
   const quoteBaseline = useRef("");
   const productsRef = useRef(products);
   productsRef.current = products;
@@ -530,6 +544,58 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       return [...rows, line];
     });
     setProdQ("");
+  };
+
+  const loadLineHits = useCallback(
+    async (q: string) =>
+      fetchLineProductHits({
+        search: (path, query) => get(client, path, query),
+        companyId,
+        query: q,
+        catalog: productsRef.current,
+      }),
+    [client, companyId],
+  );
+
+  const rememberProduct = (p: Product) => {
+    setProducts((prev) => (idOf(p) && prev.some((x) => idOf(x) === idOf(p)) ? prev : [...prev, p]));
+  };
+
+  const resolveLineProduct = async (hit: LineProductHit | Product): Promise<Product> => {
+    const fromCat = findCatalogProduct(productsRef.current, hit);
+    const candidate = (fromCat || hit) as Product;
+    if (!lineProductNeedsHydrate(candidate)) return candidate;
+    const pid = idOf(candidate);
+    if (!pid) return candidate;
+    try {
+      return await get<Product>(client, lineProductDetailRequest(pid).path);
+    } catch {
+      return candidate;
+    }
+  };
+
+  const pickLineProduct = async (i: number, hit: LineProductHit | Product) => {
+    const full = await resolveLineProduct(hit);
+    rememberProduct(full);
+    setItems((rows) => rows.map((it, idx) => (idx === i ? fillWorkItemFromProduct(it, full) : it)));
+  };
+
+  const applyBarcodeToLine = async (code: string) => {
+    const i = scanLine;
+    setScanLine(null);
+    if (i == null) return;
+    const local = findCatalogByScan(productsRef.current, code);
+    if (local) {
+      await pickLineProduct(i, local);
+      return;
+    }
+    try {
+      const req = lineBarcodeLookupRequest(companyId, code);
+      const p = await get<Product>(client, req.path, req.query);
+      await pickLineProduct(i, p);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+    }
   };
 
   const persistArgs = useRef({ form, pricedItems, status, quote, items, title, contactId, contactName, validUntil, notes });
@@ -1181,37 +1247,21 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                         ) : null}
                       </View>
                       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                        <View>
-                          <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>
-                            {trUpper(it.is_service ? "Hizmet adı" : "Ürün adı")}
-                          </Text>
-                          <View
-                            style={{
-                              borderWidth: 1,
-                              borderColor: colors.border,
-                              borderRadius: 12,
-                              backgroundColor: "#fff",
-                              minHeight: 32,
-                              paddingHorizontal: 8,
-                              justifyContent: "center",
-                            }}
-                          >
-                            <TextInput
-                              testID={`q-item-name-${i}`}
-                              value={it.name}
-                              onChangeText={(v) => patchItem(i, "name", v)}
-                              onBlur={() => {
-                                if (!workItemLineKind(kind) || it.is_service) return;
-                                const rows = items.map((row, idx) => (idx === i ? { ...row, name: it.name } : row));
-                                void ensureQuoteStockCards(rows).catch((err) => setError(apiErrorMessage(err, "Stok kartı oluşturulamadı.")));
-                              }}
-                              editable={canEdit}
-                              placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı"}
-                              placeholderTextColor={colors.muted}
-                              style={{ fontWeight: "700", fontSize: 13, color: colors.text, padding: 0, minHeight: 32 }}
-                            />
-                          </View>
-                        </View>
+                        <LineProductNameField
+                          testID={`q-item-name-${i}`}
+                          label={it.is_service ? "Hizmet adı" : "Ürün adı"}
+                          value={it.name}
+                          isService={!!it.is_service}
+                          editable={canEdit}
+                          placeholder={it.is_service ? "Hizmet adı yazın" : "Ürün adı / SKU / barkod"}
+                          loadHits={loadLineHits}
+                          excludeProductId={it.product_id}
+                          onChangeText={(v) => {
+                            setItems((rows) => rows.map((row, idx) => (idx === i ? applyLineNameDraft(row, v) : row)));
+                          }}
+                          onSelect={(p) => { void pickLineProduct(i, p); }}
+                          onScanPress={canEdit && !it.is_service ? () => setScanLine(i) : undefined}
+                        />
                         <Row style={{ alignItems: "flex-end", gap: 6 }}>
                           <View style={{ flexShrink: 0 }}>
                             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 1 }}>{trUpper("Miktar")}</Text>
@@ -1566,6 +1616,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
       >
         {project ? <ProjectWorkPreview project={project} stages={projectStages} /> : null}
       </B2BSheet>
+      <BarcodeScannerModal visible={scanLine != null} onClose={() => setScanLine(null)} onScan={applyBarcodeToLine} />
     </Screen>
   );
 }
