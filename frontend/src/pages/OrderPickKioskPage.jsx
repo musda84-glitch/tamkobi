@@ -98,6 +98,7 @@ export default function OrderPickKioskPage() {
   const [scanQty, setScanQty] = useState("1");
   const [overscanFlash, setOverscanFlash] = useState(null);
   const [labelPrintReq, setLabelPrintReq] = useState(null);
+  const [loadError, setLoadError] = useState("");
   const inputRef = useRef(null);
   const overscanTimer = useRef(null);
   const qtyCancelRef = useRef(false);
@@ -106,7 +107,11 @@ export default function OrderPickKioskPage() {
     try {
       const r = await axios.get(`${API_URL}/order-picks?company_id=${companyId}`);
       setRows(r.data);
-    } catch { toast.error("Siparişler alınamadı."); }
+      setLoadError("");
+    } catch {
+      setLoadError("Yetkiniz yok / yüklenemedi");
+      toast.error("Yetkiniz yok / yüklenemedi");
+    }
   }, [companyId]);
 
   const openOrder = useCallback(async (id) => {
@@ -301,7 +306,8 @@ export default function OrderPickKioskPage() {
           <button onClick={loadList} className="p-2.5 bg-white border rounded-xl" data-testid="pick-refresh"><RefreshCw className="w-4 h-4" /></button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {rows.length === 0 && <div className="col-span-full bg-white border rounded-2xl p-10 text-center text-slate-400" data-testid="pick-empty">Toplanacak sipariş yok.</div>}
+          {loadError && <div className="col-span-full bg-rose-50 border border-rose-200 rounded-2xl p-10 text-center text-sm font-semibold text-rose-800" data-testid="pick-load-error">{loadError}</div>}
+          {!loadError && rows.length === 0 && <div className="col-span-full bg-white border rounded-2xl p-10 text-center text-slate-400" data-testid="pick-empty">Toplanacak sipariş yok.</div>}
           {rows.map((o) => {
             const [lab, cls] = ST[o.pick_status] || ST.idle;
             const p = o.progress || {};

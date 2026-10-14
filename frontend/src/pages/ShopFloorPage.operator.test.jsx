@@ -1,4 +1,6 @@
 import React from "react";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { createRoot } from "react-dom/client";
 import { act } from "react";
 import axios from "axios";
@@ -81,4 +83,28 @@ test("operator select hides personnel without a system user", async () => {
   expect(labels).toContain("Yaşar Yıldırım — Üretim");
   expect(labels.some((t) => t.includes("Soner Akkaya"))).toBe(false);
   expect(labels.some((t) => t.includes("Gökhan Yılmaz"))).toBe(false);
+  expect(host.querySelector('[data-testid="shopfloor-load-error"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-empty"]')).not.toBeNull();
+});
+
+test("work order load failure shows permission message instead of an empty list", async () => {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/personnel/employees")) return Promise.resolve({ data: EMPS });
+    if (u.includes("/production/work-orders/performance")) return Promise.resolve({ data: { total_done: 0 } });
+    if (u.includes("/production/work-orders/pause-policy")) return Promise.resolve({ data: { allowed: true, phase: "mesai" } });
+    if (u.includes("/production/work-orders/shopfloor-settings")) return Promise.resolve({ data: { group_same_station: false } });
+    if (u.includes("/production/work-orders/stations")) return Promise.resolve({ data: [] });
+    if (u.includes("/production/work-orders")) {
+      return Promise.reject({ response: { status: 403, data: { detail: "Bu özellik için yetkiniz yok" } } });
+    }
+    if (u.includes("/personnel/me")) return Promise.resolve({ data: { tasks: [] } });
+    if (u.includes("/work-parks")) return Promise.resolve({ data: { parks: [] } });
+    return Promise.resolve({ data: [] });
+  });
+  await renderPage();
+  const err = host.querySelector('[data-testid="shopfloor-load-error"]');
+  expect(err).not.toBeNull();
+  expect(err.textContent).toBe("Yetkiniz yok / yüklenemedi");
+  expect(host.querySelector('[data-testid="shopfloor-empty"]')).toBeNull();
 });

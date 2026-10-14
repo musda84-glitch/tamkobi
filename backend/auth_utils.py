@@ -158,7 +158,7 @@ def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] =
         AUD_IK,
         AUD_YNT,
         host_kind,
-        is_ik_self_service_path,
+        is_ik_allowed_api_path,
         is_ynt_allowed_path,
         is_super_admin_api_path,
         superadmin_ynt_only,
@@ -190,7 +190,8 @@ def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] =
     if kind == KIND_IK:
         if aud != AUD_IK:
             raise HTTPException(status_code=401, detail="Bu oturum ik.tamkobi.com için geçerli değil")
-        if p.startswith("/api") and not is_ik_self_service_path(p):
+        method = getattr(request, "method", None) or "GET"
+        if p.startswith("/api") and not is_ik_allowed_api_path(p, method):
             raise HTTPException(status_code=403, detail="Personel oturumu yalnızca self-servis uçlarında geçerli")
         return
 

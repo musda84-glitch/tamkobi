@@ -135,11 +135,15 @@ def test_feature_change_is_audited():
 
 def test_portal_rule_matches_field_ops_only():
     assert rbac.portal_rule_for_path("/api/production/work-orders/stations", "GET")[1] == "portal_atolye"
+    assert rbac.portal_rule_for_path("/api/production/work-orders/performance", "GET")[1] == "portal_atolye"
+    assert rbac.portal_rule_for_path("/api/production/work-orders/shopfloor-settings", "GET")[1] == "portal_atolye"
     assert rbac.portal_rule_for_path("/api/order-picks/o1/scan", "POST")[1] == "portal_pick"
     assert rbac.portal_rule_for_path("/api/warehouses/stock-counts/c1", "GET")[1] == "portal_sayim"
     assert rbac.portal_rule_for_path("/api/vehicles/v1", "GET")[1] == "portal_vehicles"
     assert rbac.portal_rule_for_path("/api/vehicles/v1", "DELETE") is None
     assert rbac.portal_rule_for_path("/api/production/work-orders/shopfloor-settings", "POST") is None
+    assert rbac.portal_rule_for_path("/api/production/work-orders/shopfloor-settings", "PUT") is None
+    assert rbac.portal_rule_for_path("/api/production/work-orders/performance", "POST") is None
     assert rbac.portal_rule_for_path("/api/warehouses") is None
     assert rbac.portal_rule_for_path("/api/production/recipes") is None
     assert rbac.portal_rule_for_path("/api/orders") is None
@@ -168,7 +172,7 @@ _ADMIN_OPS = (
     ("PUT", "/api/vehicles/veh_1"),
     ("DELETE", "/api/vehicles/veh_1"),
     ("DELETE", "/api/warehouses/stock-counts/cnt_1"),
-    ("GET", "/api/production/work-orders/shopfloor-settings"),
+    ("PUT", "/api/production/work-orders/shopfloor-settings"),
     ("POST", "/api/production/work-orders/shopfloor-settings"),
     ("POST", "/api/production/work-orders/trash-completed"),
     ("POST", "/api/production/work-orders/wo_1/admin-trash"),
@@ -192,6 +196,8 @@ _FIELD_OPS = (
     ("POST", "/api/warehouses/stock-counts/cnt_1/complete"),
     ("GET", "/api/vehicles"),
     ("GET", "/api/vehicles/veh_1"),
+    ("GET", "/api/production/work-orders/performance"),
+    ("GET", "/api/production/work-orders/shopfloor-settings"),
 )
 
 

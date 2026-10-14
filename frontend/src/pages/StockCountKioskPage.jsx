@@ -27,6 +27,7 @@ export default function StockCountKioskPage() {
   const [cam, setCam] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState({ name: "", warehouse_id: "" });
+  const [loadError, setLoadError] = useState("");
   const inputRef = useRef(null);
   const qty = parseScanQtyInput(scanQty);
 
@@ -38,7 +39,11 @@ export default function StockCountKioskPage() {
       ]);
       setCounts(c.data || []);
       setWarehouses(w.data || []);
-    } catch { toast.error("Sayımlar yüklenemedi."); }
+      setLoadError("");
+    } catch {
+      setLoadError("Yetkiniz yok / yüklenemedi");
+      toast.error("Yetkiniz yok / yüklenemedi");
+    }
   }, [companyId]);
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -151,7 +156,8 @@ export default function StockCountKioskPage() {
           )}
           <div className="bg-white border rounded-2xl overflow-hidden" data-testid="kiosk-session-list">
             <div className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase border-b">Açık oturumlar</div>
-            {openSessions.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Açık sayım yok. Yeni sayım başlatın.</div>}
+            {loadError ? <div className="p-6 text-center text-sm font-semibold text-rose-800 bg-rose-50" data-testid="kiosk-load-error">{loadError}</div> : null}
+            {!loadError && openSessions.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Açık sayım yok. Yeni sayım başlatın.</div>}
             {openSessions.map((c) => (
               <button key={c.id} type="button" onClick={() => open(c.id)} className="w-full text-left px-4 py-3.5 border-b last:border-0 hover:bg-violet-50" data-testid={`kiosk-open-${c.id}`}>
                 <div className="font-bold text-slate-900">{c.name}</div>

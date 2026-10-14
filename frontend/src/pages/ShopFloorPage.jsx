@@ -47,6 +47,7 @@ export default function ShopFloorPage() {
   const [trashReqBusy, setTrashReqBusy] = useState(false);
   const [trashReqErr, setTrashReqErr] = useState("");
   const [pausePolicy, setPausePolicy] = useState({ allowed: true, phase: "mesai", reason: null, deadline: null });
+  const [loadError, setLoadError] = useState("");
   const loadPerf = useCallback(() => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {}), [companyId]);
   useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
 
@@ -72,7 +73,7 @@ export default function ShopFloorPage() {
       const [w, lockRows, e, s, parks, me] = await Promise.all([
         axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}&${bust}`, {
           headers,
-        }).catch(() => ({ data: [] })),
+        }),
         // Tablet istasyona kilitliyken başka istasyondaki in_progress'i de gör (UI kilidi)
         station
           ? axios.get(`${API_URL}/production/work-orders?company_id=${companyId}&status=in_progress&${bust}`, { headers }).catch(() => ({ data: [] }))
@@ -88,7 +89,10 @@ export default function ShopFloorPage() {
       setEmployees(shopFloorOperators(e.data || []));
       setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
-    } catch { /* keep last */ }
+      setLoadError("");
+    } catch {
+      setLoadError("Yetkiniz yok / yüklenemedi");
+    }
   }, [companyId, station]);
   // Mobil bitişin tablete yansıması: 5 sn poll + sekme/focus'ta anında yenile
   useLivePoll(load, { intervalMs: 5000 });
@@ -545,7 +549,8 @@ export default function ShopFloorPage() {
       )}
       {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2>{renderWoGrid(mine)}</div>}
       <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
-        {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
+        {loadError ? <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center text-sm font-semibold text-rose-800" data-testid="shopfloor-load-error">{loadError}</div> : null}
+        {!loadError && active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
         {renderWoGrid(active.filter((w) => !mine.includes(w)))}</div>
       {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2>{renderWoGrid(waiting)}</div>}
       {done.length > 0 && (

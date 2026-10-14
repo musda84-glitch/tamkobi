@@ -271,7 +271,7 @@ export function AtolyeScreen() {
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
-        }).catch(() => []),
+        }),
         station
           ? get<WorkOrder[]>(client, "/production/work-orders", {
               company_id: companyId,
@@ -292,8 +292,8 @@ export function AtolyeScreen() {
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
       if (settings && typeof settings.group_same_station === "boolean") setGroupSameStation(settings.group_same_station);
       setError(null);
-    } catch (err) {
-      setError(apiErrorMessage(err, "İş emirleri yüklenemedi."));
+    } catch {
+      setError("Yetkiniz yok / yüklenemedi");
     } finally {
       setRefreshing(false);
     }
@@ -733,7 +733,7 @@ export function AtolyeScreen() {
       ) : null}
 
       <Text style={{ fontWeight: "800", color: colors.text }}>Açık İş Emirleri ({parts.others.length})</Text>
-      {!parts.active.length ? (
+      {error ? null : !parts.active.length ? (
         <Empty icon="build-outline" title="Bekleyen iş emri yok" hint="Üretim & Reçete sayfasından üretim emri verin." />
       ) : renderGrouped(arrangedOthers, (w) => (
         <WoCard
