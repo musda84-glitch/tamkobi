@@ -253,6 +253,12 @@ export type Payroll = {
   worked_days?: number;
   status?: string;
   paid_date?: string;
+  account_name?: string;
+  movement_id?: string;
+  personnel_movement_id?: string;
+  source_type?: string;
+  source?: string;
+  source_id?: string;
 };
 
 export type EmployeeBalance = {
@@ -287,12 +293,33 @@ export type EmployeeBonus = {
   paid_at?: string;
   worked_days?: number;
   daily_wage?: number;
+  movement_id?: string;
+  personnel_movement_id?: string;
+  source_type?: string;
+  source?: string;
+  source_id?: string;
+};
+
+export type PersonnelMovement = {
+  id?: string;
+  _id?: string;
+  kind?: string;
+  kind_label?: string;
+  amount?: number;
+  period?: string;
+  account_name?: string;
+  description?: string;
+  date?: string;
+  created_at?: string;
+  status?: string;
+  effects?: { collection?: string; id?: string }[];
 };
 
 export type EmployeeCard = {
   employee?: Employee;
   payrolls?: Payroll[];
   bonuses?: EmployeeBonus[];
+  movements?: PersonnelMovement[];
   balance?: EmployeeBalance;
   overtime?: {
     hours?: number;
@@ -861,7 +888,7 @@ export function workplaceDetailsSummary(opts: {
 
 export type EmployeePayMove = {
   id: string;
-  kind: "payroll" | "bonus";
+  kind: "payroll" | "bonus" | "personnel_payment";
   title: string;
   subtitle: string;
   amount: number;
@@ -874,6 +901,9 @@ export type EmployeePayMove = {
   editable?: boolean;
   payable?: boolean;
   deletable?: boolean;
+  sourceLabel?: string;
+  linkedMovementId?: string;
+  linkedMovementIds?: string[];
 };
 
 export function isUnpaidYevmiye(b?: EmployeeBonus | null): boolean {
@@ -977,30 +1007,100 @@ export function bonusStatusTr(status?: string | null, paidDate?: string | null):
   return key;
 }
 
-/** Personel kartı: maaş + avans/prim satırlarını tarihe göre yeni→eski. */
+function payBits(bits: Array<string | number | null | undefined | false>): string {
+  return bits.filter(Boolean).map(String).join(" · ");
+}
+
+/** Ödeme kaynağı etiketi: "Kaynak: Ali BAL (Ortak)". */
+export function paySourceCaption(names?: Array<string | null | undefined> | null): string {
+  const unique: string[] = [];
+  for (const raw of names || []) {
+    const s = String(raw || "").trim().replace(/^kaynak\s*:\s*/i, "");
+    if (!s || unique.some((x) => x.toLocaleLowerCase("tr-TR") === s.toLocaleLowerCase("tr-TR"))) continue;
+    unique.push(s);
+  }
+  return unique.length ? `Kaynak: ${unique.join(", ")}` : "";
+}
+
+function linkedPaymentId(doc?: { movement_id?: string; personnel_movement_id?: string; source_type?: string; source?: string; source_id?: string } | null): string {
+  const direct = String(doc?.movement_id || doc?.personnel_movement_id || "").trim();
+  if (direct) return direct;
+  const st = String(doc?.source_type || doc?.source || "").trim();
+  if (st === "personnel_payment") return String(doc?.source_id || "").trim();
+  return "";
+}
+
+type PayRowDraft = EmployeePayMove & { _sources: string[] };
+
+function rememberSource(row: PayRowDraft, name?: string | null) {
+  const s = String(name || "").trim();
+  if (s) row._sources.push(s);
+}
+
+function rememberMovement(row: PayRowDraft, movementId?: string | null) {
+  const mid = String(movementId || "").trim();
+  if (!mid) return;
+  if (!row.linkedMovementId) row.linkedMovementId = mid;
+  const ids = row.linkedMovementIds || [];
+  if (!ids.includes(mid)) ids.push(mid);
+  row.linkedMovementIds = ids;
+}
+
+function finishPayRow(row: PayRowDraft): EmployeePayMove {
+  const cap = paySourceCaption(row._sources);
+  const subtitle = cap ? payBits([row.subtitle, cap]) : row.subtitle;
+  const next: EmployeePayMove = {
+    ...row,
+    subtitle,
+    sourceLabel: cap,
+    linkedMovementIds: row.linkedMovementIds?.length ? row.linkedMovementIds : undefined,
+  };
+  delete (next as { _sources?: string[] })._sources;
+  return next;
+}
+
+function effectHitsPersonnel(eff: { collection?: string; id?: string } | null | undefined, rowId: string): boolean {
+  const id = String(eff?.id || "").trim();
+  if (!id || id !== rowId) return false;
+  const coll = String(eff?.collection || "");
+  return coll === "bonus_payments" || coll === "payrolls";
+}
+
+function indexPayRow(byId: Map<string, PayRowDraft>, row: PayRowDraft) {
+  const id = String(row.id || "").trim();
+  if (id && !id.startsWith("pay-") && !id.startsWith("bonus-")) byId.set(id, row);
+}
+
+/** Personel kartı: maaş + avans/prim. Bağlı ödeme kaynağı aynı satırda, ikinci satır yok. */
 export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] {
-  const rows: EmployeePayMove[] = [];
+  const rows: PayRowDraft[] = [];
+  const byId = new Map<string, PayRowDraft>();
   for (const p of card?.payrolls || []) {
-    const wage = payrollWageLine(p);
-    rows.push({
+    const row: PayRowDraft = {
       id: idOf(p) || `pay-${p.period || ""}`,
       kind: "payroll",
       title: isDailyPayroll(p) ? "Yevmiye" : "Maaş",
-      subtitle: [p.period, wage, payrollStatusTr(p.status, p.paid_date)].filter(Boolean).join(" · "),
+      subtitle: payBits([p.period, payrollWageLine(p), payrollStatusTr(p.status, p.paid_date)]),
       amount: Number(p.final_payable ?? p.net_salary) || 0,
       date: String(p.paid_date || p.period || ""),
       status: p.status,
       payable: String(p.status || "") !== "paid",
-    });
+      _sources: [],
+      linkedMovementIds: [],
+    };
+    rememberSource(row, p.account_name);
+    rememberMovement(row, linkedPaymentId(p));
+    rows.push(row);
+    indexPayRow(byId, row);
   }
   for (const b of card?.bonuses || []) {
     const days = yevmiyeDaysFromBonus(b);
     const paidDate = bonusPaidDate(b);
-    rows.push({
+    const row: PayRowDraft = {
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",
       title: bonusTypeTr(b.type, b.type_label),
-      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status, paidDate), b.account_name, b.note].filter(Boolean).join(" · "),
+      subtitle: payBits([b.period, days ? `${days} gün` : "", bonusStatusTr(b.status, paidDate), b.note]),
       amount: Number(b.amount) || 0,
       date: String(paidDate || b.created_at || b.period || ""),
       status: b.status,
@@ -1011,9 +1111,58 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
       editable: isUnpaidYevmiye(b),
       payable: String(b.status || "") !== "paid",
       deletable: isDeletableBonus(b),
-    });
+      _sources: [],
+      linkedMovementIds: [],
+    };
+    rememberSource(row, b.account_name);
+    rememberMovement(row, linkedPaymentId(b));
+    rows.push(row);
+    indexPayRow(byId, row);
   }
-  return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  for (const m of card?.movements || []) {
+    if (["reversed", "cancelled"].includes(String(m.status || ""))) continue;
+    const mid = idOf(m);
+    const targets: PayRowDraft[] = [];
+    for (const row of byId.values()) {
+      if (row.linkedMovementIds?.includes(mid) || row.linkedMovementId === mid) targets.push(row);
+    }
+    for (const eff of m.effects || []) {
+      for (const [id, row] of byId) {
+        if (effectHitsPersonnel(eff, id) && !targets.includes(row)) targets.push(row);
+      }
+    }
+    if (targets.length) {
+      for (const row of targets) {
+        rememberMovement(row, mid);
+        rememberSource(row, m.account_name);
+      }
+      continue;
+    }
+    const lone: PayRowDraft = {
+      id: mid,
+      kind: "personnel_payment",
+      title: m.kind_label || "Ödeme",
+      subtitle: payBits([m.period, m.description]),
+      amount: Number(m.amount) || 0,
+      date: String(m.date || m.created_at || ""),
+      status: m.status || "posted",
+      deletable: !!mid,
+      _sources: [],
+      linkedMovementIds: [],
+    };
+    rememberSource(lone, m.account_name);
+    rows.push(lone);
+  }
+  return rows.map(finishPayRow).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+export function payMoveDeletePath(row?: { id?: string; kind?: string } | null): string | null {
+  const id = String(row?.id || "").trim();
+  if (!id || /^pay-\d{4}-\d{2}$/.test(id)) return null;
+  if (row?.kind === "payroll") return `/personnel/payrolls/${id}`;
+  if (row?.kind === "bonus") return `/personnel/bonuses/${id}`;
+  if (row?.kind === "personnel_payment") return `/personnel/movements/${id}`;
+  return null;
 }
 
 export type PayMovesPeriod = "30d" | "month" | "all";

@@ -23,6 +23,8 @@ import {
   employeeMessageDefaultBody,
   employeeCardActionsByGroup,
   employeePayMoves,
+  payMoveDeletePath,
+  paySourceCaption,
   enrichEmployeeBalance,
   bonusDue,
   overtimeDue,
@@ -759,6 +761,63 @@ describe("employee card actions", () => {
     expect(yev[0].payable).toBe(true);
     expect(yev[0].deletable).toBe(true);
     expect(yev[0].worked_days).toBe(6);
+    const linked = employeePayMoves({
+      bonuses: [{
+        id: "b1",
+        type: "advance",
+        amount: 1500,
+        period: "2026-10",
+        status: "paid",
+        paid_at: "2026-10-13",
+        note: "Avans",
+        source_type: "personnel_payment",
+        movement_id: "mov1",
+      }],
+      movements: [{
+        id: "mov1",
+        kind_label: "Avans",
+        amount: 1500,
+        account_name: "Ali BAL (Ortak)",
+        date: "2026-10-13",
+        period: "2026-10",
+        status: "posted",
+        effects: [{ collection: "bonus_payments", id: "b1" }],
+      }, {
+        id: "mov_meal",
+        kind_label: "Yol/Yemek",
+        amount: 80,
+        account_name: "Kasa",
+        description: "Yemek",
+        date: "2026-10-12",
+        status: "posted",
+      }],
+    });
+    expect(linked.map((r) => r.id)).toEqual(["b1", "mov_meal"]);
+    expect(linked[0].kind).toBe("bonus");
+    expect(linked[0].title).toBe("Avans");
+    expect(linked[0].subtitle).toMatch(/Ödendi/);
+    expect(linked[0].sourceLabel).toBe("Kaynak: Ali BAL (Ortak)");
+    expect(linked[0].linkedMovementId).toBe("mov1");
+    expect(linked[0].amount).toBe(1500);
+    expect(payMoveDeletePath(linked[0])).toBe("/personnel/bonuses/b1");
+    expect(payMoveDeletePath(linked[1])).toBe("/personnel/movements/mov_meal");
+    expect(linked[1].subtitle).toContain("Kaynak: Kasa");
+    expect(paySourceCaption(["Ali BAL (Ortak)", "Ali BAL (Ortak)"])).toBe("Kaynak: Ali BAL (Ortak)");
+    const payroll = employeePayMoves({
+      payrolls: [{ id: "p1", period: "2026-10", status: "paid", paid_date: "2026-10-13", final_payable: 10000 }],
+      movements: [{
+        id: "mov_salary",
+        kind_label: "Maaş",
+        amount: 10000,
+        account_name: "Banka",
+        date: "2026-10-13",
+        status: "posted",
+        effects: [{ collection: "payrolls", id: "p1" }],
+      }],
+    });
+    expect(payroll).toHaveLength(1);
+    expect(payroll[0].kind).toBe("payroll");
+    expect(payroll[0].sourceLabel).toBe("Kaynak: Banka");
     expect(pendingYevmiyeBonus([{ type: "yevmiye", status: "pending", period: "2026-09", id: "a" }, { type: "yevmiye", status: "paid", id: "b" }], "2026-09")?.id).toBe("a");
     expect(yevmiyeDaysFromBonus({ note: "8 gün × 1200 ₺" })).toBe(8);
     expect(yevmiyeAddHint(6, 3)).toBe("6 gün + 3 gün = 9 gün");

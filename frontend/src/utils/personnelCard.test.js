@@ -186,6 +186,92 @@ describe("personnelCard", () => {
     }).map((m) => m.kind)).toEqual(["personnel_payment"]);
   });
 
+  test("collapses a linked advance into the personnel row and names the source", () => {
+    const moves = employeePayMoves({
+      bonuses: [{
+        id: "b1",
+        type: "advance",
+        status: "paid",
+        amount: 1500,
+        period: "2026-10",
+        paid_at: "2026-10-13",
+        note: "Avans",
+        source_type: "personnel_payment",
+        source_id: "mov1",
+        movement_id: "mov1",
+      }],
+      movements: [{
+        id: "mov1",
+        kind: "advance",
+        kind_label: "Avans",
+        amount: 1500,
+        account_name: "Ali BAL (Ortak)",
+        date: "2026-10-13",
+        period: "2026-10",
+        status: "posted",
+        description: "Avans",
+        effects: [{ collection: "bonus_payments", id: "b1", action: "insert" }],
+      }],
+    });
+    expect(moves).toHaveLength(1);
+    expect(moves[0].kind).toBe("bonus");
+    expect(moves[0].title).toBe("Avans");
+    expect(moves[0].subtitle).toContain("Ödendi");
+    expect(moves[0].subtitle).toContain("Kaynak: Ali BAL (Ortak)");
+    expect(moves[0].subtitle).not.toMatch(/Ali BAL \(Ortak\).*Ali BAL/);
+    expect(moves[0].sourceLabel).toBe("Kaynak: Ali BAL (Ortak)");
+    expect(moves[0].linkedMovementId).toBe("mov1");
+    expect(moves[0].amount).toBe(1500);
+    expect(payMoveDeletePath(moves[0])).toBe("/personnel/bonuses/b1");
+  });
+
+  test("keeps an unlinked movement and a payroll source on one row", () => {
+    const moves = employeePayMoves({
+      payrolls: [{ id: "p1", period: "2026-10", status: "paid", paid_date: "2026-10-13", final_payable: 10000, account_name: "Banka" }],
+      movements: [
+        {
+          id: "mov_salary",
+          kind_label: "Maaş",
+          amount: 10000,
+          account_name: "Banka",
+          date: "2026-10-13",
+          period: "2026-10",
+          status: "posted",
+          effects: [{ collection: "payrolls", id: "p1" }],
+        },
+        {
+          id: "mov_meal",
+          kind_label: "Yol/Yemek",
+          amount: 200,
+          account_name: "Kasa",
+          description: "Yemek",
+          date: "2026-10-12",
+          period: "2026-10",
+          status: "posted",
+        },
+        {
+          id: "mov_old",
+          kind_label: "Avans",
+          amount: 50,
+          account_name: "Eski",
+          date: "2026-10-01",
+          status: "reversed",
+        },
+      ],
+    });
+    expect(moves.map((m) => m.kind)).toEqual(["payroll", "personnel_payment"]);
+    expect(moves[0].subtitle).toContain("Kaynak: Banka");
+    expect(moves[0].linkedMovementId).toBe("mov_salary");
+    expect(moves[1].id).toBe("mov_meal");
+    expect(moves[1].subtitle).toContain("Kaynak: Kasa");
+    expect(moves[1].subtitle).not.toMatch(/^Kasa/);
+    const named = employeePayMoves({
+      bonuses: [{ id: "b2", type: "advance", status: "paid", amount: 10, account_name: "Ali BAL (Ortak)", paid_at: "2026-10-02", period: "2026-10", note: "Avans" }],
+    });
+    expect(named).toHaveLength(1);
+    expect(named[0].sourceLabel).toBe("Kaynak: Ali BAL (Ortak)");
+  });
+
   test("personnel data reset path and confirm copy", () => {
     expect(empDataResetPath("emp_1")).toBe("/personnel/employees/emp_1/reset-data");
     expect(empDataResetPath("")).toBe("");

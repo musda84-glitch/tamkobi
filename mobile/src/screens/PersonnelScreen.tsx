@@ -131,6 +131,7 @@ import {
   locationMoveLine,
   locationMovesPeriodHint,
   payMoveDeleteConfirm,
+  payMoveDeletePath,
   payMovesPeriodHint,
   payMovesPeriodLabel,
   type LocationMove,
@@ -723,10 +724,11 @@ export function PersonnelScreen() {
   };
 
   const deletePayMove = async (row: EmployeePayMove) => {
-    if (row.kind !== "bonus") return;
+    const path = payMoveDeletePath(row);
+    if (!path || (row.kind !== "bonus" && row.kind !== "personnel_payment")) return;
     setBusy(true);
     try {
-      await del(client, `/personnel/bonuses/${row.id}`);
+      await del(client, path);
       setMessage("Yevmiye / ödeme kaydı silindi.");
       if (movesEmp) {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(movesEmp)}/card`);
