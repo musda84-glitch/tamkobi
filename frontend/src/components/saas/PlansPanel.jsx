@@ -6,6 +6,7 @@ import { Plus, Pencil, Trash2, X, Save, Loader2, Check, Sparkles, ExternalLink }
 import { API_URL } from "../../context/AuthContext";
 import { fmtTL, PlanChip, Toggle, inputCls, groupByCategory, PLAN_COLORS } from "./saasUi";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
+import { MoneyInput } from "../MoneyInput";
 
 const cred = { withCredentials: true };
 
@@ -58,7 +59,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
     e.preventDefault(); setBusy(true);
     try { if (plan.id) await axios.put(`${API_URL}/system/plans/${plan.id}`, f, cred); else await axios.post(`${API_URL}/system/plans`, f, cred); toast.success("Paket kaydedildi."); onSaved(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
-  const num = (k, l) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type="number" min={0} value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} className={inputCls} data-testid={`plan-${k}`} /></div>;
+  const num = (k, l, money = false) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label>{money ? <MoneyInput value={f[k]} onChange={(n) => setF({ ...f, [k]: n ?? 0 })} className={inputCls} data-testid={`plan-${k}`} /> : <input type="number" min={0} value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} className={inputCls} data-testid={`plan-${k}`} />}</div>;
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4 text-xs max-h-[90vh] overflow-y-auto" data-testid="plan-editor">
@@ -66,7 +67,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div><label className="block font-semibold text-slate-700 mb-1">Paket Adı</label><input required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={inputCls} data-testid="plan-name" /></div>
           <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Slogan</label><input value={f.tagline} onChange={(e) => setF({ ...f, tagline: e.target.value })} className={inputCls} data-testid="plan-tagline" /></div>
-          {num("price_monthly", "Aylık Fiyat (₺)")}{num("price_yearly", "Yıllık Fiyat (₺)")}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}{num("company_limit", "Şirket Limiti (0 = sınırsız)")}
+          {num("price_monthly", "Aylık Fiyat (₺)", true)}{num("price_yearly", "Yıllık Fiyat (₺)", true)}{num("user_limit", "Kullanıcı Limiti (0 = sınırsız)")}{num("company_limit", "Şirket Limiti (0 = sınırsız)")}
           {num("product_limit", "Stok kartı (0 = sınırsız)")}{num("contact_limit", "Cari kart (0 = sınırsız)")}{num("storage_limit_mb", "Resim depolama MB (0 = sınırsız)")}
           <div><label className="block font-semibold text-slate-700 mb-1">Renk</label><div className="flex gap-1.5">{Object.keys(PLAN_COLORS).map((c) => <button type="button" key={c} onClick={() => setF({ ...f, color: c })} className={`w-7 h-7 rounded-lg ${PLAN_COLORS[c]} ${f.color === c ? "ring-2 ring-offset-1 ring-slate-900" : ""}`} data-testid={`plan-color-${c}`} />)}</div></div>
           {num("sort", "Sıra")}

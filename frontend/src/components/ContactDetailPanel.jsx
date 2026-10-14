@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
+import { MoneyInput } from "./MoneyInput";
 import { mapsLink } from "./ContactLocationModal";
 import { workMapsLink } from "../utils/mapsLink";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -1199,7 +1200,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               ) : (
                 <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={editPay.account_id} onChange={(v) => setEditPay({ ...editPay, account_id: v })} testId="pay-edit-account" collectableOnly={editPay.type === "inflow"} includePartners={false} /></div>
               )}
-              <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" min="0.01" value={editPay.amount} onChange={(e) => setEditPay({ ...editPay, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="pay-edit-amount" /></div>
+              <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput value={editPay.amount} onChange={(n) => setEditPay({ ...editPay, amount: n ?? "" })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="pay-edit-amount" /></div>
               <div><label className="block font-semibold mb-1">{editPay.cheque ? "Not" : "Açıklama"}</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setEditPay(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pay-edit-save">Kaydet</button></div>
             </form>
@@ -1274,7 +1275,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <input ref={receiptCamRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-camera-input" />
                 <input ref={receiptGalRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-gallery-input" />
               </div>
-              <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
+              <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput value={payForm.amount} onChange={(n) => setPayForm({ ...payForm, amount: n ?? "" })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-desc-input" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">{payForm.method === "ledger" ? "Fişi Kaydet" : "Kaydet"}</button></div>
             </form>

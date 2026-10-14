@@ -14,6 +14,7 @@ import { EmployeeMovesModal } from "../components/EmployeeMovesModal";
 import { EmployeeAssignTaskModal } from "../components/EmployeeAssignTaskModal";
 import { AssignOvertimeModal } from "../components/AssignOvertimeModal";
 import { QuickPayModal } from "../components/QuickPayModal";
+import { MoneyInput } from "../components/MoneyInput";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
@@ -1251,10 +1252,9 @@ export default function PersonnelPage() {
               {newEmployee.pay_type === "daily" ? (
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Günlük yevmiye (₺)</label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     value={newEmployee.daily_wage}
-                    onChange={(e) => setNewEmployee({ ...newEmployee, daily_wage: e.target.value })}
+                    onChange={(n) => setNewEmployee({ ...newEmployee, daily_wage: n ?? "" })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
                     data-testid="employee-daily-wage-input"
                     placeholder="Örn: 1500"
@@ -1264,10 +1264,9 @@ export default function PersonnelPage() {
               ) : (
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Net maaş (₺)</label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     value={newEmployee.salary}
-                    onChange={(e) => setNewEmployee({ ...newEmployee, salary: e.target.value })}
+                    onChange={(n) => setNewEmployee({ ...newEmployee, salary: n ?? "" })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
                     data-testid="employee-salary-input"
                   />
@@ -1363,12 +1362,9 @@ export default function PersonnelPage() {
                       </label>
                       <div className="flex-1 min-w-[8rem]">
                         <label className="block font-semibold text-slate-700 mb-1">Resmi maaş (₺)</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
+                        <MoneyInput
                           value={newEmployee.official_salary}
-                          onChange={(e) => setNewEmployee({ ...newEmployee, official_salary: e.target.value })}
+                          onChange={(n) => setNewEmployee({ ...newEmployee, official_salary: n ?? "" })}
                           className="w-full bg-white border border-slate-200 rounded-lg p-2"
                           data-testid="employee-official-salary"
                         />
@@ -1414,24 +1410,18 @@ export default function PersonnelPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">Yemek ücreti (aylık ₺)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
+                      <MoneyInput
                         value={newEmployee.meal_allowance}
-                        onChange={(e) => setNewEmployee({ ...newEmployee, meal_allowance: e.target.value })}
+                        onChange={(n) => setNewEmployee({ ...newEmployee, meal_allowance: n ?? "" })}
                         className="w-full bg-white border border-slate-200 rounded-lg p-2"
                         data-testid="employee-meal-allowance-input"
                       />
                     </div>
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">Yol ödemesi (aylık ₺)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
+                      <MoneyInput
                         value={newEmployee.transport_allowance}
-                        onChange={(e) => setNewEmployee({ ...newEmployee, transport_allowance: e.target.value })}
+                        onChange={(n) => setNewEmployee({ ...newEmployee, transport_allowance: n ?? "" })}
                         className="w-full bg-white border border-slate-200 rounded-lg p-2"
                         data-testid="employee-transport-allowance-input"
                       />

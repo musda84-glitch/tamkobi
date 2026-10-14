@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { KeyRound, Loader2, Save, ShoppingCart } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { pinIsValid } from "../utils/posCashier";
+import { MoneyInput } from "./MoneyInput";
 
 const BOOLS = [
   ["can_change_price", "Fiyat değiştirme"],
@@ -118,13 +119,10 @@ export function PosRulesPanel({ companyId }) {
                     </td>
                   ))}
                   <td className="p-2 text-center">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
+                    <MoneyInput
                       disabled={r.code === "admin"}
                       value={r.pos_rules?.max_discount_pct ?? 0}
-                      onChange={(e) => setRule(r.code, "max_discount_pct", Number(e.target.value))}
+                      onChange={(n) => setRule(r.code, "max_discount_pct", n ?? 0)}
                       className="w-16 border rounded p-1 text-right"
                       data-testid={`pos-rule-${r.code}-max_discount_pct`}
                     />

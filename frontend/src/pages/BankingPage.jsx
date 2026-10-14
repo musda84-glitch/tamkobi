@@ -17,6 +17,7 @@ import { TxRowMenu } from "../components/TxRowMenu";
 import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "../components/TxMobileCard";
 import { SearchSelect } from "../components/SearchSelect";
 import { VirmanPartySelect } from "../components/VirmanPartySelect";
+import { MoneyInput } from "../components/MoneyInput";
 
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { partnerSummaryCardMeta } from "../utils/partnerTx";
@@ -864,11 +865,10 @@ export default function BankingPage() {
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Transfer Tutarı (₺)</label>
-                <input
-                  type="number"
+                <MoneyInput
                   placeholder="0.00"
                   value={virmanForm.amount}
-                  onChange={(e) => setVirmanForm({ ...virmanForm, amount: e.target.value })}
+                  onChange={(n) => setVirmanForm({ ...virmanForm, amount: n ?? "" })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900 text-sm"
                   data-testid="virman-amount-input"
                 />
@@ -1034,12 +1034,10 @@ export default function BankingPage() {
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Kart Limiti (₺)</label>
-                    <input
-                      type="number"
-                      min="0"
+                    <MoneyInput
                       placeholder="0"
                       value={newAccount.card_limit}
-                      onChange={(e) => setNewAccount({ ...newAccount, card_limit: e.target.value })}
+                      onChange={(n) => setNewAccount({ ...newAccount, card_limit: n ?? "" })}
                       className="w-full bg-white border border-slate-200 rounded-lg p-2"
                       data-testid="card-limit-input"
                     />
@@ -1155,10 +1153,9 @@ export default function BankingPage() {
               )}
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{newAccount.type === "credit_card" ? "Mevcut Kart Borcu (₺)" : "Açılış Bakiyesi (₺)"}</label>
-                <input
-                  type="number"
+                <MoneyInput
                   value={newAccount.current_balance}
-                  onChange={(e) => setNewAccount({ ...newAccount, current_balance: e.target.value })}
+                  onChange={(n) => setNewAccount({ ...newAccount, current_balance: n ?? "" })}
                   disabled={!!editingAccount}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 disabled:text-slate-400"
                 />

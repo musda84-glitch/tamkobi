@@ -4,6 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { StockCountPanel } from "../components/StockCountPanel";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { StockToolbar, applyStockFilters, stockFiltersFromSearch, isCriticalStock, isStockUntracked, stockQuantityLabel } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
@@ -757,7 +758,7 @@ export default function StockBarcodePage() {
                     <tr key={l.product_id} className="border-t" data-testid={`stock-reorder-row-${l.sku}`}>
                       <td className="px-2 py-1.5"><div className="font-semibold text-slate-900">{l.name}</div><div className="font-mono text-[10px] text-slate-400">{l.sku}</div></td>
                       <td className="px-2 py-1.5 text-right">{l.stock_quantity} / {l.min_stock_alert}</td>
-                      <td className="px-2 py-1.5"><input type="number" min="1" value={l.quantity} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x) }))} className="w-20 bg-slate-50 border rounded p-1 text-right" data-testid={`stock-reorder-qty-${l.sku}`} /></td>
+                      <td className="px-2 py-1.5"><QuantityInput value={l.quantity} onChange={(n) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, quantity: n ?? "" } : x) }))} className="w-20 bg-slate-50 border rounded p-1 text-right" data-testid={`stock-reorder-qty-${l.sku}`} /></td>
                       <td className="px-2 py-1.5 text-right">{fmtMoney(Number(l.unit_price || 0), l.currency || "TRY")}</td>
                       <td className="px-2 py-1.5">
                         <select value={l.contact_id || reorder.fallback} onChange={(e) => setReorder((s) => ({ ...s, lines: s.lines.map((x, idx) => idx === i ? { ...x, contact_id: e.target.value, contact_name: (s.contacts.find((c) => c.id === e.target.value) || {}).name || "" } : x) }))} className="w-full bg-slate-50 border rounded p-1" data-testid={`stock-reorder-supplier-${l.sku}`}>
@@ -1149,12 +1150,9 @@ export default function StockBarcodePage() {
 
                   <div className="flex items-center gap-2">
                     <label className="font-semibold text-slate-600">Miktar</label>
-                    <input
-                      type="number"
-                      min="0.001"
-                      step="1"
+                    <QuantityInput
                       value={scanQty}
-                      onChange={(e) => setScanQty(e.target.value)}
+                      onChange={(n) => setScanQty(n ?? "")}
                       className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1.5 font-bold text-slate-900"
                       data-testid="scanner-qty-input"
                     />
@@ -1277,20 +1275,18 @@ export default function StockBarcodePage() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Alış Fiyatı ({moneySuffix(newProduct.currency || "TRY")})</label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     value={newProduct.purchase_price}
-                    onChange={(e) => setNewProduct({ ...newProduct, purchase_price: e.target.value })}
+                    onChange={(n) => setNewProduct({ ...newProduct, purchase_price: n ?? "" })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
                     data-testid="new-product-purchase-price"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Satış Fiyatı ({moneySuffix(newProduct.currency || "TRY")})</label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     value={newProduct.sale_price}
-                    onChange={(e) => setNewProduct({ ...newProduct, sale_price: e.target.value })}
+                    onChange={(n) => setNewProduct({ ...newProduct, sale_price: n ?? "" })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
                     data-testid="product-price-input"
                   />
@@ -1390,20 +1386,18 @@ export default function StockBarcodePage() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Başlangıç Stoğu</label>
-                  <input
-                    type="number"
+                  <QuantityInput
                     value={newProduct.stock_quantity}
-                    onChange={(e) => setNewProduct({ ...newProduct, stock_quantity: e.target.value })}
+                    onChange={(n) => setNewProduct({ ...newProduct, stock_quantity: n ?? "" })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold"
                     data-testid="product-stock-input"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Kritik Stok Uyarısı</label>
-                  <input
-                    type="number"
+                  <QuantityInput
                     value={newProduct.min_stock_alert}
-                    onChange={(e) => setNewProduct({ ...newProduct, min_stock_alert: e.target.value })}
+                    onChange={(n) => setNewProduct({ ...newProduct, min_stock_alert: n ?? "" })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
                   />
                 </div>

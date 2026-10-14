@@ -7,6 +7,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ledgerPayPayload } from "../utils/personnelWage";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -76,7 +77,7 @@ export function EmployeeLedgerModal({ employee, companyId, accounts, remaining =
         </p>
         <div>
           <label className="block font-semibold mb-1">Tutar (₺)</label>
-          <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${inputCls} font-bold`} data-testid="emp-ledger-amount" />
+          <MoneyInput value={amount} onChange={(n) => setAmount(n ?? "")} className={`${inputCls} font-bold`} data-testid="emp-ledger-amount" />
         </div>
         <div>
           <label className="block font-semibold mb-1">Açıklama</label>

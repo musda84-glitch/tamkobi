@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { fmtMoney } from "../utils/money";
 import { FxPicker } from "../components/FxPicker";
+import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { statusTr } from "../utils/labels";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
@@ -188,7 +189,7 @@ export default function TradePage() {
               <div><label className="font-semibold block mb-1">Gümrük idaresi</label><input value={form.customs_office} onChange={(e) => setF("customs_office", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" placeholder="Ambarlı, Erenköy…" data-testid="trade-customs" /></div>
               <div><label className="font-semibold block mb-1">Gümrük müşaviri</label><input value={form.customs_broker} onChange={(e) => setF("customs_broker", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" /></div>
               <div><label className="font-semibold block mb-1">Döviz</label><select value={form.currency} onChange={(e) => { const c = e.target.value; setForm((s) => ({ ...s, currency: c, fx_rate: meta?.fx_defaults?.[c] || s.fx_rate })); }} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-currency">{(meta?.currencies || ["USD"]).map((c) => <option key={c}>{c}</option>)}</select></div>
-              <div><label className="font-semibold block mb-1">Kur (₺)</label><input type="number" step="0.0001" value={form.fx_rate} onChange={(e) => setF("fx_rate", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-fx" /></div>
+              <div><label className="font-semibold block mb-1">Kur (₺)</label><MoneyInput maxFractionDigits={6} value={form.fx_rate} onChange={(n) => setF("fx_rate", n ?? "")} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-fx" /></div>
               <div className="sm:col-span-2"><FxPicker companyId={companyId} date={form.file_date} currency={form.currency} rate={form.fx_rate} source={form.fx_source} onChange={(p) => setForm((s) => ({ ...s, ...p }))} testId="trade" rateTestId="trade-fx" /></div>
               <div><label className="font-semibold block mb-1">Konşimento / AWB</label><input value={form.bl_awb} onChange={(e) => setF("bl_awb", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" data-testid="trade-bl" /></div>
               <div><label className="font-semibold block mb-1">Konteyner no</label><input value={form.container_no} onChange={(e) => setF("container_no", e.target.value)} className="w-full border rounded-lg p-2 bg-slate-50" /></div>
@@ -201,13 +202,13 @@ export default function TradePage() {
 
             {form.kind === "import" && (
               <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 bg-amber-50 border border-amber-100 rounded-xl p-3" data-testid="trade-import-costs">
-                <div><label className="font-semibold block mb-1">Navlun ₺</label><input type="number" value={form.freight} onChange={(e) => setF("freight", e.target.value)} className="w-full border rounded-lg p-2" data-testid="trade-freight" /></div>
-                <div><label className="font-semibold block mb-1">Sigorta ₺</label><input type="number" value={form.insurance} onChange={(e) => setF("insurance", e.target.value)} className="w-full border rounded-lg p-2" /></div>
+                <div><label className="font-semibold block mb-1">Navlun ₺</label><MoneyInput value={form.freight} onChange={(n) => setF("freight", n ?? "")} className="w-full border rounded-lg p-2" data-testid="trade-freight" /></div>
+                <div><label className="font-semibold block mb-1">Sigorta ₺</label><MoneyInput value={form.insurance} onChange={(n) => setF("insurance", n ?? "")} className="w-full border rounded-lg p-2" /></div>
                 <div><label className="font-semibold block mb-1">GV %</label><input type="number" value={form.customs_duty_rate} onChange={(e) => setF("customs_duty_rate", e.target.value)} className="w-full border rounded-lg p-2" data-testid="trade-duty" /></div>
                 <div><label className="font-semibold block mb-1">ÖTV %</label><input type="number" value={form.otv_rate} onChange={(e) => setF("otv_rate", e.target.value)} className="w-full border rounded-lg p-2" /></div>
                 <div><label className="font-semibold block mb-1">KKDF %</label><input type="number" value={form.kkdf_rate} onChange={(e) => setF("kkdf_rate", e.target.value)} className="w-full border rounded-lg p-2" /></div>
                 <div><label className="font-semibold block mb-1">İth. KDV %</label><input type="number" value={form.import_vat_rate} onChange={(e) => setF("import_vat_rate", e.target.value)} className="w-full border rounded-lg p-2" /></div>
-                <div><label className="font-semibold block mb-1">Damga ₺</label><input type="number" value={form.stamp_tax} onChange={(e) => setF("stamp_tax", e.target.value)} className="w-full border rounded-lg p-2" data-testid="trade-stamp" /></div>
+                <div><label className="font-semibold block mb-1">Damga ₺</label><MoneyInput value={form.stamp_tax} onChange={(n) => setF("stamp_tax", n ?? "")} className="w-full border rounded-lg p-2" data-testid="trade-stamp" /></div>
               </div>
             )}
 
@@ -219,8 +220,8 @@ export default function TradePage() {
                   <input value={it.gtip} onChange={(e) => setItem(i, "gtip", e.target.value)} placeholder="GTIP" className="col-span-2 border rounded-lg p-2 font-mono" data-testid={`trade-item-gtip-${i}`} />
                   <input value={it.origin_country || ""} onChange={(e) => setItem(i, "origin_country", e.target.value)} placeholder="Menşe" className="col-span-1 border rounded-lg p-2" data-testid={`trade-item-origin-${i}`} />
                   <input type="number" value={it.net_weight || ""} onChange={(e) => setItem(i, "net_weight", e.target.value)} placeholder="Kg" className="col-span-1 border rounded-lg p-2" data-testid={`trade-item-weight-${i}`} />
-                  <input type="number" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} className="col-span-1 border rounded-lg p-2 text-center" />
-                  <input type="number" step="0.01" value={it.unit_price_fx} onChange={(e) => setItem(i, "unit_price_fx", e.target.value)} className="col-span-1 border rounded-lg p-2 text-right" data-testid={`trade-item-price-${i}`} />
+                  <QuantityInput value={it.quantity} onChange={(n) => setItem(i, "quantity", n ?? "")} className="col-span-1 border rounded-lg p-2 text-center" />
+                  <MoneyInput value={it.unit_price_fx} onChange={(n) => setItem(i, "unit_price_fx", n ?? "")} className="col-span-1 border rounded-lg p-2 text-right" data-testid={`trade-item-price-${i}`} />
                   <div className="col-span-1 text-right font-semibold">{fmtMoney((Number(it.quantity) || 0) * (Number(it.unit_price_fx) || 0), form.currency)}</div>
                   <button type="button" onClick={() => setForm((s) => ({ ...s, items: s.items.filter((_, k) => k !== i) }))} className="col-span-1 text-rose-500"><X className="w-4 h-4" /></button>
                 </div>

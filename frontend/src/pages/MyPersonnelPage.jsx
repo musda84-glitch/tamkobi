@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "../components/MoneyInput";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -181,7 +182,7 @@ export default function MyPersonnelPage() {
         <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs">
           <div className="sm:col-span-2">
             <label className="block font-semibold text-slate-600 mb-0.5">Tutar (₺)</label>
-            <input required value={advanceAmount} onChange={(e) => setAdvanceAmount(e.target.value)} placeholder="Örn: 5000" className="w-full bg-slate-50 border rounded-lg p-2" data-testid="my-personnel-advance-amount" />
+            <MoneyInput required value={advanceAmount} onChange={(n) => setAdvanceAmount(n ?? "")} placeholder="Örn: 5000" className="w-full bg-slate-50 border rounded-lg p-2" data-testid="my-personnel-advance-amount" />
           </div>
           <div className="sm:col-span-3">
             <label className="block font-semibold text-slate-600 mb-0.5">Açıklama</label>

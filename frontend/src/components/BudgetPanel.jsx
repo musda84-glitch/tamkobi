@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Target, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { MoneyInput } from "./MoneyInput";
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
@@ -34,7 +35,7 @@ export const BudgetPanel = ({ companyId, refreshKey }) => {
       {!open && withBudget.length === 0 && <div className="text-xs text-slate-400">Henüz bütçe yok. Kategorilere aylık limit belirleyin; %80'e ulaşınca uyarı alırsınız.</div>}
       {open && (
         <div className="space-y-2">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">{data.rows.map((r) => <label key={r.category} className="flex items-center justify-between gap-2 border rounded-lg px-2.5 py-1.5"><span className="truncate text-slate-700">{r.category}</span><input type="number" min="0" step="100" value={edits[r.category] ?? (r.monthly_limit || "")} onChange={(e) => setEdits({ ...edits, [r.category]: e.target.value })} placeholder="₺ / ay" className="w-24 border rounded-md p-1 text-right" data-testid={`budget-input-${r.category}`} /></label>)}</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">{data.rows.map((r) => <label key={r.category} className="flex items-center justify-between gap-2 border rounded-lg px-2.5 py-1.5"><span className="truncate text-slate-700">{r.category}</span><MoneyInput value={edits[r.category] ?? (r.monthly_limit || "")} onChange={(n) => setEdits({ ...edits, [r.category]: n ?? "" })} placeholder="₺ / ay" className="w-24 border rounded-md p-1 text-right" data-testid={`budget-input-${r.category}`} /></label>)}</div>
           <div className="flex justify-end"><button onClick={save} disabled={!Object.keys(edits).length} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold disabled:opacity-40" data-testid="budget-save">Bütçeleri Kaydet</button></div>
         </div>
       )}

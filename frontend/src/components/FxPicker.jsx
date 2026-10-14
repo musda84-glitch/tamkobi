@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 
 export const FX_CODES = ["TRY", "USD", "EUR", "GBP", "CHF", "JPY"];
 export const fmtMoney = (n, ccy = "TRY") => `${formatTrAmount((Number(n) || 0))} ${ccy === "TRY" ? "₺" : ccy}`;
@@ -43,7 +44,7 @@ export function FxPicker({ companyId, date, currency, rate, source, onChange, te
       </div>
       <div>
         <label className="block font-semibold text-slate-700 mb-1">Kur (1 {ccy} = ₺)</label>
-        <input type="number" step="0.0001" min="0" disabled={ccy === "TRY"} value={ccy === "TRY" ? 1 : (rate ?? "")} onChange={(e) => onChange({ currency: ccy, fx_rate: e.target.value, fx_source: "manual" })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono" data-testid={`${testId}-rate`} />
+        <MoneyInput maxFractionDigits={6} disabled={ccy === "TRY"} value={ccy === "TRY" ? 1 : (rate ?? "")} onChange={(n) => onChange({ currency: ccy, fx_rate: n ?? "", fx_source: "manual" })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono" data-testid={`${testId}-rate`} />
         {ccy !== "TRY" && <div className="text-[10px] text-slate-400 mt-0.5">{source === "manual" ? "Manuel kur" : source === "tcmb" ? "TCMB" : source === "kuveyt" ? "Kuveyt" : "Kur"} · {fmtMoney(local, "TRY")}/1 {ccy}</div>}
       </div>
     </div>

@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { channelTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1 text-xs w-20";
@@ -24,8 +25,8 @@ const FeeEditor = ({ ch, onSaved }) => {
     <div className="flex flex-wrap items-end gap-2 text-[10px] text-slate-500" data-testid={`fee-editor-${ch.channel}`}>
       <label>Komisyon %<br /><input type="number" step="0.1" value={f.commission_rate} onChange={(e) => setF({ ...f, commission_rate: Number(e.target.value) })} className={inp} data-testid={`fee-commission-${ch.channel}`} /></label>
       <label>Kom. KDV %<br /><input type="number" step="1" value={f.commission_vat_rate} onChange={(e) => setF({ ...f, commission_vat_rate: Number(e.target.value) })} className={inp} data-testid={`fee-vat-${ch.channel}`} /></label>
-      <label>Hizmet ₺/sip.<br /><input type="number" step="0.01" value={f.service_fee} onChange={(e) => setF({ ...f, service_fee: Number(e.target.value) })} className={inp} data-testid={`fee-service-${ch.channel}`} /></label>
-      <label>Kargo ₺/sip.<br /><input type="number" step="0.01" value={f.cargo_fee} onChange={(e) => setF({ ...f, cargo_fee: Number(e.target.value) })} className={inp} data-testid={`fee-cargo-${ch.channel}`} /></label>
+      <label>Hizmet ₺/sip.<br /><MoneyInput value={f.service_fee} onChange={(n) => setF({ ...f, service_fee: n ?? 0 })} className={inp} data-testid={`fee-service-${ch.channel}`} /></label>
+      <label>Kargo ₺/sip.<br /><MoneyInput value={f.cargo_fee} onChange={(n) => setF({ ...f, cargo_fee: n ?? 0 })} className={inp} data-testid={`fee-cargo-${ch.channel}`} /></label>
       <button onClick={save} disabled={busy} className="flex items-center gap-1 px-2 py-1.5 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid={`fee-save-${ch.channel}`}>{busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Kaydet</button>
     </div>
   );

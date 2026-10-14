@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, X, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount, fmtDate } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { dateSortKey } from "../utils/dateFormat";
 import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIsCashInflow, partnerTxSign } from "../utils/partnerTx";
 import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
@@ -83,7 +84,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
     <div className="space-y-2" data-testid={`partner-tx-card-edit-${t.id}`}>
       <div className="grid grid-cols-2 gap-2">
         <input type="date" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} className={inputCls} data-testid="partner-tx-card-edit-date" />
-        <input type="number" step="0.01" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} className={`${inputCls} text-right font-bold`} data-testid="partner-tx-card-edit-amount" />
+        <MoneyInput value={edit.amount} onChange={(n) => setEdit({ ...edit, amount: n ?? "" })} className={`${inputCls} text-right font-bold`} data-testid="partner-tx-card-edit-amount" />
       </div>
       <div className="font-semibold text-slate-900">{t.partner_name}</div>
       <TxTypeBadge label={partnerTxLabel(t)} kind={partnerTxIsCashInflow(t) ? "giriş" : "çıkış"} />
@@ -139,7 +140,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
               {!isPartnerLedgerType(t.type) && <PaymentTargetSelect companyId={companyId} accounts={accounts} value={edit.account_id || ""} onChange={(v) => setEdit({ ...edit, account_id: v })} testId="partner-tx-edit-account" includePartners={false} className={inputCls} />}
               <input value={edit.description || ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} className={`${inputCls} flex-1`} placeholder="Açıklama" data-testid="partner-tx-edit-desc" />
             </td>
-            <td className="px-4 py-2 text-right"><input type="number" step="0.01" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} className={`${inputCls} w-28 text-right font-bold`} data-testid="partner-tx-edit-amount" /></td>
+            <td className="px-4 py-2 text-right"><MoneyInput value={edit.amount} onChange={(n) => setEdit({ ...edit, amount: n ?? "" })} className={`${inputCls} w-28 text-right font-bold`} data-testid="partner-tx-edit-amount" /></td>
             <td className="px-4 py-2 text-right whitespace-nowrap"><button onClick={save} disabled={busy} className="p-1.5 rounded-md bg-emerald-600 text-white mr-1" title="Kaydet" data-testid="partner-tx-edit-save"><Check className="w-3.5 h-3.5" /></button><button onClick={() => setEdit(null)} className="p-1.5 rounded-md border" title="İptal" data-testid="partner-tx-edit-cancel"><X className="w-3.5 h-3.5" /></button></td>
           </tr>
         ) : (

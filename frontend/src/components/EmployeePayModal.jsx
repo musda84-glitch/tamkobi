@@ -6,6 +6,7 @@ import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { todayIsoDate } from "../utils/partnerTx";
 import {
@@ -164,7 +165,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
                 <select value={row.kind} onChange={(ev) => patch(row.key, "kind", ev.target.value)} className={inputCls} data-testid={`emp-pay-line-kind-${i}`}>
                   {PAYMENT_LINE_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
                 </select>
-                <input type="number" min="0" step="0.01" value={row.amount} onChange={(ev) => patch(row.key, "amount", ev.target.value)} className={inputCls} placeholder="Tutar" data-testid={`emp-pay-line-amount-${i}`} />
+                <MoneyInput value={row.amount} onChange={(n) => patch(row.key, "amount", n ?? "")} className={inputCls} placeholder="Tutar" data-testid={`emp-pay-line-amount-${i}`} />
               </div>
               <PaymentTargetSelect companyId={companyId} accounts={accounts} value={row.accountId} onChange={(id) => patch(row.key, "accountId", id)} testId={`emp-pay-line-account-${i}`} emptyLabel="Kasa / banka" className={inputCls} />
               <input value={row.description} onChange={(ev) => patch(row.key, "description", ev.target.value)} className={inputCls} placeholder="Açıklama" data-testid={`emp-pay-line-note-${i}`} />

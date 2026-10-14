@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ShoppingCart, Copy, ExternalLink, KeyRound, Loader2, Save } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { MoneyInput } from "./MoneyInput";
 
 const FEATURES = [
   ["allow_orders", "Sipariş alımı", "Sepet ve sipariş gönderme"],
@@ -129,13 +130,9 @@ export function ContactB2BPortalPanel({ contactId, contactName, onChanged }) {
           </div>
           <div>
             <label className="block font-semibold mb-1">B2B iskonto %</label>
-            <input
-              type="number"
-              min="0"
-              max="90"
-              step="0.5"
+            <MoneyInput
               value={discount}
-              onChange={(e) => setDiscount(Number(e.target.value) || 0)}
+              onChange={(n) => setDiscount(n ?? 0)}
               className="w-full bg-white border rounded-lg p-2 font-bold"
               data-testid="contact-b2b-discount"
             />
@@ -202,11 +199,9 @@ export function ContactB2BPortalPanel({ contactId, contactName, onChanged }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label className="block font-semibold mb-1">Minimum sipariş (₺)</label>
-            <input
-              type="number"
-              min="0"
+            <MoneyInput
               value={settings.min_order_amount ?? 0}
-              onChange={(e) => set("min_order_amount", Number(e.target.value) || 0)}
+              onChange={(n) => set("min_order_amount", n ?? 0)}
               className="w-full bg-slate-50 border rounded-lg p-2"
               data-testid="contact-b2b-set-min"
             />

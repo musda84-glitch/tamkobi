@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { StockCountPanel } from "../components/StockCountPanel";
+import { QuantityInput } from "../components/MoneyInput";
 
 import {
   Building2,
@@ -298,11 +299,9 @@ export default function WarehousePage() {
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Transfer Miktarı</label>
-                <input
-                  type="number"
-                  min="1"
+                <QuantityInput
                   value={transferForm.quantity}
-                  onChange={(e) => setTransferForm({ ...transferForm, quantity: e.target.value })}
+                  onChange={(n) => setTransferForm({ ...transferForm, quantity: n ?? "" })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
                   data-testid="transfer-quantity-input"
                 />

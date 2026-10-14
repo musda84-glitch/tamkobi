@@ -6,6 +6,7 @@ import { CalendarDays, Plus, Check, X, Calculator, Gift, Trash2, Loader2, Ban } 
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { LEAVE_TYPES, leaveRowActions, leaveStatusView } from "../utils/leaveRequests";
 import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
 
@@ -91,7 +92,7 @@ export const SalaryCalculator = () => {
       <form onSubmit={calc} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 text-xs">
         <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Calculator className="w-4 h-4 text-indigo-600" /> Maaş Hesaplama (Brüt ⇄ Net)</h3>
         <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setMode("gross")} className={`p-2 rounded-lg border font-semibold ${mode === "gross" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white"}`} data-testid="salary-mode-gross">Brütten Nete</button><button type="button" onClick={() => setMode("net")} className={`p-2 rounded-lg border font-semibold ${mode === "net" ? "bg-indigo-600 text-white border-indigo-600" : "bg-white"}`} data-testid="salary-mode-net">Netten Brüte</button></div>
-        <div><label className="block font-semibold mb-1">{mode === "gross" ? "Brüt Maaş (₺)" : "Net Maaş (₺)"}</label><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${inputCls} font-bold text-base`} data-testid="salary-amount-input" /></div>
+        <div><label className="block font-semibold mb-1">{mode === "gross" ? "Brüt Maaş (₺)" : "Net Maaş (₺)"}</label><MoneyInput value={amount} onChange={(n) => setAmount(n ?? "")} className={`${inputCls} font-bold text-base`} data-testid="salary-amount-input" /></div>
         <button type="submit" disabled={busy} className="w-full py-2 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-60" data-testid="salary-calc-btn">{busy ? <Loader2 className="w-4 h-4 animate-spin inline" /> : "Hesapla"}</button>
         <p className="text-[10px] text-slate-400">2026 yaklaşık oranlar; asgari ücret gelir/damga vergisi istisnası uygulanır. Resmi bordro için mali müşavirinizle doğrulayın.</p>
       </form>
@@ -118,7 +119,7 @@ export const BonusPanel = ({ companyId, employees, accounts, onChanged }) => {
         <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Gift className="w-4 h-4 text-amber-600" /> Prim / İkinci Maaş <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 font-bold">GAYRİ RESMİ</span></h3>
         <div><label className="block font-semibold mb-1">Çalışan</label><select value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} className={inputCls} data-testid="bonus-employee-select">{employees.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}</select></div>
         <div className="grid grid-cols-3 sm:grid-cols-7 gap-1">{[["bonus", "Prim"], ["overtime", "Mesai"], ["second_salary", "2. Maaş"], ["advance", "Avans"], ["bakiye", "Bakiye"], ["alacak", "Alacak"], ["borc", "Borç"]].map(([k, l]) => <button key={k} type="button" onClick={() => setForm({ ...form, type: k })} className={`p-2 rounded-lg border font-semibold ${form.type === k ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid={`bonus-type-${k}`}>{l}</button>)}</div>
-        <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Dönem</label><input type="month" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={`${inputCls} font-bold`} required data-testid="bonus-amount-input" /></div></div>
+        <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Dönem</label><input type="month" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput value={form.amount} onChange={(n) => setForm({ ...form, amount: n ?? "" })} className={`${inputCls} font-bold`} required data-testid="bonus-amount-input" /></div></div>
         <div><label className="block font-semibold mb-1">Ödeme Kaynağı</label><PaymentTargetSelect companyId={companyId} accounts={accounts} value={form.account_id} onChange={(v) => setForm({ ...form, account_id: v })} testId="bonus-account-select" emptyLabel="Sadece kaydet (ödeme yok)" /></div>
         <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Not" className={inputCls} />
         <button type="submit" className="w-full py-2 bg-amber-500 text-white rounded-lg font-semibold" data-testid="save-bonus-btn">Kaydet</button>

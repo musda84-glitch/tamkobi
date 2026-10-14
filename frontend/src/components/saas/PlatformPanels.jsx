@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Save, Loader2, Send, Mail, MessageCircle, Bell, CreditCard, KeyRound } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtTL, fmtDate, StatCard, Toggle, inputCls } from "./saasUi";
+import { MoneyInput } from "../MoneyInput";
 
 const PAY_STYLE = { paid: "bg-emerald-50 text-emerald-700", pending: "bg-amber-50 text-amber-700", expired: "bg-slate-100 text-slate-500", failed: "bg-rose-50 text-rose-700" };
 const PAY_LABEL = { paid: "Ödendi", pending: "Bekliyor", expired: "Süresi geçti", failed: "Başarısız" };
@@ -162,7 +163,7 @@ const GibPacksEditor = ({ packs, onChange }) => (
         <div key={p.id || i} className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid={`gib-pack-edit-${p.id}`}>
           <input value={p.name || ""} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} className={inputCls} placeholder="Ad" />
           <input type="number" min={1} value={p.credits || 0} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, credits: Number(e.target.value) } : x))} className={inputCls} placeholder="Kontör" />
-          <input type="number" min={0} value={p.price || 0} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, price: Number(e.target.value) } : x))} className={inputCls} placeholder="Fiyat ₺" />
+          <MoneyInput value={p.price || 0} onChange={(n) => onChange(packs.map((x, j) => j === i ? { ...x, price: n ?? 0 } : x))} className={inputCls} placeholder="Fiyat ₺" />
           <input value={p.tagline || ""} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, tagline: e.target.value } : x))} className={inputCls} placeholder="Kısa not" />
           <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={!!p.popular} onChange={(e) => onChange(packs.map((x, j) => j === i ? { ...x, popular: e.target.checked } : x))} /> Popüler</label>
         </div>

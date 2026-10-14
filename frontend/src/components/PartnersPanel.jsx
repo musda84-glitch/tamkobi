@@ -10,6 +10,7 @@ import { PartnerTxTable } from "./PartnerTxTable";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput } from "./MoneyInput";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
@@ -516,7 +517,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div><label className="block font-semibold mb-1">Ad Soyad</label><input className={inputCls} value={partnerForm.name} onChange={(e) => setPartnerForm({ ...partnerForm, name: e.target.value })} required data-testid="partner-name-input" /></div>
             <div><label className="block font-semibold mb-1">Ortaklık Payı (%)</label><input type="number" step="0.01" className={inputCls} value={partnerForm.share_percent} onChange={(e) => setPartnerForm({ ...partnerForm, share_percent: e.target.value })} required data-testid="partner-share-input" />
               <p className="text-[10px] text-slate-400 mt-1">Mevcut toplam: %{summary?.total_share_percent || 0}</p></div>
-            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="partner-salary-input" /></div>
+            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><MoneyInput className={inputCls} value={partnerForm.monthly_salary} onChange={(n) => setPartnerForm({ ...partnerForm, monthly_salary: n ?? "" })} data-testid="partner-salary-input" /></div>
             <div><label className="block font-semibold mb-1">Hak ediş tarihi</label><input type="date" className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="partner-salary-date-input" />
               <p className="text-[10px] text-slate-400 mt-1">Bu tarihte cebine yazılır. Her ay tekrarla açıksa aynı günde her ay tekrarlanır.</p></div>
             <label className="flex items-center gap-2 text-slate-700"><input type="checkbox" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="partner-salary-recurring" /> Her ay tekrarla</label>
@@ -534,7 +535,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <form onSubmit={saveSalary} className="space-y-3 text-xs">
             <div>
               <label className="block font-semibold mb-1">Aylık maaş (₺)</label>
-              <input type="number" step="0.01" min="0" className={`${inputCls} font-bold`} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} autoFocus data-testid="card-partner-salary-input" />
+              <MoneyInput className={`${inputCls} font-bold`} value={partnerForm.monthly_salary} onChange={(n) => setPartnerForm({ ...partnerForm, monthly_salary: n ?? "" })} autoFocus data-testid="card-partner-salary-input" />
             </div>
             <div>
               <label className="block font-semibold mb-1">Hak ediş tarihi</label>
@@ -556,7 +557,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <form onSubmit={savePartnerEdit} className="space-y-3 text-xs">
             <div><label className="block font-semibold mb-1">Ad Soyad</label><input className={inputCls} value={partnerForm.name} onChange={(e) => setPartnerForm({ ...partnerForm, name: e.target.value })} required data-testid="edit-partner-name-input" /></div>
             <div><label className="block font-semibold mb-1">Ortaklık Payı (%)</label><input type="number" step="0.01" className={inputCls} value={partnerForm.share_percent} onChange={(e) => setPartnerForm({ ...partnerForm, share_percent: e.target.value })} required data-testid="edit-partner-share-input" /></div>
-            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="edit-partner-salary-input" /></div>
+            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><MoneyInput className={inputCls} value={partnerForm.monthly_salary} onChange={(n) => setPartnerForm({ ...partnerForm, monthly_salary: n ?? "" })} data-testid="edit-partner-salary-input" /></div>
             <div><label className="block font-semibold mb-1">Hak ediş tarihi</label><input type="date" className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="edit-partner-salary-date-input" /></div>
             <label className="flex items-center gap-2 text-slate-700"><input type="checkbox" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="edit-partner-salary-recurring" /> Her ay tekrarla</label>
             <p className="text-[10px] text-slate-400">Hak ediş tarihi gelince cebine yazılır; geçmiş vadeler varsa o anda eklenir.</p>
@@ -587,7 +588,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 {" "}Kasa/banka bakiyesi değişmez. Firma politikası açıksa diğer yöneticinin onayı gerekir.
               </p>
             )}
-            <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={txForm.amount} onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })} required data-testid="partner-tx-amount-input" /></div>
+            <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput className={`${inputCls} font-bold`} value={txForm.amount} onChange={(n) => setTxForm({ ...txForm, amount: n ?? "" })} required data-testid="partner-tx-amount-input" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder={isPartnerLedgerType(txForm.type) ? "Örn: Açılış bakiyesi / düzeltme" : "Örn: Sermaye artırımı"} /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold" data-testid="save-partner-tx-btn">İşlemi Kaydet</button></div>
           </form>
@@ -638,7 +639,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 </span>
               </label>
             )}
-            <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={virmanForm.amount} onChange={(e) => setVirmanForm({ ...virmanForm, amount: e.target.value })} required data-testid="partner-virman-amount" /></div>
+            <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput className={`${inputCls} font-bold`} value={virmanForm.amount} onChange={(n) => setVirmanForm({ ...virmanForm, amount: n ?? "" })} required data-testid="partner-virman-amount" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={virmanForm.description} onChange={(e) => setVirmanForm({ ...virmanForm, description: e.target.value })} data-testid="partner-virman-desc" /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || !virmanForm.source_account_id || !virmanForm.target_account_id || virmanForm.source_account_id === virmanForm.target_account_id} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
           </form>

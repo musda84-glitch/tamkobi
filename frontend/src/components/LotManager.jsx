@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Plus, Trash2, AlertTriangle, Package } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { QuantityInput } from "./MoneyInput";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const today = () => new Date().toISOString().slice(0, 10);
@@ -108,7 +109,7 @@ export default function LotManager({ product, companyId, onChanged }) {
             </div>
             <div>
               <label className="font-semibold block mb-1">Miktar</label>
-              <input type="number" step="0.001" min="0.001" className={inputCls} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required disabled={form.tracking_type === "serial"} />
+              <QuantityInput maxFractionDigits={3} className={inputCls} value={form.quantity} onChange={(n) => setForm({ ...form, quantity: n ?? "" })} required disabled={form.tracking_type === "serial"} />
             </div>
           </div>
           {form.tracking_type === "lot" ? (

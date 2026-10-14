@@ -6,6 +6,7 @@ import { Plus, X, Wand2, Trash2, Save, ImagePlus, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressProductImageFile } from "../utils/compressImage";
+import { MoneyInput, QuantityInput } from "./MoneyInput";
 
 const cartesian = (options) =>
   options.reduce((acc, opt) => acc.flatMap((combo) => opt.values.map((v) => ({ ...combo, [opt.name]: v }))), [{}]);
@@ -189,8 +190,8 @@ export const VariantManager = ({ product, onUpdated }) => {
                     <td className="px-2 py-1.5"><input value={v.name} onChange={(e) => updateVariant(idx, "name", e.target.value)} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-semibold" data-testid="variant-name-input" /></td>
                     <td className="px-2 py-1.5"><input value={v.sku} onChange={(e) => updateVariant(idx, "sku", e.target.value)} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-mono" data-testid="variant-sku-input" /></td>
                     <td className="px-2 py-1.5"><input value={v.barcode || ""} placeholder="Otomatik" onChange={(e) => updateVariant(idx, "barcode", e.target.value)} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-mono" data-testid="variant-barcode-input" /></td>
-                    <td className="px-2 py-1.5"><input type="number" value={v.stock} onChange={(e) => updateVariant(idx, "stock", e.target.value)} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-bold" data-testid="variant-stock-input" /></td>
-                    <td className="px-2 py-1.5"><input type="number" value={v.price} onChange={(e) => updateVariant(idx, "price", e.target.value)} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1" data-testid="variant-price-input" /></td>
+                    <td className="px-2 py-1.5"><QuantityInput value={v.stock} onChange={(n) => updateVariant(idx, "stock", n ?? "")} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-bold" data-testid="variant-stock-input" /></td>
+                    <td className="px-2 py-1.5"><MoneyInput value={v.price} onChange={(n) => updateVariant(idx, "price", n ?? "")} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1" data-testid="variant-price-input" /></td>
                     <td className="px-2 py-1.5"><button type="button" onClick={() => setVariants(variants.filter((_, i) => i !== idx))} className="p-1 text-slate-400 hover:text-rose-600" data-testid="remove-variant-btn"><Trash2 className="w-4 h-4" /></button></td>
                   </tr>
                 ))}

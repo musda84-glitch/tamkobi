@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Coins, RefreshCw, Save } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { MoneyInput } from "./MoneyInput";
 
 const CHIP_CODES = ["USD", "EUR"];
 const EDIT_CODES = ["USD", "EUR", "GBP", "CHF", "JPY"];
@@ -154,13 +155,11 @@ export const HeaderFxRates = ({ companyId }) => {
               return (
                 <div key={code} className="flex items-center gap-2 py-1.5" data-testid={`header-fx-row-${code}`}>
                   <span className="w-10 font-bold text-slate-800">{code}</span>
-                  <input
-                    type="number"
-                    step="0.0001"
-                    min="0"
+                  <MoneyInput
+                    maxFractionDigits={6}
                     disabled={!canEdit}
                     value={val}
-                    onChange={(e) => setDraft({ ...draft, [code]: e.target.value })}
+                    onChange={(n) => setDraft({ ...draft, [code]: n ?? "" })}
                     className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-mono text-right disabled:opacity-60"
                     data-testid={`header-fx-input-${code}`}
                   />

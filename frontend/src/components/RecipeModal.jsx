@@ -6,6 +6,7 @@ import { X, Plus, Trash2, BookOpen, ListOrdered, ImagePlus, ArrowDownUp } from "
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { formatTrAmount } from "../utils/money";
+import { MoneyInput, QuantityInput } from "./MoneyInput";
 import { normalizeWorkParks, normalizeWorkshopZones, stationNamesFromParks, zoneNamesFromList } from "../utils/workParks";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
@@ -329,7 +330,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
         <div className="flex justify-between items-start border-b pb-2"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><BookOpen className="w-4 h-4 text-emerald-600" /> {recipe ? `Reçete Düzenle — ${recipe.code}` : "Yeni Reçete (Ürün Ağacı / BOM)"}</h3><button onClick={onClose} className="text-slate-400" data-testid="recipe-close"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div className="col-span-2"><label className="block font-semibold mb-1">Üretilecek Ürün (Mamul) *</label><SearchSelect value={f.finished_product_id} options={finished} placeholder="Ürün ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity}`} onChange={(id, p) => setF({ ...f, finished_product_id: id, unit: p?.unit || f.unit, name: f.name || (p ? `${p.name} Reçetesi` : "") })} testId="recipe-product" /></div>
-          <div><label className="block font-semibold mb-1">Bu reçete kaç {f.unit} üretir?</label><input type="number" min="0.001" step="any" value={f.target_quantity} onChange={(e) => setF({ ...f, target_quantity: e.target.value })} className={`${cls} font-bold`} data-testid="recipe-target-qty" /></div>
+          <div><label className="block font-semibold mb-1">Bu reçete kaç {f.unit} üretir?</label><QuantityInput value={f.target_quantity} onChange={(n) => setF({ ...f, target_quantity: n ?? "" })} className={`${cls} font-bold`} data-testid="recipe-target-qty" /></div>
           <div><label className="block font-semibold mb-1">Reçete Adı</label><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Standart üretim" className={cls} data-testid="recipe-name" /></div>
           <div className="col-span-2"><label className="block font-semibold mb-1">Müşteri (Cari)</label><SearchSelect value={f.contact_id} options={contacts} placeholder="Cari ara…" getLabel={(c) => c.name} getSub={(c) => [c.phone, c.tax_number_or_id].filter(Boolean).join(" · ")} onChange={pickContact} testId="recipe-contact" /></div>
           <div className="col-span-2"><label className="block font-semibold mb-1">İş dosyası adı</label><input value={f.job_file_name} onChange={(e) => setF({ ...f, job_file_name: e.target.value })} placeholder="Örn. AHM-2026-014 / Villa mutfak" className={cls} data-testid="recipe-job-file" /></div>
@@ -391,7 +392,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                   <div className="col-span-4"><SearchSelect value={m.product_id} options={materialsSrc.filter((p) => p.id !== f.finished_product_id)} placeholder="Hammadde ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity} ${p.unit}`} onChange={(id) => pickMat(i, id)} testId={`recipe-mat-select-${i}`} /></div>
                   <div className="col-span-2 flex flex-col gap-0.5">
                     <div className="flex items-center gap-1">
-                      <input type="number" min="0" step="any" value={m.quantity} onChange={(e) => upd(i, { quantity: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} />
+                      <QuantityInput value={m.quantity} onChange={(n) => upd(i, { quantity: n ?? "" })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} />
                       <span className="text-slate-400 text-[10px]">{m.unit}</span>
                     </div>
                     {Number(m.unit_content_qty) > 0 && m.unit_content_unit && (
@@ -403,12 +404,9 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                   <div className="col-span-1"><input type="number" min="0" step="any" value={m.wastage_percent} onChange={(e) => upd(i, { wastage_percent: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Fire / kayıp yüzdesi" /></div>
                   <div className="col-span-3 flex flex-col gap-0.5 min-w-0">
                     <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
+                      <MoneyInput
                         value={m.cost_per_unit}
-                        onChange={(e) => upd(i, { cost_per_unit: e.target.value })}
+                        onChange={(n) => upd(i, { cost_per_unit: n ?? "" })}
                         className="w-full min-w-0 bg-white border rounded p-1.5 text-right"
                         title={m.cost_includes_vat ? "KDV dahil birim fiyat" : "KDV hariç birim fiyat"}
                         placeholder={m.cost_includes_vat ? "Dahil fiyat" : "Hariç fiyat"}
@@ -558,8 +556,8 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
             </div>))}</div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
-          <div><label className="block font-semibold mb-1">İşçilik (₺)</label><input type="number" min="0" step="any" value={f.labor_cost} onChange={(e) => setF({ ...f, labor_cost: e.target.value })} className={cls} data-testid="recipe-labor" /></div>
-          <div><label className="block font-semibold mb-1">Genel Gider (₺)</label><input type="number" min="0" step="any" value={f.overhead_cost} onChange={(e) => setF({ ...f, overhead_cost: e.target.value })} className={cls} data-testid="recipe-overhead" /></div>
+          <div><label className="block font-semibold mb-1">İşçilik (₺)</label><MoneyInput value={f.labor_cost} onChange={(n) => setF({ ...f, labor_cost: n ?? "" })} className={cls} data-testid="recipe-labor" /></div>
+          <div><label className="block font-semibold mb-1">Genel Gider (₺)</label><MoneyInput value={f.overhead_cost} onChange={(n) => setF({ ...f, overhead_cost: n ?? "" })} className={cls} data-testid="recipe-overhead" /></div>
           <div className="col-span-2 bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 flex justify-between items-center" data-testid="recipe-cost-summary"><div><div className="text-[10px] uppercase font-bold text-emerald-700">Toplam Maliyet (KDV hariç)</div><div className="font-bold text-slate-900">{fmt(total)} ₺</div></div><div className="text-right"><div className="text-[10px] uppercase font-bold text-emerald-700">Birim Maliyet</div><div className="text-base font-black text-emerald-700">{fmt(unitCost)} ₺ / {f.unit}</div>{fp?.sale_price > 0 && <div className="text-[10px] text-slate-500">Satış {fmt(fp.sale_price)} ₺ → kâr %{(((fp.sale_price - unitCost) / fp.sale_price) * 100).toFixed(0)}</div>}</div></div>
         </div>
         <div><label className="block font-semibold mb-1">Üretim Notu / Talimat</label><textarea rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={cls} placeholder="Montaj sırası, kalite kontrol…" /></div>
