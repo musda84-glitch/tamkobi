@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { X, Plus, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { fmtMoney } from "../utils/money";
-import { backdropDismissProps } from "../utils/modalBackdrop";
+import { DocumentFormModal } from "./DocumentFormModal";
 import { MoneyInput, QuantityInput } from "./MoneyInput";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
@@ -28,23 +28,42 @@ export const QuoteEditModal = ({ quote, onClose, onSaved }) => {
   };
   const cls = "w-full bg-slate-50 border rounded-lg p-2";
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
-      <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="quote-edit-modal">
-        <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Teklif Düzenle — {quote.quote_number}</h3><button onClick={onClose} className="text-slate-400" data-testid="quote-edit-close"><X className="w-5 h-5" /></button></div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="col-span-2"><label className="block font-semibold mb-1">Başlık</label><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={cls} data-testid="quote-edit-title" /></div>
-          <div><label className="block font-semibold mb-1">Durum</label><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} className={cls} data-testid="quote-edit-status">{STATUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
-          <div><label className="block font-semibold mb-1">Geçerlilik</label><input type="date" value={f.valid_until} onChange={(e) => setF({ ...f, valid_until: e.target.value })} className={cls} /></div>
-          <div className="col-span-2"><label className="block font-semibold mb-1">Not</label><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={cls} /></div>
-          <div className="col-span-3"><label className="block font-semibold mb-1">Şartlar</label><input value={f.terms} onChange={(e) => setF({ ...f, terms: e.target.value })} className={cls} /></div>
+    <DocumentFormModal
+      testId="quote-edit-modal"
+      zClass="z-[60]"
+      maxWidthClass="max-w-3xl"
+      panelClassName="text-xs"
+      blur={false}
+      onBackdropClose={onClose}
+      header={(
+        <div className="p-4 sm:p-5 pb-3 space-y-3">
+          <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Teklif Düzenle — {quote.quote_number}</h3><button type="button" onClick={onClose} className="text-slate-400" data-testid="quote-edit-close"><X className="w-5 h-5" /></button></div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="sm:col-span-2"><label className="block font-semibold mb-1">Başlık</label><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={cls} data-testid="quote-edit-title" /></div>
+            <div><label className="block font-semibold mb-1">Durum</label><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} className={cls} data-testid="quote-edit-status">{STATUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+            <div><label className="block font-semibold mb-1">Geçerlilik</label><input type="date" value={f.valid_until} onChange={(e) => setF({ ...f, valid_until: e.target.value })} className={cls} /></div>
+            <div className="sm:col-span-2"><label className="block font-semibold mb-1">Not</label><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={cls} /></div>
+            <div className="sm:col-span-3"><label className="block font-semibold mb-1">Şartlar</label><input value={f.terms} onChange={(e) => setF({ ...f, terms: e.target.value })} className={cls} /></div>
+          </div>
         </div>
-        <table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Kalem</th><th className="py-1 w-20">Miktar</th><th className="py-1 w-16">Birim</th><th className="py-1 w-28">Birim Fiyat</th><th className="py-1 w-16">KDV</th><th className="py-1 text-right">Tutar</th><th className="w-8"></th></tr></thead>
+      )}
+      footer={(
+        <div className="p-4 sm:p-5 flex flex-wrap justify-between items-center gap-2">
+          <span className="font-bold">Genel Toplam (KDV dahil): {fmt(total, ccy)}</span>
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
+            <button type="button" onClick={save} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="quote-edit-save">Kaydet</button>
+          </div>
+        </div>
+      )}
+    >
+      <div className="px-4 sm:px-5 py-3 space-y-2">
+        <table className="w-full min-w-[640px]"><thead className="text-slate-500 uppercase text-[10px] border-b sticky top-0 bg-white z-[1]"><tr><th className="text-left py-1 bg-white">Kalem</th><th className="py-1 w-20 bg-white">Miktar</th><th className="py-1 w-16 bg-white">Birim</th><th className="py-1 w-28 bg-white">Birim Fiyat</th><th className="py-1 w-16 bg-white">KDV</th><th className="py-1 text-right bg-white">Tutar</th><th className="w-8 bg-white"></th></tr></thead>
           <tbody className="divide-y divide-slate-100">{items.map((it, i) => (
-            <tr key={i}><td className="py-1"><input value={it.name} onChange={(e) => upd(i, "name", e.target.value)} className="w-full bg-slate-50 border rounded p-1" data-testid={`quote-item-name-${i}`} /></td><td className="py-1"><QuantityInput selectOnFocus value={it.quantity} onChange={(n) => setNum(i, "quantity", n)} className="w-full bg-slate-50 border rounded p-1 text-center" data-testid={`quote-item-qty-${i}`} /></td><td className="py-1"><input value={it.unit || "Adet"} onChange={(e) => upd(i, "unit", e.target.value)} className="w-full bg-slate-50 border rounded p-1 text-center" /></td><td className="py-1"><MoneyInput selectOnFocus value={it.unit_price} onChange={(n) => setNum(i, "unit_price", n)} className="w-full bg-slate-50 border rounded p-1 text-right" data-testid={`quote-item-price-${i}`} /></td><td className="py-1"><select value={it.vat_rate ?? 20} onChange={(e) => upd(i, "vat_rate", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1">{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></td><td className="py-1 text-right font-bold">{fmt(Number(it.quantity || 0) * Number(it.unit_price || 0), ccy)}</td><td className="text-right"><button onClick={() => setItems(items.filter((_, idx) => idx !== i))} className="text-rose-500" title="Sil"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>
+            <tr key={i}><td className="py-1"><input value={it.name} onChange={(e) => upd(i, "name", e.target.value)} className="w-full bg-slate-50 border rounded p-1" data-testid={`quote-item-name-${i}`} /></td><td className="py-1"><QuantityInput selectOnFocus value={it.quantity} onChange={(n) => setNum(i, "quantity", n)} className="w-full bg-slate-50 border rounded p-1 text-center" data-testid={`quote-item-qty-${i}`} /></td><td className="py-1"><input value={it.unit || "Adet"} onChange={(e) => upd(i, "unit", e.target.value)} className="w-full bg-slate-50 border rounded p-1 text-center" /></td><td className="py-1"><MoneyInput selectOnFocus value={it.unit_price} onChange={(n) => setNum(i, "unit_price", n)} className="w-full bg-slate-50 border rounded p-1 text-right" data-testid={`quote-item-price-${i}`} /></td><td className="py-1"><select value={it.vat_rate ?? 20} onChange={(e) => upd(i, "vat_rate", Number(e.target.value))} className="w-full bg-slate-50 border rounded p-1">{[20, 10, 1, 0].map((v) => <option key={v} value={v}>%{v}</option>)}</select></td><td className="py-1 text-right font-bold">{fmt(Number(it.quantity || 0) * Number(it.unit_price || 0), ccy)}</td><td className="text-right"><button type="button" onClick={() => setItems(items.filter((_, idx) => idx !== i))} className="text-rose-500" title="Sil"><Trash2 className="w-3.5 h-3.5" /></button></td></tr>
           ))}</tbody></table>
-        <button onClick={() => setItems([...items, { name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="quote-add-item"><Plus className="w-3.5 h-3.5" /> Kalem Ekle</button>
-        <div className="flex justify-between items-center border-t pt-2"><span className="font-bold">Genel Toplam (KDV dahil): {fmt(total, ccy)}</span><div className="flex gap-2"><button onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={save} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="quote-edit-save">Kaydet</button></div></div>
+        <button type="button" onClick={() => setItems([...items, { name: "", quantity: 1, unit: "Adet", unit_price: 0, vat_rate: 20 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="quote-add-item"><Plus className="w-3.5 h-3.5" /> Kalem Ekle</button>
       </div>
-    </div>
+    </DocumentFormModal>
   );
 };

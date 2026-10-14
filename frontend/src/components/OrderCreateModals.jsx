@@ -5,6 +5,7 @@ import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { ContactSearchSelect } from "./ContactSearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "./DocumentLineEditor";
+import { DocumentFormModal } from "./DocumentFormModal";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { orderLinesLocked } from "../utils/orderEdit";
 import { useEscape } from "../utils/useEscape";
@@ -66,9 +67,16 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş oluşturulamadı."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
-      <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="new-order-modal">
-        <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">Yeni Sipariş Oluştur</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="new-order-close"><X className="w-4 h-4" /></button></div>
+    <DocumentFormModal
+      testId="new-order-modal"
+      zClass="z-[70]"
+      maxWidthClass="max-w-6xl"
+      panelClassName="text-xs"
+      blur={false}
+      onBackdropClose={onClose}
+      header={(
+        <div className="p-4 sm:p-5 pb-3 space-y-4">
+        <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">Yeni Sipariş Oluştur</h3><button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="new-order-close"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="md:col-span-2"><label className="block font-semibold mb-1">Cari (seçince bilgiler dolar)</label><ContactSearchSelect companyId={companyId} value={f.contact_id} valueLabel={f.customer_name} placeholder="Cari ara…" onChange={pickContact} testId="new-order-contact" /></div>
           <div><label className="block font-semibold mb-1">Kanal</label><select value={f.channel} onChange={(e) => setF({ ...f, channel: e.target.value })} className={inp} data-testid="new-order-channel">{CHANNELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
@@ -92,6 +100,17 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
             });
           }}
         />
+        </div>
+      )}
+      footer={(
+        <div className="p-4 sm:p-5 space-y-3">
+        <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} currency="TRY" />
+        <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={inp} data-testid="new-order-notes" />
+        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button><button type="button" onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>
+        </div>
+      )}
+    >
+        <div className="px-4 sm:px-5 py-3">
         <DocumentLineEditor
           items={items}
           onChange={setItems}
@@ -102,11 +121,8 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
           currency="TRY"
           testIdPrefix="new-order"
         />
-        <LineTotalsFooter subtotal={totals.subtotal} vat={totals.vat} lineDiscount={totals.lineDiscount} grandTotal={totals.grandTotal} currency="TRY" />
-        <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={2} placeholder="Sipariş notu" className={inp} data-testid="new-order-notes" />
-        <div className="flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button><button onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="new-order-save">{busy ? "Kaydediliyor…" : "Siparişi Oluştur"}</button></div>
-      </div>
-    </div>
+        </div>
+    </DocumentFormModal>
   );
 };
 
@@ -151,8 +167,15 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
     }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
-      <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="edit-order-modal">
+    <DocumentFormModal
+      testId="edit-order-modal"
+      zClass="z-[70]"
+      maxWidthClass="max-w-6xl"
+      panelClassName="text-xs"
+      blur={false}
+      onBackdropClose={onClose}
+      header={(
+        <div className="p-4 sm:p-5 pb-3 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-bold text-slate-900">Siparişi Düzenle · {order.order_number}</h3>
           <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="edit-order-close"><X className="w-4 h-4" /></button>
@@ -164,15 +187,22 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
         </div>
         {linesLocked ? (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Pazaryeri kalemleri değiştirilemez. Not ve müşteri sipariş numarası kaydedilir.</div>
-        ) : (
-          <DocumentLineEditor items={items} onChange={setItems} products={products} kind="order" allowService invoiceType="sales" currency={order?.currency || "TRY"} testIdPrefix="edit-order" />
-        )}
-        <div className="flex justify-end gap-2">
+        ) : null}
+        </div>
+      )}
+      footer={(
+        <div className="p-4 sm:p-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg">İptal</button>
           <button type="button" onClick={save} disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="edit-order-save">{busy ? "Kaydediliyor…" : "Kaydet"}</button>
         </div>
-      </div>
-    </div>
+      )}
+    >
+      {linesLocked ? null : (
+        <div className="px-4 sm:px-5 py-3">
+          <DocumentLineEditor items={items} onChange={setItems} products={products} kind="order" allowService invoiceType="sales" currency={order?.currency || "TRY"} testIdPrefix="edit-order" />
+        </div>
+      )}
+    </DocumentFormModal>
   );
 };
 

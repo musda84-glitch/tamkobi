@@ -14,6 +14,7 @@ import { lineUnitIncl } from "../utils/printFormLayout";
 import { LegalConsent } from "./LegalConsent";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { DocumentFormModal } from "./DocumentFormModal";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -426,9 +427,38 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
     } catch (e) { toast.error(e.response?.data?.detail || "Güncellenemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl max-w-lg w-full p-4 sm:p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="b2b-edit-order-modal">
-        <div className="flex justify-between items-start"><div><h3 className="text-sm font-bold text-slate-900">Siparişi düzenle</h3><p className="text-slate-500 font-mono">{order.order_number}</p></div><button type="button" onClick={onClose} className="text-slate-400" data-testid="b2b-edit-close"><X className="w-5 h-5" /></button></div>
+    <DocumentFormModal
+      testId="b2b-edit-order-modal"
+      zClass="z-[70]"
+      maxWidthClass="max-w-lg"
+      panelClassName="text-xs"
+      blur={false}
+      onBackdropClose={onClose}
+      header={(
+        <div className="p-4 sm:p-5 pb-2">
+          <div className="flex justify-between items-start"><div><h3 className="text-sm font-bold text-slate-900">Siparişi düzenle</h3><p className="text-slate-500 font-mono">{order.order_number}</p></div><button type="button" onClick={onClose} className="text-slate-400" data-testid="b2b-edit-close"><X className="w-5 h-5" /></button></div>
+        </div>
+      )}
+      footer={(
+        <div className="p-4 sm:p-5 space-y-3">
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu" className="w-full border rounded-xl p-2.5" data-testid="b2b-edit-note" />
+        <div className="space-y-1 border-t pt-2">
+          <div className="flex justify-between text-slate-500" data-testid="b2b-edit-kalem">
+            <span>Toplam kalem</span>
+            <span>{cartKalemLabel(kalemCount)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <b data-testid="b2b-edit-total">Toplam (KDV dahil) {fmt(total)}</b>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">Vazgeç</button>
+              <button type="button" onClick={save} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="b2b-edit-save">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Kaydet"}</button>
+            </div>
+          </div>
+        </div>
+        </div>
+      )}
+    >
+        <div className="px-4 sm:px-5 py-2">
         <div className="divide-y">{lines.map((l, idx) => {
           const unitGross = b2bEditUnitGross(l);
           const lineGross = b2bEditLineGross(l);
@@ -464,22 +494,8 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
             <button type="button" onClick={addLine} disabled={!addId} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold disabled:opacity-40" data-testid="b2b-edit-add-btn">Ekle</button>
           </div>
         )}
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu" className="w-full border rounded-xl p-2.5" data-testid="b2b-edit-note" />
-        <div className="space-y-1 border-t pt-2">
-          <div className="flex justify-between text-slate-500" data-testid="b2b-edit-kalem">
-            <span>Toplam kalem</span>
-            <span>{cartKalemLabel(kalemCount)}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <b data-testid="b2b-edit-total">Toplam (KDV dahil) {fmt(total)}</b>
-            <div className="flex gap-2">
-              <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">Vazgeç</button>
-              <button type="button" onClick={save} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="b2b-edit-save">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Kaydet"}</button>
-            </div>
-          </div>
         </div>
-      </div>
-    </div>
+    </DocumentFormModal>
   );
 };
 

@@ -48,6 +48,7 @@ import { orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseSh
 import { useNavigate } from "react-router-dom";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { DocumentLineEditor } from "./DocumentLineEditor";
+import { DocumentFormModal } from "./DocumentFormModal";
 import { documentLineTotals, hydrateLine } from "../utils/documentLines";
 import { withMarketplaceVatFlag } from "../utils/marketplaceVat";
 import { orderFooterTotals } from "../utils/orderMoney";
@@ -1283,8 +1284,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           );
         })()}
         {editInv && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditInv(null))}>
-            <div className="bg-white rounded-2xl max-w-6xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
+          <DocumentFormModal
+            testId="invoice-edit-modal"
+            zClass="z-[60]"
+            maxWidthClass="max-w-6xl"
+            panelClassName="text-xs"
+            blur={false}
+            onBackdropClose={() => setEditInv(null)}
+            header={(
+            <div className="p-4 sm:p-5 pb-3 space-y-3">
               <div className="flex justify-between items-center border-b pb-2 gap-3">
                 <h3 className="text-sm font-bold">{isGibIssued(editInv) ? "Fatura Düzenle" : (editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle")} — {editInv.invoice_number}</h3>
                 <div className="flex items-center gap-2 shrink-0">
@@ -1293,7 +1301,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     onPickMode={(mode) => invoiceCopy.openPick(editInv, mode)}
                     onCopied={onInvoiceCopied}
                   />
-                  <button type="button" onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+                  <button type="button" onClick={() => setEditInv(null)} className="text-slate-400" data-testid="edit-inv-close"><X className="w-5 h-5" /></button>
                 </div>
               </div>
               {isGibIssued(editInv) && (
@@ -1380,6 +1388,23 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   />
                 </div>
               </div>
+            </div>
+            )}
+            footer={(() => { const t = documentLineTotals(editInv.items || []); const ccy = editInv.currency || "TRY"; return (
+              <div className="p-4 sm:p-5 flex flex-wrap justify-between items-center gap-3">
+                <div className="text-right space-y-0.5 ml-auto sm:ml-0">
+                  <div>KDV Hariç: <b>{fmtMoney(t.subtotal, ccy)}</b></div>
+                  <div>KDV: <b>{fmtMoney(t.vat, ccy)}</b></div>
+                  <div className="font-bold">Genel Toplam (KDV Dahil): {fmtMoney(t.grandTotal, ccy)}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
+                  <button type="button" onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button>
+                </div>
+              </div>
+            ); })()}
+          >
+              <div className="px-4 sm:px-5 py-3">
               <DocumentLineEditor
                 items={editInv.items || []}
                 onChange={(items) => setEditInv({ ...editInv, items })}
@@ -1391,15 +1416,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 disabled={isGibIssued(editInv)}
                 testIdPrefix="edit-inv-item"
               />
-              {(() => { const t = documentLineTotals(editInv.items || []); const ccy = editInv.currency || "TRY"; return (
-              <div className="flex justify-between items-center border-t pt-2"><div className="text-right space-y-0.5"><div>KDV Hariç: <b>{fmtMoney(t.subtotal, ccy)}</b></div><div>KDV: <b>{fmtMoney(t.vat, ccy)}</b></div><div className="font-bold">Genel Toplam (KDV Dahil): {fmtMoney(t.grandTotal, ccy)}</div></div><div className="flex gap-2"><button onClick={() => setEditInv(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={saveInvoiceEdit} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="edit-inv-save-btn">Kaydet</button></div></div>
-              ); })()}
-            </div>
-          </div>
+              </div>
+          </DocumentFormModal>
         )}
         {editOrder && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditOrder(null))}>
-            <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="detail-order-edit-modal">
+          <DocumentFormModal
+            testId="detail-order-edit-modal"
+            zClass="z-[60]"
+            maxWidthClass="max-w-5xl"
+            panelClassName="text-xs"
+            blur={false}
+            onBackdropClose={() => setEditOrder(null)}
+            header={(
+              <div className="p-4 sm:p-5 pb-3 space-y-3">
               <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Sipariş Düzenle · {editOrder.order_number}</h3><button type="button" onClick={() => setEditOrder(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div><label className="block font-semibold mb-1">Müşteri sipariş no</label><input value={editOrder.customer_order_number} onChange={(e) => setEditOrder({ ...editOrder, customer_order_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="detail-order-edit-po" /></div>
@@ -1407,12 +1436,22 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               </div>
               {editOrder.linesLocked ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Pazaryeri kalemleri değiştirilemez. Not ve müşteri sipariş numarası kaydedilir.</div>
-              ) : (
+              ) : null}
+              </div>
+            )}
+            footer={(
+              <div className="p-4 sm:p-5 flex justify-end gap-2">
+                <button type="button" onClick={() => setEditOrder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
+                <button type="button" onClick={saveEditOrder} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="detail-order-edit-save">Kaydet</button>
+              </div>
+            )}
+          >
+            {editOrder.linesLocked ? null : (
+              <div className="px-4 sm:px-5 py-3">
                 <DocumentLineEditor items={editOrder.items} onChange={(items) => setEditOrder({ ...editOrder, items })} products={orderProducts} kind="order" testIdPrefix="detail-order-line" />
-              )}
-              <div className="flex justify-end gap-2 border-t pt-2"><button type="button" onClick={() => setEditOrder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="button" onClick={saveEditOrder} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="detail-order-edit-save">Kaydet</button></div>
-            </div>
-          </div>
+              </div>
+            )}
+          </DocumentFormModal>
         )}
         {orderDetail && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setOrderDetail(null))}>
