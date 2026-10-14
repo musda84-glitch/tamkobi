@@ -160,3 +160,40 @@ test("ödeme açılışında uuid üretir ve Idempotency-Key gönderir", async (
   expect(body.idempotency_key.length).toBeGreaterThan(8);
   expect(cfg.headers["Idempotency-Key"]).toBe(body.idempotency_key);
 });
+
+test("Masraf ödemesi türü bakiyeyi düşürmez ve isteğe bağlı masraf bağlar", async () => {
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/expenses")) {
+      return Promise.resolve({ data: { expenses: [
+        { id: "ex1", expense_number: "MSR-2026-0007", description: "Market", paid_by_personnel: true, personnel_debt_status: "open" },
+        { id: "ex2", expense_number: "MSR-2026-0008", description: "Şirket", payment_status: "unpaid" },
+      ] } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  render(
+    <EmployeePayModal employee={{ id: "e1", full_name: "Ali" }} companyId="c1" accounts={accounts} card={card} onClose={() => {}} />,
+  );
+  const kind = host.querySelector('[data-testid="emp-pay-line-kind-0"]');
+  expect(kind.textContent).toContain("Masraf ödemesi");
+  await act(async () => {
+    setNative(kind, "reimburse");
+    await Promise.resolve();
+  });
+  expect(host.querySelector('[data-testid="emp-pay-line-reimburse-hint-0"]').textContent).toMatch(/düşmez/);
+  const expense = host.querySelector('[data-testid="emp-pay-line-expense-0"]');
+  expect(expense.textContent).toContain("MSR-2026-0007");
+  expect(expense.textContent).not.toContain("MSR-2026-0008");
+  act(() => {
+    setNative(host.querySelector('[data-testid="emp-pay-line-amount-0"]'), "250");
+    setNative(expense, "ex1");
+  });
+  expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).toContain("33.300,00");
+  await act(async () => {
+    host.querySelector('[data-testid="emp-pay-submit"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const [, body] = axios.post.mock.calls[0];
+  expect(body.lines[0]).toMatchObject({ kind: "reimburse", amount: 250, expense_id: "ex1", account_id: "bank1" });
+});

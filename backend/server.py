@@ -19323,7 +19323,9 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         expenses = await db.expenses.find({"employee_id": emp_id}).to_list(500)
     as_of = employee_pay.istanbul_today()
     unpaid_payroll = employee_pay.unpaid_salary_amount(emp, payrolls, month, as_of)
-    unpaid_expenses = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("payment_status") != "paid"), 2)
+    unpaid_expenses = round(sum(
+        _emp_num(e.get("total")) for e in expenses if employee_pay.expense_counts_in_receivable(e)
+    ), 2)
     meal = round(_emp_num(emp.get("meal_allowance")), 2)
     transport = round(_emp_num(emp.get("transport_allowance")), 2)
     # Yemek/yol yalnızca hak ediş günü gelince alacağa düşer (maaş slotları ile aynı).
@@ -19928,6 +19930,10 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "source": b.get("source"), "date": b.get("date"), "created_at": b.get("created_at"), "paid_at": b.get("paid_at"),
         "account_name": b.get("account_name"),
     } for b in bonuses]
+    import personnel_payments
+    reimburse_rows = clean_docs(await db.personnel_movements.find({
+        **pay_q, "kind": "reimburse",
+    }).sort("date", -1).to_list(100))
 
     return {
         "employee": safe_emp,
@@ -19938,6 +19944,7 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "leave_balance": leave_bal,
         "payrolls": payroll_public,
         "bonuses": bonus_public,
+        "reimbursements": personnel_payments.reimbursement_rows(reimburse_rows),
         "balance": await _employee_receivable(emp, payrolls, bonuses, month),
         "receipts": await _employee_receipts(emp_id),
         "tasks": tasks,

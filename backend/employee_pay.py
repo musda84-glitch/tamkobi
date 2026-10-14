@@ -33,6 +33,11 @@ PAY_KIND_FIELDS = (
     ("expense", "unpaid_expenses"),
 )
 
+REIMBURSE_KIND = "reimburse"
+PERSONNEL_PAYER_VALUES = {"personnel", "employee", "personel", "staff"}
+CLOSED_PERSONNEL_DEBT = {"closed", "reimbursed", "paid"}
+_PERSONNEL_DEBT_TEXT = "personel tarafından ödendi"
+
 
 def istanbul_today(now: Any = None) -> dt_date:
     """Europe/Istanbul takvim günü. Naive datetime UTC sayılır."""
@@ -634,6 +639,73 @@ def grouped_cash_shortfall(lines: Optional[List[dict]], accounts_by_id: Optional
         if cash_shortfall(accounts_by_id.get(aid), total):
             return CASH_SHORT_MSG
     return None
+
+
+def _truthy_flag(v: Any) -> bool:
+    if v is True or v == 1:
+        return True
+    return str(v or "").strip().lower() in {"1", "true", "yes", "evet"}
+
+
+def expense_paid_by_personnel(exp: Optional[dict]) -> bool:
+    """Personel şirket adına cebinden ödediyse True."""
+    if not isinstance(exp, dict):
+        return False
+    if _truthy_flag(exp.get("paid_by_personnel")):
+        return True
+    for key in ("payer", "paid_by_kind", "payment_source", "paid_by"):
+        if str(exp.get(key) or "").strip().lower() in PERSONNEL_PAYER_VALUES:
+            return True
+    blob = " ".join(
+        str(exp.get(k) or "")
+        for k in ("note", "notes", "description", "payment_note", "paid_by_label")
+    ).lower()
+    return _PERSONNEL_DEBT_TEXT in blob
+
+
+def personnel_debt_status_of(exp: Optional[dict]) -> str:
+    return str((exp or {}).get("personnel_debt_status") or "").strip().lower()
+
+
+def personnel_debt_closed(exp: Optional[dict]) -> bool:
+    return personnel_debt_status_of(exp) in CLOSED_PERSONNEL_DEBT
+
+
+def personnel_debt_open(exp: Optional[dict]) -> bool:
+    """Açık 'personel tarafından ödendi' borcu. Kapalı kayıt açık sayılmaz."""
+    if not isinstance(exp, dict) or personnel_debt_closed(exp):
+        return False
+    if personnel_debt_status_of(exp) == "open":
+        return True
+    return expense_paid_by_personnel(exp)
+
+
+def expense_counts_in_receivable(exp: Optional[dict]) -> bool:
+    """Şirketin personele masraf borcu hak edişe girer. Personel cebinden ödenen girmez."""
+    if not isinstance(exp, dict):
+        return False
+    if str(exp.get("payment_status") or "") == "paid":
+        return False
+    if personnel_debt_status_of(exp) or expense_paid_by_personnel(exp):
+        return False
+    return True
+
+
+def personnel_debt_amount(exp: Optional[dict]) -> float:
+    if not isinstance(exp, dict):
+        return 0.0
+    if exp.get("personnel_debt_amount") not in (None, ""):
+        return round(_amt(exp.get("personnel_debt_amount")), 2)
+    raw = exp.get("total") if exp.get("total") not in (None, "") else exp.get("amount")
+    return round(_amt(raw), 2)
+
+
+def payment_lines_affecting_balance(lines: Optional[List[dict]]) -> List[dict]:
+    """Masraf ödemesi maaş, avans ve hak ediş bakiyesinden düşülmez."""
+    return [
+        ln for ln in (lines or [])
+        if str((ln or {}).get("kind") or "").strip().lower() != REIMBURSE_KIND
+    ]
 
 
 def payment_after(remaining: float, lines: Optional[List[dict]]) -> Dict[str, Any]:

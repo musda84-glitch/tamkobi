@@ -359,7 +359,8 @@ export function employeePayMoves(card) {
         if (effectHitsPersonnel(eff, id) && !targets.includes(row)) targets.push(row);
       }
     }
-    if (targets.length) {
+    const isReimburse = String(m.kind || "") === "reimburse";
+    if (!isReimburse && targets.length) {
       for (const row of targets) {
         rememberMovement(row, mid);
         rememberSource(row, m.account_name);
@@ -369,8 +370,9 @@ export function employeePayMoves(card) {
     const lone = {
       id: mid,
       kind: "personnel_payment",
-      title: m.kind_label || "Ödeme",
-      subtitle: payBits([m.period, m.description]),
+      payKind: m.kind,
+      title: m.kind_label || (isReimburse ? "Masraf ödemesi" : "Ödeme"),
+      subtitle: payBits([m.period, m.expense_number, m.description]),
       amount: Number(m.amount) || 0,
       date: String(m.date || m.created_at || ""),
       status: m.status || "posted",
@@ -565,9 +567,25 @@ export function payMoveDeletePath(row) {
   return null;
 }
 
+export const REIMBURSE_BADGE = "Masraf ödemesi";
+
+export function payMoveBadge(row) {
+  if (row?.payKind === "reimburse" || row?.title === REIMBURSE_BADGE) {
+    return { label: REIMBURSE_BADGE, kind: "masraf" };
+  }
+  if (row?.title === "Avans") return { label: "Çıkış", kind: "çıkış" };
+  return { label: "Giriş", kind: "giriş" };
+}
+
 export function payMoveDeleteConfirm(row) {
   const paid = row?.status === "paid";
   if (row?.kind === "personnel_payment") {
+    if (row?.payKind === "reimburse" || row?.title === REIMBURSE_BADGE) {
+      return {
+        title: "Masraf ödemesini sil",
+        message: "Bu masraf ödemesi silinsin mi? Bağlı kasa, banka veya ortak çıkışı da silinir. Masraf kaydının personel borcu yeniden açılır.",
+      };
+    }
     return {
       title: "Ödemeyi geri al",
       message: "Bu ödeme geri alınsın mı? Kasa/banka bakiyesi ve avans/bordro/prim kapatmaları düzeltilir, makbuz iptal edilir.",

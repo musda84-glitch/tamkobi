@@ -26,6 +26,7 @@ import {
   overtimeMoveSourceLabel,
   overtimeMovesPeriodHint,
   payMoveCanDelete,
+  payMoveBadge,
   payMoveDeleteConfirm,
   payMoveDeletePath,
   payMovesPeriodHint,
@@ -184,6 +185,18 @@ describe("personnelCard", () => {
     expect(employeePayMoves({
       movements: [{ id: "mov_1", kind_label: "Maaş", amount: 1000, date: "2026-10-13", period: "2026-10", status: "posted" }],
     }).map((m) => m.kind)).toEqual(["personnel_payment"]);
+    const reimburse = employeePayMoves({
+      movements: [{
+        id: "mov_r", kind: "reimburse", kind_label: "Masraf ödemesi", amount: 250,
+        date: "2026-10-14", period: "2026-10", account_name: "Kasa", expense_number: "MSR-2026-0007", status: "posted",
+      }],
+    });
+    expect(reimburse).toHaveLength(1);
+    expect(reimburse[0].title).toBe("Masraf ödemesi");
+    expect(reimburse[0].subtitle).toContain("MSR-2026-0007");
+    expect(payMoveBadge(reimburse[0])).toEqual({ label: "Masraf ödemesi", kind: "masraf" });
+    expect(payMoveBadge({ title: "Avans" }).label).toBe("Çıkış");
+    expect(payMoveDeleteConfirm(reimburse[0]).message).toMatch(/çıkışı da silinir/);
   });
 
   test("collapses a linked advance into the personnel row and names the source", () => {

@@ -83,6 +83,10 @@ describe("employeePay", () => {
     expect(sgkCashBlocked({ salary: 10000 }, true, [{ kind: "salary", amount: 10000, accountId: "k" }], accounts)).toBeNull();
     expect(cashShortfallWarning([{ kind: "advance", amount: 150, accountId: "k" }], accounts)).toContain("yetersiz");
     expect(paymentPreview(5000, [{ amount: 7000 }]).message).toContain("sonraki maaştan düşülecek");
+    expect(paymentPreview(5000, [{ kind: "reimburse", amount: 7000 }])).toMatchObject({
+      paying: 0, remainingAfter: 5000, overpaid: false,
+    });
+    expect(paymentPreview(5000, [{ amount: 1000 }, { kind: "reimburse", amount: 7000 }]).remainingAfter).toBe(4000);
     expect(istanbulPeriod(new Date("2026-09-30T21:30:00Z"))).toBe("2026-10");
   });
 

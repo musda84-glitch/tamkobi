@@ -101,6 +101,10 @@ import {
   overtimeSummaryLine,
   validateOvertimeEdit,
   personnelExpensePayload,
+  personnelReimbursePayload,
+  expensePersonnelDebtOpen,
+  validateReimburse,
+  REIMBURSE_LABEL,
   assignEmployeeToTasks,
   assignedTaskAfterAssign,
   employeeDutyBoard,
@@ -389,6 +393,11 @@ export function PersonnelScreen() {
   const [bonusForm, setBonusForm] = useState<{ employee_id: string; type: string; amount: string | number; period: string; note: string }>({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
   const [settleEmp, setSettleEmp] = useState<Employee | null>(null);
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
+  const [reimburseEmp, setReimburseEmp] = useState<Employee | null>(null);
+  const [reimburseAmount, setReimburseAmount] = useState<string | number>("");
+  const [reimburseNote, setReimburseNote] = useState("");
+  const [reimburseExpenseId, setReimburseExpenseId] = useState("");
+  const [reimburseDebts, setReimburseDebts] = useState<{ value: string; label: string }[]>([]);
   const [expenseAmount, setExpenseAmount] = useState<string | number>("");
   const [expenseNote, setExpenseNote] = useState("");
   const [msgEmp, setMsgEmp] = useState<Employee | null>(null);
@@ -729,7 +738,7 @@ export function PersonnelScreen() {
     setBusy(true);
     try {
       await del(client, path);
-      setMessage("Yevmiye / ödeme kaydı silindi.");
+      setMessage(row.payKind === "reimburse" ? "Masraf ödemesi silindi." : "Yevmiye / ödeme kaydı silindi.");
       if (movesEmp) {
         const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(movesEmp)}/card`);
         setMoves(employeePayMoves(card));
@@ -842,6 +851,53 @@ export function PersonnelScreen() {
     transport: (emp: Employee) => openAllowance(emp, "transport"),
     bonus: (emp: Employee) => (isDailyWage(emp) ? openYevmiyeDays(emp) : openExtraPay(emp, "bonus")),
     otpay: (emp: Employee) => openExtraPay(emp, "overtime"),
+    reimburse: openReimburse,
+  };
+
+  function openReimburse(emp: Employee) {
+    setReimburseEmp(emp);
+    setReimburseAmount("");
+    setReimburseNote("");
+    setReimburseExpenseId("");
+    setPayAccount((cur) => cur || (accounts[0] ? idOf(accounts[0]) : ""));
+    get<Partner[]>(client, "/banking/partners", { company_id: companyId })
+      .then((pars) => { if (Array.isArray(pars)) setPartners(pars); })
+      .catch(() => undefined);
+    get<{ expenses?: Record<string, unknown>[] }>(client, "/expenses", { company_id: companyId, employee_id: idOf(emp) })
+      .then((res) => {
+        const rows = Array.isArray(res?.expenses) ? res.expenses : [];
+        setReimburseDebts(rows.filter(expensePersonnelDebtOpen).map((exp) => ({
+          value: String(exp.id || exp._id || ""),
+          label: [exp.expense_number, exp.description].filter(Boolean).map(String).join(" · ") || "Masraf",
+        })).filter((row) => row.value));
+      })
+      .catch(() => setReimburseDebts([]));
+  }
+
+  const saveReimburse = async () => {
+    if (!reimburseEmp) return;
+    const invalid = validateReimburse(reimburseAmount, payAccount);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true);
+    try {
+      await post(client, `/personnel/employees/${idOf(reimburseEmp)}/settle`, personnelReimbursePayload(
+        reimburseAmount,
+        payAccount,
+        reimburseNote,
+        reimburseExpenseId,
+        todayIso(),
+      ));
+      setMessage(`${reimburseEmp.full_name} için masraf ödemesi kaydedildi.`);
+      setReimburseEmp(null);
+      setReimburseAmount("");
+      setReimburseNote("");
+      setReimburseExpenseId("");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Masraf ödemesi kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openEmployeeMessage = (emp: Employee) => {
@@ -2425,6 +2481,14 @@ export function PersonnelScreen() {
               } : undefined}
             >
               <Text style={{ fontWeight: "800", color: colors.text }}>{row.title}</Text>
+              {row.payKind === "reimburse" ? (
+                <Text
+                  testID={`emp-pay-move-badge-${row.id}`}
+                  style={{ alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, overflow: "hidden", backgroundColor: "#EEF2FF", color: "#4338CA", fontSize: 11, fontWeight: "800" }}
+                >
+                  {REIMBURSE_LABEL}
+                </Text>
+              ) : null}
               <Muted>{row.editable ? `${row.subtitle} · düzenle` : row.subtitle}</Muted>
               <Text style={{ fontWeight: "800", color: row.kind === "bonus" && row.title === "Avans" ? colors.warning : colors.text }}>
                 {fmtMoney(row.amount)}
@@ -2568,7 +2632,7 @@ export function PersonnelScreen() {
       <B2BSheet
         visible={!!settleEmp}
         title={settleEmp ? employeePayButtonLabel({ balance: balances[idOf(settleEmp)] }, balances[idOf(settleEmp)]) : "Öde"}
-        subtitle={settleEmp ? `${settleEmp.full_name} · maaş, mesai, prim, yemek, yol, avans` : undefined}
+        subtitle={settleEmp ? `${settleEmp.full_name} · maaş, mesai, prim, yemek, yol, avans, masraf ödemesi` : undefined}
         onClose={() => setSettleEmp(null)}
         testID="employee-settle-sheet"
       >
@@ -2614,6 +2678,35 @@ export function PersonnelScreen() {
             </View>
           </View>
         ) : null}
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!reimburseEmp}
+        title="Masraf ödemesi"
+        subtitle={reimburseEmp ? `${reimburseEmp.full_name} · hak ediş, maaş ve avanstan düşmez` : undefined}
+        onClose={() => setReimburseEmp(null)}
+        testID="reimburse-pay-sheet"
+      >
+        <MoneyInput label="Tutar (₺)" testID="reimburse-pay-amount" value={reimburseAmount} onChange={(n) => setReimburseAmount(n ?? "")} placeholder="Örn: 250" />
+        <Field label="Açıklama" testID="reimburse-pay-note" value={reimburseNote} onChangeText={setReimburseNote} placeholder="Cebinden ödenen masraf" />
+        <GroupedSelect
+          label="Kasa / Banka / Ortak"
+          testID="reimburse-pay-account"
+          value={payAccount}
+          onChange={setPayAccount}
+          groups={payGroups}
+          emptyLabel="Hesap seçin"
+        />
+        <GroupedSelect
+          label="Masraf kaydı (isteğe bağlı)"
+          testID="reimburse-pay-expense"
+          value={reimburseExpenseId}
+          onChange={setReimburseExpenseId}
+          groups={reimburseDebts.length ? [{ label: "Açık personel borçları", options: reimburseDebts }] : []}
+          emptyLabel="Bağlama"
+        />
+        <Muted>Kaynak hesaptan çıkış yazılır. Gider olarak yeniden kaydedilmez.</Muted>
+        <PrimaryButton title="Masraf ödemesini kaydet" testID="reimburse-pay-submit" color="#4338CA" loading={busy} onPress={saveReimburse} />
       </B2BSheet>
 
       <B2BSheet
@@ -3286,6 +3379,7 @@ const EMP_ACTION_TONE: Record<string, { color: string; bg: string }> = {
   transport: { color: "#0E7490", bg: "#ECFEFF" },
   bonus: { color: "#B45309", bg: "#FFFBEB" },
   otpay: { color: "#6D28D9", bg: "#F5F3FF" },
+  reimburse: { color: "#4338CA", bg: "#EEF2FF" },
 };
 
 function EmpActionChip({

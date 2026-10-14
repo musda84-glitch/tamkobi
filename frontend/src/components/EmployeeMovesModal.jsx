@@ -26,6 +26,7 @@ import {
   overtimeMoveDetail,
   overtimeMoveLine,
   overtimeMovesPeriodHint,
+  payMoveBadge,
   payMoveCanDelete,
   payMoveDeleteConfirm,
   payMoveDeletePath,
@@ -560,7 +561,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
                   testId={`emp-pay-move-${row.id}`}
                   date={row.date}
                   party={row.title}
-                  badge={<TxTypeBadge label={row.title === "Avans" ? "Çıkış" : "Giriş"} kind={row.title === "Avans" ? "çıkış" : "giriş"} />}
+                  badge={<TxTypeBadge label={payMoveBadge(row).label} kind={payMoveBadge(row).kind} testId={`emp-pay-move-badge-${row.id}`} />}
                   amount={fmtPayMoveAmount(row.amount)}
                   amountClassName={row.title === "Avans" ? "text-amber-700" : "text-slate-900"}
                   description={row.subtitle}

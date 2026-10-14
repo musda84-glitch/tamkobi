@@ -309,6 +309,7 @@ export type PersonnelMovement = {
   period?: string;
   account_name?: string;
   description?: string;
+  expense_number?: string;
   date?: string;
   created_at?: string;
   status?: string;
@@ -889,6 +890,7 @@ export function workplaceDetailsSummary(opts: {
 export type EmployeePayMove = {
   id: string;
   kind: "payroll" | "bonus" | "personnel_payment";
+  payKind?: string;
   title: string;
   subtitle: string;
   amount: number;
@@ -1122,13 +1124,16 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
   for (const m of card?.movements || []) {
     if (["reversed", "cancelled"].includes(String(m.status || ""))) continue;
     const mid = idOf(m);
+    const isReimburse = String(m.kind || "") === "reimburse";
     const targets: PayRowDraft[] = [];
-    for (const row of byId.values()) {
-      if (row.linkedMovementIds?.includes(mid) || row.linkedMovementId === mid) targets.push(row);
-    }
-    for (const eff of m.effects || []) {
-      for (const [id, row] of byId) {
-        if (effectHitsPersonnel(eff, id) && !targets.includes(row)) targets.push(row);
+    if (!isReimburse) {
+      for (const row of byId.values()) {
+        if (row.linkedMovementIds?.includes(mid) || row.linkedMovementId === mid) targets.push(row);
+      }
+      for (const eff of m.effects || []) {
+        for (const [id, row] of byId) {
+          if (effectHitsPersonnel(eff, id) && !targets.includes(row)) targets.push(row);
+        }
       }
     }
     if (targets.length) {
@@ -1141,8 +1146,9 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
     const lone: PayRowDraft = {
       id: mid,
       kind: "personnel_payment",
-      title: m.kind_label || "Ödeme",
-      subtitle: payBits([m.period, m.description]),
+      payKind: m.kind,
+      title: m.kind_label || (isReimburse ? REIMBURSE_LABEL : "Ödeme"),
+      subtitle: payBits([m.period, m.expense_number, m.description]),
       amount: Number(m.amount) || 0,
       date: String(m.date || m.created_at || ""),
       status: m.status || "posted",
@@ -1216,7 +1222,13 @@ export function filterPayMoves(
 
 export const PAY_MOVE_DELETE_TITLE = "Kaydı sil";
 
-export function payMoveDeleteConfirm(row?: { title?: string } | null): { title: string; message: string } {
+export function payMoveDeleteConfirm(row?: { title?: string; kind?: string; payKind?: string } | null): { title: string; message: string } {
+  if (row?.payKind === "reimburse" || row?.title === REIMBURSE_LABEL) {
+    return {
+      title: "Masraf ödemesini sil",
+      message: "Bu masraf ödemesi silinsin mi? Bağlı kasa, banka veya ortak çıkışı da silinir. Masraf kaydının personel borcu yeniden açılır.",
+    };
+  }
   const name = String(row?.title || "Kayıt").trim() || "Kayıt";
   return {
     title: PAY_MOVE_DELETE_TITLE,
@@ -2572,6 +2584,7 @@ export const EMPLOYEE_CARD_PAY_ACTIONS = [
   { key: "transport", title: "Yol" },
   { key: "bonus", title: "Prim öde" },
   { key: "otpay", title: "Mesai öde" },
+  { key: "reimburse", title: "Masraf ödemesi" },
 ] as const;
 
 export const EMPLOYEE_CARD_WORK_ACTIONS = [
@@ -2600,6 +2613,7 @@ export const EMPLOYEE_CARD_ACTION_ICONS: Record<string, string> = {
   location: "chatbubble-ellipses-outline",
   message: "chatbubble-ellipses-outline",
   expense: "receipt-outline",
+  reimburse: "wallet-outline",
   duties: "checkbox-outline",
 };
 
@@ -2619,6 +2633,60 @@ export function employeeMessageDefaultBody(emp?: { full_name?: string } | null):
 export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
   if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;
   return Number(balance?.transport_due ?? emp?.transport_allowance ?? 0) || 0;
+}
+
+export const REIMBURSE_KIND = "reimburse";
+export const REIMBURSE_LABEL = "Masraf ödemesi";
+
+const PERSONNEL_PAYER_VALUES = new Set(["personnel", "employee", "personel", "staff"]);
+const CLOSED_PERSONNEL_DEBT = new Set(["closed", "reimbursed", "paid"]);
+
+function truthyFlag(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  return ["1", "true", "yes", "evet"].includes(String(v || "").trim().toLowerCase());
+}
+
+export function expensePersonnelDebtOpen(exp?: Record<string, unknown> | null): boolean {
+  if (!exp) return false;
+  const status = String(exp.personnel_debt_status || "").trim().toLowerCase();
+  if (CLOSED_PERSONNEL_DEBT.has(status)) return false;
+  if (status === "open") return true;
+  if (truthyFlag(exp.paid_by_personnel)) return true;
+  for (const key of ["payer", "paid_by_kind", "payment_source", "paid_by"]) {
+    if (PERSONNEL_PAYER_VALUES.has(String(exp[key] || "").trim().toLowerCase())) return true;
+  }
+  const blob = ["note", "notes", "description", "payment_note", "paid_by_label"]
+    .map((k) => String(exp[k] || ""))
+    .join(" ")
+    .toLowerCase();
+  return blob.includes("personel tarafından ödendi");
+}
+
+export function validateReimburse(amount: string | number, accountId: string): string | null {
+  if (!(num(amount) > 0)) return "Masraf ödeme tutarı girin.";
+  if (!String(accountId || "").trim()) return "Kasa / banka / ortak seçin.";
+  return null;
+}
+
+export function personnelReimbursePayload(
+  amount: string | number,
+  accountId: string,
+  note: string,
+  expenseId = "",
+  date = "",
+) {
+  const line: Record<string, unknown> = {
+    kind: REIMBURSE_KIND,
+    amount: num(amount),
+    description: note.trim(),
+    ...splitPaymentTarget(accountId),
+  };
+  const eid = String(expenseId || "").trim();
+  if (eid) line.expense_id = eid;
+  return {
+    date: (date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+    lines: [line],
+  };
 }
 
 export function personnelExpensePayload(

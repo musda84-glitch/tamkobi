@@ -44,6 +44,9 @@ import {
   bonusPayPayload,
   allowanceDue,
   personnelExpensePayload,
+  personnelReimbursePayload,
+  expensePersonnelDebtOpen,
+  validateReimburse,
   assignEmployeeToTasks,
   assignedTaskAfterAssign,
   overtimePayload,
@@ -669,7 +672,7 @@ describe("overtime assign", () => {
 describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
-    expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
+    expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Masraf ödemesi", "Görev ata", "+ Mesai"]);
     expect(employeeCardActionIcon("advance")).toBe("cash-outline");
     expect(employeeCardActionIcon("location")).toBe("chatbubble-ellipses-outline");
     expect(employeeCardActionIcon("message")).toBe("chatbubble-ellipses-outline");
@@ -679,8 +682,9 @@ describe("employee card actions", () => {
     expect(employeeCardActionIcon("expense")).toBe("receipt-outline");
     expect(employeeCardActionIcon("duties")).toBe("checkbox-outline");
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
-      "Avans", "Bakiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
+      "Avans", "Bakiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Masraf ödemesi", "Görev ata", "+ Mesai",
     ]);
+    expect(employeeCardActionIcon("reimburse")).toBe("wallet-outline");
     expect(parseYevmiyeDays("12")).toBe(12);
     expect(parseYevmiyeDays("2,5")).toBe(2);
     expect(parseYevmiyeDays("0")).toBeNull();
@@ -708,7 +712,7 @@ describe("employee card actions", () => {
       account_id: "acc1",
     });
     expect(employeeCardActionsByGroup("work").map((a) => a.title)).toEqual(["Görev ata", "+ Mesai"]);
-    expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport", "bonus", "otpay"]);
+    expect(employeeCardActionsByGroup("pay").map((a) => a.key)).toEqual(["advance", "salary", "meal", "transport", "bonus", "otpay", "reimburse"]);
     expect(titles).not.toContain("Düzenle");
     expect(titles).not.toContain("Sil");
     expect(allowanceDue({ meal_allowance: 5000 }, { meal_due: 3750 }, "meal")).toBe(3750);
@@ -749,6 +753,37 @@ describe("employee card actions", () => {
     expect(rows[1].payable).toBe(true);
     expect(rows[0].payable).toBe(false);
     expect(employeePayMoves(null)).toEqual([]);
+    const reimburse = employeePayMoves({
+      payrolls: [{ id: "p9", period: "2026-09", status: "paid", paid_date: "2026-09-30", final_payable: 1000 }],
+      movements: [
+        { id: "mov_sal", kind: "salary", kind_label: "Maaş", amount: 1000, date: "2026-10-01", account_name: "Banka", status: "posted", effects: [{ collection: "payrolls", id: "p9" }] },
+        { id: "mov_r", kind: "reimburse", kind_label: "Masraf ödemesi", amount: 250, date: "2026-10-14", expense_number: "MSR-2026-0007", account_name: "Kasa", status: "posted" },
+      ],
+    });
+    expect(reimburse.map((r) => r.title)).toEqual(["Masraf ödemesi", "Maaş"]);
+    expect(reimburse[0].kind).toBe("personnel_payment");
+    expect(reimburse[0].payKind).toBe("reimburse");
+    expect(reimburse[0].deletable).toBe(true);
+    expect(reimburse[0].subtitle).toContain("MSR-2026-0007");
+    expect(reimburse[0].subtitle).toContain("Kaynak: Kasa");
+    expect(reimburse[1].linkedMovementId).toBe("mov_sal");
+    expect(reimburse[1].subtitle).toContain("Kaynak: Banka");
+    expect(payMoveDeleteConfirm(reimburse[0]).message).toMatch(/çıkışı da silinir/);
+    expect(expensePersonnelDebtOpen({ paid_by_personnel: true })).toBe(true);
+    expect(expensePersonnelDebtOpen({ personnel_debt_status: "closed", paid_by_personnel: true })).toBe(false);
+    expect(validateReimburse("", "")).toBe("Masraf ödeme tutarı girin.");
+    expect(validateReimburse("250", "")).toBe("Kasa / banka / ortak seçin.");
+    expect(personnelReimbursePayload("250", "partner:ort1", " yakıt ", "ex1", "2026-10-14")).toEqual({
+      date: "2026-10-14",
+      lines: [{
+        kind: "reimburse",
+        amount: 250,
+        description: "yakıt",
+        partner_id: "ort1",
+        account_id: null,
+        expense_id: "ex1",
+      }],
+    });
     const daily = employeePayMoves({
       payrolls: [{ id: "d1", period: "2026-09", status: "pending", pay_type: "daily", worked_days: 12, daily_wage: 1500, final_payable: 18000 }],
     });
