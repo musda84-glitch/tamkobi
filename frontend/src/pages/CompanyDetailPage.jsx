@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SystemLayout } from "../components/saas/SystemLayout";
@@ -12,6 +12,12 @@ import {
 } from "../utils/companyDetailTabs";
 
 const cred = { withCredentials: true };
+const LEAVE_MSG = "Kaydedilmemiş değişiklikler var. Sayfadan çıkmak istiyor musunuz?";
+
+function anchorFromEvent(event) {
+  const node = event.target instanceof Element ? event.target : event.target?.parentElement;
+  return node?.closest?.("a[href]") || null;
+}
 
 /**
  * ynt: /sistem/sirketler/:companyId — şirket detayı (eski drawer yerine tam sayfa).
@@ -40,6 +46,17 @@ export default function CompanyDetailPage() {
     }, { replace: true });
   }, [setSearchParams]);
 
+  const confirmLeave = useCallback(() => {
+    if (!dirty) return true;
+    return window.confirm(LEAVE_MSG);
+  }, [dirty]);
+
+  const setTabGuarded = useCallback((nextId) => {
+    if (nextId === tab) return;
+    if (!confirmLeave()) return;
+    setTab(nextId);
+  }, [tab, confirmLeave, setTab]);
+
   const loadMeta = useCallback(async () => {
     try {
       const [p, m, c] = await Promise.all([
@@ -66,13 +83,37 @@ export default function CompanyDetailPage() {
     refreshLicense?.();
   }, [loadMeta, refreshLicense]);
 
-  const blocker = useBlocker(dirty);
   useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    const ok = window.confirm("Kaydedilmemiş değişiklikler var. Sayfadan çıkmak istiyor musunuz?");
-    if (ok) blocker.proceed();
-    else blocker.reset();
-  }, [blocker]);
+    if (!dirty) return undefined;
+    const onClick = (event) => {
+      if (event.defaultPrevented) return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = anchorFromEvent(event);
+      if (!anchor || anchor.hasAttribute("download")) return;
+      const target = (anchor.getAttribute("target") || "").trim();
+      if (target && target !== "_self") return;
+      const href = anchor.getAttribute("href") || "";
+      if (!href || href.startsWith("#") || /^(mailto|tel|javascript):/i.test(href)) return;
+      let url;
+      try {
+        url = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin) return;
+      const here = `${window.location.pathname}${window.location.search}`;
+      const next = `${url.pathname}${url.search}`;
+      if (next === here) return;
+      if (window.confirm(LEAVE_MSG)) {
+        setDirty(false);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [dirty]);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -85,7 +126,7 @@ export default function CompanyDetailPage() {
   }, [dirty]);
 
   const goBack = () => {
-    if (dirty && !window.confirm("Kaydedilmemiş değişiklikler var. Sayfadan çıkmak istiyor musunuz?")) return;
+    if (!confirmLeave()) return;
     setDirty(false);
     navigate("/sistem/sirketler");
   };
@@ -128,7 +169,7 @@ export default function CompanyDetailPage() {
             companies={companies}
             initialTab={tab}
             controlledTab={tab}
-            onTabChange={setTab}
+            onTabChange={setTabGuarded}
             onDirtyChange={setDirty}
             onClose={goBack}
             onChanged={changed}

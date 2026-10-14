@@ -70,6 +70,22 @@ if (config.enableHealthCheck) {
 }
 
 let webpackConfig = {
+  // react-router-dom 7 package.json "main" points at a missing dist/main.js.
+  // Jest (react-scripts) resolves "main", so real MemoryRouter imports fail unless mapped.
+  jest: {
+    configure: (jestConfig) => {
+      jestConfig.moduleNameMapper = {
+        ...(jestConfig.moduleNameMapper || {}),
+        "^react-router-dom$": "<rootDir>/node_modules/react-router-dom/dist/index.js",
+        "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js",
+        "^react-router$": "<rootDir>/node_modules/react-router/dist/development/index.js",
+      };
+      const polyfill = "<rootDir>/src/setupTests.js";
+      const files = jestConfig.setupFiles || [];
+      if (!files.includes(polyfill)) jestConfig.setupFiles = [polyfill, ...files];
+      return jestConfig;
+    },
+  },
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],

@@ -2,25 +2,12 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
 import axios from "axios";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { CompaniesTable } from "../components/saas/CompaniesTable";
+import { companyDetailPath } from "../utils/companyDetailTabs";
 
 jest.mock("axios");
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
-
-const mockNavigate = jest.fn();
-let mockParams = { companyId: "comp_matek" };
-let mockSearch = new URLSearchParams("tab=entegrator");
-const mockSetSearchParams = jest.fn();
-
-jest.mock("react-router-dom", () => {
-  const React = require("react");
-  return {
-    Link: ({ to, children, ...rest }) => React.createElement("a", { href: typeof to === "string" ? to : "/", ...rest }, children),
-    useNavigate: () => mockNavigate,
-    useParams: () => mockParams,
-    useSearchParams: () => [mockSearch, mockSetSearchParams],
-    useBlocker: () => ({ state: "unblocked", proceed: jest.fn(), reset: jest.fn() }),
-  };
-}, { virtual: true });
 
 jest.mock("../context/AuthContext", () => ({
   API_URL: "http://test/api",
@@ -48,6 +35,8 @@ const companyPayload = {
   email: "info@matek.test",
   tax_number: "123",
   city: "İstanbul",
+  created_at: "2024-01-01T00:00:00Z",
+  allow_platform_access: true,
   license_id: "comp_matek",
   is_primary: true,
   license_companies: [{ id: "comp_matek", name: "MATEK DEKORASYON", primary: true }],
@@ -85,13 +74,43 @@ const flush = async () => {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 };
 
+function LocationEcho() {
+  const loc = useLocation();
+  return <div data-testid="location-echo">{loc.pathname}{loc.search}</div>;
+}
+
+function renderAt(entry) {
+  const root = createRoot(host);
+  act(() => {
+    root.render(
+      <MemoryRouter initialEntries={[entry]}>
+        <LocationEcho />
+        <Routes>
+          <Route path="/sistem/sirketler/:companyId" element={<CompanyDetailPage />} />
+          <Route path="/sistem/sirketler" element={<div data-testid="companies-list" />} />
+          <Route path="/sistem" element={<div data-testid="platform-home" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  });
+  return root;
+}
+
+function CompaniesRoute() {
+  const navigate = useNavigate();
+  return (
+    <CompaniesTable
+      rows={[companyPayload]}
+      plans={[{ id: "plan_enterprise", name: "Kurumsal", price_monthly: 1, is_popular: true }]}
+      onOpen={(id) => navigate(companyDetailPath(id))}
+      onCreated={() => {}}
+    />
+  );
+}
+
 beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
-  mockParams = { companyId: "comp_matek" };
-  mockSearch = new URLSearchParams("tab=entegrator");
-  mockNavigate.mockReset();
-  mockSetSearchParams.mockReset();
   axios.get.mockImplementation((url) => {
     if (String(url).includes("/system/companies/comp_matek")) return Promise.resolve({ data: companyPayload });
     if (String(url).includes("/system/companies")) return Promise.resolve({ data: [companyPayload] });
@@ -109,9 +128,18 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
+async function makeDirty() {
+  const select = host.querySelector('[data-testid="drawer-einvoice-provider"]');
+  expect(select).not.toBeNull();
+  await act(async () => {
+    select.value = "";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await flush();
+}
+
 test("company detail route page opens with tab from URL", async () => {
-  const root = createRoot(host);
-  await act(async () => { root.render(<CompanyDetailPage />); });
+  const root = renderAt("/sistem/sirketler/comp_matek?tab=entegrator");
   await flush();
   expect(host.querySelector('[data-testid="company-detail-page"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="company-detail-back"]')).not.toBeNull();
@@ -122,12 +150,36 @@ test("company detail route page opens with tab from URL", async () => {
   expect(host.querySelector('[data-testid="drawer-einvoice"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="drawer-einvoice-info"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="drawer-einvoice-sticky-save"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="location-echo"]')?.textContent).toBe("/sistem/sirketler/comp_matek?tab=entegrator");
+  root.unmount();
+});
+
+test("Yönet in CompaniesTable opens the company detail page", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={["/sistem/sirketler"]}>
+        <LocationEcho />
+        <Routes>
+          <Route path="/sistem/sirketler" element={<CompaniesRoute />} />
+          <Route path="/sistem/sirketler/:companyId" element={<CompanyDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  });
+  const manage = host.querySelector('[data-testid="company-manage-comp_matek"]');
+  expect(manage).not.toBeNull();
+  expect(manage.textContent).toMatch(/Yönet/);
+  await act(async () => { manage.click(); });
+  await flush();
+  expect(host.querySelector('[data-testid="company-detail-page"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="location-echo"]')?.textContent).toBe("/sistem/sirketler/comp_matek");
+  expect(host.querySelector('[data-testid="company-detail-crumb-id"]')?.textContent).toBe("comp_matek");
   root.unmount();
 });
 
 test("einvoice save calls same system API", async () => {
-  const root = createRoot(host);
-  await act(async () => { root.render(<CompanyDetailPage />); });
+  const root = renderAt("/sistem/sirketler/comp_matek?tab=entegrator");
   await flush();
   const saveBtn = host.querySelector('[data-testid="drawer-einvoice-save"]');
   expect(saveBtn).not.toBeNull();
@@ -142,20 +194,43 @@ test("einvoice save calls same system API", async () => {
 
 test("unsaved changes prompt on back", async () => {
   const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
-  const root = createRoot(host);
-  await act(async () => { root.render(<CompanyDetailPage />); });
+  const root = renderAt("/sistem/sirketler/comp_matek?tab=entegrator");
   await flush();
-  const select = host.querySelector('[data-testid="drawer-einvoice-provider"]');
-  expect(select).not.toBeNull();
-  await act(async () => {
-    select.value = "";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await flush();
+  await makeDirty();
   const back = host.querySelector('[data-testid="company-detail-back"]');
   await act(async () => { back.click(); });
   expect(confirmSpy).toHaveBeenCalled();
-  expect(mockNavigate).not.toHaveBeenCalled();
+  expect(host.querySelector('[data-testid="location-echo"]')?.textContent).toContain("/sistem/sirketler/comp_matek");
+  expect(host.querySelector('[data-testid="companies-list"]')).toBeNull();
+  confirmSpy.mockRestore();
+  root.unmount();
+});
+
+test("unsaved changes prompt on in-page link and tab", async () => {
+  const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
+  const root = renderAt("/sistem/sirketler/comp_matek?tab=entegrator");
+  await flush();
+  await makeDirty();
+  const crumb = host.querySelector('[data-testid="company-detail-breadcrumb"]');
+  const companiesLink = [...crumb.querySelectorAll("a")].find((a) => a.textContent.includes("Şirketler"));
+  expect(companiesLink).toBeTruthy();
+  await act(async () => { companiesLink.click(); });
+  expect(confirmSpy).toHaveBeenCalled();
+  expect(host.querySelector('[data-testid="location-echo"]')?.textContent).toContain("comp_matek");
+  expect(host.querySelector('[data-testid="companies-list"]')).toBeNull();
+
+  confirmSpy.mockClear();
+  const licenseTab = host.querySelector('[data-testid="drawer-tab-license"]');
+  await act(async () => { licenseTab.click(); });
+  expect(confirmSpy).toHaveBeenCalled();
+  expect(host.querySelector('[data-testid="drawer-tab-einvoice"]')?.getAttribute("aria-selected")).toBe("true");
+  expect(host.querySelector('[data-testid="location-echo"]')?.textContent).toContain("tab=entegrator");
+
+  confirmSpy.mockReturnValue(true);
+  await act(async () => { licenseTab.click(); });
+  await flush();
+  expect(host.querySelector('[data-testid="drawer-tab-license"]')?.getAttribute("aria-selected")).toBe("true");
+  expect(host.querySelector('[data-testid="location-echo"]')?.textContent).toBe("/sistem/sirketler/comp_matek");
   confirmSpy.mockRestore();
   root.unmount();
 });

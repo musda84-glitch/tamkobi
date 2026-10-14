@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import re
+
+os.environ.setdefault("JWT_SECRET", "test-ynt-integrity-jwt-secret-not-default-32b")
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -19,17 +21,35 @@ from auth_utils import create_access_token
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# ynt kabuğu: saas panelleri + /sistem sayfaları (CompanyDetail dahil).
 FRONTEND_YNT_SCAN = [
     ROOT / "frontend/src/components/saas",
     ROOT / "frontend/src/pages/SystemAdminPage.jsx",
     ROOT / "frontend/src/pages/SystemLoginPage.jsx",
     ROOT / "frontend/src/pages/System2FASetupPage.jsx",
     ROOT / "frontend/src/pages/WebsiteAdminPage.jsx",
+    ROOT / "frontend/src/pages/CompanyDetailPage.jsx",
     ROOT / "frontend/src/components/IsnetIntegrationPanel.jsx",
+    ROOT / "frontend/src/components/SmsCenter.jsx",
 ]
+
+# saas/** içinde ynt'ye mount edilmeyen kiracı çağrıları.
+# Bu dosyalar taranır; yalnızca bu önekler muaf. Yeni bir kiracı yolu testi düşürür.
+_TENANT_CALL_ALLOW = {
+    "MyPlanPanel.jsx": ("/api/license", "/api/payments"),
+    "LicenseWidgets.jsx": ("/api/license",),
+    "StorageManagerPanel.jsx": ("/api/storage/me",),
+}
 
 # `${API_URL}/foo` — API_URL already includes /api
 _API_CALL_RE = re.compile(r"""\$\{(?:API_URL|apiUrl)\}/([a-zA-Z0-9_./${}-]+)""")
+_API_PLUS_RE = re.compile(r"""(?:API_URL|apiUrl)\s*\+\s*["'](/[^"']+)["']""")
+# IntegrityPanel apiBase="/system/integrity" ve varsayılan parametre
+_API_BASE_PROP_RE = re.compile(r"""apiBase\s*=\s*["'](/[^"']+)["']""")
+# SystemAdminPage: axios.get(`${API_URL}${path}`) + grab("/system/overview")
+_QUOTED_API_RE = re.compile(
+    r"""["'](/(?:system|auth|admin|platform|public|einvoice|integrations|comm|files|license|payments|storage|saas)[a-zA-Z0-9_./${}-]*)["']"""
+)
 
 
 def _req(host: str, path: str = "/api/auth/me", peer: str = "203.0.113.9"):
@@ -174,58 +194,89 @@ def test_enforce_audience_allows_integration_paths(monkeypatch):
         auth_utils.enforce_token_audience(payload, _req("ynt.taiyazilim.com", path), path=path)
 
 
-# saas/** içinde ynt shell'e mount edilmeyen tenant panelleri
-_TENANT_ONLY_SAAS = frozenset({
-    "MyPlanPanel.jsx",
-    "LicenseWidgets.jsx",
-    "StorageManagerPanel.jsx",
-})
-
-
 def _iter_frontend_files():
     for entry in FRONTEND_YNT_SCAN:
         if entry.is_file():
             yield entry
         elif entry.is_dir():
             for p in entry.rglob("*"):
-                if p.suffix in (".jsx", ".js", ".tsx", ".ts") and p.is_file():
-                    if p.name in _TENANT_ONLY_SAAS:
-                        continue
-                    yield p
+                if p.suffix not in (".jsx", ".js", ".tsx", ".ts") or not p.is_file():
+                    continue
+                if ".test." in p.name or p.name.endswith(".spec.js"):
+                    continue
+                yield p
+
+
+def _normalize_api_path(raw: str) -> str:
+    raw = (raw or "").split("?", 1)[0].strip()
+    if not raw:
+        return ""
+    parts = []
+    for seg in raw.strip("/").split("/"):
+        if "${" in seg or seg.startswith(":"):
+            break
+        parts.append(seg)
+    if not parts:
+        return ""
+    if parts[0] == "api":
+        return "/" + "/".join(parts)
+    return "/api/" + "/".join(parts)
 
 
 def _api_paths_from_source(text: str) -> set[str]:
     out = set()
     for m in _API_CALL_RE.finditer(text):
-        raw = m.group(1).split("?", 1)[0]
-        # Drop template segments like ${id}
-        parts = []
-        for seg in raw.strip("/").split("/"):
-            if "${" in seg or seg.startswith(":"):
-                break
-            parts.append(seg)
-        if not parts:
-            continue
-        path = "/api/" + "/".join(parts)
-        out.add(path)
+        path = _normalize_api_path(m.group(1))
+        if path:
+            out.add(path)
+    for m in _API_PLUS_RE.finditer(text):
+        path = _normalize_api_path(m.group(1))
+        if path:
+            out.add(path)
+    for m in _API_BASE_PROP_RE.finditer(text):
+        path = _normalize_api_path(m.group(1))
+        if path:
+            out.add(path)
+    if "API_URL" in text or "apiUrl" in text:
+        for m in _QUOTED_API_RE.finditer(text):
+            path = _normalize_api_path(m.group(1))
+            if path:
+                out.add(path)
     return out
 
 
+def _tenant_exempt(filename: str, path: str) -> bool:
+    prefs = _TENANT_CALL_ALLOW.get(filename) or ()
+    for pref in prefs:
+        base = pref.rstrip("/")
+        if path == base or path.startswith(base + "/") or path.startswith(pref):
+            return True
+    return False
+
+
 def test_ynt_frontend_api_paths_in_allowlist_or_public():
-    """ynt UI (saas/System*/Isnet panel) çağrıları allowlist veya public olmalı."""
+    """saas, SystemAdmin, CompanyDetail ve /sistem sayfalarındaki axios/fetch yolları ynt allowlist'te olmalı."""
     skip_prefixes = (
         "/api/system",
         "/api/platform/admin",
         "/api/auth",
     )
-    found = set()
+    found = []
     for f in _iter_frontend_files():
         text = f.read_text(encoding="utf-8", errors="ignore")
-        found |= _api_paths_from_source(text)
+        for path in _api_paths_from_source(text):
+            found.append((f.name, path))
     assert found, "ynt tarama hiç API yolu bulamadı"
     missing = []
-    for path in sorted(found):
+    for name, path in sorted(set(found)):
         if any(path == p or path.startswith(p.rstrip("/") + "/") or path.startswith(p) for p in skip_prefixes):
+            continue
+        if _tenant_exempt(name, path):
+            continue
+        # IntegrityPanel şirket yöneticisi tabanını da tanımlar; ynt çağrısı systemSections'tadır.
+        if name == "IntegrityPanel.jsx" and (
+            path == "/api/admin/integrity" or path.startswith("/api/admin/integrity/")
+        ):
             continue
         allowed = (
             ha.is_ynt_allowed_path(path)
@@ -233,5 +284,19 @@ def test_ynt_frontend_api_paths_in_allowlist_or_public():
             or rbac.is_public_api_path(path, "POST")
         )
         if not allowed:
-            missing.append(path)
+            missing.append(f"{name}: {path}")
     assert not missing, f"ynt UI yolları allowlist'te yok: {missing}"
+    names = {name for name, _path in found}
+    assert "CompanyDetailPage.jsx" in names
+    assert "SystemAdminPage.jsx" in names
+    # IntegrityPanel hem şirket hem platform tabanını tanımlar; ynt çağrı yeri systemSections.
+    admin_hits = [
+        f"{name}: {path}"
+        for name, path in found
+        if path.startswith("/api/admin/integrity") and name != "IntegrityPanel.jsx"
+    ]
+    assert not admin_hits, f"ynt UI hâlâ /api/admin/integrity çağırıyor: {admin_hits}"
+    assert any(
+        name == "systemSections.jsx" and path.startswith("/api/system/integrity")
+        for name, path in found
+    ), "platform veri tutarlılığı /api/system/integrity kullanmıyor"
