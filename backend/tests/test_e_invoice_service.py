@@ -432,6 +432,19 @@ class TestIntegratorCredits:
         assert out["balance"] is None
         assert out["source"] == "none"
 
+    def test_missing_mode_returns_warning_without_soap(self):
+        fake_db = MagicMock()
+        fake_db.einvoice_settings.find_one = AsyncMock(
+            return_value={"provider": "isnet", "status": "configured", "company_tax_id": "4810173324"}
+        )
+        e_invoice.init(fake_db)
+        with patch.object(e_invoice.isnet, "get_company_balance", new_callable=AsyncMock) as bal:
+            out = asyncio.run(e_invoice.api_integrator_credits("c1"))
+        bal.assert_not_called()
+        assert out["balance"] is None
+        assert out["message"] == e_invoice.isnet.MODE_REQUIRED_DETAIL
+        assert out["source"] == "isnet"
+
 
 class TestFetchIntegratorXml:
     def test_http_error_returns_none_for_local_fallback(self):

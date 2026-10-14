@@ -2035,6 +2035,36 @@ def test_soap_url_follows_explicit_test_and_live():
     assert isnet.explicit_environment({"mode": "staging"}) == ""
 
 
+def test_get_company_balance_without_mode_makes_no_soap_call():
+    settings = {"company_tax_id": "4810173324"}
+    soap = AsyncMock()
+    client = AsyncMock()
+    with patch("isnet._soap_call", soap), patch("isnet.httpx.AsyncClient", return_value=client):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(isnet.get_company_balance(settings))
+    assert exc.value.status_code == 400
+    assert exc.value.detail == isnet.MODE_REQUIRED_DETAIL
+    soap.assert_not_called()
+    client.assert_not_called()
+
+
+def test_soap_call_without_mode_makes_no_http():
+    client = AsyncMock()
+    with patch("isnet.httpx.AsyncClient", return_value=client):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                isnet._soap_call(
+                    {},
+                    endpoint=isnet.TEST_SOAP,
+                    action="HealthCheck",
+                    service_interface="IInvoiceService",
+                )
+            )
+    assert exc.value.status_code == 400
+    assert exc.value.detail == isnet.MODE_REQUIRED_DETAIL
+    client.assert_not_called()
+
+
 def test_download_pdf_and_xml_without_mode_make_no_call():
     settings = {"company_tax_id": "4810173324"}
     ettn = "f0ad3b22-88d6-49d3-97a4-f738fe213505"

@@ -1297,7 +1297,7 @@ async def _soap_call(
     timeout: float = 60.0,
     array_map: Optional[Dict[str, str]] = None,
 ) -> ET.Element:
-    _ = settings
+    require_explicit_mode(settings)
     envelope = soap_envelope_xml(action, request, array_map=array_map)
     headers = {
         "Content-Type": "text/xml; charset=utf-8",
@@ -1440,6 +1440,7 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
 
 async def get_company_balance(settings: dict, tax_code: Optional[str] = None) -> Dict[str, Any]:
     """GetCompanyBalance — NetteFatura-API invoice.getCompanyBalance()."""
+    require_explicit_mode(settings)
     req = _company_request(settings, tax_code)
     if len(req["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
