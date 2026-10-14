@@ -78,8 +78,9 @@ export function ReconciliationPanel({ companyId }) {
             <tr>
               <th className="text-left p-2">Ortak</th>
               <th className="text-right p-2">Kart</th>
-              <th className="text-right p-2">Lehine</th>
-              <th className="text-right p-2">Aleyhine</th>
+              <th className="text-right p-2">Kayıtlı</th>
+              <th className="text-right p-2">Giriş</th>
+              <th className="text-right p-2">Çıkış</th>
               <th className="text-right p-2">Fark</th>
             </tr>
           </thead>
@@ -88,8 +89,9 @@ export function ReconciliationPanel({ companyId }) {
               <tr key={row.id} className="border-t border-slate-100" data-testid={`recon-partner-${row.id}`}>
                 <td className="p-2">{row.ad}</td>
                 <td className="p-2 text-right">{money(row.kart_bakiyesi)}</td>
-                <td className="p-2 text-right">{money(row.liste_lehine)}</td>
-                <td className="p-2 text-right">{money(row.liste_aleyhine)}</td>
+                <td className="p-2 text-right">{money(row.kayitli_bakiye)}</td>
+                <td className="p-2 text-right">{money(row.liste_giris)}</td>
+                <td className="p-2 text-right">{money(row.liste_cikis)}</td>
                 <td className="p-2 text-right"><Drift value={row.fark} /></td>
               </tr>
             ))}

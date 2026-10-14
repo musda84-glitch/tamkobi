@@ -150,6 +150,79 @@ def test_ali_bal_card_equals_list_delta():
     assert payload["total_cash_in"] == pytest.approx(cash["cash_in"])
     assert payload["total_cash_out"] == pytest.approx(cash["cash_out"])
     assert payload["total_card_pocket"] == pytest.approx(view["total_balance"])
+    # Pozitif net = Alacaklı (etiket yönü değişmez)
+    assert partner_pay.present_partner_balance(cash["cash_net"])["label"] == "Alacaklı"
+
+
+def test_partner_row_uses_ledger_card_and_shows_stale_cache_drift():
+    """Eski işaretle kaydedilmiş partners.balance kartı sapıtmaz; fark önbelleği gösterir.
+
+    Kart bakiyesi = Giriş − Çıkış = ledger_totals (partner_tx_effect toplamı).
+    kayitli_bakiye = partners.balance; fark = kayitli − liste_net. Yazma yok.
+    """
+    cash = partner_pay.cash_card_totals(ALI_BAL_TXS)
+    ledger = partner_pay.ledger_totals(ALI_BAL_TXS)
+    giris, cikis = cash["cash_in"], cash["cash_out"]
+    live = ledger["balance"]
+    assert live == pytest.approx(giris - cikis)
+    assert live == pytest.approx(886189.78)
+    stale = round(-live, 2)  # eski işaret: Alacaklı tutar eksi yazılmış
+    partner = {"_id": "ali", "company_id": "co", "name": "Ali BAL", "balance": stale}
+    txs = [{**tx, "partner_id": "ali", "company_id": "co", "_id": f"pt{i}"} for i, tx in enumerate(ALI_BAL_TXS)]
+
+    row = balance_reconciliation._partner_row(partner, txs)
+    assert row["kart_bakiyesi"] == pytest.approx(giris - cikis)
+    assert row["kart_bakiyesi"] == pytest.approx(live)
+    assert row["kart_bakiyesi"] != pytest.approx(stale)
+    assert row["kayitli_bakiye"] == pytest.approx(stale)
+    assert row["liste_giris"] == pytest.approx(giris)
+    assert row["liste_cikis"] == pytest.approx(cikis)
+    assert row["liste_net"] == pytest.approx(cash["cash_net"])
+    assert row["fark"] == pytest.approx(stale - cash["cash_net"])
+    assert "liste_lehine" not in row
+    assert "liste_aleyhine" not in row
+    assert partner_pay.present_partner_balance(row["kart_bakiyesi"])["label"] == "Alacaklı"
+
+    db = MemoryDB()
+    db.partners.docs["ali"] = copy.deepcopy(partner)
+    for tx in txs:
+        db.partner_transactions.docs[tx["_id"]] = copy.deepcopy(tx)
+
+    async def scenario():
+        before = {k: copy.deepcopy(v.docs) for k, v in db._cols.items()}
+        report = await balance_reconciliation.build_reconciliation(db, "co")
+        after = {k: copy.deepcopy(v.docs) for k, v in db._cols.items()}
+        for key, docs in before.items():
+            assert after.get(key) == docs
+        for key, docs in after.items():
+            if key not in before:
+                assert docs == {}
+        assert report["read_only"] is True
+        found = {r["id"]: r for r in report["partners"]}["ali"]
+        assert found["kart_bakiyesi"] == pytest.approx(giris - cikis)
+        assert found["kayitli_bakiye"] == pytest.approx(stale)
+        assert found["liste_giris"] == pytest.approx(giris)
+        assert found["liste_cikis"] == pytest.approx(cikis)
+        assert found["fark"] == pytest.approx(stale - found["liste_net"])
+        csv = balance_reconciliation.render_csv(report)
+        assert "liste_giris" in csv
+        assert "liste_cikis" in csv
+        assert "kayitli_bakiye" in csv
+        assert "liste_lehine" not in csv
+        assert "liste_aleyhine" not in csv
+        lines = balance_reconciliation.report_lines(report)
+        assert all(len(line) == len(lines[0]) for line in lines)
+        partner_line = next(line for line in lines if line[0] == "ortak")
+        header = lines[0]
+        assert header.index("liste_giris") > 0
+        assert partner_line[header.index("kart_bakiyesi")] == f"{giris - cikis:.2f}"
+        assert partner_line[header.index("kayitli_bakiye")] == f"{stale:.2f}"
+        assert partner_line[header.index("liste_giris")] == f"{giris:.2f}"
+        assert partner_line[header.index("liste_cikis")] == f"{cikis:.2f}"
+        assert partner_line[header.index("fark")] == f"{stale - cash['cash_net']:.2f}"
+        return report
+
+    _run(scenario())
 
 
 def test_signed_amount_zero_rules():

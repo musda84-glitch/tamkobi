@@ -41,17 +41,21 @@ def _account_row(acc: dict, txs: List[dict], *, integrated: bool) -> Dict[str, A
 
 
 def _partner_row(partner: dict, txs: List[dict]) -> Dict[str, Any]:
+    """Kart = hareket defteri (Giriş − Çıkış); kayıtlı önbellek ayrı, fark = kayitli − liste_net."""
     totals = partner_pay.cash_card_totals(txs)
-    kart = round(_num(partner.get("balance")), 2)
+    ledger = partner_pay.ledger_totals(txs)
+    kart = round(_num(ledger.get("balance")), 2)
+    kayitli = round(_num(partner.get("balance")), 2)
     liste = totals["cash_net"]
     return {
         "id": _rid(partner),
         "ad": partner.get("name") or "",
         "kart_bakiyesi": kart,
-        "liste_lehine": totals["cash_in"],
-        "liste_aleyhine": totals["cash_out"],
+        "kayitli_bakiye": kayitli,
+        "liste_giris": totals["cash_in"],
+        "liste_cikis": totals["cash_out"],
         "liste_net": liste,
-        "fark": round(kart - liste, 2),
+        "fark": round(kayitli - liste, 2),
     }
 
 
@@ -167,7 +171,7 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
     rows: List[List[str]] = [[
         "grup", "id", "ad", "tur", "entegre_mi",
         "gosterilen", "hareket_toplami", "banka_bildirdigi",
-        "kart_bakiyesi", "liste_lehine", "liste_aleyhine",
+        "kart_bakiyesi", "kayitli_bakiye", "liste_giris", "liste_cikis",
         "kayitli", "hesaplanan", "fark",
     ]]
     for a in report.get("accounts") or []:
@@ -176,19 +180,20 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
             "evet" if a.get("entegre_mi") else "hayir",
             _fmt(a.get("gosterilen")), _fmt(a.get("hareket_toplami")),
             "" if a.get("banka_bildirdigi") is None else _fmt(a.get("banka_bildirdigi")),
-            "", "", "", "", "", _fmt(a.get("fark")),
+            "", "", "", "", "", "", _fmt(a.get("fark")),
         ])
     for p in report.get("partners") or []:
         rows.append([
             "ortak", p.get("id") or "", p.get("ad") or "", "partner", "",
             "", "", "",
-            _fmt(p.get("kart_bakiyesi")), _fmt(p.get("liste_lehine")), _fmt(p.get("liste_aleyhine")),
+            _fmt(p.get("kart_bakiyesi")), _fmt(p.get("kayitli_bakiye")),
+            _fmt(p.get("liste_giris")), _fmt(p.get("liste_cikis")),
             "", "", _fmt(p.get("fark")),
         ])
     for c in report.get("contacts") or []:
         rows.append([
             "cari", c.get("id") or "", c.get("ad") or "", "contact", "",
-            "", "", "", "", "", "",
+            "", "", "", "", "", "", "",
             _fmt(c.get("kayitli")), _fmt(c.get("hesaplanan")), _fmt(c.get("fark")),
         ])
     return rows
