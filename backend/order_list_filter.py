@@ -94,6 +94,35 @@ def order_has_einvoice(order: Optional[dict]) -> bool:
     return False
 
 
+# e-Fatura / e-Arşiv. Kağıt, gider pusulası ve e-irsaliye e-belge sayılmaz.
+_EDOC_E_TYPES = frozenset({"e_invoice", "e_archive", "efatura", "earsiv"})
+
+
+def order_invoice_e_type(order: Optional[dict]) -> str:
+    """Liste enrich'inin yazdığı invoice_e_type; yoksa siparişteki e_type."""
+    if not order:
+        return ""
+    return str(order.get("invoice_e_type") or order.get("e_type") or "").strip().lower()
+
+
+def order_einvoice_unsent(order: Optional[dict]) -> bool:
+    """e-Fatura/e-Arşiv oluşmuş ama GİB'e gitmemiş.
+
+    invoice_e_type e-belge (e_invoice/e_archive) değilse False: kağıt fatura
+    ve gider pusulası bu filtreye girmez. Taslak ve hata (GİB kimliği kalsa
+    bile) girer. GİB'e gitmiş kayıt ve faturası olmayan satır girmez.
+    """
+    if not order or not order.get("invoice_id"):
+        return False
+    if order_invoice_e_type(order) not in _EDOC_E_TYPES:
+        return False
+    state = str(order.get("einvoice_state") or "").lower()
+    gs = str(order.get("invoice_gib_status") or order.get("gib_status") or "")
+    if state == "error" or _GIB_ERR.search(gs):
+        return True
+    return not order_has_einvoice(order)
+
+
 def order_doc_status(order: Optional[dict]) -> str:
     st = str((order or {}).get("order_status") or "").lower()
     if st in ("cancelled", "canceled"):
@@ -232,7 +261,7 @@ def order_date_sql_range(date_from: str = "", date_to: str = "") -> Optional[Dic
 
 def needs_invoice_ebelge_filter(invoiced: Optional[str] = None, doc_status: Optional[Sequence[str]] = None) -> bool:
     """E-fatura veya belge filtresi e-belge alanlarına bakmadan doğru eşleşmez."""
-    if (invoiced or "all") == "einvoice":
+    if (invoiced or "all") in ("einvoice", "einvoice_unsent"):
         return True
     return doc_status_filter_active(doc_status)
 
@@ -299,6 +328,8 @@ def order_matches(order: dict, filt: OrderListFilter) -> bool:
     if invoiced == "yes" and not order.get("invoice_id"):
         return False
     if invoiced == "einvoice" and not order_has_einvoice(order):
+        return False
+    if invoiced == "einvoice_unsent" and not order_einvoice_unsent(order):
         return False
     if invoiced == "no" and order.get("invoice_id"):
         return False
