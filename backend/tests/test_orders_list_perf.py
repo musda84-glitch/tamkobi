@@ -200,6 +200,70 @@ def test_paged_orders_enrich_ebelge_only_page_items():
     assert out["truncated"] is False
 
 
+def test_paged_einvoice_unsent_filters_after_full_scan_enrich():
+    """GİB alanları faturadan geldikten sonra elenir; toplam sayfa dilimine bakmaz."""
+    rows = [
+        {"_id": "draft", "order_number": "DRAFT", "order_status": "pending", "channel": "b2b",
+         "order_date": "2026-06-01T00:00:00Z", "total_amount": 10, "invoice_id": "inv_d"},
+        {"_id": "err", "order_number": "ERR", "order_status": "pending", "channel": "b2b",
+         "order_date": "2026-06-02T00:00:00Z", "total_amount": 20, "invoice_id": "inv_e"},
+        {"_id": "sent", "order_number": "SENT", "order_status": "pending", "channel": "b2b",
+         "order_date": "2026-06-03T00:00:00Z", "total_amount": 30, "invoice_id": "inv_s"},
+        {"_id": "none", "order_number": "NONE", "order_status": "pending", "channel": "b2b",
+         "order_date": "2026-06-04T00:00:00Z", "total_amount": 40},
+    ]
+    captured = {"ebelge": []}
+
+    class FakeCursor:
+        def sort(self, *a, **k):
+            return self
+
+        async def to_list(self, n):
+            return list(rows[:n])
+
+    fake_db = MagicMock()
+    fake_db.orders.find = MagicMock(return_value=FakeCursor())
+
+    async def enrich(docs):
+        captured["ebelge"].append(len(docs))
+        for o in docs:
+            if o["order_number"] == "DRAFT":
+                o["einvoice_state"] = "draft"
+                o["invoice_gib_status"] = "Taslak"
+            elif o["order_number"] == "ERR":
+                o["einvoice_state"] = "error"
+                o["invoice_gib_status"] = "Hata: şema"
+                o["invoice_gib_uuid"] = "uuid-err"
+            elif o["order_number"] == "SENT":
+                o["einvoice_state"] = "sent"
+                o["gib_invoice_id"] = "GIB1"
+        return docs
+
+    async def ident(docs, company_id=None):
+        return docs
+
+    async def run():
+        with patch.object(server, "db", fake_db), \
+             patch.object(server, "clean_docs", lambda x: x), \
+             patch.object(server, "dedupe_orders_by_marketplace_key", lambda x: x), \
+             patch.object(server, "_decorate_b2b_held_order", lambda o: o), \
+             patch.object(server, "_enrich_orders_invoice_ebelge", AsyncMock(side_effect=enrich)), \
+             patch.object(server, "_enrich_orders_marketplace_item_media", AsyncMock(side_effect=ident)), \
+             patch.object(server, "_enrich_orders_stock_matches", AsyncMock(side_effect=ident)), \
+             patch.object(server, "_enrich_orders_production_flags", AsyncMock(side_effect=ident)):
+            return await server.list_orders(
+                company_id="comp_1", paged=True, invoiced="einvoice_unsent", page=1, page_size=1, sort="number_asc",
+            )
+
+    out = asyncio.run(run())
+    assert captured["ebelge"] == [4]
+    assert out["total"] == 2
+    assert out["total_amount"] == 30
+    assert out["has_more"] is True
+    assert [o["order_number"] for o in out["items"]] == ["DRAFT"]
+    assert out["items"][0]["einvoice_state"] == "draft"
+
+
 def test_paged_einvoice_filter_enriches_matching_scan():
     rows = [
         {"_id": f"o{i}", "order_number": f"N{i:04d}", "order_status": "pending", "channel": "b2b",

@@ -148,6 +148,7 @@ export const OrdersToolbar = ({
           <option value="all">Fatura: Tümü</option>
           <option value="yes">Faturalandı</option>
           <option value="einvoice">E Fatura Kesildi</option>
+          <option value="einvoice_unsent">E-Fatura Kesilmedi (GİB'e gönderilmedi)</option>
           <option value="no">Faturalanmadı</option>
         </select>
         <select value={f.cargo} onChange={(e) => set("cargo", e.target.value)} className={sel} data-testid="ord-cargo"><option value="all">Kargo: Tümü</option><option value="yes">Kargolandı</option><option value="no">Kargo Bekliyor</option></select>

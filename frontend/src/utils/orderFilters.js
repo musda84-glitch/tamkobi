@@ -198,7 +198,7 @@ export function orderFiltersFromSearch(params) {
   const channel = get("channel");
   if (channel) next.channel = channel;
   const invoiced = get("invoiced");
-  if (["all", "yes", "no", "einvoice"].includes(invoiced)) next.invoiced = invoiced;
+  if (["all", "yes", "no", "einvoice", "einvoice_unsent"].includes(invoiced)) next.invoiced = invoiced;
   const cargo = get("cargo");
   if (["all", "yes", "no"].includes(cargo)) next.cargo = cargo;
   const doc = get("doc");
@@ -263,6 +263,17 @@ export function buildOrderListParams(f, { companyId, page = 1, pageSize = 50, cu
   return params;
 }
 
+const GIB_ERR = /^\s*hata\s*:/i;
+
+/** Fatura oluşmuş; e-Fatura/e-Arşiv entegratöre/GİB'e gitmemiş (taslak, hata, hiç gönderilmemiş). */
+export function orderInvoiceNotSentToGib(o) {
+  if (!o?.invoice_id) return false;
+  const state = String(o.einvoice_state || "").toLowerCase();
+  const gs = String(o.invoice_gib_status || o.gib_status || "");
+  if (state === "error" || GIB_ERR.test(gs)) return true;
+  return !orderHasEInvoiceIssued(o);
+}
+
 function orderSearchBlob(o) {
   const parts = [
     o?.order_number,
@@ -290,6 +301,7 @@ export const applyOrderFilters = (orders, f) => {
     if (f.channel !== "all" && (o.channel || "b2b") !== f.channel) return false;
     if (f.invoiced === "yes" && !o.invoice_id) return false;
     if (f.invoiced === "einvoice" && !orderHasEInvoiceIssued(o)) return false;
+    if (f.invoiced === "einvoice_unsent" && !orderInvoiceNotSentToGib(o)) return false;
     if (f.invoiced === "no" && o.invoice_id) return false;
     if (f.cargo === "yes" && !isShippedOrder(o)) return false;
     if (f.cargo === "no" && isShippedOrder(o)) return false;
