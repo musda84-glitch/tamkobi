@@ -5403,6 +5403,7 @@ async def _b2b_contact(token: str) -> Dict[str, Any]:
     return c
 
 async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[OrderItem]:
+    import event_notify
     disc = float(contact.get("b2b_discount", 0) or 0)
     items: List[OrderItem] = []
     for it in raw_items or []:
@@ -5428,6 +5429,13 @@ async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[Ord
             "price_includes_vat": includes,
             "is_service": p.get("type") == "service",
         }
+        existing_image = str(it.get("image_url") or it.get("image") or "").strip()
+        if existing_image:
+            d["image_url"] = existing_image
+        else:
+            card_image = event_notify.order_line_card_image(it, p)
+            if card_image:
+                d["image_url"] = card_image
         enrich_line(d, price_mode="incl" if includes else "excl", default_vat=vat_rate)
         payload = pick_fields(d, ORDER_ITEM_FIELDS)
         if "product_name" not in payload:
@@ -8114,6 +8122,37 @@ async def quick_stock_adjust(req: Dict[str, Any]):
 async def _fill_stock_codes(company_id: str, items: list):
     """Copy product SKU / barcode onto document lines when missing (print + scan + UBL)."""
     return await _fill_stock_codes_impl(db, company_id, items)
+
+
+async def _fill_order_line_images(company_id: str, items: list) -> None:
+    """Yeni sipariş kalemine ürün kartı görseli. Dolu pazaryeri görseli korunur."""
+    if not items:
+        return
+    from stock_codes import line_get, line_set, load_products_for_items
+    import event_notify
+    try:
+        products = await load_products_for_items(db, items)
+    except Exception:
+        logger.exception("order line image lookup failed")
+        return
+    for it in items:
+        if str(line_get(it, "image_url") or "").strip():
+            continue
+        pid = str(line_get(it, "product_id") or "")
+        product = products.get(pid) if pid else None
+        if not isinstance(product, dict):
+            continue
+        if company_id and product.get("company_id") and str(product.get("company_id")) != str(company_id):
+            continue
+        raw = it if isinstance(it, dict) else {
+            "product_id": pid,
+            "sku": line_get(it, "sku"),
+            "barcode": line_get(it, "barcode"),
+            "variant_id": getattr(it, "variant_id", "") or "",
+        }
+        img = event_notify.order_line_card_image(raw, product)
+        if img:
+            line_set(it, "image_url", img)
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
@@ -17432,6 +17471,9 @@ async def create_order(order: Order, user: dict = Depends(get_current_user)):
         if (order.channel or "") != "saha" or not rbac.role_features(role).get("portal_saha"):
             raise HTTPException(status_code=403, detail=rbac.portal_denial_detail("portal_saha"))
     await _fill_stock_codes(order.company_id, order.items)
+    import event_notify
+    if event_notify.stores_order_line_image(order.channel or "manual"):
+        await _fill_order_line_images(order.company_id, order.items)
     if not order.order_number:
         order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
     _apply_order_totals(order)

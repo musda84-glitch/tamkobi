@@ -8,10 +8,12 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -866,40 +868,194 @@ def _line_prices(line: dict) -> Tuple[Any, Any]:
     return unit or 0, total or 0
 
 
-def _files_url(base: str, path: str) -> str:
+_MEDIA_KEYS = ("url", "image_url", "thumbnail_url", "src", "path", "file")
+_IST = None
+_CHANNEL_LABELS = {
+    "b2b": "B2B Portal",
+    "pos": "Kasa",
+    "kasa": "Kasa",
+    "manual": "Manuel",
+    "manuel": "Manuel",
+    "saha": "Saha",
+    "trendyol": "Trendyol",
+    "hepsiburada": "Hepsiburada",
+    "n11": "n11",
+    "amazon": "Amazon",
+    "shopify": "Shopify",
+    "woocommerce": "WooCommerce",
+    "ciceksepeti": "Çiçeksepeti",
+    "pazarama": "Pazarama",
+    "shopphp": "ShopPHP",
+    "pttavm": "PttAVM",
+    "etsy": "Etsy",
+    "ikas": "ikas",
+    "ideasoft": "İdeasoft",
+    "ticimax": "Ticimax",
+    "wix": "Wix",
+    "opencart": "OpenCart",
+    "tsoft": "T-Soft",
+    "prestashop": "PrestaShop",
+    "shopier": "Shopier",
+    "aliexpress": "AliExpress",
+    "trendyol_market": "Trendyol Go Market",
+    "trendyol_yemek": "Trendyol Go Yemek",
+    "akakce": "Akakçe",
+    "flo": "FLO",
+    "beymen": "Beymen",
+    "teknosa": "Teknosa",
+    "idefix": "idefix",
+    "getir_carsi": "Getir Çarşı",
+    "boyner": "Boyner",
+}
+_ORDER_CARD_CHANNELS = {"", "manual", "manuel", "b2b", "pos", "kasa", "saha"}
+
+
+def stores_order_line_image(channel: str) -> bool:
+    """B2B, kasa ve manuel sipariş yeni kaleme ürün kartı görseli yazabilir."""
+    return str(channel or "manual").strip().lower() in _ORDER_CARD_CHANNELS
+
+
+def media_ref(value) -> str:
+    """String veya {url,image_url,...} galeri öğesini URL'ye çevir. productImages.js mediaRef."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, Mapping):
+        for key in _MEDIA_KEYS:
+            raw = value.get(key)
+            if raw not in (None, ""):
+                return str(raw).strip()
+        return ""
+    return str(value).strip()
+
+
+def _first_gallery_image(images) -> str:
+    if not isinstance(images, list) or not images:
+        return ""
+    return media_ref(images[0])
+
+
+def _match_variant(item: Mapping, product: Mapping) -> Optional[dict]:
+    variants = [v for v in (product.get("variants") or []) if isinstance(v, dict)]
+    if not variants:
+        return None
+    vid = str(item.get("variant_id") or "").strip()
+    if vid:
+        for variant in variants:
+            if str(variant.get("variant_id") or "") == vid:
+                return variant
+    sku = str(item.get("sku") or "").strip()
+    parent = str(product.get("sku") or "").strip()
+    if sku and sku != parent:
+        for variant in variants:
+            if str(variant.get("sku") or "").strip() == sku:
+                return variant
+    return None
+
+
+def _variant_image(variant: Optional[Mapping]) -> str:
+    if not isinstance(variant, Mapping):
+        return ""
+    return (
+        media_ref(variant.get("image_url"))
+        or media_ref(variant.get("thumbnail_url"))
+        or media_ref(variant.get("image"))
+    )
+
+
+def resolve_line_image(item: Optional[Mapping], product: Optional[Mapping]) -> str:
+    """Pazaryeri satırı → varyant → küçük resim → kapak → galeri ilk kare."""
+    row = item if isinstance(item, Mapping) else {}
+    direct = media_ref(row.get("image_url")) or media_ref(row.get("image"))
+    if direct:
+        return direct
+    card = product if isinstance(product, Mapping) else {}
+    variant_img = _variant_image(_match_variant(row, card))
+    if variant_img:
+        return variant_img
+    return (
+        media_ref(card.get("thumbnail_url"))
+        or media_ref(card.get("image_url"))
+        or _first_gallery_image(card.get("images"))
+    )
+
+
+def order_line_card_image(item: Optional[Mapping], product: Optional[Mapping]) -> str:
+    """Yeni B2B/manuel kalem. Katalog kartı `image_url` döner; kapak varsa o yazılır.
+
+    Varyant eşleşirse varyant görseli önce gelir. Kapak yoksa küçük resim, o da
+    yoksa galerinin ilk karesi. Dolu pazaryeri görseli burada üretilmez.
+    """
+    row = item if isinstance(item, Mapping) else {}
+    card = product if isinstance(product, Mapping) else {}
+    variant_img = _variant_image(_match_variant(row, card))
+    if variant_img:
+        return variant_img
+    return (
+        media_ref(card.get("image_url"))
+        or media_ref(card.get("thumbnail_url"))
+        or _first_gallery_image(card.get("images"))
+    )
+
+
+def _files_url(base: str, path: str, *, thumb: bool = True) -> str:
     if not base or public_url.is_invalid_public_base(base):
         return ""
     clean = str(path or "").split("?")[0].lstrip("/")
     if not clean:
         return ""
-    return f"{base}/api/files/{clean}?w=128&fmt=jpg"
+    url = f"{base}/api/files/{clean}"
+    if thumb:
+        url += "?w=128&fmt=jpg"
+    return _sign_file_url(url, clean)
 
 
-def _placeholder_url(base: str) -> str:
-    if not base or public_url.is_invalid_public_base(base):
+def _file_get_is_public(storage_path: str) -> bool:
+    rel = str(storage_path or "").split("?")[0].lstrip("/")
+    if not rel:
+        return False
+    try:
+        import rbac
+        return bool(rbac.is_public_api_path(f"/api/files/{rel}", "GET"))
+    except Exception:
+        return True
+
+
+def _sign_file_url(url: str, storage_path: str) -> str:
+    """Herkese açık dosya olduğu gibi kalır. Değilse imzalı paylaşım adresi."""
+    if not url or _file_get_is_public(storage_path):
+        return url
+    try:
+        import signed_links
+        token = signed_links.make_doc_share_token(storage_path, "files")
+    except Exception:
+        logger.warning("order mail file share token failed")
         return ""
-    return f"{base}/brand/tamkobi-icon-192.png"
+    if not token:
+        return ""
+    joiner = "&" if "?" in url else "?"
+    return f"{url}{joiner}t={quote(token, safe='')}"
 
 
-def order_image_url(raw, base: str) -> str:
-    """Mutlak, herkese açık görsel. Dosyalar JPEG küçültme ile; gömme yok."""
+def order_image_url(raw, base: str, *, thumb: bool = True) -> str:
+    """Mutlak görsel adresi. data/cid gömme yok; geçersiz tabanda boş."""
     s = str(raw or "").strip()
     if not s:
-        return _placeholder_url(base)
+        return ""
     low = s.lower()
     if low.startswith("javascript:") or low.startswith("data:") or low.startswith("cid:"):
-        return _placeholder_url(base)
+        return ""
     if "/api/files/" in s:
         path = s.split("/api/files/", 1)[1]
-        built = _files_url(base, path)
-        return built or _placeholder_url(base)
+        return _files_url(base, path, thumb=thumb)
     if low.startswith("http://") or low.startswith("https://"):
         if public_url.is_invalid_public_base(s):
-            return _placeholder_url(base)
+            return ""
         return s
     if s.startswith("/") and base and not public_url.is_invalid_public_base(base):
         return f"{base}{s}"
-    return _files_url(base, s) or _placeholder_url(base)
+    return _files_url(base, s, thumb=thumb)
 
 
 def _batch_subject(orders: List[dict]) -> str:
@@ -912,91 +1068,455 @@ def _batch_subject(orders: List[dict]) -> str:
     return f"{len(orders)} yeni sipariş"
 
 
-def _lines_html(order: dict, base: str) -> str:
+def channel_label(raw) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    return _CHANNEL_LABELS.get(text.lower(), text)
+
+
+def _istanbul():
+    global _IST
+    if _IST is None:
+        try:
+            _IST = ZoneInfo("Europe/Istanbul")
+        except Exception:
+            _IST = timezone(timedelta(hours=3))
+    return _IST
+
+
+def _order_local_dt(order: Mapping) -> Optional[datetime]:
+    for key in ("order_date", "created_at"):
+        raw = order.get(key)
+        if not raw:
+            continue
+        try:
+            return _parse_ts(str(raw)).astimezone(_istanbul())
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _fmt_tr_dt(dt: datetime) -> str:
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
+def _clock_span(orders: List[dict]) -> str:
+    stamps = [dt for dt in (_order_local_dt(o) for o in orders) if dt]
+    if not stamps:
+        return ""
+    start, end = min(stamps), max(stamps)
+    a, b = start.strftime("%H:%M"), end.strftime("%H:%M")
+    return a if a == b else f"{a}–{b}"
+
+
+def _currency_totals(orders: List[dict]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for order in orders:
+        cur = str(order.get("currency") or "TRY").upper()
+        if cur in ("TL", "TRL"):
+            cur = "TRY"
+        try:
+            amount = float(_order_gross(order) or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        out[cur] = out.get(cur, 0.0) + amount
+    return out
+
+
+def _summary_line(orders: List[dict]) -> str:
+    parts = [f"{len(orders)} sipariş"]
+    totals = _currency_totals(orders)
+    for cur, amount in totals.items():
+        parts.append(f"Toplam {_fmt_money(amount, cur)}")
+    clock = _clock_span(orders)
+    if clock:
+        parts.append(clock)
+    return " · ".join(parts)
+
+
+def _amount_parts(order: Mapping) -> Tuple[Any, Any]:
+    gross = _order_gross(order)
+    vat = order.get("vat_total")
+    sub = order.get("subtotal")
+    if vat in (None, ""):
+        vat = 0
+    if sub in (None, ""):
+        try:
+            sub = float(gross or 0) - float(vat or 0)
+        except (TypeError, ValueError):
+            sub = gross or 0
+    return sub, vat
+
+
+def _line_name(item: Mapping, product: Optional[Mapping]) -> str:
+    return str(
+        item.get("product_name")
+        or item.get("name")
+        or (product or {}).get("name")
+        or "Ürün"
+    ).strip() or "Ürün"
+
+
+def _line_meta(item: Mapping, product: Optional[Mapping], variant: Optional[Mapping]) -> str:
+    bits = []
+    sku = str(item.get("sku") or "").strip()
+    if sku:
+        bits.append(sku)
+    vname = str(item.get("variant_name") or (variant or {}).get("name") or "").strip()
+    name = _line_name(item, product)
+    if vname and vname.casefold() not in name.casefold():
+        bits.append(vname)
+    return " · ".join(bits)
+
+
+def _initials(name: str) -> str:
+    words = [w for w in re.split(r"\s+", str(name or "").strip()) if w]
+    chars: List[str] = []
+    if len(words) >= 2:
+        for word in words:
+            for ch in word:
+                if ch.isalnum():
+                    chars.append(ch)
+                    break
+            if len(chars) >= 2:
+                break
+    elif words:
+        for ch in words[0]:
+            if ch.isalnum():
+                chars.append(ch)
+            if len(chars) >= 2:
+                break
+    if not chars:
+        return "·"
+    return "".join(chars[:2]).upper()
+
+
+def _product_of(item: Mapping, products: Mapping) -> dict:
+    pid = str(item.get("product_id") or "").strip()
+    product = products.get(pid) if pid else None
+    return product if isinstance(product, dict) else {}
+
+
+def _mail_button(href: str, label: str) -> str:
+    if not href:
+        return ""
+    safe = _esc(href)
+    text = _esc(label)
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">'
+        "<tr><td align=\"center\" style=\"padding:16px 0 0;\">"
+        "<!--[if mso]>"
+        f'<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{safe}" '
+        'style="height:48px;v-text-anchor:middle;width:240px;" arcsize="8%" stroke="f" fillcolor="#059669">'
+        "<w:anchorlock/>"
+        f'<center style="color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;">{text}</center>'
+        "</v:roundrect>"
+        "<![endif]-->"
+        "<!--[if !mso]><!-- -->"
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="width:100%;">'
+        '<tr><td align="center" bgcolor="#059669" style="background-color:#059669;border-radius:6px;">'
+        f'<a href="{safe}" style="display:inline-block;padding:14px 28px;font-family:Arial,Helvetica,sans-serif;'
+        f'font-size:16px;line-height:20px;font-weight:bold;color:#ffffff;text-decoration:none;">{text}</a>'
+        "</td></tr></table>"
+        "<!--<![endif]-->"
+        "</td></tr></table>"
+    )
+
+
+def _kv_row(label: str, value: str) -> str:
+    return (
+        '<tr>'
+        f'<td class="tk-stack tk-muted" width="120" valign="top" style="padding:4px 12px 4px 0;width:120px;'
+        f'font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;color:#64748b;">{_esc(label)}</td>'
+        f'<td class="tk-stack tk-text" valign="top" style="padding:4px 0;font-family:Arial,Helvetica,sans-serif;'
+        f'font-size:14px;line-height:20px;color:#0f172a;">{value}</td>'
+        "</tr>"
+    )
+
+
+def _visual_cell(url: str, name: str) -> str:
+    if url:
+        return (
+            '<td class="tk-stack" width="64" valign="middle" style="width:64px;padding:8px 10px 8px 0;">'
+            f'<img src="{_esc(url)}" width="64" height="64" alt="{_esc(name)}" '
+            'style="display:block;width:64px;height:64px;border:0;">'
+            "</td>"
+        )
+    return (
+        '<td class="tk-stack" width="64" height="64" align="center" valign="middle" bgcolor="#e2e8f0" '
+        'style="width:64px;height:64px;background-color:#e2e8f0;text-align:center;vertical-align:middle;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:64px;font-weight:bold;color:#475569;">'
+        f"{_esc(_initials(name))}</td>"
+    )
+
+
+def _lines_html(order: dict, base: str, products: Optional[Mapping] = None) -> str:
+    products = products or {}
     items = [it for it in (order.get("items") or []) if isinstance(it, dict)]
     shown = items[:ORDER_MAIL_MAX_LINES]
     extra = len(items) - len(shown)
     cur = str(order.get("currency") or "TRY")
-    rows = ["<table style='width:100%;border-collapse:collapse;font-size:13px'>"]
+    head = (
+        '<tr>'
+        '<td class="tk-muted" width="64" bgcolor="#f8fafc" style="width:64px;padding:8px 10px 8px 0;background-color:#f8fafc;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;font-weight:bold;color:#64748b;">Görsel</td>'
+        '<td class="tk-muted" bgcolor="#f8fafc" style="padding:8px 8px 8px 0;background-color:#f8fafc;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;font-weight:bold;color:#64748b;">Ürün</td>'
+        '<td class="tk-stack tk-muted" align="right" bgcolor="#f8fafc" style="padding:8px 8px 8px 0;background-color:#f8fafc;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;font-weight:bold;color:#64748b;">Adet</td>'
+        '<td class="tk-stack tk-muted" align="right" bgcolor="#f8fafc" style="padding:8px 8px 8px 0;background-color:#f8fafc;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;font-weight:bold;color:#64748b;">Birim</td>'
+        '<td class="tk-stack tk-muted" align="right" bgcolor="#f8fafc" style="padding:8px 0;background-color:#f8fafc;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;font-weight:bold;color:#64748b;">Tutar</td>'
+        "</tr>"
+    )
+    rows = [
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:100%;border-collapse:collapse;">',
+        head,
+    ]
     for it in shown:
-        name = it.get("product_name") or it.get("name") or ""
-        img = order_image_url(it.get("image_url") or it.get("image") or "", base)
-        img_html = (
-            f"<img src='{_esc(img)}' width='64' height='64' alt='' "
-            f"style='width:64px;height:64px;object-fit:cover;border-radius:8px'>"
-        ) if img else ""
+        product = _product_of(it, products)
+        variant = _match_variant(it, product)
+        name = _line_name(it, product)
+        meta = _line_meta(it, product, variant)
+        url = order_image_url(resolve_line_image(it, product), base, thumb=True)
+        if not url and (media_ref(it.get("image_url")) or media_ref(it.get("image"))):
+            bare = {k: v for k, v in it.items() if k not in ("image_url", "image", "thumbnail_url")}
+            url = order_image_url(resolve_line_image(bare, product), base, thumb=True)
         unit, line_total = _line_prices(it)
+        meta_html = ""
+        if meta:
+            meta_html = (
+                f'<br><span class="tk-muted" style="font-size:12px;line-height:16px;color:#64748b;">{_esc(meta)}</span>'
+            )
         rows.append(
             "<tr>"
-            f"<td style='padding:4px;width:64px;vertical-align:top'>{img_html}</td>"
-            f"<td style='padding:4px'>{_esc(name)}</td>"
-            f"<td style='padding:4px;text-align:right'>{_esc(_fmt_qty(it.get('quantity')))}</td>"
-            f"<td style='padding:4px;text-align:right'>{_esc(_fmt_money(unit, cur))}</td>"
-            f"<td style='padding:4px;text-align:right'>{_esc(_fmt_money(line_total, cur))}</td>"
+            f"{_visual_cell(url, name)}"
+            '<td class="tk-text" valign="middle" style="padding:8px 8px 8px 0;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:14px;line-height:18px;color:#0f172a;">{_esc(name)}{meta_html}</td>'
+            '<td class="tk-stack tk-text" align="right" valign="middle" style="padding:8px 8px 8px 0;'
+            'font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;color:#0f172a;">'
+            f"{_esc(_fmt_qty(it.get('quantity')))}</td>"
+            '<td class="tk-stack tk-text" align="right" valign="middle" style="padding:8px 8px 8px 0;'
+            'font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;color:#0f172a;">'
+            f"{_esc(_fmt_money(unit, cur))}</td>"
+            '<td class="tk-stack tk-text" align="right" valign="middle" style="padding:8px 0;'
+            'font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;color:#0f172a;font-weight:bold;">'
+            f"{_esc(_fmt_money(line_total, cur))}</td>"
             "</tr>"
         )
     if extra > 0:
         rows.append(
-            f"<tr><td colspan='5' style='padding:4px;color:#64748b'>{_esc(f've {extra} kalem daha')}</td></tr>"
+            '<tr><td colspan="5" class="tk-muted" style="padding:8px 0 0;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:12px;line-height:16px;color:#64748b;">{_esc(f"ve {extra} kalem daha")}</td></tr>'
+        )
+    sub, vat = _amount_parts(order)
+    total_label = _esc(format_order_total(order))
+    for label, value, strong in (
+        ("Ara toplam", _esc(_fmt_money(sub, cur)), False),
+        ("KDV", _esc(_fmt_money(vat, cur)), False),
+        ("Genel toplam", total_label, True),
+    ):
+        weight = "font-weight:bold;" if strong else ""
+        rows.append(
+            "<tr>"
+            f'<td colspan="4" align="right" class="tk-muted" style="padding:6px 8px 0 0;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:13px;line-height:18px;color:#64748b;{weight}">{_esc(label)}</td>'
+            f'<td align="right" class="tk-text" style="padding:6px 0 0;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:13px;line-height:18px;color:#0f172a;{weight}">{value}</td>'
+            "</tr>"
         )
     rows.append("</table>")
     return "".join(rows)
 
 
-def _order_batch_html(company_name: str, orders: List[dict], links: Dict[str, str], base: str) -> str:
-    shown = orders[:ORDER_MAIL_MAX_ORDERS]
-    extra_orders = len(orders) - len(shown)
-    parts = [
-        "<div style='font-family:Arial,sans-serif;max-width:640px'>",
-        f"<p style='color:#64748b;font-size:12px;margin:0 0 8px'>{_esc(company_name)}</p>",
-        f"<h2 style='color:#0f172a;margin:0 0 12px'>{_esc(_batch_subject(orders))}</h2>",
+def _order_card_html(order: dict, link: str, base: str, products: Mapping) -> str:
+    oid = str(order.get("_id") or "")
+    no = str(order.get("order_number") or oid)
+    when = _order_local_dt(order)
+    note = str(order.get("notes") or order.get("note") or "").strip()
+    rows = [
+        _kv_row("Sipariş No", f'<span style="font-weight:bold;">{_esc(no)}</span>'),
+        _kv_row("Kanal", _esc(channel_label(order.get("channel")))),
+        _kv_row("Müşteri", _esc(order.get("customer_name") or "")),
     ]
-    for o in shown:
-        oid = str(o.get("_id") or "")
-        link = links.get(oid) or ""
-        no = str(o.get("order_number") or oid)
-        head = (
-            f"<a href='{_esc(link)}' style='color:#059669;font-weight:bold'>{_esc(no)}</a>"
-            if link else f"<b>{_esc(no)}</b>"
-        )
-        parts.append(
-            "<div style='margin:0 0 16px;padding:12px;border:1px solid #e2e8f0;border-radius:12px'>"
-            f"<p style='margin:0 0 8px'>{head} · {_esc(o.get('channel') or '')} · "
-            f"{_esc(o.get('customer_name') or '')} · {_esc(format_order_total(o))}</p>"
-            f"{_lines_html(o, base)}</div>"
-        )
-    if extra_orders:
-        parts.append(f"<p style='color:#334155'>{_esc(f've {extra_orders} sipariş daha')}</p>")
-    parts.append("</div>")
-    return "".join(parts)
+    if when:
+        rows.append(_kv_row("Tarih/saat", _esc(_fmt_tr_dt(when))))
+    if note:
+        rows.append(_kv_row("Not", _esc(note)))
+    meta = (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">'
+        + "".join(rows)
+        + "</table>"
+    )
+    return (
+        '<table role="presentation" class="tk-card tk-line" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'bgcolor="#ffffff" style="width:100%;background-color:#ffffff;border:1px solid #e2e8f0;">'
+        '<tr><td style="padding:16px;">'
+        f"{meta}"
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr>'
+        '<td style="padding:12px 0 0;border-top:1px solid #e2e8f0;font-size:0;line-height:0;">&nbsp;</td>'
+        "</tr></table>"
+        f"{_lines_html(order, base, products)}"
+        f"{_mail_button(link, 'Siparişi aç')}"
+        "</td></tr></table>"
+    )
 
 
-def _order_batch_text(company_name: str, orders: List[dict], links: Dict[str, str]) -> str:
+def _order_batch_html(
+    company_name: str,
+    orders: List[dict],
+    links: Dict[str, str],
+    base: str,
+    products: Optional[Mapping] = None,
+    *,
+    logo_url: str = "",
+    settings_link: str = "",
+) -> str:
+    products = products or {}
     shown = orders[:ORDER_MAIL_MAX_ORDERS]
     extra_orders = len(orders) - len(shown)
-    lines = [company_name, "", _batch_subject(orders), ""]
-    for o in shown:
-        oid = str(o.get("_id") or "")
-        no = str(o.get("order_number") or oid)
-        lines.append(
-            f"{no} · {o.get('channel') or ''} · {o.get('customer_name') or ''} · {format_order_total(o)}"
+    subject = _batch_subject(orders)
+    summary = _summary_line(orders)
+    logo = order_image_url(logo_url, base, thumb=False) if logo_url else ""
+    if logo:
+        logo_html = (
+            '<td width="48" valign="middle" style="width:48px;padding:0 12px 0 0;">'
+            f'<img src="{_esc(logo)}" width="40" height="40" alt="{_esc(company_name)}" '
+            'style="display:block;width:40px;height:40px;border:0;">'
+            "</td>"
         )
-        if links.get(oid):
-            lines.append(links[oid])
-        items = [it for it in (o.get("items") or []) if isinstance(it, dict)]
-        cur = str(o.get("currency") or "TRY")
+    else:
+        logo_html = ""
+    if settings_link:
+        settings_html = (
+            f'<a href="{_esc(settings_link)}" style="color:#059669;font-weight:bold;text-decoration:underline;">'
+            f"{_esc('Bildirim ayarları')}</a>"
+        )
+    else:
+        settings_html = (
+            '<span style="color:#059669;font-weight:bold;">'
+            f"{_esc('Bildirim ayarları')}</span>"
+        )
+    cards = []
+    for order in shown:
+        oid = str(order.get("_id") or "")
+        cards.append(
+            '<tr><td style="padding:0 0 16px;">'
+            f"{_order_card_html(order, links.get(oid) or '', base, products)}"
+            "</td></tr>"
+        )
+    extra_html = ""
+    if extra_orders:
+        extra_html = (
+            '<tr><td class="tk-text" style="padding:0 0 16px;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:14px;line-height:20px;color:#334155;">{_esc(f"ve {extra_orders} sipariş daha")}</td></tr>'
+        )
+    return (
+        '<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="color-scheme" content="light dark">'
+        '<meta name="supported-color-schemes" content="light dark">'
+        f"<title>{_esc(subject)}</title>"
+        "<style>"
+        ":root{color-scheme:light dark;supported-color-schemes:light dark;}"
+        "@media only screen and (max-width:600px){"
+        ".tk-wrap{width:100% !important;}"
+        ".tk-stack{display:block !important;width:100% !important;}"
+        "}"
+        "@media (prefers-color-scheme:dark){"
+        ".tk-page{background-color:#0f172a !important;}"
+        ".tk-card{background-color:#1e293b !important;}"
+        ".tk-text{color:#f8fafc !important;}"
+        ".tk-muted{color:#cbd5e1 !important;}"
+        ".tk-bar{background-color:#064e3b !important;}"
+        ".tk-line{border-color:#334155 !important;}"
+        "}"
+        "</style></head>"
+        '<body class="tk-page" bgcolor="#f1f5f9" style="margin:0;padding:0;background-color:#f1f5f9;">'
+        '<table role="presentation" class="tk-page" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'bgcolor="#f1f5f9" style="width:100%;background-color:#f1f5f9;">'
+        '<tr><td align="center" style="padding:24px 12px;">'
+        "<!--[if mso]><table role=\"presentation\" align=\"center\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td><![endif]-->"
+        '<table role="presentation" class="tk-wrap" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:100%;max-width:600px;">'
+        '<tr><td class="tk-card" bgcolor="#ffffff" style="background-color:#ffffff;padding:20px 20px 8px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr>'
+        f"{logo_html}"
+        '<td class="tk-text" valign="middle" style="font-family:Arial,Helvetica,sans-serif;font-size:18px;'
+        f'line-height:24px;font-weight:bold;color:#0f172a;">{_esc(company_name)}</td>'
+        "</tr></table></td></tr>"
+        '<tr><td class="tk-bar tk-text" bgcolor="#ecfdf5" style="background-color:#ecfdf5;padding:12px 20px;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;color:#065f46;">'
+        f"{_esc(summary)}</td></tr>"
+        '<tr><td style="height:16px;font-size:0;line-height:0;">&nbsp;</td></tr>'
+        + "".join(cards)
+        + extra_html
+        + '<tr><td class="tk-muted" style="padding:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;'
+        'line-height:18px;color:#64748b;">'
+        f"{settings_html}"
+        " · Yeni siparişler tek e-postada toplanır. Kanalları bildirim ayarlarından değiştirebilirsiniz."
+        "</td></tr></table>"
+        "<!--[if mso]></td></tr></table><![endif]-->"
+        "</td></tr></table></body></html>"
+    )
+
+
+def _order_batch_text(
+    company_name: str,
+    orders: List[dict],
+    links: Dict[str, str],
+    products: Optional[Mapping] = None,
+    *,
+    settings_link: str = "",
+) -> str:
+    products = products or {}
+    shown = orders[:ORDER_MAIL_MAX_ORDERS]
+    extra_orders = len(orders) - len(shown)
+    lines = [company_name, "", _batch_subject(orders), _summary_line(orders), ""]
+    for order in shown:
+        oid = str(order.get("_id") or "")
+        no = str(order.get("order_number") or oid)
+        cur = str(order.get("currency") or "TRY")
+        lines.append(f"Sipariş No: {no}")
+        lines.append(f"Kanal: {channel_label(order.get('channel'))}")
+        lines.append(f"Müşteri: {order.get('customer_name') or ''}")
+        when = _order_local_dt(order)
+        if when:
+            lines.append(f"Tarih/saat: {_fmt_tr_dt(when)}")
+        note = str(order.get("notes") or order.get("note") or "").strip()
+        if note:
+            lines.append(f"Not: {note}")
+        items = [it for it in (order.get("items") or []) if isinstance(it, dict)]
         for it in items[:ORDER_MAIL_MAX_LINES]:
+            product = _product_of(it, products)
+            variant = _match_variant(it, product)
             unit, line_total = _line_prices(it)
-            name = it.get("product_name") or it.get("name") or ""
+            name = _line_name(it, product)
+            meta = _line_meta(it, product, variant)
+            label = f"{name} ({meta})" if meta else name
             lines.append(
-                f"- {name} · {_fmt_qty(it.get('quantity'))} · {_fmt_money(unit, cur)} · {_fmt_money(line_total, cur)}"
+                f"- {label} · {_fmt_qty(it.get('quantity'))} · {_fmt_money(unit, cur)} · {_fmt_money(line_total, cur)}"
             )
         extra = len(items) - ORDER_MAIL_MAX_LINES
         if extra > 0:
             lines.append(f"ve {extra} kalem daha")
+        sub, vat = _amount_parts(order)
+        lines.append(f"Ara toplam: {_fmt_money(sub, cur)}")
+        lines.append(f"KDV: {_fmt_money(vat, cur)}")
+        lines.append(f"Genel toplam: {format_order_total(order)}")
+        if links.get(oid):
+            lines.append(links[oid])
         lines.append("")
     if extra_orders:
         lines.append(f"ve {extra_orders} sipariş daha")
+    lines.append("")
+    lines.append("Bildirim ayarları")
+    if settings_link:
+        lines.append(settings_link)
+    lines.append("Yeni siparişler tek e-postada toplanır.")
     return "\n".join(lines).strip()
 
 
@@ -1161,6 +1681,44 @@ async def _retry_rows(rows: List[dict], claim_id: str, extra: Optional[dict] = N
             logger.exception("notify outbox retry")
 
 
+async def _products_for_orders(company_id: str, orders: List[dict]) -> Dict[str, dict]:
+    """Tüm kalemlerin ürün kartlarını tek sorguda yükle."""
+    ids: List[str] = []
+    seen = set()
+    for order in orders:
+        for it in order.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            pid = str(it.get("product_id") or "").strip()
+            if pid and pid not in seen:
+                seen.add(pid)
+                ids.append(pid)
+    if not ids:
+        return {}
+    try:
+        cursor = _db.products.find(
+            {"company_id": company_id, "_id": {"$in": ids}},
+            {
+                "name": 1, "sku": 1, "thumbnail_url": 1, "image_url": 1,
+                "images": 1, "variants": 1, "company_id": 1,
+            },
+        )
+        rows = await _to_list(cursor, max(len(ids), 1) + 5)
+    except Exception:
+        logger.exception("order mail product images company=%s", company_id)
+        return {}
+    out: Dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("company_id") or "") not in ("", str(company_id)):
+            continue
+        pid = str(row.get("_id") or "")
+        if pid:
+            out[pid] = row
+    return out
+
+
 async def _order_links(orders: List[dict]) -> Dict[str, str]:
     links: Dict[str, str] = {}
     for o in orders:
@@ -1171,14 +1729,28 @@ async def _order_links(orders: List[dict]) -> Dict[str, str]:
     return links
 
 
-async def _send_order_emails(company_id: str, prefs: dict, emails: List[str], orders: List[dict], already: set) -> Tuple[List[str], List[str]]:
+async def _send_order_emails(
+    company_id: str,
+    prefs: dict,
+    emails: List[str],
+    orders: List[dict],
+    already: set,
+    products: Optional[Dict[str, dict]] = None,
+) -> Tuple[List[str], List[str]]:
     base = _safe_link(await app_link(""))
     links = await _order_links(orders)
+    settings = _safe_link(await app_link("/settings?tab=notifications"))
+    company = await _db.companies.find_one({"_id": company_id}, {"name": 1, "logo_url": 1}) or {}
+    company_name = str(company.get("name") or "Firma").strip() or "Firma"
     subject = _batch_subject(orders)
-    html_body = _order_batch_html(await _company_name(company_id), orders, links, base)
-    text_body = _order_batch_text(await _company_name(company_id), orders, links)
+    cards = products or {}
+    html_body = _order_batch_html(
+        company_name, orders, links, base, cards,
+        logo_url=str(company.get("logo_url") or ""),
+        settings_link=settings,
+    )
+    text_body = _order_batch_text(company_name, orders, links, cards, settings_link=settings)
     reply_to = await _company_reply_to(company_id, prefs)
-    company_name = await _company_name(company_id)
     sent: List[str] = []
     failed: List[str] = []
     for em in emails:
@@ -1247,7 +1819,8 @@ async def _deliver_order_batch(company_id: str, rows: List[dict], claim_id: str)
             already = set()
             for r in active:
                 already.update(r.get("sent_to") or [])
-            sent, failed = await _send_order_emails(company_id, prefs, emails, visible, already)
+            products = await _products_for_orders(company_id, visible)
+            sent, failed = await _send_order_emails(company_id, prefs, emails, visible, already, products)
             if sent:
                 await _update_claimed(active, claim_id, {"sent_to": sorted(set(sent) | already), "email_sent": not failed})
                 for r in active:

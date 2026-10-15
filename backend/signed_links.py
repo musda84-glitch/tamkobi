@@ -14,6 +14,7 @@ from auth_utils import get_jwt_secret
 DOC_SHARE_TTL_SEC = 90 * 24 * 3600
 
 _DOC_PATH_RE = re.compile(r"^/api/(invoices|e-invoice)/([^/]+)/(pdf|xml)$")
+_FILE_PREFIX = "/api/files/"
 
 
 def doc_kind_from_path(path: str) -> Optional[Tuple[str, str]]:
@@ -50,15 +51,27 @@ def verify_doc_share_token(doc_id: str, kind: str, token: Optional[str]) -> bool
     return hmac.compare_digest(expect, sig)
 
 
+def file_storage_from_path(path: str) -> Optional[str]:
+    """`/api/files/<depo yolu>` → depo yolu. Sorgu dizesi düşer."""
+    p = (path or "").split("?", 1)[0]
+    if not p.startswith(_FILE_PREFIX):
+        return None
+    storage = p[len(_FILE_PREFIX):].lstrip("/")
+    return storage or None
+
+
 def is_signed_public_doc(path: str, method: str, token: Optional[str]) -> bool:
     """Allowlist yardımcısı: yalnızca GET + geçerli t."""
     if (method or "GET").upper() not in ("GET", "HEAD"):
         return False
     parsed = doc_kind_from_path(path)
-    if not parsed:
+    if parsed:
+        doc_id, kind = parsed
+        return verify_doc_share_token(doc_id, kind, token)
+    storage = file_storage_from_path(path)
+    if not storage or not token:
         return False
-    doc_id, kind = parsed
-    return verify_doc_share_token(doc_id, kind, token)
+    return verify_doc_share_token(storage, "files", token)
 
 
 def build_doc_share_url(base: str, path: str, token: str) -> str:

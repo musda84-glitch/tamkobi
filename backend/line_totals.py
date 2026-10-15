@@ -205,6 +205,7 @@ ORDER_ITEM_FIELDS = (
     "product_id", "product_name", "sku", "barcode", "quantity", "unit",
     "unit_price", "unit_price_incl", "vat_rate", "discount_rate", "total",
     "total_incl", "vat_amount", "is_service", "note", "price_includes_vat",
+    "image_url",
 )
 
 
