@@ -149,7 +149,7 @@ def test_host_serves_matching_site(db):
     assert tai_body["theme"] == "corporate"
     assert tai_body["colors"]["navy"] == "#13295B"
     assert tai_body["colors"]["red"] == "#CC1F26"
-    assert tai_body["logo"].endswith("/brand/tai/tai_yazilim_logo.svg")
+    assert tai_body["logo"].endswith("/brand/tai/logo-v1.svg")
     assert any(p["title"] == "TamKobi" for p in tai_body["content"]["products"])
     wtai = c.get("/api/public/site", headers={"host": "www.taiyazilim.com"})
     assert wtai.json()["slug"] == "tai"

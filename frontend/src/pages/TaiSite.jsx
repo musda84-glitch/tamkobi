@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
@@ -11,7 +11,7 @@ import {
   publishedCards,
   taiPageKey,
 } from "../utils/marketingSite";
-import { TAI_FAVICON_ICO, TAI_FAVICON_PNG, TAI_LOGO_SRC } from "../utils/platformBrand";
+import { TAI_LOGO_SRC, TAI_OG_IMAGE } from "../utils/platformBrand";
 import { announceVitrinPreview } from "../utils/vitrinPreview";
 
 const NAVY = "#13295B";
@@ -61,24 +61,6 @@ export default function TaiSite({ page }) {
     announceVitrinPreview();
   }, [slug]);
 
-  useLayoutEffect(() => {
-    if (slug !== "tai") return undefined;
-    const links = [
-      { rel: "icon", href: TAI_FAVICON_ICO },
-      { rel: "icon", type: "image/png", href: TAI_FAVICON_PNG },
-    ];
-    const created = links.map((spec) => {
-      const el = document.createElement("link");
-      el.setAttribute("rel", spec.rel);
-      if (spec.type) el.setAttribute("type", spec.type);
-      el.setAttribute("href", spec.href);
-      el.setAttribute("data-tai-icon", "1");
-      document.head.appendChild(el);
-      return el;
-    });
-    return () => created.forEach((el) => el.remove());
-  }, [slug]);
-
   useEffect(() => {
     if (slug !== "tai") return undefined;
     let on = true;
@@ -119,20 +101,20 @@ export default function TaiSite({ page }) {
 
   return (
     <div className="min-h-screen bg-white text-slate-900" data-testid="tai-site" data-page={key}>
-      <Seo title={seo.title} description={seo.description} path={pathname || "/"} siteName={brand} image="/brand/tai/tai-icon-512.png" />
-      <header className="text-white" style={{ background: NAVY }} data-testid="tai-header">
-        <div className="max-w-6xl mx-auto px-5 h-16 flex items-center justify-between gap-4">
-            <Link to={`/${linkQuery()}`} className="flex items-center gap-2.5 min-w-0" data-testid="tai-brand">
-            <img src={data?.logo || TAI_LOGO_SRC} alt={brand} className="w-9 h-9 rounded-lg bg-white/10" />
-            <span className="font-bold tracking-tight truncate">{brand}</span>
+      <Seo title={seo.title} description={seo.description} path={pathname || "/"} siteName={brand} image={TAI_OG_IMAGE} imageWidth={1200} imageHeight={1200} />
+      <header className="bg-white border-b border-slate-200" data-testid="tai-header">
+        <div className="max-w-6xl mx-auto px-4 sm:px-5 h-16 sm:h-20 flex items-center justify-between gap-3">
+          <Link to={`/${linkQuery()}`} className="flex items-center min-w-0 shrink-0" data-testid="tai-brand">
+            <img src={TAI_LOGO_SRC} alt="TAI Yazılım" className="h-10 sm:h-14 w-auto" />
           </Link>
-          <nav className="flex items-center gap-4 text-xs font-semibold">
+          <nav className="flex items-center gap-3 sm:gap-4 text-[11px] sm:text-xs font-semibold overflow-x-auto">
             {nav.map((item) => (
               <NavLink
                 key={item.key}
                 to={`${item.to}${linkQuery()}`}
                 end={item.end}
-                className={({ isActive }) => (isActive ? "text-white" : "text-white/75 hover:text-white")}
+                className="shrink-0"
+                style={({ isActive }) => ({ color: isActive ? RED : NAVY, opacity: isActive ? 1 : 0.72 })}
                 data-testid={`tai-nav-${item.key}`}
               >
                 {item.label}
@@ -237,7 +219,11 @@ export default function TaiSite({ page }) {
         <div className="max-w-6xl mx-auto px-5 py-16 text-sm text-slate-500" data-testid="tai-unpublished">Bu sayfa yayında değil.</div>
       ) : null}
 
-      <footer className="border-t py-6 text-center text-[11px] text-slate-500">{brand}</footer>
+      <footer className="border-t py-8" data-testid="tai-footer">
+        <div className="max-w-6xl mx-auto px-5 flex justify-center">
+          <img src={TAI_LOGO_SRC} alt="TAI Yazılım" className="h-9 sm:h-11 w-auto" />
+        </div>
+      </footer>
     </div>
   );
 }

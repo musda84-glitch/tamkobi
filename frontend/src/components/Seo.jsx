@@ -16,6 +16,8 @@ export function Seo({
   trialDays = 14,
   path = "/",
   image = DEFAULT_IMAGE,
+  imageWidth = 1200,
+  imageHeight = 630,
   noindex = false,
   jsonLd = null,
   siteName = "TamKobi",
@@ -39,8 +41,8 @@ export function Seo({
       <meta property="og:description" content={resolvedDescription} />
       <meta property="og:url" content={url} />
       <meta property="og:image" content={absImage} />
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
+      <meta property="og:image:width" content={String(imageWidth)} />
+      <meta property="og:image:height" content={String(imageHeight)} />
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={title} />
       <meta name="twitter:description" content={resolvedDescription} />
