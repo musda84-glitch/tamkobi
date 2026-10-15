@@ -122,6 +122,11 @@ test("preparePreviewXml rejects DespatchAdvice for an invoice design", () => {
   expect(preparePreviewXml(xml, "e_dispatch")).toContain("IRS1");
 });
 
+test("preparePreviewXml rejects unreadable XML", () => {
+  expect(() => preparePreviewXml("bu bir xml degil", "e_invoice")).toThrow(/XML okunamadı/);
+  expect(() => preparePreviewXml("", "e_dispatch")).toThrow(/XML okunamadı/);
+});
+
 test("readPreviewXmlFile rejects files over 2 MB and zip without jszip", async () => {
   const big = { name: "buyuk.xml", size: 2 * 1024 * 1024 + 1, text: async () => "<Invoice/>" };
   await expect(readPreviewXmlFile(big)).rejects.toThrow(/2 MB/);

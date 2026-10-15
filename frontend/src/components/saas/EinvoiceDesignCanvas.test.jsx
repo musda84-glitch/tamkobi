@@ -729,6 +729,17 @@ test("DespatchAdvice XML is rejected for an e-invoice design", async () => {
   expect(srcDoc()).not.toContain("IRS2026999");
 });
 
+test("unreadable XML shows a clear error and does not open the preview", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  await pickXmlFile(new File(["bu bir xml degil"], "bozuk.xml", { type: "text/xml" }));
+  expect(host.querySelector('[data-testid="einvoice-design-xml-upload-error"]')?.textContent).toMatch(/XML okunamadı/);
+  expect(host.querySelector("iframe")).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-xml-use-sample"]')).toBeNull();
+});
+
 test("XML larger than 2 MB is rejected", async () => {
   const root = createRoot(host);
   await act(async () => {
