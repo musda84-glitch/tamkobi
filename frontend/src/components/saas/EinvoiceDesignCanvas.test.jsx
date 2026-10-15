@@ -24,7 +24,9 @@ jest.mock("../../utils/einvoiceXsltPreview", () => {
       if (text.includes("DespatchAdvice") && !xmlText.includes("DespatchAdvice")) return "";
       const m = text.match(/<div class="inv-stamp"[\s\S]*?<\/div>/);
       const stack = text.includes('class="inv-stack"') ? "inv-stack" : "";
-      return `<html><body><div id="real-xml">${stack}${m ? m[0] : "NO-STAMP"}</div></body></html>`;
+      const id = (xmlText.match(/<(?:[\w.-]+:)?ID>([^<]*)<\/(?:[\w.-]+:)?ID>/) || [])[1] || "";
+      const leak = /EmbeddedDocumentBinaryObject/i.test(xmlText) ? "EMBED-LEAK" : "";
+      return `<html><body><div id="real-xml">${stack}${id}${leak}${m ? m[0] : "NO-STAMP"}</div></body></html>`;
     },
   };
 });
@@ -664,4 +666,77 @@ test("Kaşe stacks under GİB e-Arşiv and the real XML preview matches", async 
     || "";
   expect(srcdoc).toContain("inv-stack");
   expect(srcdoc).toContain('class="inv-stamp"');
+});
+
+async function pickXmlFile(file) {
+  const input = host.querySelector('[data-testid="einvoice-design-xml-upload-input"]');
+  await act(async () => {
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+}
+
+function srcDoc() {
+  const frame = host.querySelector('[data-testid="einvoice-design-preview"]');
+  return frame?.getAttribute("srcdoc") || frame?.srcdoc || "";
+}
+
+test("uploaded Invoice XML is shown in the preview iframe", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-xml-upload"]')?.textContent).toContain("XML yükle");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>xslt-ref</cbc:ID>
+    <cac:Attachment><cbc:EmbeddedDocumentBinaryObject mimeCode="application/xml">SECRETBASE64PAYLOAD</cbc:EmbeddedDocumentBinaryObject></cac:Attachment>
+  </cac:AdditionalDocumentReference>
+  <cbc:ID>GIB202600000042</cbc:ID>
+</Invoice>`;
+  await pickXmlFile(new File([xml], "fatura.xml", { type: "text/xml" }));
+  const frame = host.querySelector('[data-testid="einvoice-design-preview"]');
+  expect(frame?.tagName).toBe("IFRAME");
+  expect(srcDoc()).toContain("GIB202600000042");
+  expect(srcDoc()).not.toContain("SECRETBASE64PAYLOAD");
+  expect(srcDoc()).not.toContain("EMBED-LEAK");
+  expect(host.querySelector('[data-testid="einvoice-design-xml-use-sample"]')?.textContent).toContain("Örneğe dön");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-xml-use-sample"]').click();
+  });
+  expect(srcDoc()).toContain("ABC2026000000001");
+  expect(srcDoc()).not.toContain("GIB202600000042");
+  expect(host.querySelector('[data-testid="einvoice-design-xml-use-sample"]')).toBeNull();
+});
+
+test("DespatchAdvice XML is rejected for an e-invoice design", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<n1:DespatchAdvice xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:ID>IRS2026999</cbc:ID>
+</n1:DespatchAdvice>`;
+  await pickXmlFile(new File([xml], "irsaliye.xml", { type: "text/xml" }));
+  const err = host.querySelector('[data-testid="einvoice-design-xml-upload-error"]');
+  expect(err?.textContent).toMatch(/uyuşmuyor/);
+  expect(err?.textContent).toMatch(/DespatchAdvice/);
+  expect(err?.textContent).toMatch(/Invoice/);
+  expect(host.querySelector("iframe")).toBeNull();
+  expect(srcDoc()).not.toContain("IRS2026999");
+});
+
+test("XML larger than 2 MB is rejected", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  const file = new File([new Uint8Array(2 * 1024 * 1024 + 1)], "buyuk.xml", { type: "text/xml" });
+  expect(file.size).toBeGreaterThan(2 * 1024 * 1024);
+  await pickXmlFile(file);
+  expect(host.querySelector('[data-testid="einvoice-design-xml-upload-error"]')?.textContent).toMatch(/2 MB/);
+  expect(host.querySelector("iframe")).toBeNull();
 });

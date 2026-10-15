@@ -3,10 +3,14 @@ import {
   extractXsltLogo,
   layoutFromXslt,
   parseXsltHints,
+  preparePreviewXml,
   prepareXsltForBrowser,
+  readPreviewXmlFile,
   SAMPLE_DESPATCH_XML,
   SAMPLE_UBL_XML,
   sampleXmlForKind,
+  stripEmbeddedDocuments,
+  ublRootLocalName,
   xsltFallbackPreviewHtml,
 } from "./einvoiceXsltPreview";
 
@@ -76,6 +80,9 @@ test("sampleXmlForKind uses DespatchAdvice XML for e-İrsaliye", () => {
   expect(sampleXmlForKind("e_dispatch")).toBe(SAMPLE_DESPATCH_XML);
   expect(sampleXmlForKind("e_invoice")).toBe(SAMPLE_UBL_XML);
   expect(sampleXmlForKind("e_archive")).toBe(SAMPLE_UBL_XML);
+  expect(ublRootLocalName(sampleXmlForKind("e_invoice"))).toBe("Invoice");
+  expect(ublRootLocalName(sampleXmlForKind("e_archive"))).toBe("Invoice");
+  expect(ublRootLocalName(sampleXmlForKind("e_dispatch"))).toBe("DespatchAdvice");
   expect(SAMPLE_DESPATCH_XML).toContain("urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2");
   expect(SAMPLE_DESPATCH_XML).toContain("DespatchSupplierParty");
   expect(SAMPLE_DESPATCH_XML).toContain("DeliveryCustomerParty");
@@ -84,6 +91,42 @@ test("sampleXmlForKind uses DespatchAdvice XML for e-İrsaliye", () => {
   expect(SAMPLE_DESPATCH_XML).toContain("Alıcı Ticaret Ltd. Şti.");
   expect(SAMPLE_DESPATCH_XML).toContain("1234567890");
   expect(SAMPLE_DESPATCH_XML).toContain("9876543210");
+  expect(SAMPLE_DESPATCH_XML).toContain("ABC2026000000001");
+});
+
+test("stripEmbeddedDocuments drops embedded XSLT and images, keeps other references", () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:ID>KEEP123</cbc:ID>
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>xslt-ref</cbc:ID>
+    <cac:Attachment><cbc:EmbeddedDocumentBinaryObject mimeCode="application/xml">SECRETBASE64PAYLOAD</cbc:EmbeddedDocumentBinaryObject></cac:Attachment>
+  </cac:AdditionalDocumentReference>
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>BAKIYE-1</cbc:ID>
+    <cbc:DocumentType>BAKIYE</cbc:DocumentType>
+  </cac:AdditionalDocumentReference>
+</Invoice>`;
+  const out = stripEmbeddedDocuments(xml);
+  expect(out).toContain("KEEP123");
+  expect(out).toContain("BAKIYE-1");
+  expect(out).not.toContain("SECRETBASE64PAYLOAD");
+  expect(out).not.toContain("EmbeddedDocumentBinaryObject");
+  expect(out).not.toContain("xslt-ref");
+});
+
+test("preparePreviewXml rejects DespatchAdvice for an invoice design", () => {
+  const xml = `<?xml version="1.0"?><n1:DespatchAdvice xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"><cbc:ID xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">IRS1</cbc:ID></n1:DespatchAdvice>`;
+  expect(() => preparePreviewXml(xml, "e_invoice")).toThrow(/uyuşmuyor/);
+  expect(() => preparePreviewXml(xml, "e_archive")).toThrow(/Invoice/);
+  expect(preparePreviewXml(xml, "e_dispatch")).toContain("IRS1");
+});
+
+test("readPreviewXmlFile rejects files over 2 MB and zip without jszip", async () => {
+  const big = { name: "buyuk.xml", size: 2 * 1024 * 1024 + 1, text: async () => "<Invoice/>" };
+  await expect(readPreviewXmlFile(big)).rejects.toThrow(/2 MB/);
+  const zip = { name: "belge.zip", size: 120, type: "application/zip", text: async () => "PK" };
+  await expect(readPreviewXmlFile(zip)).rejects.toThrow(/\.xml/);
 });
 
 test("xsltFallbackPreviewHtml uses extracted style", () => {
