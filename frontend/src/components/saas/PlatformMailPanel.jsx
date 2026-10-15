@@ -5,6 +5,7 @@ import { Mail, Server, Plus, Trash2, Loader2, Save, Shield, Send, PlugZap, Penci
 import { API_URL } from "../../context/AuthContext";
 import { pickMailServerId } from "../../utils/platformMail";
 import { inputCls, Toggle } from "./saasUi";
+import { PlatformMailInbox } from "./PlatformMailInbox";
 
 const cred = { withCredentials: true };
 
@@ -216,6 +217,8 @@ export const PlatformMailPanel = () => {
         <div className="font-bold text-slate-900 flex items-center gap-1.5"><Mail className="w-4 h-4 text-sky-600" /> Platform posta sunucusu</div>
         <p className="mt-1 text-[11px] leading-relaxed">Microsoft 365 <b>Send As</b> / Google <b>Send mail as</b> / Odoo outgoing mail server ile aynı model: önce SMTP sunucusunu bağlayın, sonra bildiğiniz gönderen adreslerini (info@, destek@, fatura@) ekleyin ve hangi panel yöneticisinin hangi kutuyu kullanabileceğini seçin. Lisans hatırlatması ve abonelik faturası varsayılan kutudan gider; şirket İletişim Merkezi SMTP’si yedek olarak kalır.</p>
       </div>
+
+      <PlatformMailInbox mailboxes={d.mailboxes} />
 
       <form onSubmit={saveServer} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="mail-server-form">
         <div className="flex flex-wrap items-center justify-between gap-2">
