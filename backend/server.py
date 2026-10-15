@@ -8697,9 +8697,98 @@ async def _reverse_invoice_effects(inv: dict):
         inv["stock_effects_applied"] = False
 
 
+def incoming_purchase_ledger_posted(inv: dict) -> bool:
+    """Gelen alış faturası cariye/stoğa işlendiyse ikinci kayıt açılmaz."""
+    if not inv:
+        return False
+    if inv.get("status") == "cancelled":
+        return True
+    if inv.get("effects_applied"):
+        return True
+    return (inv.get("status") or "draft") != "draft"
+
+
+async def _post_incoming_purchase_invoice(invoice_id: str, inv: dict) -> dict:
+    """Sipariş taslak «Faturalaştır» ile aynı servis: `_apply_invoice_effects`.
+
+    Gelen belge GİB'den alınmıştır; e-Fatura / e-Arşiv / kağıt olarak yeniden kesilmez.
+    Çift tıklama veya zaten işlenmiş fatura ikinci bakiye/stok hareketi yazmaz.
+    """
+    fresh = await db.invoices.find_one({"_id": invoice_id}) or inv
+    inv = dict(fresh)
+    if inv.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="İptal edilmiş gelen fatura işlenemez.")
+    if incoming_purchase_ledger_posted(inv):
+        return {
+            "status": "success",
+            "already": True,
+            "message": "Fatura zaten cariye işlendi.",
+            "invoice_id": invoice_id,
+            "payment_status": inv.get("payment_status") or "unpaid",
+        }
+    claim = await db.invoices.update_one(
+        {
+            "_id": invoice_id,
+            "status": "draft",
+            "effects_applied": {"$ne": True},
+            "posting_lock": {"$ne": True},
+        },
+        {"$set": {"posting_lock": True}},
+    )
+    if not getattr(claim, "matched_count", 0):
+        return {
+            "status": "success",
+            "already": True,
+            "message": "Fatura zaten cariye işlendi.",
+            "invoice_id": invoice_id,
+            "payment_status": inv.get("payment_status") or "unpaid",
+        }
+    try:
+        if inv.get("invoice_type") != "purchase":
+            inv["invoice_type"] = "purchase"
+        # False: stok girişi uygula. Edocs'un None yolu yalnızca önceden stoğu artmış onaylı belgededir.
+        if inv.get("stock_effects_applied") is not True:
+            inv["stock_effects_applied"] = False
+        await _apply_invoice_effects(inv)
+        now = datetime.now(timezone.utc).isoformat()
+        paid = float(inv.get("paid_amount") or 0)
+        payment_status = inv.get("payment_status") or "unpaid"
+        if paid <= 0.01:
+            payment_status = "unpaid"
+        await db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": {
+                "status": "approved",
+                "effects_applied": True,
+                "invoice_type": "purchase",
+                "direction": "incoming",
+                "payment_status": payment_status,
+                "approved_at": now,
+                "posted_to_contact_at": now,
+                "posting_lock": False,
+                "stock_effects_applied": True,
+            }},
+        )
+    except Exception:
+        await db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": {"posting_lock": False}},
+        )
+        raise
+    return {
+        "status": "success",
+        "already": False,
+        "message": "Alış faturası cariye işlendi; stok girişi yapıldı.",
+        "invoice_id": invoice_id,
+        "payment_status": "unpaid",
+    }
+
+
 @api_router.post("/invoices/{invoice_id}/approve")
 async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    if _is_incoming_purchase_invoice(inv):
+        return await _post_incoming_purchase_invoice(invoice_id, inv)
     if inv.get("status") != "draft":
         if inv.get("order_id") and not (await db.orders.find_one({"_id": inv["order_id"], "is_invoiced": True})):
             await _mark_order_invoiced_from_invoice(inv)
@@ -9329,6 +9418,9 @@ async def accept_incoming_invoice(invoice_id: str, user: dict = Depends(get_curr
     if resp == "rejected":
         raise HTTPException(status_code=400, detail="Reddedilmiş gelen fatura onaylanamaz.")
     now = datetime.now(timezone.utc).isoformat()
+    if inv.get("status") == "draft" and not incoming_purchase_ledger_posted(inv):
+        await _post_incoming_purchase_invoice(invoice_id, inv)
+        inv = await db.invoices.find_one({"_id": invoice_id}) or inv
     updates = {
         "gib_response": "accepted",
         "gib_status": "Gelen E-Fatura Onaylandı",
@@ -9336,9 +9428,6 @@ async def accept_incoming_invoice(invoice_id: str, user: dict = Depends(get_curr
         "accepted_at": now,
     }
     if inv.get("status") == "draft":
-        if not inv.get("effects_applied"):
-            await _apply_invoice_effects(inv)
-            updates["effects_applied"] = True
         updates["status"] = "approved"
         updates["approved_at"] = now
     await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})

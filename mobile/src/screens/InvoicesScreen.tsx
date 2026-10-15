@@ -7,11 +7,12 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { confirmAction } from "../components/chips";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { DraftInvoiceFaturalastir } from "../components/DraftInvoiceFaturalastir";
+import { IncomingInvoiceFaturalastir } from "../components/IncomingInvoiceFaturalastir";
 import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
-import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoiceListTitle, invoiceRowDangerAction } from "../utils/invoiceDraft";
+import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoiceListTitle, invoiceRowDangerAction, isIncomingPurchaseInvoice } from "../utils/invoiceDraft";
 import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
@@ -200,6 +201,7 @@ export function InvoicesScreen() {
             const danger = invoiceRowDangerAction(inv);
             const allowDanger = (danger === "delete" && canDelete) || (danger === "cancel" && canEdit);
             const showFaturalastir = canEdit && canFaturalastirDraftInvoice(inv);
+            const showIncomingPost = canEdit && isIncomingPurchaseInvoice(inv);
             const row = (
               <ListRow
                 testID={allowDanger ? undefined : `inv-row-${iid}`}
@@ -234,6 +236,14 @@ export function InvoicesScreen() {
                     allowed={canEdit}
                     testID={`inv-faturalastir-${iid}`}
                     onIssued={() => { setError(null); load(); }}
+                    onError={setError}
+                  />
+                ) : null}
+                {showIncomingPost ? (
+                  <IncomingInvoiceFaturalastir
+                    invoice={inv}
+                    testID={`incoming-faturalastir-${iid}`}
+                    onPosted={() => { setError(null); load(); }}
                     onError={setError}
                   />
                 ) : null}

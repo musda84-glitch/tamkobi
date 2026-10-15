@@ -4,6 +4,7 @@ import {
   DRAFT_FATURALASTIR_TYPES,
   draftFaturalastirNeedsOnay,
   issueInvoiceFromOnay,
+  postIncomingPurchaseInvoice,
 } from "./invoiceFaturalastir";
 
 jest.mock("../api/client", () => ({
@@ -121,5 +122,38 @@ describe("issueInvoiceFromOnay", () => {
     expect(mockedPost).toHaveBeenCalledWith(client, "/invoices/inv_2/send-to-gib", {
       e_type: "e_archive",
     });
+  });
+});
+
+describe("postIncomingPurchaseInvoice", () => {
+  const client = { baseUrl: "https://example.test", token: "t" };
+  const draft = {
+    id: "inv_in",
+    status: "draft",
+    invoice_type: "purchase",
+    direction: "incoming",
+    e_type: "e_invoice",
+    effects_applied: false,
+  };
+
+  beforeEach(() => {
+    mockedPost.mockReset();
+    mockedPost.mockResolvedValue({});
+  });
+
+  it("posts the purchase once through approve and does not resend to GİB", async () => {
+    await postIncomingPurchaseInvoice(client, draft);
+    expect(mockedPost).toHaveBeenCalledTimes(1);
+    expect(mockedPost).toHaveBeenCalledWith(client, "/invoices/inv_in/approve");
+    expect(mockedPost.mock.calls.some((c) => String(c[1]).includes("send-to-gib"))).toBe(false);
+  });
+
+  it("does not post again when the invoice is already on the ledger", async () => {
+    await postIncomingPurchaseInvoice(client, {
+      ...draft,
+      status: "approved",
+      effects_applied: true,
+    });
+    expect(mockedPost).not.toHaveBeenCalled();
   });
 });

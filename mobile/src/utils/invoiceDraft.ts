@@ -508,6 +508,14 @@ export function isIncomingPurchasePending(inv?: Invoice | null): boolean {
   return incomingPurchaseResponse(inv) === "pending";
 }
 
+/** Gelen alış faturası cariye/stoğa işlendiyse Faturalaştır pasif kalır. */
+export function incomingPurchaseLedgerPosted(inv?: Invoice | null): boolean {
+  if (!isIncomingPurchaseInvoice(inv)) return false;
+  if (inv?.status === "cancelled") return true;
+  if (inv?.effects_applied) return true;
+  return Boolean(inv?.status && inv.status !== "draft");
+}
+
 export function remainingAmount(inv?: Invoice | null): number {
   return Math.max(0, num(inv?.grand_total) - num(inv?.paid_amount));
 }

@@ -1,7 +1,7 @@
 import { post, put, type ApiClient } from "../api/client";
 import type { Invoice } from "../types";
 import type { EfaturaOnayPayload } from "./efaturaOnay";
-import { isGibIssued, isIncomingPurchaseInvoice } from "./invoiceDraft";
+import { incomingPurchaseLedgerPosted, isGibIssued, isIncomingPurchaseInvoice } from "./invoiceDraft";
 import { nowIssueDateTime } from "./invoiceIssueNow";
 
 /** Taslak satış faturası — siparişteki Faturalaştır gibi tür seçilip kesilir. */
@@ -25,6 +25,14 @@ export type DraftFaturalastirType = (typeof DRAFT_FATURALASTIR_TYPES)[number]["k
 
 export function draftFaturalastirNeedsOnay(eType: string): boolean {
   return eType === "e_invoice" || eType === "e_archive" || eType === "auto";
+}
+
+/** Gelen fatura: sipariş taslağı ile aynı onay. Tür listesi yok. */
+export async function postIncomingPurchaseInvoice(client: ApiClient, inv: Invoice): Promise<void> {
+  if (incomingPurchaseLedgerPosted(inv)) return;
+  const id = inv.id || inv._id;
+  if (!id) throw new Error("Fatura bulunamadı.");
+  await post(client, `/invoices/${id}/approve`);
 }
 
 /** ElektronikFaturaOnayModal sonucu → send-to-gib (InvoiceDetail ile aynı gövde). */

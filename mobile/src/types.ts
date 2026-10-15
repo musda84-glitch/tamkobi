@@ -157,6 +157,7 @@ export type Invoice = {
   direction?: string;
   source?: string;
   edoc_id?: string;
+  effects_applied?: boolean;
   gib_response?: string;
   dispatch_id?: string;
   installment_plan?: boolean;
