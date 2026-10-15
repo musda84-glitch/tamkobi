@@ -3,10 +3,18 @@
  * ynt → TAI Yazılım. Diğer hostlar TamKobi kalır.
  */
 
-import { getHostKind } from "./hosts";
+import { getHostKind, hostnameOf } from "./hosts";
+import { TAI_HOSTS } from "./marketingSite";
 
 export const TAI_PLATFORM_TITLE = "TAI Yazılım · Platform Yönetimi";
-export const TAI_LOGO_SRC = "/brand/tai/tai_yazilim_logo.svg";
+/** Yatay kilit; taiyazilim.com ve ynt aynı dosyayı kullanır. */
+export const TAI_LOGO_SRC = "/brand/tai/logo-v1.svg";
+export const TAI_OG_IMAGE = "/brand/tai/og-v1.png";
+/** Ok işareti. Yalnız taiyazilim.com sekme ikonu. */
+export const TAI_SITE_FAVICON_SVG = "/brand/tai/mark-v1.svg";
+export const TAI_SITE_FAVICON_ICO = "/brand/tai/favicon-v1.ico";
+export const TAI_SITE_FAVICON_PNG = "/brand/tai/favicon-v1.png";
+export const TAI_SITE_APPLE = "/brand/tai/apple-touch-v1.png";
 export const TAI_FAVICON_ICO = "/brand/tai/favicon.ico";
 export const TAI_FAVICON_PNG = "/brand/tai/favicon.png";
 export const TAI_APPLE_TOUCH = "/brand/tai/tai-icon-192.png";
@@ -17,6 +25,11 @@ const TAM_APPLE_TOUCH = "/brand/tamkobi-icon-192.png";
 
 export function isYntHost(win = typeof window !== "undefined" ? window : undefined) {
   return getHostKind(win) === "ynt";
+}
+
+/** Kurumsal site. ynt.taiyazilim.com ve tamkobi.com buna girmez. */
+export function isTaiMarketingHost(win = typeof window !== "undefined" ? window : undefined) {
+  return TAI_HOSTS.includes(hostnameOf(win));
 }
 
 function upsertLink(doc, { rel, type, href, sizes }) {
@@ -37,13 +50,22 @@ function upsertLink(doc, { rel, type, href, sizes }) {
 export function applyPlatformDocumentBrand(doc = typeof document !== "undefined" ? document : undefined, win = typeof window !== "undefined" ? window : undefined) {
   if (!doc?.documentElement) return { ynt: false };
   const ynt = isYntHost(win);
+  const taiSite = !ynt && isTaiMarketingHost(win);
   doc.documentElement.classList.toggle("ynt-host", ynt);
   const icons = ynt
-    ? { ico: TAI_FAVICON_ICO, png: TAI_FAVICON_PNG, apple: TAI_APPLE_TOUCH }
-    : { ico: TAM_FAVICON_ICO, png: TAM_FAVICON_PNG, apple: TAM_APPLE_TOUCH };
+    ? { ico: TAI_FAVICON_ICO, png: TAI_FAVICON_PNG, apple: TAI_APPLE_TOUCH, svg: "" }
+    : taiSite
+      ? { ico: TAI_SITE_FAVICON_ICO, png: TAI_SITE_FAVICON_PNG, apple: TAI_SITE_APPLE, svg: TAI_SITE_FAVICON_SVG }
+      : { ico: TAM_FAVICON_ICO, png: TAM_FAVICON_PNG, apple: TAM_APPLE_TOUCH, svg: "" };
   upsertLink(doc, { rel: "icon", href: icons.ico, sizes: "any" });
   upsertLink(doc, { rel: "icon", type: "image/png", href: icons.png });
   upsertLink(doc, { rel: "apple-touch-icon", href: icons.apple });
+  const svgIcon = doc.head?.querySelector('link[rel="icon"][type="image/svg+xml"]');
+  if (icons.svg) {
+    upsertLink(doc, { rel: "icon", type: "image/svg+xml", href: icons.svg });
+  } else if (svgIcon) {
+    svgIcon.remove();
+  }
   if (ynt) doc.title = TAI_PLATFORM_TITLE;
   else if (doc.title === TAI_PLATFORM_TITLE) doc.title = "TamKobi";
   const theme = doc.querySelector('meta[name="theme-color"]');

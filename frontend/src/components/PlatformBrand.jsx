@@ -31,8 +31,8 @@ export function PlatformBrandLockup({ testId = "sys-brand", variant = "sidebar",
 
   if (ynt) {
     return (
-      <div className="flex items-center gap-2.5 min-w-0">
-        <img src={TAI_LOGO_SRC} alt="TAI Yazılım" className="w-9 h-9 shrink-0 rounded-lg" data-testid="tai-logo" />
+      <div className="flex flex-col items-start gap-1.5 min-w-0">
+        <img src={TAI_LOGO_SRC} alt="TAI Yazılım" className="h-10 w-auto max-w-full shrink-0 bg-white rounded-md px-1.5 py-0.5" data-testid="tai-logo" />
         <div className={`font-bold leading-snug text-white ${variant === "sidebar" ? "text-xs" : "text-sm"}`} data-testid={testId}>{TAI_PLATFORM_TITLE}</div>
       </div>
     );
