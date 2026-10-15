@@ -63,3 +63,60 @@ test("Bildirimler paneli olayları ve kaydetmeyi gösterir", async () => {
   root.unmount();
   host.remove();
 });
+
+test("Gruplama süresi seçilir ve kayda gider", async () => {
+  axios.get.mockResolvedValue({
+    data: {
+      ...SAMPLE,
+      events: {
+        ...SAMPLE.events,
+        order_new: { inapp: true, email: true, sms: false, digest: "batch", batch_minutes: 10 },
+      },
+    },
+  });
+  axios.put.mockResolvedValue({
+    data: {
+      ...SAMPLE,
+      events: {
+        ...SAMPLE.events,
+        order_new: { inapp: true, email: true, sms: false, digest: "batch", batch_minutes: 30 },
+      },
+    },
+  });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<NotifyPrefsPanel companyId="comp1" />);
+  });
+  await act(async () => {});
+  const sel = host.querySelector('[data-testid="notify-order-batch-minutes"]');
+  expect(sel).toBeTruthy();
+  expect(sel.value).toBe("10");
+  expect(sel.textContent).toMatch(/Hemen/);
+  expect(sel.textContent).toMatch(/60 dk/);
+  expect(host.querySelector('[data-testid="notify-order-batch-note"]')?.textContent).toMatch(
+    /Uygulama içi bildirim ve push her zaman anında gelir/,
+  );
+  expect(host.querySelector('[data-testid="notify-order_new-digest"]')?.textContent).toMatch(/Grupla/);
+  expect(host.querySelector('[data-testid="notify-order_new-digest"]')?.textContent).toMatch(/Saatlik özet/);
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+  await act(async () => {
+    setter.call(sel, "30");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="notify-prefs-save"]').click();
+  });
+  expect(axios.put).toHaveBeenCalledWith(
+    "http://test/api/notify/prefs",
+    expect.objectContaining({
+      company_id: "comp1",
+      events: expect.objectContaining({
+        order_new: expect.objectContaining({ batch_minutes: 30, digest: "batch" }),
+      }),
+    }),
+  );
+  root.unmount();
+  host.remove();
+});

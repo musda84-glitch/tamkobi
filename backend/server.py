@@ -5452,7 +5452,7 @@ async def _notify_company(company_id: str, typ: str, title: str, message: str, r
             await event_notify.notify_event(
                 company_id, "order_new", title, message,
                 link="/orders", ref_type="order", ref_id=ref_id,
-                dedupe_key=f"order:b2b:{ref_id}",
+                dedupe_key=f"order:{ref_id}",
             )
             return
         except Exception:
@@ -7964,24 +7964,36 @@ async def update_product_images(product_id: str, req: Dict[str, Any], user: dict
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
     return clean_doc(updated)
 
+def _file_thumb_fmt(fmt: Optional[str]) -> str:
+    f = (fmt or "").strip().lower()
+    if f in ("jpg", "jpeg"):
+        return "jpg"
+    if f == "png":
+        return "png"
+    return "webp"
+
+
 @api_router.get("/files/{path:path}")
-async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
-    """Dosya sunumu. w=64|128|320 → küçük WebP (önbellekli; liste/kart tam dosya çekmez)."""
+async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280), fmt: Optional[str] = Query(None)):
+    """Dosya sunumu. w=64|128|320 küçültür. fmt=jpg|png|webp (e-posta JPEG/PNG)."""
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     # Önce cache: hit olursa orijinali storage'dan hiç okuma
-    if w:
-        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
+    thumb_fmt = _file_thumb_fmt(fmt) if (w or (fmt or "").strip()) else "webp"
+    edge = int(w) if w else (1280 if (fmt or "").strip() else 0)
+    if w or (fmt or "").strip():
+        cache_key = image_opt.resize_cache_path(path, edge or int(w or 128), thumb_fmt)
         if cache_key != path:
             try:
                 cached, cached_ct = get_object(cache_key)
                 if cached and len(cached) > 32:
+                    fallback_ct = {"jpg": "image/jpeg", "png": "image/png"}.get(thumb_fmt, "image/webp")
                     return Response(
                         content=cached,
-                        media_type=cached_ct or "image/webp",
+                        media_type=cached_ct or fallback_ct,
                         headers={
                             "Cache-Control": "public, max-age=604800, immutable",
                             "Vary": "Accept",
-                            "X-Image-Resize": str(w),
+                            "X-Image-Resize": str(edge or w or ""),
                             "X-Image-Cache": "hit",
                         },
                     )
@@ -8000,10 +8012,13 @@ async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
     head = data[:240].lstrip().lower()
     if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
-    if w and media.startswith("image/") and media != "image/svg+xml":
-        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
-        thumb = image_opt.make_thumbnail(data, media, path, max_edge=int(w), quality=70)
-        if thumb and thumb.data and len(thumb.data) < len(data):
+    if (w or (fmt or "").strip()) and media.startswith("image/") and media != "image/svg+xml":
+        cache_key = image_opt.resize_cache_path(path, edge or int(w or 128), thumb_fmt)
+        thumb = image_opt.make_thumbnail(
+            data, media, path, max_edge=edge or int(w or 128), quality=70, out_fmt=thumb_fmt,
+        )
+        force_fmt = bool((fmt or "").strip()) and thumb_fmt in ("jpg", "png")
+        if thumb and thumb.data and (force_fmt or len(thumb.data) < len(data)):
             if cache_key != path:
                 try:
                     put_object(cache_key, thumb.data, thumb.content_type)
@@ -8015,7 +8030,7 @@ async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
                 headers={
                     "Cache-Control": "public, max-age=604800, immutable",
                     "Vary": "Accept",
-                    "X-Image-Resize": str(w),
+                    "X-Image-Resize": str(edge or w or ""),
                     "X-Image-Cache": "miss",
                 },
             )
