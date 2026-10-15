@@ -1,0 +1,128 @@
+/*
+ * Platform yönetimi (ynt) teması.
+ * Yalnızca html.ynt-host üzerinde geçerlidir; sınıf host_audience / YNT_HOST
+ * ile kind === "ynt" olduğunda eklenir. app, b2b, ik ve firma panelleri bu
+ * sınıfı almaz.
+ *
+ * Kontrast (WCAG AA):
+ *   #FFFFFF on #13295B = 14.04:1 (birincil buton yazısı)
+ *   #FFFFFF on #0c1c40 = 16.72:1 (birincil hover)
+ *   #FFFFFF on #CC1F26 = 5.54:1  (aktif menü / uyarı dolgusu, normal metin AA)
+ *   #CC1F26 on #FFFFFF = 5.54:1  (açık zeminde uyarı metni)
+ *   #CC1F26 on #13295B = 2.53:1  — kırmızı yazı lacivert zeminde kullanılmaz.
+ *     Aktif menü kırmızı dolgu + beyaz yazı; kenar için 2px beyaz iç çizgi
+ *     (lacivert zemine karşı 3:1 UI sınırı).
+ */
+
+html.ynt-host {
+  --ynt-navy: #13295B;
+  --ynt-red: #CC1F26;
+  --ynt-on-navy: #ffffff;
+  --ynt-on-red: #ffffff;
+  --ynt-primary: var(--ynt-navy);
+  --ynt-primary-hover: #0c1c40;
+  --ynt-accent: var(--ynt-red);
+  --ynt-accent-hover: #a8181e;
+  --ynt-warning: var(--ynt-red);
+  --ynt-warning-on-light: var(--ynt-red);
+  --ynt-sidebar: var(--ynt-navy);
+  --ynt-edge: #ffffff;
+  --ynt-focus: var(--ynt-red);
+  --ynt-sidebar-muted: #d5deee;
+  --ynt-sidebar-faint: #c5d0e6;
+}
+
+/* Birincil butonlar: lacivert dolgu, beyaz yazı. */
+html.ynt-host button.bg-amber-400,
+html.ynt-host a.bg-amber-400 {
+  background-color: var(--ynt-primary) !important;
+  color: var(--ynt-on-navy) !important;
+  border-color: var(--ynt-primary) !important;
+  box-shadow: inset 0 0 0 2px var(--ynt-edge);
+}
+
+html.ynt-host button.bg-amber-400:hover,
+html.ynt-host a.bg-amber-400:hover {
+  background-color: var(--ynt-primary-hover) !important;
+  color: var(--ynt-on-navy) !important;
+}
+
+/* Aktif sol menü: kırmızı vurgu, beyaz yazı. */
+html.ynt-host [data-testid="sys-sidebar-nav"] a.bg-amber-400,
+html.ynt-host [data-testid="sys-sidebar-nav"] a.bg-amber-400:hover {
+  background-color: var(--ynt-accent) !important;
+  color: var(--ynt-on-red) !important;
+  box-shadow: inset 0 0 0 2px var(--ynt-edge);
+}
+
+html.ynt-host [data-testid="sys-sidebar-nav"] a.bg-amber-400:hover {
+  background-color: var(--ynt-accent-hover) !important;
+}
+
+html.ynt-host [data-testid="help-page-btn"].bg-amber-400 {
+  background-color: var(--ynt-accent) !important;
+  color: var(--ynt-on-red) !important;
+  box-shadow: none;
+}
+
+/* Uyarı dolgusu (kota çubuğu). Yazı taşımayan ince çubuklar. */
+html.ynt-host .h-1\.5.bg-amber-400,
+html.ynt-host .h-full.bg-amber-400 {
+  background-color: var(--ynt-warning) !important;
+  box-shadow: none;
+}
+
+/* Açık zemindeki uyarı metni ve çerçeve. Koyu zemindeki amber-200/300/400
+   olduğu gibi kalır; kırmızı orada AA'yı tutmaz. */
+html.ynt-host .text-amber-600,
+html.ynt-host .text-amber-700,
+html.ynt-host .text-amber-800,
+html.ynt-host .text-amber-900 {
+  color: var(--ynt-warning-on-light) !important;
+}
+
+html.ynt-host .border-amber-200,
+html.ynt-host .border-amber-300,
+html.ynt-host .border-amber-400 {
+  border-color: var(--ynt-warning) !important;
+}
+
+html.ynt-host [data-testid="system-layout"] > aside {
+  background-color: var(--ynt-sidebar);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--ynt-on-navy);
+}
+
+html.ynt-host [data-testid="system-layout"] > aside .text-slate-400,
+html.ynt-host [data-testid="sys-sidebar-nav"] a:not(.bg-amber-400) {
+  color: var(--ynt-sidebar-muted);
+}
+
+html.ynt-host [data-testid="system-layout"] > aside .text-slate-500 {
+  color: var(--ynt-sidebar-faint);
+}
+
+html.ynt-host [data-testid="system-layout"] > aside .text-amber-400,
+html.ynt-host [data-testid="sys-sidebar-nav"] .text-amber-300 {
+  color: var(--ynt-on-navy);
+}
+
+html.ynt-host .border-amber-500\/30 {
+  border-color: color-mix(in srgb, var(--ynt-red) 55%, transparent) !important;
+}
+
+html.ynt-host .ynt-accent-link {
+  color: var(--ynt-on-navy);
+  text-decoration: underline;
+  text-decoration-color: var(--ynt-red);
+  text-underline-offset: 3px;
+}
+
+html.ynt-host [data-testid="system-login-page"] input:focus,
+html.ynt-host [data-testid="sys-forgot-form"] input:focus,
+html.ynt-host [data-testid="sys-2fa-form"] input:focus,
+html.ynt-host [data-testid="sys-2fa-setup-page"] input:focus,
+html.ynt-host [data-testid="system-layout"] :is(input, textarea, select):focus {
+  outline: 2px solid var(--ynt-focus);
+  outline-offset: 1px;
+}

@@ -7,6 +7,7 @@ import { PosSessionProvider } from "./context/PosSessionContext";
 import { MesaimGateProvider } from "./context/MesaimGateContext";
 import { Toaster } from "sonner";
 import HostShell from "./components/HostShell";
+import { PlatformDocumentBrand } from "./components/PlatformBrand";
 import HostRouteGuard from "./components/HostRouteGuard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SetupGuard from "./components/SetupGuard";
@@ -107,6 +108,7 @@ export default function App() {
         <HelpProvider>
         <PosSessionProvider>
         <MesaimGateProvider>
+        <PlatformDocumentBrand />
         <Toaster position="top-right" richColors closeButton />
         <HelpHost />
         <NoticesGate />

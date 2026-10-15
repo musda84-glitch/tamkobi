@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { LogIn, KeyRound, ArrowLeft, ShieldCheck } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
-import TamKobiMark from "../components/TamKobiMark";
+import { PlatformBrandLockup } from "../components/PlatformBrand";
+import { isYntHost } from "../utils/platformBrand";
 import { REMEMBER_SYS_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 
 export default function SystemLoginPage() {
@@ -117,16 +118,7 @@ export default function SystemLoginPage() {
       <div className="absolute -left-20 -top-20 w-96 h-96 rounded-full bg-amber-400/10 blur-3xl" />
       {mode === "forgot" ? (
         <form onSubmit={forgot} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="sys-forgot-form">
-          <div className="flex items-center gap-2.5">
-            <TamKobiMark className="w-9 h-9 shrink-0 rounded-xl" />
-            <div>
-              <div className="tracking-tight">
-                <span className="font-bold text-white">Tam</span>
-                <span className="font-medium text-slate-300">Kobi</span>
-              </div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Şifre Sıfırlama</div>
-            </div>
-          </div>
+          <PlatformBrandLockup testId="sys-forgot-brand" variant="login" subtitle="Şifre Sıfırlama" />
           <p className="text-xs text-slate-400">Platform yönetici hesabınız için sıfırlama bağlantısı alın. Kayıtlı bir hesap varsa seçtiğiniz kanala gider.</p>
           <div className="flex gap-2" data-testid="sys-forgot-channel">
             <button type="button" onClick={() => { setChannel("email"); setResetInfo(null); setErr(""); }} className={`flex-1 py-2 rounded-xl border text-xs font-bold ${!smsMode ? "bg-amber-400 text-slate-900 border-amber-400" : "bg-white/5 text-slate-300 border-white/10"}`} data-testid="sys-forgot-channel-email">E-posta</button>
@@ -149,13 +141,7 @@ export default function SystemLoginPage() {
         </form>
       ) : mode === "totp" ? (
         <form onSubmit={submitTotp} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="sys-2fa-form">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-400 flex items-center justify-center text-slate-900"><ShieldCheck className="w-5 h-5" /></div>
-            <div>
-              <div className="font-bold text-white text-sm">İki adımlı doğrulama</div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Authenticator / kurtarma kodu</div>
-            </div>
-          </div>
+          <PlatformBrandLockup testId="sys-2fa-brand" plainTitle="İki adımlı doğrulama" subtitle="Authenticator / kurtarma kodu" />
           <p className="text-xs text-slate-400">Google Authenticator (veya uyumlu uygulama) içindeki 6 haneli kodu girin. Telefon yoksa tek kullanımlık kurtarma kodlarından birini kullanın.</p>
           <div>
             <label className="block text-xs font-semibold mb-1 text-slate-300">Doğrulama kodu</label>
@@ -178,16 +164,7 @@ export default function SystemLoginPage() {
         </form>
       ) : (
         <form onSubmit={submit} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="system-login-page">
-          <div className="flex items-center gap-2.5">
-            <TamKobiMark className="w-9 h-9 shrink-0 rounded-xl" />
-            <div>
-              <div className="tracking-tight" data-testid="sys-login-brand">
-                <span className="font-bold text-white">Tam</span>
-                <span className="font-medium text-slate-300">Kobi</span>
-              </div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Platform Yönetimi</div>
-            </div>
-          </div>
+          <PlatformBrandLockup testId="sys-login-brand" variant="login" />
           <p className="text-xs text-slate-400">Bu alan müşteri ERP'sinden bağımsızdır; yalnızca platform yöneticileri giriş yapabilir.</p>
           <div><label className="block text-xs font-semibold mb-1 text-slate-300">E-posta</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-email" /></div>
           <div><label className="block text-xs font-semibold mb-1 text-slate-300">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-password" /></div>
@@ -200,7 +177,7 @@ export default function SystemLoginPage() {
           </div>
           {err && <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2" data-testid="sys-login-error">{err}</div>}
           <button disabled={busy} className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="sys-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Panele Giriş"}</button>
-          <button type="button" onClick={() => { setMode("forgot"); setErr(""); }} className="w-full text-[11px] text-amber-300 font-semibold" data-testid="sys-forgot-open">Şifremi unuttum</button>
+          <button type="button" onClick={() => { setMode("forgot"); setErr(""); }} className={`w-full text-[11px] font-semibold ${isYntHost() ? "ynt-accent-link" : "text-amber-300"}`} data-testid="sys-forgot-open">Şifremi unuttum</button>
           <BuildStamp tone="system" />
         </form>
       )}

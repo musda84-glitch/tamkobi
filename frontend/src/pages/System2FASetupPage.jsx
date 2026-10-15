@@ -2,9 +2,10 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShieldCheck, Copy, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
+import { PlatformBrandLockup } from "../components/PlatformBrand";
 
 export default function System2FASetupPage() {
   const { user, authenticated, loading, refreshLicense } = useAuth();
@@ -87,13 +88,7 @@ export default function System2FASetupPage() {
   return (
     <div className="min-h-screen bg-[#0b0f1a] flex items-center justify-center p-6" data-testid="sys-2fa-setup-page">
       <div className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-md p-8 space-y-4 text-slate-100">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-amber-400 flex items-center justify-center text-slate-900"><ShieldCheck className="w-5 h-5" /></div>
-          <div>
-            <div className="font-bold text-white text-sm">Süper admin 2FA kurulumu</div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Google Authenticator uyumlu</div>
-          </div>
-        </div>
+        <PlatformBrandLockup testId="sys-2fa-setup-brand" plainTitle="Süper admin 2FA kurulumu" subtitle="Google Authenticator uyumlu" />
 
         {step === "load" && <p className="text-xs text-slate-400">{busy ? "Kurulum hazırlanıyor…" : (err || "…")}</p>}
 

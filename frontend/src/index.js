@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { HelmetProvider } from "react-helmet-async";
 import "@/api/client";
 import "@/index.css";
+import "@/theme/ynt.css";
 import App from "@/App";
 import { canonicalizeLocalOrigin } from "@/canonicalizeLocal";
 import { stripStaticRhTags } from "@/stripStaticRhTags";
