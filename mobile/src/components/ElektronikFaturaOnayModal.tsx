@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Switch, Text, View } from "react-native";
 import { get } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import {
   buildIadeNote,
-  digitsTax,
   invoiceNeedsExemptionPrompt,
   invoiceNeedsWithholdingPrompt,
   isReturnInvoiceDoc,
@@ -17,10 +16,12 @@ import {
 } from "../utils/efaturaOnay";
 import { WITHHOLDING, withholdingSelectGroups } from "../utils/invoiceDraft";
 import {
-  buyerNeedsLiveMukellefQuery,
+  docBuyerTaxId,
   dropGibMukellef,
   eTypeFromGib,
   fetchGibMukellef,
+  gibLookupPresentation,
+  type GibEntry,
   type GibMukellef,
 } from "../utils/gibMukellef";
 import { docDocumentDate, docHasOldDocumentDate } from "../utils/invoiceDocDate";
@@ -68,6 +69,7 @@ export function ElektronikFaturaOnayModal({
   visible,
   order,
   invoice,
+  contact,
   preferredEType,
   contactIsEInvoiceUser,
   initialStampNow = true,
@@ -77,6 +79,7 @@ export function ElektronikFaturaOnayModal({
   visible: boolean;
   order?: DocLike | null;
   invoice?: DocLike | null;
+  contact?: { tax_number_or_id?: string; tax_id?: string; name?: string } | null;
   preferredEType?: "e_invoice" | "e_archive" | null;
   contactIsEInvoiceUser?: boolean | null;
   /** Hızlı gönderim tarih sorusu sonucu (web #1154 stamp_now). */
@@ -99,9 +102,11 @@ export function ElektronikFaturaOnayModal({
   const [credits, setCredits] = useState<number | null>(null);
   const [creditsSource, setCreditsSource] = useState("");
   const [gibMeta, setGibMeta] = useState<GibMukellef | null>(null);
+  const [gibEntry, setGibEntry] = useState<GibEntry | null>(null);
   const [gibStatus, setGibStatus] = useState<"loading" | "ok" | "error">("loading");
   const [gibError, setGibError] = useState("");
   const [gibRetry, setGibRetry] = useState(0);
+  const gibRefreshRef = useRef(false);
   const [stampNow, setStampNow] = useState(initialStampNow);
   const [exemptionCode, setExemptionCode] = useState(
     String(doc?.tax_exemption_code || doc?.vat_exemption_code || "").trim(),
@@ -132,14 +137,9 @@ export function ElektronikFaturaOnayModal({
     }
     let cancelled = false;
     setLoadingMeta(true);
-    const tax = digitsTax(
-      doc?.contact_tax_id
-        || doc?.buyer_tax_id
-        || doc?.customer_tax_id
-        || doc?.tax_number_or_id
-        || doc?.tax_id
-        || "",
-    );
+    const tax = docBuyerTaxId(doc, contact);
+    const refresh = gibRefreshRef.current;
+    gibRefreshRef.current = false;
 
     const loadCredits = get<{ balance?: number; source?: string; provider?: string }>(
       client,
@@ -159,24 +159,36 @@ export function ElektronikFaturaOnayModal({
         }
       });
 
-    const needsLive = buyerNeedsLiveMukellefQuery(tax);
     if (!cancelled) {
-      setGibStatus(needsLive ? "loading" : "ok");
+      setGibStatus("loading");
       setGibError("");
-      if (!needsLive) setGibMeta(null);
     }
-    const loadGib = fetchGibMukellef(client, companyId, tax)
+    const loadGib = fetchGibMukellef(client, companyId, tax, { refresh })
       .then((entry) => {
-        if (cancelled || entry.status !== "ok") return;
+        if (cancelled) return;
+        const decided = entry.status === "ok" ? eTypeFromGib(entry.data) : null;
+        if (entry.status !== "ok" || !decided) {
+          const msg = entry.status === "error"
+            ? entry.error
+            : (entry.data?.message || "GİB mükellefiyeti doğrulanamadı.");
+          setGibMeta(entry.status === "ok" ? entry.data : null);
+          setGibEntry(entry.status === "error" ? entry : { status: "error", error: msg });
+          setGibStatus("error");
+          setGibError(msg);
+          return;
+        }
+        setGibEntry(entry);
         setGibMeta(entry.data || null);
         setGibStatus("ok");
         setGibError("");
       })
       .catch((err: { message?: string; gibEntry?: { error?: string } }) => {
         if (cancelled) return;
+        const msg = err?.gibEntry?.error || err?.message || "GİB sorgusu başarısız.";
         setGibMeta(null);
+        setGibEntry({ status: "error", error: msg });
         setGibStatus("error");
-        setGibError(err?.gibEntry?.error || err?.message || "GİB sorgusu başarısız.");
+        setGibError(msg);
       });
 
     Promise.all([loadCredits, loadGib]).finally(() => {
@@ -186,11 +198,12 @@ export function ElektronikFaturaOnayModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, companyId, client, doc, gibRetry]);
+  }, [visible, companyId, client, doc, contact, gibRetry]);
 
-  const gibBlocked = gibStatus !== "ok";
-  const resolvedType = gibStatus === "ok" ? eTypeFromGib(gibMeta) : "e_archive";
-  const isTaxpayer = gibStatus === "ok" && resolvedType === "e_invoice";
+  const gibView = gibLookupPresentation(doc, contact, gibStatus === "loading" ? null : gibEntry);
+  const resolvedType = gibStatus === "ok" ? eTypeFromGib(gibMeta) : null;
+  const gibBlocked = resolvedType !== "e_invoice" && resolvedType !== "e_archive";
+  const isTaxpayer = resolvedType === "e_invoice";
   const message = gibError
     ? gibError
     : gibBlocked
@@ -224,11 +237,11 @@ export function ElektronikFaturaOnayModal({
       return;
     }
 
-    if (gibBlocked) {
+    if (gibBlocked || (resolvedType !== "e_invoice" && resolvedType !== "e_archive")) {
       setFormError(gibError || "GİB sorgusu tamamlanmadan gönderilemez.");
       return;
     }
-    let resolvedEType: "e_invoice" | "e_archive" = "e_archive";
+    let resolvedEType: "e_invoice" | "e_archive";
     let sc: "TEMEL" | "TICARI" | undefined;
     if (opts?.forceArchive || !isTaxpayer) {
       resolvedEType = "e_archive";
@@ -238,6 +251,8 @@ export function ElektronikFaturaOnayModal({
     } else if (isTaxpayer) {
       resolvedEType = "e_invoice";
       sc = isReturn ? "TEMEL" : "TICARI";
+    } else {
+      resolvedEType = resolvedType;
     }
 
     const wh = askWithholding ? parseWithholdingValue(withholdingValue) : undefined;
@@ -279,6 +294,16 @@ export function ElektronikFaturaOnayModal({
     }
   };
 
+  const retryGib = (forceRefresh = false) => {
+    gibRefreshRef.current = !!forceRefresh;
+    dropGibMukellef(companyId || "", docBuyerTaxId(doc, contact));
+    setGibEntry(null);
+    setGibMeta(null);
+    setGibError("");
+    setGibStatus("loading");
+    setGibRetry((n) => n + 1);
+  };
+
   const docLabel = doc?.invoice_number || doc?.order_number || "Belge";
   const contactLabel = doc?.contact_name || doc?.customer_name || "";
 
@@ -308,12 +333,7 @@ export function ElektronikFaturaOnayModal({
                 title="Tekrar sorgula"
                 testID="efatura-onay-retry"
                 color={colors.slate800}
-                onPress={() => {
-                  dropGibMukellef(companyId || "", digitsTax(
-                    doc?.contact_tax_id || doc?.buyer_tax_id || doc?.customer_tax_id || doc?.tax_number_or_id || doc?.tax_id || "",
-                  ));
-                  setGibRetry((n) => n + 1);
-                }}
+                onPress={() => retryGib(true)}
               />
             </>
           ) : isTaxpayer ? (
@@ -352,6 +372,25 @@ export function ElektronikFaturaOnayModal({
       }
     >
       <Muted testID="efatura-onay-message">{loadingMeta ? "Mükellef ve kontör kontrol ediliyor…" : message}</Muted>
+      <View style={{ marginTop: 10, gap: 4 }} testID="efatura-onay-gib-meta">
+        <Text testID="efatura-onay-vkn" style={{ color: colors.text, fontSize: 12 }}>VKN: {gibView.tax || "—"}</Text>
+        <Text testID="efatura-onay-unvan" style={{ color: colors.text, fontSize: 12 }}>Unvan: {gibView.name || "—"}</Text>
+        <Text testID="efatura-onay-source" style={{ color: colors.text, fontSize: 12 }}>Kaynak: {gibView.source || "—"}</Text>
+        <Text testID="efatura-onay-aliases" style={{ color: colors.text, fontSize: 12 }}>
+          Etiket: {gibView.aliases.length ? gibView.aliases.join(", ") : "—"}
+        </Text>
+        {gibView.mismatch ? (
+          <Text testID="efatura-onay-tax-mismatch" style={{ color: "#B45309", fontSize: 12, fontWeight: "700" }}>
+            Fatura VKN {gibView.docTax} ile cari VKN {gibView.contactTax} farklı. Sorgu fatura VKN ile yapıldı.
+          </Text>
+        ) : null}
+        <PrimaryButton
+          title="GİB'i yeniden sorgula"
+          testID="efatura-onay-gib-refresh"
+          color={colors.slate800}
+          onPress={() => retryGib(true)}
+        />
+      </View>
 
       {credits != null ? (
         <View

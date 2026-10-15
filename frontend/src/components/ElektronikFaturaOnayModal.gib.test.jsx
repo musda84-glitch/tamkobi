@@ -148,3 +148,196 @@ test("yer tutucu TCKN canlı sorgu olmadan e-Arşiv gönderir", async () => {
   await flush();
   expect(onConfirm.mock.calls[0][0].eType).toBe("e_archive");
 });
+
+test("fatura VKN cariden önce sorgulanır; unvan, kaynak ve etiket görünür", async () => {
+  const calls = [];
+  axios.get.mockImplementation((url, cfg) => {
+    if (String(url).includes("/gib/lookup")) {
+      calls.push(cfg?.params || {});
+      return Promise.resolve({
+        data: {
+          tax_id: "3680486408",
+          is_e_invoice_user: true,
+          suggested_e_type: "e_invoice",
+          lookup_status: "mukellef",
+          name: "ERSAY HOME",
+          source: "isnet",
+          alias: "urn:mail:pk@ersay.home",
+          aliases: ["urn:mail:pk@ersay.home", "urn:mail:gb@ersay.home"],
+        },
+      });
+    }
+    return Promise.resolve({ data: { balance: 9, source: "isnet" } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoice={{
+          id: "inv-ersay",
+          invoice_number: "TA2026000000055",
+          contact_tax_id: "3680486408",
+          contact_name: "ERSAY HOME",
+          contact_id: "cnt-ersay",
+        }}
+        contacts={[{ id: "cnt-ersay", name: "Eski Cari", tax_number_or_id: "12345678901", is_e_invoice_user: false }]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={jest.fn(async () => ({}))}
+      />,
+    );
+  });
+  await flush();
+  expect(calls[0]?.tax_id).toBe("3680486408");
+  expect(host.querySelector('[data-testid="efatura-onay-vkn"]')?.textContent).toMatch(/3680486408/);
+  expect(host.querySelector('[data-testid="efatura-onay-unvan"]')?.textContent).toMatch(/ERSAY HOME/);
+  expect(host.querySelector('[data-testid="efatura-onay-source"]')?.textContent).toMatch(/isnet/);
+  expect(host.querySelector('[data-testid="efatura-onay-aliases"]')?.textContent).toMatch(/urn:mail:pk@ersay.home/);
+  expect(host.querySelector('[data-testid="efatura-onay-tax-mismatch"]')?.textContent).toMatch(/Fatura VKN 3680486408 ile cari VKN 12345678901 farklı/);
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).toBeNull();
+  expect(host.querySelector('[data-testid="efatura-onay-continue"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="efatura-onay-continue"]').click();
+  });
+  expect(host.querySelector('[data-testid="efatura-onay-temel"]')).not.toBeNull();
+});
+
+test("unknown gönderimi kilitler; Tekrar sorgula ve yeniden sorgula refresh=1 gönderir", async () => {
+  const calls = [];
+  axios.get.mockImplementation((url, cfg) => {
+    if (String(url).includes("/gib/lookup")) {
+      calls.push(cfg?.params || {});
+      const err = new Error("GİB yanıtında TaxPayer yok; mükellefiyet doğrulanamadı.");
+      err.response = { status: 422, data: { detail: err.message } };
+      return Promise.reject(err);
+    }
+    return Promise.resolve({ data: { balance: 1, source: "isnet" } });
+  });
+  const onConfirm = jest.fn(async () => ({}));
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoice={{ id: "inv-unk", invoice_number: "F9", contact_tax_id: "3680486408" }}
+        contacts={[]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={onConfirm}
+      />,
+    );
+  });
+  await flush();
+  expect(host.querySelector('[data-testid="efatura-onay-retry"]')?.textContent).toMatch(/Tekrar sorgula/);
+  expect(host.querySelector('[data-testid="efatura-onay-blocked"]')?.disabled).toBe(true);
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).toBeNull();
+  expect(host.querySelector('[data-testid="efatura-onay-vkn"]')?.textContent).toMatch(/3680486408/);
+  expect(host.textContent).toMatch(/TaxPayer/);
+  await act(async () => {
+    host.querySelector('[data-testid="efatura-onay-retry"]').click();
+  });
+  await flush();
+  expect(calls.some((p) => String(p.refresh) === "1" || p.refresh === 1)).toBe(true);
+  expect(onConfirm).not.toHaveBeenCalled();
+});
+
+test("toplu kesimde bir belgenin hatası diğerini e-Arşiv yapmaz", async () => {
+  axios.get.mockImplementation((url, cfg) => {
+    if (String(url).includes("/gib/lookup")) {
+      const tax = cfg?.params?.tax_id;
+      if (tax === "1112223334") {
+        const err = new Error("GİB yanıtında TaxPayer yok; mükellefiyet doğrulanamadı.");
+        err.response = { status: 422, data: { detail: err.message } };
+        return Promise.reject(err);
+      }
+      return Promise.resolve({
+        data: {
+          tax_id: tax,
+          is_e_invoice_user: true,
+          suggested_e_type: "e_invoice",
+          lookup_status: "mukellef",
+          name: "ERSAY HOME",
+          source: "isnet",
+          aliases: ["urn:mail:pk@ersay.home"],
+        },
+      });
+    }
+    return Promise.resolve({ data: { balance: 3, source: "isnet" } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoices={[
+          { id: "bad", invoice_number: "BAD", contact_tax_id: "1112223334", contact_name: "Bilinmeyen" },
+          { id: "good", invoice_number: "GOOD", contact_tax_id: "3680486408", contact_name: "ERSAY HOME" },
+        ]}
+        contacts={[]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={jest.fn(async () => ({}))}
+      />,
+    );
+  });
+  await flush();
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).toBeNull();
+  expect(host.querySelector('[data-testid="efatura-onay-blocked"]')).not.toBeNull();
+  const rows = [...host.querySelectorAll('[data-testid="efatura-onay-bulk-preview"] li')];
+  expect(rows.map((el) => el.getAttribute("data-kind"))).toEqual(["Sorgu hatası", "E-Fatura"]);
+});
+
+test("boş VKN sorgusuz e-Arşiv gönderir", async () => {
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/gib/lookup")) return Promise.reject(new Error("lookup çağrılmamalı"));
+    return Promise.resolve({ data: { balance: 1, source: "wallet" } });
+  });
+  const onConfirm = jest.fn(async () => ({}));
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoice={{ id: "inv-blank", invoice_number: "B", contact_tax_id: "" }}
+        contacts={[]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={onConfirm}
+      />,
+    );
+  });
+  await flush();
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/gib/lookup"))).toBe(false);
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="efatura-onay-earsiv"]').click();
+  });
+  await flush();
+  expect(onConfirm.mock.calls[0][0].eType).toBe("e_archive");
+});
+
+test("9 haneli VKN gönderimi kilitler ve sorgu atmaz", async () => {
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/gib/lookup")) return Promise.reject(new Error("lookup çağrılmamalı"));
+    return Promise.resolve({ data: { balance: 1, source: "wallet" } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoice={{ id: "inv-short", invoice_number: "S", contact_tax_id: "123456789" }}
+        contacts={[]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={jest.fn()}
+      />,
+    );
+  });
+  await flush();
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).toBeNull();
+  expect(host.querySelector('[data-testid="efatura-onay-blocked"]')).not.toBeNull();
+  expect(host.textContent).toMatch(/VKN\/TCKN 10 veya 11 haneli olmalı/);
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/gib/lookup"))).toBe(false);
+});
