@@ -362,9 +362,10 @@ def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def present_partner_balance(balance: Any) -> Dict[str, Any]:
-    """Ortak bakiyesinin tek gösterimi.
+    """Ortak bakiyesinin tek gösterimi. İmza ve tutar hesabı değişmez.
 
-    Artı bakiye (Giriş > Çıkış) = Alacaklı, eksi = Borçlu.
+    Giriş (+) ortağın şirketten aldığı, Çıkış (−) şirkete ödediği paradır.
+    Artı bakiye = Ortak borçlu, eksi = Ortak alacaklı, sıfır = Kapalı.
     Kart ve seçici tutarı her zaman mutlak değerdir; yön yalnızca etikettedir.
     """
     try:
@@ -376,7 +377,7 @@ def present_partner_balance(balance: Any) -> Dict[str, Any]:
             "balance": amount,
             "abs": amount,
             "display": amount,
-            "label": "Alacaklı",
+            "label": "Ortak borçlu",
             "side": "credit",
         }
     if amount < 0:
@@ -385,14 +386,14 @@ def present_partner_balance(balance: Any) -> Dict[str, Any]:
             "balance": amount,
             "abs": abs_amount,
             "display": abs_amount,
-            "label": "Borçlu",
+            "label": "Ortak alacaklı",
             "side": "debit",
         }
     return {
         "balance": 0.0,
         "abs": 0.0,
         "display": 0.0,
-        "label": "Denk",
+        "label": "Kapalı",
         "side": "zero",
     }
 
@@ -461,7 +462,7 @@ def summary_payload(view: Dict[str, Any]) -> Dict[str, Any]:
         "total_balance": view.get("total_balance") or 0,
         "total_card_pocket": view.get("total_balance") or 0,
         "total_cash_net": view.get("card_display") or 0,
-        "balance_label": view.get("label") or "Denk",
+        "balance_label": view.get("label") or "Kapalı",
         "total_cash_in": cash.get("cash_in") or 0,
         "total_cash_out": cash.get("cash_out") or 0,
         "tx_count": cash.get("tx_count") or 0,

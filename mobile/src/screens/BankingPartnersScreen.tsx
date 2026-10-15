@@ -108,11 +108,14 @@ function PartnerCard({
           const flow = partnerCardCashFlow(partner, txs, pid);
           return (
             <>
-              <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }} testID={`partner-balance-${pid}`}>
+              <Text style={{ fontSize: 20, fontWeight: "800", color: flow.color }} testID={`partner-balance-${pid}`}>
                 {fmtMoney(flow.display)}
               </Text>
+              <Text style={{ fontSize: 12, fontWeight: "800", color: flow.color }} testID={`partner-badge-${pid}`}>
+                {flow.badge}
+              </Text>
               <Muted testID={`partner-flow-${pid}`}>
-                {flow.badge} · giriş {fmtMoney(flow.giris)} · çıkış {fmtMoney(Math.abs(flow.cikis))}
+                {flow.receivedLabel} {fmtMoney(flow.giris)} · {flow.paidLabel} {fmtMoney(Math.abs(flow.cikis))}
               </Muted>
             </>
           );
@@ -244,9 +247,9 @@ export function BankingPartnersPanel({
           <StatRows
             testID="partners-summary"
             items={[
-              { key: "balance", label: card.badge, value: fmtMoney(card.display) },
-              { key: "capital", label: "Toplam Giriş", value: fmtMoney(card.fromCash ? card.cashIn : summary.total_capital_in) },
-              { key: "withdrawn", label: "Toplam Çıkış", value: fmtMoney(card.fromCash ? card.cashOut : summary.total_withdrawn) },
+              { key: "balance", label: card.badge, value: fmtMoney(card.display), valueColor: card.color },
+              { key: "capital", label: `Toplam ${card.receivedLabel}`, value: fmtMoney(card.fromCash ? card.cashIn : summary.total_capital_in) },
+              { key: "withdrawn", label: `Toplam ${card.paidLabel}`, value: fmtMoney(card.fromCash ? card.cashOut : summary.total_withdrawn) },
             ]}
           />
         );

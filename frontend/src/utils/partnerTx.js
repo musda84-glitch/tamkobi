@@ -62,50 +62,61 @@ export function partnerTxLabel(tx) {
   return "Denk";
 }
 
+/** Kart altı: Giriş toplamı ortağın aldığı, Çıkış toplamı ödediği paradır. */
+export const PARTNER_RECEIVED_LABEL = "Aldığı";
+export const PARTNER_PAID_LABEL = "Ödediği";
+
 /**
- * Ortak bakiyesi = cebindeki para (yazma):
- *   artı → Alacaklı (ortağa yazılan / çekilebilir)
- *   eksi → Borçlu (fazla çekmiş)
- * Kartta tutar her zaman mutlak değerdir; yön yalnızca Alacaklı / Borçlu etiketindedir.
+ * Ortak bakiyesi gösterimi. Hesap ve kayıt değişmez; yalnız etiket.
+ * Giriş (+) ortağın şirketten aldığı, Çıkış (−) şirkete ödediği paradır.
+ *   bakiye > 0 → Ortak borçlu (kırmızı)
+ *   bakiye < 0 → Ortak alacaklı (yeşil)
+ *   bakiye = 0 → Kapalı (gri)
+ * Tutar her zaman mutlak değerdir. API balance_label kullanılmaz.
  */
 export function partnerBalanceMeta(balance) {
   const n = Number(balance);
   const amount = Number.isFinite(n) ? n : 0;
+  const abs = Math.abs(amount);
+  const flow = { receivedLabel: PARTNER_RECEIVED_LABEL, paidLabel: PARTNER_PAID_LABEL, hint: "" };
   if (amount > 0) {
     return {
+      ...flow,
       amount,
-      abs: amount,
-      display: amount,
-      label: "Alacaklı",
-      badge: "Alacaklı",
-      hint: "",
-      amountCls: "text-amber-700",
-      badgeCls: "bg-amber-100 text-amber-800 border-amber-200",
-      side: "credit",
+      abs,
+      display: abs,
+      label: "Ortak borçlu",
+      badge: "Ortak borçlu",
+      amountCls: "text-rose-700",
+      badgeCls: "bg-rose-100 text-rose-800 border-rose-200",
+      color: "#E11D48",
+      side: "debit",
     };
   }
   if (amount < 0) {
     return {
+      ...flow,
       amount,
-      abs: Math.abs(amount),
-      display: Math.abs(amount),
-      label: "Borçlu",
-      badge: "Borçlu",
-      hint: "",
-      amountCls: "text-rose-700",
-      badgeCls: "bg-rose-100 text-rose-800 border-rose-200",
-      side: "debit",
+      abs,
+      display: abs,
+      label: "Ortak alacaklı",
+      badge: "Ortak alacaklı",
+      amountCls: "text-emerald-700",
+      badgeCls: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      color: "#059669",
+      side: "credit",
     };
   }
   return {
+    ...flow,
     amount: 0,
     abs: 0,
     display: 0,
-    label: "Denk",
-    badge: "Denk",
-    hint: "",
-    amountCls: "text-slate-800",
-    badgeCls: "bg-slate-100 text-slate-600 border-slate-200",
+    label: "Kapalı",
+    badge: "Kapalı",
+    amountCls: "text-slate-500",
+    badgeCls: "bg-slate-100 text-slate-500 border-slate-200",
+    color: "#64748B",
     side: "zero",
   };
 }
@@ -127,16 +138,13 @@ export function partnerSummaryCardMeta(summary) {
   };
 }
 
-/** Seçici: işaret yok, mutlak tutar + Borçlu/Alacaklı, Türkçe biçim. */
+/** Seçici: işaret yok, mutlak tutar + partnerBalanceMeta etiketi. */
 export function partnerOptionLabel(partner) {
   const meta = partnerBalanceMeta(partner?.balance);
-  const absRaw = partner?.balance_abs != null && partner.balance_abs !== "" ? Number(partner.balance_abs) : meta.abs;
-  const abs = Number.isFinite(absRaw) ? absRaw : 0;
-  const label = partner?.balance_label || meta.label;
   const share = partner?.share_percent ?? 0;
   const name = partner?.name || "Ortak";
-  const amount = abs.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const tag = label && label !== "Denk" ? ` ${label}` : "";
+  const amount = meta.display.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const tag = meta.label ? ` ${meta.label}` : "";
   return `${name} (Ortak • %${share} · ${amount} ₺${tag})`;
 }
 /** Kart bakiyesini artırır mı — partnerTxEffect ile aynı (Giriş). */

@@ -385,14 +385,20 @@ describe("finance drafts", () => {
     ], "a").map((t) => t.id)).toEqual(["3", "1"]);
   });
 
-  it("partner balance meta matches web Alacaklı/Borçlu display", () => {
-    const credit = partnerBalanceMeta(1200);
-    expect(credit.badge).toBe("Alacaklı");
-    expect(credit.display).toBe(1200);
-    const debit = partnerBalanceMeta(-500);
-    expect(debit.badge).toBe("Borçlu");
-    expect(debit.display).toBe(500);
-    expect(partnerBalanceMeta(0).badge).toBe("Denk");
+  it("partner balance meta matches web Ortak borçlu / Ortak alacaklı display", () => {
+    const debt = partnerBalanceMeta(1200);
+    expect(debt.badge).toBe("Ortak borçlu");
+    expect(debt.label).toBe("Ortak borçlu");
+    expect(debt.display).toBe(1200);
+    expect(debt.color).toBe("#E11D48");
+    expect(debt.receivedLabel).toBe("Aldığı");
+    expect(debt.paidLabel).toBe("Ödediği");
+    const credit = partnerBalanceMeta(-500);
+    expect(credit.badge).toBe("Ortak alacaklı");
+    expect(credit.display).toBe(500);
+    expect(credit.color).toBe("#059669");
+    expect(partnerBalanceMeta(0).badge).toBe("Kapalı");
+    expect(partnerBalanceMeta(0).color).toBe("#64748B");
     const card = partnerSummaryCardMeta({
       total_card_pocket: 800,
       total_cash_net: 236013.99,
@@ -402,10 +408,14 @@ describe("finance drafts", () => {
     });
     expect(card.fromCash).toBe(true);
     expect(card.display).toBe(800);
-    expect(card.badge).toBe("Alacaklı");
-    expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).toContain("Borçlu");
-    expect(partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 })).not.toContain("-");
-    expect(partnerOptionLabel({ name: "Mustafa Bal", share_percent: 50, balance: 30257.85 })).toContain("Alacaklı");
+    expect(card.badge).toBe("Ortak borçlu");
+    expect(card.color).toBe("#E11D48");
+    const ali = partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22, balance_label: "Borçlu" });
+    expect(ali).toContain("Ortak alacaklı");
+    expect(ali).not.toContain("-");
+    expect(ali).not.toMatch(/ Borçlu/);
+    expect(partnerOptionLabel({ name: "Mustafa Bal", share_percent: 50, balance: 30257.85, balance_label: "Alacaklı" })).toContain("Ortak borçlu");
+    expect(partnerOptionLabel({ name: "Sıfır", share_percent: 0, balance: 0 })).toContain("Kapalı");
   });
 
   it("partner card cash flow uses tx kasa yönü like web ledger", () => {
@@ -414,7 +424,7 @@ describe("finance drafts", () => {
     expect(fallback.fromTx).toBe(false);
     expect(fallback.giris).toBe(0);
     expect(fallback.cikis).toBe(0);
-    expect(fallback.badge).toBe("Borçlu");
+    expect(fallback.badge).toBe("Ortak alacaklı");
     expect(fallback.display).toBe(382340.22);
     const flow = partnerCardCashFlow(partner, [
       { id: "1", partner_id: "p1", type: "capital_in", amount: 50000 },
@@ -426,7 +436,9 @@ describe("finance drafts", () => {
     expect(flow.giris).toBe(50000);
     expect(flow.cikis).toBe(20000 + 5000);
     expect(flow.display).toBe(382340.22);
-    expect(flow.badge).toBe("Borçlu");
+    expect(flow.badge).toBe("Ortak alacaklı");
+    expect(flow.receivedLabel).toBe("Aldığı");
+    expect(flow.paidLabel).toBe("Ödediği");
   });
 
   it("Ali BAL card equals sum of list deltas (same fixture as web)", () => {
@@ -459,6 +471,7 @@ describe("finance drafts", () => {
     expect(flow.giris).toBeCloseTo(278400, 2);
     expect(flow.cikis).toBeCloseTo(994589.78, 2);
     expect(flow.display).toBeCloseTo(716189.78, 2);
-    expect(flow.badge).toBe("Borçlu");
+    expect(flow.badge).toBe("Ortak alacaklı");
+    expect(flow.color).toBe("#059669");
   });
 });

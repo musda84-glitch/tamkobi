@@ -21,7 +21,7 @@ import { VirmanPartySelect } from "../components/VirmanPartySelect";
 import { MoneyInput } from "../components/MoneyInput";
 
 import { formatTrAmount, fmtDate } from "../utils/money";
-import { partnerSummaryCardMeta } from "../utils/partnerTx";
+import { PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, partnerSummaryCardMeta } from "../utils/partnerTx";
 import { shownAccountBalance, sumShownBalances, totalLiquidity as sumLiquidity } from "../utils/accountTotals";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
@@ -554,7 +554,7 @@ export default function BankingPage() {
               </div>
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">{partnerSummary.partner_count} Ortak</h3>
-                <div className="text-xs text-slate-500">Toplam Giriş: {(partnerSummary.total_cash_in ?? partnerSummary.total_capital_in).toLocaleString('tr-TR')} ₺ • Toplam Çıkış: {(partnerSummary.total_cash_out ?? partnerSummary.total_withdrawn).toLocaleString('tr-TR')} ₺</div>
+                <div className="text-xs text-slate-500">Toplam {PARTNER_RECEIVED_LABEL}: {(partnerSummary.total_cash_in ?? partnerSummary.total_capital_in).toLocaleString('tr-TR')} ₺ • Toplam {PARTNER_PAID_LABEL}: {(partnerSummary.total_cash_out ?? partnerSummary.total_withdrawn).toLocaleString('tr-TR')} ₺</div>
               </div>
             </div>
             <div className="pt-3 border-t border-amber-200/60">

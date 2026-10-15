@@ -147,7 +147,7 @@ def test_ali_bal_card_equals_list_delta():
     )
     assert view["total_balance"] == pytest.approx(-716189.78)
     assert view["partners"][0]["balance_display"] == pytest.approx(716189.78)
-    assert view["partners"][0]["balance_label"] == "Borçlu"
+    assert view["partners"][0]["balance_label"] == "Ortak alacaklı"
     payload = partner_pay.summary_payload({**view, "cash": cash, "source_partners": view["partners"]})
     assert payload["total_cash_in"] == pytest.approx(cash["cash_in"])
     assert payload["total_cash_out"] == pytest.approx(cash["cash_out"])
@@ -181,13 +181,13 @@ def test_partner_row_uses_posting_inc_card_and_shows_stale_cache_drift():
     assert row["fark"] == pytest.approx(stale - live)
     assert "liste_lehine" not in row
     assert "liste_aleyhine" not in row
-    assert partner_pay.present_partner_balance(row["kart_bakiyesi"])["label"] == "Borçlu"
+    assert partner_pay.present_partner_balance(row["kart_bakiyesi"])["label"] == "Ortak alacaklı"
     credit = balance_reconciliation._partner_row(
         {"_id": "m", "name": "Mustafa", "balance": 0},
         [{"type": "capital_in", "amount": 5000}],
     )
     assert credit["kart_bakiyesi"] == pytest.approx(5000)
-    assert partner_pay.present_partner_balance(credit["kart_bakiyesi"])["label"] == "Alacaklı"
+    assert partner_pay.present_partner_balance(credit["kart_bakiyesi"])["label"] == "Ortak borçlu"
 
     db = MemoryDB()
     db.partners.docs["ali"] = copy.deepcopy(partner)
