@@ -522,18 +522,21 @@ async def finalize_create_result(
     if oid and out.get("status") != "error":
         e_type = out.get("e_type") or inv.get("e_type") or "e_archive"
         einvoice_state = out.get("einvoice_state") or inv.get("einvoice_state") or "sent"
-        await _db.orders.update_one(
-            {"_id": oid},
-            {"$set": {
-                "is_invoiced": True,
-                "invoice_id": invoice_id,
-                "invoice_number": inv.get("invoice_number"),
-                # Sipariş listesi rozeti: Faturalaşmış (E-Fatura|E-Arşiv) — kırmızı bilgi
-                "e_type": e_type,
-                "invoice_e_type": e_type,
-                "einvoice_state": einvoice_state,
-            }},
-        )
+        order_patch = {
+            "is_invoiced": True,
+            "invoice_id": invoice_id,
+            "invoice_number": inv.get("invoice_number"),
+            # Sipariş listesi rozeti: Faturalaşmış (E-Fatura|E-Arşiv) — kırmızı bilgi
+            "e_type": e_type,
+            "invoice_e_type": e_type,
+            "einvoice_state": einvoice_state,
+        }
+        await _db.orders.update_one({"_id": oid}, {"$set": order_patch})
+        from dispatch_invoice import order_ids_of
+        for extra in order_ids_of(inv):
+            if extra == oid:
+                continue
+            await _db.orders.update_one({"_id": extra}, {"$set": order_patch})
         out.setdefault("order_id", oid)
         out.setdefault("e_type", e_type)
     await record_e_invoice(
@@ -544,6 +547,16 @@ async def finalize_create_result(
     )
     logger.info("E-Fatura oluşturuldu: %s (sipariş=%s)", out.get("invoice_number"), oid or "-")
     return out
+
+
+async def _finish_issued_invoice(inv: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """Kesim başarılı: bağlı siparişler faturalansın; taslak irsaliye varsa uyarı eklensin."""
+    import dispatch_invoice as _di
+    warn = await _di.draft_dispatch_warning(_db, inv)
+    await _di.mark_orders_invoiced(_db, inv)
+    if warn:
+        result = {**result, "warning": warn, "dispatch_draft_warning": warn}
+    return result
 
 
 def normalize_scenario(raw: Optional[str], e_type: str) -> str:
@@ -800,7 +813,7 @@ async def issue_invoice(
                 "issued_at": _now(),
             }},
         )
-        return {"status": "success", "einvoice_state": "paper", "message": "Kağıt fatura olarak kesildi.", "invoice_id": invoice_id, "tracking_id": None}
+        return await _finish_issued_invoice(inv, {"status": "success", "einvoice_state": "paper", "message": "Kağıt fatura olarak kesildi.", "invoice_id": invoice_id, "tracking_id": None})
 
     settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
     provider = settings.get("provider") or ""
@@ -1063,7 +1076,7 @@ async def issue_invoice(
             msg = f"{'E-Fatura' if et == 'e_invoice' else 'E-Arşiv'} (GİB). {msg}"
         if gib_mode.lower() in ("test", "sandbox", "demo"):
             msg = f"[Test] {msg}"
-        return {
+        return await _finish_issued_invoice(inv, {
             "status": "success",
             "einvoice_state": "sent",
             "message": msg,
@@ -1080,7 +1093,7 @@ async def issue_invoice(
             "scenario": scen,
             "gib_credits_left": remaining,
             "gib_lookup": gib_meta,
-        }
+        })
 
     if et == "e_dispatch":
         await _db.invoices.update_one(
@@ -1127,7 +1140,7 @@ async def issue_invoice(
         message = f"{kind} olarak kesildi (GİB mükellef kaydı). ETTN/Takip No: {tracking}"
     else:
         message = f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking}"
-    return {
+    return await _finish_issued_invoice(inv, {
         "status": "success",
         "einvoice_state": "sent",
         "message": message,
@@ -1140,7 +1153,7 @@ async def issue_invoice(
         "scenario": scen,
         "gib_credits_left": remaining,
         "gib_lookup": gib_meta,
-    }
+    })
 
 
 async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any]:

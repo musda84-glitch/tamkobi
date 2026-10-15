@@ -198,7 +198,7 @@ INVOICE_ITEM_FIELDS = (
     "product_id", "name", "quantity", "unit", "unit_price", "unit_price_incl",
     "vat_rate", "discount_percent", "discount_rate", "total", "total_incl",
     "vat_amount", "is_service", "sku", "barcode", "gtip", "origin_country",
-    "net_weight", "landed_unit_try", "note",
+    "net_weight", "landed_unit_try", "note", "dispatch_id", "order_id",
 )
 
 ORDER_ITEM_FIELDS = (
