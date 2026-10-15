@@ -74,6 +74,18 @@ def _company_admin(cid):
     }
 
 
+def _super_admin():
+    return {
+        "_id": "u_sa",
+        "role": "admin",
+        "company_ids": [],
+        "is_super_admin": True,
+    }
+
+
+_SA = _super_admin()
+
+
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
@@ -172,14 +184,14 @@ def test_export_import_roundtrip():
         "source": "visual",
         "xslt": _OK_XSLT,
         "layout": {"version": 1, "primary": "#112233"},
-    }, {}))
-    exported = _run(ed.export_design(created["id"], {}))
+    }, _SA))
+    exported = _run(ed.export_design(created["id"], _SA))
     assert exported.media_type == "application/json"
     payload = json.loads(exported.body.decode("utf-8"))
     assert payload["schema_version"] == 1
     assert payload["source"] == "visual"
     assert payload["layout"]["primary"] == "#112233"
-    imported = _run(ed.import_design(payload, {}))
+    imported = _run(ed.import_design(payload, _SA))
     assert imported["source"] == "visual"
     assert imported["layout"]["primary"] == "#112233"
     assert imported["id"] != created["id"]
@@ -229,20 +241,20 @@ def test_ensure_defaults_seeds_and_selects():
 def test_copy_select_and_block_delete_selected():
     col = _boot()
     _run(ed.ensure_defaults())
-    created = _run(ed.create_design({"copy_from_id": "einvoice_xslt_default_e_invoice", "name": "Özel e-Fatura"}, {}))
+    created = _run(ed.create_design({"copy_from_id": "einvoice_xslt_default_e_invoice", "name": "Özel e-Fatura"}, _SA))
     assert created["kind"] == "e_invoice"
     assert created["is_builtin"] is False
     assert created["is_selected"] is False
     assert "<xsl:stylesheet" in created["xslt"]
-    sel = _run(ed.select_design(created["id"], {}))
+    sel = _run(ed.select_design(created["id"], _SA))
     assert sel["id"] == created["id"]
     assert next(i for i in sel["items"] if i["id"] == created["id"])["is_selected"] is True
     assert next(i for i in sel["items"] if i["id"] == "einvoice_xslt_default_e_invoice")["is_selected"] is False
     with pytest.raises(HTTPException) as e:
-        _run(ed.delete_design(created["id"], {}))
+        _run(ed.delete_design(created["id"], _SA))
     assert e.value.status_code == 400
     with pytest.raises(HTTPException) as e2:
-        _run(ed.delete_design("einvoice_xslt_default_e_invoice", {}))
+        _run(ed.delete_design("einvoice_xslt_default_e_invoice", _SA))
     assert "Varsayılan" in e2.value.detail
     xslt = _run(ed.selected_xslt("e_invoice"))
     assert created["xslt"][:40] in (xslt or "")
@@ -256,15 +268,15 @@ def test_layout_copy_and_update():
         "copy_from_id": "einvoice_xslt_default_e_invoice",
         "name": "Görsel",
         "layout": {"version": 1, "primary": "#112233", "blocks": [{"id": "header", "hidden": False}]},
-    }, {}))
+    }, _SA))
     assert created["layout"]["primary"] == "#112233"
     assert created["has_layout"] is True
-    updated = _run(ed.update_design(created["id"], {"layout": {"accent": "#abcdef"}}, {}))
+    updated = _run(ed.update_design(created["id"], {"layout": {"accent": "#abcdef"}}, _SA))
     assert updated["layout"]["accent"] == "#abcdef"
-    copied = _run(ed.create_design({"copy_from_id": created["id"]}, {}))
+    copied = _run(ed.create_design({"copy_from_id": created["id"]}, _SA))
     assert copied["layout"]["accent"] == "#abcdef"
     with pytest.raises(HTTPException):
-        _run(ed.update_design(created["id"], {"layout": ["nope"]}, {}))
+        _run(ed.update_design(created["id"], {"layout": ["nope"]}, _SA))
 
 
 def _tiny_png_b64():
@@ -391,8 +403,8 @@ def test_two_companies_get_only_own_logo_in_xslt():
     blue = _logo_png((20, 40, 200))
     col.companies.rows["co_red"] = {"_id": "co_red", "logo": f"data:image/png;base64,{red}"}
     col.companies.rows["co_blue"] = {"_id": "co_blue", "logo": f"data:image/png;base64,{blue}"}
-    admin_red = _company_admin("co_red")
-    admin_blue = _company_admin("co_blue")
+    admin_red = _super_admin()
+    admin_blue = _super_admin()
     d_red = _run(ed.create_company_design({
         "company_id": "co_red",
         "kind": "e_invoice",
@@ -456,40 +468,97 @@ def test_platform_default_has_no_embedded_company_logo():
     assert "<xsl:otherwise>" not in (xslt or "") or "firmaLogoImageString" in (xslt or "")
 
 
-def test_company_admin_cannot_change_platform_default():
+def test_company_user_design_endpoints_forbidden():
+    """Firma kullanıcısı (şirket admini dahil) tasarım okuma/yazma uçlarında 403 alır."""
     col = _boot()
     _run(ed.ensure_defaults())
+    before = {k: dict(v) for k, v in col.rows.items()}
     admin = _company_admin("co_a")
     sales = {
         "_id": "u_sales",
         "role": "sales",
         "company_ids": ["co_a"],
         "active_company_id": "co_a",
+        "is_super_admin": False,
     }
+    callers = (
+        lambda u: ed.list_company_designs("co_a", u),
+        lambda u: ed.get_company_design("einvoice_xslt_default_e_invoice", "co_a", u),
+        lambda u: ed.download_company_design("einvoice_xslt_default_e_invoice", "co_a", u),
+        lambda u: ed.export_company_design("einvoice_xslt_default_e_invoice", "co_a", u),
+        lambda u: ed.create_company_design({"company_id": "co_a", "kind": "e_invoice", "name": "X", "xslt": _OK_XSLT}, u),
+        lambda u: ed.update_company_design("einvoice_xslt_default_e_invoice", {"name": "Hack", "company_id": "co_a"}, u),
+        lambda u: ed.select_company_design("einvoice_xslt_default_e_invoice", {"company_id": "co_a"}, "co_a", u),
+        lambda u: ed.import_company_design({"company_id": "co_a", "kind": "e_invoice", "name": "I", "xslt": _OK_XSLT, "source": "xslt"}, u),
+        lambda u: ed.delete_company_design("einvoice_xslt_default_e_invoice", "co_a", u),
+        lambda u: ed.list_designs("co_a", u),
+        lambda u: ed.create_design({"company_id": "co_a", "kind": "e_invoice", "name": "X", "xslt": _OK_XSLT}, u),
+    )
+    for user in (admin, sales):
+        for call in callers:
+            with pytest.raises(HTTPException) as e:
+                _run(call(user))
+            assert e.value.status_code == 403
+    assert col.rows.keys() == before.keys()
+    for key, row in before.items():
+        assert col.rows[key]["name"] == row["name"]
+        assert col.rows[key].get("is_selected") == row.get("is_selected")
+        assert col.rows[key].get("xslt") == row.get("xslt")
+
+
+def test_app_host_super_admin_cannot_manage_designs():
+    _boot()
+    _run(ed.ensure_defaults())
+    sa = _super_admin()
+    app_req = type("Req", (), {"headers": {"host": "app.tamkobi.com"}, "client": None})()
     with pytest.raises(HTTPException) as e:
-        _run(ed.update_company_design("einvoice_xslt_default_e_invoice", {"name": "Hack"}, admin))
+        _run(ed.list_company_designs("co_a", sa, app_req))
     assert e.value.status_code == 403
     with pytest.raises(HTTPException) as e2:
-        _run(ed.create_company_design({"kind": "e_invoice", "name": "X", "xslt": _OK_XSLT}, sales))
+        _run(ed.list_designs("co_a", sa, app_req))
     assert e2.value.status_code == 403
-    created = _run(ed.create_company_design({
+
+
+def test_super_admin_company_scope_isolation():
+    """#1223: süper admin seçilen firmanın tasarımını yönetir; başka firma ve platform seçimi değişmez."""
+    col = _boot()
+    _run(ed.ensure_defaults())
+    sa = _super_admin()
+    ynt_req = type("Req", (), {"headers": {"host": "ynt.taiyazilim.com"}, "client": None})()
+    listed = _run(ed.list_designs("co_a", sa, ynt_req))
+    assert listed["items"]
+    assert all(i.get("is_platform") or i.get("company_id") in (None, "co_a") for i in listed["items"])
+    created = _run(ed.create_design({
         "company_id": "co_a",
         "copy_from_id": "einvoice_xslt_default_e_invoice",
         "name": "Şirket e-Fatura",
-    }, admin))
+    }, sa, ynt_req))
     assert created["company_id"] == "co_a"
     assert created["is_platform"] is False
     marked = _OK_XSLT.replace("ok", "company-co-a-marker")
-    saved = _run(ed.update_company_design(created["id"], {"name": "Kayıtlı şirket", "xslt": marked, "company_id": "co_a"}, admin))
+    saved = _run(ed.update_design(created["id"], {"name": "Kayıtlı şirket", "xslt": marked, "company_id": "co_a"}, sa, ynt_req))
     assert saved["name"] == "Kayıtlı şirket"
-    sel = _run(ed.select_company_design(created["id"], {"company_id": "co_a"}, None, admin))
+    with pytest.raises(HTTPException) as denied:
+        _run(ed.update_design("einvoice_xslt_default_e_invoice", {"name": "Hack", "company_id": "co_a"}, sa, ynt_req))
+    assert denied.value.status_code == 403
+    assert col.rows["einvoice_xslt_default_e_invoice"]["name"] != "Hack"
+    assert col.rows["einvoice_xslt_default_e_invoice"]["is_selected"] is True
+    sel = _run(ed.select_design(created["id"], sa, ynt_req, "co_a"))
     assert sel["id"] == created["id"]
     assert next(i for i in sel["items"] if i["id"] == created["id"])["is_selected"] is True
     assert next(i for i in sel["items"] if i["id"] == "einvoice_xslt_default_e_invoice")["is_selected"] is False
+    assert col.rows["einvoice_xslt_default_e_invoice"]["is_selected"] is True
+    blue = _run(ed.list_designs("co_blue", sa))
+    assert created["id"] not in {i["id"] for i in blue["items"]}
+    with pytest.raises(HTTPException) as hidden:
+        _run(ed.get_design(created["id"], sa, None, "co_blue"))
+    assert hidden.value.status_code == 404
+    platform_list = _run(ed.list_designs(None, sa))
+    assert created["id"] not in {i["id"] for i in platform_list["items"]}
     xslt = _run(ed.selected_xslt("e_invoice", "co_a"))
     assert "company-co-a-marker" in (xslt or "")
-    platform = _run(ed.selected_xslt("e_invoice", "co_other"))
-    assert "company-co-a-marker" not in (platform or "")
+    other = _run(ed.selected_xslt("e_invoice", "co_other"))
+    assert "company-co-a-marker" not in (other or "")
 
 
 def test_prepare_xslt_strips_foreign_fallback_logo():

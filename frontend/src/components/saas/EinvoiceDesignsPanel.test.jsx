@@ -33,14 +33,17 @@ beforeEach(() => {
   document.body.appendChild(host);
   axios.get.mockImplementation((url) => {
     const u = String(url);
-    if (u.endsWith("/system/einvoice-designs")) return Promise.resolve({ data: LIST });
+    if (u.includes("/system/companies")) {
+      return Promise.resolve({ data: [{ id: "co_a", name: "A Firması" }, { id: "co_b", name: "B Firması" }] });
+    }
     if (u.includes("/download")) return Promise.resolve({ data: new Blob(["<xsl:stylesheet/>"]) });
     if (u.includes("/export")) return Promise.resolve({ data: new Blob(['{"schema_version":1}']) });
     if (u.includes("/einvoice-designs/")) {
       return Promise.resolve({
-        data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null, source: "xslt" },
+        data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null, source: "xslt", is_platform: u.includes("company_id=") },
       });
     }
+    if (u.includes("/system/einvoice-designs")) return Promise.resolve({ data: LIST });
     return Promise.resolve({ data: LIST });
   });
   axios.post.mockResolvedValue({
@@ -63,12 +66,31 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+async function flush() {
+  await act(async () => { await Promise.resolve(); });
+}
+
+async function chooseCompany(value = "__platform__") {
+  const sel = host.querySelector('[data-testid="einvoice-design-company-select"]');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+    setter.call(sel, value);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await flush();
+  await flush();
+}
+
 test("lists designs, opens editor and has download", async () => {
   const root = createRoot(host);
   await act(async () => {
     root.render(<EinvoiceDesignsPanel />);
   });
-  await act(async () => { await Promise.resolve(); });
+  await flush();
+  expect(host.querySelector('[data-testid="einvoice-design-company-select"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-company-hint"]')?.textContent).toMatch(/firma seçin/i);
+  expect(host.querySelector('[data-testid="einvoice-design-row-einvoice_xslt_default_e_invoice"]')).toBeNull();
+  await chooseCompany("__platform__");
   expect(host.querySelector('[data-testid="einvoice-designs-panel"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-row-einvoice_xslt_default_e_invoice"]')?.textContent).toContain("Varsayılan e-Fatura");
   expect(host.querySelector('[data-testid="einvoice-design-download-einvoice_xslt_default_e_invoice"]')).not.toBeNull();
@@ -97,7 +119,8 @@ test("save from xslt source omits layout payload", async () => {
   await act(async () => {
     root.render(<EinvoiceDesignsPanel />);
   });
-  await act(async () => { await Promise.resolve(); });
+  await flush();
+  await chooseCompany("__platform__");
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-edit-einvoice_xslt_default_e_invoice"]').click();
   });
@@ -116,36 +139,28 @@ test("save from xslt source omits layout payload", async () => {
   expect(body.xslt).toBeTruthy();
 });
 
-test("company mode lists via tenant endpoint and shows İşNet logo hint", async () => {
-  axios.get.mockImplementation((url) => {
-    const u = String(url);
-    if (u.includes("/einvoice/designs?")) {
-      return Promise.resolve({
-        data: {
-          ...LIST,
-          items: LIST.items.map((i) => ({ ...i, is_platform: i.is_builtin, company_id: null })),
-        },
-      });
-    }
-    return Promise.resolve({
-      data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null, source: "xslt", is_platform: true },
-    });
-  });
+test("selected company uses system endpoint and does not call tenant designs API", async () => {
   const root = createRoot(host);
   await act(async () => {
-    root.render(<EinvoiceDesignsPanel mode="company" companyId="co_a" />);
+    root.render(<EinvoiceDesignsPanel />);
   });
-  await act(async () => { await Promise.resolve(); });
-  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/einvoice/designs?company_id=co_a"))).toBe(true);
+  await flush();
+  await chooseCompany("co_a");
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/system/einvoice-designs") && String(c[0]).includes("company_id=co_a"))).toBe(true);
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/einvoice/designs"))).toBe(false);
   expect(host.querySelector('[data-testid="einvoice-isnet-logo-hint"]')?.textContent).toMatch(/NetteFatura/);
+  expect(host.querySelector('[data-testid="einvoice-design-upload-btn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-new-btn"]')).not.toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-select-einvoice_xslt_custom"]').click();
   });
-  await act(async () => { await Promise.resolve(); });
+  await flush();
   expect(axios.post).toHaveBeenCalled();
   const selectUrl = String(axios.post.mock.calls[0][0]);
-  expect(selectUrl).toContain("/einvoice/designs/einvoice_xslt_custom/select");
+  expect(selectUrl).toContain("/system/einvoice-designs/einvoice_xslt_custom/select");
   expect(selectUrl).toContain("company_id=co_a");
+  const body = axios.post.mock.calls[0][1];
+  expect(body.company_id).toBe("co_a");
 });
 
 async function openInvoiceDesign() {
@@ -153,11 +168,12 @@ async function openInvoiceDesign() {
   await act(async () => {
     root.render(<EinvoiceDesignsPanel />);
   });
-  await act(async () => { await Promise.resolve(); });
+  await flush();
+  await chooseCompany("__platform__");
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-edit-einvoice_xslt_default_e_invoice"]').click();
   });
-  await act(async () => { await Promise.resolve(); });
+  await flush();
   return root;
 }
 

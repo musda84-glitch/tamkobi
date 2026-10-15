@@ -128,6 +128,8 @@ def test_is_ynt_allowed_integration_paths():
     assert ha.is_ynt_allowed_path("/api/einvoice/providers")
     assert ha.is_ynt_allowed_path("/api/einvoice/settings")
     assert ha.is_ynt_allowed_path("/api/einvoice/test")
+    assert ha.is_ynt_allowed_path("/api/einvoice/designs")
+    assert ha.is_ynt_allowed_path("/api/einvoice/designs/abc/select")
     assert ha.is_ynt_allowed_path("/api/integrations/isnet/egress")
     assert ha.is_ynt_allowed_path("/api/integrations/isnet/save")
     assert ha.is_ynt_allowed_path("/api/integrations/isnet-portal/test")

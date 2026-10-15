@@ -110,6 +110,10 @@ def test_flag_matrix_superadmin_api(monkeypatch):
 def test_is_super_admin_api_path_narrow():
     assert ha.is_super_admin_api_path("/api/system/companies")
     assert ha.is_super_admin_api_path("/api/platform/admin/products")
+    assert ha.is_super_admin_api_path("/api/einvoice/designs")
+    assert ha.is_super_admin_api_path("/api/einvoice/designs/abc/select")
+    assert not ha.is_super_admin_api_path("/api/einvoice/settings")
+    assert not ha.is_super_admin_api_path("/api/einvoice/incoming/sync")
     assert not ha.is_super_admin_api_path("/api/license/me")
     assert not ha.is_super_admin_api_path("/api/auth/2fa/verify")
     assert not ha.is_super_admin_api_path("/api/orders/system/foo")  # eski substring tuzağı
