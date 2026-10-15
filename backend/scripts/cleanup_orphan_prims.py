@@ -156,18 +156,36 @@ async def _main(company_id: str, apply: bool) -> int:
         pass
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    from mysql_store import MySQLClient
+    from mysql_store import MySQLClient, mysql_settings_from_env
 
-    db = MySQLClient()
-    report = await cleanup_orphan_prims(db, company_id, apply=apply)
-    if report["dry_run"]:
-        print(f"dry-run: {report['count']} sahipsiz prim. Veritabanı değişmedi.")
-    else:
-        print(f"uygulandı: {report['count']} prim silindi.")
-        for row in report["rows"]:
-            print("silindi " + json.dumps(row, ensure_ascii=False, default=str))
-    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    return 0
+    # MySQLClient istemcidir; koleksiyonlar client[db_adı] üzerindedir (server.py DB_NAME).
+    # Ad, load_dotenv sonrası mysql_settings_from_env ile .env DB_NAME / MYSQL_DATABASE'den gelir.
+    client = MySQLClient()
+    try:
+        db_name = str(mysql_settings_from_env().get("db") or "tamkobi").strip()
+        db = client[db_name]
+        cid = str(company_id or "").strip()
+        company = await db.companies.find_one({"_id": cid}) if cid else None
+        if not company:
+            print(f"hata: '{cid}' id'li firma bulunamadı.", file=sys.stderr)
+            return 1
+        report = await cleanup_orphan_prims(db, cid, apply=apply)
+        if report["dry_run"]:
+            print(f"dry-run: {report['count']} sahipsiz prim. Veritabanı değişmedi.")
+        else:
+            print(f"uygulandı: {report['count']} prim silindi.")
+            for row in report["rows"]:
+                print("silindi " + json.dumps(row, ensure_ascii=False, default=str))
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return 0
+    finally:
+        try:
+            await client.close_async()
+        except Exception:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 def main() -> None:
