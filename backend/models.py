@@ -235,6 +235,8 @@ class InvoiceItem(BaseModel):
     serial_number: Optional[str] = None
     production_date: Optional[str] = None
     expiry_date: Optional[str] = None
+    dispatch_id: Optional[str] = None
+    order_id: Optional[str] = None
 
 class Invoice(BaseDocument):
     company_id: str

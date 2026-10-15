@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import React, { Fragment, useCallback, useMemo, useState } from "react";
+import React, { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -17,6 +17,7 @@ import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
 import { dispatchDirFromParam, splitDispatchLists } from "../utils/despatchShipment";
+import { outgoingMergeIds } from "../utils/dispatchMerge";
 
 const EXTRA_FILTERS = [
   { key: "outgoing_e", label: "Giden e" },
@@ -60,6 +61,7 @@ export function InvoicesScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
 
   const apiType = type === "outgoing_e" || type === "incoming_e" ? undefined : (type === "all" ? undefined : type);
 
@@ -77,6 +79,8 @@ export function InvoicesScreen() {
   }, [client, companyId, apiType]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => { setPicked([]); }, [type, dispatchDir]);
 
   const actOnInvoice = (inv: Invoice) => {
     const kind = invoiceRowDangerAction(inv);
@@ -134,6 +138,29 @@ export function InvoicesScreen() {
   const filtered = type === "dispatch"
     ? (dispatchDir === "in" ? dispatchSplit.incoming : dispatchSplit.outgoing)
     : searched;
+
+  const showMergePick = type === "dispatch" && dispatchDir === "out" && canEdit;
+  const mergeIds = showMergePick ? outgoingMergeIds(filtered, picked) : [];
+  const togglePick = (id: string) => setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const mergeDispatches = () => {
+    if (mergeIds.length < 2) return;
+    confirmAction(
+      "Tek faturada birleştir",
+      `${mergeIds.length} giden irsaliye tek taslak satış faturasında birleştirilsin mi?`,
+      async () => {
+        try {
+          const key = `${Date.now()}-${mergeIds.join("-")}`;
+          await post(client, "/dispatches/merge-to-invoice", { dispatch_ids: mergeIds, idempotency_key: key });
+          setPicked([]);
+          setError(null);
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "İrsaliyeler birleştirilemedi."));
+        }
+      },
+      "Birleştir",
+    );
+  };
 
   const filterTabs = [...INVOICE_FILTERS, ...EXTRA_FILTERS];
 
@@ -202,6 +229,15 @@ export function InvoicesScreen() {
               ))}
             </View>
           ) : null}
+          {showMergePick ? (
+            <PrimaryButton
+              title="Tek faturada birleştir"
+              testID="merge-dispatches-btn"
+              disabled={mergeIds.length < 2}
+              onPress={mergeDispatches}
+              color="#A21CAF"
+            />
+          ) : null}
           {canEdit ? (
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1 }}>
@@ -268,7 +304,19 @@ export function InvoicesScreen() {
             );
             return (
               <View key={iid} style={{ gap: 4 }}>
-                {body}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  {showMergePick ? (
+                    <Pressable
+                      testID={`dispatch-select-${iid}`}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: picked.includes(iid) }}
+                      onPress={() => togglePick(iid)}
+                    >
+                      <Ionicons name={picked.includes(iid) ? "checkbox" : "square-outline"} size={22} color="#A21CAF" />
+                    </Pressable>
+                  ) : null}
+                  <View style={{ flex: 1 }}>{body}</View>
+                </View>
                 {showFaturalastir ? (
                   <DraftInvoiceFaturalastir
                     invoice={inv}

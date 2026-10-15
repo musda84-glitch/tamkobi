@@ -408,6 +408,22 @@ def _amt(n: Any) -> str:
         return "0.00"
 
 
+def despatch_document_refs(inv: Dict[str, Any], fallback_date: str = "") -> list:
+    """Her irsaliye için (numara, IssueDate). Çoklu birleştirmede sıra korunur."""
+    numbers = [str(n).strip() for n in (inv.get("dispatch_numbers") or []) if str(n or "").strip()]
+    dates = list(inv.get("dispatch_dates") or [])
+    if numbers:
+        out = []
+        for i, num in enumerate(numbers):
+            raw = dates[i] if i < len(dates) and dates[i] else (inv.get("dispatch_date") or fallback_date)
+            out.append((num, _date(raw or fallback_date)))
+        return out
+    disp_no = str(inv.get("dispatch_number") or "").strip()
+    if not disp_no:
+        return []
+    return [(disp_no, _date(inv.get("dispatch_date") or inv.get("issue_date") or fallback_date))]
+
+
 def _date(s: Any) -> str:
     raw = str(s or "")[:10]
     if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
@@ -756,7 +772,7 @@ def build_invoice_ubl(
     _cbc(root, "DocumentCurrencyCode", currency)
     _cbc(root, "LineCountNumeric", str(len(items) or 1))
 
-    # UBL sıra: BillingReference → AdditionalDocumentReference → Signature
+    # UBL sıra: BillingReference → DespatchDocumentReference → AdditionalDocumentReference → Signature
     # İade: orijinal satış faturasına BillingReference (GİB Schematron zorunlu)
     if returning:
         bref = _return_billing_ref(inv)
@@ -774,6 +790,11 @@ def build_invoice_ubl(
             _cbc(idr, "DocumentTypeCode", dcode or "İADE")
             if dtype:
                 _cbc(idr, "DocumentType", dtype[:120])
+
+    for disp_id, disp_date in despatch_document_refs(inv, issue_date):
+        dref = _cac(root, "DespatchDocumentReference")
+        _cbc(dref, "ID", disp_id)
+        _cbc(dref, "IssueDate", disp_date)
 
     if send_ready and (e_type == "e_archive" or profile == "EARSIVFATURA"):
         buyer_email = str(buyer.get("email") or inv.get("contact_email") or "").strip()

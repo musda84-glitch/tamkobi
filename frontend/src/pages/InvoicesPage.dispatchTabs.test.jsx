@@ -66,7 +66,7 @@ jest.mock("axios", () => {
   };
   return { __esModule: true, default: impl, ...impl };
 });
-jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
+jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warning: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
   useAuth: () => ({ activeCompany: { id: "c1" }, addonOn: () => false, can: () => true }),
@@ -185,4 +185,38 @@ test("arama, tarih ve belge filtresi iki sekmenin sayısını da günceller", as
   await flush(2);
   expect(count("out")).toBe("1");
   expect(host.querySelector('[data-testid="invoice-row-IRS-OUT"]')).toBeTruthy();
+});
+
+test("giden sekmesinde seçilen irsaliyeler tek faturada birleştirilir", async () => {
+  const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(true);
+  axios.post.mockResolvedValue({ data: { status: "success", message: "2 irsaliye birleştirildi" } });
+  await renderPage("/dispatches?dir=out");
+  const btn = host.querySelector('[data-testid="merge-dispatches-btn"]');
+  expect(btn).toBeTruthy();
+  expect(btn.disabled).toBe(true);
+
+  await act(async () => {
+    host.querySelector('[data-testid="inv-select-IRS-OUT"]').click();
+    host.querySelector('[data-testid="inv-select-IRS-OLD"]').click();
+  });
+  await flush(2);
+  expect(host.querySelector('[data-testid="merge-dispatches-btn"]').disabled).toBe(false);
+
+  await act(async () => {
+    host.querySelector('[data-testid="merge-dispatches-btn"]').click();
+  });
+  await flush(4);
+
+  const calls = axios.post.mock.calls.filter((c) => String(c[0]).includes("/dispatches/merge-to-invoice"));
+  expect(calls).toHaveLength(1);
+  expect(calls[0][1].dispatch_ids).toEqual(["out1", "old1"]);
+  expect(calls[0][1].idempotency_key).toBeTruthy();
+  expect(calls[0][2].headers["Idempotency-Key"]).toBe(calls[0][1].idempotency_key);
+  confirmSpy.mockRestore();
+});
+
+test("gelen sekmesinde birleştir aksiyonu yoktur", async () => {
+  await renderPage("/dispatches?dir=in");
+  expect(host.querySelector('[data-testid="merge-dispatches-btn"]')).toBeFalsy();
+  expect(host.querySelector('[data-testid="invoice-row-IRS-IN"]')).toBeTruthy();
 });

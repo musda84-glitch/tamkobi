@@ -48,6 +48,7 @@ import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayloa
 import { paymentAskMessage, shouldAskPaymentAfterSave } from "../utils/invoiceAskPayment";
 import { DespatchSendDialog } from "../components/DespatchSendDialog";
 import { canSendOutgoingDispatch, despatchSendLabel, isIncomingDispatch } from "../utils/despatchShipment";
+import { selectedOutgoingDispatchIds } from "../utils/dispatchMerge";
 
 import {
   FileText,
@@ -215,6 +216,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [bulkEInvoiceBusy, setBulkEInvoiceBusy] = useState(false);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const [installmentInv, setInstallmentInv] = useState(null);
   const [expandedInvId, setExpandedInvId] = useState(null);
   const [expandedItemsById, setExpandedItemsById] = useState({});
@@ -335,6 +337,31 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       toast.error(err.response?.data?.detail || "Toplu stok kartı açılamadı.");
     } finally {
       setLineMatchBusy("");
+    }
+  };
+  const mergeOutgoingIds = selectedOutgoingDispatchIds(visibleInvoices, selected);
+  const handleMergeDispatches = async () => {
+    const ids = selectedOutgoingDispatchIds(visibleInvoices, selected);
+    if (ids.length < 2) {
+      toast.error("Birleştirmek için en az iki giden irsaliye seçin.");
+      return;
+    }
+    if (!window.confirm(`${ids.length} giden irsaliye tek taslak satış faturasında birleştirilsin mi?`)) return;
+    const key = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `merge-${Date.now()}`;
+    setMergeBusy(true);
+    try {
+      const r = await axios.post(
+        `${API_URL}/dispatches/merge-to-invoice`,
+        { dispatch_ids: ids, idempotency_key: key },
+        { headers: { "Idempotency-Key": key } },
+      );
+      toast.success(r.data?.message || "İrsaliyeler tek faturada birleştirildi.");
+      setSelected([]);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İrsaliyeler birleştirilemedi.");
+    } finally {
+      setMergeBusy(false);
     }
   };
   const handleConvertDispatch = async (inv) => {
@@ -809,6 +836,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       }
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, body);
       if (!opts.silentToast) toast.success(res.data.message);
+      const draftWarn = res.data?.warning || res.data?.dispatch_draft_warning;
+      if (draftWarn && !opts.silentToast) toast.warning(draftWarn);
       // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek.
       // Onay modalı zaten send içinde wait_for_gib poll eder; ekstra refresh süreyi uzatır.
       let refreshMsg = "";
@@ -1267,6 +1296,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <span className={`ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full px-1 text-[10px] ${dispatchDir === tab.id ? "bg-white/20" : "bg-slate-200 text-slate-700"}`} data-testid={`dispatch-dir-count-${tab.id}`}>{tab.count}</span>
               </button>
             ))}
+            {dispatchDir === "out" && (
+              <button
+                type="button"
+                onClick={handleMergeDispatches}
+                disabled={mergeOutgoingIds.length < 2 || mergeBusy}
+                className="ml-1 px-3 py-1.5 rounded-lg font-semibold bg-fuchsia-50 text-fuchsia-800 border border-fuchsia-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="merge-dispatches-btn"
+              >
+                Tek faturada birleştir
+              </button>
+            )}
           </div>
         )}
         {!lockType && (
