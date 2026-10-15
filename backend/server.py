@@ -70,7 +70,7 @@ from line_totals import (
     ORDER_ITEM_FIELDS,
     pick_fields,
 )
-from stock_codes import fill_stock_codes as _fill_stock_codes_impl
+from stock_codes import fill_stock_codes as _fill_stock_codes_impl, _variant_source as _b2b_variant_source
 from auth_utils import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
@@ -5476,6 +5476,134 @@ async def _notify_new_task_assignees(project: Dict[str, Any], previous_tasks: Li
             extra={"project_id": proj_id} if proj_id else None,
         ))
 
+def _b2b_num(value, default=0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _b2b_discount_rate(item: dict) -> float:
+    for key in ("discount_rate", "discount_percent"):
+        raw = item.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if val:
+            return val
+    return 0.0
+
+
+def _b2b_line_variant(raw: dict, product: dict):
+    variants = [v for v in (product.get("variants") or []) if isinstance(v, dict)]
+    vid = str(raw.get("variant_id") or "").strip()
+    if vid:
+        hit = next((v for v in variants if str(v.get("variant_id") or "") == vid), None)
+        if hit:
+            return hit
+    src = _b2b_variant_source(
+        product,
+        str(raw.get("sku") or "").strip(),
+        str(raw.get("barcode") or "").strip(),
+        str(raw.get("name") or raw.get("product_name") or "").strip(),
+    )
+    if src is product:
+        return None
+    return src
+
+
+def _b2b_line_name(raw: dict, product: dict, variant: Optional[dict]) -> str:
+    name = str(raw.get("name") or raw.get("product_name") or (product or {}).get("name") or "").strip()
+    variant_name = str(raw.get("variant_name") or (variant or {}).get("name") or "").strip()
+    if variant_name and variant_name.casefold() not in name.casefold():
+        name = f"{name} — {variant_name}".strip(" —")
+    return name or "Kalem"
+
+
+def _b2b_line_image(raw: dict, product: dict, variant: Optional[dict]) -> str:
+    for src in (raw, variant, product):
+        if not isinstance(src, dict):
+            continue
+        for key in ("image_url", "thumbnail_url"):
+            val = str(src.get(key) or "").strip()
+            if val:
+                return val
+    return ""
+
+
+def _b2b_invoice_summary(inv: dict) -> dict:
+    """Portal listesi: kalem ve iç maliyet alanları yok."""
+    return {
+        "id": inv.get("_id") or inv.get("id"),
+        "invoice_number": inv.get("invoice_number"),
+        "issue_date": inv.get("issue_date"),
+        "due_date": inv.get("due_date"),
+        "grand_total": inv.get("grand_total"),
+        "paid_amount": inv.get("paid_amount", 0),
+        "payment_status": inv.get("payment_status"),
+        "e_type": inv.get("e_type"),
+        "currency": inv.get("currency") or "TRY",
+    }
+
+
+def b2b_invoice_lines_view(invoice: dict, products: Optional[dict] = None) -> dict:
+    """B2B faturasının bayiye açık kalemleri. Alış fiyatı, kâr ve iç not dönmez."""
+    products = products or {}
+    company_id = invoice.get("company_id")
+    items_out = []
+    for raw in invoice.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        pid = str(raw.get("product_id") or "")
+        product = products.get(pid) if pid else None
+        if not isinstance(product, dict):
+            product = {}
+        elif company_id and product.get("company_id") and product.get("company_id") != company_id:
+            product = {}
+        variant = _b2b_line_variant(raw, product) if product else None
+        src = variant or product
+        sku = str(raw.get("sku") or src.get("sku") or product.get("sku") or "").strip()
+        barcode = str(raw.get("barcode") or src.get("barcode") or product.get("barcode") or "").strip()
+        disc = _b2b_discount_rate(raw)
+        qty = _b2b_num(raw.get("quantity"))
+        unit_price = _b2b_num(raw.get("unit_price"))
+        if raw.get("total") in (None, ""):
+            total = round(qty * unit_price * (1 - disc / 100.0), 2)
+        else:
+            total = _b2b_num(raw.get("total"))
+        row = {
+            "sku": sku,
+            "name": _b2b_line_name(raw, product, variant),
+            "quantity": qty,
+            "unit": str(raw.get("unit") or product.get("unit") or "Adet"),
+            "unit_price": unit_price,
+            "vat_rate": _b2b_num(raw.get("vat_rate")),
+            "total": total,
+        }
+        image = _b2b_line_image(raw, product, variant)
+        if barcode:
+            row["barcode"] = barcode
+        if image:
+            row["image_url"] = image
+        if disc:
+            row["discount_rate"] = disc
+        items_out.append(row)
+    return {
+        "id": str(invoice.get("_id") or invoice.get("id") or ""),
+        "invoice_number": invoice.get("invoice_number"),
+        "currency": str(invoice.get("currency") or "TRY"),
+        "subtotal": _b2b_num(invoice.get("subtotal")),
+        "vat_total": _b2b_num(invoice.get("vat_total")),
+        "grand_total": _b2b_num(invoice.get("grand_total")),
+        "items": items_out,
+    }
+
+
 @api_router.get("/public/b2b/{token}")
 async def b2b_portal(token: str):
     c = await _b2b_contact(token)
@@ -5517,7 +5645,7 @@ async def b2b_portal(token: str):
                 it["manufacturer_code"] = p.get("manufacturer_code")
     await _enrich_b2b_orders_production(orders)
     orders = _sort_b2b_cart_orders(orders)
-    invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
+    invoices = [_b2b_invoice_summary(i) for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
     ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
@@ -5526,6 +5654,30 @@ async def b2b_portal(token: str):
             "products": products, "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
             "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart},
             "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS]}
+
+@api_router.get("/public/b2b/{token}/invoices/{invoice_id}/lines")
+async def b2b_invoice_lines(token: str, invoice_id: str):
+    """Yalnız bu B2B carisinin faturası. Başka cari, taslak ve iptal 404; iç maliyet dönmez."""
+    c = await _b2b_contact(token)
+    company = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    bs = resolve_b2b_settings(company, c)
+    if not bs.get("enabled", True) or bs.get("show_statement", True) is False:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await db.invoices.find_one({
+        "_id": invoice_id,
+        "company_id": c["company_id"],
+        "contact_id": c["_id"],
+        "status": {"$nin": ["cancelled", "draft"]},
+    })
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    items = [it for it in (inv.get("items") or []) if isinstance(it, dict)]
+    pids = list({str(it.get("product_id")) for it in items if it.get("product_id")})
+    products: Dict[str, Any] = {}
+    if pids:
+        rows = await db.products.find({"_id": {"$in": pids}, "company_id": c["company_id"]}).to_list(len(pids) + 5)
+        products = {p["_id"]: p for p in rows if isinstance(p, dict)}
+    return b2b_invoice_lines_view(inv, products)
 
 @api_router.post("/public/b2b/{token}/change-password")
 async def b2b_change_password(token: str, req: Dict[str, Any]):

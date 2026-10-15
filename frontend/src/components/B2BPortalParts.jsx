@@ -1,18 +1,19 @@
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, Factory, CheckCircle2, Circle } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, Factory, CheckCircle2, Circle, ChevronDown } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
 import { orderStatusLabel, trackingCarrierLabel } from "../utils/warehouseShip";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel, cartHeading, cartKalemLabel, cartLinesQtyTotal } from "../utils/b2bCart";
 import { lineUnitIncl } from "../utils/printFormLayout";
 import { LegalConsent } from "./LegalConsent";
-import { fmtDate, fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney, formatTrQty } from "../utils/money";
+import { TX_NO_OVERFLOW_CLASS, TX_WRAP_CLASS } from "./TxMobileCard";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { DocumentFormModal } from "./DocumentFormModal";
 
@@ -599,19 +600,263 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
 
 const payStatus = (v) => (["paid", "partially_paid", "unpaid", "overdue"].includes(v) ? v : "unpaid");
 
-export const StatementList = ({ invoices, company, balance }) => {
+const invoiceId = (inv) => String(inv?.id || inv?._id || "");
+const invoiceCurrency = (inv) => inv?.currency || "TRY";
+
+const b2bDiscountLabel = (line) => {
+  const raw = line?.discount_rate != null && line.discount_rate !== "" ? line.discount_rate : line?.discount_percent;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n === 0) return "";
+  return `%${formatTrQty(n)}`;
+};
+
+const b2bQtyLabel = (line) => {
+  const unit = String(line?.unit || "Adet").trim() || "Adet";
+  return `${formatTrQty(line?.quantity)} ${unit}`;
+};
+
+const b2bVatLabel = (line) => {
+  const n = Number(line?.vat_rate);
+  return `%${formatTrQty(Number.isFinite(n) ? n : 0)}`;
+};
+
+function InvoicePayBadge({ status }) {
+  const paid = payStatus(status) === "paid";
+  return (
+    <span className={`px-1.5 py-0.5 rounded font-semibold ${paid ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+      {statusTr(payStatus(status))}
+    </span>
+  );
+}
+
+function InvoiceExpandButton({ open, invoiceNumber, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      aria-label={open ? "Fatura kalemlerini gizle" : "Fatura kalemlerini göster"}
+      data-testid={`b2b-invoice-toggle-${invoiceNumber}`}
+      className="shrink-0 p-1 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+    >
+      <ChevronDown className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`} />
+    </button>
+  );
+}
+
+function InvoiceLineImage({ url }) {
+  if (!url) return null;
+  return (
+    <img
+      src={listImageUrl(url, 48)}
+      alt=""
+      className="w-9 h-9 object-contain rounded border bg-white shrink-0"
+      loading="lazy"
+      decoding="async"
+    />
+  );
+}
+
+function InvoiceLinesBody({ state, invoiceNumber }) {
+  if (!state || state.status === "loading") {
+    return (
+      <div className="px-3 py-2 text-xs text-slate-500 flex items-center gap-2" data-testid={`b2b-invoice-lines-loading-${invoiceNumber}`}>
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Yükleniyor…
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="px-3 py-2 text-xs text-rose-700" data-testid={`b2b-invoice-lines-error-${invoiceNumber}`}>
+        {state.error || "Kalemler yüklenemedi."}
+      </div>
+    );
+  }
+  const data = state.data || {};
+  const items = Array.isArray(data.items) ? data.items : [];
+  const ccy = data.currency || "TRY";
+  return (
+    <div className={`px-3 py-2 ${TX_NO_OVERFLOW_CLASS}`} data-testid={`b2b-invoice-lines-${invoiceNumber}`}>
+      {items.length === 0 && <div className="text-xs text-slate-400 py-1">Bu faturada kalem yok.</div>}
+      {items.length > 0 && (
+        <>
+          <div
+            className={`md:hidden space-y-2 ${TX_NO_OVERFLOW_CLASS}`}
+            data-testid={`b2b-invoice-lines-cards-${invoiceNumber}`}
+            data-tx-mobile-list="1"
+          >
+            {items.map((line, idx) => {
+              const discount = b2bDiscountLabel(line);
+              return (
+                <div
+                  key={`${line.sku || "line"}-${idx}`}
+                  className={`rounded-xl border bg-white p-2.5 space-y-1 ${TX_WRAP_CLASS}`}
+                  data-tx-wrap="1"
+                  data-testid={`b2b-invoice-line-card-${invoiceNumber}-${idx}`}
+                >
+                  <div className="flex gap-2 min-w-0">
+                    <InvoiceLineImage url={line.image_url} />
+                    <div className={`min-w-0 flex-1 ${TX_WRAP_CLASS}`}>
+                      <div className="font-mono text-[10px] text-slate-500">{line.sku || "—"}</div>
+                      <div className={`font-semibold text-slate-900 ${TX_WRAP_CLASS}`}>{line.name}</div>
+                      {line.barcode ? <div className={`text-slate-500 ${TX_WRAP_CLASS}`}>Barkod {line.barcode}</div> : null}
+                    </div>
+                  </div>
+                  <div className={`flex flex-wrap gap-x-3 gap-y-0.5 text-slate-600 ${TX_WRAP_CLASS}`}>
+                    <span>{b2bQtyLabel(line)}</span>
+                    <span>Birim {fmt(line.unit_price, ccy)}</span>
+                    {discount ? <span>İskonto {discount}</span> : null}
+                    <span>KDV {b2bVatLabel(line)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3 font-bold">
+                    <span>Tutar</span>
+                    <span>{fmt(line.total, ccy)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <table className="hidden md:table w-full text-[11px]" data-testid={`b2b-invoice-lines-table-${invoiceNumber}`}>
+            <thead className="text-slate-500 uppercase text-[10px]">
+              <tr>
+                <th className="p-2 text-left w-10">Görsel</th>
+                <Th>Stok kodu</Th>
+                <Th>Ürün</Th>
+                <Th>Barkod</Th>
+                <Th>Miktar</Th>
+                <Th right>Birim fiyat</Th>
+                <Th right>İskonto</Th>
+                <Th right>KDV</Th>
+                <Th right>Tutar</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {items.map((line, idx) => (
+                <tr key={`${line.sku || "line"}-${idx}`} data-testid={`b2b-invoice-line-${invoiceNumber}-${idx}`}>
+                  <td className="p-2"><InvoiceLineImage url={line.image_url} /></td>
+                  <td className="p-2 font-mono">{line.sku || "—"}</td>
+                  <td className={`p-2 font-semibold ${TX_WRAP_CLASS}`}>{line.name}</td>
+                  <td className="p-2 font-mono text-slate-600">{line.barcode || "—"}</td>
+                  <td className="p-2 whitespace-nowrap">{b2bQtyLabel(line)}</td>
+                  <td className="p-2 text-right whitespace-nowrap">{fmt(line.unit_price, ccy)}</td>
+                  <td className="p-2 text-right">{b2bDiscountLabel(line) || "—"}</td>
+                  <td className="p-2 text-right">{b2bVatLabel(line)}</td>
+                  <td className="p-2 text-right font-bold whitespace-nowrap">{fmt(line.total, ccy)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      <div className={`mt-2 space-y-1 text-xs border-t border-slate-200 pt-2 ${TX_WRAP_CLASS}`} data-testid={`b2b-invoice-totals-${invoiceNumber}`}>
+        <div className="flex justify-between gap-3"><span className="text-slate-500">Ara toplam</span><b>{fmt(data.subtotal, ccy)}</b></div>
+        <div className="flex justify-between gap-3"><span className="text-slate-500">KDV</span><b>{fmt(data.vat_total, ccy)}</b></div>
+        <div className="flex justify-between gap-3 font-bold text-slate-900"><span>Genel toplam</span><b data-testid={`b2b-invoice-grand-${invoiceNumber}`}>{fmt(data.grand_total, ccy)}</b></div>
+      </div>
+    </div>
+  );
+}
+
+export const StatementList = ({ invoices, company, balance, token }) => {
   const bal = balance || 0;
+  const openRef = useRef({});
+  const cacheRef = useRef({});
+  const [open, setOpen] = useState({});
+  const [cache, setCache] = useState({});
+
+  const loadInvoiceLines = (id) => {
+    const cur = cacheRef.current[id];
+    if (cur && (cur.status === "ok" || cur.status === "loading")) return;
+    if (!token) {
+      cacheRef.current = { ...cacheRef.current, [id]: { status: "error", error: "Kalemler yüklenemedi." } };
+      setCache(cacheRef.current);
+      return;
+    }
+    cacheRef.current = { ...cacheRef.current, [id]: { status: "loading" } };
+    setCache(cacheRef.current);
+    axios.get(`${API_URL}/public/b2b/${token}/invoices/${encodeURIComponent(id)}/lines`)
+      .then((r) => {
+        cacheRef.current = { ...cacheRef.current, [id]: { status: "ok", data: r.data } };
+        setCache(cacheRef.current);
+      })
+      .catch((e) => {
+        const detail = e?.response?.data?.detail;
+        cacheRef.current = {
+          ...cacheRef.current,
+          [id]: { status: "error", error: typeof detail === "string" && detail.trim() ? detail : "Kalemler yüklenemedi." },
+        };
+        setCache(cacheRef.current);
+      });
+  };
+
+  const toggleInvoice = (inv) => {
+    const id = invoiceId(inv);
+    if (!id) return;
+    const willOpen = !openRef.current[id];
+    openRef.current = { ...openRef.current, [id]: willOpen };
+    setOpen(openRef.current);
+    if (willOpen) loadInvoiceLines(id);
+  };
+
   return (
     <div className="bg-white rounded-2xl border overflow-hidden" data-testid="b2b-statement">
       <div className="p-3 border-b flex flex-col sm:flex-row sm:justify-between gap-1 text-sm"><b>Faturalarım</b><span className="text-xs sm:text-sm">Güncel bakiye: <b className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b></span></div>
       {invoices.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Fatura yok.</div>}
-      <div className="md:hidden divide-y">{invoices.map((i) => (
-        <div key={i.invoice_number} className="p-3 text-xs space-y-1" data-testid={`b2b-invoice-${i.invoice_number}`}>
-          <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{i.invoice_number}</span><span className={`px-1.5 py-0.5 rounded font-semibold ${payStatus(i.payment_status) === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(payStatus(i.payment_status))}</span></div>
-          <div className="text-slate-500">Tarih {fmtDate(i.issue_date)}{i.due_date ? ` · Vade ${fmtDate(i.due_date)}` : ""}</div>
-          <div className="flex items-center justify-between"><span className="font-bold text-sm">{fmt(i.grand_total)}</span><span className="text-slate-500">Ödenen {fmt(i.paid_amount)}{i.grand_total - (i.paid_amount || 0) > 0.01 && <b className="text-rose-600 ml-1">· kalan {fmt(i.grand_total - (i.paid_amount || 0))}</b>}</span></div>
-        </div>))}</div>
-      {invoices.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Fatura</Th><Th>Tarih</Th><Th>Vade</Th><Th right>Tutar</Th><Th right>Ödenen</Th><Th>Durum</Th></tr></thead><tbody className="divide-y">{invoices.map((i) => <tr key={i.invoice_number}><td className="p-3 font-mono font-bold">{i.invoice_number}</td><td className="p-3">{fmtDate(i.issue_date)}</td><td className="p-3">{i.due_date ? fmtDate(i.due_date) : "-"}</td><td className="p-3 text-right font-bold">{fmt(i.grand_total)}</td><td className="p-3 text-right">{fmt(i.paid_amount)}</td><td className="p-3"><span className={`px-1.5 py-0.5 rounded font-semibold ${payStatus(i.payment_status) === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(payStatus(i.payment_status))}</span></td></tr>)}</tbody></table>}
+      <div className={`md:hidden divide-y ${TX_NO_OVERFLOW_CLASS}`}>
+        {invoices.map((i) => {
+          const id = invoiceId(i);
+          const ccy = invoiceCurrency(i);
+          const isOpen = Boolean(id && open[id]);
+          const remain = (i.grand_total || 0) - (i.paid_amount || 0);
+          return (
+            <div key={id || i.invoice_number} className={`p-3 text-xs space-y-1 ${TX_WRAP_CLASS}`} data-testid={`b2b-invoice-${i.invoice_number}`}>
+              <div className="flex items-start gap-1">
+                {id ? <InvoiceExpandButton open={isOpen} invoiceNumber={i.invoice_number} onClick={() => toggleInvoice(i)} /> : null}
+                <div className={`flex-1 min-w-0 space-y-1 ${TX_WRAP_CLASS}`}>
+                  <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{i.invoice_number}</span><InvoicePayBadge status={i.payment_status} /></div>
+                  <div className="text-slate-500">Tarih {fmtDate(i.issue_date)}{i.due_date ? ` · Vade ${fmtDate(i.due_date)}` : ""}</div>
+                  <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(i.grand_total, ccy)}</span><span className={`text-slate-500 ${TX_WRAP_CLASS}`}>Ödenen {fmt(i.paid_amount, ccy)}{remain > 0.01 && <b className="text-rose-600 ml-1">· kalan {fmt(remain, ccy)}</b>}</span></div>
+                </div>
+              </div>
+              {isOpen && <InvoiceLinesBody state={cache[id]} invoiceNumber={i.invoice_number} />}
+            </div>
+          );
+        })}
+      </div>
+      {invoices.length > 0 && (
+        <table className="hidden md:table w-full text-xs">
+          <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b">
+            <tr><th className="p-2 w-8" /><Th>Fatura</Th><Th>Tarih</Th><Th>Vade</Th><Th right>Tutar</Th><Th right>Ödenen</Th><Th>Durum</Th></tr>
+          </thead>
+          <tbody className="divide-y">
+            {invoices.map((i) => {
+              const id = invoiceId(i);
+              const ccy = invoiceCurrency(i);
+              const isOpen = Boolean(id && open[id]);
+              return (
+                <React.Fragment key={id || i.invoice_number}>
+                  <tr data-testid={`b2b-invoice-row-${i.invoice_number}`}>
+                    <td className="p-2 w-8">{id ? <InvoiceExpandButton open={isOpen} invoiceNumber={i.invoice_number} onClick={() => toggleInvoice(i)} /> : null}</td>
+                    <td className="p-3 font-mono font-bold">{i.invoice_number}</td>
+                    <td className="p-3">{fmtDate(i.issue_date)}</td>
+                    <td className="p-3">{i.due_date ? fmtDate(i.due_date) : "-"}</td>
+                    <td className="p-3 text-right font-bold">{fmt(i.grand_total, ccy)}</td>
+                    <td className="p-3 text-right">{fmt(i.paid_amount, ccy)}</td>
+                    <td className="p-3"><InvoicePayBadge status={i.payment_status} /></td>
+                  </tr>
+                  {isOpen && (
+                    <tr data-testid={`b2b-invoice-detail-${i.invoice_number}`}>
+                      <td colSpan={7} className="p-0 bg-slate-50/80 border-t">
+                        <InvoiceLinesBody state={cache[id]} invoiceNumber={i.invoice_number} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
       {company.iban && <div className="p-3 text-xs text-slate-500 border-t break-all">Ödeme için: <b>{company.bank_name}</b> IBAN <span className="font-mono">{company.iban}</span></div>}
     </div>
   );
