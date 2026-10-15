@@ -556,6 +556,7 @@ class OrderItem(BaseModel):
     vat_amount: float = 0.0
     is_service: bool = False
     note: Optional[str] = None
+    image_url: Optional[str] = None
     price_includes_vat: bool = False
 
 class Order(BaseDocument):

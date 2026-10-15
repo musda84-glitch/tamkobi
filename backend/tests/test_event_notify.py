@@ -145,6 +145,7 @@ def _db():
     ])
     db.invoices = FakeColl([])
     db.orders = FakeColl([])
+    db.products = FakeColl([])
     db.platform_settings = FakeColl([{"_id": "platform"}])
     db.push_tokens = FakeColl([])
     db.mail_logs = FakeColl([])
@@ -716,7 +717,10 @@ def test_order_mail_escapes_script_and_extra_lines(setup_en):
     assert "&lt;script&gt;" in html
     assert "ve 1 kalem daha" in html
     assert "ve 1 sipariş daha" in html
-    assert "https://app.tamkobi.com/brand/tamkobi-icon-192.png" in html
+    assert "tamkobi-icon" not in html
+    assert "https://app.tamkobi.com/api/files/c1/p.webp?w=128&amp;fmt=jpg" in html
+    assert "B2B Portal" in html
+    assert "Görsel" in html and "Siparişi aç" in html
     text = send.await_args.args[2]
     assert "ve 1 kalem daha" in text
     assert "ve 1 sipariş daha" in text
@@ -870,3 +874,168 @@ def test_empty_recipients_skipped(setup_en):
     asyncio.run(_run())
     assert send.await_count == 0
     assert next(iter(db.notify_outbox.docs.values()))["status"] == "skipped"
+
+
+def test_channel_and_line_image_priority():
+    from models import OrderItem
+    from line_totals import ORDER_ITEM_FIELDS, pick_fields
+
+    assert event_notify.channel_label("b2b") == "B2B Portal"
+    assert event_notify.channel_label("pos") == "Kasa"
+    assert event_notify.channel_label("manual") == "Manuel"
+    assert event_notify.channel_label("trendyol") == "Trendyol"
+    assert event_notify.channel_label("OzelKanal") == "OzelKanal"
+
+    product = {
+        "sku": "RAF",
+        "thumbnail_url": "/t.webp",
+        "image_url": "/full.webp",
+        "images": [{"url": "/gal.webp"}],
+        "variants": [{"variant_id": "v1", "sku": "VAR-1", "name": "Kırmızı", "image_url": "/var.webp"}],
+    }
+    assert event_notify.resolve_line_image({"image_url": "https://cdn.example/mp.jpg"}, product) == "https://cdn.example/mp.jpg"
+    assert event_notify.resolve_line_image({"product_id": "p", "variant_id": "v1"}, product) == "/var.webp"
+    assert event_notify.resolve_line_image({"sku": "VAR-1"}, product) == "/var.webp"
+    assert event_notify.resolve_line_image({}, product) == "/t.webp"
+    assert event_notify.resolve_line_image({}, {"image_url": "/full.webp"}) == "/full.webp"
+    assert event_notify.resolve_line_image({}, {"images": [{"image_url": "/obj.webp"}]}) == "/obj.webp"
+    assert event_notify.order_line_card_image({"variant_id": "v1"}, product) == "/var.webp"
+    assert event_notify.order_line_card_image({}, product) == "/full.webp"
+    assert event_notify.order_line_card_image({}, {"thumbnail_url": "/t.webp"}) == "/t.webp"
+    assert event_notify.order_image_url("/api/files/c1/p.webp", "https://app.tamkobi.com") == (
+        "https://app.tamkobi.com/api/files/c1/p.webp?w=128&fmt=jpg"
+    )
+    assert event_notify.order_image_url("https://cdn.example/a.jpg", "https://app.tamkobi.com") == "https://cdn.example/a.jpg"
+    assert event_notify.order_image_url("/api/files/c1/p.webp", "") == ""
+    assert event_notify.order_image_url("data:image/png;base64,aaa", "https://app.tamkobi.com") == ""
+    assert event_notify.order_image_url("cid:img", "https://app.tamkobi.com") == ""
+    item = OrderItem(product_name="Raf", image_url="/api/files/a.webp")
+    assert item.image_url == "/api/files/a.webp"
+    assert "image_url" in ORDER_ITEM_FIELDS
+    assert pick_fields(item.model_dump(), ORDER_ITEM_FIELDS)["image_url"] == "/api/files/a.webp"
+
+
+def test_private_file_image_uses_share_token(monkeypatch):
+    import signed_links
+    monkeypatch.setattr(event_notify, "_file_get_is_public", lambda _path: False)
+    monkeypatch.setattr(signed_links, "make_doc_share_token", lambda *_a, **_k: "9.sig")
+    url = event_notify.order_image_url("/api/files/c1/p.webp", "https://app.tamkobi.com")
+    assert url == "https://app.tamkobi.com/api/files/c1/p.webp?w=128&fmt=jpg&t=9.sig"
+    assert not url.startswith("data:") and "cid:" not in url
+
+
+def test_order_mail_layout_resolves_product_images_once(setup_en):
+    db, send, _ = setup_en
+    db.companies.docs["c1"]["logo_url"] = "/api/files/c1/logo.png"
+    db.products.docs.update({
+        "p-var": {
+            "_id": "p-var", "company_id": "c1", "name": "Raf", "sku": "RAF",
+            "thumbnail_url": "/api/files/c1/thumb.webp",
+            "image_url": "/api/files/c1/full.webp",
+            "variants": [{"variant_id": "v1", "sku": "VAR-1", "name": "Kırmızı", "image_url": "/api/files/c1/var.webp"}],
+        },
+        "p-thumb": {
+            "_id": "p-thumb", "company_id": "c1", "sku": "MASA",
+            "thumbnail_url": "/api/files/c1/thumb-only.webp",
+            "image_url": "/api/files/c1/full-only.webp",
+        },
+        "p-gal": {
+            "_id": "p-gal", "company_id": "c1",
+            "images": [{"url": "/api/files/c1/gal.webp"}],
+        },
+        "p-none": {"_id": "p-none", "company_id": "c1", "name": "Yalın Ürün"},
+    })
+    db.orders.docs["o1"] = _order(
+        "o1",
+        order_number="B2B-1",
+        channel="b2b",
+        customer_name="<script>x</script>",
+        notes="Kapıda bırak",
+        order_date="2026-10-15T12:00:00+00:00",
+        subtotal=80,
+        vat_total=20,
+        grand_total=100,
+        items=[
+            {"product_id": "p-var", "product_name": "Raf", "variant_id": "v1", "sku": "VAR-1", "quantity": 1, "unit_price": 40, "total": 40},
+            {"product_id": "p-thumb", "product_name": "Masa", "sku": "MASA", "quantity": 1, "unit_price": 20, "total": 20},
+            {"product_id": "p-gal", "product_name": "Galeri", "quantity": 1, "unit_price": 10, "total": 10},
+            {"product_id": "p-none", "product_name": "Yalın Ürün", "quantity": 1, "unit_price": 10, "total": 10},
+            {"product_id": "p-var", "product_name": "Pazar", "image_url": "https://cdn.example/mp.jpg", "quantity": 1, "unit_price": 10, "total": 10},
+            {"product_name": "Gömülü", "image_url": "data:image/png;base64,AAAA", "quantity": 1, "unit_price": 0, "total": 0},
+        ],
+    )
+    db.orders.docs["o2"] = _order(
+        "o2",
+        order_number="POS-1",
+        channel="pos",
+        customer_name="Kasa Müşteri",
+        currency="USD",
+        fx_rate=40.5,
+        grand_total=10,
+        local_total=405,
+        order_date="2026-10-15T12:30:00+00:00",
+        subtotal=10,
+        vat_total=0,
+        items=[{"product_name": "Dolarlı", "quantity": 1, "unit_price": 10, "total": 10}],
+    )
+    calls = []
+    orig = db.products.find
+
+    def _find(q=None, *args, **kwargs):
+        calls.append(q)
+        return orig(q, *args, **kwargs)
+
+    db.products.find = _find
+
+    async def _run():
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {"email": True, "sms": False, "digest": "batch", "batch_minutes": 0}},
+        })
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            await event_notify.notify_orders_batch("c1", [db.orders.docs["o1"], db.orders.docs["o2"]])
+            await event_notify.flush_notify_outbox()
+
+    asyncio.run(_run())
+    html = send.await_args.kwargs["html"]
+    text = send.await_args.args[2]
+    assert len(calls) == 1
+    assert set(calls[0]["_id"]["$in"]) == {"p-var", "p-thumb", "p-gal", "p-none"}
+    assert calls[0]["company_id"] == "c1"
+    base = "https://app.tamkobi.com/api/files/c1/"
+    assert f"{base}var.webp?w=128&amp;fmt=jpg" in html
+    assert f"{base}thumb.webp" not in html
+    assert f"{base}full.webp" not in html
+    assert f"{base}thumb-only.webp?w=128&amp;fmt=jpg" in html
+    assert f"{base}full-only.webp" not in html
+    assert f"{base}gal.webp?w=128&amp;fmt=jpg" in html
+    assert "https://cdn.example/mp.jpg" in html
+    assert "data:image" not in html and "cid:" not in html
+    assert "tamkobi-icon" not in html
+    assert ">YÜ</td>" in html
+    assert 'alt="Yalın Ürün"' not in html
+    assert 'alt="Raf"' in html
+    assert 'width="64"' in html and 'height="64"' in html
+    assert 'alt="Demo A.Ş."' in html
+    assert f"{base}logo.png" in html
+    assert "B2B Portal" in html and "B2B Portal" in text
+    assert "Kasa" in html
+    assert "Sipariş No" in html and "Kanal" in html and "Müşteri" in html and "Tarih/saat" in html
+    assert "Not" in html and "Kapıda bırak" in html
+    assert "Görsel" in html and "Ürün" in html and "Adet" in html and "Birim" in html and "Tutar" in html
+    assert "Siparişi aç" in html
+    assert "/orders?open=o1" in html
+    assert "/settings?tab=notifications" in html
+    assert "Bildirim ayarları" in html and "Bildirim ayarları" in text
+    assert 'name="color-scheme"' in html
+    assert "@media" in html and "width:100%" in html
+    assert 'role="presentation"' in html
+    assert "object-fit" not in html
+    assert "display:flex" not in html and "display:grid" not in html
+    assert "position:" not in html
+    assert "<script>" not in html and "&lt;script&gt;" in html
+    assert "15:00–15:30" in html and "15.10.2026 15:00" in html
+    assert "2 sipariş" in html and "Toplam 100,00 ₺" in html and "Toplam 10,00 USD" in html
+    for label in ("Ara toplam", "KDV", "Genel toplam", "100,00 ₺", "10,00 USD", "kur 40,50", "405,00 ₺"):
+        assert label in text
+    assert "VAR-1" in html and "Kırmızı" in html
