@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 ERP_FORGOT_MSG = "Kayıtlı bir hesap varsa şifre sıfırlama bağlantısı e-posta adresine gönderildi."
 ERP_FORGOT_SMS_MSG = "Kayıtlı bir hesap varsa SMS gönderildi."
+# Platform Destek ve varsayılan kutu da yokken. Hesap var/yok söylemez.
+FORGOT_MAIL_UNAVAILABLE_MSG = "Mail gönderilemedi, yöneticiye başvurun."
 MIN_PASSWORD = 6
 
 # Public forgot yanıtında yalnızca bu anahtarlar istemciye gider.
@@ -96,6 +98,11 @@ def generic_forgot_response(channel: Any = "email") -> dict:
     ch = forgot_channel(channel)
     msg = ERP_FORGOT_SMS_MSG if ch == "sms" else ERP_FORGOT_MSG
     return {"status": "ok", "message": msg, "channel": ch}
+
+
+def forgot_mail_unavailable_response() -> dict:
+    """Posta kutusu yok. Yanıt her e-posta için aynıdır; hesap sızdırmaz."""
+    return {"status": "ok", "message": FORGOT_MAIL_UNAVAILABLE_MSG, "channel": "email"}
 
 
 def public_forgot_payload(out: dict, *, channel: Any = None) -> dict:
