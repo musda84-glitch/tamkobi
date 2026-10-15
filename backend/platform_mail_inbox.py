@@ -1,7 +1,8 @@
 """Platform gelen kutusu: mail.tamkobi.com IMAP, salt okunur, veritabanına yazılmaz.
 
-Kutu şifresi platform_mailboxes.password_enc üzerinden çözülür. Düz şifre API
-yanıtına, denetime ve log satırına konmaz.
+Şifre önce kutunun password_enc alanından çözülür. Alan boşsa ve kutunun
+e-postası sunucunun SMTP kullanıcı adıyla aynıysa sunucu şifresi kullanılır.
+Düz şifre API yanıtına, denetime ve log satırına konmaz.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import bleach
 from fastapi import Depends, HTTPException, Query, Request
 
-import comm_service
+import comm_service  # noqa: F401  — testler decrypt'i bu modül üzerinden yamar; platform_mail ile aynı nesne
 import platform_store
 import saas
 from client_ip import request_ip
@@ -133,16 +134,12 @@ def _imap_user(box: dict) -> str:
     return email_addr
 
 
-def _imap_password(box: dict) -> str:
-    enc = box.get("password_enc") or ""
-    if not enc:
-        raise HTTPException(status_code=400, detail="Bu kutunun şifresi tanımlı değil.")
-    try:
-        password = comm_service.decrypt(enc)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Kutu şifresi okunamadı.")
+async def _imap_password(box: dict) -> str:
+    import platform_mail
+
+    password = await platform_mail.resolve_mailbox_password(box)
     if not password:
-        raise HTTPException(status_code=400, detail="Bu kutunun şifresi tanımlı değil.")
+        raise HTTPException(status_code=400, detail=platform_mail.MAILBOX_PASSWORD_MISSING)
     return password
 
 
@@ -434,7 +431,7 @@ async def list_messages(
     user: dict = Depends(saas.require_super_admin),
 ):
     box = await _authorized_box(box_id, user)
-    password = _imap_password(box)
+    password = await _imap_password(box)
     try:
         return await _run_imap(imap_list_inbox, _imap_user(box), password, page)
     except InboxImapError as exc:
@@ -450,7 +447,7 @@ async def read_message(
 ):
     uid = _check_uid(uid)
     box = await _authorized_box(box_id, user)
-    password = _imap_password(box)
+    password = await _imap_password(box)
     try:
         body = await _run_imap(imap_read_inbox, _imap_user(box), password, uid, images)
     except InboxNotFound:
@@ -471,7 +468,7 @@ async def mark_seen(
     if not isinstance(req, dict) or not isinstance(req.get("seen"), bool):
         raise HTTPException(status_code=400, detail="seen true veya false olmalı.")
     box = await _authorized_box(box_id, user)
-    password = _imap_password(box)
+    password = await _imap_password(box)
     try:
         return await _run_imap(imap_set_seen, _imap_user(box), password, uid, req["seen"])
     except InboxImapError as exc:

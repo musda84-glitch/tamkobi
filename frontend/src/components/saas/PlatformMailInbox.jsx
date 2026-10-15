@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Inbox, Loader2, Mail, Paperclip, RefreshCw } from "lucide-react";
+import { Inbox, Loader2, Mail, Paperclip, Pencil, RefreshCw } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
+import { MAILBOX_PASSWORD_HINT, mailboxPasswordHint } from "../../utils/platformMail";
 import { inputCls } from "./saasUi";
 
 const cred = { withCredentials: true };
@@ -17,7 +18,7 @@ const fmtWhen = (value) => {
 /**
  * Posta Sunucusu gelen kutusu. Küçük ekranda gizlenir; mobil yerleşim aynı kalır.
  */
-export const PlatformMailInbox = ({ mailboxes }) => {
+export const PlatformMailInbox = ({ mailboxes, passwordPrompt = null, onEdit, onInboxReady }) => {
   const options = useMemo(
     () => (Array.isArray(mailboxes) ? mailboxes.filter((b) => b && b.id && b.is_active !== false) : []),
     [mailboxes],
@@ -30,6 +31,9 @@ export const PlatformMailInbox = ({ mailboxes }) => {
   const [list, setList] = useState(null);
   const [selected, setSelected] = useState(null);
   const [showImages, setShowImages] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const onInboxReadyRef = useRef(onInboxReady);
+  onInboxReadyRef.current = onInboxReady;
 
   useEffect(() => {
     if (!options.length) {
@@ -42,21 +46,35 @@ export const PlatformMailInbox = ({ mailboxes }) => {
   useEffect(() => {
     if (!boxId) {
       setList(null);
+      setPasswordError("");
       return undefined;
     }
     let cancel = false;
     setLoading(true);
+    setPasswordError("");
     axios.get(`${API_URL}/system/mail/mailboxes/${boxId}/messages`, { ...cred, params: { page } })
-      .then((r) => { if (!cancel) setList(r.data || { messages: [], total: 0, page, page_size: 50 }); })
+      .then((r) => {
+        if (cancel) return;
+        setPasswordError("");
+        setList(r.data || { messages: [], total: 0, page, page_size: 50 });
+        onInboxReadyRef.current?.(boxId);
+      })
       .catch((err) => {
         if (cancel) return;
-        toast.error(err.response?.data?.detail || "Gelen kutusu alınamadı.");
+        const detail = err.response?.data?.detail;
+        const message = typeof detail === "string" ? detail : "";
+        setPasswordError(mailboxPasswordHint(message) ? message : "");
+        toast.error(detail || "Gelen kutusu alınamadı.");
         setList({ messages: [], total: 0, page, page_size: 50 });
       })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
   }, [boxId, page, reloadTick]);
 
+  const sentPrompt = passwordPrompt && mailboxPasswordHint(passwordPrompt.message) ? passwordPrompt : null;
+  const banner = passwordError
+    ? { boxId, message: passwordError }
+    : sentPrompt;
   const messages = list?.messages || [];
   const pageSize = list?.page_size || 50;
   const total = list?.total || 0;
@@ -135,12 +153,26 @@ export const PlatformMailInbox = ({ mailboxes }) => {
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Yenile
         </button>
       </div>
+      {banner && (
+        <div className="px-4 py-3 border-b border-amber-100 bg-amber-50 text-slate-700" data-testid="mail-inbox-password-hint">
+          <p className="font-semibold text-rose-800" data-testid="mail-inbox-password-error">{banner.message}</p>
+          <p className="mt-1">{MAILBOX_PASSWORD_HINT}</p>
+          <button
+            type="button"
+            onClick={() => onEdit?.(banner.boxId)}
+            className="mt-2 px-3 py-1.5 border border-slate-300 bg-white text-slate-800 rounded-lg font-semibold inline-flex items-center gap-1"
+            data-testid="mail-inbox-edit-password"
+          >
+            <Pencil className="w-3.5 h-3.5" /> Düzenle
+          </button>
+        </div>
+      )}
       <div className="grid md:grid-cols-5 min-h-[480px]">
         <div className="md:col-span-2 border-r border-slate-100 flex flex-col min-h-[320px]" data-testid="mail-inbox-list">
           <div className="flex-1 overflow-y-auto max-h-[560px]">
             {!boxId && <div className="p-6 text-slate-400">Okunacak kutu yok.</div>}
             {boxId && loading && !messages.length && <div className="p-6 text-slate-400">Yükleniyor…</div>}
-            {boxId && !loading && !messages.length && <div className="p-6 text-slate-400" data-testid="mail-inbox-empty">Bu sayfada ileti yok.</div>}
+            {boxId && !loading && !messages.length && !passwordError && <div className="p-6 text-slate-400" data-testid="mail-inbox-empty">Bu sayfada ileti yok.</div>}
             {messages.map((m) => {
               const uid = String(m.uid);
               const active = selected && String(selected.uid) === uid;

@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Mail, Server, Plus, Trash2, Loader2, Save, Shield, Send, PlugZap, Pencil, X } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
-import { pickMailServerId } from "../../utils/platformMail";
+import { mailboxPasswordHint, pickMailServerId } from "../../utils/platformMail";
 import { inputCls, Toggle } from "./saasUi";
 import { PlatformMailInbox } from "./PlatformMailInbox";
 
@@ -30,6 +30,7 @@ export const PlatformMailPanel = () => {
   const [box, setBox] = useState(emptyBox());
   const [editingBoxId, setEditingBoxId] = useState(null);
   const [testTo, setTestTo] = useState("");
+  const [passwordPrompt, setPasswordPrompt] = useState(null);
 
   const load = useCallback(() => {
     axios.get(`${API_URL}/system/mail`, cred).then((r) => {
@@ -74,7 +75,7 @@ export const PlatformMailPanel = () => {
       smtp_user: s.smtp_user || "",
       password: "",
     });
-    document.querySelector('[data-testid="mail-server-form"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.querySelector('[data-testid="mail-server-form"]')?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   };
 
   const saveServer = async (e) => {
@@ -137,7 +138,7 @@ export const PlatformMailPanel = () => {
       password: "",
       smtp_user: b.smtp_user || "",
     });
-    document.querySelector('[data-testid="mail-box-form"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.querySelector('[data-testid="mail-box-form"]')?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   };
 
   const saveBox = async (e) => {
@@ -159,6 +160,7 @@ export const PlatformMailPanel = () => {
         toast.success("E-posta kutusu eklendi.");
       }
       resetBoxForm();
+      setPasswordPrompt(null);
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Kaydedilemedi.");
@@ -195,7 +197,9 @@ export const PlatformMailPanel = () => {
       const r = await axios.post(`${API_URL}/system/mail/send-test`, { mailbox_id: b.id, to: testTo || undefined }, cred);
       toast.success(`Gönderildi: ${r.data.from} → ${r.data.to}`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Gönderilemedi.");
+      const detail = err.response?.data?.detail;
+      if (mailboxPasswordHint(detail)) setPasswordPrompt({ boxId: b.id, message: String(detail) });
+      toast.error(detail || "Gönderilemedi.");
     } finally {
       setBusy("");
     }
@@ -218,7 +222,15 @@ export const PlatformMailPanel = () => {
         <p className="mt-1 text-[11px] leading-relaxed">Microsoft 365 <b>Send As</b> / Google <b>Send mail as</b> / Odoo outgoing mail server ile aynı model: önce SMTP sunucusunu bağlayın, sonra bildiğiniz gönderen adreslerini (info@, destek@, fatura@) ekleyin ve hangi panel yöneticisinin hangi kutuyu kullanabileceğini seçin. Lisans hatırlatması ve abonelik faturası varsayılan kutudan gider; şirket İletişim Merkezi SMTP’si yedek olarak kalır.</p>
       </div>
 
-      <PlatformMailInbox mailboxes={d.mailboxes} />
+      <PlatformMailInbox
+        mailboxes={d.mailboxes}
+        passwordPrompt={passwordPrompt}
+        onInboxReady={(id) => setPasswordPrompt((cur) => (cur && cur.boxId === id ? null : cur))}
+        onEdit={(id) => {
+          const found = (d.mailboxes || []).find((item) => item.id === id);
+          if (found) startEditBox(found);
+        }}
+      />
 
       <form onSubmit={saveServer} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="mail-server-form">
         <div className="flex flex-wrap items-center justify-between gap-2">
