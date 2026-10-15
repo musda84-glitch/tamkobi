@@ -1,6 +1,7 @@
 import { ApiHttpError } from "../api/errors";
 import {
   GIB_MUKELLEF_TTL_MS,
+  buyerContactPending,
   buyerTaxChoice,
   clearGibMukellefCache,
   docBuyerTaxId,
@@ -96,7 +97,36 @@ describe("gibMukellef", () => {
     const contact = { tax_number_or_id: "12345678901" };
     expect(docBuyerTaxId(doc, contact)).toBe("3680486408");
     expect(buyerTaxChoice(doc, contact).mismatch).toBe(true);
+    expect(buyerTaxChoice(doc, contact).source).toBe("Belge");
     expect(docBuyerTaxId({ contact_tax_id: "" }, contact)).toBe("12345678901");
+  });
+
+  it("yer tutucu belge VKN'si cariye düşer; tax_id okunur", () => {
+    const fromPlaceholder = buyerTaxChoice(
+      { contact_tax_id: "11111111111", contact_id: "cnt-ersay" },
+      { tax_number_or_id: "3680486408" },
+    );
+    expect(fromPlaceholder.tax).toBe("3680486408");
+    expect(fromPlaceholder.mismatch).toBe(false);
+    expect(fromPlaceholder.source).toBe("Cari");
+    const fromTaxId = buyerTaxChoice({ contact_tax_id: "" }, { tax_id: "3680486408" });
+    expect(fromTaxId.tax).toBe("3680486408");
+    const bothEmpty = buyerTaxChoice({ contact_tax_id: "" }, {});
+    expect(bothEmpty.tax).toBe("");
+    expect(bothEmpty.placeholder).toBe(true);
+    const bothReal = buyerTaxChoice(
+      { contact_tax_id: "6320984412" },
+      { tax_number_or_id: "3680486408" },
+    );
+    expect(bothReal.tax).toBe("6320984412");
+    expect(bothReal.mismatch).toBe(true);
+    const doc = { contact_id: "cnt-ersay", contact_tax_id: "11111111111" };
+    expect(buyerContactPending(doc, [])).toBe(true);
+    expect(buyerContactPending(doc, [{ id: "cnt-ersay", tax_number_or_id: "3680486408" }])).toBe(false);
+    const pendingView = gibLookupPresentation(doc, null, null, { contactPending: true });
+    expect(pendingView.blocked).toBe(true);
+    expect(pendingView.eType).toBeNull();
+    expect(pendingView.taxSource).toBe("");
   });
 
   it("bulunamadı mesajı mükellefi e-Arşiv yapmaz; unknown null döner", () => {

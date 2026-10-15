@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import e_invoice
 import isnet
 import isnet_portal
-from buyer_tax import buyer_tax_choice
+from buyer_tax import buyer_tax_choice, contact_card_tax_id, invoice_contact_tax_id
 
 
 def _run(coro):
@@ -62,9 +62,39 @@ def test_buyer_tax_choice_doc_before_contact():
     )
     assert choice["tax"] == "3680486408"
     assert choice["mismatch"] is True
+    assert choice["source"] == "Belge"
     fallback = buyer_tax_choice({"contact_tax_id": ""}, {"tax_id": "6320984412"})
     assert fallback["tax"] == "6320984412"
     assert fallback["mismatch"] is False
+    assert fallback["source"] == "Cari"
+
+    placeholder = buyer_tax_choice(
+        {"contact_tax_id": "11111111111"},
+        {"tax_number_or_id": "3680486408"},
+    )
+    assert placeholder["tax"] == "3680486408"
+    assert placeholder["mismatch"] is False
+    assert placeholder["source"] == "Cari"
+    assert placeholder["placeholder"] is False
+
+    both_empty = buyer_tax_choice({"contact_tax_id": ""}, {"tax_number_or_id": ""})
+    assert both_empty["tax"] == ""
+    assert both_empty["mismatch"] is False
+    assert both_empty["placeholder"] is True
+
+    both_placeholder = buyer_tax_choice(
+        {"contact_tax_id": "11111111111"},
+        {"tax_number_or_id": "11111111111"},
+    )
+    assert both_placeholder["tax"] == ""
+    assert both_placeholder["placeholder"] is True
+
+    assert contact_card_tax_id({"tax_id": "3680486408"}) == "3680486408"
+    assert contact_card_tax_id({"tax_number": "6320984412"}) == "6320984412"
+    assert contact_card_tax_id({"vkn": "4810173324"}) == "4810173324"
+    assert contact_card_tax_id({}) == ""
+    assert invoice_contact_tax_id({}) == "11111111111"
+    assert invoice_contact_tax_id({"tax_id": "3680486408"}) == "3680486408"
 
 
 def test_soap_taxpayer_present_uses_inbox_alias_not_default():
@@ -302,6 +332,90 @@ def test_issue_invoice_prefers_doc_vkn_and_missing_is_error():
             await e_invoice.resolve_buyer_mukellef("c1", "123456789")
         assert resolve_short.value.status_code == 422
         assert resolve_short.value.detail == "VKN/TCKN 10 veya 11 haneli olmalı"
+
+    _run(_go())
+
+
+def test_placeholder_doc_vkn_uses_contact_and_updates_draft():
+    mukellef = {
+        "suggested_e_type": "e_invoice",
+        "is_e_invoice_user": True,
+        "alias": "urn:mail:pk@ersay.home",
+        "lookup_status": "mukellef",
+    }
+
+    async def _issue(inv, contact, looked_return=None):
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+        looked = AsyncMock(return_value=looked_return or mukellef)
+        with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+            e_invoice, "resolve_buyer_mukellef", looked
+        ):
+            out = await e_invoice.issue_invoice(inv["_id"], e_type="auto")
+        return out, looked
+
+    async def _go():
+        inv = {
+            "_id": "inv_ph_real",
+            "company_id": "c1",
+            "invoice_type": "sales",
+            "e_type": "auto",
+            "status": "draft",
+            "contact_id": "cnt-ersay",
+            "contact_name": "ERSAY HOME",
+            "contact_tax_id": "11111111111",
+            "invoice_number": "TA2026000000099",
+            "items": [{"name": "X", "quantity": 1, "unit_price": 10, "vat_rate": 20}],
+        }
+        contact = {"_id": "cnt-ersay", "company_id": "c1", "name": "ERSAY HOME", "tax_number_or_id": "3680486408"}
+        out, looked = await _issue(inv, contact)
+        looked.assert_awaited()
+        assert looked.await_args.args[1] == "3680486408"
+        assert looked.await_args.kwargs.get("contact_id") == "cnt-ersay"
+        assert out["e_type"] == "e_invoice"
+        sets = [
+            c.args[1]["$set"]
+            for c in e_invoice._db.invoices.update_one.await_args_list
+            if c.args and isinstance(c.args[1], dict) and "$set" in c.args[1]
+        ]
+        assert any(s.get("contact_tax_id") == "3680486408" for s in sets)
+
+        empty_doc = {**inv, "_id": "inv_empty_doc", "contact_tax_id": ""}
+        empty_contact = {"_id": "cnt-ersay", "company_id": "c1", "name": "ERSAY", "tax_id": "3680486408"}
+        out2, looked2 = await _issue(empty_doc, empty_contact)
+        assert looked2.await_args.args[1] == "3680486408"
+        assert out2["e_type"] == "e_invoice"
+
+        both = {
+            **inv,
+            "_id": "inv_both_empty",
+            "contact_id": "cnt-blank",
+            "contact_tax_id": "",
+        }
+        blank_contact = {"_id": "cnt-blank", "name": "Bos", "tax_number_or_id": "", "tax_id": ""}
+        e_invoice.init(_issue_db(inv=both, contact=blank_contact), {"consume_credits": AsyncMock(return_value=1)})
+        with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+            e_invoice, "resolve_buyer_mukellef", AsyncMock()
+        ) as skipped:
+            blank_out = await e_invoice.issue_invoice("inv_both_empty", e_type="auto")
+        skipped.assert_not_awaited()
+        assert blank_out["e_type"] == "e_archive"
+
+        mismatch_inv = {**inv, "_id": "inv_mis", "contact_tax_id": "6320984412"}
+        mismatch_contact = {"_id": "cnt-ersay", "name": "Eski", "tax_number_or_id": "3680486408"}
+        out3, looked3 = await _issue(mismatch_inv, mismatch_contact)
+        assert looked3.await_args.args[1] == "6320984412"
+        assert out3["e_type"] == "e_invoice"
+        mis_sets = [
+            c.args[1]["$set"]
+            for c in e_invoice._db.invoices.update_one.await_args_list
+            if c.args and isinstance(c.args[1], dict) and "$set" in c.args[1]
+        ]
+        assert not any(s.get("contact_tax_id") == "3680486408" for s in mis_sets)
+
+        assert buyer_tax_choice(
+            {"contact_tax_id": "6320984412"},
+            {"tax_number_or_id": "3680486408"},
+        )["mismatch"] is True
 
     _run(_go())
 

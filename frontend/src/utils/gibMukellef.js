@@ -30,21 +30,65 @@ export function buyerNeedsLiveMukellefQuery(tax) {
   return (d.length === 10 || d.length === 11) && !isPlaceholderTaxId(d);
 }
 
-/** Sorgu VKN'si: önce belgenin contact_tax_id'si, yoksa cari. */
+export const DOC_TAX_FIELDS = ["contact_tax_id", "buyer_tax_id", "customer_tax_id", "tax_number_or_id", "tax_id"];
+export const CONTACT_TAX_FIELDS = ["tax_number_or_id", "tax_id", "tax_number", "vkn", "tckn"];
+
+function firstTaxDigits(src, fields) {
+  if (!src) return "";
+  for (const key of fields) {
+    const d = digitsTax(src[key]);
+    if (d) return d;
+  }
+  return "";
+}
+
+function usableTax(raw) {
+  const d = digitsTax(raw);
+  if (!d || isPlaceholderTaxId(d)) return "";
+  return d;
+}
+
+export function contactCardTaxId(contact) {
+  return firstTaxDigits(contact, CONTACT_TAX_FIELDS);
+}
+
+export function contactIdOf(doc) {
+  return String(doc?.contact_id || doc?.contactId || "").trim();
+}
+
+export function findListedContact(doc, contacts) {
+  const id = contactIdOf(doc);
+  if (!id) return null;
+  return (contacts || []).find((c) => String(c?.id || c?._id || "") === id) || null;
+}
+
+/** Cari listede yoksa GET /contacts/{id} gerekir; gelene kadar e-Arşiv önerilmez. */
+export function buyerContactPending(doc, contacts) {
+  return !!contactIdOf(doc) && !findListedContact(doc, contacts);
+}
+
+/** Sorgu VKN'si: belgede gerçek kimlik varsa o, değilse cari. Yer tutucu cariyi ezmez. */
 export function buyerTaxChoice(doc, contact) {
-  const docTax = digitsTax(
-    doc?.contact_tax_id
-    || doc?.buyer_tax_id
-    || doc?.customer_tax_id
-    || doc?.tax_number_or_id
-    || doc?.tax_id,
-  );
-  const contactTax = digitsTax(contact?.tax_number_or_id || contact?.tax_id);
+  const docTax = firstTaxDigits(doc, DOC_TAX_FIELDS);
+  const contactTax = contactCardTaxId(contact);
+  const docReal = usableTax(docTax);
+  const contactReal = usableTax(contactTax);
+  let tax = "";
+  let source = "";
+  if (docReal) {
+    tax = docReal;
+    source = "Belge";
+  } else if (contactReal) {
+    tax = contactReal;
+    source = "Cari";
+  }
   return {
-    tax: docTax || contactTax,
+    tax,
     docTax,
     contactTax,
-    mismatch: !!(docTax && contactTax && docTax !== contactTax),
+    mismatch: !!(docReal && contactReal && docReal !== contactReal),
+    source,
+    placeholder: !docReal && !contactReal,
   };
 }
 
