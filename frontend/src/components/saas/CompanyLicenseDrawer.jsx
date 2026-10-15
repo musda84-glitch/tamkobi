@@ -10,6 +10,7 @@ import { COMPANY_DETAIL_TABS, COMPANY_DETAIL_TAB_IDS } from "../../utils/company
 import { AddonToggles } from "./AddonsPanel";
 import IsnetIntegrationPanel from "../IsnetIntegrationPanel";
 import CompanySmsSummary from "./CompanySmsSummary";
+import { NotifyPrefsPanel } from "../NotifyPrefsPanel";
 
 /** @deprecated use COMPANY_DETAIL_TABS — testler drawer-tab-* id’lerini bekler */
 const DRAWER_TABS = COMPANY_DETAIL_TABS;
@@ -628,6 +629,12 @@ export const CompanyLicenseDrawer = ({
                 ))}
               </div>
             </section>
+          ) : null}
+
+          {tab === "notify" ? (
+            <div className="space-y-4" data-testid="drawer-notify">
+              <NotifyPrefsPanel mode="platform" companyId={companyId} />
+            </div>
           ) : null}
 
           {tab === "ai" ? (

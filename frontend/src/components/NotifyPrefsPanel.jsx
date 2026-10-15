@@ -6,6 +6,7 @@ import { API_URL } from "../context/AuthContext";
 
 const EVENT_ORDER = ["einvoice_incoming", "order_new", "gib_credits_low", "receivable_overdue"];
 const ORDER_BATCH_MINUTES = [0, 5, 10, 15, 30, 60];
+const cred = { withCredentials: true };
 
 function orderBatchMinutes(events) {
   const raw = Number((events?.order_new || {}).batch_minutes);
@@ -19,20 +20,29 @@ const FALLBACK_LABELS = {
   receivable_overdue: "Vadesi geçmiş alacak",
 };
 
+function prefsUrl(mode, companyId) {
+  if (mode === "platform") return `${API_URL}/saas/companies/${companyId}/notify-prefs`;
+  return `${API_URL}/notify/prefs`;
+}
+
 /**
- * Firma Ayarları → Bildirimler: olay kanalları (uygulama / e-posta / SMS / özet).
+ * Olay bildirim tercihleri.
+ * mode="platform": YNT firma detayı → GET/PUT /saas/companies/:id/notify-prefs
+ * mode="company" (varsayılan): eski uç noktalar (salt okuma; kayıt süper admin ister).
  */
-export function NotifyPrefsPanel({ companyId }) {
+export function NotifyPrefsPanel({ companyId, mode = "company" }) {
   const [prefs, setPrefs] = useState(null);
   const [busy, setBusy] = useState(false);
+  const isPlatform = mode === "platform";
+  const url = prefsUrl(mode, companyId);
 
   useEffect(() => {
     if (!companyId) return;
-    axios
-      .get(`${API_URL}/notify/prefs`, { params: { company_id: companyId } })
-      .then((r) => setPrefs(r.data))
-      .catch(() => toast.error("Bildirim tercihleri yüklenemedi."));
-  }, [companyId]);
+    const req = isPlatform
+      ? axios.get(url, cred)
+      : axios.get(url, { params: { company_id: companyId } });
+    req.then((r) => setPrefs(r.data)).catch(() => toast.error("Bildirim tercihleri yüklenemedi."));
+  }, [companyId, isPlatform, url]);
 
   if (!prefs) {
     return (
@@ -44,6 +54,7 @@ export function NotifyPrefsPanel({ companyId }) {
 
   const labels = prefs.event_labels || FALLBACK_LABELS;
   const events = prefs.events || {};
+  const usage = prefs.email_usage || {};
 
   const setEvent = (key, field, value) => {
     setPrefs({
@@ -66,16 +77,23 @@ export function NotifyPrefsPanel({ companyId }) {
           batch_minutes: orderBatchMinutes(prefs.events),
         },
       };
-      const r = await axios.put(`${API_URL}/notify/prefs`, {
-        company_id: companyId,
+      const extra = String(prefs.extra_emails_text ?? (prefs.extra_emails || []).join(", "))
+        .split(/[,;\s]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const body = {
         events,
-        extra_emails: String(prefs.extra_emails_text ?? (prefs.extra_emails || []).join(", "))
-          .split(/[,;\s]+/)
-          .map((x) => x.trim())
-          .filter(Boolean),
+        extra_emails: extra,
         email_from: prefs.email_from || "platform",
         gib_credits_threshold: Number(prefs.gib_credits_threshold) || 20,
-      });
+      };
+      if (isPlatform) {
+        const raw = prefs.daily_email_cap;
+        body.daily_email_cap = raw === "" || raw == null ? null : Number(raw);
+      } else {
+        body.company_id = companyId;
+      }
+      const r = isPlatform ? await axios.put(url, body, cred) : await axios.put(url, body);
       setPrefs({ ...r.data, extra_emails_text: (r.data.extra_emails || []).join(", ") });
       toast.success("Bildirim tercihleri kaydedildi.");
     } catch (err) {
@@ -86,6 +104,8 @@ export function NotifyPrefsPanel({ companyId }) {
   };
 
   const extraText = prefs.extra_emails_text ?? (prefs.extra_emails || []).join(", ");
+  const platCap = prefs.notify_daily_email_cap_default;
+  const capPlaceholder = platCap == null || platCap === "" ? "Platform varsayılanı (sınırsız)" : `Platform varsayılanı (${platCap})`;
 
   return (
     <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs" data-testid="notify-prefs-panel">
@@ -95,6 +115,7 @@ export function NotifyPrefsPanel({ companyId }) {
           <div className="text-sm font-bold text-slate-900">Olay bildirimleri</div>
           <p className="text-[11px] text-slate-500 mt-0.5">
             Gelen e-fatura, yeni sipariş, kontör ve vadesi geçmiş alacaklar için uygulama içi, e-posta ve isteğe bağlı SMS.
+            {isPlatform ? " Bu ayarlar Platform Yönetimi’nden kaydedilir." : ""}
           </p>
         </div>
       </div>
@@ -164,6 +185,30 @@ export function NotifyPrefsPanel({ companyId }) {
           Uygulama içi bildirim ve push her zaman anında gelir
         </p>
       </div>
+
+      {isPlatform ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="notify-email-cap-block">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">Günlük e-posta limiti</label>
+            <input
+              type="number"
+              min={0}
+              value={prefs.daily_email_cap ?? ""}
+              onChange={(e) => setPrefs({ ...prefs, daily_email_cap: e.target.value === "" ? "" : Number(e.target.value) })}
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+              placeholder={capPlaceholder}
+              data-testid="notify-daily-email-cap"
+            />
+            <p className="text-[10px] text-slate-500 mt-1">Boş = platform varsayılanı. Limit dolunca e-posta ertesi güne ertelenir; uygulama içi bildirim gider.</p>
+          </div>
+          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-1" data-testid="notify-email-usage">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Gönderim</div>
+            <div data-testid="notify-sent-24h">Son 24 saat: {usage.sent_24h ?? 0} gönderilen · {usage.deferred_24h ?? 0} ertelenen</div>
+            <div data-testid="notify-sent-30d">Son 30 gün: {usage.sent_30d ?? 0} gönderilen · {usage.deferred_30d ?? 0} ertelenen</div>
+            <div data-testid="notify-deferred">Kuyrukta ertelenen: {usage.deferred ?? 0}</div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>

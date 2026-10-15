@@ -3,7 +3,7 @@ import { MoneyInput, parseTrNumber } from "../components/MoneyInput";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Bell, Monitor } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Monitor } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, resolveSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
@@ -27,7 +27,6 @@ import { EinvoicePull30dButton } from "../components/EinvoicePull30dButton";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 import { DesktopAppPanel } from "../components/DesktopAppPanel";
-import { NotifyPrefsPanel } from "../components/NotifyPrefsPanel";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, stageToneLabel, slugStageKey } from "../utils/projectStages";
 import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } from "../utils/workParks";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -39,7 +38,7 @@ const EinvoiceDesignSupportNote = () => (
     Fatura tasarımı değişikliği için destek ile iletişime geçin.
   </p>
 );
-const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -758,7 +757,6 @@ export default function SettingsPage({ embedded = false }) {
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
           {shownTab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
-          {shownTab === "notifications" && <NotifyPrefsPanel companyId={companyId} />}
           {shownTab === "plan" && <MyPlanPanel companyId={companyId} />}
           {shownTab === "print" && <PrintSettings companyId={companyId} />}
           {shownTab === "einvoice" && <EInvoiceSettings companyId={companyId} />}

@@ -4,6 +4,7 @@ export const COMPANY_DETAIL_TABS = [
   { id: "license", label: "Lisans", url: "license" },
   { id: "einvoice", label: "Entegratör", url: "entegrator" },
   { id: "sms", label: "SMS", url: "sms" },
+  { id: "notify", label: "Bildirimler", url: "notify" },
   { id: "storage", label: "Depolama", url: "storage" },
   { id: "ai", label: "Yapay zekâ", url: "ai" },
 ];

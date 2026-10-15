@@ -159,6 +159,30 @@ beforeEach(() => {
       return Promise.resolve({ data: { connected: true, operator: "Netgsm", last_sent_at: "2026-10-12T09:00:00Z", error_count: 2, readonly: true } });
     }
     if (u.includes("/comm/sms/")) return Promise.resolve({ data: u.includes("/logs") ? [] : { provider: "netgsm", usercode: "", has_password: false, providers: [] } });
+    if (u.includes("/notify-prefs")) {
+      return Promise.resolve({
+        data: {
+          company_id: "comp_matek",
+          events: {
+            einvoice_incoming: { inapp: true, email: true, sms: false, digest: "instant" },
+            order_new: { inapp: true, email: true, sms: false, digest: "batch", batch_minutes: 10 },
+            gib_credits_low: { inapp: true, email: true, sms: false, digest: "instant" },
+            receivable_overdue: { inapp: true, email: true, sms: false, digest: "instant" },
+          },
+          extra_emails: [],
+          email_from: "platform",
+          gib_credits_threshold: 20,
+          daily_email_cap: 8,
+          email_usage: { sent_24h: 2, sent_30d: 9, deferred_24h: 0, deferred_30d: 1, deferred: 1 },
+          event_labels: {
+            einvoice_incoming: "Gelen e-Fatura",
+            order_new: "Yeni sipariş",
+            gib_credits_low: "GİB kontör düşük",
+            receivable_overdue: "Vadesi geçmiş alacak",
+          },
+        },
+      });
+    }
     return Promise.resolve({ data: companyPayload });
   });
   axios.post.mockResolvedValue({ data: { message: "gönderildi", status: "success", folder_count: 1 } });
@@ -193,7 +217,7 @@ test("shows admin email, membership and sends password reset", async () => {
 test("renders management tabs including Depolama and Yapay zekâ", async () => {
   await renderDrawer();
   expect(host.querySelector('[data-testid="drawer-tabs"]')).not.toBeNull();
-  for (const id of ["license", "einvoice", "sms", "storage", "ai"]) {
+  for (const id of ["license", "einvoice", "sms", "notify", "storage", "ai"]) {
     expect(host.querySelector(`[data-testid="drawer-tab-${id}"]`)).not.toBeNull();
   }
   expect(host.querySelector('[data-testid="drawer-membership"]')).not.toBeNull();
@@ -287,6 +311,41 @@ test("Depolama tab loads usage and saves storage limit via license API", async (
   const put = axios.put.mock.calls.find((c) => String(c[0]).includes("/system/companies/comp_matek/license"));
   expect(put).toBeTruthy();
   expect(put[1]).toMatchObject({ storage_limit_mb: 4096 });
+});
+
+test("Bildirimler sekmesi paneli açar, limit/sayaç gösterir ve doğru URL'ye PUT eder", async () => {
+  axios.put.mockResolvedValue({
+    data: {
+      company_id: "comp_matek",
+      events: {
+        einvoice_incoming: { inapp: true, email: true, sms: false, digest: "instant" },
+        order_new: { inapp: true, email: true, sms: false, digest: "batch", batch_minutes: 10 },
+        gib_credits_low: { inapp: true, email: true, sms: false, digest: "instant" },
+        receivable_overdue: { inapp: true, email: true, sms: false, digest: "instant" },
+      },
+      extra_emails: [],
+      email_from: "platform",
+      gib_credits_threshold: 20,
+      daily_email_cap: 8,
+      email_usage: { sent_24h: 2, sent_30d: 9, deferred_24h: 0, deferred_30d: 1, deferred: 1 },
+    },
+  });
+  await renderDrawer();
+  await clickTab("notify");
+  expect(host.querySelector('[data-testid="drawer-notify"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="notify-prefs-panel"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="notify-daily-email-cap"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="notify-email-usage"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="notify-sent-24h"]')?.textContent).toMatch(/2/);
+  const getCall = axios.get.mock.calls.find((c) => String(c[0]).includes("/saas/companies/comp_matek/notify-prefs"));
+  expect(getCall).toBeTruthy();
+  const saveBtn = host.querySelector('[data-testid="notify-prefs-save"]');
+  expect(saveBtn).not.toBeNull();
+  await act(async () => { saveBtn.click(); });
+  await flush();
+  const put = axios.put.mock.calls.find((c) => String(c[0]).includes("/saas/companies/comp_matek/notify-prefs"));
+  expect(put).toBeTruthy();
+  expect(put[1]).toMatchObject({ daily_email_cap: 8 });
 });
 
 test("Yapay zekâ tab shows status and toggles addon API", async () => {

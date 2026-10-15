@@ -13,6 +13,7 @@ import event_notify
 import mail_service
 import notify
 import public_url
+import saas
 
 
 class FakeColl:
@@ -51,6 +52,9 @@ class FakeColl:
         if "$setOnInsert" in upd and upsert:
             for k, v in upd["$setOnInsert"].items():
                 doc.setdefault(k, v)
+        if "$unset" in upd:
+            for k in upd["$unset"]:
+                doc.pop(k, None)
         if "$inc" in upd:
             for k, v in upd["$inc"].items():
                 doc[k] = int(doc.get(k) or 0) + int(v)
@@ -87,6 +91,10 @@ class FakeColl:
                 if "$lt" in v and not (d.get(k) is not None and d.get(k) < v["$lt"]):
                     return False
                 if "$lte" in v and not (d.get(k) is not None and d.get(k) <= v["$lte"]):
+                    return False
+                if "$gt" in v and not (d.get(k) is not None and d.get(k) > v["$gt"]):
+                    return False
+                if "$gte" in v and not (d.get(k) is not None and d.get(k) >= v["$gte"]):
                     return False
                 continue
             if k == "company_ids":
@@ -150,6 +158,8 @@ def _db():
     db.push_tokens = FakeColl([])
     db.mail_logs = FakeColl([])
     db.mail_suppressions = FakeColl([])
+    db.company_audit_log = FakeColl([])
+    db.__getitem__.side_effect = lambda key: getattr(db, key)
     return db
 
 
@@ -373,7 +383,7 @@ def test_prefs_api_tenant_isolation(setup_en):
     asyncio.run(_run())
 
 
-def test_put_notify_prefs_requires_company_admin(setup_en):
+def test_put_notify_prefs_forbidden_for_company_admin(setup_en):
     async def _run():
         sales = {"_id": "u_sales", "company_ids": ["c1"], "active_company_id": "c1", "role": "sales"}
         with pytest.raises(HTTPException) as ei:
@@ -381,9 +391,21 @@ def test_put_notify_prefs_requires_company_admin(setup_en):
                 {"company_id": "c1", "extra_emails": ["x@y.com"]}, user=sales,
             )
         assert ei.value.status_code == 403
+        assert "Platform Yönetimi" in str(ei.value.detail)
         admin = {"_id": "u_admin", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin"}
+        with pytest.raises(HTTPException) as ei2:
+            await event_notify.put_notify_prefs_route(
+                {"company_id": "c1", "extra_emails": ["ok@demo.com"]}, user=admin,
+            )
+        assert ei2.value.status_code == 403
+        assert ei2.value.detail == event_notify.COMPANY_NOTIFY_FORBIDDEN
+        req = MagicMock()
+        req.query_params = {"company_id": "c1"}
+        got = await event_notify.get_notify_prefs_route(req, company_id="c1", user=admin)
+        assert got["company_id"] == "c1"
+        sa = {"_id": "u_sa", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin", "is_super_admin": True}
         out = await event_notify.put_notify_prefs_route(
-            {"company_id": "c1", "extra_emails": ["ok@demo.com"]}, user=admin,
+            {"company_id": "c1", "extra_emails": ["ok@demo.com"]}, user=sa,
         )
         assert "ok@demo.com" in out.get("extra_emails", [])
 
@@ -1025,8 +1047,9 @@ def test_order_mail_layout_resolves_product_images_once(setup_en):
     assert "Görsel" in html and "Ürün" in html and "Adet" in html and "Birim" in html and "Tutar" in html
     assert "Siparişi aç" in html
     assert "/orders?open=o1" in html
-    assert "/settings?tab=notifications" in html
-    assert "Bildirim ayarları" in html and "Bildirim ayarları" in text
+    assert "/settings?tab=notifications" not in html
+    assert "Ayarlar Platform Yönetimi&#x27;nden yapılır" in html
+    assert "Ayarlar Platform Yönetimi'nden yapılır" in text
     assert 'name="color-scheme"' in html
     assert "@media" in html and "width:100%" in html
     assert 'role="presentation"' in html
@@ -1039,3 +1062,270 @@ def test_order_mail_layout_resolves_product_images_once(setup_en):
     for label in ("Ara toplam", "KDV", "Genel toplam", "100,00 ₺", "10,00 USD", "kur 40,50", "405,00 ₺"):
         assert label in text
     assert "VAR-1" in html and "Kırmızı" in html
+
+
+def _sa():
+    return {"id": "sa1", "name": "Süper Admin", "is_super_admin": True, "email": "sa@tamkobi.com"}
+
+
+def test_saas_notify_prefs_get_put_and_audit(setup_en):
+    db, _send, _ = setup_en
+
+    async def _run():
+        with pytest.raises(HTTPException) as e404:
+            await event_notify.get_saas_notify_prefs("missing", _sa())
+        assert e404.value.status_code == 404
+        got = await event_notify.get_saas_notify_prefs("c1", _sa())
+        assert got["company_id"] == "c1"
+        assert got["events"]["order_new"]["digest"] == "batch"
+        assert "email_usage" in got
+        saved = await event_notify.put_saas_notify_prefs(
+            "c1",
+            {
+                "extra_emails": ["audit@demo.com"],
+                "events": {"order_new": {"inapp": True, "email": True, "sms": False, "digest": "batch", "batch_minutes": 15}},
+                "daily_email_cap": 12,
+            },
+            _sa(),
+        )
+        assert "audit@demo.com" in saved["extra_emails"]
+        assert saved["events"]["order_new"]["batch_minutes"] == 15
+        assert saved["daily_email_cap"] == 12
+        assert saved["daily_email_cap_resolved"] == 12
+        audits = list(db.company_audit_log.docs.values())
+        assert len(audits) == 1
+        row = audits[0]
+        assert row["company_id"] == "c1"
+        assert row["user_id"] == "sa1"
+        assert row["action"] == "update"
+        assert "Bildirim" in (row.get("record_label") or "") or "bildirim" in (row.get("summary") or "").lower() or row.get("summary")
+        again = await event_notify.get_saas_notify_prefs("c1", _sa())
+        assert again["daily_email_cap"] == 12
+        assert again["events"]["order_new"]["batch_minutes"] == 15
+        with pytest.raises(HTTPException) as e400:
+            await event_notify.put_saas_notify_prefs(
+                "c1",
+                {"events": {"order_new": {"batch_minutes": 7}}},
+                _sa(),
+            )
+        assert e400.value.status_code == 400
+
+    asyncio.run(_run())
+
+
+def test_saas_notify_prefs_requires_super_admin_dep():
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI
+
+    wanted = {
+        ("/api/saas/companies/{company_id}/notify-prefs", "GET"),
+        ("/api/saas/companies/{company_id}/notify-prefs", "PUT"),
+    }
+    seen = set()
+    for route in event_notify.router.routes:
+        methods = getattr(route, "methods", None) or set()
+        for method in methods:
+            seen.add((route.path, method))
+            if (route.path, method) not in wanted:
+                continue
+            calls = []
+
+            def walk(dep):
+                calls.append(dep.call)
+                for sub in getattr(dep, "dependencies", []) or []:
+                    walk(sub)
+
+            for dep in route.dependant.dependencies:
+                walk(dep)
+            assert saas.require_super_admin in calls
+    assert wanted <= seen
+
+    app = FastAPI()
+    app.include_router(event_notify.router)
+    client = TestClient(app)
+    r = client.get("/api/saas/companies/c1/notify-prefs")
+    assert r.status_code in (401, 403)
+    r2 = client.put("/api/saas/companies/c1/notify-prefs", json={})
+    assert r2.status_code in (401, 403)
+
+
+def test_existing_notify_prefs_read_unchanged(setup_en):
+    db, _send, _ = setup_en
+    db.company_notify_prefs.docs["cnp_c1"] = {
+        "_id": "cnp_c1",
+        "company_id": "c1",
+        "events": {
+            "einvoice_incoming": {"inapp": True, "email": False, "sms": False, "digest": "instant"},
+            "order_new": {"inapp": True, "email": False, "sms": True, "digest": "hourly", "batch_minutes": 30},
+            "gib_credits_low": {"inapp": True, "email": True, "sms": False, "digest": "instant"},
+            "receivable_overdue": {"inapp": True, "email": True, "sms": False, "digest": "daily"},
+        },
+        "extra_emails": ["keep@demo.com"],
+        "email_from": "company",
+        "gib_credits_threshold": 7,
+    }
+
+    async def _run():
+        out = await event_notify.get_saas_notify_prefs("c1", _sa())
+        assert out["extra_emails"] == ["keep@demo.com"]
+        assert out["email_from"] == "company"
+        assert out["gib_credits_threshold"] == 7
+        assert out["events"]["order_new"]["batch_minutes"] == 30
+        assert out["events"]["order_new"]["email"] is False
+        assert out["events"]["order_new"]["sms"] is True
+        assert out["events"]["einvoice_incoming"]["email"] is False
+        assert out["daily_email_cap"] is None
+        stored = db.company_notify_prefs.docs["cnp_c1"]
+        assert "daily_email_cap" not in stored
+
+    asyncio.run(_run())
+
+
+def test_daily_email_cap_defers_email_inapp_goes_next_day_sends(setup_en):
+    db, send, _ = setup_en
+    db.orders.docs["o1"] = _order("o1")
+    db.orders.docs["o2"] = _order("o2")
+
+    async def _run():
+        await event_notify.save_prefs("c1", {
+            "daily_email_cap": 1,
+            "events": {"order_new": {"inapp": True, "email": True, "sms": False, "digest": "batch", "batch_minutes": 0}},
+        })
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            r1 = await event_notify.notify_event(
+                "c1", "order_new", "Sipariş 1", "m1", link="/orders",
+                ref_type="order", ref_id="o1",
+            )
+            assert r1.get("inapp") is True
+            await event_notify.flush_notify_outbox()
+            first_sends = send.await_count
+            assert first_sends >= 1
+            r2 = await event_notify.notify_event(
+                "c1", "order_new", "Sipariş 2", "m2", link="/orders",
+                ref_type="order", ref_id="o2",
+            )
+            assert r2.get("inapp") is True
+            await event_notify.flush_notify_outbox()
+            sent = [d for d in db.notify_outbox.docs.values() if d.get("status") == "sent"]
+            deferred = [d for d in db.notify_outbox.docs.values() if d.get("status") == "deferred"]
+            assert len(sent) == 1
+            assert len(deferred) == 1
+            assert send.await_count == first_sends
+            inapps = [d for d in db.notifications.docs.values() if d.get("company_id") == "c1"]
+            assert len(inapps) >= 2
+            usage = await event_notify.notify_email_usage("c1")
+            assert usage["sent_24h"] == 1
+            assert usage["sent_30d"] == 1
+            assert usage["deferred"] == 1
+            yesterday = (event_notify._istanbul_day_start() - timedelta(hours=1)).isoformat()
+            for d in db.mail_logs.docs.values():
+                if d.get("context") == "event_notify":
+                    d["created_at"] = yesterday
+            for d in sent:
+                d["sent_at"] = yesterday
+            past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+            for d in deferred:
+                d["next_try_at"] = past
+                d["due_at"] = past
+            await event_notify.flush_notify_outbox()
+            assert send.await_count > first_sends
+            leftover = [d for d in db.notify_outbox.docs.values() if d.get("status") == "deferred"]
+            assert leftover == []
+            usage2 = await event_notify.notify_email_usage("c1")
+            assert usage2["deferred"] == 0
+            assert usage2["sent_30d"] >= 2
+
+    asyncio.run(_run())
+
+
+def test_unlimited_email_cap_unchanged(setup_en):
+    db, send, _ = setup_en
+    db.orders.docs["o1"] = _order("o1")
+    db.orders.docs["o2"] = _order("o2")
+
+    async def _run():
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {"inapp": True, "email": True, "sms": False, "digest": "batch", "batch_minutes": 0}},
+        })
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            await event_notify.notify_event(
+                "c1", "order_new", "S1", "m", link="/orders", ref_type="order", ref_id="o1",
+            )
+            await event_notify.notify_event(
+                "c1", "order_new", "S2", "m", link="/orders", ref_type="order", ref_id="o2",
+            )
+            await event_notify.flush_notify_outbox()
+        assert send.await_count >= 1
+        assert not any(d.get("status") == "deferred" for d in db.notify_outbox.docs.values())
+        assert all(d.get("status") == "sent" for d in db.notify_outbox.docs.values())
+
+    asyncio.run(_run())
+
+
+def test_instant_email_defers_when_cap_zero_inapp_still_sent(setup_en):
+    db, send, _ = setup_en
+
+    async def _run():
+        await event_notify.save_prefs("c1", {
+            "daily_email_cap": 0,
+            "events": {"einvoice_incoming": {"inapp": True, "email": True, "sms": False, "digest": "instant"}},
+        })
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            res = await event_notify.notify_event(
+                "c1", "einvoice_incoming", "Gelen", "msg", link="/edoc-inbox",
+                ref_type="edoc", ref_id="e1",
+            )
+        assert res.get("inapp") is True
+        assert (res.get("email") or {}).get("status") == "deferred"
+        assert send.await_count == 0
+        deferred = [d for d in db.notify_outbox.docs.values() if d.get("status") == "deferred"]
+        assert len(deferred) == 1
+        inapps = list(db.notifications.docs.values())
+        assert inapps
+
+    asyncio.run(_run())
+
+
+def test_platform_default_email_cap_used_when_company_empty(setup_en):
+    db, send, _ = setup_en
+    db.platform_settings.docs["platform"] = {
+        "_id": "platform", "notify_daily_email_cap_default": 1,
+    }
+    db.orders.docs["o1"] = _order("o1")
+    db.orders.docs["o2"] = _order("o2")
+
+    async def _run():
+        assert await event_notify.resolve_daily_email_cap("c1") == 1
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {"inapp": True, "email": True, "sms": False, "digest": "batch", "batch_minutes": 0}},
+        })
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            await event_notify.notify_event(
+                "c1", "order_new", "S1", "m", link="/orders", ref_type="order", ref_id="o1",
+            )
+            await event_notify.flush_notify_outbox()
+            await event_notify.notify_event(
+                "c1", "order_new", "S2", "m", link="/orders", ref_type="order", ref_id="o2",
+            )
+            await event_notify.flush_notify_outbox()
+        assert any(d.get("status") == "deferred" for d in db.notify_outbox.docs.values())
+
+    asyncio.run(_run())
+
+
+def test_invalid_daily_email_cap_400(setup_en):
+    async def _run():
+        with pytest.raises(HTTPException) as ei:
+            await event_notify.save_prefs("c1", {"daily_email_cap": -3})
+        assert ei.value.status_code == 400
+        import saas_billing
+        with pytest.raises(HTTPException) as ei2:
+            await saas_billing.put_settings({"notify_daily_email_cap_default": "abc"}, {})
+        assert ei2.value.status_code == 400
+
+    asyncio.run(_run())
+

@@ -104,7 +104,7 @@ COLLECTIONS = {
     "platform_settings": {
         "scope": SCOPE_PLATFORM,
         "description": "Tek satırlık platform ayarı (_id=platform): marka, deneme, GİB paketleri, AI, bakım penceresi. Vitrin kimliği sites ile eşlenir.",
-        "keys": ("_id", "brand_name", "trial_days", "trial_plan_id", "gib_packs", "ai", "public_url", "maintenance", "notify_order_batch_minutes_default"),
+        "keys": ("_id", "brand_name", "trial_days", "trial_plan_id", "gib_packs", "ai", "public_url", "maintenance", "notify_order_batch_minutes_default", "notify_daily_email_cap_default"),
         "refs": ("saas_plans._id", "sites._id"),
     },
     "sites": {
@@ -747,7 +747,7 @@ COLLECTIONS = {
     "company_notify_prefs": {
         "scope": SCOPE_TENANT,
         "description": "Şirket olay bildirimi tercihleri (e-posta/SMS/özet).",
-        "keys": ("_id", "company_id", "events", "extra_emails", "email_from"),
+        "keys": ("_id", "company_id", "events", "extra_emails", "email_from", "daily_email_cap"),
         "refs": ("companies._id",),
     },
     "notify_outbox": {

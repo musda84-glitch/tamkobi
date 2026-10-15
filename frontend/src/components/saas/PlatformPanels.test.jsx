@@ -39,6 +39,7 @@ const SETTINGS = {
   gib_credits_sales: false,
   gib_packs: [],
   notify_order_batch_minutes_default: 10,
+  notify_daily_email_cap_default: null,
 };
 
 test("ynt platform ayarında sipariş gruplama varsayılanı kaydedilir", async () => {
@@ -61,6 +62,7 @@ test("ynt platform ayarında sipariş gruplama varsayılanı kaydedilir", async 
   expect(sel.value).toBe("10");
   expect(sel.textContent).toMatch(/Hemen/);
   expect(sel.textContent).toMatch(/60 dk/);
+  expect(host.querySelector('[data-testid="set-daily-email-cap-default"]')).toBeTruthy();
   const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
   await act(async () => {
     setter.call(sel, "15");

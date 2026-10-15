@@ -17,9 +17,11 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+import company_audit
 import mail_service
 import notify
 import public_url
+import saas
 import tenant_access
 
 logger = logging.getLogger("TamKobiERP")
@@ -47,6 +49,9 @@ DEFAULT_CHANNEL = {"inapp": True, "email": True, "sms": False, "digest": "instan
 ORDER_BATCH_MINUTES = (0, 5, 10, 15, 30, 60)
 DEFAULT_ORDER_BATCH_MINUTES = 10
 ORDER_BATCH_DETAIL = "Gruplama süresi 0, 5, 10, 15, 30 veya 60 dakika olabilir."
+DAILY_EMAIL_CAP_DETAIL = "Günlük e-posta limiti boş (limitsiz) veya 0 ve üzeri tam sayı olmalıdır."
+COMPANY_NOTIFY_FORBIDDEN = "Bildirim ayarları Platform Yönetimi'nden yapılır."
+IST = ZoneInfo("Europe/Istanbul")
 BATCH_SUMMARY_THRESHOLD = 5
 ORDER_MAIL_MAX_ORDERS = 20
 ORDER_MAIL_MAX_LINES = 15
@@ -123,6 +128,31 @@ def _parse_batch_minutes(val, *, strict: bool) -> Optional[int]:
     return n
 
 
+def _parse_daily_email_cap(val, *, strict: bool) -> Optional[int]:
+    """Boş = inherit/limitsiz. 0 geçerli (e-posta yok)."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, bool) or isinstance(val, (list, dict)):
+        if strict:
+            raise HTTPException(status_code=400, detail=DAILY_EMAIL_CAP_DETAIL)
+        return None
+    if isinstance(val, float) and not float(val).is_integer():
+        if strict:
+            raise HTTPException(status_code=400, detail=DAILY_EMAIL_CAP_DETAIL)
+        return None
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        if strict:
+            raise HTTPException(status_code=400, detail=DAILY_EMAIL_CAP_DETAIL)
+        return None
+    if n < 0 or n > 1_000_000:
+        if strict:
+            raise HTTPException(status_code=400, detail=DAILY_EMAIL_CAP_DETAIL)
+        return None
+    return n
+
+
 def _norm_event_prefs(raw: Optional[dict]) -> dict:
     out = {}
     src = raw if isinstance(raw, dict) else {}
@@ -169,6 +199,7 @@ def public_prefs(doc: dict) -> dict:
     ef = str(d.get("email_from") or "platform").strip().lower()
     d["email_from"] = ef if ef in EMAIL_FROM_MODES else "platform"
     d["gib_credits_threshold"] = int(d.get("gib_credits_threshold") or GIB_CREDITS_LOW_DEFAULT)
+    d["daily_email_cap"] = _parse_daily_email_cap(d.get("daily_email_cap"), strict=False)
     d["event_labels"] = dict(EVENT_LABELS)
     return d
 
@@ -207,12 +238,22 @@ async def save_prefs(company_id: str, body: dict) -> dict:
         "gib_credits_threshold": thr,
         "updated_at": _now(),
     }
+    unset: Dict[str, str] = {}
+    if "daily_email_cap" in body:
+        cap = _parse_daily_email_cap(body.get("daily_email_cap"), strict=True)
+        if cap is None:
+            unset["daily_email_cap"] = ""
+        else:
+            doc["daily_email_cap"] = cap
+    upd: Dict[str, Any] = {"$set": doc, "$setOnInsert": {"created_at": _now()}}
+    if unset:
+        upd["$unset"] = unset
     await _db.company_notify_prefs.update_one(
         {"company_id": cid},
-        {"$set": doc, "$setOnInsert": {"created_at": _now()}},
+        upd,
         upsert=True,
     )
-    return await present_prefs(doc)
+    return await present_prefs(await get_prefs(cid))
 
 
 async def _platform_batch_default() -> int:
@@ -251,7 +292,163 @@ async def resolve_order_batch_minutes(company_id: str, prefs: Optional[dict] = N
     return await _platform_batch_default()
 
 
-async def present_prefs(doc: dict) -> dict:
+async def _platform_daily_email_cap() -> Optional[int]:
+    try:
+        coll = getattr(_db, "platform_settings", None)
+        find_one = getattr(coll, "find_one", None) if coll is not None else None
+        if find_one is None:
+            return None
+        row = await find_one({"_id": "platform"})
+    except Exception:
+        return None
+    if not isinstance(row, dict) or "notify_daily_email_cap_default" not in row:
+        return None
+    return _parse_daily_email_cap(row.get("notify_daily_email_cap_default"), strict=False)
+
+
+async def resolve_daily_email_cap(company_id: str, prefs: Optional[dict] = None) -> Optional[int]:
+    """Firma limiti, yoksa platform varsayılanı, yoksa limitsiz (None)."""
+    raw = None
+    if prefs is not None:
+        raw = prefs.get("daily_email_cap")
+    else:
+        try:
+            row = await _db.company_notify_prefs.find_one({"company_id": company_id}) if company_id else None
+        except Exception:
+            row = None
+        raw = (row or {}).get("daily_email_cap")
+    parsed = _parse_daily_email_cap(raw, strict=False)
+    if parsed is not None:
+        return parsed
+    return await _platform_daily_email_cap()
+
+
+def _istanbul_day_start(now: Optional[datetime] = None) -> datetime:
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone(IST)
+    return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def _next_istanbul_midnight(now: Optional[datetime] = None) -> datetime:
+    return _istanbul_day_start(now) + timedelta(days=1)
+
+
+def _row_ts(row: dict, *keys: str) -> str:
+    for key in keys:
+        val = row.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
+async def _count_sent_since(company_id: str, since_iso: str) -> int:
+    """Gönderim kaydı (mail_logs context=event_notify), yoksa outbox sent."""
+    try:
+        logs = await _to_list(
+            _db.mail_logs.find({
+                "company_id": company_id,
+                "status": "sent",
+                "context": "event_notify",
+                "created_at": {"$gte": since_iso},
+            }),
+            20000,
+        )
+    except Exception:
+        logs = []
+    if logs:
+        return len(logs)
+    try:
+        rows = await _to_list(
+            _db.notify_outbox.find({
+                "company_id": company_id,
+                "status": "sent",
+                "sent_at": {"$gte": since_iso},
+            }),
+            20000,
+        )
+    except Exception:
+        rows = []
+    return len(rows)
+
+
+async def notify_email_usage(company_id: str) -> dict:
+    """Tek seferde 24s / 30g gönderilen + ertelenen sayıları (N+1 yok)."""
+    now = datetime.now(timezone.utc)
+    h24 = (now - timedelta(hours=24)).isoformat()
+    d30 = (now - timedelta(days=30)).isoformat()
+    try:
+        sent = await _to_list(
+            _db.mail_logs.find({
+                "company_id": company_id,
+                "status": "sent",
+                "context": "event_notify",
+                "created_at": {"$gte": d30},
+            }),
+            20000,
+        )
+    except Exception:
+        sent = []
+    if not sent:
+        try:
+            sent = [
+                {**r, "created_at": r.get("sent_at") or r.get("created_at")}
+                for r in await _to_list(
+                    _db.notify_outbox.find({
+                        "company_id": company_id,
+                        "status": "sent",
+                        "sent_at": {"$gte": d30},
+                    }),
+                    20000,
+                )
+            ]
+        except Exception:
+            sent = []
+    try:
+        deferred = await _to_list(
+            _db.notify_outbox.find({
+                "company_id": company_id,
+                "status": "deferred",
+            }),
+            5000,
+        )
+    except Exception:
+        deferred = []
+    return {
+        "sent_24h": sum(1 for r in sent if _row_ts(r, "created_at") >= h24),
+        "sent_30d": len(sent),
+        "deferred_24h": sum(1 for r in deferred if _row_ts(r, "deferred_at", "created_at") >= h24),
+        "deferred_30d": sum(1 for r in deferred if _row_ts(r, "deferred_at", "created_at") >= d30),
+        "deferred": len(deferred),
+    }
+
+
+async def _email_over_cap(company_id: str, prefs: Optional[dict] = None) -> Tuple[bool, Optional[str]]:
+    cap = await resolve_daily_email_cap(company_id, prefs)
+    if cap is None:
+        return False, None
+    used = await _count_sent_since(company_id, _istanbul_day_start().isoformat())
+    if used >= cap:
+        return True, _next_istanbul_midnight().isoformat()
+    return False, None
+
+
+async def _record_notify_mail(company_id: str, to: List[str], subject: str) -> None:
+    try:
+        await _db.mail_logs.insert_one({
+            "_id": f"nl_{uuid.uuid4().hex[:12]}",
+            "company_id": company_id,
+            "to": list(to or []),
+            "subject": (subject or "")[:500],
+            "status": "sent",
+            "context": "event_notify",
+            "purpose": "transactional",
+            "created_at": _now(),
+        })
+    except Exception:
+        logger.exception("notify mail log company=%s", company_id)
+
+
+async def present_prefs(doc: dict, *, with_usage: bool = False) -> dict:
     out = public_prefs(doc)
     cid = str(doc.get("company_id") or "")
     events = out.get("events") or {}
@@ -259,6 +456,11 @@ async def present_prefs(doc: dict) -> dict:
     order["batch_minutes"] = await resolve_order_batch_minutes(cid, prefs=doc)
     events["order_new"] = order
     out["events"] = events
+    plat = await _platform_daily_email_cap()
+    out["notify_daily_email_cap_default"] = plat
+    out["daily_email_cap_resolved"] = await resolve_daily_email_cap(cid, prefs=doc)
+    if with_usage:
+        out["email_usage"] = await notify_email_usage(cid)
     return out
 
 
@@ -416,8 +618,11 @@ async def _queue_outbox(
     ref_id: Optional[str],
     channels: dict,
     digest: str,
+    status: str = "pending",
+    next_try_at: Optional[str] = None,
 ) -> None:
-    await _db.notify_outbox.insert_one({
+    now = _now()
+    doc = {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
         "event": event,
@@ -428,11 +633,16 @@ async def _queue_outbox(
         "ref_id": ref_id,
         "channels": {"email": bool(channels.get("email")), "sms": bool(channels.get("sms"))},
         "digest": digest,
-        "due_at": _due_for_digest(digest),
-        "status": "pending",
+        "due_at": next_try_at or _due_for_digest(digest),
+        "status": status if status in ("pending", "deferred") else "pending",
         "attempts": 0,
-        "created_at": _now(),
-    })
+        "created_at": now,
+    }
+    if next_try_at:
+        doc["next_try_at"] = next_try_at
+    if doc["status"] == "deferred":
+        doc["deferred_at"] = now
+    await _db.notify_outbox.insert_one(doc)
 
 
 async def _enqueue_order_outbox(
@@ -496,6 +706,7 @@ async def _send_email_now(company_id: str, prefs: dict, emails: List[str], title
     status = result.get("status") or "failed"
     via = result.get("driver") or "platform"
     if status == "sent":
+        await _record_notify_mail(company_id, result.get("to") or emails, subject)
         return {"status": "sent", "to": result.get("to") or emails, "via": via}
     return {
         "status": "failed",
@@ -605,7 +816,18 @@ async def notify_event(
 
     if need_email:
         emails = await _recipient_emails(cid, ev, prefs)
-        result["email"] = await _send_email_now(cid, prefs, emails, title, message, abs_link)
+        blocked, nxt = await _email_over_cap(cid, prefs)
+        if blocked:
+            await _queue_outbox(
+                cid, ev, title=title, message=message, link=abs_link or inapp_link,
+                ref_type=ref_type, ref_id=ref_id,
+                channels={"email": True, "sms": False}, digest="instant",
+                status="deferred", next_try_at=nxt,
+            )
+            result["email"] = {"status": "deferred", "next_try_at": nxt}
+            result["queued"] = True
+        else:
+            result["email"] = await _send_email_now(cid, prefs, emails, title, message, abs_link)
     if need_sms:
         phones = await _recipient_phones(cid, ev)
         result["sms"] = await _send_sms_now(cid, phones, title, message)
@@ -1390,16 +1612,11 @@ def _order_batch_html(
         )
     else:
         logo_html = ""
-    if settings_link:
-        settings_html = (
-            f'<a href="{_esc(settings_link)}" style="color:#059669;font-weight:bold;text-decoration:underline;">'
-            f"{_esc('Bildirim ayarları')}</a>"
-        )
-    else:
-        settings_html = (
-            '<span style="color:#059669;font-weight:bold;">'
-            f"{_esc('Bildirim ayarları')}</span>"
-        )
+    settings_note = "Ayarlar Platform Yönetimi'nden yapılır"
+    settings_html = (
+        '<span style="color:#059669;font-weight:bold;">'
+        f"{_esc(settings_note)}</span>"
+    )
     cards = []
     for order in shown:
         oid = str(order.get("_id") or "")
@@ -1457,7 +1674,7 @@ def _order_batch_html(
         + '<tr><td class="tk-muted" style="padding:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;'
         'line-height:18px;color:#64748b;">'
         f"{settings_html}"
-        " · Yeni siparişler tek e-postada toplanır. Kanalları bildirim ayarlarından değiştirebilirsiniz."
+        " · Yeni siparişler tek e-postada toplanır."
         "</td></tr></table>"
         "<!--[if mso]></td></tr></table><![endif]-->"
         "</td></tr></table></body></html>"
@@ -1513,9 +1730,7 @@ def _order_batch_text(
     if extra_orders:
         lines.append(f"ve {extra_orders} sipariş daha")
     lines.append("")
-    lines.append("Bildirim ayarları")
-    if settings_link:
-        lines.append(settings_link)
+    lines.append("Ayarlar Platform Yönetimi'nden yapılır")
     lines.append("Yeni siparişler tek e-postada toplanır.")
     return "\n".join(lines).strip()
 
@@ -1595,12 +1810,13 @@ async def _release_stale_sending() -> None:
 
 
 async def _claim_pending(candidates: List[dict]) -> str:
-    """pending → sending. İki işleyici aynı satırı alamaz; sonra yalnız claim_id okunur."""
+    """pending/deferred → sending. İki işleyici aynı satırı alamaz; sonra yalnız claim_id okunur."""
     claim_id = str(uuid.uuid4())
     now = _now()
     patch = {"$set": {"status": "sending", "claim_id": claim_id, "claimed_at": now}}
     coll = _db.notify_outbox
     atomic = getattr(coll, "update_one_atomic", None)
+    claim_status = {"$in": ["pending", "deferred"]}
     if not candidates:
         return claim_id
     if atomic:
@@ -1611,7 +1827,7 @@ async def _claim_pending(candidates: List[dict]) -> str:
                         "_id": row["_id"],
                         "company_id": row.get("company_id"),
                         "event": row.get("event"),
-                        "status": "pending",
+                        "status": claim_status,
                     },
                     patch,
                 )
@@ -1624,7 +1840,7 @@ async def _claim_pending(candidates: List[dict]) -> str:
         {
             "company_id": first.get("company_id"),
             "event": first.get("event"),
-            "status": "pending",
+            "status": claim_status,
             "_id": {"$in": ids},
         },
         patch,
@@ -1657,6 +1873,27 @@ async def _mark_rows(rows: List[dict], claim_id: str, status: str, extra: Option
     if status in ("skipped", "failed", "sent"):
         fields["claim_id"] = claim_id
     await _update_claimed(rows, claim_id, fields)
+
+
+async def _defer_rows(rows: List[dict], claim_id: str, next_try_at: Optional[str]) -> None:
+    """Limit doldu: satır silinmez, ertesi İstanbul gününe ertelenir."""
+    nxt = next_try_at or _next_istanbul_midnight().isoformat()
+    now = _now()
+    for row in rows:
+        try:
+            await _db.notify_outbox.update_one(
+                {"_id": row["_id"], "claim_id": claim_id},
+                {"$set": {
+                    "status": "deferred",
+                    "deferred_at": now,
+                    "next_try_at": nxt,
+                    "due_at": nxt,
+                    "claim_id": None,
+                    "claimed_at": None,
+                }},
+            )
+        except Exception:
+            logger.exception("notify outbox defer")
 
 
 async def _retry_rows(rows: List[dict], claim_id: str, extra: Optional[dict] = None) -> None:
@@ -1739,7 +1976,6 @@ async def _send_order_emails(
 ) -> Tuple[List[str], List[str]]:
     base = _safe_link(await app_link(""))
     links = await _order_links(orders)
-    settings = _safe_link(await app_link("/settings?tab=notifications"))
     company = await _db.companies.find_one({"_id": company_id}, {"name": 1, "logo_url": 1}) or {}
     company_name = str(company.get("name") or "Firma").strip() or "Firma"
     subject = _batch_subject(orders)
@@ -1747,9 +1983,8 @@ async def _send_order_emails(
     html_body = _order_batch_html(
         company_name, orders, links, base, cards,
         logo_url=str(company.get("logo_url") or ""),
-        settings_link=settings,
     )
-    text_body = _order_batch_text(company_name, orders, links, cards, settings_link=settings)
+    text_body = _order_batch_text(company_name, orders, links, cards)
     reply_to = await _company_reply_to(company_id, prefs)
     sent: List[str] = []
     failed: List[str] = []
@@ -1771,6 +2006,8 @@ async def _send_order_emails(
             sent.append(em)
         else:
             failed.append(em)
+    if sent:
+        await _record_notify_mail(company_id, sent, subject)
     return sent, failed
 
 
@@ -1810,6 +2047,16 @@ async def _deliver_order_batch(company_id: str, rows: List[dict], claim_id: str)
         return len(rows)
 
     if want_email and not all(r.get("email_sent") for r in active):
+        blocked, nxt = await _email_over_cap(company_id, prefs)
+        if blocked:
+            if want_sms:
+                phones = await _recipient_phones(company_id, "order_new")
+                if phones:
+                    res = await _send_sms_now(company_id, phones, "Yeni sipariş", _sms_order_summary(visible))
+                    if res.get("status") != "failed":
+                        await _update_claimed(active, claim_id, {"sms_sent": True})
+            await _defer_rows(active, claim_id, nxt)
+            return len(rows)
         emails = await _recipient_emails(company_id, "order_new", prefs)
         if not emails:
             if not want_sms:
@@ -1858,6 +2105,16 @@ async def _deliver_generic(company_id: str, event: str, rows: List[dict], claim_
     want_sms = any((i.get("channels") or {}).get("sms") for i in rows) and not all(i.get("sms_sent") for i in rows)
     try:
         if want_email:
+            blocked, nxt = await _email_over_cap(company_id, prefs)
+            if blocked:
+                if want_sms:
+                    phones = await _recipient_phones(company_id, event)
+                    if phones:
+                        res = await _send_sms_now(company_id, phones, title, message)
+                        if res.get("status") != "failed":
+                            await _update_claimed(rows, claim_id, {"sms_sent": True})
+                await _defer_rows(rows, claim_id, nxt)
+                return len(rows)
             emails = await _recipient_emails(company_id, event, prefs)
             if not emails:
                 if not want_sms:
@@ -1890,7 +2147,10 @@ async def flush_notify_outbox(*, force: bool = False) -> dict:
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
     try:
-        pending = await _to_list(_db.notify_outbox.find({"status": "pending"}), 500)
+        pending = await _to_list(
+            _db.notify_outbox.find({"status": {"$in": ["pending", "deferred"]}}),
+            500,
+        )
     except Exception:
         logger.exception("notify outbox scan failed")
         return {"flushed": 0, "at": _now()}
@@ -1965,5 +2225,59 @@ async def get_notify_prefs_route(
 @router.put("/notify/prefs")
 async def put_notify_prefs_route(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     cid = tenant_access.resolve_company_id(user, (req or {}).get("company_id"))
-    await tenant_access.require_company_admin(user, cid)
-    return await save_prefs(cid, req or {})
+    if not user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail=COMPANY_NOTIFY_FORBIDDEN)
+    before = await get_prefs(cid)
+    saved = await save_prefs(cid, req or {})
+    await _audit_prefs_put(cid, user, before, saved, "/api/notify/prefs")
+    return saved
+
+
+async def _require_existing_company(company_id: str) -> str:
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    row = await _db.companies.find_one({"_id": cid})
+    if not row:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return cid
+
+
+async def _audit_prefs_put(company_id: str, user: dict, before: dict, after: dict, path: str) -> None:
+    try:
+        summary = company_audit.diff_summary(public_prefs(before), after) or "Bildirim tercihleri güncellendi"
+        await company_audit.write(
+            _db,
+            company_id=company_id,
+            user=user,
+            module="/settings",
+            action="update",
+            record_id=str(before.get("_id") or after.get("id") or f"cnp_{company_id}"),
+            record_label="Bildirim tercihleri",
+            summary=summary,
+            path=path,
+        )
+    except Exception:
+        logger.exception("notify prefs audit company=%s", company_id)
+
+
+@router.get("/saas/companies/{company_id}/notify-prefs")
+async def get_saas_notify_prefs(
+    company_id: str,
+    _: dict = Depends(saas.require_super_admin),
+):
+    cid = await _require_existing_company(company_id)
+    return await present_prefs(await get_prefs(cid), with_usage=True)
+
+
+@router.put("/saas/companies/{company_id}/notify-prefs")
+async def put_saas_notify_prefs(
+    company_id: str,
+    req: Dict[str, Any],
+    admin: dict = Depends(saas.require_super_admin),
+):
+    cid = await _require_existing_company(company_id)
+    before = await get_prefs(cid)
+    saved = await save_prefs(cid, req or {})
+    await _audit_prefs_put(cid, admin, before, saved, f"/api/saas/companies/{cid}/notify-prefs")
+    return await present_prefs(await get_prefs(cid), with_usage=True)
