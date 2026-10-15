@@ -235,6 +235,8 @@ class InvoiceItem(BaseModel):
     serial_number: Optional[str] = None
     production_date: Optional[str] = None
     expiry_date: Optional[str] = None
+    dispatch_id: Optional[str] = None
+    order_id: Optional[str] = None
 
 class Invoice(BaseDocument):
     company_id: str
@@ -556,6 +558,7 @@ class OrderItem(BaseModel):
     vat_amount: float = 0.0
     is_service: bool = False
     note: Optional[str] = None
+    image_url: Optional[str] = None
     price_includes_vat: bool = False
 
 class Order(BaseDocument):

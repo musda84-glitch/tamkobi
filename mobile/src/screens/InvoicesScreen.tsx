@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
-import React, { Fragment, useCallback, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import React, { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -16,6 +16,8 @@ import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoice
 import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
+import { dispatchDirFromParam, splitDispatchLists } from "../utils/despatchShipment";
+import { outgoingMergeIds } from "../utils/dispatchMerge";
 
 const EXTRA_FILTERS = [
   { key: "outgoing_e", label: "Giden e" },
@@ -48,14 +50,18 @@ function isIncomingE(inv: Invoice): boolean {
 
 export function InvoicesScreen() {
   const { client, companyId, can } = useAuth();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ dir?: string }>();
   const canEdit = can("/invoices", "edit");
   const canDelete = can("/invoices", "delete");
   const [rows, setRows] = useState<Invoice[]>([]);
   const [type, setType] = useState("all");
+  const dispatchDir = dispatchDirFromParam(params.dir);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
 
   const apiType = type === "outgoing_e" || type === "incoming_e" ? undefined : (type === "all" ? undefined : type);
 
@@ -73,6 +79,8 @@ export function InvoicesScreen() {
   }, [client, companyId, apiType]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => { setPicked([]); }, [type, dispatchDir]);
 
   const actOnInvoice = (inv: Invoice) => {
     const kind = invoiceRowDangerAction(inv);
@@ -110,7 +118,7 @@ export function InvoicesScreen() {
     }
   };
 
-  const filtered = useMemo(() => {
+  const searched = useMemo(() => {
     const s = q.trim().toLowerCase();
     let list = [...rows];
     if (type === "outgoing_e") list = list.filter(isOutgoingE);
@@ -122,6 +130,37 @@ export function InvoicesScreen() {
     list.sort((a, b) => compareInvoiceActivity(a, b, "desc"));
     return list;
   }, [q, rows, type]);
+
+  const dispatchSplit = useMemo(
+    () => (type === "dispatch" ? splitDispatchLists(searched) : { incoming: [] as Invoice[], outgoing: [] as Invoice[] }),
+    [searched, type],
+  );
+  const filtered = type === "dispatch"
+    ? (dispatchDir === "in" ? dispatchSplit.incoming : dispatchSplit.outgoing)
+    : searched;
+
+  const showMergePick = type === "dispatch" && dispatchDir === "out" && canEdit;
+  const mergeIds = showMergePick ? outgoingMergeIds(filtered, picked) : [];
+  const togglePick = (id: string) => setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  const mergeDispatches = () => {
+    if (mergeIds.length < 2) return;
+    confirmAction(
+      "Tek faturada birleştir",
+      `${mergeIds.length} giden irsaliye tek taslak satış faturasında birleştirilsin mi?`,
+      async () => {
+        try {
+          const key = `${Date.now()}-${mergeIds.join("-")}`;
+          await post(client, "/dispatches/merge-to-invoice", { dispatch_ids: mergeIds, idempotency_key: key });
+          setPicked([]);
+          setError(null);
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "İrsaliyeler birleştirilemedi."));
+        }
+      },
+      "Birleştir",
+    );
+  };
 
   const filterTabs = [...INVOICE_FILTERS, ...EXTRA_FILTERS];
 
@@ -163,6 +202,42 @@ export function InvoicesScreen() {
               );
             })}
           </View>
+          {type === "dispatch" ? (
+            <View style={{ flexDirection: "row", gap: 8 }} testID="dispatch-dir-tabs">
+              {([
+                { id: "out" as const, label: "Giden", count: dispatchSplit.outgoing.length },
+                { id: "in" as const, label: "Gelen", count: dispatchSplit.incoming.length },
+              ]).map((tab) => (
+                <Pressable
+                  key={tab.id}
+                  testID={`dispatch-dir-${tab.id}`}
+                  accessibilityState={{ selected: dispatchDir === tab.id }}
+                  onPress={() => router.setParams({ dir: tab.id })}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor: dispatchDir === tab.id ? "#A21CAF" : colors.slate100,
+                  }}
+                >
+                  <Text style={{ fontWeight: "800", fontSize: 12, color: dispatchDir === tab.id ? "#fff" : colors.slate800 }}>{tab.label}</Text>
+                  <Text testID={`dispatch-dir-count-${tab.id}`} style={{ fontWeight: "800", fontSize: 11, color: dispatchDir === tab.id ? "#fff" : colors.slate800 }}>{tab.count}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {showMergePick ? (
+            <PrimaryButton
+              title="Tek faturada birleştir"
+              testID="merge-dispatches-btn"
+              disabled={mergeIds.length < 2}
+              onPress={mergeDispatches}
+              color="#A21CAF"
+            />
+          ) : null}
           {canEdit ? (
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1 }}>
@@ -229,7 +304,19 @@ export function InvoicesScreen() {
             );
             return (
               <View key={iid} style={{ gap: 4 }}>
-                {body}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  {showMergePick ? (
+                    <Pressable
+                      testID={`dispatch-select-${iid}`}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: picked.includes(iid) }}
+                      onPress={() => togglePick(iid)}
+                    >
+                      <Ionicons name={picked.includes(iid) ? "checkbox" : "square-outline"} size={22} color="#A21CAF" />
+                    </Pressable>
+                  ) : null}
+                  <View style={{ flex: 1 }}>{body}</View>
+                </View>
                 {showFaturalastir ? (
                   <DraftInvoiceFaturalastir
                     invoice={inv}

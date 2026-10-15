@@ -33,6 +33,7 @@ from xml.sax.saxutils import escape as xml_esc
 import httpx
 from fastapi import HTTPException
 
+from buyer_tax import buyer_tax_choice
 from safe_error import as_text, mask_sensitive_text, public_provider_detail, provider_error_code
 
 logger = logging.getLogger(__name__)
@@ -1505,8 +1506,112 @@ async def lookup_despatch_user(settings: dict, password: str, tax_id: str) -> Di
     }
 
 
+_NOT_FOUND_RE = re.compile(r"bulunamad", re.I)
+_NOT_REGISTERED_RE = re.compile(
+    r"kay[ıi]tl[ıi]\s+de[gğ]il|m[üu]kellefi?\s+de[gğ]ildir|m[üu]kellef\s+de[gğ]il|"
+    r"e-?fatura\s+kullan[ıi]c[ıi]s[ıi]\s+de[gğ]il|listesinde\s+yok",
+    re.I,
+)
+_FALSE_FLAGS = frozenset({"false", "0", "hayir", "hayır", "no"})
+
+
+def _alias_values(root: Optional[ET.Element], *tags: str) -> List[str]:
+    """Posta kutusu etiketleri. Inbox (PK) çağıran tarafta öne alınır."""
+    if root is None:
+        return []
+    out: List[str] = []
+    for tag in tags:
+        for el in _find_all(root, tag):
+            nodes = list(el) or [el]
+            for node in nodes:
+                val = _text(node) or _find_text(node, "Alias", "Value", "Tag", "Etiket")
+                val = (val or "").strip()
+                if not val or val.lower() in {t.lower() for t in tags}:
+                    continue
+                if "@" not in val and not val.lower().startswith("urn:"):
+                    continue
+                if val not in out:
+                    out.append(val)
+    return out
+
+
+def _soap_messages(body: Optional[ET.Element]) -> str:
+    if body is None:
+        return ""
+    parts = _find_all_texts(body, "Message", "ErrorMessage", "ResultDescription", "Description")
+    return " ".join(parts)
+
+
+def classify_get_tax_payer(body: Optional[ET.Element], tax: str) -> Dict[str, Any]:
+    """GetTaxPayer gövdesi → mukellef | not_mukellef.
+
+    TaxPayer yok, boş veya «bulunamadı» unknown'dur (HTTPException). Yalnız açık
+    «kayıtlı değil» / IsEInvoiceUser=false not_mukellef sayılır. Ham gövde yanıta yazılmaz.
+    """
+    if body is None:
+        raise HTTPException(status_code=422, detail="GİB yanıtı okunamadı; mükellefiyet doğrulanamadı.")
+
+    payers = _find_all(body, "TaxPayer")
+    payer = payers[0] if payers else None
+    name = ""
+    inbox: List[str] = []
+    other: List[str] = []
+    if payer is not None:
+        name = _find_text(payer, "TaxPayerName", "Title", "IdentifierName", "Name") or ""
+        inbox = _alias_values(payer, "InboxTagList", "InboxTags", "PkList", "ReceiverTag", "ReceiverAlias")
+        other = _alias_values(payer, "Alias", "Aliases", "OutboxTagList", "GbList")
+    if not name:
+        name = _find_text(body, "TaxPayerName", "Title", "GibUserName") or ""
+    aliases: List[str] = []
+    for val in inbox + other:
+        if val not in aliases:
+            aliases.append(val)
+    if name or aliases:
+        primary = inbox[0] if inbox else (aliases[0] if aliases else "")
+        return {
+            "tax_id": tax,
+            "is_e_invoice_user": True,
+            "alias": primary,
+            "aliases": aliases,
+            "name": name,
+            "lookup_status": "mukellef",
+            "source": "isnet",
+        }
+    if payer is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="GİB TaxPayer kaydı okunamadı; mükellefiyet doğrulanamadı.",
+        )
+
+    msg = _soap_messages(body)
+    if _NOT_FOUND_RE.search(msg):
+        raise HTTPException(
+            status_code=422,
+            detail="GİB kaydı bulunamadı; mükellefiyet doğrulanamadı.",
+        )
+    flag = _find_text(body, "IsEInvoiceUser", "IsExist", "EFaturaMukellefi", "Registered").strip().lower()
+    if flag in _FALSE_FLAGS or _NOT_REGISTERED_RE.search(msg):
+        return {
+            "tax_id": tax,
+            "is_e_invoice_user": False,
+            "alias": "",
+            "aliases": [],
+            "name": "",
+            "lookup_status": "not_mukellef",
+            "source": "isnet",
+        }
+    raise HTTPException(
+        status_code=422,
+        detail="GİB yanıtında TaxPayer yok; mükellefiyet doğrulanamadı.",
+    )
+
+
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
-    """GetTaxPayer — NetteFatura-API addressBook.getTaxPayer() / n11faturam.lookup_user."""
+    """GetTaxPayer — NetteFatura-API addressBook.getTaxPayer() / n11faturam.lookup_user.
+
+    PK (Inbox) etiketi birincil alias'tır. TaxPayer yoksa veya parse belirsizse
+    «mükellef değil» dönülmez; çağıran 422 alır.
+    """
     require_explicit_mode(settings)
     _ = password
     tax = re.sub(r"\D", "", str(tax_id or ""))
@@ -1520,40 +1625,7 @@ async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, A
         request={"TaxPayerTaxCode": tax},
         timeout=30.0,
     )
-    payers = _find_all(body, "TaxPayer")
-    if not payers:
-        return {"tax_id": tax, "is_e_invoice_user": False, "alias": "", "name": ""}
-
-    payer = payers[0]
-    name = _find_text(payer, "TaxPayerName", "Title", "IdentifierName", "Name") or _find_text(
-        body, "TaxPayerName", "Title"
-    )
-    aliases: List[str] = []
-    for tag in ("InboxTagList", "OutboxTagList", "Alias", "Aliases", "string"):
-        for el in _find_all(payer, tag):
-            if list(el):
-                for child in el:
-                    val = _text(child) or _find_text(child, "Alias", "Value", "Tag")
-                    if val and "@" in val and val not in aliases:
-                        aliases.append(val)
-            else:
-                val = _text(el)
-                if val and "@" in val and val not in aliases:
-                    aliases.append(val)
-    for el in _find_all(payer, "Alias"):
-        val = _find_text(el, "Alias", "Value", "Tag") or _text(el)
-        if val and "@" in val and val not in aliases:
-            aliases.append(val)
-
-    is_user = bool(name or aliases)
-    return {
-        "tax_id": tax,
-        "is_e_invoice_user": is_user,
-        "alias": aliases[0] if aliases else "",
-        "name": name or "",
-        "aliases": aliases,
-        "source": "isnet",
-    }
+    return classify_get_tax_payer(body, tax)
 
 
 def _ensure_b64(xml_or_b64: str) -> str:
@@ -2249,7 +2321,7 @@ async def send_despatch_document(
         await _fill_invoice_stock_codes(inv_for_ubl)
         xml, _local_ettn, inv_id = build_despatch_ubl(inv_for_ubl, company_for_ubl, contact, xslt=xslt)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.exception("isnet build_despatch_ubl")
         raise HTTPException(status_code=500, detail=f"e-İrsaliye UBL hatası: {e}") from e
@@ -2344,16 +2416,7 @@ async def send_document(
         or ""
     ).strip()
     if e_type == "e_invoice" and not receiver:
-        buyer_tax = re.sub(
-            r"\D",
-            "",
-            str(
-                (contact or {}).get("tax_number_or_id")
-                or (contact or {}).get("tax_id")
-                or invoice.get("contact_tax_id")
-                or ""
-            ),
-        )
+        buyer_tax = buyer_tax_choice(invoice, contact)["tax"]
         if len(buyer_tax) in (10, 11):
             try:
                 looked = await lookup_user(merged, password or "", buyer_tax)
@@ -2369,16 +2432,7 @@ async def send_document(
                 ),
             )
 
-    buyer_tax_digits = re.sub(
-        r"\D",
-        "",
-        str(
-            (contact or {}).get("tax_number_or_id")
-            or (contact or {}).get("tax_id")
-            or invoice.get("contact_tax_id")
-            or ""
-        ),
-    )
+    buyer_tax_digits = buyer_tax_choice(invoice, contact)["tax"]
     if e_type == "e_invoice" and len(buyer_tax_digits) not in (10, 11):
         raise HTTPException(
             status_code=400,

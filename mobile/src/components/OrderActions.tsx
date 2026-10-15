@@ -39,8 +39,7 @@ import {
   eBelgeCreateBody,
   isOrderFullyInvoiced,
 } from "../utils/orderInvoice";
-import { digitsTax } from "../utils/efaturaOnay";
-import { contactMukellefPatch, faturalastirMenuLabel, fetchGibMukellef, type GibEntry } from "../utils/gibMukellef";
+import { contactMukellefPatch, docBuyerTaxId, faturalastirMenuLabel, fetchGibMukellef, type GibEntry } from "../utils/gibMukellef";
 import {
   isYmd,
   mobilePrimaryAction,
@@ -157,12 +156,7 @@ export function OrderActions({
   const oid = idOf(order);
   const num = order.order_number || oid;
 
-  const buyerTax = digitsTax(
-    (order as { contact_tax_id?: string }).contact_tax_id
-    || (order as { customer_tax_id?: string }).customer_tax_id
-    || (order as { buyer_tax_id?: string }).buyer_tax_id
-    || "",
-  );
+  const buyerTax = docBuyerTaxId(order);
   useEffect(() => {
     const cid = companyId || activeCompany?.id || "";
     if (!cid) {

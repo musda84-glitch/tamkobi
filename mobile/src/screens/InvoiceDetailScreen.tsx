@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -42,6 +42,15 @@ import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 import { printInvoiceForm } from "../utils/orderShare";
 import { integratorPdfKindLabel, shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
+import {
+  canSendOutgoingDispatch,
+  despatchFormFrom,
+  despatchSendLabel,
+  despatchSendPayload,
+  isIncomingDispatch,
+  validateDespatchForm,
+  type DespatchForm,
+} from "../utils/despatchShipment";
 
 function confirmAction(title: string, msg: string, onYes: () => void) {
   if (Platform.OS === "web") {
@@ -79,6 +88,9 @@ export function InvoiceDetailScreen() {
   const [efaturaOpen, setEfaturaOpen] = useState(false);
   const [efaturaPreferred, setEfaturaPreferred] = useState<"e_invoice" | "e_archive" | null>(null);
   const [efaturaStampNow, setEfaturaStampNow] = useState(true);
+  const [ship, setShip] = useState<DespatchForm | null>(null);
+  const [shipError, setShipError] = useState("");
+  const shipInit = useRef("");
 
   const load = useCallback(async () => {
     try {
@@ -120,6 +132,34 @@ export function InvoiceDetailScreen() {
 
   useFocusEffect(useCallback(() => { load(); loadAccounts(); }, [load, loadAccounts]));
   useLiveRefresh(() => { load(); loadAccounts(); }, ["invoices", "cash", "contacts", "orders"]);
+
+  useEffect(() => {
+    if (!inv || !canSendOutgoingDispatch(inv) || shipInit.current === String(id || "")) return;
+    let cancelled = false;
+    (async () => {
+      let defs: Record<string, string> = {};
+      try {
+        const settings = await get<{ despatch_defaults?: Record<string, string> }>(client, "/einvoice/settings", { company_id: companyId });
+        defs = settings?.despatch_defaults || {};
+      } catch {
+        defs = {};
+      }
+      let fallback = "";
+      if (!String(inv.shipping_address || inv.address || "").trim() && inv.contact_id) {
+        try {
+          const contact = await get<{ address?: string }>(client, `/contacts/${inv.contact_id}`);
+          fallback = String(contact?.address || "");
+        } catch {
+          fallback = "";
+        }
+      }
+      if (cancelled) return;
+      shipInit.current = String(id || "");
+      setShip(despatchFormFrom(inv, defs, fallback));
+      setShipError("");
+    })();
+    return () => { cancelled = true; };
+  }, [client, companyId, id, inv]);
 
   useEffect(() => {
     const ids = lineProductIds((inv?.items || []) as Array<Record<string, unknown>>);
@@ -290,7 +330,7 @@ export function InvoiceDetailScreen() {
             );
           }, "Yazdırılamadı.")}
         />
-        {canEdit && canEditInvoice(inv) ? (
+        {canEdit && canEditInvoice(inv) && !isIncomingDispatch(inv) ? (
           <PrimaryButton
             title={draft ? "Taslağı düzenle" : "Düzenle"}
             testID="inv-edit"
@@ -396,6 +436,53 @@ export function InvoiceDetailScreen() {
           <Muted>Kesilmiş belgede dip toplam GİB kaydına bağlıdır; kalem veya iskonto değiştirilemez.</Muted>
         )}
       </Card>
+
+      {canEdit && ship && canSendOutgoingDispatch(inv) ? (
+        <Card testID="despatch-send-form">
+          <Text style={{ fontWeight: "800", color: colors.text }}>{despatchSendLabel(inv)}</Text>
+          <Muted>Nakliye bilgisi GİB&apos;e gitmeden önce tamamlanır.</Muted>
+          <Field label="Sevk tarihi" testID="despatch-issue-date" value={ship.issue_date} onChangeText={(v) => setShip({ ...ship, issue_date: v })} placeholder="YYYY-MM-DD" />
+          <Field label="Sevk saati" testID="despatch-issue-time" value={ship.issue_time} onChangeText={(v) => setShip({ ...ship, issue_time: v })} placeholder="10:30" />
+          <Field label="Teslim adresi" testID="despatch-address" value={ship.shipping_address} onChangeText={(v) => setShip({ ...ship, shipping_address: v })} />
+          <Row>
+            <Chip label="Kendi aracım" active={ship.despatch_mode !== "carrier"} onPress={() => setShip({ ...ship, despatch_mode: "own" })} testID="despatch-mode-own" />
+            <Chip label="Taşıyıcı firma" active={ship.despatch_mode === "carrier"} onPress={() => setShip({ ...ship, despatch_mode: "carrier" })} testID="despatch-mode-carrier" />
+          </Row>
+          {ship.despatch_mode === "carrier" ? (
+            <>
+              <Field label="Taşıyıcı VKN/TCKN" testID="despatch-carrier-vkn" value={ship.despatch_carrier_vkn} onChangeText={(v) => setShip({ ...ship, despatch_carrier_vkn: v })} />
+              <Field label="Ünvan" testID="despatch-carrier-name" value={ship.despatch_carrier_name} onChangeText={(v) => setShip({ ...ship, despatch_carrier_name: v })} />
+              <Field label="Kargo takip no" testID="despatch-tracking" value={ship.cargo_tracking_number} onChangeText={(v) => setShip({ ...ship, cargo_tracking_number: v })} />
+            </>
+          ) : (
+            <>
+              <Field label="Plaka" testID="despatch-plate" value={ship.despatch_plate} onChangeText={(v) => setShip({ ...ship, despatch_plate: v })} placeholder="34ABC123" />
+              <Field label="Şoför adı" testID="despatch-driver-first" value={ship.despatch_driver_first} onChangeText={(v) => setShip({ ...ship, despatch_driver_first: v })} />
+              <Field label="Şoför soyadı" testID="despatch-driver-last" value={ship.despatch_driver_last} onChangeText={(v) => setShip({ ...ship, despatch_driver_last: v })} />
+              <Field label="Şoför TCKN" testID="despatch-driver-tckn" value={ship.despatch_driver_tckn} onChangeText={(v) => setShip({ ...ship, despatch_driver_tckn: v })} />
+            </>
+          )}
+          {shipError ? <Text testID="despatch-form-error" style={{ color: colors.danger, fontWeight: "700" }}>{shipError}</Text> : null}
+          <PrimaryButton
+            title={busy ? "Gönderiliyor…" : despatchSendLabel(inv)}
+            testID="despatch-send-submit"
+            color={colors.primary}
+            loading={busy}
+            onPress={() => {
+              const problems = validateDespatchForm(ship);
+              if (problems.length) {
+                setShipError(problems.join(" "));
+                return;
+              }
+              setShipError("");
+              run(async () => {
+                await post(client, `/invoices/${id}/send-to-gib`, despatchSendPayload(ship));
+                setMessage("e-İrsaliye GİB'e gönderildi.");
+              }, "İrsaliye gönderilemedi.");
+            }}
+          />
+        </Card>
+      ) : null}
 
       {canEdit && canFaturalastirDraftInvoice(inv) ? (
         <DraftInvoiceFaturalastir
@@ -525,7 +612,7 @@ export function InvoiceDetailScreen() {
         </Card>
       ) : null}
 
-      {canEdit && !draft ? (
+      {canEdit && !draft && !isIncomingDispatch(inv) ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>Kesilmiş belgede düzenlenebilir</Text>
           <Field label="Vade tarihi" testID="inv-due-edit" value={dueDate} onChangeText={setDueDate} placeholder="YYYY-MM-DD" />

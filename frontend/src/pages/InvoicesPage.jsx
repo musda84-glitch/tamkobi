@@ -46,6 +46,9 @@ import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegr
 import { einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
 import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayload } from "../utils/barcodeSale";
 import { paymentAskMessage, shouldAskPaymentAfterSave } from "../utils/invoiceAskPayment";
+import { DespatchSendDialog } from "../components/DespatchSendDialog";
+import { canSendOutgoingDispatch, despatchSendLabel, isIncomingDispatch } from "../utils/despatchShipment";
+import { selectedOutgoingDispatchIds } from "../utils/dispatchMerge";
 
 import {
   FileText,
@@ -153,15 +156,33 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const contactFilter = searchParams.get("contact_id") || "";
-  const visibleInvoices = useMemo(
+  const dispatchView = filterType === "dispatch";
+  const dispatchDir = searchParams.get("dir") === "in" ? "in" : "out";
+  const setDispatchDir = (dir) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("dir", dir === "in" ? "in" : "out");
+    setSearchParams(next, { replace: true });
+  };
+  const filteredInvoices = useMemo(
     () => applyInvoiceFilters(
       invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter),
       { ...filters, showCancelled },
     ),
     [invoices, contactFilter, filters, showCancelled],
   );
+  const incomingDispatches = useMemo(
+    () => (dispatchView ? filteredInvoices.filter((inv) => isIncomingDispatch(inv)) : []),
+    [dispatchView, filteredInvoices],
+  );
+  const outgoingDispatches = useMemo(
+    () => (dispatchView ? filteredInvoices.filter((inv) => !isIncomingDispatch(inv)) : []),
+    [dispatchView, filteredInvoices],
+  );
+  const visibleInvoices = dispatchView
+    ? (dispatchDir === "in" ? incomingDispatches : outgoingDispatches)
+    : filteredInvoices;
   const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
-  const listResetKey = useMemo(() => `${filterType}|${contactFilter || ""}|${showCancelled ? 1 : 0}|${JSON.stringify(filters)}`, [filterType, contactFilter, showCancelled, filters]);
+  const listResetKey = useMemo(() => `${filterType}|${dispatchDir}|${contactFilter || ""}|${showCancelled ? 1 : 0}|${JSON.stringify(filters)}`, [filterType, dispatchDir, contactFilter, showCancelled, filters]);
   const { visible: pagedInvoices, hasMore: invoicesHasMore, sentinelRef: invoicesSentinelRef } = useInfiniteRows(visibleInvoices, { resetKey: listResetKey });
 
   const activeSortCol = invoiceSortCol(filters.sort);
@@ -190,10 +211,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [ctxMenu, setCtxMenu] = useState(null);
   /** null | { mode: 'send'|'print', invoice?, invoices? } */
   const [eFaturaJob, setEFaturaJob] = useState(null);
+  const [despatchTarget, setDespatchTarget] = useState(null);
   const [bulkEInvoiceConfirm, setBulkEInvoiceConfirm] = useState(null);
   const [bulkEInvoiceBusy, setBulkEInvoiceBusy] = useState(false);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const [installmentInv, setInstallmentInv] = useState(null);
   const [expandedInvId, setExpandedInvId] = useState(null);
   const [expandedItemsById, setExpandedItemsById] = useState({});
@@ -314,6 +337,31 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       toast.error(err.response?.data?.detail || "Toplu stok kartı açılamadı.");
     } finally {
       setLineMatchBusy("");
+    }
+  };
+  const mergeOutgoingIds = selectedOutgoingDispatchIds(visibleInvoices, selected);
+  const handleMergeDispatches = async () => {
+    const ids = selectedOutgoingDispatchIds(visibleInvoices, selected);
+    if (ids.length < 2) {
+      toast.error("Birleştirmek için en az iki giden irsaliye seçin.");
+      return;
+    }
+    if (!window.confirm(`${ids.length} giden irsaliye tek taslak satış faturasında birleştirilsin mi?`)) return;
+    const key = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `merge-${Date.now()}`;
+    setMergeBusy(true);
+    try {
+      const r = await axios.post(
+        `${API_URL}/dispatches/merge-to-invoice`,
+        { dispatch_ids: ids, idempotency_key: key },
+        { headers: { "Idempotency-Key": key } },
+      );
+      toast.success(r.data?.message || "İrsaliyeler tek faturada birleştirildi.");
+      setSelected([]);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İrsaliyeler birleştirilemedi.");
+    } finally {
+      setMergeBusy(false);
     }
   };
   const handleConvertDispatch = async (inv) => {
@@ -793,6 +841,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       }
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, body);
       if (!opts.silentToast) toast.success(res.data.message);
+      const draftWarn = res.data?.warning || res.data?.dispatch_draft_warning;
+      if (draftWarn && !opts.silentToast) toast.warning(draftWarn);
       // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek.
       // Onay modalı zaten send içinde wait_for_gib poll eder; ekstra refresh süreyi uzatır.
       let refreshMsg = "";
@@ -818,7 +868,30 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
 
+  const openDespatchSend = (inv) => {
+    if (!canSendOutgoingDispatch(inv)) return;
+    closeCtx();
+    setDespatchTarget(inv);
+  };
+  const submitDespatchSend = async (payload) => {
+    const inv = despatchTarget;
+    const id = inv?.id || inv?._id;
+    if (!id) return;
+    try {
+      const res = await axios.post(`${API_URL}/invoices/${id}/send-to-gib`, payload);
+      toast.success(res.data?.message || "e-İrsaliye gönderildi.");
+      setDespatchTarget(null);
+      setPreviewInvoice(null);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "e-İrsaliye gönderilemedi.");
+    }
+  };
   const handleIssueFromMenu = (inv, eType) => {
+    if (eType === "e_dispatch" || inv?.invoice_type === "dispatch" || inv?.e_type === "e_dispatch") {
+      openDespatchSend(inv);
+      return;
+    }
     // Siparişlerdeki gibi: GİB e-belge kesimi Elektronik Fatura Onayı modalından geçer.
     const openOnay = !eType || eType === "auto" || eType === "e_invoice" || eType === "e_archive";
     if (openOnay) {
@@ -1209,6 +1282,39 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs">
+        {dispatchView && (
+          <div className="flex items-center gap-1 shrink-0" data-testid="dispatch-dir-tabs">
+            {[
+              { id: "out", label: "Giden", count: outgoingDispatches.length },
+              { id: "in", label: "Gelen", count: incomingDispatches.length },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setDispatchDir(tab.id)}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                  dispatchDir === tab.id ? "bg-fuchsia-700 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+                data-testid={`dispatch-dir-${tab.id}`}
+                data-active={dispatchDir === tab.id ? "1" : "0"}
+              >
+                {tab.label}
+                <span className={`ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full px-1 text-[10px] ${dispatchDir === tab.id ? "bg-white/20" : "bg-slate-200 text-slate-700"}`} data-testid={`dispatch-dir-count-${tab.id}`}>{tab.count}</span>
+              </button>
+            ))}
+            {dispatchDir === "out" && (
+              <button
+                type="button"
+                onClick={handleMergeDispatches}
+                disabled={mergeOutgoingIds.length < 2 || mergeBusy}
+                className="ml-1 px-3 py-1.5 rounded-lg font-semibold bg-fuchsia-50 text-fuchsia-800 border border-fuchsia-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="merge-dispatches-btn"
+              >
+                Tek faturada birleştir
+              </button>
+            )}
+          </div>
+        )}
         {!lockType && (
           <div className="flex items-center gap-2 overflow-x-auto min-w-0 flex-1">
             {[
@@ -1583,7 +1689,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === "dispatch" ? (
-                          <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : (inv.invoice_ref_number || inv.invoice_id) ? "Mevcut faturaya bağla" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
+                          <>
+                            {canSendOutgoingDispatch(inv) ? (
+                              <button type="button" onClick={() => openDespatchSend(inv)} className="col-span-6 px-2 py-1 text-[10px] font-semibold rounded-lg bg-fuchsia-700 text-white hover:bg-fuchsia-800" data-testid={`dispatch-send-btn-${inv.invoice_number}`}>{despatchSendLabel(inv)}</button>
+                            ) : null}
+                            <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id || isIncomingDispatch(inv)} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : (inv.invoice_ref_number || inv.invoice_id) ? "Mevcut faturaya bağla" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
+                          </>
                         ) : inv.invoice_type === "sales" && supportsEDispatch(einvoiceSettings) ? (
                           <button type="button" onClick={() => handleCreateDispatch(inv)} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition" title={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "e-İrsaliye oluştur (bağlı entegratör)"} data-testid={`create-dispatch-btn-${inv.invoice_number}`}><Truck className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -2432,6 +2543,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   )}
                 </div>
               </div>
+              {canSendOutgoingDispatch(previewInvoice) && (
+                <div className="pt-3 border-t no-print">
+                  <button
+                    type="button"
+                    onClick={() => openDespatchSend(previewInvoice)}
+                    className="px-4 py-2 bg-fuchsia-700 text-white rounded-xl text-xs font-semibold"
+                    data-testid="dispatch-preview-send"
+                  >
+                    {despatchSendLabel(previewInvoice)}
+                  </button>
+                </div>
+              )}
               {!isIncomingPurchaseInvoice(previewInvoice) && previewInvoice.invoice_type !== "dispatch" && (
                 <InvoiceActionPanel
                   className="mt-4"
@@ -2446,6 +2569,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             </div>
           </div>
         </div>
+      )}
+
+      {despatchTarget && (
+        <DespatchSendDialog
+          invoice={despatchTarget}
+          defaults={einvoiceSettings?.despatch_defaults}
+          fallbackAddress={contacts.find((c) => (c.id || c._id) === despatchTarget.contact_id)?.address || ""}
+          onClose={() => setDespatchTarget(null)}
+          onSubmit={submitDespatchSend}
+        />
       )}
 
       {/* PAYMENT MODAL */}

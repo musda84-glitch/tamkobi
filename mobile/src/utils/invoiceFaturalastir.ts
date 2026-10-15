@@ -41,7 +41,7 @@ export async function issueInvoiceFromOnay(
   client: ApiClient,
   inv: { id?: string; _id?: string; contact_id?: string },
   payload: EfaturaOnayPayload,
-): Promise<void> {
+): Promise<{ message?: string; warning?: string; dispatch_draft_warning?: string }> {
   const id = inv.id || inv._id;
   if (!id) throw new Error("Fatura bulunamadı.");
   const mukellefPatch = contactMukellefPatch(payload.gibMeta);
@@ -78,5 +78,9 @@ export async function issueInvoiceFromOnay(
     body.issue_date = stamp.issue_date;
     body.issue_time = stamp.issue_time;
   }
-  await post(client, `/invoices/${id}/send-to-gib`, body);
+  return await post<{ message?: string; warning?: string; dispatch_draft_warning?: string }>(
+    client,
+    `/invoices/${id}/send-to-gib`,
+    body,
+  );
 }

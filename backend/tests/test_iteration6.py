@@ -277,31 +277,23 @@ class TestQuotePaymentPlan:
 
 # ---------- GİB lookup ----------
 class TestGibLookup:
-    def test_vkn(self, api):
+    def test_vkn_requires_auth(self, api):
         r = api.get(f"{BASE}/gib/lookup", params={"tax_id": "1234567890"})
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["kind"] == "VKN"
-        assert d["is_e_invoice_user"] is True
-        assert d["suggested_e_type"] == "e_invoice"
-        assert d["source"] == "simulated"
-        assert d["local_contact"] is None
+        assert r.status_code == 401, r.text
 
-    def test_tckn(self, api):
-        d = api.get(f"{BASE}/gib/lookup", params={"tax_id": "12345678901"}).json()
-        assert d["kind"] == "TCKN"
-        assert d["suggested_e_type"] == "e_archive"
+    def test_tckn_requires_auth(self, api):
+        r = api.get(f"{BASE}/gib/lookup", params={"tax_id": "12345678901"})
+        assert r.status_code == 401, r.text
 
-    def test_invalid(self, api):
-        assert api.get(f"{BASE}/gib/lookup", params={"tax_id": "123"}).status_code == 400
+    def test_invalid_requires_auth(self, api):
+        assert api.get(f"{BASE}/gib/lookup", params={"tax_id": "123"}).status_code == 401
 
-    def test_local_contact(self, api):
+    def test_local_contact_requires_auth(self, api):
         contacts = api.get(f"{BASE}/contacts?company_id={COMPANY}").json()
         c = next((x for x in contacts if (x.get("tax_number_or_id") or "").isdigit() and len(x["tax_number_or_id"]) in (10, 11)), None)
         assert c, "no contact with valid tax id"
-        d = api.get(f"{BASE}/gib/lookup", params={"tax_id": c["tax_number_or_id"]}).json()
-        assert d["local_contact"] is not None
-        assert d["local_contact"]["id"] == c["id"]
+        r = api.get(f"{BASE}/gib/lookup", params={"tax_id": c["tax_number_or_id"]})
+        assert r.status_code == 401, r.text
 
 
 # ---------- general discount ----------

@@ -69,8 +69,11 @@ export function DraftInvoiceFaturalastir({
     }
     setSending(true);
     const label = DRAFT_FATURALASTIR_TYPES.find((t) => t.key === eType)?.label || eType;
-    post(client, `/invoices/${id}/send-to-gib`, { e_type: eType })
-      .then(() => onIssued?.(`${label} olarak kesildi.`))
+    post<{ message?: string; warning?: string; dispatch_draft_warning?: string }>(client, `/invoices/${id}/send-to-gib`, { e_type: eType })
+      .then((res) => {
+        const warn = res?.warning || res?.dispatch_draft_warning;
+        onIssued?.(warn ? `${label} olarak kesildi. ${warn}` : `${label} olarak kesildi.`);
+      })
       .catch((err) => onError?.(apiErrorMessage(err, "Fatura kesilemedi.")))
       .finally(() => setSending(false));
   };
@@ -79,9 +82,10 @@ export function DraftInvoiceFaturalastir({
     const label = payload.eType === "e_invoice" ? "E-Fatura" : "E-Arşiv";
     setSending(true);
     try {
-      await issueInvoiceFromOnay(client, invoice, payload);
+      const res = await issueInvoiceFromOnay(client, invoice, payload);
       setOnayOpen(false);
-      onIssued?.(`${label} olarak kesildi.`);
+      const warn = res?.warning || res?.dispatch_draft_warning;
+      onIssued?.(warn ? `${label} olarak kesildi. ${warn}` : `${label} olarak kesildi.`);
     } catch (err) {
       onError?.(apiErrorMessage(err, "Fatura kesilemedi."));
     } finally {

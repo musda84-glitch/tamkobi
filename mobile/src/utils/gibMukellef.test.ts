@@ -1,9 +1,14 @@
 import { ApiHttpError } from "../api/errors";
 import {
+  GIB_MUKELLEF_TTL_MS,
+  buyerContactPending,
+  buyerTaxChoice,
   clearGibMukellefCache,
+  docBuyerTaxId,
   eTypeFromGib,
   faturalastirMenuLabel,
   fetchGibMukellef,
+  gibLookupPresentation,
   type GibEntry,
 } from "./gibMukellef";
 
@@ -85,5 +90,157 @@ describe("gibMukellef", () => {
     expect(faturalastirMenuLabel(entry)).toBe("Faturalaştır");
     // ElektronikFaturaOnayModal gönder düğmesini yalnız status === "ok" iken açar.
     expect(entry?.status === "ok").toBe(false);
+  });
+
+  it("docBuyerTaxId fatura VKN'sini cariden önce alır", () => {
+    const doc = { contact_tax_id: "3680486408" };
+    const contact = { tax_number_or_id: "12345678901" };
+    expect(docBuyerTaxId(doc, contact)).toBe("3680486408");
+    expect(buyerTaxChoice(doc, contact).mismatch).toBe(true);
+    expect(buyerTaxChoice(doc, contact).source).toBe("Belge");
+    expect(docBuyerTaxId({ contact_tax_id: "" }, contact)).toBe("12345678901");
+  });
+
+  it("yer tutucu belge VKN'si cariye düşer; tax_id okunur", () => {
+    const fromPlaceholder = buyerTaxChoice(
+      { contact_tax_id: "11111111111", contact_id: "cnt-ersay" },
+      { tax_number_or_id: "3680486408" },
+    );
+    expect(fromPlaceholder.tax).toBe("3680486408");
+    expect(fromPlaceholder.mismatch).toBe(false);
+    expect(fromPlaceholder.source).toBe("Cari");
+    const fromTaxId = buyerTaxChoice({ contact_tax_id: "" }, { tax_id: "3680486408" });
+    expect(fromTaxId.tax).toBe("3680486408");
+    const bothEmpty = buyerTaxChoice({ contact_tax_id: "" }, {});
+    expect(bothEmpty.tax).toBe("");
+    expect(bothEmpty.placeholder).toBe(true);
+    const bothReal = buyerTaxChoice(
+      { contact_tax_id: "6320984412" },
+      { tax_number_or_id: "3680486408" },
+    );
+    expect(bothReal.tax).toBe("6320984412");
+    expect(bothReal.mismatch).toBe(true);
+    const doc = { contact_id: "cnt-ersay", contact_tax_id: "11111111111" };
+    expect(buyerContactPending(doc, [])).toBe(true);
+    expect(buyerContactPending(doc, [{ id: "cnt-ersay", tax_number_or_id: "3680486408" }])).toBe(false);
+    const pendingView = gibLookupPresentation(doc, null, null, { contactPending: true });
+    expect(pendingView.blocked).toBe(true);
+    expect(pendingView.eType).toBeNull();
+    expect(pendingView.taxSource).toBe("");
+  });
+
+  it("bulunamadı mesajı mükellefi e-Arşiv yapmaz; unknown null döner", () => {
+    expect(eTypeFromGib({
+      is_e_invoice_user: true,
+      suggested_e_type: "e_invoice",
+      message: "Kayıt bulunamadı",
+    })).toBe("e_invoice");
+    expect(eTypeFromGib({
+      lookup_status: "unknown",
+      is_e_invoice_user: false,
+      message: "bulunamadı",
+    })).toBeNull();
+    expect(faturalastirMenuLabel({
+      lookup_status: "unknown",
+      is_e_invoice_user: false,
+      suggested_e_type: "e_archive",
+    })).toBe("Faturalaştır");
+  });
+
+  it("TTL dolunca yeniden sorgular; hata, unknown ve eksik VKN önbelleğe yazılmaz", async () => {
+    const now = 1_700_000_000_000;
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(now);
+    const fetchMock = jest.fn(async (url: string) => {
+      const tax = decodeURIComponent(String(url).split("tax_id=")[1]?.split("&")[0] || "");
+      return jsonResponse(200, {
+        tax_id: tax,
+        is_e_invoice_user: true,
+        suggested_e_type: "e_invoice",
+        lookup_status: "mukellef",
+        name: "ERSAY HOME",
+        source: "isnet",
+        alias: "urn:mail:pk@ersay.home",
+        aliases: ["urn:mail:pk@ersay.home", "urn:mail:gb@ersay.home"],
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const first = await fetchGibMukellef(client, "c1", "3680486408");
+    expect(first.status).toBe("ok");
+    if (first.status === "ok") expect(first.expiresAt).toBe(now + GIB_MUKELLEF_TTL_MS);
+    await fetchGibMukellef(client, "c1", "3680486408");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    nowSpy.mockReturnValue(now + GIB_MUKELLEF_TTL_MS);
+    await fetchGibMukellef(client, "c1", "3680486408");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockImplementation(async () => jsonResponse(200, {
+      lookup_status: "unknown",
+      is_e_invoice_user: false,
+      suggested_e_type: "e_archive",
+      message: "GİB kaydı bulunamadı; mükellefiyet doğrulanamadı.",
+    }));
+    await expect(fetchGibMukellef(client, "c1", "6320984412")).rejects.toThrow(/doğrulanamadı/);
+    await expect(fetchGibMukellef(client, "c1", "6320984412")).rejects.toThrow(/doğrulanamadı/);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    const before = fetchMock.mock.calls.length;
+    const empty = await fetchGibMukellef(client, "c1", "");
+    expect(empty.status).toBe("ok");
+    if (empty.status === "ok") {
+      expect(eTypeFromGib(empty.data)).toBe("e_archive");
+      expect(empty.data.lookup_status).toBe("not_mukellef");
+    }
+    await expect(fetchGibMukellef(client, "c1", "123456789")).rejects.toThrow("VKN/TCKN 10 veya 11 haneli olmalı");
+    await expect(fetchGibMukellef(client, "c1", "123456789")).rejects.toThrow("VKN/TCKN 10 veya 11 haneli olmalı");
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+
+    const view = gibLookupPresentation(
+      { contact_tax_id: "3680486408" },
+      { tax_number_or_id: "12345678901" },
+      {
+        status: "ok",
+        expiresAt: now + GIB_MUKELLEF_TTL_MS,
+        data: {
+          name: "ERSAY HOME",
+          source: "isnet",
+          lookup_status: "mukellef",
+          aliases: ["urn:mail:pk@ersay.home"],
+        },
+      },
+    );
+    expect(view.tax).toBe("3680486408");
+    expect(view.mismatch).toBe(true);
+    expect(view.name).toBe("ERSAY HOME");
+    expect(view.source).toBe("isnet");
+    expect(view.aliases).toEqual(["urn:mail:pk@ersay.home"]);
+    expect(view.eType).toBe("e_invoice");
+    expect(view.blocked).toBe(false);
+    const blocked = gibLookupPresentation(
+      { contact_tax_id: "3680486408" },
+      null,
+      { status: "error", error: "GİB yanıtında TaxPayer yok; mükellefiyet doğrulanamadı." },
+    );
+    expect(blocked.blocked).toBe(true);
+    expect(blocked.eType).toBeNull();
+    expect(blocked.error).toMatch(/TaxPayer/);
+    nowSpy.mockRestore();
+  });
+
+  it("yeniden sorgula refresh=1 gönderir", async () => {
+    const fetchMock = jest.fn(async (url: string) => jsonResponse(200, {
+      tax_id: "3680486408",
+      is_e_invoice_user: true,
+      suggested_e_type: "e_invoice",
+      lookup_status: "mukellef",
+      source: "isnet_portal",
+      aliases: ["urn:mail:pk@ersay.home"],
+    }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await fetchGibMukellef(client, "c1", "3680486408");
+    await fetchGibMukellef(client, "c1", "3680486408", { refresh: true });
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls[1]).toMatch(/refresh=1/);
+    expect(urls).toHaveLength(2);
   });
 });

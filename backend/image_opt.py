@@ -246,8 +246,9 @@ def make_thumbnail(
     filename: str = "",
     max_edge: int = 320,
     quality: int = 72,
+    out_fmt: str = "",
 ) -> Optional[OptimizeResult]:
-    """Liste/kart için küçük WebP (veya JPEG) önizleme. Başarısızsa None."""
+    """Liste/kart için küçük önizleme. out_fmt=jpg|png e-posta istemcileri için. Başarısızsa None."""
     if not data:
         return None
     sniffed = _sniff_type(data, content_type or "")
@@ -268,7 +269,19 @@ def make_thumbnail(
         if max(im.size) > edge:
             im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
         alpha = _has_alpha(im)
-        if alpha:
+        fmt = (out_fmt or "").strip().lower()
+        if fmt == "jpeg":
+            fmt = "jpg"
+        if fmt == "jpg":
+            rgb = im.convert("RGB")
+            payload = _save(rgb, "JPEG", quality=int(quality or 72), optimize=True)
+            ctype, ext = "image/jpeg", "jpg"
+        elif fmt == "png":
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert("RGBA" if alpha else "RGB")
+            payload = _save(im, "PNG", optimize=True, compress_level=8)
+            ctype, ext = "image/png", "png"
+        elif alpha:
             if im.mode != "RGBA":
                 im = im.convert("RGBA")
             try:

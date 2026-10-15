@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import {
@@ -20,11 +20,15 @@ import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { resolveOrderContact } from "../utils/orderEBelge";
 import {
+  buyerContactPending,
   buyerNeedsLiveMukellefQuery,
+  buyerTaxChoice,
   docBuyerTaxId,
   dropGibMukellef,
   eTypeFromGib,
   fetchGibMukellef,
+  findListedContact,
+  isPlaceholderTaxId,
 } from "../utils/gibMukellef";
 import {
   WITHHOLDING_OPTIONS,
@@ -237,6 +241,10 @@ export function ElektronikFaturaOnayModal({
   const [docGib, setDocGib] = useState({});
   const [gibError, setGibError] = useState("");
   const [gibRetry, setGibRetry] = useState(0);
+  const gibRefreshRef = useRef(false);
+  const [extraContacts, setExtraContacts] = useState([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [attemptedContactIds, setAttemptedContactIds] = useState([]);
   const askExemption = !isPrint && !isBulk && invoiceNeedsExemptionPrompt(invoice || doc);
   const askWithholding = !isPrint && !isBulk && invoiceNeedsWithholdingPrompt(invoice || doc);
   const [exemptionCode, setExemptionCode] = useState(
@@ -310,37 +318,76 @@ export function ElektronikFaturaOnayModal({
     return doc ? [doc] : [];
   }, [isPrint, bulkDocs, doc]);
 
+  const mergedContacts = useMemo(() => {
+    const byId = new Map();
+    for (const c of [...(contacts || []), ...extraContacts]) {
+      const id = String(c?.id || c?._id || "");
+      if (id) byId.set(id, c);
+    }
+    return [...byId.values()];
+  }, [contacts, extraContacts]);
+
+  const contactsPending = !isPrint && docsForGib.some((d) => {
+    if (!buyerContactPending(d, mergedContacts)) return false;
+    const id = String(d?.contact_id || d?.contactId || "");
+    return !attemptedContactIds.includes(id);
+  });
+
+  const contactFor = useCallback(
+    (d) => findListedContact(d, mergedContacts) || resolveOrderContact(d, mergedContacts),
+    [mergedContacts],
+  );
+
   const decisionFor = (d, idx) => {
-    const tax = docBuyerTaxId(d, resolveOrderContact(d, contacts));
+    const pending = buyerContactPending(d, mergedContacts);
+    const choice = buyerTaxChoice(d, contactFor(d));
+    const tax = choice.tax;
     const needsLive = buyerNeedsLiveMukellefQuery(tax);
     const entry = docGib[docKey(d, idx)];
+    const base = {
+      tax,
+      docTax: choice.docTax,
+      contactTax: choice.contactTax,
+      mismatch: choice.mismatch,
+      taxSource: choice.source,
+      needsLive,
+    };
+    const id = String(d?.contact_id || d?.contactId || "");
+    if (pending && !needsLive && !attemptedContactIds.includes(id)) {
+      return { ...base, status: "loading", eType: null, data: null };
+    }
     if (!entry) {
-      if (!needsLive) {
+      if (!needsLive && (!tax || isPlaceholderTaxId(tax))) {
         return {
-          tax,
-          needsLive,
+          ...base,
           status: "ok",
           eType: "e_archive",
-          data: { is_e_invoice_user: false, suggested_e_type: "e_archive", tax_id: tax },
+          data: { is_e_invoice_user: false, suggested_e_type: "e_archive", lookup_status: "not_mukellef", tax_id: tax, source: "placeholder" },
         };
       }
-      return { tax, needsLive, status: "loading", eType: null, data: null };
+      if (!needsLive) {
+        return { ...base, status: "error", error: "VKN/TCKN 10 veya 11 haneli olmalı", eType: null, data: null };
+      }
+      return { ...base, status: "loading", eType: null, data: null };
     }
     if (entry.status === "error") {
-      return { tax, needsLive, status: "error", error: entry.error, eType: null, data: null };
+      return { ...base, status: "error", error: entry.error, eType: null, data: null };
     }
     if (entry.status !== "ok") {
-      return { tax, needsLive, status: "loading", eType: null, data: null };
+      return { ...base, status: "loading", eType: null, data: null };
     }
     const data = entry.data || {};
     const eType = eTypeFromGib(data);
-    return { tax, needsLive, status: "ok", eType, data, isMukellef: eType === "e_invoice" };
+    if (!eType) {
+      return { ...base, status: "error", error: data.message || "GİB mükellefiyeti doğrulanamadı.", eType: null, data };
+    }
+    return { ...base, status: "ok", eType, data, isMukellef: eType === "e_invoice" };
   };
 
   const gibDecisions = docsForGib.map((d, idx) => decisionFor(d, idx));
-  const gibBlocked = !isPrint && gibDecisions.some((d) => d.status !== "ok");
+  const gibBlocked = !isPrint && gibDecisions.some((d) => d.status !== "ok" || !d.eType);
   const anyTaxpayer = gibDecisions.some((d) => d.status === "ok" && d.eType === "e_invoice");
-  const archiveOnly = !isPrint && !anyTaxpayer;
+  const archiveOnly = !isPrint && !gibBlocked && gibDecisions.length > 0 && !anyTaxpayer;
 
   const message = isPrint
     ? isBulk || bulkDocs.length
@@ -364,6 +411,44 @@ export function ElektronikFaturaOnayModal({
     setReturnInvoiceDate(next.date);
     setExemptionCode(String(doc?.tax_exemption_code || doc?.vat_exemption_code || "").trim());
   }, [doc]);
+
+  useEffect(() => {
+    if (isPrint) {
+      setContactsLoading(false);
+      return undefined;
+    }
+    const missing = docsForGib
+      .map((d) => String(d?.contact_id || d?.contactId || "").trim())
+      .filter((id) => id && !mergedContacts.some((c) => String(c.id || c._id) === id) && !attemptedContactIds.includes(id));
+    const unique = [...new Set(missing)];
+    if (!unique.length) {
+      setContactsLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setContactsLoading(true);
+    Promise.all(unique.map((id) =>
+      axios.get(`${API_URL}/contacts/${id}`).then((r) => r.data).catch(() => null),
+    )).then((rows) => {
+      if (cancelled) return;
+      const found = (rows || []).filter(Boolean);
+      if (found.length) {
+        setExtraContacts((prev) => {
+          const byId = new Map(prev.map((c) => [String(c.id || c._id), c]));
+          found.forEach((c) => {
+            const id = String(c.id || c._id || "");
+            if (id) byId.set(id, c);
+          });
+          return [...byId.values()];
+        });
+      }
+      setAttemptedContactIds((prev) => [...new Set([...prev, ...unique])]);
+      setContactsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [docsForGib, isPrint, mergedContacts, attemptedContactIds]);
 
   useEffect(() => {
     if (isPrint) {
@@ -394,11 +479,22 @@ export function ElektronikFaturaOnayModal({
         }
       });
 
+    if (contactsPending || contactsLoading) {
+      loadCredits.finally(() => {
+        if (!cancelled) setLoadingMeta(true);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const refresh = gibRefreshRef.current;
+    gibRefreshRef.current = false;
     const loadAll = Promise.all(docsForGib.map(async (d, idx) => {
       const key = docKey(d, idx);
-      const tax = docBuyerTaxId(d, resolveOrderContact(d, contacts));
+      const tax = docBuyerTaxId(d, contactFor(d));
       try {
-        const entry = await fetchGibMukellef(companyId, tax);
+        const entry = await fetchGibMukellef(companyId, tax, axios.get, { refresh });
         return [key, entry];
       } catch (err) {
         const detail = err?.gibEntry?.error
@@ -429,11 +525,12 @@ export function ElektronikFaturaOnayModal({
     return () => {
       cancelled = true;
     };
-  }, [companyId, contacts, docsForGib, isPrint, gibRetry]);
+  }, [companyId, contacts, extraContacts, docsForGib, isPrint, gibRetry, contactsPending, contactsLoading, contactFor]);
 
-  const retryGib = () => {
+  const retryGib = (forceRefresh = false) => {
+    gibRefreshRef.current = !!forceRefresh;
     docsForGib.forEach((d) => {
-      dropGibMukellef(companyId, docBuyerTaxId(d, resolveOrderContact(d, contacts)));
+      dropGibMukellef(companyId, docBuyerTaxId(d, contactFor(d)));
     });
     setDocGib({});
     setGibError("");
@@ -556,7 +653,10 @@ export function ElektronikFaturaOnayModal({
     const sourceDocs = bulkDocs.length ? bulkDocs : doc ? [doc] : [];
     const documents = sourceDocs.map((d, idx) => {
       const dec = decisionFor(d, idx);
-      const eType = forcedEType === "e_archive" || dec.eType !== "e_invoice" ? "e_archive" : "e_invoice";
+      if (dec.eType !== "e_invoice" && dec.eType !== "e_archive") {
+        throw new Error(dec.error || "GİB mükellefiyeti doğrulanamadı.");
+      }
+      const eType = forcedEType === "e_archive" ? "e_archive" : dec.eType;
       const docIsReturn = isReturnInvoiceDoc(d);
       const docScenario = eType === "e_invoice"
         ? (docIsReturn || sc === "TEMEL" ? "TEMEL" : "TICARI")
@@ -729,7 +829,7 @@ export function ElektronikFaturaOnayModal({
             <>
               {loadingMeta ? (
                 <p className="text-sm text-slate-500 flex items-center gap-2" data-testid="efatura-onay-loading">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Entegratör sorgulanıyor…
+                  <Loader2 className="w-4 h-4 animate-spin" /> {contactsPending || contactsLoading ? "Yükleniyor…" : "Entegratör sorgulanıyor…"}
                 </p>
               ) : (
                 <p
@@ -739,6 +839,42 @@ export function ElektronikFaturaOnayModal({
                 >
                   {message}
                 </p>
+              )}
+              {!isPrint && gibDecisions.length > 0 && (
+                <div
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 space-y-2 text-xs text-slate-700"
+                  data-testid="efatura-onay-gib-meta"
+                >
+                  {gibDecisions.slice(0, isBulk ? 8 : 1).map((dec, idx) => {
+                    const aliases = Array.isArray(dec.data?.aliases) && dec.data.aliases.length
+                      ? dec.data.aliases
+                      : (dec.data?.alias ? [dec.data.alias] : []);
+                    return (
+                      <div key={`${dec.tax || "tax"}-${idx}`} className="space-y-0.5" data-testid={`efatura-onay-gib-row-${idx}`}>
+                        <div data-testid="efatura-onay-vkn">VKN: {dec.tax || "—"}</div>
+                        <div data-testid="efatura-onay-vkn-origin">VKN kaynağı: {dec.taxSource || "—"}</div>
+                        <div data-testid="efatura-onay-unvan">Unvan: {dec.data?.name || "—"}</div>
+                        <div data-testid="efatura-onay-source">Kaynak: {dec.data?.source || "—"}</div>
+                        <div data-testid="efatura-onay-aliases">
+                          Etiket: {aliases.length ? aliases.join(", ") : "—"}
+                        </div>
+                        {dec.mismatch ? (
+                          <div className="text-amber-800 font-medium" data-testid="efatura-onay-tax-mismatch">
+                            Fatura VKN {dec.docTax} ile cari VKN {dec.contactTax} farklı. Sorgu fatura VKN ile yapıldı.
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => retryGib(true)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-semibold"
+                    data-testid="efatura-onay-gib-refresh"
+                  >
+                    GİB&apos;i yeniden sorgula
+                  </button>
+                </div>
               )}
               {credits != null && !isPrint && (
                 <div
@@ -811,7 +947,7 @@ export function ElektronikFaturaOnayModal({
                             ? "E-Fatura"
                             : "E-Arşiv";
                       return (
-                      <li key={docKey(d, idx)} className="text-xs text-slate-700 flex justify-between gap-2">
+                      <li key={docKey(d, idx)} className="text-xs text-slate-700 flex justify-between gap-2" data-kind={kind}>
                         <span className="font-semibold truncate">{docLabel(d)}</span>
                         <span className="text-slate-400 truncate shrink min-w-0">
                           {kind}
@@ -1094,7 +1230,7 @@ export function ElektronikFaturaOnayModal({
                   </button>
                   <button
                     type="button"
-                    onClick={retryGib}
+                    onClick={() => retryGib(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-sm font-semibold"
                     data-testid="efatura-onay-retry"
                   >

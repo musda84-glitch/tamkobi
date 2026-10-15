@@ -24,6 +24,7 @@ import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { contactMukellefPatch } from "../utils/gibMukellef";
 import { formatOrderDateTime } from "../utils/orderTermin";
+import { InvoiceOrderMismatchBadge } from "./InvoiceOrderMismatchBadge";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
@@ -951,7 +952,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         )}
                       </td>
                       <td className="py-2 font-mono text-slate-500">{o.cargo_tracking_number || "—"}</td>
-                      <td className="py-2 text-right font-bold">{fmt(o.grand_total ?? o.total_amount)}</td>
+                      <td className="py-2 text-right font-bold">{fmt(o.grand_total ?? o.total_amount)}<div className="font-normal"><InvoiceOrderMismatchBadge ord={o} /></div></td>
                       <td className="py-2 text-right">
                         <div className="flex justify-end gap-1">
                           {isCart ? (
@@ -1512,7 +1513,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 const t = documentLineTotals((orderDetail.items || []).map((it) => withMarketplaceVatFlag(it, orderDetail.channel)));
                 const footer = orderFooterTotals(orderDetail, t);
                 return (
-              <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(footer.subtotal)}</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(footer.vat)}</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(footer.grandTotal)}</span></div></div>
+              <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(footer.subtotal)}</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(footer.vat)}</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(footer.grandTotal)}</span></div><InvoiceOrderMismatchBadge ord={orderDetail} /></div>
                 );
               })()}
               <div className="flex justify-between text-slate-500"><span>Fatura: {orderDetail.is_invoiced ? "Kesildi" : "Kesilmedi"}</span></div>

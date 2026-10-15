@@ -408,6 +408,22 @@ def _amt(n: Any) -> str:
         return "0.00"
 
 
+def despatch_document_refs(inv: Dict[str, Any], fallback_date: str = "") -> list:
+    """Her irsaliye için (numara, IssueDate). Çoklu birleştirmede sıra korunur."""
+    numbers = [str(n).strip() for n in (inv.get("dispatch_numbers") or []) if str(n or "").strip()]
+    dates = list(inv.get("dispatch_dates") or [])
+    if numbers:
+        out = []
+        for i, num in enumerate(numbers):
+            raw = dates[i] if i < len(dates) and dates[i] else (inv.get("dispatch_date") or fallback_date)
+            out.append((num, _date(raw or fallback_date)))
+        return out
+    disp_no = str(inv.get("dispatch_number") or "").strip()
+    if not disp_no:
+        return []
+    return [(disp_no, _date(inv.get("dispatch_date") or inv.get("issue_date") or fallback_date))]
+
+
 def _date(s: Any) -> str:
     raw = str(s or "")[:10]
     if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
@@ -756,7 +772,7 @@ def build_invoice_ubl(
     _cbc(root, "DocumentCurrencyCode", currency)
     _cbc(root, "LineCountNumeric", str(len(items) or 1))
 
-    # UBL sıra: BillingReference → AdditionalDocumentReference → Signature
+    # UBL sıra: BillingReference → DespatchDocumentReference → AdditionalDocumentReference → Signature
     # İade: orijinal satış faturasına BillingReference (GİB Schematron zorunlu)
     if returning:
         bref = _return_billing_ref(inv)
@@ -774,6 +790,11 @@ def build_invoice_ubl(
             _cbc(idr, "DocumentTypeCode", dcode or "İADE")
             if dtype:
                 _cbc(idr, "DocumentType", dtype[:120])
+
+    for disp_id, disp_date in despatch_document_refs(inv, issue_date):
+        dref = _cac(root, "DespatchDocumentReference")
+        _cbc(dref, "ID", disp_id)
+        _cbc(dref, "IssueDate", disp_date)
 
     if send_ready and (e_type == "e_archive" or profile == "EARSIVFATURA"):
         buyer_email = str(buyer.get("email") or inv.get("contact_email") or "").strip()
@@ -956,9 +977,10 @@ def build_invoice_ubl(
 
 def _buyer_from(inv: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     c = contact or {}
+    from buyer_tax import buyer_tax_choice
     return {
         "name": c.get("name") or inv.get("contact_name") or "",
-        "tax_number_or_id": c.get("tax_number_or_id") or inv.get("contact_tax_id") or "",
+        "tax_number_or_id": buyer_tax_choice(inv, c)["tax"],
         "tax_office": c.get("tax_office") or "",
         "address": c.get("address") or inv.get("shipping_address") or "",
         "city": c.get("city") or inv.get("city") or "",
@@ -970,33 +992,9 @@ def _buyer_from(inv: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> Dict[
 
 def _despatch_transport(inv: Dict[str, Any]) -> Dict[str, str]:
     """Plaka / sürücü / taşıyıcı — belge alanı veya despatch_defaults."""
-    nested = inv.get("despatch_defaults") if isinstance(inv.get("despatch_defaults"), dict) else {}
-    def _g(*keys: str) -> str:
-        for k in keys:
-            if inv.get(k) not in (None, ""):
-                return str(inv.get(k) or "").strip()
-            if nested.get(k) not in (None, ""):
-                return str(nested.get(k) or "").strip()
-        return ""
-    plate = _g("despatch_plate", "plate", "vehicle_plate").upper().replace(" ", "")
-    trailer = _g("despatch_trailer", "trailer").upper().replace(" ", "")
-    driver_first = _g("despatch_driver_first", "driver_first", "driver_name")
-    driver_last = _g("despatch_driver_last", "driver_last")
-    if driver_first and not driver_last and " " in driver_first:
-        parts = driver_first.split(None, 1)
-        driver_first, driver_last = parts[0], parts[1]
-    driver_tckn = "".join(ch for ch in _g("despatch_driver_tckn", "driver_tckn") if ch.isdigit())
-    carrier_name = _g("despatch_carrier_name", "carrier_name", "cargo_carrier")
-    carrier_vkn = "".join(ch for ch in _g("despatch_carrier_vkn", "carrier_vkn") if ch.isdigit())
-    return {
-        "plate": plate,
-        "trailer": trailer,
-        "driver_first": driver_first,
-        "driver_last": driver_last,
-        "driver_tckn": driver_tckn,
-        "carrier_name": carrier_name,
-        "carrier_vkn": carrier_vkn,
-    }
+    from despatch_shipment import transport_from
+
+    return transport_from(inv)
 
 
 def build_despatch_ubl(
@@ -1016,11 +1014,12 @@ def build_despatch_ubl(
     if not issue_time:
         issue_time = default_issue_time()
     transport = _despatch_transport(inv)
-    if send_ready and not transport["plate"]:
-        raise ValueError(
-            "e-İrsaliye için araç plakası zorunlu. "
-            "Ayarlar → İşNet e-İrsaliye varsayılanları veya irsaliye belgesine plaka girin."
-        )
+    if send_ready:
+        from despatch_shipment import shipment_error_message
+
+        message = shipment_error_message(inv, seller)
+        if message:
+            raise ValueError(message)
 
     root = ET.Element(_q(DESPATCH_NS, "DespatchAdvice"))
     if send_ready:
@@ -1041,6 +1040,8 @@ def build_despatch_ubl(
         _cbc(root, "Note", notes[:500])
     if transport["plate"]:
         _cbc(root, "Note", f"Plaka: {transport['plate']}")
+    if transport.get("tracking"):
+        _cbc(root, "Note", f"Kargo takip no: {transport['tracking'][:80]}")
     _cbc(root, "LineCountNumeric", str(len(items)))
 
     inv_ref = str(
@@ -1104,8 +1105,11 @@ def build_despatch_ubl(
 
     shipment = _cac(root, "Shipment")
     _cbc(shipment, "ID", "1")
-    # GİB: nakliye = Shipment + ShipmentStage (plaka) + Delivery (adres, taşıyıcı, fiili sevk)
-    if transport["plate"] or transport["driver_tckn"] or transport["driver_first"] or send_ready:
+    # ShipmentStage yalnızca plaka veya şoför varken. Boş stage (yalnız TransportModeCode) üretilmez.
+    has_stage = bool(
+        transport["plate"] or transport["driver_tckn"] or transport["driver_first"] or transport["driver_last"]
+    )
+    if has_stage:
         stage = _cac(shipment, "ShipmentStage")
         _cbc(stage, "TransportModeCode", "3")  # 3 = karayolu (GİB kod listesi)
         if transport["plate"]:
@@ -1114,7 +1118,7 @@ def build_despatch_ubl(
             _cbc(road, "LicensePlateID", transport["plate"], schemeID="PLAKA")
         if transport["trailer"]:
             _cbc(stage, "Instructions", f"Dorse: {transport['trailer']}")
-        if transport["driver_first"] or transport["driver_tckn"]:
+        if transport["driver_first"] or transport["driver_last"] or transport["driver_tckn"]:
             driver = _cac(stage, "DriverPerson")
             _cbc(driver, "FirstName", (transport["driver_first"] or "Sürücü")[:60])
             _cbc(driver, "FamilyName", (transport["driver_last"] or "-")[:60])
@@ -1124,26 +1128,33 @@ def build_despatch_ubl(
 
     delivery = _cac(shipment, "Delivery")
     _fill_address(_cac(delivery, "DeliveryAddress"), buyer_party, send_ready=True)
-    carrier_party = _cac(delivery, "CarrierParty")
-    if transport["carrier_vkn"] or transport["carrier_name"]:
-        if transport["carrier_vkn"]:
+    carrier_vkn = transport["carrier_vkn"]
+    carrier_name = transport["carrier_name"]
+    use_seller_as_carrier = False
+    if not (carrier_vkn or carrier_name) and transport["mode"] == "own":
+        scheme, tid = _tax_id(seller_party.get("tax_id"))
+        from despatch_shipment import seller_tax_usable
+        if seller_tax_usable(tid):
+            carrier_vkn = tid
+            carrier_name = str(seller_party.get("name") or "").strip()
+            use_seller_as_carrier = True
+        elif send_ready:
+            raise ValueError("Taşıyıcı bilgisi eksik. Satıcının 0000000000 VKN'si ile sahte taşıyıcı yazılmaz.")
+    if carrier_vkn or carrier_name:
+        carrier_party = _cac(delivery, "CarrierParty")
+        if carrier_vkn:
             cident = _cac(carrier_party, "PartyIdentification")
-            scheme = "VKN" if len(transport["carrier_vkn"]) == 10 else "TCKN"
-            _cbc(cident, "ID", transport["carrier_vkn"], schemeID=scheme)
-        if transport["carrier_name"]:
+            scheme = "VKN" if len(carrier_vkn) == 10 else "TCKN"
+            _cbc(cident, "ID", carrier_vkn, schemeID=scheme)
+        if carrier_name:
             cpn = _cac(carrier_party, "PartyName")
-            _cbc(cpn, "Name", transport["carrier_name"][:200])
-        else:
+            _cbc(cpn, "Name", carrier_name[:200])
+        elif use_seller_as_carrier:
             cpn = _cac(carrier_party, "PartyName")
             _cbc(cpn, "Name", str(seller_party.get("name") or "Taşıyıcı")[:200])
         _fill_address(_cac(carrier_party, "PostalAddress"), seller_party, send_ready=True)
-    else:
-        cident = _cac(carrier_party, "PartyIdentification")
-        scheme, tid = _tax_id(seller_party.get("tax_id"))
-        _cbc(cident, "ID", tid or "0000000000", schemeID=scheme or "VKN")
-        cpn = _cac(carrier_party, "PartyName")
-        _cbc(cpn, "Name", str(seller_party.get("name") or "Taşıyıcı")[:200])
-        _fill_address(_cac(carrier_party, "PostalAddress"), seller_party, send_ready=True)
+    elif send_ready:
+        raise ValueError("Taşıyıcı bilgisi eksik. Satıcının 0000000000 VKN'si ile sahte taşıyıcı yazılmaz.")
     despatch = _cac(delivery, "Despatch")
     _cbc(despatch, "ActualDespatchDate", issue_date)
     _cbc(despatch, "ActualDespatchTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)

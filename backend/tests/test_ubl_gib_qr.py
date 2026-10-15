@@ -242,7 +242,13 @@ def test_send_ready_despatch_embeds_xslt_not_images():
     inv = _sales(
         invoice_number="IRS2026000000001",
         e_type="e_dispatch",
+        despatch_mode="own",
         despatch_plate="34ABC123",
+        issue_time="10:00:00",
+        shipping_address="Teslim adresi 1",
+        despatch_driver_first="Ali",
+        despatch_driver_last="Yilmaz",
+        despatch_driver_tckn="10000000146",
     )
     xml = ubl_export.build_despatch_ubl(
         inv, _seller(), _buyer(), send_ready=True, xslt=classic_isnet_xslt("e_dispatch"),
@@ -342,7 +348,16 @@ def test_build_despatch_ubl_send_ready_blocks_injected_logo(monkeypatch):
         )
 
     monkeypatch.setattr(ubl_export, "attach_xslt_stylesheet", wrapped)
-    inv = _sales(invoice_number="IRS2026000000002", despatch_plate="06XYZ789")
+    inv = _sales(
+        invoice_number="IRS2026000000002",
+        despatch_mode="own",
+        despatch_plate="06XYZ789",
+        issue_time="10:00:00",
+        shipping_address="Teslim adresi 1",
+        despatch_driver_first="Ali",
+        despatch_driver_last="Yilmaz",
+        despatch_driver_tckn="10000000146",
+    )
     with pytest.raises(ValueError, match="XSLT"):
         ubl_export.build_despatch_ubl(
             inv, _seller(), _buyer(), send_ready=True, xslt=_XSLT,

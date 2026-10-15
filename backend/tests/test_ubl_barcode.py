@@ -139,7 +139,11 @@ def test_invoice_ubl_writes_additional_item_identification():
 
 
 def test_despatch_ubl_writes_additional_item_identification():
-    inv = _inv(invoice_type="dispatch", e_type="e_dispatch", despatch_plate="34ABC123")
+    inv = _inv(
+        invoice_type="dispatch", e_type="e_dispatch", despatch_mode="own",
+        despatch_plate="34ABC123", issue_time="10:00:00", shipping_address="Teslim adresi 1",
+        despatch_driver_first="Ali", despatch_driver_last="Yilmaz", despatch_driver_tckn="10000000146",
+    )
     xml = ubl_export.build_despatch_ubl(inv, _seller(), _buyer(), send_ready=True)
     root = ET.fromstring(xml)
     item = _item(root, "DespatchLine")

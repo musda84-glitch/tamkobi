@@ -48,6 +48,7 @@ from order_list_filter import (
 from b2b_catalog import b2b_catalog_mongo_filter
 from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
 from contact_tax import contact_tax_patch
+from buyer_tax import buyer_tax_choice, invoice_contact_tax_id
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -69,6 +70,13 @@ from line_totals import (
     INVOICE_ITEM_FIELDS,
     ORDER_ITEM_FIELDS,
     pick_fields,
+)
+from order_invoice_mismatch import (
+    attach_invoice_mismatch_warnings,
+    order_is_shipped_for_sync,
+    order_items_signature,
+    order_sync_skip_reason,
+    pick_status_is_open,
 )
 from stock_codes import fill_stock_codes as _fill_stock_codes_impl, _variant_source as _b2b_variant_source
 from auth_utils import (
@@ -5396,6 +5404,7 @@ async def _b2b_contact(token: str) -> Dict[str, Any]:
     return c
 
 async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[OrderItem]:
+    import event_notify
     disc = float(contact.get("b2b_discount", 0) or 0)
     items: List[OrderItem] = []
     for it in raw_items or []:
@@ -5421,6 +5430,13 @@ async def _b2b_build_items(contact: Dict[str, Any], raw_items: list) -> List[Ord
             "price_includes_vat": includes,
             "is_service": p.get("type") == "service",
         }
+        existing_image = str(it.get("image_url") or it.get("image") or "").strip()
+        if existing_image:
+            d["image_url"] = existing_image
+        else:
+            card_image = event_notify.order_line_card_image(it, p)
+            if card_image:
+                d["image_url"] = card_image
         enrich_line(d, price_mode="incl" if includes else "excl", default_vat=vat_rate)
         payload = pick_fields(d, ORDER_ITEM_FIELDS)
         if "product_name" not in payload:
@@ -5445,7 +5461,7 @@ async def _notify_company(company_id: str, typ: str, title: str, message: str, r
             await event_notify.notify_event(
                 company_id, "order_new", title, message,
                 link="/orders", ref_type="order", ref_id=ref_id,
-                dedupe_key=f"order:b2b:{ref_id}",
+                dedupe_key=f"order:{ref_id}",
             )
             return
         except Exception:
@@ -6194,6 +6210,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             o["einvoice_state"] = inv.get("einvoice_state") or o.get("einvoice_state")
             o["invoice_gib_status"] = inv.get("gib_status")
     await _annotate_orders_invoice_missing(orders)
+    await _annotate_orders_invoice_mismatch(orders, preloaded=inv_by_id)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
     mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(200)
     email_deliveries = [m for m in mails if mail_tracking.within_days(m.get("created_at") or "")][:80]
@@ -7957,24 +7974,36 @@ async def update_product_images(product_id: str, req: Dict[str, Any], user: dict
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
     return clean_doc(updated)
 
+def _file_thumb_fmt(fmt: Optional[str]) -> str:
+    f = (fmt or "").strip().lower()
+    if f in ("jpg", "jpeg"):
+        return "jpg"
+    if f == "png":
+        return "png"
+    return "webp"
+
+
 @api_router.get("/files/{path:path}")
-async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
-    """Dosya sunumu. w=64|128|320 → küçük WebP (önbellekli; liste/kart tam dosya çekmez)."""
+async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280), fmt: Optional[str] = Query(None)):
+    """Dosya sunumu. w=64|128|320 küçültür. fmt=jpg|png|webp (e-posta JPEG/PNG)."""
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     # Önce cache: hit olursa orijinali storage'dan hiç okuma
-    if w:
-        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
+    thumb_fmt = _file_thumb_fmt(fmt) if (w or (fmt or "").strip()) else "webp"
+    edge = int(w) if w else (1280 if (fmt or "").strip() else 0)
+    if w or (fmt or "").strip():
+        cache_key = image_opt.resize_cache_path(path, edge or int(w or 128), thumb_fmt)
         if cache_key != path:
             try:
                 cached, cached_ct = get_object(cache_key)
                 if cached and len(cached) > 32:
+                    fallback_ct = {"jpg": "image/jpeg", "png": "image/png"}.get(thumb_fmt, "image/webp")
                     return Response(
                         content=cached,
-                        media_type=cached_ct or "image/webp",
+                        media_type=cached_ct or fallback_ct,
                         headers={
                             "Cache-Control": "public, max-age=604800, immutable",
                             "Vary": "Accept",
-                            "X-Image-Resize": str(w),
+                            "X-Image-Resize": str(edge or w or ""),
                             "X-Image-Cache": "hit",
                         },
                     )
@@ -7993,10 +8022,13 @@ async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
     head = data[:240].lstrip().lower()
     if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
-    if w and media.startswith("image/") and media != "image/svg+xml":
-        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
-        thumb = image_opt.make_thumbnail(data, media, path, max_edge=int(w), quality=70)
-        if thumb and thumb.data and len(thumb.data) < len(data):
+    if (w or (fmt or "").strip()) and media.startswith("image/") and media != "image/svg+xml":
+        cache_key = image_opt.resize_cache_path(path, edge or int(w or 128), thumb_fmt)
+        thumb = image_opt.make_thumbnail(
+            data, media, path, max_edge=edge or int(w or 128), quality=70, out_fmt=thumb_fmt,
+        )
+        force_fmt = bool((fmt or "").strip()) and thumb_fmt in ("jpg", "png")
+        if thumb and thumb.data and (force_fmt or len(thumb.data) < len(data)):
             if cache_key != path:
                 try:
                     put_object(cache_key, thumb.data, thumb.content_type)
@@ -8008,7 +8040,7 @@ async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
                 headers={
                     "Cache-Control": "public, max-age=604800, immutable",
                     "Vary": "Accept",
-                    "X-Image-Resize": str(w),
+                    "X-Image-Resize": str(edge or w or ""),
                     "X-Image-Cache": "miss",
                 },
             )
@@ -8092,6 +8124,37 @@ async def quick_stock_adjust(req: Dict[str, Any]):
 async def _fill_stock_codes(company_id: str, items: list):
     """Copy product SKU / barcode onto document lines when missing (print + scan + UBL)."""
     return await _fill_stock_codes_impl(db, company_id, items)
+
+
+async def _fill_order_line_images(company_id: str, items: list) -> None:
+    """Yeni sipariş kalemine ürün kartı görseli. Dolu pazaryeri görseli korunur."""
+    if not items:
+        return
+    from stock_codes import line_get, line_set, load_products_for_items
+    import event_notify
+    try:
+        products = await load_products_for_items(db, items)
+    except Exception:
+        logger.exception("order line image lookup failed")
+        return
+    for it in items:
+        if str(line_get(it, "image_url") or "").strip():
+            continue
+        pid = str(line_get(it, "product_id") or "")
+        product = products.get(pid) if pid else None
+        if not isinstance(product, dict):
+            continue
+        if company_id and product.get("company_id") and str(product.get("company_id")) != str(company_id):
+            continue
+        raw = it if isinstance(it, dict) else {
+            "product_id": pid,
+            "sku": line_get(it, "sku"),
+            "barcode": line_get(it, "barcode"),
+            "variant_id": getattr(it, "variant_id", "") or "",
+        }
+        img = event_notify.order_line_card_image(raw, product)
+        if img:
+            line_set(it, "image_url", img)
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
@@ -8177,7 +8240,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
     settings = await db.einvoice_settings.find_one({"company_id": inv["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
     doc = {"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
-           "contact_tax_id": inv.get("contact_tax_id") or (contact or {}).get("tax_number_or_id") or (contact or {}).get("tax_id"),
+           "contact_tax_id": buyer_tax_choice(inv, contact)["tax"] or invoice_contact_tax_id(contact),
            "shipping_address": (contact or {}).get("address"), "city": (contact or {}).get("city"), "items": [{**it, "vat_rate": 0} for it in inv.get("items", [])],
            "subtotal": inv.get("subtotal", 0), "vat_total": 0, "grand_total": inv.get("subtotal", 0), "currency": inv.get("currency", "TRY"), "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
            "invoice_id": invoice_id, "invoice_ref_number": inv.get("invoice_number"), "source_channel": inv.get("source_channel", "manual"), "dispatch_status": "draft",
@@ -8316,7 +8379,7 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
         if not contact:
             raise HTTPException(status_code=400, detail="Hedef cari bulunamadı.")
         contact_name = contact.get("name") or ""
-        contact_tax_id = contact.get("tax_number_or_id") or contact.get("tax_id")
+        contact_tax_id = invoice_contact_tax_id(contact)
         contact_tax_office = contact.get("tax_office")
     elif not contact_id:
         raise HTTPException(status_code=400, detail="Faturada cari yok; farklı cari seçerek kopyalayın.")
@@ -8445,25 +8508,104 @@ async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, 
             "invoice": clean_doc(linked or existing),
             "message": f"{d.get('invoice_number')} mevcut faturaya bağlandı: {num}",
         }
+    doc = await _merge_dispatches_core([dispatch_id], user, company_id=d.get("company_id"))
+    return {
+        "status": "success",
+        "invoice": clean_doc(dict(doc)),
+        "message": f"{d['invoice_number']} → {doc['invoice_number']} satış faturası oluşturuldu.",
+    }
+
+
+class _IdempotencyKeyRequest:
+    """Gövdedeki idempotency_key'i Idempotency-Key başlığı gibi sunar."""
+
+    def __init__(self, key: str):
+        self.headers = {"Idempotency-Key": str(key or "").strip()[:200]}
+
+
+def _idem_request(request: Request, body: Optional[Dict[str, Any]]):
+    if idempotency.header_key(request):
+        return request
+    key = ""
+    if isinstance(body, dict):
+        key = str(body.get("idempotency_key") or "").strip()
+    if key:
+        return _IdempotencyKeyRequest(key)
+    return request
+
+
+async def _merge_dispatches_core(dispatch_ids, user: dict, company_id: Optional[str] = None) -> dict:
+    """Giden irsaliyelerden tek TASLAK satış faturası. Tekli dönüşüm de bunu kullanır."""
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    seen = []
+    for raw in dispatch_ids or []:
+        sid = str(raw or "").strip()
+        if sid and sid not in seen:
+            seen.append(sid)
+    if not seen:
+        raise HTTPException(status_code=400, detail="Birleştirilecek irsaliye seçin.")
+    loaded = []
+    for did in seen:
+        row = await db.invoices.find_one({"_id": did})
+        if not row or row.get("invoice_type") != "dispatch" or str(row.get("company_id") or "") != str(company_id):
+            raise HTTPException(status_code=404, detail="İrsaliye bulunamadı.")
+        loaded.append(row)
+    products = {
+        p["_id"]: p
+        for p in await db.products.find({"company_id": company_id}, {"vat_rate": 1}).to_list(3000)
+    }
+
+    async def create_invoice(spec: dict):
+        items = [InvoiceItem(**it) for it in spec["items"]]
+        inv = Invoice(
+            company_id=spec["company_id"],
+            invoice_type="sales",
+            e_type="e_archive",
+            contact_id=spec["contact_id"],
+            contact_name=spec.get("contact_name") or "",
+            contact_tax_id=spec.get("contact_tax_id") or "",
+            contact_tax_office=spec.get("contact_tax_office") or "",
+            items=items,
+            currency=spec.get("currency") or "TRY",
+            fx_rate=float(spec.get("fx_rate") or 1),
+            fx_source=spec.get("fx_source"),
+            general_discount_rate=float(spec.get("general_discount_rate") or 0),
+            general_discount_amount=float(spec.get("general_discount_amount") or 0),
+            status="draft",
+            notes=spec.get("notes") or "",
+            source_channel=spec.get("source_channel") or "manual",
+            issue_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        )
+        return await _create_invoice_core(inv, user)
+
+    try:
+        return await dispatch_invoice.merge_loaded_dispatches(
+            db, loaded, company_id=company_id, products=products, create_invoice=create_invoice,
+        )
+    except dispatch_invoice.MergeBlocked as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@api_router.post("/dispatches/merge-to-invoice")
+async def merge_dispatches_to_invoice(request: Request, req: Optional[Dict[str, Any]] = None, user: dict = Depends(get_current_user)):
+    """Seçilen giden irsaliyeleri tek taslak satış faturasında birleştirir."""
     req = req or {}
-    products = {p["_id"]: p for p in await db.products.find({"company_id": d["company_id"]}, {"vat_rate": 1}).to_list(3000)}
-    items = []
-    for it in d.get("items", []):
-        vat = int(it.get("vat_rate") or 0) or int((products.get(it.get("product_id")) or {}).get("vat_rate") or 20)
-        items.append(InvoiceItem(product_id=it.get("product_id"), name=it.get("name") or "Kalem", quantity=float(it.get("quantity") or 1), unit=it.get("unit") or "Adet", unit_price=float(it.get("unit_price") or 0), vat_rate=vat, discount_rate=float(it.get("discount_rate") or 0), total=float(it.get("total") or 0), sku=it.get("sku") or "", barcode=it.get("barcode") or ""))
-    if not items:
-        raise HTTPException(status_code=400, detail="İrsaliyede kalem yok.")
-    if not d.get("contact_id"):
-        raise HTTPException(status_code=400, detail="İrsaliyede cari bağlı değil; önce cari seçin.")
-    inv = Invoice(company_id=d["company_id"], invoice_type="sales", e_type=req.get("e_type") or "e_archive", contact_id=d["contact_id"], contact_name=d.get("contact_name") or "", contact_tax_id=d.get("contact_tax_id") or "",
-                  issue_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"), items=items, currency=d.get("currency") or "TRY", status="draft", notes=f"İrsaliye: {d['invoice_number']}" + (f" · Sipariş: {d['order_number']}" if d.get("order_number") else ""),
-                  source_channel=d.get("source_channel") or "manual")
-    created = await _create_invoice_core(inv, user)
-    await db.invoices.update_one({"_id": created["id"]}, {"$set": {"dispatch_id": dispatch_id, "dispatch_number": d["invoice_number"], "order_id": d.get("order_id"), "order_number": d.get("order_number")}})
-    await db.invoices.update_one({"_id": dispatch_id}, {"$set": {"converted_invoice_id": created["id"], "converted_invoice_number": created["invoice_number"], "dispatch_status": "invoiced"}})
-    if d.get("order_id"):
-        await db.orders.update_one({"_id": d["order_id"], "invoice_id": None}, {"$set": {"invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
-    return {"status": "success", "invoice": clean_doc(await db.invoices.find_one({"_id": created["id"]})), "message": f"{d['invoice_number']} → {created['invoice_number']} satış faturası oluşturuldu."}
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+
+    async def go():
+        doc = await _merge_dispatches_core(req.get("dispatch_ids") or [], user, company_id=company_id)
+        n = len(doc.get("dispatch_ids") or [])
+        num = doc.get("invoice_number")
+        if n <= 1:
+            src = (doc.get("dispatch_numbers") or [""])[0]
+            msg = f"{src} → {num} satış faturası oluşturuldu."
+        else:
+            msg = f"{n} irsaliye {num} taslak satış faturasında birleştirildi."
+        return {"status": "success", "invoice": clean_doc(dict(doc)), "message": msg}
+
+    return await idempotency.run(
+        db, company_id, _idem_request(request, req), "dispatches/merge-to-invoice", go,
+    )
 
 async def _create_invoice_core(invoice: Invoice, user: dict):
     invoice.company_id = tenant_access.resolve_company_id(user, invoice.company_id)
@@ -8655,7 +8797,9 @@ async def _apply_invoice_effects(inv: dict):
     if inv.get("contact_id"):
         change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
-    if inv.get("invoice_type") == "sales":
+    # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
+    skip_stock = bool(inv.get("stock_effects_from_dispatch"))
+    if inv.get("invoice_type") == "sales" and not skip_stock:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
@@ -8681,7 +8825,8 @@ async def _reverse_invoice_effects(inv: dict):
     if inv.get("contact_id"):
         change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
-    if inv.get("invoice_type") == "sales":
+    skip_stock = bool(inv.get("stock_effects_from_dispatch"))
+    if inv.get("invoice_type") == "sales" and not skip_stock:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
@@ -8836,32 +8981,29 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
 
 
 async def _mark_order_invoiced_from_invoice(inv: dict) -> None:
-    """Onaylı / e-belge kesilmiş faturayı siparişe bağla (is_invoiced)."""
-    oid = inv.get("order_id")
-    if not oid:
-        return
-    await db.orders.update_one(
-        {"_id": oid},
-        {"$set": {
-            "is_invoiced": True,
-            "invoice_id": inv.get("_id"),
-            "invoice_number": inv.get("invoice_number"),
-        }},
-    )
+    """Onaylı / e-belge kesilmiş faturayı bağlı siparişlerin hepsine yaz (is_invoiced)."""
+    await dispatch_invoice.mark_orders_invoiced(db, inv)
 
 @api_router.get("/gib/lookup")
-async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_01"):
-    tid = "".join(ch for ch in tax_id if ch.isdigit())
-    if len(tid) not in (10, 11):
-        raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
-    result = await e_invoice.resolve_buyer_mukellef(company_id, tid)
+async def gib_lookup(
+    tax_id: str,
+    company_id: Optional[str] = None,
+    refresh: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    tid = "".join(ch for ch in (tax_id or "") if ch.isdigit())
+    result = await e_invoice.resolve_buyer_mukellef(company_id, tid, refresh=bool(refresh))
     local = result.get("local_contact")
+    status = result.get("lookup_status") or ("mukellef" if result.get("is_e_invoice_user") else "not_mukellef")
     return {
         "tax_id": result["tax_id"],
         "kind": result["kind"],
         "is_e_invoice_user": result["is_e_invoice_user"],
         "suggested_e_type": result["suggested_e_type"],
         "alias": result.get("alias"),
+        "aliases": result.get("aliases") or [],
+        "lookup_status": status,
         "source": result.get("source"),
         "name": result.get("name") or "",
         "local_contact": clean_doc(local) if local else None,
@@ -8874,11 +9016,21 @@ def _invoice_gib_locked(inv: dict) -> bool:
     return invoice_gib_locked(inv)
 
 
+_DESPATCH_EDIT_KEYS = {
+    "despatch_mode", "despatch_plate", "despatch_trailer", "despatch_driver_first", "despatch_driver_last",
+    "despatch_driver_tckn", "despatch_carrier_name", "despatch_carrier_vkn", "cargo_tracking_number",
+}
+
+
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    from despatch_shipment import is_incoming_dispatch
+
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
+    if is_incoming_dispatch(inv):
+        raise HTTPException(status_code=400, detail="Gelen e-irsaliye düzenlenemez.")
     # GİB'e gönderilmemiş faturalar (taslak veya yalnızca yerel onay) tam düzenlenebilir
     if _invoice_gib_locked(inv):
         allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
@@ -8886,7 +9038,10 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}
+    if _is_dispatch_doc(inv):
+        editable = editable | _DESPATCH_EDIT_KEYS
+    allowed = {k: v for k, v in req.items() if k in editable}
     reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
         _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
@@ -8978,12 +9133,18 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
                     "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
                 )
             raise HTTPException(status_code=500, detail="Fatura etkileri uygulanamadı; değişiklik geri alındı.")
-    if updated and updated.get("status") == "draft" and "items" in allowed:
+    # Geri alma (rollback) bu noktaya gelmez. GİB kilidi yukarıda döner; kalem zaten yazılmaz.
+    line_or_discount = bool({"items", "general_discount_rate", "general_discount_amount"} & set(allowed))
+    if updated and line_or_discount and not _invoice_gib_locked(updated):
+        rows = allowed.get("items") or updated.get("items") or []
         try:
-            await _sync_draft_order_items(updated, allowed.get("items") or updated.get("items") or [])
+            wrote = await _sync_order_from_invoice(updated, rows)
+            if wrote and updated.get("status") == "draft":
+                # Taslak bağ alanları: is_invoiced False, fatura no. Onaylıda yazılmaz.
+                await _stamp_draft_order_invoice_link(updated)
         except Exception:
             logging.getLogger(__name__).exception(
-                "Taslak fatura→sipariş senkronu başarısız: %s", invoice_id
+                "Fatura→sipariş senkronu başarısız: %s", invoice_id
             )
     return clean_doc(updated)
 
@@ -9178,6 +9339,7 @@ async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
     if applied:
         await _reverse_invoice_effects(inv)
     await _unlink_orders_from_invoice(inv)
+    await dispatch_invoice.release_invoice_dispatches(db, inv)
     if _is_dispatch_doc(inv):
         await _unlink_dispatch_refs(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
@@ -9280,6 +9442,7 @@ async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user
             {"$unset": {"related_invoice_id": ""}},
         )
     await _unlink_orders_on_invoice_cancel(invoice_id)
+    await dispatch_invoice.release_invoice_dispatches(db, inv)
     if _is_dispatch_doc(inv):
         await _unlink_dispatch_refs(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
@@ -9332,8 +9495,21 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """GİB'e e-belge gönderimi — e_invoice.issue_invoice üzerinden."""
+    from despatch_shipment import despatch_gib_accepted, is_incoming_dispatch, shipment_patch_from_request
+
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    if _is_dispatch_doc(inv):
+        if is_incoming_dispatch(inv):
+            raise HTTPException(status_code=400, detail="Gelen e-irsaliye gönderilemez.")
+        if despatch_gib_accepted(inv):
+            raise HTTPException(status_code=409, detail="Bu irsaliye GİB tarafından kabul edilmiş; tekrar gönderilemez.")
+        patch = shipment_patch_from_request(req)
+        if patch:
+            await db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+            inv = await db.invoices.find_one({"_id": invoice_id}) or inv
+        if not req.get("e_type"):
+            req = {**req, "e_type": "e_dispatch"}
     if inv.get("status") == "draft" and not inv.get("effects_applied"):
         # İrsaliye bakiyeye yazılmaz; effects_applied işaretleme de yapılmaz.
         if not _is_dispatch_doc(inv):
@@ -13456,7 +13632,7 @@ async def delete_leave(leave_id: str, user: dict = Depends(get_current_user)):
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, user: dict = Depends(get_current_user)):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
-    await _annotate_orders_invoice_missing([o])
+    await _annotate_orders_invoice_flags([o])
     return clean_doc(o)
 
 _MARKETPLACE_EDIT_BLOCK = {
@@ -14016,7 +14192,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "invoice_number": invoice_number,
         "contact_id": contact["_id"],
         "contact_name": contact.get("name") or order.get("customer_name") or "",
-        "contact_tax_id": contact.get("tax_number_or_id") or "11111111111",
+        "contact_tax_id": invoice_contact_tax_id(contact),
         "shipping_address": _ship or None,
         "city": _city or None,
         "customer_phone": order.get("customer_phone") or contact.get("phone") or None,
@@ -14122,6 +14298,135 @@ async def _sync_draft_order_items(invoice: dict, items: list) -> None:
     }})
 
 
+def _order_sync_note(invoice: dict) -> str:
+    number = str(invoice.get("invoice_number") or "").strip() or "fatura"
+    return f"Fatura {number} düzenlemesinden güncellendi"
+
+
+def _same_money(a, b, places: int = 2) -> bool:
+    try:
+        return round(float(a or 0), places) == round(float(b or 0), places)
+    except (TypeError, ValueError):
+        return a == b
+
+
+async def _invoice_sync_pick_session_open(order: dict) -> bool:
+    """Açık toplama oturumu var mı? Oturum satırları burada değiştirilmez."""
+    if pick_status_is_open(order):
+        return True
+    oid = order.get("_id") or order.get("id")
+    if not oid:
+        return False
+    q: Dict[str, Any] = {"order_id": oid, "status": {"$nin": ["shipped", "delivered"]}}
+    company_id = order.get("company_id")
+    if company_id:
+        q["company_id"] = company_id
+    ses = await db.order_pick_sessions.find_one(q)
+    if not ses:
+        return False
+    if company_id and ses.get("company_id") and ses.get("company_id") != company_id:
+        return False
+    return str(ses.get("status") or "").strip().lower() not in ("shipped", "delivered")
+
+
+async def _stamp_draft_order_invoice_link(invoice: dict) -> None:
+    """Taslak senkronunda sipariş bağını koru. Onaylı faturada çağrılmaz."""
+    order_id = invoice.get("order_id") or invoice.get("source_order_id")
+    company_id = invoice.get("company_id")
+    if not order_id or not company_id:
+        return
+    link: Dict[str, Any] = {"is_invoiced": False}
+    inv_id = invoice.get("_id") or invoice.get("id")
+    if inv_id:
+        link["invoice_id"] = inv_id
+    if invoice.get("invoice_number"):
+        link["invoice_number"] = invoice.get("invoice_number")
+    await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": link})
+
+
+async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
+    """Taslak ve GİB'e gitmemiş onaylı (kâğıt dahil) fatura kalemlerini bağlı siparişe yaz.
+
+    Onaylı faturada is_invoiced olsa da kalemler güncellenir. Taslakta sipariş
+    zaten faturalıysa mevcut erken dönüş korunur; bağ alanlarını
+    `_sync_draft_order_items` yazar.
+    is_invoiced, invoice_id, invoice_number ve order_status değişmez.
+    Stok, cari ve rezervasyon yeniden uygulanmaz; o etkiler faturadadır.
+    Başka firma, iptal/iade, başka faturaya bağlı sipariş, pazaryeri ve
+    sevk/açık toplamada kalem değişimi yazılmaz (uyarı liste/detayda kalır).
+    """
+    if not invoice or not items or _invoice_gib_locked(invoice):
+        return False
+    order_id = invoice.get("order_id") or invoice.get("source_order_id")
+    company_id = invoice.get("company_id")
+    if not order_id or not company_id:
+        return False
+    order = await db.orders.find_one({"_id": order_id, "company_id": company_id})
+    if not order:
+        return False
+    # Taslak + faturalanmış sipariş: eski `_sync_draft_order_items` de dokunmaz.
+    if invoice.get("status") == "draft" and order.get("is_invoiced"):
+        return False
+    early = order_sync_skip_reason(order, invoice, items_changed=False, pick_open=False)
+    if early:
+        return False
+    ord_rows = invoice_items_to_order_items(items)
+    await _fill_stock_codes(company_id, ord_rows)
+    ord_items = [it.model_dump() for it in _order_item_models(ord_rows)]
+    subtotal, vat_total, discount_total, grand_total = order_document_totals(ord_items)
+    items_changed = order_items_signature(ord_items) != order_items_signature(order.get("items"))
+    pick_open = False
+    if items_changed and not order_is_shipped_for_sync(order):
+        pick_open = await _invoice_sync_pick_session_open(order)
+    if order_sync_skip_reason(order, invoice, items_changed=items_changed, pick_open=pick_open):
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    total_amount = grand_total if vat_total else subtotal
+    patch: Dict[str, Any] = {
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "grand_total": grand_total,
+        "total_amount": total_amount,
+        "updated_at": now,
+    }
+    if items_changed:
+        patch["items"] = ord_items
+    currency = str(invoice.get("currency") or "").strip()
+    if currency:
+        patch["currency"] = currency
+    if invoice.get("fx_rate") not in (None, ""):
+        patch["fx_rate"] = float(invoice.get("fx_rate") or 1)
+    if invoice.get("fx_source"):
+        patch["fx_source"] = invoice.get("fx_source")
+    if invoice.get("fx_date"):
+        patch["fx_date"] = invoice.get("fx_date")
+    rate = float(patch.get("fx_rate") if patch.get("fx_rate") not in (None, "") else (order.get("fx_rate") or 1))
+    patch["local_total"] = round(float(grand_total) * rate, 2)
+    material = items_changed
+    for key in ("subtotal", "vat_total", "discount_total", "grand_total", "total_amount", "local_total"):
+        if not _same_money(patch.get(key), order.get(key)):
+            material = True
+    if patch.get("currency") and patch.get("currency") != (order.get("currency") or "TRY"):
+        material = True
+    if "fx_rate" in patch and not _same_money(patch.get("fx_rate"), order.get("fx_rate") or 1, 6):
+        material = True
+    if patch.get("fx_source") and patch.get("fx_source") != order.get("fx_source"):
+        material = True
+    if not material:
+        # Kalem aynıysa onaylıda kayıt açma. Taslakta bağ alanları yine yazılsın.
+        return str(invoice.get("status") or "") == "draft"
+    note = _order_sync_note(invoice)
+    await db.orders.update_one(
+        {"_id": order["_id"], "company_id": company_id},
+        {
+            "$set": patch,
+            "$push": {"order_history": {"updated_at": now, "message": note}},
+        },
+    )
+    return True
+
+
 @api_router.post("/orders/{order_id}/approve")
 async def approve_order(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
@@ -14212,27 +14517,54 @@ async def list_returns(company_id: Optional[str] = "comp_nexus_main_01"):
 
 @api_router.post("/orders/{order_id}/create-dispatch")
 async def create_dispatch(order_id: str, user: dict = Depends(get_current_user)):
+    """Siparişten yalnız taslak e-İrsaliye. İşNet/GİB gönderimi detaydaki nakliye formundan yapılır."""
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     if o.get("dispatch_id"):
-        d = await db.invoices.find_one({"_id": o["dispatch_id"]})
-        if d and d.get("status") == "draft" and d.get("e_type") == "e_dispatch" and not d.get("gib_uuid"):
-            sent = await _send_dispatch_to_isnet_if_configured(d)
-            if sent.get("sent"):
-                return {
-                    "status": "success",
-                    "dispatch": sent.get("dispatch") or clean_doc(d),
-                    "message": (sent.get("result") or {}).get("message") or "e-İrsaliye İşNet'e iletildi.",
-                }
-        return {"status": "exists", "dispatch": clean_doc(d), "message": "Bu sipariş için irsaliye zaten mevcut."}
+        d = await db.invoices.find_one({"_id": o["dispatch_id"], "company_id": o["company_id"]})
+        if not d:
+            d = await db.invoices.find_one({"_id": o["dispatch_id"]})
+        return {
+            "status": "exists",
+            "dispatch": clean_doc(d) if d else {"id": o["dispatch_id"]},
+            "message": "Bu sipariş için irsaliye zaten mevcut.",
+        }
+    contact_id = str(o.get("contact_id") or "").strip()
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="Önce cari seçin")
+    contact = await db.contacts.find_one({"_id": contact_id, "company_id": o["company_id"]})
+    if not contact:
+        raise HTTPException(status_code=400, detail="Önce cari seçin")
     number = await _next_number("IRS", db.invoices)
-    contact = await db.contacts.find_one({"name": o.get("customer_name"), "company_id": o["company_id"]})
     settings = await db.einvoice_settings.find_one({"company_id": o["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
-    doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"] if contact else None,
-           "contact_name": o.get("customer_name"),
-           "contact_tax_id": (contact or {}).get("tax_number_or_id") or (contact or {}).get("tax_id"),
-           "customer_phone": o.get("customer_phone"), "shipping_address": o.get("shipping_address"), "city": o.get("city"),
-           "items": [{"product_id": it.get("product_id"), "name": it.get("product_name"), "quantity": it.get("quantity"), "unit": "Adet", "unit_price": it.get("unit_price"), "vat_rate": 0, "total": it.get("total")} for it in o.get("items", [])],
+    items = []
+    for it in o.get("items") or []:
+        product = None
+        pid = str(it.get("product_id") or "").strip()
+        if pid:
+            product = await db.products.find_one({"_id": pid, "company_id": o["company_id"]})
+        if product is not None and product.get("vat_rate") is not None:
+            vat_rate = product.get("vat_rate")
+        elif it.get("vat_rate") is not None:
+            vat_rate = it.get("vat_rate")
+        else:
+            vat_rate = 0
+        unit = (product or {}).get("unit") or it.get("unit") or "Adet"
+        items.append({
+            "product_id": it.get("product_id"),
+            "name": it.get("product_name") or it.get("name"),
+            "quantity": it.get("quantity"),
+            "unit": unit,
+            "unit_price": it.get("unit_price"),
+            "vat_rate": vat_rate,
+            "total": it.get("total"),
+        })
+    ship = str(o.get("shipping_address") or "").strip() or str((contact or {}).get("address") or "").strip()
+    doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"],
+           "contact_name": contact.get("name") or o.get("customer_name"),
+           "contact_tax_id": invoice_contact_tax_id(contact),
+           "customer_phone": o.get("customer_phone") or contact.get("phone"), "shipping_address": ship, "city": o.get("city") or contact.get("city"),
+           "items": items,
            "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
            "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier") or defaults.get("carrier_name"), "cargo_tracking_number": o.get("cargo_tracking_number"), "source_channel": o.get("channel", "b2b"),
            "despatch_defaults": defaults,
@@ -14246,19 +14578,6 @@ async def create_dispatch(order_id: str, user: dict = Depends(get_current_user))
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
-    sent = await _send_dispatch_to_isnet_if_configured(doc)
-    if sent.get("sent"):
-        return {
-            "status": "success",
-            "dispatch": sent.get("dispatch") or clean_doc(doc),
-            "message": (sent.get("result") or {}).get("message") or f"{number} e-İrsaliye İşNet'e iletildi.",
-        }
-    if sent.get("reason") == "send_failed":
-        return {
-            "status": "success",
-            "dispatch": clean_doc(doc),
-            "message": f"{number} taslak oluşturuldu; İşNet: {sent.get('detail')}",
-        }
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
 
 
@@ -17155,6 +17474,8 @@ _INVOICE_EBELGE_PROJECTION = {
     "local_invoice_number": 1,
     "gib_uuid": 1,
     "gib_tracking_id": 1,
+    "grand_total": 1,
+    "company_id": 1,
 }
 
 
@@ -17179,38 +17500,11 @@ async def _load_company_invoices_for_orders(docs: List[Dict[str, Any]], projecti
     return found
 
 
-async def _annotate_orders_invoice_missing(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """invoice_id var ama bu firmanın canlı faturası yoksa yanıta invoice_missing=true. DB'ye yazılmaz."""
-    if not docs:
-        return docs
-    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
-        return docs
-    live = await _load_company_invoices_for_orders(docs, {"_id": 1})
-    for order in docs:
-        inv_id = str((order or {}).get("invoice_id") or "").strip()
-        if not inv_id:
-            continue
-        cid = str(order.get("company_id") or "").strip()
-        if not cid or (cid, inv_id) not in live:
-            order["invoice_missing"] = True
-    return docs
-
-
-async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Liste rozeti: fatura e_type / einvoice_state siparişe yansısın (Faturalaşmış E-Fatura/E-Arşiv).
-
-    Canlı faturası olmayan siparişe invoice_missing=true eklenir (yanıt alanı, DB yazılmaz).
-    """
-    from order_ebelge_enrich import enrich_orders_with_invoices
-
-    if not docs:
-        return docs
-    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
-        return docs
-    live = await _load_company_invoices_for_orders(docs, _INVOICE_EBELGE_PROJECTION)
+def _mark_missing_and_index_live_invoices(docs: List[Dict[str, Any]], live: Dict[tuple, dict]) -> Dict[str, dict]:
+    """Canlı faturası yoksa invoice_missing yazar; canlıları invoice_id ile döner."""
     by_id: Dict[str, dict] = {}
-    for order in docs:
-        inv_id = str(order.get("invoice_id") or "").strip()
+    for order in docs or []:
+        inv_id = str((order or {}).get("invoice_id") or "").strip()
         if not inv_id:
             continue
         cid = str(order.get("company_id") or "").strip()
@@ -17219,7 +17513,76 @@ async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict
             order["invoice_missing"] = True
             continue
         by_id[inv_id] = inv
-    return enrich_orders_with_invoices(docs, by_id)
+    return by_id
+
+
+async def _annotate_orders_invoice_missing(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """invoice_id var ama bu firmanın canlı faturası yoksa yanıta invoice_missing=true. DB'ye yazılmaz."""
+    if not docs:
+        return docs
+    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
+        return docs
+    live = await _load_company_invoices_for_orders(docs, {"_id": 1})
+    _mark_missing_and_index_live_invoices(docs, live)
+    return docs
+
+
+async def _annotate_orders_invoice_flags(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Tek firma sorgusu: kayıp fatura bayrağı ve tutar farkı uyarısı. DB'ye yazılmaz."""
+    if not docs:
+        return docs
+    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
+        return docs
+    live = await _load_company_invoices_for_orders(
+        docs,
+        {"_id": 1, "grand_total": 1, "company_id": 1, "invoice_number": 1},
+    )
+    by_id = _mark_missing_and_index_live_invoices(docs, live)
+    return attach_invoice_mismatch_warnings(docs, by_id)
+
+
+async def _annotate_orders_invoice_mismatch(
+    docs: List[Dict[str, Any]],
+    preloaded: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Sipariş grand_total bağlı faturadan ayrılıyorsa uyarı alanı. Tek $in sorgusu."""
+    if not docs:
+        return docs
+    by_id: Dict[str, Any] = {}
+    for key, inv in (preloaded or {}).items():
+        if inv and key:
+            by_id[key] = inv
+    missing = []
+    for order in docs:
+        inv_id = order.get("invoice_id")
+        if inv_id and inv_id not in by_id:
+            missing.append(inv_id)
+    missing = list(dict.fromkeys(missing))
+    if missing:
+        rows = await db.invoices.find(
+            {"_id": {"$in": missing}},
+            {"grand_total": 1, "company_id": 1, "invoice_number": 1},
+        ).to_list(len(missing))
+        for row in rows:
+            by_id[row["_id"]] = row
+    return attach_invoice_mismatch_warnings(docs, by_id)
+
+
+async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Liste rozeti: fatura e_type / einvoice_state, tutar farkı ve kayıp fatura bayrağı.
+
+    Firma başına tek canlı fatura sorgusu. invoice_missing yanıt alanıdır, DB'ye yazılmaz.
+    """
+    from order_ebelge_enrich import enrich_orders_with_invoices
+
+    if not docs:
+        return docs
+    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
+        return docs
+    live = await _load_company_invoices_for_orders(docs, _INVOICE_EBELGE_PROJECTION)
+    by_id = _mark_missing_and_index_live_invoices(docs, live)
+    enriched = enrich_orders_with_invoices(docs, by_id)
+    return attach_invoice_mismatch_warnings(enriched, by_id)
 
 
 async def _enrich_orders_production_flags(
@@ -17308,6 +17671,9 @@ async def create_order(order: Order, user: dict = Depends(get_current_user)):
         if (order.channel or "") != "saha" or not rbac.role_features(role).get("portal_saha"):
             raise HTTPException(status_code=403, detail=rbac.portal_denial_detail("portal_saha"))
     await _fill_stock_codes(order.company_id, order.items)
+    import event_notify
+    if event_notify.stores_order_line_image(order.channel or "manual"):
+        await _fill_order_line_images(order.company_id, order.items)
     if not order.order_number:
         order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
     _apply_order_totals(order)
@@ -17429,7 +17795,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         "invoice_number": invoice_number,
         "contact_id": _oc["_id"],
         "contact_name": _oc.get("name") or order.get("customer_name"),
-        "contact_tax_id": _oc.get("tax_number_or_id") or "11111111111",
+        "contact_tax_id": invoice_contact_tax_id(_oc),
         "e_type": e_type_req or "e_archive",
         "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).strftime("%Y-%m-%d"),
