@@ -79,6 +79,26 @@ def test_soap_taxpayer_present_uses_inbox_alias_not_default():
     assert info["alias"] != "urn:mail:defaultpk@3680486408.com.tr"
 
 
+SOAP_NAME_ONLY = """
+<Body>
+  <TaxPayer>
+    <TaxPayerName>ERSAY HOME</TaxPayerName>
+  </TaxPayer>
+</Body>
+"""
+
+
+def test_soap_name_without_alias_is_mukellef():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    with patch("isnet._soap_call", AsyncMock(return_value=_body(SOAP_NAME_ONLY))):
+        info = _run(isnet.lookup_user(settings, "", "3680486408"))
+    assert info["lookup_status"] == "mukellef"
+    assert info["is_e_invoice_user"] is True
+    assert info["name"] == "ERSAY HOME"
+    assert info["alias"] == ""
+    assert info["aliases"] == []
+
+
 def test_soap_taxpayer_missing_is_unknown_not_false():
     settings = {"company_tax_id": "4810173324", "mode": "test"}
     with patch("isnet._soap_call", AsyncMock(return_value=_body(SOAP_EMPTY))):
@@ -251,12 +271,37 @@ def test_issue_invoice_prefers_doc_vkn_and_missing_is_error():
         blank = {**inv, "_id": "inv_blank", "contact_tax_id": "", "contact_id": "cnt2"}
         blank_contact = {"_id": "cnt2", "name": "Bos", "tax_number_or_id": "", "is_e_invoice_user": False}
         e_invoice.init(_issue_db(inv=blank, contact=blank_contact), {"consume_credits": AsyncMock(return_value=1)})
-        with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as skipped:
-            with pytest.raises(HTTPException) as exc:
-                await e_invoice.issue_invoice("inv_blank", e_type="auto")
+        with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+            e_invoice, "resolve_buyer_mukellef", AsyncMock()
+        ) as skipped:
+            blank_out = await e_invoice.issue_invoice("inv_blank", e_type="auto")
         skipped.assert_not_awaited()
-        assert exc.value.status_code == 422
-        assert exc.value.detail == "VKN eksik"
+        assert blank_out["e_type"] == "e_archive"
+
+        with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as skipped_explicit:
+            with pytest.raises(HTTPException) as explicit:
+                await e_invoice.issue_invoice("inv_blank", e_type="e_invoice")
+        skipped_explicit.assert_not_awaited()
+        assert explicit.value.status_code == 409
+
+        short = {**inv, "_id": "inv_short", "contact_tax_id": "123456789", "contact_id": "cnt3"}
+        short_contact = {"_id": "cnt3", "name": "Kisa", "tax_number_or_id": "", "is_e_invoice_user": False}
+        e_invoice.init(_issue_db(inv=short, contact=short_contact), {"consume_credits": AsyncMock(return_value=1)})
+        with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as skipped_short:
+            with pytest.raises(HTTPException) as short_exc:
+                await e_invoice.issue_invoice("inv_short", e_type="auto")
+        skipped_short.assert_not_awaited()
+        assert short_exc.value.status_code == 422
+        assert short_exc.value.detail == "VKN/TCKN 10 veya 11 haneli olmalı"
+
+        empty_meta = await e_invoice.resolve_buyer_mukellef("c1", "")
+        assert empty_meta["suggested_e_type"] == "e_archive"
+        assert empty_meta["lookup_status"] == "not_mukellef"
+        assert empty_meta["is_e_invoice_user"] is False
+        with pytest.raises(HTTPException) as resolve_short:
+            await e_invoice.resolve_buyer_mukellef("c1", "123456789")
+        assert resolve_short.value.status_code == 422
+        assert resolve_short.value.detail == "VKN/TCKN 10 veya 11 haneli olmalı"
 
     _run(_go())
 

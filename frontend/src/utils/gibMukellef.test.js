@@ -94,11 +94,15 @@ test("başarılı sorgu 120 sn sonra yeniden gider; hata ve unknown önbelleğe 
   expect(eTypeFromGib({ lookup_status: "unknown", message: "bulunamadı" })).toBeNull();
 });
 
-test("eksik VKN önbelleğe yazılmaz ve e-Arşiv sayılmaz; yer tutucu sorgu atmaz", async () => {
+test("boş VKN sorgusuz e-Arşiv; 9 hane 422 ve önbelleğe yazılmaz", async () => {
   const axiosGet = jest.fn();
-  await expect(fetchGibMukellef("c1", "123", axiosGet)).rejects.toThrow("VKN eksik");
-  await expect(fetchGibMukellef("c1", "", axiosGet)).rejects.toThrow("VKN eksik");
-  expect(peekGibMukellef("c1", "123")).toBeNull();
+  const empty = await fetchGibMukellef("c1", "", axiosGet);
+  expect(empty.status).toBe("ok");
+  expect(eTypeFromGib(empty.data)).toBe("e_archive");
+  expect(empty.data.lookup_status).toBe("not_mukellef");
+  await expect(fetchGibMukellef("c1", "123456789", axiosGet)).rejects.toThrow("VKN/TCKN 10 veya 11 haneli olmalı");
+  await expect(fetchGibMukellef("c1", "123456789", axiosGet)).rejects.toThrow("VKN/TCKN 10 veya 11 haneli olmalı");
+  expect(peekGibMukellef("c1", "123456789")).toBeNull();
   const placeholder = await fetchGibMukellef("c1", "11111111111", axiosGet);
   expect(placeholder.data.lookup_status).toBe("not_mukellef");
   expect(placeholder.data.suggested_e_type).toBe("e_archive");

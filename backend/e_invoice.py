@@ -193,10 +193,11 @@ async def resolve_buyer_mukellef(
     if local is None and _db is not None and tid:
         local = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
     from contact_tax import is_placeholder_tax_id
-    if is_placeholder_tax_id(tid):
+    # Boş kimlik yer tutucu gibi sorgusuz e-Arşiv. Dolu ama 10/11 hane değilse hata.
+    if not tid or is_placeholder_tax_id(tid):
         return _placeholder_mukellef(tid, local)
     if len(tid) not in (10, 11):
-        raise HTTPException(status_code=422, detail="VKN eksik")
+        raise HTTPException(status_code=422, detail="VKN/TCKN 10 veya 11 haneli olmalı")
 
     settings = (await _db.einvoice_settings.find_one({"company_id": company_id}) if _db else None) or {}
     live = settings.get("status") == "configured"
@@ -738,10 +739,10 @@ async def issue_invoice(
                 invoice_id,
             )
         from contact_tax import is_placeholder_tax_id
-        if is_placeholder_tax_id(tax):
+        if not tax or is_placeholder_tax_id(tax):
             gib_meta = _placeholder_mukellef(tax, contact)
         elif len(tax) not in (10, 11):
-            raise HTTPException(status_code=422, detail="VKN eksik")
+            raise HTTPException(status_code=422, detail="VKN/TCKN 10 veya 11 haneli olmalı")
         else:
             gib_meta = await resolve_buyer_mukellef(inv.get("company_id") or "", tax, contact=contact)
         if (

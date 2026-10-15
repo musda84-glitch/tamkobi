@@ -288,7 +288,36 @@ test("toplu kesimde bir belgenin hatası diğerini e-Arşiv yapmaz", async () =>
   expect(rows.map((el) => el.getAttribute("data-kind"))).toEqual(["Sorgu hatası", "E-Fatura"]);
 });
 
-test("eksik VKN sessizce e-Arşiv olmaz", async () => {
+test("boş VKN sorgusuz e-Arşiv gönderir", async () => {
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/gib/lookup")) return Promise.reject(new Error("lookup çağrılmamalı"));
+    return Promise.resolve({ data: { balance: 1, source: "wallet" } });
+  });
+  const onConfirm = jest.fn(async () => ({}));
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoice={{ id: "inv-blank", invoice_number: "B", contact_tax_id: "" }}
+        contacts={[]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={onConfirm}
+      />,
+    );
+  });
+  await flush();
+  expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/gib/lookup"))).toBe(false);
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="efatura-onay-earsiv"]').click();
+  });
+  await flush();
+  expect(onConfirm.mock.calls[0][0].eType).toBe("e_archive");
+});
+
+test("9 haneli VKN gönderimi kilitler ve sorgu atmaz", async () => {
   axios.get.mockImplementation((url) => {
     if (String(url).includes("/gib/lookup")) return Promise.reject(new Error("lookup çağrılmamalı"));
     return Promise.resolve({ data: { balance: 1, source: "wallet" } });
@@ -298,8 +327,8 @@ test("eksik VKN sessizce e-Arşiv olmaz", async () => {
     root.render(
       <ElektronikFaturaOnayModal
         mode="send"
-        invoice={{ id: "inv-blank", invoice_number: "B", contact_tax_id: "" }}
-        contacts={[{ id: "c", tax_number_or_id: "12" }]}
+        invoice={{ id: "inv-short", invoice_number: "S", contact_tax_id: "123456789" }}
+        contacts={[]}
         companyId="c1"
         onClose={() => {}}
         onConfirm={jest.fn()}
@@ -308,6 +337,7 @@ test("eksik VKN sessizce e-Arşiv olmaz", async () => {
   });
   await flush();
   expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).toBeNull();
-  expect(host.textContent).toMatch(/VKN eksik/);
+  expect(host.querySelector('[data-testid="efatura-onay-blocked"]')).not.toBeNull();
+  expect(host.textContent).toMatch(/VKN\/TCKN 10 veya 11 haneli olmalı/);
   expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/gib/lookup"))).toBe(false);
 });

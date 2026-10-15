@@ -1567,7 +1567,7 @@ def classify_get_tax_payer(body: Optional[ET.Element], tax: str) -> Dict[str, An
         if val not in aliases:
             aliases.append(val)
     if name or aliases:
-        primary = inbox[0] if inbox else aliases[0]
+        primary = inbox[0] if inbox else (aliases[0] if aliases else "")
         return {
             "tax_id": tax,
             "is_e_invoice_user": True,

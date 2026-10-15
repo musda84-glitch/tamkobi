@@ -155,8 +155,14 @@ describe("gibMukellef", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
 
     const before = fetchMock.mock.calls.length;
-    await expect(fetchGibMukellef(client, "c1", "12")).rejects.toThrow("VKN eksik");
-    await expect(fetchGibMukellef(client, "c1", "12")).rejects.toThrow("VKN eksik");
+    const empty = await fetchGibMukellef(client, "c1", "");
+    expect(empty.status).toBe("ok");
+    if (empty.status === "ok") {
+      expect(eTypeFromGib(empty.data)).toBe("e_archive");
+      expect(empty.data.lookup_status).toBe("not_mukellef");
+    }
+    await expect(fetchGibMukellef(client, "c1", "123456789")).rejects.toThrow("VKN/TCKN 10 veya 11 haneli olmalı");
+    await expect(fetchGibMukellef(client, "c1", "123456789")).rejects.toThrow("VKN/TCKN 10 veya 11 haneli olmalı");
     expect(fetchMock).toHaveBeenCalledTimes(before);
 
     const view = gibLookupPresentation(

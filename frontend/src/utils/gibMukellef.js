@@ -163,13 +163,13 @@ export function fetchGibMukellef(companyId, taxId, axiosGet = axios.get, options
   const key = cacheKey(companyId, tax);
   const refresh = !!(options && options.refresh);
   if (!buyerNeedsLiveMukellefQuery(tax)) {
-    if (isPlaceholderTaxId(tax)) {
+    if (!tax || isPlaceholderTaxId(tax)) {
       const entry = localArchiveEntry(tax);
       cache.set(key, entry);
       return Promise.resolve(entry);
     }
-    const err = new Error("VKN eksik");
-    gibFail(err, "VKN eksik");
+    const err = new Error("VKN/TCKN 10 veya 11 haneli olmalı");
+    gibFail(err, "VKN/TCKN 10 veya 11 haneli olmalı");
     return Promise.reject(err);
   }
   if (!refresh) {

@@ -326,7 +326,7 @@ export function ElektronikFaturaOnayModal({
       needsLive,
     };
     if (!entry) {
-      if (!needsLive && isPlaceholderTaxId(tax)) {
+      if (!needsLive && (!tax || isPlaceholderTaxId(tax))) {
         return {
           ...base,
           status: "ok",
@@ -335,7 +335,7 @@ export function ElektronikFaturaOnayModal({
         };
       }
       if (!needsLive) {
-        return { ...base, status: "error", error: "VKN eksik", eType: null, data: null };
+        return { ...base, status: "error", error: "VKN/TCKN 10 veya 11 haneli olmalı", eType: null, data: null };
       }
       return { ...base, status: "loading", eType: null, data: null };
     }
