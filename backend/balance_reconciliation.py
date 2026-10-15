@@ -1,11 +1,14 @@
 """Salt-okuma bakiye mutabakatı. Hiçbir koleksiyona yazmaz."""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional, Set
 
 import account_balance
 import contact_balance
 import partner_pay
+
+_IBAN_RE = re.compile(r"^TR[A-Z0-9]{13,}$")
 
 
 def _num(v: Any) -> float:
@@ -19,6 +22,26 @@ def _rid(doc: dict) -> str:
     return str((doc or {}).get("_id") or (doc or {}).get("id") or "")
 
 
+def _unmatched_bank_sync(txs: List[dict], aid: str) -> List[dict]:
+    rows = []
+    for tx in txs or []:
+        if str(tx.get("source") or "") != "bank_sync":
+            continue
+        if str(tx.get("match_status") or "") != "unmatched":
+            continue
+        if str(tx.get("account_id") or "") != aid:
+            continue
+        rows.append(tx)
+    return rows
+
+
+def _has_opening(txs: List[dict], aid: str) -> bool:
+    return any(
+        str(tx.get("source") or "") == "opening" and str(tx.get("account_id") or "") == aid
+        for tx in txs or []
+    )
+
+
 def _account_row(acc: dict, txs: List[dict], *, integrated: bool) -> Dict[str, Any]:
     aid = _rid(acc)
     moved = account_balance.movement_balance(txs, aid, acc)
@@ -28,6 +51,8 @@ def _account_row(acc: dict, txs: List[dict], *, integrated: bool) -> Dict[str, A
         moved = 0.0
     reported = acc.get("bank_reported_balance")
     reported_n = None if reported is None else round(_num(reported), 2)
+    unmatched = _unmatched_bank_sync(txs, aid)
+    unmatched_sum = round(sum(account_balance.tx_signed_amount(tx, aid, acc) for tx in unmatched), 2)
     return {
         "id": aid,
         "ad": acc.get("account_name") or acc.get("bank_name") or aid,
@@ -37,7 +62,120 @@ def _account_row(acc: dict, txs: List[dict], *, integrated: bool) -> Dict[str, A
         "hareket_toplami": moved,
         "banka_bildirdigi": reported_n,
         "fark": round(shown - moved, 2),
+        "eslesmemis_adet": len(unmatched),
+        "eslesmemis_tutar": unmatched_sum,
+        "banka_farki": None if reported_n is None else round(reported_n - moved, 2),
+        "acilis_var": _has_opening(txs, aid),
     }
+
+
+def norm_ref(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def is_iban(value: Any) -> bool:
+    return bool(_IBAN_RE.match(norm_ref(value)))
+
+
+def connection_refs(conn: Optional[dict], acc: Optional[dict] = None) -> Dict[str, Set[str]]:
+    """Bağlantının IBAN ve hesap no kimlikleri (bağlı hesap + bank_account_number)."""
+    ibans: Set[str] = set()
+    numbers: Set[str] = set()
+
+    def add(raw: Any) -> None:
+        token = norm_ref(raw)
+        if not token or token == "-":
+            return
+        if is_iban(token):
+            ibans.add(token)
+        else:
+            numbers.add(token)
+
+    acc = acc or {}
+    add(acc.get("iban"))
+    add(acc.get("account_number"))
+    add((conn or {}).get("bank_account_number"))
+    return {"ibans": ibans, "numbers": numbers}
+
+
+def link_warnings(accounts: List[dict], connections: List[dict]) -> List[Dict[str, Any]]:
+    """Aynı IBAN/hesap no'ya birden fazla bağlantı veya aynı adlı birden fazla entegre hesap."""
+    by_id: Dict[str, dict] = {}
+    for acc in accounts or []:
+        aid = _rid(acc)
+        if aid:
+            by_id[aid] = acc
+    iban_groups: Dict[str, Set[str]] = {}
+    number_groups: Dict[str, Set[str]] = {}
+    for conn in connections or []:
+        cid = _rid(conn)
+        acc = by_id.get(str((conn or {}).get("linked_account_id") or ""))
+        refs = connection_refs(conn, acc)
+        for iban in refs["ibans"]:
+            iban_groups.setdefault(iban, set()).add(cid)
+        for number in refs["numbers"]:
+            number_groups.setdefault(number, set()).add(cid)
+    warnings: List[Dict[str, Any]] = []
+    for iban, ids in iban_groups.items():
+        if len(ids) > 1:
+            warnings.append({
+                "tur": "cift_iban",
+                "anahtar": iban,
+                "adet": len(ids),
+                "mesaj": f"Aynı IBAN ({iban}) {len(ids)} banka bağlantısına bağlı.",
+            })
+    for number, ids in number_groups.items():
+        if len(ids) > 1:
+            warnings.append({
+                "tur": "cift_hesap_no",
+                "anahtar": number,
+                "adet": len(ids),
+                "mesaj": f"Aynı hesap no ({number}) {len(ids)} banka bağlantısına bağlı.",
+            })
+    name_groups: Dict[str, List[dict]] = {}
+    integrated_ids = {str(c.get("linked_account_id")) for c in connections or [] if c.get("linked_account_id")}
+    for aid in integrated_ids:
+        acc = by_id.get(aid)
+        if not acc:
+            continue
+        label = str(acc.get("account_name") or "").strip()
+        key = label.casefold()
+        if not key:
+            continue
+        name_groups.setdefault(key, []).append(acc)
+    for rows in name_groups.values():
+        if len(rows) > 1:
+            label = rows[0].get("account_name") or ""
+            warnings.append({
+                "tur": "cift_hesap_adi",
+                "anahtar": label,
+                "adet": len(rows),
+                "mesaj": f"Aynı adlı {len(rows)} entegre hesap var: {label}.",
+            })
+    return warnings
+
+
+async def conflicting_connection_iban(db, company_id: str, conn: dict, acc: Optional[dict], *, ignore_id: str = "") -> Optional[str]:
+    """Aynı şirkette bu IBAN'a bağlı başka bağlantı varsa IBAN'ı döndür."""
+    refs = connection_refs(conn, acc)
+    if not refs["ibans"]:
+        return None
+    existing = await db.bank_connections.find({"company_id": str(company_id or "")}).to_list(500)
+    acc_ids = list({str(c.get("linked_account_id")) for c in existing or [] if c.get("linked_account_id")})
+    accs: Dict[str, dict] = {}
+    if acc_ids:
+        rows = await db.bank_accounts.find({"_id": {"$in": acc_ids}}).to_list(500)
+        for row in rows or []:
+            accs[str(row.get("_id") or row.get("id") or "")] = row
+    for other in existing or []:
+        oid = str(other.get("_id") or other.get("id") or "")
+        if ignore_id and oid == str(ignore_id):
+            continue
+        other_acc = accs.get(str(other.get("linked_account_id") or ""))
+        hit = refs["ibans"] & connection_refs(other, other_acc)["ibans"]
+        if hit:
+            return next(iter(hit))
+    return None
 
 
 def _partner_row(partner: dict, txs: List[dict]) -> Dict[str, Any]:
@@ -161,6 +299,7 @@ async def build_reconciliation(db, company_id: str) -> Dict[str, Any]:
             "contact_count": len(contact_rows),
             "contact_drift": _drift(contact_rows),
         },
+        "uyarilar": link_warnings(accounts or [], conns or []),
     }
 
 
@@ -171,6 +310,7 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
         "gosterilen", "hareket_toplami", "banka_bildirdigi",
         "kart_bakiyesi", "kayitli_bakiye", "liste_giris", "liste_cikis",
         "kayitli", "hesaplanan", "fark",
+        "eslesmemis_adet", "eslesmemis_tutar", "banka_farki",
     ]]
     for a in report.get("accounts") or []:
         rows.append([
@@ -179,6 +319,9 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
             _fmt(a.get("gosterilen")), _fmt(a.get("hareket_toplami")),
             "" if a.get("banka_bildirdigi") is None else _fmt(a.get("banka_bildirdigi")),
             "", "", "", "", "", "", _fmt(a.get("fark")),
+            str(int(a.get("eslesmemis_adet") or 0)),
+            _fmt(a.get("eslesmemis_tutar")),
+            "" if a.get("banka_farki") is None else _fmt(a.get("banka_farki")),
         ])
     for p in report.get("partners") or []:
         rows.append([
@@ -187,12 +330,14 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
             _fmt(p.get("kart_bakiyesi")), _fmt(p.get("kayitli_bakiye")),
             _fmt(p.get("liste_giris")), _fmt(p.get("liste_cikis")),
             "", "", _fmt(p.get("fark")),
+            "", "", "",
         ])
     for c in report.get("contacts") or []:
         rows.append([
             "cari", c.get("id") or "", c.get("ad") or "", "contact", "",
             "", "", "", "", "", "", "",
             _fmt(c.get("kayitli")), _fmt(c.get("hesaplanan")), _fmt(c.get("fark")),
+            "", "", "",
         ])
     return rows
 

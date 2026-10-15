@@ -10070,7 +10070,8 @@ async def create_bank_account(account: BankAccount):
         pool = await bank_guard.ensure_customer_card_pool(db, doc.get("company_id") or "")
         return clean_doc(pool)
     await db.bank_accounts.insert_one(doc)
-    if str(doc.get("type") or "") == "cash_box":
+    # Bakiye belgede zaten set; açılış satırı deftere yazılır, $inc yapılmaz. Havuz hariç.
+    if account_balance.opening_eligible(doc):
         await account_balance.ensure_opening_tx(db, doc)
     return clean_doc(doc)
 
@@ -10081,10 +10082,18 @@ async def update_bank_account(account_id: str, req: Dict[str, Any], user: dict =
     allowed = {k: v for k, v in req.items() if k in allowed_keys and v is not None}
     if "type" in allowed and allowed["type"] not in ("bank", "cash_box", "pos", "okc_pos", "credit_card"):
         raise HTTPException(status_code=400, detail="Geçersiz hesap türü.")
+    balance_update = None
     if "current_balance" in req:
-        if await db.bank_transactions.count_documents({"$or": [{"account_id": account_id}, {"target_account_id": account_id}]}):
+        # Açılış satırı hareket sayılmaz; hareketsiz hesapta bakiye ve açılış yeniden yazılır.
+        if await db.bank_transactions.count_documents({
+            "$and": [
+                {"$or": [{"account_id": account_id}, {"target_account_id": account_id}]},
+                {"source": {"$ne": "opening"}},
+            ],
+        }):
             raise HTTPException(status_code=400, detail="Hareketi olan hesabın bakiyesi buradan değiştirilemez.")
-        allowed["current_balance"] = float(req["current_balance"] or 0)
+        balance_update = float(req["current_balance"] or 0)
+        allowed["current_balance"] = balance_update
     if not allowed:
         return clean_doc(acc)
     allowed_keys = {
@@ -10094,6 +10103,8 @@ async def update_bank_account(account_id: str, req: Dict[str, Any], user: dict =
         "okc_brand", "okc_serial", "okc_terminal_id", "okc_api_url", "okc_api_key",
     }
     allowed = {k: req[k] for k in allowed_keys if k in req}
+    if balance_update is not None:
+        allowed["current_balance"] = balance_update
     if "pos_commission_rate" in allowed:
         allowed["pos_commission_rate"] = float(allowed["pos_commission_rate"] or 0)
     if "card_limit" in allowed and allowed["card_limit"] is not None and allowed["card_limit"] != "":
@@ -10104,7 +10115,91 @@ async def update_bank_account(account_id: str, req: Dict[str, Any], user: dict =
     allowed = await _resolve_card_owner_fields(acc.get("company_id") or "", allowed, existing=acc)
     allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.bank_accounts.update_one({"_id": account_id}, {"$set": allowed})
-    return clean_doc(await db.bank_accounts.find_one({"_id": account_id}))
+    updated = await db.bank_accounts.find_one({"_id": account_id})
+    if balance_update is not None:
+        # Bakiye $set ile yazıldı. Defterdeki eski açılış silinir; yeni satır $inc yapmaz.
+        if account_balance.opening_eligible(updated):
+            await account_balance.rewrite_opening_tx(db, updated, balance_update)
+        else:
+            await db.bank_transactions.delete_many({"account_id": account_id, "source": "opening"})
+    return clean_doc(updated)
+
+
+@api_router.post("/banking/accounts/{account_id}/opening-balance")
+async def save_opening_from_difference(account_id: str, user: dict = Depends(get_current_user)):
+    """Gösterilen − hareket farkını açılış hareketi olarak yazar. Bakiye $inc yok. İkinci çağrı 409."""
+    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    if not account_balance.opening_eligible(acc):
+        raise HTTPException(status_code=400, detail="Bu hesap türünde açılış bakiyesi kaydedilemez.")
+    company_id = str(acc.get("company_id") or "")
+
+    async def _opening_exists() -> bool:
+        found = await db.bank_transactions.find_one({
+            "company_id": company_id,
+            "account_id": account_id,
+            "source": "opening",
+        })
+        return bool(found)
+
+    if await _opening_exists():
+        raise HTTPException(status_code=409, detail="Bu hesabın açılış hareketi zaten kayıtlı.")
+    txs = await db.bank_transactions.find({
+        "company_id": company_id,
+        "$or": [{"account_id": account_id}, {"target_account_id": account_id}],
+    }).to_list(20000)
+    moved = account_balance.movement_balance(txs, account_id, acc)
+    shown = round(float(acc.get("current_balance") or 0), 2)
+    fark = round(shown - moved, 2)
+    if abs(fark) < 0.01:
+        raise HTTPException(status_code=400, detail="Fark yok; açılış bakiyesi yazılmadı.")
+    if await _opening_exists():
+        raise HTTPException(status_code=409, detail="Bu hesabın açılış hareketi zaten kayıtlı.")
+    first = account_balance.earliest_tx_day(txs)
+    on_date = account_balance.day_before(first) if first else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    doc = account_balance.opening_tx_doc(acc, fark, on_date=on_date)
+    if not doc:
+        raise HTTPException(status_code=400, detail="Fark yok; açılış bakiyesi yazılmadı.")
+    doc["description"] = "Fark açılış bakiyesi olarak kaydedildi"
+    await db.bank_transactions.insert_one(doc)
+    summary = f"Fark açılış bakiyesi olarak kaydedildi ({fark:.2f})."
+    try:
+        await company_audit.write(
+            db,
+            company_id=company_id,
+            user=user,
+            module="/banking",
+            action="create",
+            record_id=account_id,
+            record_label=str(acc.get("account_name") or acc.get("bank_name") or ""),
+            summary=summary,
+            href="/banking?tab=reconciliation",
+            path=f"/api/banking/accounts/{account_id}/opening-balance",
+        )
+    except Exception:
+        logger.exception("opening balance audit failed")
+    try:
+        await db.activity_logs.insert_one({
+            "_id": str(uuid.uuid4()),
+            "company_id": company_id,
+            "user_id": (user or {}).get("id") or (user or {}).get("_id"),
+            "user_name": (user or {}).get("name"),
+            "method": "POST",
+            "path": f"/banking/accounts/{account_id}/opening-balance",
+            "module": "/banking",
+            "status": 200,
+            "detail": summary,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        logger.exception("opening balance activity log failed")
+    return {
+        "status": "ok",
+        "account_id": account_id,
+        "amount": round(fark, 2),
+        "date": doc.get("date"),
+        "current_balance": shown,
+        "transaction_id": doc.get("_id"),
+    }
 
 @api_router.get("/banking/transactions")
 async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01", account_id: Optional[str] = None):
@@ -11352,6 +11447,12 @@ async def create_bank_connection(conn: BankConnection, user: dict = Depends(get_
     conn.linked_account_name = _linked_account_label(acc)
     doc = bank_providers.normalize_kuveyt_connection_secrets(conn.to_mongo())
     doc = bank_providers.apply_linked_account_number(doc, acc)
+    if str(acc.get("company_id") or "") != str(conn.company_id):
+        raise HTTPException(status_code=404, detail="Bağlanacak banka hesabı bulunamadı.")
+    import balance_reconciliation as _recon
+    clash = await _recon.conflicting_connection_iban(db, conn.company_id, doc, acc)
+    if clash:
+        raise HTTPException(status_code=400, detail=f"Bu IBAN zaten bir banka bağlantısına bağlı ({clash}).")
     test = await bank_providers.test_connection(doc)
     doc["status"] = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     doc["last_error"] = None if test["ok"] else test["message"]
@@ -21822,7 +21923,7 @@ app.include_router(data_sync.router)
 @app.get("/")
 async def root():
     stamp = read_stamp()
-    return {"status": "healthy", "service": "TamKobi API", "version": stamp.get("version") or "2.0.0", "git_sha": stamp.get("git_sha_short")}
+    return {"status": "healthy", "service": "TamKobi API", "version": stamp.get("version") or "2.0.1", "git_sha": stamp.get("git_sha_short")}
 
 
 @app.get("/api/version")
@@ -21839,7 +21940,7 @@ async def api_health():
         {
             "status": "healthy",
             "service": "TamKobi API",
-            "version": stamp.get("version") or "2.0.0",
+            "version": stamp.get("version") or "2.0.1",
             "git_sha": stamp.get("git_sha_short"),
         },
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
