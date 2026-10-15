@@ -16,6 +16,10 @@ test("marketing, login and platform paths stay public", () => {
   expect(isPublicPath("/proje/abc")).toBe(true);
   expect(isPublicPath("/ekstre/abc")).toBe(true);
   expect(isPublicPath("/yasal/kvkk")).toBe(true);
+  expect(isPublicPath("/hakkimizda")).toBe(true);
+  expect(isPublicPath("/hizmetler")).toBe(true);
+  expect(isPublicPath("/referanslar")).toBe(true);
+  expect(isPublicPath("/iletisim")).toBe(true);
 });
 
 test("ERP shell paths are not public", () => {

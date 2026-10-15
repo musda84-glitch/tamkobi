@@ -395,6 +395,13 @@ async def seed():
         new_name = (p.get("name") or "").replace("Nexus", "TamKobi", 1)
         if new_name and new_name != p.get("name"):
             await _db.products.update_one({"_id": p["_id"]}, {"$set": {"name": new_name}})
+    try:
+        import logging
+        import public_sites
+        if public_sites.db_ready():
+            await public_sites.ensure_seeded()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("TamKobiERP").warning("sites seed skipped: %s", exc)
 
 
 # ---------------- Effective license ----------------

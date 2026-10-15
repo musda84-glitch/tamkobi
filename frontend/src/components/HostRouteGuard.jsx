@@ -8,6 +8,7 @@ import {
   preferredHostForPath,
   yntRedirectEnabled,
 } from "../utils/hosts";
+import { isSitePreviewSearch } from "../utils/marketingSite";
 
 /**
  * Fallback guard: if the current path does not belong on this host,
@@ -23,6 +24,11 @@ export default function HostRouteGuard({ children }) {
 
   useEffect(() => {
     const suffix = `${pathname}${search || ""}${hash || ""}`;
+
+    // Paneldeki canlı önizleme aynı origin'de seçili siteyi açar.
+    if (kind === "ynt" && isSitePreviewSearch(search) && pathAllowedOnHost(pathname, "site")) {
+      return;
+    }
 
     // ynt: only /sistem*, /sso, /yasal*; "/" → /sistem; everything else → /sistem
     if (kind === "ynt") {

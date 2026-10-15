@@ -16,7 +16,11 @@ export function isPublicPath(pathname) {
     p.startsWith("/davet/") ||
     p.startsWith("/odeme/") ||
     p.startsWith("/yenile/") ||
-    p.startsWith("/yasal")
+    p.startsWith("/yasal") ||
+    p.startsWith("/hakkimizda") ||
+    p.startsWith("/hizmetler") ||
+    p.startsWith("/referanslar") ||
+    p.startsWith("/iletisim")
   );
 }
 

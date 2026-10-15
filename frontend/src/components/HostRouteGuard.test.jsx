@@ -108,6 +108,15 @@ describe("HostRouteGuard", () => {
     await m.cleanup();
   });
 
+  test("ynt preview of the tai site stays on the page", async () => {
+    getHostKind.mockReturnValue("ynt");
+    mockLocation.pathname = "/";
+    mockLocation.search = "?site=tai&onizleme=1";
+    const m = await mount();
+    expect(replaceSpy).not.toHaveBeenCalled();
+    await m.cleanup();
+  });
+
   test("ynt root redirects to /sistem", async () => {
     getHostKind.mockReturnValue("ynt");
     mockLocation.pathname = "/";

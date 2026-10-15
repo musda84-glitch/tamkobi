@@ -66,6 +66,7 @@ const SystemLoginPage = page(() => import("./pages/SystemLoginPage"));
 const System2FASetupPage = page(() => import("./pages/System2FASetupPage"));
 const WebsiteAdminPage = page(() => import("./pages/WebsiteAdminPage"));
 const PricingPage = page(() => import("./pages/PricingPage"));
+const TaiSitePage = page(() => import("./pages/TaiSite"));
 const SignupPage = page(() => import("./pages/SignupPage"));
 const LegalPage = page(() => import("./pages/LegalPage"));
 const NotFoundPage = page(() => import("./pages/NotFoundPage"));
@@ -180,6 +181,10 @@ export default function App() {
                   <Route path="/sistem/ayarlar" element={<SystemAdminPage section="ayarlar" />} />
                   <Route path="/sistem/:section" element={<SystemAdminPage />} />
                   <Route path="/web" element={<PricingPage />} />
+                  <Route path="/hakkimizda" element={<TaiSitePage />} />
+                  <Route path="/hizmetler" element={<TaiSitePage />} />
+                  <Route path="/referanslar" element={<TaiSitePage />} />
+                  <Route path="/iletisim" element={<TaiSitePage />} />
                   <Route path="/fiyatlar" element={<Navigate to="/web" replace />} />
                   <Route path="/kayit" element={<SignupPage />} />
                   <Route path="/yasal/:slug" element={<LegalPage />} />
