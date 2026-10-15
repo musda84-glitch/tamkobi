@@ -32,7 +32,9 @@ import { waDigits } from "../utils/contactStatement";
 import { idOf } from "../utils/money";
 import { canStaffDeleteOrder } from "../utils/orderEdit";
 import {
+  canCreateOrderDraftInvoice,
   canIssueOrderEBelge,
+  canPostOrderDraftInvoice,
   convertToDraftBody,
   eBelgeCreateBody,
   isOrderFullyInvoiced,
@@ -820,8 +822,8 @@ export function OrderActions({
     }
     switch (item.id) {
       case "faturalastir":
-        if (order.invoice_id && !order.is_invoiced) postDraftInvoice();
-        else if (!order.is_invoiced) createDraftInvoice();
+        if (canCreateOrderDraftInvoice(order)) createDraftInvoice();
+        else if (canPostOrderDraftInvoice(order)) postDraftInvoice();
         else onMessage?.("Sipariş zaten faturalanmış.");
         return;
       case "efatura_olustur":

@@ -8,20 +8,24 @@ export function orderStatusOf(o: { order_status?: string; status?: string } | nu
   return String(o?.order_status || o?.status || "");
 }
 
-export function isOrderInvoiced(o: { is_invoiced?: boolean; invoice_id?: string } | null | undefined): boolean {
+export function isOrderInvoiced(o: { is_invoiced?: boolean; invoice_id?: string; invoice_missing?: boolean } | null | undefined): boolean {
   // Yalnızca cariye işlenmiş / e-belge kesilmiş fatura; taslak (invoice_id) kilit değildir.
+  // Kayıp bağ faturasız sayılır.
+  if (o?.invoice_missing) return false;
   return !!o?.is_invoiced;
 }
 
-export function canStaffEditOrder(o: Pick<Order, "channel" | "order_status" | "is_invoiced" | "invoice_id"> & { status?: string } | null | undefined): boolean {
+export function canStaffEditOrder(o: Pick<Order, "channel" | "order_status" | "is_invoiced" | "invoice_id" | "invoice_missing"> & { status?: string } | null | undefined): boolean {
   if (!o || isOrderInvoiced(o)) return false;
   if (isMarketplaceChannel(o.channel)) return false;
   return !LOCKED_STATUSES.has(orderStatusOf(o));
 }
 
-export function canStaffDeleteOrder(o: { is_invoiced?: boolean; invoice_id?: string; [key: string]: unknown } | null | undefined): boolean {
-  // Taslak faturalı sipariş de silinmez (web ile aynı).
-  return !!o && !o.is_invoiced && !o.invoice_id;
+export function canStaffDeleteOrder(o: { is_invoiced?: boolean; invoice_id?: string; invoice_missing?: boolean; [key: string]: unknown } | null | undefined): boolean {
+  // Taslak faturalı sipariş de silinmez (web ile aynı). Kayıp bağ faturasız sayılır.
+  if (!o) return false;
+  if (o.invoice_missing) return true;
+  return !o.is_invoiced && !o.invoice_id;
 }
 
 export function cartFromOrderItems(items?: Array<Record<string, unknown>> | null): CartLine[] {

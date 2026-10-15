@@ -23,6 +23,7 @@ export type OrderMoreOrder = {
   channel?: string | null;
   is_invoiced?: boolean;
   invoice_id?: string;
+  invoice_missing?: boolean;
   invoice_number?: string;
   order_number?: string;
   e_type?: string | null;
@@ -99,7 +100,7 @@ function orderDocEType(ord?: OrderMoreOrder | null): string {
 }
 
 export function orderHasEInvoiceIssued(ord?: OrderMoreOrder | null): boolean {
-  if (!ord) return false;
+  if (!ord || ord.invoice_missing) return false;
   if (!EDOC_TYPES.has(orderDocEType(ord))) return false;
   const state = String(ord.einvoice_state || "").trim().toLowerCase();
   if (NOT_ISSUED_STATES.has(state)) return false;
@@ -150,7 +151,7 @@ export type OrderInvoiceBadge = {
 
 /** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → faturalaşmış e-belge (kırmızı bilgi). */
 export function orderInvoiceBadge(ord?: OrderMoreOrder | null): OrderInvoiceBadge | null {
-  if (!ord) return null;
+  if (!ord || ord.invoice_missing) return null;
   const eType = orderDocEType(ord);
   const state = String(ord.einvoice_state || "").trim().toLowerCase();
   const gs = String(ord.invoice_gib_status || ord.gib_status || "");
@@ -221,6 +222,11 @@ export function orderInvoiceBadge(ord?: OrderMoreOrder | null): OrderInvoiceBadg
 
 export function orderMoreMenuKind(ord?: OrderMoreOrder | null): OrderMoreKind {
   if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
+  if (ord?.invoice_missing) {
+    if (isIntegrationOrder(ord)) return "integration_draft";
+    if (isPanelOrder(ord)) return "panel_draft";
+    return "default";
+  }
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   // Cariye faturalaştı, henüz GİB e-belgesi yok
@@ -397,7 +403,9 @@ export function orderDownloadMoreItems(): OrderMoreItem[] {
 }
 
 export function canDeleteFromMoreMenu(ord?: OrderMoreOrder | null): boolean {
-  return !!ord && !ord.is_invoiced && !ord.invoice_id;
+  if (!ord) return false;
+  if (ord.invoice_missing) return true;
+  return !ord.is_invoiced && !ord.invoice_id;
 }
 
 export function orderDeleteMoreItem(): OrderMoreItem {

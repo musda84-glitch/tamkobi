@@ -21,6 +21,22 @@ describe("orderInvoice draft / post / e-belge", () => {
     expect(canIssueOrderEBelge({ is_invoiced: true, invoice_id: "inv1" })).toBe(true);
   });
 
+  it("treats a missing linked invoice as uninvoiced", () => {
+    const missing = {
+      invoice_id: "inv_gone",
+      is_invoiced: true,
+      invoice_missing: true,
+      e_type: "e_archive",
+      einvoice_state: "sent",
+    };
+    expect(isOrderFullyInvoiced(missing)).toBe(false);
+    expect(hasOrderDraftInvoice(missing)).toBe(false);
+    expect(canCreateOrderDraftInvoice(missing)).toBe(true);
+    expect(canPostOrderDraftInvoice(missing)).toBe(false);
+    expect(canIssueOrderEBelge(missing)).toBe(false);
+    expect(faturalaActionLabel(missing)).toBe("Faturala");
+  });
+
   it("gates Faturala create vs post", () => {
     expect(canCreateOrderDraftInvoice({})).toBe(true);
     expect(canPostOrderDraftInvoice({})).toBe(false);

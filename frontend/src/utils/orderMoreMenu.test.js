@@ -230,6 +230,21 @@ describe("orderMoreMenu", () => {
     expect(labels).not.toContain("Siparişi Sil");
   });
 
+  it("invoice_missing stays an uninvoiced panel draft even if stale e-document fields remain", () => {
+    const ord = {
+      channel: "b2b",
+      invoice_id: "inv_gone",
+      is_invoiced: true,
+      invoice_missing: true,
+      e_type: "e_archive",
+      einvoice_state: "sent",
+      gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    };
+    expect(orderHasEInvoiceIssued(ord)).toBe(false);
+    expect(orderInvoiceBadge(ord)).toBeNull();
+    expect(orderMoreMenuKind(ord)).toBe("panel_draft");
+  });
+
   it("panel draft (B2B/manual) hides mini cargo labels until shipment", () => {
     const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-1" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");

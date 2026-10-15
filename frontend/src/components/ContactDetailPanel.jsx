@@ -610,6 +610,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     try {
       const r = await axios.delete(`${API_URL}/invoices/${inv.id}`);
       toast.success(r.data.message || "Fatura silindi.");
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["invoices"] });
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Silinemedi.");

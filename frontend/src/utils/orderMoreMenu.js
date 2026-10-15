@@ -73,7 +73,7 @@ function orderDocEType(ord) {
 }
 
 export function orderHasEInvoiceIssued(ord) {
-  if (!ord) return false;
+  if (!ord || ord.invoice_missing) return false;
   if (!EDOC_TYPES.has(orderDocEType(ord))) return false;
   const state = String(ord.einvoice_state || "").trim().toLowerCase();
   if (NOT_ISSUED_STATES.has(state)) return false;
@@ -139,7 +139,7 @@ export function orderEBelgeKindLabel(ord) {
 }
 
 export function orderInvoiceBadge(ord) {
-  if (!ord) return null;
+  if (!ord || ord.invoice_missing) return null;
   const eType = orderDocEType(ord);
   const state = String(ord.einvoice_state || "").trim().toLowerCase();
   const gs = String(ord.invoice_gib_status || ord.gib_status || "");
@@ -212,6 +212,11 @@ export function orderInvoiceBadge(ord) {
 /** Menü kimliği: panel_einvoice | integration_einvoice | integration_invoiced | integration_draft | panel_draft | panel_invoiced | held_cart | default */
 export function orderMoreMenuKind(ord) {
   if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
+  if (ord?.invoice_missing) {
+    if (isIntegrationOrder(ord)) return "integration_draft";
+    if (isPanelOrder(ord)) return "panel_draft";
+    return "default";
+  }
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   // Cariye faturalaştı, henüz GİB e-belgesi yok

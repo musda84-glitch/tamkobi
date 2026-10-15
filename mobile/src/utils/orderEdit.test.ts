@@ -12,6 +12,8 @@ describe("staff order gates", () => {
   it("blocks invoiced, cancelled and marketplace edits", () => {
     expect(canStaffEditOrder({ channel: "b2b", order_status: "pending", is_invoiced: true })).toBe(false);
     expect(canStaffDeleteOrder({ invoice_id: "inv-1" })).toBe(false);
+    expect(canStaffDeleteOrder({ invoice_id: "inv-1", is_invoiced: true, invoice_missing: true })).toBe(true);
+    expect(canStaffEditOrder({ channel: "b2b", order_status: "pending", is_invoiced: true, invoice_missing: true })).toBe(true);
     expect(canStaffEditOrder({ channel: "b2b", order_status: "cancelled" })).toBe(false);
     expect(canStaffEditOrder({ channel: "trendyol", order_status: "pending" })).toBe(false);
     expect(canStaffDeleteOrder({ is_invoiced: false })).toBe(true);

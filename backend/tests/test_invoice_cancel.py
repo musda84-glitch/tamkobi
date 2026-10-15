@@ -69,7 +69,7 @@ def test_cancel_invoice_reverses_and_marks_cancelled():
     with patch.object(server, "db", mock_db), patch.object(
         server, "_reverse_invoice_effects", AsyncMock()
     ) as rev, patch.object(
-        server, "_unlink_orders_from_invoice", AsyncMock()
+        server, "_unlink_orders_on_invoice_cancel", AsyncMock()
     ) as unlink, patch.object(
         server, "_cancel_promissory_for_query", AsyncMock()
     ), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
@@ -135,7 +135,7 @@ def test_cancel_issued_dispatch_unlinks_refs():
     with patch.object(server, "db", mock_db), patch.object(
         server, "_reverse_invoice_effects", AsyncMock()
     ), patch.object(
-        server, "_unlink_orders_from_invoice", AsyncMock()
+        server, "_unlink_orders_on_invoice_cancel", AsyncMock()
     ), patch.object(
         server, "_unlink_dispatch_refs", AsyncMock()
     ) as un_disp, patch.object(

@@ -6193,6 +6193,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             o["invoice_e_type"] = inv.get("e_type")
             o["einvoice_state"] = inv.get("einvoice_state") or o.get("einvoice_state")
             o["invoice_gib_status"] = inv.get("gib_status")
+    await _annotate_orders_invoice_missing(orders)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
     mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(200)
     email_deliveries = [m for m in mails if mail_tracking.within_days(m.get("created_at") or "")][:80]
@@ -9039,11 +9040,128 @@ async def _unlink_dispatch_refs(dispatch_id: str):
     )
 
 
-async def _unlink_orders_from_invoice(invoice_id: str):
+_ORDER_INVOICE_LINK_UNSET = {
+    "invoice_id": "",
+    "invoice_number": "",
+    "invoice_e_type": "",
+    "invoice_gib_status": "",
+    "invoice_gib_uuid": "",
+    "gib_uuid": "",
+    "gib_invoice_id": "",
+    "einvoice_state": "",
+}
+
+
+def _invoice_linked_order_ids(invoice: dict) -> List[str]:
+    """Faturanın gösterdiği sipariş kimlikleri (order_id, source_order_id, order_ids)."""
+    ids: List[str] = []
+    if not isinstance(invoice, dict):
+        return ids
+    for key in ("order_id", "source_order_id"):
+        val = str(invoice.get(key) or "").strip()
+        if val and val not in ids:
+            ids.append(val)
+    for raw in invoice.get("order_ids") or []:
+        val = str(raw or "").strip()
+        if val and val not in ids:
+            ids.append(val)
+    return ids
+
+
+def _order_status_after_invoice_unlink(order: dict) -> Optional[str]:
+    """order_status invoiced ise önceki duruma, yoksa pending. Diğer durumlarda None (dokunma)."""
+    if str((order or {}).get("order_status") or "").strip() != "invoiced":
+        return None
+    for key in ("order_status_before", "previous_order_status", "status_before_invoice"):
+        prev = str(order.get(key) or "").strip()
+        if prev and prev != "invoiced":
+            return prev
+    return "pending"
+
+
+def _unlink_orders_query(invoice: dict) -> Optional[Dict[str, Any]]:
+    """company_id zorunlu. Başka faturaya bağlı sipariş eşleşmez."""
+    if not isinstance(invoice, dict):
+        return None
+    company_id = str(invoice.get("company_id") or "").strip()
+    inv_id = str(invoice.get("_id") or "").strip()
+    order_ids = _invoice_linked_order_ids(invoice)
+    only_orders = bool(invoice.get("_unlink_order_ids_only"))
+    if not company_id or (not inv_id and not order_ids):
+        return None
+    clauses: List[Dict[str, Any]] = []
+    if inv_id and not only_orders:
+        clauses.append({"invoice_id": inv_id})
+    if order_ids:
+        empty_or_this: List[Dict[str, Any]] = [
+            {"invoice_id": {"$exists": False}},
+            {"invoice_id": None},
+            {"invoice_id": ""},
+        ]
+        if inv_id and not only_orders:
+            empty_or_this.append({"invoice_id": inv_id})
+        clauses.append({"_id": {"$in": order_ids}, "$or": empty_or_this})
+    if not clauses:
+        return None
+    query: Dict[str, Any] = {"company_id": company_id, "$or": clauses}
+    # Onarım betiği: is_invoiced sipariş yalnız --include-invoiced ile temizlenir.
+    if invoice.get("_unlink_skip_invoiced"):
+        query["is_invoiced"] = {"$ne": True}
+    return query
+
+
+async def _unlink_orders_on_invoice_cancel(invoice_id: str):
+    """İptal akışı: mevcut basit bağ koparma. Silme yolundan çağrılmaz."""
     await db.orders.update_many(
         {"invoice_id": invoice_id},
         {"$unset": {"invoice_id": "", "invoice_number": ""}, "$set": {"is_invoiced": False}},
     )
+
+
+async def _unlink_orders_from_invoice(invoice: dict) -> int:
+    """Taslak/kağıt fatura silinince siparişin fatura bağını sıfırla. Sipariş silinmez.
+
+    Eşleşme: invoice_id bu fatura, ya da _id fatura.order_id / source_order_id
+    ve o siparişin invoice_id'si bu fatura veya boş. company_id zorunlu.
+    Başka faturaya bağlı veya başka firmadaki siparişe dokunulmaz.
+    Kanal, teslim ve kargo alanları değişmez.
+    """
+    query = _unlink_orders_query(invoice)
+    if not query:
+        return 0
+    company_id = query["company_id"]
+    inv_id = str(invoice.get("_id") or "").strip()
+    only_orders = bool(invoice.get("_unlink_order_ids_only"))
+    orders = await db.orders.find(query).to_list(2000)
+    groups: Dict[Optional[str], List[str]] = {}
+    for order in orders:
+        if str(order.get("company_id") or "") != company_id:
+            continue
+        if invoice.get("_unlink_skip_invoiced") and order.get("is_invoiced"):
+            continue
+        linked = str(order.get("invoice_id") or "").strip()
+        if linked and (only_orders or linked != inv_id):
+            continue
+        oid = order.get("_id")
+        if not oid:
+            continue
+        groups.setdefault(_order_status_after_invoice_unlink(order), []).append(oid)
+    if not groups:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    touched = 0
+    for status, ids in groups.items():
+        if not ids:
+            continue
+        patch: Dict[str, Any] = {"is_invoiced": False, "updated_at": now}
+        if status:
+            patch["order_status"] = status
+        await db.orders.update_many(
+            {"company_id": company_id, "_id": {"$in": ids}},
+            {"$unset": dict(_ORDER_INVOICE_LINK_UNSET), "$set": patch},
+        )
+        touched += len(ids)
+    return touched
 
 
 async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
@@ -9059,7 +9177,7 @@ async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
     applied = bool(inv.get("effects_applied")) or (not is_draft and inv.get("status") in ("approved", "sent_to_gib", "paid"))
     if applied:
         await _reverse_invoice_effects(inv)
-    await _unlink_orders_from_invoice(invoice_id)
+    await _unlink_orders_from_invoice(inv)
     if _is_dispatch_doc(inv):
         await _unlink_dispatch_refs(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
@@ -9161,7 +9279,7 @@ async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user
             {"_id": ptx["_id"]},
             {"$unset": {"related_invoice_id": ""}},
         )
-    await _unlink_orders_from_invoice(invoice_id)
+    await _unlink_orders_on_invoice_cancel(invoice_id)
     if _is_dispatch_doc(inv):
         await _unlink_dispatch_refs(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
@@ -13338,6 +13456,7 @@ async def delete_leave(leave_id: str, user: dict = Depends(get_current_user)):
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, user: dict = Depends(get_current_user)):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    await _annotate_orders_invoice_missing([o])
     return clean_doc(o)
 
 _MARKETPLACE_EDIT_BLOCK = {
@@ -13830,15 +13949,26 @@ async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None, user
 async def _create_draft_invoice_for_order(order: dict, source: str = "approve") -> Optional[dict]:
     """Sipariş onayında / sevkiyatta cari Faturalar sekmesinde görünen taslak satış faturası.
 
-    Stok / cari bakiyesine dokunmaz. Siparişte fatura varsa yeniden oluşturmaz.
+    Stok / cari bakiyesine dokunmaz. Canlı fatura varsa yeniden oluşturmaz.
+    company_id + invoice_id dolu ama fatura yoksa (silinmiş / çöp) yeni taslak açılır.
     """
-    if not order or not order.get("_id") or order.get("is_invoiced"):
+    if not order or not order.get("_id"):
         return None
-    existing_id = order.get("invoice_id")
-    if existing_id:
-        existing = await db.invoices.find_one({"_id": existing_id})
+    cid = str(order.get("company_id") or "").strip()
+    inv_id = str(order.get("invoice_id") or "").strip()
+    if order.get("is_invoiced") and (not cid or not inv_id):
+        return None
+    existing = None
+    if inv_id:
+        inv_q: Dict[str, Any] = {"_id": inv_id}
+        if cid:
+            inv_q["company_id"] = cid
+        existing = await db.invoices.find_one(inv_q)
+    if order.get("is_invoiced"):
         if existing:
-            return existing
+            return None
+    elif existing:
+        return existing
     # Sevkiyatta müşteri adı yoksa sipariş no ile cari açılsın (taslak fatura kaçmasın).
     if not (order.get("customer_name") or "").strip() and not order.get("contact_id"):
         order = {**order, "customer_name": f"Sipariş {order.get('order_number') or order.get('_id')}"}
@@ -17016,30 +17146,79 @@ async def list_orders(
     return _sort_b2b_cart_orders(docs)
 
 
+_INVOICE_EBELGE_PROJECTION = {
+    "e_type": 1,
+    "einvoice_state": 1,
+    "gib_status": 1,
+    "gib_invoice_id": 1,
+    "invoice_number": 1,
+    "local_invoice_number": 1,
+    "gib_uuid": 1,
+    "gib_tracking_id": 1,
+}
+
+
+async def _load_company_invoices_for_orders(docs: List[Dict[str, Any]], projection: Optional[dict] = None) -> Dict[tuple, dict]:
+    """Siparişlerin invoice_id'leri için firma başına tek canlı fatura sorgusu. Çöpteki kayıt gelmez."""
+    by_company: Dict[str, set] = {}
+    for order in docs or []:
+        inv_id = str((order or {}).get("invoice_id") or "").strip()
+        cid = str((order or {}).get("company_id") or "").strip()
+        if not inv_id or not cid:
+            continue
+        by_company.setdefault(cid, set()).add(inv_id)
+    found: Dict[tuple, dict] = {}
+    for cid, ids in by_company.items():
+        id_list = list(ids)
+        rows = await db.invoices.find(
+            {"company_id": cid, "_id": {"$in": id_list}},
+            projection or {"_id": 1},
+        ).to_list(len(id_list) or 1)
+        for row in rows:
+            found[(cid, str(row.get("_id")))] = row
+    return found
+
+
+async def _annotate_orders_invoice_missing(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """invoice_id var ama bu firmanın canlı faturası yoksa yanıta invoice_missing=true. DB'ye yazılmaz."""
+    if not docs:
+        return docs
+    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
+        return docs
+    live = await _load_company_invoices_for_orders(docs, {"_id": 1})
+    for order in docs:
+        inv_id = str((order or {}).get("invoice_id") or "").strip()
+        if not inv_id:
+            continue
+        cid = str(order.get("company_id") or "").strip()
+        if not cid or (cid, inv_id) not in live:
+            order["invoice_missing"] = True
+    return docs
+
+
 async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Liste rozeti: fatura e_type / einvoice_state siparişe yansısın (Faturalaşmış E-Fatura/E-Arşiv)."""
+    """Liste rozeti: fatura e_type / einvoice_state siparişe yansısın (Faturalaşmış E-Fatura/E-Arşiv).
+
+    Canlı faturası olmayan siparişe invoice_missing=true eklenir (yanıt alanı, DB yazılmaz).
+    """
     from order_ebelge_enrich import enrich_orders_with_invoices
 
     if not docs:
         return docs
-    inv_ids = [o.get("invoice_id") for o in docs if o.get("invoice_id")]
-    inv_ids = list({i for i in inv_ids if i})
-    if not inv_ids:
+    if not any(str((o or {}).get("invoice_id") or "").strip() for o in docs):
         return docs
-    invs = await db.invoices.find(
-        {"_id": {"$in": inv_ids}},
-        {
-            "e_type": 1,
-            "einvoice_state": 1,
-            "gib_status": 1,
-            "gib_invoice_id": 1,
-            "invoice_number": 1,
-            "local_invoice_number": 1,
-            "gib_uuid": 1,
-            "gib_tracking_id": 1,
-        },
-    ).to_list(len(inv_ids))
-    by_id = {i["_id"]: i for i in invs}
+    live = await _load_company_invoices_for_orders(docs, _INVOICE_EBELGE_PROJECTION)
+    by_id: Dict[str, dict] = {}
+    for order in docs:
+        inv_id = str(order.get("invoice_id") or "").strip()
+        if not inv_id:
+            continue
+        cid = str(order.get("company_id") or "").strip()
+        inv = live.get((cid, inv_id)) if cid else None
+        if not inv:
+            order["invoice_missing"] = True
+            continue
+        by_id[inv_id] = inv
     return enrich_orders_with_invoices(docs, by_id)
 
 
@@ -17181,12 +17360,20 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
 
     as_draft = bool(req.get("as_draft"))
     e_type_req = req.get("e_type") if req.get("e_type") in ("e_invoice", "e_archive", "paper") else None
+    live = None
+    if order.get("invoice_id"):
+        inv_q: Dict[str, Any] = {"_id": order["invoice_id"]}
+        if order.get("company_id"):
+            inv_q["company_id"] = order["company_id"]
+        live = await db.invoices.find_one(inv_q)
+    # Bağlı fatura bu firmada yoksa (silinmiş / çöp) sipariş yeniden faturalaştırılabilir.
+    dead = bool(order.get("invoice_id") and order.get("company_id") and not live)
 
     if as_draft:
-        if order.get("is_invoiced"):
+        if order.get("is_invoiced") and not dead:
             return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id"), "draft": False}
-        if order.get("invoice_id"):
-            existing = await db.invoices.find_one({"_id": order["invoice_id"]})
+        if order.get("invoice_id") and not dead:
+            existing = live
             if existing and existing.get("status") == "draft":
                 if e_type_req and existing.get("e_type") != e_type_req:
                     await db.invoices.update_one({"_id": existing["_id"]}, {"$set": {"e_type": e_type_req}})
@@ -17214,11 +17401,11 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
             "draft": True,
         }
 
-    if order.get("is_invoiced"):
+    if order.get("is_invoiced") and not dead:
         return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id")}
     draft_inv = None
-    if order.get("invoice_id"):
-        draft_inv = await db.invoices.find_one({"_id": order["invoice_id"]})
+    if order.get("invoice_id") and not dead:
+        draft_inv = live
         if draft_inv and draft_inv.get("status") != "draft":
             return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id")}
     _oc = await _ensure_order_contact(order)
@@ -21904,23 +22091,49 @@ async def _restore_recipe(doc, _related):
     await db.products.update_one({"_id": doc.get("finished_product_id")}, {"$set": {"has_recipe": True}})
 
 
+async def _relink_orders_after_invoice_restore(doc: dict) -> None:
+    """Çöpten dönen faturayı, başka faturaya bağlı olmayan siparişe tekrar yaz.
+
+    is_invoiced False kalır (yeniden faturalaştırılabilsin). Başka firma veya
+    başka faturanın siparişi değişmez.
+    """
+    if not isinstance(doc, dict):
+        return
+    company_id = str(doc.get("company_id") or "").strip()
+    inv_id = str(doc.get("_id") or "").strip()
+    order_ids = []
+    for key in ("order_id", "source_order_id"):
+        val = str(doc.get(key) or "").strip()
+        if val and val not in order_ids:
+            order_ids.append(val)
+    if not company_id or not inv_id or not order_ids:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_many(
+        {
+            "company_id": company_id,
+            "_id": {"$in": order_ids},
+            "$or": [
+                {"invoice_id": {"$exists": False}},
+                {"invoice_id": None},
+                {"invoice_id": ""},
+                {"invoice_id": inv_id},
+            ],
+        },
+        {"$set": {
+            "invoice_id": inv_id,
+            "invoice_number": doc.get("invoice_number"),
+            "is_invoiced": False,
+            "updated_at": now,
+        }},
+    )
+
+
 async def _restore_invoice(doc, _related):
     """Çöp kutusundan geri alınan onaylı kağıt faturanın bakiye/stok etkisini yeniden uygula."""
     if doc.get("effects_applied") and doc.get("status") != "draft":
         await _apply_invoice_effects(doc)
-    # Sipariş bağlantısını mümkünse geri bağla
-    oid = doc.get("order_id")
-    if oid and doc.get("_id"):
-        order = await db.orders.find_one({"_id": oid})
-        if order and not order.get("invoice_id"):
-            await db.orders.update_one(
-                {"_id": oid},
-                {"$set": {
-                    "invoice_id": doc["_id"],
-                    "invoice_number": doc.get("invoice_number"),
-                    "is_invoiced": bool(doc.get("status") != "draft" and doc.get("status") not in (None,)),
-                }},
-            )
+    await _relink_orders_after_invoice_restore(doc)
 
 
 async def _restore_assigned_task(doc, _related):

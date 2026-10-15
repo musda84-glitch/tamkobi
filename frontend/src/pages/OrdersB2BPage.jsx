@@ -55,6 +55,7 @@ import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/pri
 import { eBelgeMenuItems, orderEBelgeType, resolveOrderContact } from "../utils/orderEBelge";
 import { contactMukellefPatch, docBuyerTaxId, faturalastirMenuLabel, fetchGibMukellef } from "../utils/gibMukellef";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
+import { orderUninvoicedInvoiceButton } from "../utils/orderInvoiceAction";
 import { OrderInvoiceNumberMarks } from "../components/OrderInvoiceNumberMarks";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId, todayYmd } from "../utils/orderBulkActions";
@@ -550,7 +551,7 @@ export default function OrdersB2BPage() {
         return;
       }
       if (action === "invoice" || action === "invoice_create") {
-        const creatable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
+        const creatable = list.filter((o) => o.invoice_missing || (!o.is_invoiced && !o.invoice_id));
         if (!creatable.length) { toast.info("Taslak fatura oluşturulacak sipariş yok (zaten faturalı veya taslaklı)."); return; }
         if (!window.confirm(`${creatable.length} sipariş için taslak fatura oluşturulsun mu?`)) return;
       } else if (action === "approve") {
@@ -576,7 +577,7 @@ export default function OrdersB2BPage() {
         const oid = orderRowId(o);
         try {
           if (action === "invoice" || action === "invoice_create") {
-            if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
+            if (!o.invoice_missing && (o.is_invoiced || o.invoice_id)) { skipped++; continue; }
             await axios.post(`${API_URL}/orders/${oid}/convert-to-invoice`, {
               e_type: orderEBelgeType(o, contacts) || "e_archive",
               as_draft: true,
@@ -925,7 +926,17 @@ export default function OrdersB2BPage() {
     [listMeta.channels],
   );
 
-  const refreshOrdersSilent = useCallback(() => loadData({ silent: true }), [loadData]);
+  const refreshOrdersSilent = useCallback((detail) => {
+    const scopes = detail?.scopes || [];
+    const cols = detail?.collections || [];
+    const drop = scopes.includes("invoices") || scopes.includes("all") || cols.includes("orders");
+    const run = () => loadData({ silent: true });
+    if (drop && companyId) {
+      dropCached("orders", companyId).finally(run);
+      return;
+    }
+    run();
+  }, [loadData, companyId]);
   useDataRefresh(refreshOrdersSilent, { companyId, scopes: ["orders", "invoices"] });
 
   /**
@@ -1095,12 +1106,12 @@ export default function OrdersB2BPage() {
 
   /** Faturalaştır → cariye işlenmiş fatura (yeşil). E-belge ayrıca kesilir. */
   const handleFaturalastir = async (ord) => {
-    if (ord.is_invoiced) {
+    if (ord.is_invoiced && !ord.invoice_missing) {
       toast.info("Sipariş zaten cariye faturalaştı.");
       return;
     }
     try {
-      let invoiceId = ord.invoice_id;
+      let invoiceId = ord.invoice_missing ? null : ord.invoice_id;
       if (!invoiceId) {
         const draft = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/convert-to-invoice`, {
           e_type: orderEBelgeType(ord, contacts) || "e_archive",
@@ -2200,8 +2211,10 @@ export default function OrdersB2BPage() {
                           <>
                         {!ord.is_invoiced && !ord.invoice_id && !orderHasEInvoiceIssued(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {(() => {
+                          const missing = !!ord.invoice_missing;
+                          const uninvoicedBtn = orderUninvoicedInvoiceButton(ord);
                           const invBadge = orderInvoiceBadge(ord);
-                          if (invBadge && invBadge.interactive === false) {
+                          if (!missing && invBadge && invBadge.interactive === false) {
                             return (
                               <span
                                 className={`inline-flex flex-col items-center justify-center px-1.5 py-0.5 rounded-lg text-[8px] font-bold border leading-tight text-center max-w-[5.25rem] pointer-events-none select-none ${invBadge.className}`}
@@ -2215,7 +2228,7 @@ export default function OrdersB2BPage() {
                               </span>
                             );
                           }
-                          if (ord.is_invoiced) {
+                          if (!missing && ord.is_invoiced) {
                             return (
                               <button
                                 type="button"
@@ -2228,7 +2241,7 @@ export default function OrdersB2BPage() {
                               </button>
                             );
                           }
-                          if (ord.invoice_id) {
+                          if (!missing && ord.invoice_id) {
                             return (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -2273,9 +2286,9 @@ export default function OrdersB2BPage() {
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm"
-                                title="Fatura işlemleri"
-                                aria-label="Fatura işlemleri"
+                                className={uninvoicedBtn?.className || "p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm"}
+                                title={uninvoicedBtn?.title || "Fatura işlemleri"}
+                                aria-label={uninvoicedBtn?.ariaLabel || "Fatura işlemleri"}
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
                                 <FileText className="w-4 h-4" />

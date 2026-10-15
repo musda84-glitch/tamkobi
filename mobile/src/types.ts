@@ -219,6 +219,7 @@ export type Order = {
   source?: string;
   is_invoiced?: boolean;
   invoice_id?: string;
+  invoice_missing?: boolean;
   invoice_number?: string;
   e_type?: string;
   invoice_e_type?: string;

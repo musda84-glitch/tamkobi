@@ -644,7 +644,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
     const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
     if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
-    try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+    try {
+      const r = await axios.delete(`${API_URL}/invoices/${inv.id}`);
+      toast.success(r.data.message);
+      await notifyDataChanged({ companyId, scopes: ["invoices"] });
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const handleCancelInvoice = async (inv) => {
     const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
@@ -1059,6 +1064,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           ok++;
         } catch { fail++; }
       }
+      if (ok) await notifyDataChanged({ companyId, scopes: ["invoices"] });
       setBulkBusy(false);
       toast[fail ? "error" : "success"](`${ok} fatura silindi${fail ? `, ${fail} hata` : ""}.`);
       setSelected([]);

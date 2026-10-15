@@ -6,28 +6,35 @@ export type OrderInvoiceFlags = OrderMoreOrder & {
   is_invoiced?: boolean;
   invoice_id?: string;
   invoice_number?: string;
+  invoice_missing?: boolean;
 };
 
-/** Resmi / cariye işlenmiş fatura (taslak sayılmaz). */
+/** Resmi / cariye işlenmiş fatura (taslak ve kayıp bağ sayılmaz). */
 export function isOrderFullyInvoiced(o: OrderInvoiceFlags | null | undefined): boolean {
+  if (o?.invoice_missing) return false;
   return !!o?.is_invoiced;
 }
 
-/** Taslak fatura var, henüz cariye işlenmemiş. */
+/** Taslak fatura var, henüz cariye işlenmemiş. Kayıp bağ taslak değildir. */
 export function hasOrderDraftInvoice(o: OrderInvoiceFlags | null | undefined): boolean {
+  if (o?.invoice_missing) return false;
   return !!o?.invoice_id && !o?.is_invoiced;
 }
 
 export function canCreateOrderDraftInvoice(o: OrderInvoiceFlags | null | undefined): boolean {
-  return !!o && !o.is_invoiced && !o.invoice_id;
+  if (!o) return false;
+  if (o.invoice_missing) return true;
+  return !o.is_invoiced && !o.invoice_id;
 }
 
 export function canPostOrderDraftInvoice(o: OrderInvoiceFlags | null | undefined): boolean {
+  if (o?.invoice_missing) return false;
   return hasOrderDraftInvoice(o);
 }
 
 /** GİB e-Fatura/e-Arşiv: yalnızca cariye faturalaşmış sipariş. */
 export function canIssueOrderEBelge(o: OrderInvoiceFlags | null | undefined): boolean {
+  if (o?.invoice_missing) return false;
   return !!o?.is_invoiced;
 }
 
