@@ -1,4 +1,4 @@
-import { readSettingsTab, writeSettingsTab, settingsParamFor, DEFAULT_SETTINGS_TAB } from "./settingsTabs";
+import { readSettingsTab, writeSettingsTab, settingsParamFor, resolveSettingsTab, DEFAULT_SETTINGS_TAB } from "./settingsTabs";
 
 describe("ayar bölümünü adresten okuma", () => {
   test("kendi adresinde ?tab= okunur", () => {
@@ -54,4 +54,9 @@ describe("bölüm değiştirme", () => {
 
 test("iki kip ayrı parametre kullanır", () => {
   expect(settingsParamFor(false)).not.toBe(settingsParamFor(true));
+});
+
+test("kaldırılmış veri tutarlılığı bölümü firma ayarlarına döner", () => {
+  expect(resolveSettingsTab("integrity")).toBe(DEFAULT_SETTINGS_TAB);
+  expect(resolveSettingsTab("einvoice")).toBe("einvoice");
 });

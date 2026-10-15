@@ -16,6 +16,7 @@ import partner_pay
 import pay_claim
 import rbac
 import tenant_access
+import trash
 
 KIND_LABELS = {
     "salary": "Maaş",
@@ -1400,3 +1401,56 @@ async def reverse_linked_personnel_payments(
         await reverse_payment(db, mov, actor=actor)
         n += 1
     return n
+
+
+def _bonus_trash_label(bonus: dict) -> str:
+    amount = float(bonus.get("amount") or 0)
+    return f"{bonus.get('employee_name')} · {bonus.get('type')} · {amount:,.2f} ₺"
+
+
+async def delete_bonus_record(db, bonus: dict) -> bool:
+    """Prim kaydını mevcut silme yoluyla çöpe taşır.
+
+    Önce bağlı personel ödeme hareketi (varsa kasa/banka/ortak etkisiyle) geri alınır.
+    Kayıt duruyorsa ve ödenmişse bağlı kasa/banka/ortak hareketleri prepare_source_trash
+    ile birlikte taşınır. Kayıt zaten yoksa işlem tekrarlanabilir.
+    """
+    if not bonus or not bonus.get("_id"):
+        return False
+    bonus_id = bonus["_id"]
+    await reverse_linked_personnel_payments(db, bonus, collection="bonus_payments")
+    fresh = await db.bonus_payments.find_one({"_id": bonus_id})
+    if not fresh:
+        return True
+    related: List[dict] = []
+    if fresh.get("status") == "paid":
+        related = await linked_moves.prepare_source_trash(
+            db, "personnel_bonus", bonus_id, company_id=fresh.get("company_id"),
+        )
+    await trash.soft_delete(
+        "bonus_payments",
+        fresh,
+        "bonus",
+        _bonus_trash_label(fresh),
+        related=related,
+        note=fresh.get("status") or "",
+    )
+    if related:
+        await linked_moves.recalc_after_trash(db, related)
+    return True
+
+
+async def delete_employee_bonuses(db, employee: dict) -> int:
+    """Personel silinirken aynı firmadaki primleri mevcut prim silme yoluyla temizler."""
+    emp_id = str((employee or {}).get("_id") or "").strip()
+    cid = str((employee or {}).get("company_id") or "").strip()
+    if not emp_id or not cid:
+        return 0
+    rows = await db.bonus_payments.find({"employee_id": emp_id, "company_id": cid}).to_list(5000)
+    removed = 0
+    for row in list(rows):
+        if str(row.get("company_id") or "") != cid or str(row.get("employee_id") or "") != emp_id:
+            continue
+        await delete_bonus_record(db, row)
+        removed += 1
+    return removed

@@ -13745,26 +13745,8 @@ async def _reverse_personnel_payment_links(doc: dict, collection: str) -> None:
 @api_router.delete("/personnel/bonuses/{bonus_id}")
 async def delete_bonus(bonus_id: str, user: dict = Depends(get_current_user)):
     b = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
-    await _reverse_personnel_payment_links(b, "bonus_payments")
-    fresh = await db.bonus_payments.find_one({"_id": bonus_id})
-    if not fresh:
-        return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
-    b = fresh
-    related = []
-    if b.get("status") == "paid":
-        related = await linked_moves.prepare_source_trash(
-            db, "personnel_bonus", bonus_id, company_id=b.get("company_id"),
-        )
-    await trash.soft_delete(
-        "bonus_payments",
-        b,
-        "bonus",
-        f"{b.get('employee_name')} · {b.get('type')} · {float(b.get('amount') or 0):,.2f} ₺",
-        related=related,
-        note=b.get("status") or "",
-    )
-    if related:
-        await linked_moves.recalc_after_trash(db, related)
+    import personnel_payments
+    await personnel_payments.delete_bonus_record(db, b)
     return {"status": "success", "message": "Kayıt çöp kutusuna taşındı."}
 
 
@@ -19943,7 +19925,11 @@ async def delete_employee(emp_id: str, user: dict = Depends(get_current_user)):
     emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     label = emp.get("full_name") or emp_id
     note = " · ".join(x for x in [emp.get("position"), emp.get("department"), emp.get("tc_kimlik")] if x)
+    import personnel_payments
+    removed = await personnel_payments.delete_employee_bonuses(db, emp)
     await trash.soft_delete("employees", emp, "employee", label, note=note)
+    if removed:
+        return {"status": "success", "message": "Personel ve bağlı prim kayıtları çöp kutusuna taşındı."}
     return {"status": "success", "message": "Personel çöp kutusuna taşındı."}
 
 @api_router.get("/personnel/employees/{emp_id}/card")
@@ -21781,7 +21767,7 @@ tax_obligations.init(db, get_current_user)
 vehicles.init(db, get_current_user)
 fx.init(db)
 finance.init(db, get_current_user)
-linked_moves.init(db, reverse_tx_fn=_reverse_tx_effects, get_current_user=get_current_user)
+linked_moves.init(db, reverse_tx_fn=_reverse_tx_effects)
 cheques.init(db, get_current_user)
 attendance.init(db, get_current_user)
 trash.init(db, get_current_user)
@@ -21981,7 +21967,6 @@ app.include_router(tax_obligations.router)
 app.include_router(vehicles.router)
 app.include_router(fx.router)
 app.include_router(finance.router)
-app.include_router(linked_moves.router)
 app.include_router(cheques.router)
 app.include_router(attendance.router)
 app.include_router(trash.router)
