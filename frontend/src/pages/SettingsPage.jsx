@@ -3,7 +3,7 @@ import { MoneyInput, parseTrNumber } from "../components/MoneyInput";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Bell, Wrench } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Bell, Wrench, Monitor } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
@@ -27,6 +27,7 @@ import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { EinvoicePull30dButton } from "../components/EinvoicePull30dButton";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
+import { DesktopAppPanel } from "../components/DesktopAppPanel";
 import { NotifyPrefsPanel } from "../components/NotifyPrefsPanel";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, stageToneLabel, slugStageKey } from "../utils/projectStages";
 import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } from "../utils/workParks";
@@ -39,7 +40,7 @@ const EinvoiceDesignSupportNote = () => (
     Fatura tasarımı değişikliği için destek ile iletişime geçin.
   </p>
 );
-const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["integrity", "Veri Tutarlılığı", Wrench], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["integrity", "Veri Tutarlılığı", Wrench], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -714,11 +715,17 @@ export const B2BSettings = ({ companyId }) => {
  * durumda bölüm adı `?ayar=` içinde durur (bkz. utils/settingsTabs).
  */
 export default function SettingsPage({ embedded = false }) {
-  const { activeCompany } = useAuth();
+  const { activeCompany, can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const tab = readSettingsTab(searchParams, embedded);
+  // Doğrudan /settings adresi firma ayarı yetkisi ister. Masaüstü indirmesi
+  // oturum açmış her firma kullanıcısına açıktır; yetkisi olmayan yalnız bu sekmeyi görür.
+  // Hesabım içine gömülü ayarlar mevcut davranışıyla tüm sekmeleri göstermeye devam eder.
+  const fullSettings = embedded || (typeof can === "function" && can("/settings", "view"));
+  const shownTab = fullSettings ? tab : "desktop";
+  const navTabs = fullSettings ? TABS : TABS.filter(([k]) => k === "desktop");
   const [contacts, setContacts] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const selectTab = (k) => setSearchParams((prev) => writeSettingsTab(prev, embedded, k), { replace: true });
@@ -730,15 +737,15 @@ export default function SettingsPage({ embedded = false }) {
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
           {SETTINGS_TAB_GROUPS.map((g) => {
-            const tabs = TABS.filter(([k]) => g.tabs.includes(k));
+            const tabs = navTabs.filter(([k]) => g.tabs.includes(k));
             if (!tabs.length) return null;
-            const groupActive = g.tabs.includes(tab);
+            const groupActive = g.tabs.includes(shownTab);
             return (
               <div key={g.id} className={`flex lg:flex-col gap-1 shrink-0 ${groupActive ? "lg:bg-slate-50 lg:rounded-xl" : ""}`} data-testid={`settings-group-${g.id}`}>
                 <div className={`hidden lg:block px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider ${groupActive ? "text-emerald-700" : "text-slate-400"}`}>{g.label}</div>
                 {tabs.map(([k, l, Icon]) => (
-                  <button key={k} onClick={() => selectTab(k)} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${tab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
-                    <Icon className={`w-4 h-4 shrink-0 ${tab === k ? "text-white" : "text-slate-400"}`} /> {l}
+                  <button key={k} onClick={() => selectTab(k)} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${shownTab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
+                    <Icon className={`w-4 h-4 shrink-0 ${shownTab === k ? "text-white" : "text-slate-400"}`} /> {l}
                   </button>
                 ))}
               </div>
@@ -746,12 +753,12 @@ export default function SettingsPage({ embedded = false }) {
           })}
         </nav>
         <div className="flex-1 min-w-0 space-y-6">
-          {tab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
-          {tab === "notifications" && <NotifyPrefsPanel companyId={companyId} />}
-          {tab === "plan" && <MyPlanPanel companyId={companyId} />}
-          {tab === "print" && <PrintSettings companyId={companyId} />}
-          {tab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
-          {tab === "sms" && (
+          {shownTab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
+          {shownTab === "notifications" && <NotifyPrefsPanel companyId={companyId} />}
+          {shownTab === "plan" && <MyPlanPanel companyId={companyId} />}
+          {shownTab === "print" && <PrintSettings companyId={companyId} />}
+          {shownTab === "einvoice" && <EInvoiceSettings companyId={companyId} />}
+          {shownTab === "sms" && (
             <div className="space-y-3">
               <p className="text-xs text-slate-500">
                 Şirketinizin SMS operatörü (Netgsm, İleti Merkezi, Verimor) bu ekrandan yönetilir.
@@ -760,28 +767,29 @@ export default function SettingsPage({ embedded = false }) {
               <SmsCenter companyId={companyId} contacts={contacts} />
             </div>
           )}
-          {tab === "mail" && <MailClient companyId={companyId} />}
-          {tab === "bank" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} />}
-          {tab === "fx" && <FxRatesPanel companyId={companyId} />}
-          {tab === "channels" && (
+          {shownTab === "mail" && <MailClient companyId={companyId} />}
+          {shownTab === "bank" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} />}
+          {shownTab === "fx" && <FxRatesPanel companyId={companyId} />}
+          {shownTab === "channels" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
               <a href="/ecommerce" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-emerald-500 flex items-center gap-3" data-testid="settings-link-ecommerce"><ShoppingCart className="w-6 h-6 text-orange-500" /><div><div className="text-sm font-bold">E-Ticaret Entegrasyonları</div><div className="text-xs text-slate-500">Trendyol, Hepsiburada, N11… API anahtarları</div></div><LinkIcon className="w-4 h-4 text-slate-300 ml-auto" /></a>
               <a href="/cargo" className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-emerald-500 flex items-center gap-3" data-testid="settings-link-cargo"><Truck className="w-6 h-6 text-blue-500" /><div><div className="text-sm font-bold">Kargo Entegrasyonları</div><div className="text-xs text-slate-500">Yurtiçi, Aras, MNG, Sürat… API anahtarları</div></div><LinkIcon className="w-4 h-4 text-slate-300 ml-auto" /></a>
             </div>
           )}
-          {tab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
-          {tab === "extension" && <BrowserExtensionPanel />}
-          {tab === "units" && <UnitsCategories companyId={companyId} />}
-          {tab === "project_stages" && <ProjectStagesSettings companyId={companyId} />}
-          {tab === "work_parks" && <WorkParksSettings companyId={companyId} />}
-          {tab === "workshop_zones" && <WorkshopZonesSettings companyId={companyId} />}
-          {tab === "users" && <UsersRolesPanel companyId={companyId} />}
-          {tab === "pos_rules" && <PosRulesPanel companyId={companyId} />}
-          {tab === "migration" && <MigrationPanel companyId={companyId} />}
-          {tab === "storage" && <MyStoragePanel />}
-          {tab === "integrity" && <IntegrityPanel companyId={companyId} compact apiBase="/admin/integrity" />}
-          {tab === "summary" && <MorningSummarySettings companyId={companyId} />}
-          {tab === "modules" && <div className="space-y-4"><ModuleOrder /><RadialSlotsEditor /></div>}
+          {shownTab === "whatsapp" && <WhatsAppSettings companyId={companyId} />}
+          {shownTab === "extension" && <BrowserExtensionPanel />}
+          {shownTab === "desktop" && <DesktopAppPanel />}
+          {shownTab === "units" && <UnitsCategories companyId={companyId} />}
+          {shownTab === "project_stages" && <ProjectStagesSettings companyId={companyId} />}
+          {shownTab === "work_parks" && <WorkParksSettings companyId={companyId} />}
+          {shownTab === "workshop_zones" && <WorkshopZonesSettings companyId={companyId} />}
+          {shownTab === "users" && <UsersRolesPanel companyId={companyId} />}
+          {shownTab === "pos_rules" && <PosRulesPanel companyId={companyId} />}
+          {shownTab === "migration" && <MigrationPanel companyId={companyId} />}
+          {shownTab === "storage" && <MyStoragePanel />}
+          {shownTab === "integrity" && <IntegrityPanel companyId={companyId} compact apiBase="/admin/integrity" />}
+          {shownTab === "summary" && <MorningSummarySettings companyId={companyId} />}
+          {shownTab === "modules" && <div className="space-y-4"><ModuleOrder /><RadialSlotsEditor /></div>}
         </div>
       </div>
     </div>

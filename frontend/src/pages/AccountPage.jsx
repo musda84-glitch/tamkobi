@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
-import { Building2, CreditCard, KeyRound, Loader2, MapPin, Plus, Puzzle, Settings, UserRound, Wallet } from "lucide-react";
+import { Building2, CreditCard, KeyRound, Loader2, MapPin, Monitor, Plus, Puzzle, Settings, UserRound, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
@@ -151,6 +151,17 @@ const ProfileTab = ({ user, reloadSession }) => {
   };
   return (
     <div className="space-y-4 text-xs max-w-2xl" data-testid="account-profile">
+      <Link
+        to="/settings?tab=desktop"
+        className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 hover:bg-slate-100/70"
+        data-testid="account-go-desktop-app"
+      >
+        <span className="font-semibold text-slate-900 inline-flex items-center gap-2">
+          <Monitor className="w-4 h-4" />
+          Masaüstü uygulamasını indir
+        </span>
+        <span className="text-slate-700 font-bold">İndir →</span>
+      </Link>
       <Link
         to={`/settings?tab=extension`}
         className="flex items-center justify-between gap-3 bg-sky-50 border border-sky-200 rounded-2xl px-4 py-3 hover:bg-sky-100/70"

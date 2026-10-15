@@ -95,6 +95,7 @@ import bank_providers
 import bank_guard
 import cash_approval
 import pos_cashier
+import desktop_release
 import marketplace_providers
 from marketplace_settlement import (
     is_marketplace_settlement_tx,
@@ -21629,6 +21630,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 rbac.init(db, _mail_account, get_current_user)
 company_audit.init(db, get_current_user)
 pos_cashier.init(db, get_current_user, {"do_return": _pos_do_return, "do_cancel_sale": _pos_do_cancel_sale})
+desktop_release.init(get_current_user)
 saas.init(db, get_current_user)
 import platform_notices
 platform_notices.init(db)
@@ -21872,6 +21874,7 @@ app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(company_audit.router)
 app.include_router(pos_cashier.router)
+app.include_router(desktop_release.router)
 app.include_router(expenses.router)
 app.include_router(tax_obligations.router)
 app.include_router(vehicles.router)
