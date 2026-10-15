@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import linked_moves  # noqa: E402
@@ -199,24 +201,41 @@ def test_other_company_employee_does_not_protect_this_company():
     assert db.employees.docs[0]["company_id"] == "c2"
 
 
+def _skip_if_mysql_unreachable():
+    """Bağlantı yoksa testi düşürme. Şifre uydurulmaz; yalnız ortam MYSQL_* kullanılır."""
+    import pymysql
+
+    try:
+        conn = pymysql.connect(
+            host=os.environ.get("MYSQL_HOST", "127.0.0.1"),
+            port=int(os.environ.get("MYSQL_PORT", "3306")),
+            user=os.environ.get("MYSQL_USER", ""),
+            password=os.environ.get("MYSQL_PASSWORD", ""),
+            charset="utf8mb4",
+            connect_timeout=3,
+        )
+    except (pymysql.err.OperationalError, ConnectionRefusedError):
+        pytest.skip("MySQL yok")
+    else:
+        conn.close()
+
+
 def test_cli_dry_run_real_mysql_lists_name_amount_and_prim_id(monkeypatch, tmp_path):
     """Script gerçek MySQLClient[db] ile çalışır; dry-run ad, tutar ve prim id yazar.
 
     Veritabanı nesnesi MySQLDatabase'dir (sahte koleksiyon yok). Olmayan firma
-    id'si sıfırdan farklı çıkar. Dry-run kayıt silmez.
+    id'si sıfırdan farklı çıkar. Dry-run kayıt silmez. MySQL yoksa atlanır.
     """
     import json
     import subprocess
     import uuid
 
+    _skip_if_mysql_unreachable()
+
     from mysql_store import MySQLClient, MySQLDatabase, mysql_settings_from_env
 
     db_name = "tamkobi_orphan_prim_test"
     monkeypatch.setenv("TAMKOBI_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MYSQL_HOST", os.environ.get("MYSQL_HOST", "127.0.0.1"))
-    monkeypatch.setenv("MYSQL_PORT", os.environ.get("MYSQL_PORT", "3306"))
-    monkeypatch.setenv("MYSQL_USER", os.environ.get("MYSQL_USER", "tamkobi"))
-    monkeypatch.setenv("MYSQL_PASSWORD", os.environ.get("MYSQL_PASSWORD", "tamkobi"))
     monkeypatch.setenv("MYSQL_DATABASE", db_name)
     monkeypatch.setenv("DB_NAME", db_name)
     monkeypatch.setenv("MYSQL_URL", "")
@@ -340,3 +359,81 @@ def test_cli_dry_run_real_mysql_lists_name_amount_and_prim_id(monkeypatch, tmp_p
         return {row["_id"] for row in left}
 
     assert _run(check()) == {bonus_id, live_bonus_id}
+
+
+def test_main_fake_client_uses_db_name_and_lists_dry_run(monkeypatch, tmp_path, capsys):
+    """MySQL olmadan: _main client[DB_NAME] kullanır, olmayan firma 1 döner, dry-run listeler."""
+    import json
+
+    import mysql_store
+
+    mod = _load()
+    db_name = "orphan_env_db"
+    monkeypatch.setenv("TAMKOBI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DB_NAME", db_name)
+    monkeypatch.setenv("MYSQL_DATABASE", db_name)
+    monkeypatch.setenv("MYSQL_URL", "")
+    monkeypatch.setenv("DATABASE_URL", "")
+
+    db = _Db()
+    db.companies = _Col()
+    created = []
+
+    class _SplitClient:
+        """MySQLClient ayrımı: koleksiyon istemcide değil, client[db] üzerindedir."""
+
+        def __init__(self):
+            created.append(self)
+            self.names = []
+            self.closed = False
+
+        def __getitem__(self, name):
+            self.names.append(name)
+            return db
+
+        async def close_async(self):
+            self.closed = True
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(mysql_store, "MySQLClient", _SplitClient)
+
+    missing = _run(mod._main("firma_yok", False))
+    missing_err = capsys.readouterr().err
+    assert missing == 1
+    assert "firma bulunamadı" in missing_err
+    assert created[-1].names == [db_name]
+    assert created[-1].closed is True
+    with pytest.raises(AttributeError):
+        created[-1].employees
+
+    company = "c_env"
+    bonus_id = "prim_env_1"
+    employee_name = "Silinmiş Kerem"
+    amount = 1375
+    db.companies.docs.append({"_id": company, "name": "Env Firma"})
+    db.employees.docs.append({"_id": "e_live", "company_id": company, "full_name": "Ayşe"})
+    db.bonus_payments.docs.append(_bonus(
+        _id=bonus_id, company_id=company, employee_id="gone_emp",
+        employee_name=employee_name, amount=amount,
+    ))
+    db.bonus_payments.docs.append(_bonus(
+        _id="prim_live", company_id=company, employee_id="e_live",
+        employee_name="Ayşe", amount=40,
+    ))
+
+    code = _run(mod._main(company, False))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert created[-1].names == [db_name]
+    assert employee_name in out
+    assert str(amount) in out
+    assert bonus_id in out
+    payload = json.loads(out[out.index("{"):])
+    assert payload["dry_run"] is True
+    row = payload["rows"][0]
+    assert row["employee_name"] == employee_name
+    assert row["amount"] == amount
+    assert row["bonus_id"] == bonus_id
+    assert {item["_id"] for item in db.bonus_payments.docs} == {bonus_id, "prim_live"}
