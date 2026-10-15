@@ -8,6 +8,7 @@ import { nowIssueDateTime } from "./invoiceIssueNow";
 /** Taslak satış faturası — siparişteki Faturalaştır gibi tür seçilip kesilir. */
 export function canFaturalastirDraftInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
+  if (inv.status === "approving" || inv.status === "cancelling") return false;
   if (inv.status !== "draft") return false;
   if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
   if (inv.e_type === "expense_slip") return false;

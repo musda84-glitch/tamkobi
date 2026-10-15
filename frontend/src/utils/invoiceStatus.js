@@ -1,6 +1,6 @@
 /** İptal / void faturalar aktif listelerde gizlenir. */
 
-export const CANCELLED_INVOICE_STATUSES = new Set(["cancelled", "canceled", "void"]);
+export const CANCELLED_INVOICE_STATUSES = new Set(["cancelled", "canceled", "cancelling", "void"]);
 
 function fold(value) {
   return String(value || "")
@@ -25,4 +25,15 @@ export function withoutCancelledInvoices(rows) {
 export function invoicesForDisplay(rows, showCancelled = false) {
   const list = Array.isArray(rows) ? rows : [];
   return showCancelled ? list : withoutCancelledInvoices(list);
+}
+
+export const APPROVING_INVOICE_BADGE = "Faturalaştırılıyor…";
+
+export function isApprovingInvoice(inv) {
+  return Boolean(inv) && inv.status === "approving";
+}
+
+/** Faturalaştır claim sırasında satır aksiyonları kapalı. */
+export function invoiceRowActionsDisabled(inv) {
+  return isApprovingInvoice(inv);
 }

@@ -19,6 +19,9 @@ import {
   runInvoiceDateBulk,
   invoiceBulkDeleteSkipReason,
   runInvoiceDeleteBulk,
+  invoiceCancelConfirmText,
+  invoiceBulkApproveSkipReason,
+  runInvoiceBulkItems,
 } from "./invoiceBulkActions";
 import { invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
 
@@ -168,5 +171,52 @@ test("delete 409 reason appears and confirm text matches #1264", async () => {
 test("bulkApiErrorDetail reads FastAPI detail", () => {
   expect(bulkApiErrorDetail({ response: { data: { detail: "Faturalaşmış belge silinemez" } } })).toBe(
     "Faturalaşmış belge silinemez",
+  );
+});
+
+test("cancel confirm text is irreversible and does not cancel GIB/IsNet e-document", () => {
+  const text = invoiceCancelConfirmText({ count: 3, gibSentCount: 2 });
+  expect(text.toLocaleLowerCase("tr-TR")).toContain("iptal geri alınamaz");
+  expect(text.toLocaleLowerCase("tr-TR")).toContain("gib/işnet'teki e-belgeyi iptal etmez");
+  expect(text).toContain("2 tanesi GİB'e gönderilmiş");
+  expect(text).toContain("3 fatura iptal edilecek");
+});
+
+test("dispatch cancel confirm keeps existing copy and adds irreversible", () => {
+  const text = invoiceCancelConfirmText({
+    invoices: [{ invoice_number: "IRS-1", invoice_type: "dispatch", e_type: "e_dispatch" }],
+  });
+  expect(text).toContain("e-irsaliye iptal edilsin mi");
+  expect(text).toContain("İptal geri alınamaz");
+});
+
+test("bulk approve skip reasons and result items include error detail", async () => {
+  expect(invoiceBulkApproveSkipReason({ status: "approved" })).toBe("Taslak değil");
+  expect(invoiceBulkApproveSkipReason({ status: "approving" })).toBe("Fatura onaylanıyor");
+  expect(invoiceBulkApproveSkipReason({
+    status: "draft", invoice_type: "purchase", direction: "incoming",
+  })).toBe("Gelen alış faturası");
+  expect(invoiceBulkApproveSkipReason({ status: "draft", invoice_type: "sales" })).toBe("");
+  const items = await runInvoiceBulkItems(
+    [
+      { id: "a", invoice_number: "A", status: "approved" },
+      { id: "b", invoice_number: "B", status: "draft", invoice_type: "sales" },
+    ],
+    {
+      skipReason: invoiceBulkApproveSkipReason,
+      run: async (inv) => {
+        if (inv.id === "b") {
+          const err = new Error("x");
+          err.response = { data: { detail: "Fatura başka bir işlemde onaylanıyor" } };
+          throw err;
+        }
+      },
+    },
+  );
+  expect(items.map((x) => x.outcome)).toEqual(["skipped", "error"]);
+  expect(items[0].reason).toBe("Taslak değil");
+  expect(items[1].reason).toBe("Fatura başka bir işlemde onaylanıyor");
+  expect(bulkApiErrorDetail({ response: { data: { detail: "Fatura başka bir işlemde onaylanıyor" } } })).toBe(
+    "Fatura başka bir işlemde onaylanıyor",
   );
 });

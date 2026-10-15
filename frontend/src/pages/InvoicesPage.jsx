@@ -42,9 +42,16 @@ import {
   classifyInvoiceDateBulk,
   runInvoiceDateBulk,
   runInvoiceDeleteBulk,
+  invoiceCancelConfirmText,
+  classifyInvoiceLinkRecipients,
+  sendInvoiceShareLink,
+  invoiceBulkApproveSkipReason,
+  runInvoiceBulkItems,
 } from "../utils/invoiceBulkActions";
+import { isCancelledInvoice, isApprovingInvoice, APPROVING_INVOICE_BADGE, invoiceRowActionsDisabled } from "../utils/invoiceStatus";
 import { BulkResultModal } from "../components/BulkResultModal";
 import { BulkInvoiceDateModal } from "../components/BulkInvoiceDateModal";
+import { BulkInvoiceLinkConfirmModal } from "../components/BulkInvoiceLinkConfirmModal";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { contactMukellefPatch } from "../utils/gibMukellef";
 import { shouldAskBulkEInvoiceDate, todayYmd } from "../utils/orderBulkActions";
@@ -230,7 +237,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [bulkEInvoiceConfirm, setBulkEInvoiceConfirm] = useState(null);
   const [bulkEInvoiceBusy, setBulkEInvoiceBusy] = useState(false);
   const [bulkDateConfirm, setBulkDateConfirm] = useState(null);
+  const [bulkLinkConfirm, setBulkLinkConfirm] = useState(null);
   const [bulkResult, setBulkResult] = useState(null);
+  const linkSendLockRef = useRef(false);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [mergeBusy, setMergeBusy] = useState(false);
@@ -723,9 +732,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
   const handleCancelInvoice = async (inv) => {
     const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
-    if (!window.confirm(isDisp
-      ? `${inv.invoice_number} numaralı e-irsaliye iptal edilsin mi?\nKayıt iptal edilir; bağlı sipariş irsaliye bağı kopar.`
-      : `${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
+    if (!window.confirm(invoiceCancelConfirmText({
+      invoices: [inv],
+      gibSentCount: isGibIssued(inv) ? 1 : 0,
+      isDispatch: isDisp,
+    }))) return;
     try {
       const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
       toast.success(r.data.message || "Fatura iptal edildi.");
@@ -1118,34 +1129,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       return;
     }
     if (action === "invoice_link") {
-      const ready = list.filter((inv) => {
-        const c = contacts.find((x) => x.id === inv.contact_id);
-        return inv.id && (inv.contact_email || c?.email);
-      });
-      if (!ready.length) { toast.error("E-posta adresi olan fatura seçin."); return; }
-      let ok = 0, fail = 0;
-      for (const inv of ready) {
-        try {
-          const c = contacts.find((x) => x.id === inv.contact_id) || {};
-          const to = inv.contact_email || c.email;
-          const fd = new FormData();
-          const invId = inv.id || inv._id;
-          const sr = await axios.get(`${API_URL}/invoices/${invId}/share-link`, { params: { kind: "pdf" } });
-          const link = sr.data?.url;
-          if (!link) throw new Error("İmzalı link yok");
-          fd.append("company_id", companyId);
-          fd.append("to", to);
-          fd.append("subject", `Faturanız ${inv.invoice_number}`);
-          fd.append("body", `Sayın ${inv.contact_name || ""},\n\n${inv.invoice_number} numaralı faturanız: ${link}`);
-          fd.append("context", "invoice");
-          fd.append("ref_id", inv.id || inv._id);
-          fd.append("contact_id", inv.contact_id || "");
-          fd.append("contact_name", inv.contact_name || "");
-          await axios.post(`${API_URL}/comm/mail/send`, fd);
-          ok++;
-        } catch { fail++; }
-      }
-      toast[fail ? "error" : "success"](`${ok} fatura linki gönderildi${fail ? `, ${fail} hata` : ""}.`);
+      const preview = classifyInvoiceLinkRecipients(list, contacts);
+      if (!preview.total) { toast.error("Fatura seçin."); return; }
+      setBulkLinkConfirm(preview);
       return;
     }
     if (action === "delete") {
@@ -1169,34 +1155,82 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     if (action === "cancel") {
       const open = list.filter((inv) => canCancelInvoice(inv));
       if (!open.length) { toast.info("İptal edilebilir fatura yok."); return; }
-      if (!window.confirm(`${open.length} fatura iptal edilsin mi?`)) return;
+      const gibSentCount = open.filter((inv) => isGibIssued(inv)).length;
+      const allDisp = open.every((inv) => inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch");
+      if (!window.confirm(invoiceCancelConfirmText({
+        invoices: open,
+        count: open.length,
+        gibSentCount,
+        isDispatch: allDisp,
+      }))) return;
     }
 
+    if (action !== "approve" && action !== "cancel") return;
+
     setBulkBusy(true);
-    let ok = 0, fail = 0, skipped = 0, firstErr = "";
-    for (const inv of list) {
-      try {
-        if (action === "approve") {
-          if (inv.status !== "draft" || isIncomingPurchaseInvoice(inv)) { skipped++; continue; }
-          await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
-        } else if (action === "cancel") {
-          if (!canCancelInvoice(inv)) { skipped++; continue; }
-          await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
-        } else {
-          skipped++;
-          continue;
-        }
-        ok++;
-      } catch (err) {
-        fail++;
-        if (!firstErr) firstErr = bulkApiErrorDetail(err);
-      }
+    try {
+      const items = await runInvoiceBulkItems(list, {
+        skipReason: (inv) => {
+          if (action === "approve") return invoiceBulkApproveSkipReason(inv);
+          if (!canCancelInvoice(inv)) return "İptal edilemez";
+          return "";
+        },
+        run: async (inv) => {
+          if (action === "approve") {
+            await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+          } else {
+            await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
+          }
+        },
+      });
+      setBulkResult({
+        title: action === "approve" ? "Toplu taslak onay sonucu" : "Toplu iptal sonucu",
+        items,
+      });
+      setSelected([]);
+      loadData();
+    } finally {
+      setBulkBusy(false);
     }
-    setBulkBusy(false);
-    if (!ok && !fail) toast.info(skipped ? "Seçili faturalarda bu işlem için uygun kayıt yok." : "İşlenecek fatura yok.");
-    else toast[fail ? "error" : "success"](`${ok} fatura işlendi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}${skipped ? `, ${skipped} atlandı` : ""}.`);
-    setSelected([]);
-    loadData();
+  };
+
+  const confirmBulkInvoiceLinkSend = async () => {
+    const preview = bulkLinkConfirm;
+    if (!preview || bulkBusy || linkSendLockRef.current) return;
+    linkSendLockRef.current = true;
+    setBulkBusy(true);
+    const items = [];
+    try {
+      for (const row of preview.skipped || []) {
+        items.push({
+          id: row.inv.id || row.inv._id,
+          label: row.inv.invoice_number,
+          outcome: "skipped",
+          reason: row.reason || "E-posta yok",
+        });
+      }
+      for (const row of preview.ready || []) {
+        const id = row.inv.id || row.inv._id;
+        const label = row.inv.invoice_number;
+        try {
+          await sendInvoiceShareLink({
+            axiosClient: axios,
+            apiUrl: API_URL,
+            companyId,
+            inv: row.inv,
+            email: row.email,
+          });
+          items.push({ id, label, outcome: "ok" });
+        } catch (err) {
+          items.push({ id, label, outcome: "error", reason: bulkApiErrorDetail(err) || "Hata" });
+        }
+      }
+      setBulkLinkConfirm(null);
+      setBulkResult({ title: "Fatura linki gönderimi", items });
+    } finally {
+      setBulkBusy(false);
+      linkSendLockRef.current = false;
+    }
   };
 
   const postingIncomingRef = useRef(new Set());
@@ -1500,6 +1534,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${typeBadge(inv)[1]}`}>
                               {typeBadge(inv)[0]}
                             </span>
+                            {isCancelledInvoice(inv) ? (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-rose-100 text-rose-800" data-testid={`inv-cancelled-badge-${inv.invoice_number}`}>İptal</span>
+                            ) : isApprovingInvoice(inv) ? (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-amber-100 text-amber-800" data-testid={`inv-approving-badge-${inv.invoice_number}`}>{APPROVING_INVOICE_BADGE}</span>
+                            ) : null}
                             <SourceBadge channel={inv.source_channel} testId={`inv-source-${inv.invoice_number}`} />
                             <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
                               {invoiceETypeLabel(inv)}
@@ -1573,7 +1612,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         </span>
                       ) : (
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
-                        isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
+                        isCancelledInvoice(inv)
+                          ? "bg-rose-100 text-rose-800"
+                          : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "bg-amber-100 text-amber-800"
                           : inv.payment_status === "paid"
                           ? "bg-emerald-100 text-emerald-800"
@@ -1581,7 +1622,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           ? "bg-amber-100 text-amber-800"
                           : "bg-rose-100 text-rose-800"
                       }`} data-testid={`inv-pay-${inv.invoice_number}`}>
-                        {isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
+                        {isCancelledInvoice(inv)
+                          ? "İptal"
+                          : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "İşlenmedi"
                           : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
                       </span>
@@ -1617,10 +1660,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         const incoming = isIncomingPurchaseInvoice(inv);
                         const pendingIncoming = incoming && isIncomingPurchasePending(inv);
                         if (incoming) {
+                          const incomingDisabled = invoiceRowActionsDisabled(inv);
                           return (
                             <div
-                              className="flex flex-wrap items-center justify-center gap-1.5"
+                              className={`flex flex-wrap items-center justify-center gap-1.5 ${incomingDisabled ? "opacity-40 pointer-events-none" : ""}`}
                               data-testid={`inv-actions-${inv.invoice_number}`}
+                              aria-disabled={incomingDisabled || undefined}
                             >
                               <IncomingInvoiceFaturalastirButton
                                 inv={inv}
@@ -1676,8 +1721,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             </div>
                           );
                         }
+                        const actionsDisabled = invoiceRowActionsDisabled(inv);
                         return (
-                      <div className="flex flex-col items-center gap-1 mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                      <div className={`flex flex-col items-center gap-1 mx-auto ${actionsDisabled ? "opacity-40 pointer-events-none" : ""}`} data-testid={`inv-actions-${inv.invoice_number}`} aria-disabled={actionsDisabled || undefined}>
                         {canIssueInv && canFaturalastirDraftInvoice(inv) ? (
                           <DraftInvoiceFaturalastirButton
                             inv={inv}
@@ -1917,6 +1963,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           busy={bulkBusy}
           onClose={() => !bulkBusy && setBulkDateConfirm(null)}
           onConfirm={confirmBulkInvoiceDate}
+        />
+      )}
+      {bulkLinkConfirm && (
+        <BulkInvoiceLinkConfirmModal
+          ready={bulkLinkConfirm.ready || []}
+          skipped={bulkLinkConfirm.skipped || []}
+          total={bulkLinkConfirm.total}
+          busy={bulkBusy}
+          onClose={() => !bulkBusy && setBulkLinkConfirm(null)}
+          onConfirm={confirmBulkInvoiceLinkSend}
         />
       )}
       {bulkResult && (

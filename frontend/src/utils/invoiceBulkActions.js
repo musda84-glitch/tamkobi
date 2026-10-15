@@ -46,6 +46,98 @@ export async function bulkApiErrorDetailAsync(err) {
   return bulkApiErrorDetail(err);
 }
 
+
+export const INVOICE_LINK_TTL_HOURS = 720;
+
+export function isDispatchInvoice(inv) {
+  return Boolean(inv && (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch"));
+}
+
+/** Tekil ve toplu iptal onay metni. GİB/İşNet çağrılmaz; iptal geri alınamaz. */
+export function invoiceCancelConfirmText({
+  invoices,
+  count,
+  gibSentCount = 0,
+  isDispatch,
+} = {}) {
+  const list = Array.isArray(invoices) ? invoices : [];
+  const n = Number(count != null ? count : (list.length || 1)) || 1;
+  const dispatch = isDispatch != null
+    ? !!isDispatch
+    : list.length > 0 && list.every(isDispatchInvoice);
+  if (dispatch) {
+    if (n === 1 && list[0]?.invoice_number) {
+      return `${list[0].invoice_number} numaralı e-irsaliye iptal edilsin mi?\nKayıt iptal edilir; bağlı sipariş irsaliye bağı kopar. İptal geri alınamaz.`;
+    }
+    return `${n} irsaliye iptal edilecek. İptal geri alınamaz.\nKayıt iptal edilir; bağlı sipariş irsaliye bağı kopar.`;
+  }
+  const gib = Number(gibSentCount) || 0;
+  const lines = [
+    `${n} fatura iptal edilecek. İptal geri alınamaz.`,
+    "Cari bakiyesi ve stok etkileri geri alınır.",
+    "Bu işlem GİB/İşNet'teki e-belgeyi İPTAL ETMEZ; GİB'e gönderilmiş belgeleri ayrıca GİB/İşNet portalından iptal etmelisiniz.",
+  ];
+  if (gib > 0) lines.push(`${gib} tanesi GİB'e gönderilmiş.`);
+  return lines.join("\n");
+}
+
+export function invoiceShareLinkParams() {
+  return { kind: "pdf", ttl_hours: INVOICE_LINK_TTL_HOURS };
+}
+
+export function invoiceLinkMailBody({ contactName, invoiceNumber, link } = {}) {
+  return `Sayın ${contactName || ""},\n\n${invoiceNumber || ""} numaralı faturanız: ${link}\n\nLink 30 gün geçerlidir.`;
+}
+
+function contactEmailForInvoice(inv, contacts = []) {
+  const c = (contacts || []).find((x) => (x.id || x._id) === inv?.contact_id) || {};
+  return String(inv?.contact_email || c.email || "").trim();
+}
+
+export function classifyInvoiceLinkRecipients(invoices = [], contacts = []) {
+  const ready = [];
+  const skipped = [];
+  for (const inv of invoices || []) {
+    const email = contactEmailForInvoice(inv, contacts);
+    if (email) ready.push({ inv, email });
+    else skipped.push({ inv, reason: "E-posta yok" });
+  }
+  return { ready, skipped, total: (invoices || []).length };
+}
+
+export async function sendInvoiceShareLink({ axiosClient, apiUrl, companyId, inv, email }) {
+  const invId = inv.id || inv._id;
+  const sr = await axiosClient.get(`${apiUrl}/invoices/${invId}/share-link`, {
+    params: invoiceShareLinkParams(),
+  });
+  const link = sr.data?.url;
+  if (!link) throw new Error("İmzalı link yok");
+  const fd = new FormData();
+  fd.append("company_id", companyId || "");
+  fd.append("to", email);
+  fd.append("subject", `Faturanız ${inv.invoice_number || ""}`);
+  fd.append("body", invoiceLinkMailBody({
+    contactName: inv.contact_name,
+    invoiceNumber: inv.invoice_number,
+    link,
+  }));
+  fd.append("context", "invoice");
+  fd.append("ref_id", invId);
+  fd.append("contact_id", inv.contact_id || "");
+  fd.append("contact_name", inv.contact_name || "");
+  await axiosClient.post(`${apiUrl}/comm/mail/send`, fd);
+}
+
+export function invoiceBulkApproveSkipReason(inv) {
+  if (!inv) return "Taslak değil";
+  if (inv.invoice_type === "purchase" && (
+    inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id
+  )) return "Gelen alış faturası";
+  if (inv.status === "approving") return "Fatura onaylanıyor";
+  if (inv.status !== "draft") return "Taslak değil";
+  return "";
+}
+
 export async function runInvoiceBulkItems(list, { skipReason, run } = {}) {
   const items = [];
   for (const inv of list || []) {

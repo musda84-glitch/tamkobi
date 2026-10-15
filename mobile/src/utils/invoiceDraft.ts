@@ -410,7 +410,7 @@ export function looksLikeOfficialGibInvoiceNumber(no?: string | null): boolean {
  */
 export function canEditInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
-  if (inv.status === "cancelled") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving") return false;
   if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.invoice_type === "dispatch") return false;
   if (isGibIssued(inv)) return false;
@@ -461,7 +461,7 @@ export function invoiceDetailTotals(inv: Invoice, gdMode?: GdMode, gdValue?: num
 
 export function canDeleteInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
-  if (inv.status === "cancelled") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving") return false;
   if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") {
     if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return false;
     return !isGibIssued(inv);
@@ -485,7 +485,7 @@ export function invoiceDeleteConfirmMessage(inv?: Invoice | null): string {
 /** Onaylı e-Fatura / e-Arşiv iptal edilebilir (silinmez). Kağıt silinir. Ödemeli olsa da izin verilir. */
 export function canCancelInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
-  if (inv.status === "cancelled" || inv.status === "draft") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving" || inv.status === "draft") return false;
   if (inv.invoice_type === "dispatch") return false;
   if (inv.e_type === "paper" || inv.e_type === "expense_slip" || inv.e_type === "e_dispatch") return false;
   if (inv.e_type === "e_invoice" || inv.e_type === "e_archive" || inv.e_type === "e_export") return true;

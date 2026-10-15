@@ -284,6 +284,14 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
       invoice_type: "dispatch",
       e_type: "e_dispatch",
     })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "approving",
+      invoice_type: "sales",
+      e_type: "e_archive",
+    })).toBe(false);
+    expect(canDeleteInvoice({ status: "approving", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
+    expect(canCancelInvoice({ status: "cancelling", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
+    expect(canEditInvoice({ status: "cancelling", invoice_type: "sales", e_type: "paper" })).toBe(false);
   });
 
   test("Faturalaştır type options include GİB and paper", () => {

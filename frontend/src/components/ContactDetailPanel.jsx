@@ -16,6 +16,7 @@ import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice, invoiceDeleteConfirmMessage } from "./InvoiceContextMenu";
+import { invoiceCancelConfirmText } from "../utils/invoiceBulkActions";
 import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "./IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
@@ -635,9 +636,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
 
   const cancelInvoice = async (inv) => {
     const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
-    if (!window.confirm(isDisp
-      ? `${inv.invoice_number} numaralı e-irsaliye iptal edilsin mi?\nKayıt iptal edilir; bağlı sipariş irsaliye bağı kopar.`
-      : `${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
+    if (!window.confirm(invoiceCancelConfirmText({
+      invoices: [inv],
+      gibSentCount: isGibIssued(inv) ? 1 : 0,
+      isDispatch: isDisp,
+    }))) return;
     try {
       const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
       toast.success(r.data.message || "Fatura iptal edildi.");
