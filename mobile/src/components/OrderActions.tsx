@@ -33,14 +33,13 @@ import { idOf } from "../utils/money";
 import { canStaffDeleteOrder } from "../utils/orderEdit";
 import {
   canIssueOrderEBelge,
-  canShowEFaturaOption,
   convertToDraftBody,
   eBelgeCreateBody,
   isOrderFullyInvoiced,
-  orderEBelgeTypeFromContact,
 } from "../utils/orderInvoice";
+import { digitsTax } from "../utils/efaturaOnay";
+import { contactMukellefPatch, faturalastirMenuLabel, fetchGibMukellef, type GibEntry } from "../utils/gibMukellef";
 import {
-  eBelgeMenuItems,
   isYmd,
   mobilePrimaryAction,
   orderMoreMenuItems,
@@ -144,7 +143,7 @@ export function OrderActions({
   const [invoiceDate, setInvoiceDate] = useState(todayYmd());
   const [carriers, setCarriers] = useState<CargoCatalogItem[]>(FALLBACK_CARGO_CATALOG);
   const [carrier, setCarrier] = useState(String(order.cargo_carrier || ""));
-  const [contactFlag, setContactFlag] = useState<{ is_e_invoice_user?: boolean } | null>(null);
+  const [gibEntry, setGibEntry] = useState<GibEntry | null>(null);
   const [efaturaOpen, setEfaturaOpen] = useState(false);
   const [efaturaPreferred, setEfaturaPreferred] = useState<"e_invoice" | "e_archive" | null>(null);
   const canEdit = can("/orders", "edit");
@@ -156,27 +155,26 @@ export function OrderActions({
   const oid = idOf(order);
   const num = order.order_number || oid;
 
-  // List rows: skip N× contact overview fetches (major list lag). Detail screen loads flag.
+  const buyerTax = digitsTax(
+    (order as { contact_tax_id?: string }).contact_tax_id
+    || (order as { customer_tax_id?: string }).customer_tax_id
+    || (order as { buyer_tax_id?: string }).buyer_tax_id
+    || "",
+  );
   useEffect(() => {
-    if (compact) {
-      setContactFlag(null);
-      return;
-    }
-    const cid = order.contact_id;
+    const cid = companyId || activeCompany?.id || "";
     if (!cid) {
-      setContactFlag(null);
-      return;
+      setGibEntry(null);
+      return undefined;
     }
     let cancelled = false;
-    get<{ contact?: { is_e_invoice_user?: boolean }; is_e_invoice_user?: boolean }>(client, `/contacts/${cid}/overview`)
-      .then((ov) => {
-        if (cancelled) return;
-        const flag = !!(ov?.contact?.is_e_invoice_user ?? ov?.is_e_invoice_user);
-        setContactFlag({ is_e_invoice_user: flag });
-      })
-      .catch(() => { if (!cancelled) setContactFlag(null); });
+    fetchGibMukellef(client, cid, buyerTax)
+      .then((entry) => { if (!cancelled) setGibEntry(entry); })
+      .catch((err: { gibEntry?: GibEntry; message?: string }) => {
+        if (!cancelled) setGibEntry(err?.gibEntry || { status: "error", error: err?.message || "GİB sorgusu başarısız." });
+      });
     return () => { cancelled = true; };
-  }, [client, compact, order.contact_id]);
+  }, [client, companyId, activeCompany?.id, buyerTax]);
 
   const ensure = async () => {
     if (order.items?.length) return order;
@@ -409,12 +407,9 @@ export function OrderActions({
     );
   };
 
-  const issueEBelge = (eType: "e_invoice" | "e_archive") => {
+  const issueEBelge = (_eType?: "e_invoice" | "e_archive") => {
     setMoreOpen(false);
-    const resolved = eType === "e_invoice" && !canShowEFaturaOption(contactFlag)
-      ? "e_archive"
-      : (eType || orderEBelgeTypeFromContact(contactFlag));
-    setEfaturaPreferred(resolved);
+    setEfaturaPreferred(null);
     setEfaturaOpen(true);
   };
 
@@ -423,12 +418,10 @@ export function OrderActions({
     const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
     setBusy("ebelge");
     try {
-      if (payload.alias && order.contact_id) {
+      const mukellefPatch = contactMukellefPatch(payload.gibMeta);
+      if (mukellefPatch && order.contact_id) {
         try {
-          await put(client, `/contacts/${order.contact_id}`, {
-            e_invoice_alias: payload.alias,
-            is_e_invoice_user: resolved === "e_invoice",
-          });
+          await put(client, `/contacts/${order.contact_id}`, mukellefPatch);
         } catch {
           /* gönderim yine denenecek */
         }
@@ -832,7 +825,7 @@ export function OrderActions({
         else onMessage?.("Sipariş zaten faturalanmış.");
         return;
       case "efatura_olustur":
-        issueEBelge(orderEBelgeTypeFromContact(contactFlag));
+        issueEBelge();
         return;
       case "invoice_date":
         if (!order.invoice_id) {
@@ -927,18 +920,23 @@ export function OrderActions({
   const canInvoice = can("/invoices", "edit") || canEdit;
   const showEBelge = canInvoice && canIssueOrderEBelge(order);
   const showInvoiced = isOrderFullyInvoiced(order);
-  const showEFatura = canShowEFaturaOption(contactFlag);
   const formPrinted = !!order.form_printed_at;
   const isCartOrder = !!(order as { is_held_cart?: boolean; is_active_cart?: boolean }).is_held_cart
     || !!(order as { is_active_cart?: boolean }).is_active_cart
     || order.order_status === "held_cart"
     || order.order_status === "active_cart";
 
-  const { items: moreItems } = orderMoreMenuItems(order, {
-    eBelgeItems: showEBelge ? eBelgeMenuItems(showEFatura) : [],
+  const { items: menuItems } = orderMoreMenuItems(order, {
+    eBelgeItems: showEBelge ? [{ eType: "e_archive" as const, label: "E-Fatura / E-Arşiv (GİB)", testIdSuffix: "gib" }] : [],
     canDelete: showDelete,
   });
-  const primary = isCartOrder ? null : mobilePrimaryAction(order);
+  const moreItems = menuItems.map((it) => (
+    it.id === "faturalastir" ? { ...it, label: faturalastirMenuLabel(gibEntry) } : it
+  ));
+  const primaryBase = isCartOrder ? null : mobilePrimaryAction(order);
+  const primary = primaryBase?.id === "faturalastir"
+    ? { ...primaryBase, label: faturalastirMenuLabel(gibEntry) }
+    : primaryBase;
   const printTone = formPrinted ? "violet" : "slate";
   const produceTone = (order.has_production_order || order.sent_to_production_at || order.production_recipe_id || order.production_order_id)
     ? "emerald"
@@ -1303,10 +1301,9 @@ export function OrderActions({
           contact_name: order.customer_name,
           customer_name: order.customer_name,
           contact_id: order.contact_id,
-          is_e_invoice_user: contactFlag?.is_e_invoice_user,
+          contact_tax_id: buyerTax,
         }}
         preferredEType={efaturaPreferred}
-        contactIsEInvoiceUser={contactFlag?.is_e_invoice_user}
         onClose={() => setEfaturaOpen(false)}
         onConfirm={confirmEBelge}
       />

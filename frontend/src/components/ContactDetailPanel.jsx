@@ -22,6 +22,7 @@ import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu"
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
+import { contactMukellefPatch } from "../utils/gibMukellef";
 import { formatOrderDateTime } from "../utils/orderTermin";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
@@ -1167,16 +1168,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             contacts={c ? [c] : []}
             companyId={activeCompany?.id || activeCompany?._id || c?.company_id}
             onClose={() => setEFaturaInvoice(null)}
-            onConfirm={async ({ eType, scenario, alias, withholding, returnRef, exemption, stampNow }) => {
+            onConfirm={async ({ eType, scenario, withholding, returnRef, exemption, stampNow, gibMeta }) => {
               const inv = eFaturaInvoice;
               if (!inv) return;
               const invId = inv.id || inv._id;
-              if (alias && inv.contact_id) {
+              const mukellefPatch = contactMukellefPatch(gibMeta);
+              if (mukellefPatch && inv.contact_id) {
                 try {
-                  await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
-                    e_invoice_alias: alias,
-                    is_e_invoice_user: eType === "e_invoice",
-                  });
+                  await axios.put(`${API_URL}/contacts/${inv.contact_id}`, mukellefPatch);
                 } catch {
                   /* gönderim yine denenecek */
                 }

@@ -30,13 +30,26 @@ def is_blank_text(raw: Any) -> bool:
     return str(raw or "").strip() in ("", "-", "—", "0")
 
 
+def is_placeholder_tax_id(raw: Any) -> bool:
+    """Perakende / test yer tutucuları e-Fatura mükellefi sayılmaz.
+
+    11111111111 ve aynı rakamın tekrarı (2222222222 gibi) gerçek kimlik değildir.
+    """
+    d = digits_only(raw)
+    if not d:
+        return False
+    if d in PLACEHOLDER_TAX_IDS:
+        return True
+    if len(d) in (10, 11) and len(set(d)) == 1:
+        return True
+    return False
+
+
 def is_real_tax_id(raw: Any) -> bool:
     d = digits_only(raw)
     if len(d) not in (10, 11):
         return False
-    if d in PLACEHOLDER_TAX_IDS:
-        return False
-    if len(set(d)) == 1:
+    if is_placeholder_tax_id(d):
         return False
     return True
 

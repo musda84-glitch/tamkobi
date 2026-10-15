@@ -1,6 +1,7 @@
-/** Sipariş e-belge türü: cari GİB e-fatura mükellefi değilse (bilgi yoksa) e-arşiv. */
+/** Sipariş e-belge türü: yalnız canlı GİB sonucu. Cari is_e_invoice_user kararda kullanılmaz. */
 
 import { orderHasEInvoiceIssued } from "./orderMoreMenu";
+import { eTypeFromGib } from "./gibMukellef";
 
 export function contactIsEInvoiceUser(contact) {
   return !!contact?.is_e_invoice_user;
@@ -26,16 +27,19 @@ export function resolveOrderContact(ord, contacts = []) {
 
 /**
  * GİB e-belge türü.
- * Mükellef bilgisi yoksa veya false ise → e_archive (kural).
+ * Canlı sorgu yoksa e-Arşiv (cari bayrağı e-Fatura sayılmaz).
  */
-export function orderEBelgeType(ord, contacts = []) {
-  const c = resolveOrderContact(ord, contacts);
-  if (contactIsEInvoiceUser(c)) return "e_invoice";
+export function orderEBelgeType(ord, _contacts = [], gibLookup = null) {
+  const lookup = gibLookup || ord?.gib_lookup || ord?.gibMeta || null;
+  const data = lookup?.data || lookup;
+  if (data && (data.suggested_e_type || typeof data.is_e_invoice_user === "boolean")) {
+    return eTypeFromGib(data);
+  }
   return "e_archive";
 }
 
-export function orderCanIssueEFatura(ord, contacts = []) {
-  return orderEBelgeType(ord, contacts) === "e_invoice";
+export function orderCanIssueEFatura(ord, contacts = [], gibLookup = null) {
+  return orderEBelgeType(ord, contacts, gibLookup) === "e_invoice";
 }
 
 /** Elektronik Fatura Onayı modal metni. */
@@ -50,10 +54,10 @@ export function orderCanShowEBelgeMenu(ord) {
   return !!ord?.is_invoiced && !orderHasEInvoiceIssued(ord);
 }
 
-export function eBelgeMenuItems(ord, contacts = []) {
+export function eBelgeMenuItems(ord, contacts = [], gibLookup = null) {
   if (!orderCanShowEBelgeMenu(ord)) return [];
-  const type = orderEBelgeType(ord, contacts);
-  if (type === "e_invoice") {
+  const type = orderEBelgeType(ord, contacts, gibLookup);
+  if (gibLookup && type === "e_invoice") {
     return [
       { eType: "e_invoice", label: "E-Fatura kes (GİB)", testIdSuffix: "efatura" },
       { eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" },

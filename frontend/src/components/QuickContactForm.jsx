@@ -14,7 +14,7 @@ export const QuickContactForm = ({ companyId, defaultType = "customer", onCreate
     if (!f.name.trim()) { toast.error("Ünvan / ad soyad zorunlu."); return; }
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/contacts`, { company_id: companyId, type: f.type, name: f.name.trim(), tax_number_or_id: f.tax.trim(), tax_office: f.tax_office.trim(), phone: f.phone.trim(), email: f.email.trim(), address: f.address.trim(), city: "İstanbul", category: f.type === "supplier" ? "Tedarikçi" : "Genel", is_e_invoice_user: f.tax.trim().length === 10 });
+      const r = await axios.post(`${API_URL}/contacts`, { company_id: companyId, type: f.type, name: f.name.trim(), tax_number_or_id: f.tax.trim(), tax_office: f.tax_office.trim(), phone: f.phone.trim(), email: f.email.trim(), address: f.address.trim(), city: "İstanbul", category: f.type === "supplier" ? "Tedarikçi" : "Genel", is_e_invoice_user: false });
       toast.success(`${r.data.name} carisi oluşturuldu ve seçildi.`);
       onCreated?.(r.data);
     } catch (err) { toast.error(err.response?.data?.detail || "Cari oluşturulamadı."); } finally { setBusy(false); }

@@ -157,7 +157,8 @@ class TestResolveBuyerMukellef:
         assert vkn["suggested_e_type"] == "e_invoice" and vkn["is_e_invoice_user"] is True
         assert tckn["suggested_e_type"] == "e_archive" and tckn["is_e_invoice_user"] is False
 
-    def test_contact_flag_overrides_simulated_length(self):
+    def test_contact_flag_does_not_override_simulated_length(self):
+        """Cari is_e_invoice_user kesim kararında kullanılmaz; simüle VKN e-Fatura kalır."""
         fake_db = MagicMock()
         contact = {"_id": "cnt1", "name": "X", "tax_number_or_id": "1234567890", "is_e_invoice_user": False}
         fake_db.einvoice_settings.find_one = AsyncMock(return_value={})
@@ -166,7 +167,8 @@ class TestResolveBuyerMukellef:
         out = asyncio.get_event_loop().run_until_complete(
             e_invoice.resolve_buyer_mukellef("c1", "1234567890", contact=contact)
         )
-        assert out["suggested_e_type"] == "e_archive"
+        assert out["suggested_e_type"] == "e_invoice"
+        assert out["is_e_invoice_user"] is True
 
 
 class TestUblProfileOverride:
@@ -281,15 +283,15 @@ class TestIssueInvoiceSimulated:
 
         asyncio.get_event_loop().run_until_complete(_run())
 
-    def test_explicit_einvoice_honors_temel_ticari(self):
-        """Temel/Ticari onayı e_type=e_invoice gönderir; TCKN (e-arşiv) olsa bile e-fatura kalır."""
+    def test_explicit_einvoice_still_queries_mukellef(self):
+        """e_type=e_invoice GİB sorgusunu atlamaz; mükellef değilse 409."""
         fake_db = MagicMock()
         inv = {
             "_id": "inv_force", "company_id": "c1", "invoice_type": "sales", "e_type": "paper",
             "status": "draft", "contact_id": "cnt3", "contact_name": "Nihai", "contact_tax_id": "12345678901",
             "invoice_number": "NX3", "items": [],
         }
-        contact = {"_id": "cnt3", "name": "Nihai", "tax_number_or_id": "12345678901", "is_e_invoice_user": False}
+        contact = {"_id": "cnt3", "name": "Nihai", "tax_number_or_id": "12345678901", "is_e_invoice_user": True}
         company = {"_id": "c1", "name": "Firma", "tax_number": "1234567801"}
 
         async def find_one(q):
@@ -312,11 +314,16 @@ class TestIssueInvoiceSimulated:
 
         async def _run():
             with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
-                with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as lookup:
-                    out = await e_invoice.issue_invoice("inv_force", e_type="e_invoice", scenario="TEMEL")
-                    lookup.assert_not_awaited()
-                assert out["e_type"] == "e_invoice"
-                assert out["einvoice_state"] == "sent"
+                with patch.object(
+                    e_invoice,
+                    "resolve_buyer_mukellef",
+                    AsyncMock(return_value={"suggested_e_type": "e_archive", "is_e_invoice_user": False, "alias": None}),
+                ) as lookup:
+                    with pytest.raises(HTTPException) as exc:
+                        await e_invoice.issue_invoice("inv_force", e_type="e_invoice", scenario="TEMEL")
+                    lookup.assert_awaited()
+                assert exc.value.status_code == 409
+                assert exc.value.detail == "Alıcı e-Fatura mükellefi değil, e-Arşiv kesilmeli"
 
         asyncio.get_event_loop().run_until_complete(_run())
 
@@ -711,3 +718,194 @@ class TestIsnetOfficialInvoiceNumber:
             assert final[-1].get("gib_invoice_id") in (None, "")
 
         asyncio.get_event_loop().run_until_complete(_run())
+
+
+def _issue_db(*, inv, contact, company=None, settings=None):
+    company = company or {"_id": "c1", "name": "Firma", "tax_number": "1234567801"}
+    settings = settings if settings is not None else {"status": "simulated"}
+    fake_db = MagicMock()
+
+    async def find_one(q):
+        if q.get("_id") == inv["_id"]:
+            return inv
+        if q.get("_id") == contact["_id"]:
+            return contact
+        if q.get("_id") == company["_id"]:
+            return company
+        return settings
+
+    fake_db.invoices.find_one = AsyncMock(side_effect=find_one)
+    fake_db.contacts.find_one = AsyncMock(return_value=contact)
+    fake_db.contacts.update_one = AsyncMock()
+    fake_db.companies.find_one = AsyncMock(return_value=company)
+    fake_db.einvoice_settings.find_one = AsyncMock(return_value=settings)
+    fake_db.invoices.update_one = AsyncMock()
+    fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+    return fake_db
+
+
+class TestMukellefGate:
+    def test_placeholder_tckn_einvoice_is_409(self):
+        inv = {
+            "_id": "inv_ph", "company_id": "c1", "invoice_type": "sales", "e_type": "e_archive",
+            "status": "draft", "contact_id": "cnt", "contact_name": "Pazaryeri",
+            "contact_tax_id": "11111111111", "invoice_number": "MTE1", "items": [],
+        }
+        contact = {"_id": "cnt", "name": "Pazaryeri", "tax_number_or_id": "11111111111", "is_e_invoice_user": True}
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+
+        async def _run():
+            with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as lookup:
+                with pytest.raises(HTTPException) as exc:
+                    await e_invoice.issue_invoice("inv_ph", e_type="e_invoice", scenario="TEMEL")
+                lookup.assert_not_awaited()
+            assert exc.value.status_code == 409
+            assert exc.value.detail == "Alıcı e-Fatura mükellefi değil, e-Arşiv kesilmeli"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_repeated_digit_vkn_einvoice_is_409(self):
+        inv = {
+            "_id": "inv_rep", "company_id": "c1", "invoice_type": "sales", "e_type": "e_invoice",
+            "status": "draft", "contact_id": "cnt", "contact_name": "Yer",
+            "contact_tax_id": "2222222222", "invoice_number": "MTE2", "items": [],
+        }
+        contact = {"_id": "cnt", "name": "Yer", "tax_number_or_id": "2222222222", "is_e_invoice_user": True}
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+
+        async def _run():
+            with pytest.raises(HTTPException) as exc:
+                await e_invoice.issue_invoice("inv_rep", e_type="e_invoice", scenario="TICARI")
+            assert exc.value.status_code == 409
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_not_taxpayer_auto_is_earsiv(self):
+        inv = {
+            "_id": "inv_auto", "company_id": "c1", "invoice_type": "sales", "e_type": "auto",
+            "status": "draft", "contact_id": "cnt", "contact_name": "Bireysel",
+            "contact_tax_id": "12345678901", "invoice_number": "NXA", "items": [],
+        }
+        contact = {"_id": "cnt", "name": "Bireysel", "tax_number_or_id": "12345678901", "is_e_invoice_user": True}
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+                e_invoice,
+                "resolve_buyer_mukellef",
+                AsyncMock(return_value={
+                    "suggested_e_type": "e_archive",
+                    "is_e_invoice_user": False,
+                    "alias": None,
+                }),
+            ):
+                out = await e_invoice.issue_invoice("inv_auto", e_type="auto")
+            assert out["e_type"] == "e_archive"
+            assert out["scenario"] == "EARSIVFATURA"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_taxpayer_temel_stays_temelfatura(self):
+        inv = {
+            "_id": "inv_temel", "company_id": "c1", "invoice_type": "sales", "e_type": "e_invoice",
+            "status": "draft", "contact_id": "cnt", "contact_name": "Sirket",
+            "contact_tax_id": "1234567890", "invoice_number": "NXT", "items": [],
+        }
+        contact = {
+            "_id": "cnt", "name": "Sirket", "tax_number_or_id": "1234567890",
+            "is_e_invoice_user": False, "e_invoice_alias": "urn:mail:stale@old",
+        }
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")) as built, patch.object(
+                e_invoice,
+                "resolve_buyer_mukellef",
+                AsyncMock(return_value={
+                    "suggested_e_type": "e_invoice",
+                    "is_e_invoice_user": True,
+                    "alias": "urn:mail:gibpk@firma",
+                }),
+            ):
+                out = await e_invoice.issue_invoice("inv_temel", e_type="e_invoice", scenario="TEMEL")
+            assert out["e_type"] == "e_invoice"
+            assert out["scenario"] == "TEMELFATURA"
+            passed_contact = built.await_args.args[2]
+            assert passed_contact["e_invoice_alias"] == "urn:mail:gibpk@firma"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_return_invoice_forces_temel(self):
+        inv = {
+            "_id": "inv_iade", "company_id": "c1", "invoice_type": "return", "e_type": "e_invoice",
+            "status": "draft", "contact_id": "cnt", "contact_name": "Sirket",
+            "contact_tax_id": "1234567890", "invoice_number": "NXI", "items": [],
+            "original_invoice_number": "U052026000000065",
+            "original_issue_date": "2026-09-29",
+        }
+        contact = {"_id": "cnt", "name": "Sirket", "tax_number_or_id": "1234567890", "is_e_invoice_user": True}
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+                e_invoice,
+                "resolve_buyer_mukellef",
+                AsyncMock(return_value={
+                    "suggested_e_type": "e_invoice",
+                    "is_e_invoice_user": True,
+                    "alias": "urn:mail:pk@firma",
+                }),
+            ):
+                out = await e_invoice.issue_invoice("inv_iade", e_type="e_invoice", scenario="TICARI")
+            assert out["e_type"] == "e_invoice"
+            assert out["scenario"] == "TEMELFATURA"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_gib_502_is_not_silent_einvoice(self):
+        inv = {
+            "_id": "inv_502", "company_id": "c1", "invoice_type": "sales", "e_type": "e_invoice",
+            "status": "draft", "contact_id": "cnt", "contact_name": "Sirket",
+            "contact_tax_id": "1234567890", "invoice_number": "NX502", "items": [],
+        }
+        contact = {"_id": "cnt", "name": "Sirket", "tax_number_or_id": "1234567890", "is_e_invoice_user": True}
+        e_invoice.init(_issue_db(inv=inv, contact=contact), {"consume_credits": AsyncMock(return_value=1)})
+
+        async def _run():
+            with patch.object(
+                e_invoice,
+                "resolve_buyer_mukellef",
+                AsyncMock(side_effect=HTTPException(status_code=502, detail="İşNet SOAP GİB sorgusu başarısız.")),
+            ):
+                with pytest.raises(HTTPException) as exc:
+                    await e_invoice.issue_invoice("inv_502", e_type="e_invoice", scenario="TEMEL")
+            assert exc.value.status_code == 502
+            assert "e-Fatura" not in str(exc.value.detail) or "başarısız" in str(exc.value.detail).lower()
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_same_vkn_live_lookup_once(self):
+        e_invoice.clear_mukellef_cache()
+        fake_db = MagicMock()
+        fake_db.contacts.find_one = AsyncMock(return_value=None)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value={
+            "status": "configured", "provider": "isnet",
+        })
+        e_invoice.init(fake_db, {"password_fn": lambda s: "pw"})
+        calls = {"n": 0}
+
+        async def lookup(_settings, _pwd, _tax):
+            calls["n"] += 1
+            return {"is_e_invoice_user": True, "alias": "urn:mail:pk@x", "name": "ACME"}
+
+        async def _run():
+            with patch.object(e_invoice.isnet, "lookup_user", AsyncMock(side_effect=lookup)):
+                a = await e_invoice.resolve_buyer_mukellef("c-cache", "6320984412")
+                b = await e_invoice.resolve_buyer_mukellef("c-cache", "6320984412")
+            assert a["is_e_invoice_user"] is True and b["alias"] == "urn:mail:pk@x"
+            assert calls["n"] == 1
+
+        try:
+            asyncio.get_event_loop().run_until_complete(_run())
+        finally:
+            e_invoice.clear_mukellef_cache()

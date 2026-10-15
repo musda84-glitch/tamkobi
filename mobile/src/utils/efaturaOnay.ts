@@ -124,6 +124,12 @@ export type EfaturaOnayPayload = {
   scenario?: "TEMEL" | "TICARI";
   stampNow?: boolean;
   alias?: string;
+  gibMeta?: {
+    is_e_invoice_user?: boolean;
+    suggested_e_type?: string;
+    alias?: string | null;
+    message?: string;
+  };
   withholding?: { withholding_rate: number; withholding_code: string };
   exemption?: { tax_exemption_code: string; tax_exemption_reason: string };
   returnRef?: {

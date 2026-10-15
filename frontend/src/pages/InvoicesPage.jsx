@@ -31,6 +31,7 @@ import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
 import { invoiceBulkNeedsSelection, bulkApiErrorDetail } from "../utils/invoiceBulkActions";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
+import { contactMukellefPatch } from "../utils/gibMukellef";
 import { shouldAskBulkEInvoiceDate, todayYmd } from "../utils/orderBulkActions";
 import { FxPicker } from "../components/FxPicker";
 import { TimeInput } from "../components/TimeInput";
@@ -429,7 +430,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     setFormData((fd) => ({
       ...fd,
       invoice_type: newParam === "purchase" ? "purchase" : "sales",
-      e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"),
+      e_type: newParam === "purchase" ? "paper" : "e_archive",
       contact_id: c?.id || fd.contact_id || "",
       contact_name: c?.name || fd.contact_name || "",
       contact_tax_id: c?.tax_number_or_id || fd.contact_tax_id || "",
@@ -1790,7 +1791,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             const docs = (payload.documents && payload.documents.length)
               ? payload.documents
               : (eFaturaJob.invoices || (eFaturaJob.invoice ? [eFaturaJob.invoice] : []));
-            const { eType, scenario, alias, withholding, returnRef, exemption, stampNow } = payload;
+            const { eType, scenario, withholding, returnRef, exemption, stampNow } = payload;
 
             ctx?.setSteps?.([
               { id: "prepare", label: "Hazırlık ve doğrulama" },
@@ -1811,6 +1812,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
             for (const inv of docs) {
               const invId = inv.id || inv._id;
+              const docEType = inv.eType || eType;
+              const docScenario = inv.scenario || (docEType === "e_invoice" ? scenario : undefined);
+              const docGib = inv.gibMeta || (docs.length === 1 ? payload.gibMeta : null);
               if (!invId || !canRunInvoiceIssueFlow(inv) || isIncomingPurchaseInvoice(inv)) {
                 skipped++;
                 if (invId) ctx?.setItem?.(invId, { status: "skipped", detail: "Gönderime uygun değil" });
@@ -1818,12 +1822,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               }
               ctx?.setItem?.(invId, { status: "running", detail: "Hazırlanıyor…" });
               try {
-                if (alias && inv.contact_id && docs.length === 1) {
+                const mukellefPatch = contactMukellefPatch(docGib);
+                if (mukellefPatch && inv.contact_id) {
                   try {
-                    await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
-                      e_invoice_alias: alias,
-                      is_e_invoice_user: eType === "e_invoice",
-                    });
+                    await axios.put(`${API_URL}/contacts/${inv.contact_id}`, mukellefPatch);
                   } catch { /* gönderim yine denenecek */ }
                 }
                 const patch = {};
@@ -1854,8 +1856,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 }
                 ctx?.setStep?.("send", "active", docs.length > 1 ? `${inv.invoice_number || invId}` : "");
                 ctx?.setItem?.(invId, { status: "running", detail: "GİB’e gönderiliyor…" });
-                const sent = await handleSendToGib(invId, eType, {
-                  scenario,
+                const sent = await handleSendToGib(invId, docEType, {
+                  scenario: docScenario,
                   stampNow: !!issueStamp,
                   issueStamp: issueStamp || undefined,
                   silentToast: true,
@@ -2095,7 +2097,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           shipping_address: c?.address || formData.shipping_address || "",
                           city: c?.city || formData.city || "",
                           customer_phone: c?.phone || formData.customer_phone || "",
-                          e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type,
+                          e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? "e_archive" : formData.e_type,
                         });
                       }}
                       testId="inv-contact-select"
@@ -2200,7 +2202,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               </div>
               {quickContact && (
                 <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
-                  onCreated={(c) => { setContacts((prev) => [c, ...prev]); setContactFieldsOpen(false); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
+                  onCreated={(c) => { setContacts((prev) => [c, ...prev]); setContactFieldsOpen(false); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(fd.e_type) ? "e_archive" : fd.e_type })); setQuickContact(false); }} />
               )}
               <details className="rounded-md border border-slate-200 bg-white px-2 py-1">
                 <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">GİB’den getir</summary>

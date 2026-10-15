@@ -10,6 +10,12 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { GibContactLookup } from "./GibContactLookup";
 import { gibLookupToContactPatch, gibMukellefLabel, isCompleteTaxId, digitsTaxId } from "../utils/gibContactFill";
 
+function formatGibQueryStamp(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30";
 const TABS = [["general", "Genel", User], ["tax", "Vergi & e-Fatura", Receipt], ["address", "Adres & Konum", MapPin], ["finance", "Finans & Vade", Wallet], ["b2b", "B2B Portal", ShoppingCart], ["notes", "Notlar & Etiket", StickyNote]];
 const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, e_invoice_alias: "", email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", b2b_allow_orders: true, b2b_show_prices: true, b2b_show_stock: true, b2b_show_statement: true, b2b_show_installments: true, b2b_allow_ai_cart: true, b2b_min_order_amount: 0, b2b_welcome_note: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "", logo_url: "", is_active: true };
@@ -34,6 +40,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [busy, setBusy] = useState(false);
   const [gibBusy, setGibBusy] = useState(false);
   const [gibMeta, setGibMeta] = useState(null);
+  const [gibQueriedAt, setGibQueriedAt] = useState(null);
   const lastGibTax = useRef("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.type === "number" ? Number(e.target.value) : e.target.value });
 
@@ -41,6 +48,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
     if (!res) return;
     setF((prev) => ({ ...prev, ...gibLookupToContactPatch(res, prev) }));
     setGibMeta(res);
+    setGibQueriedAt(new Date());
     lastGibTax.current = String(res.tax_id || "");
     if (switchTab) setTab((t) => (t === "general" ? "tax" : t));
   }, []);
@@ -84,7 +92,9 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const S = (k, l, opts) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><select value={f[k] ?? ""} onChange={set(k)} className={inp} data-testid={`cf-${k}`}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>;
   const C = (k, l) => <label className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer"><input type="checkbox" checked={!!f[k]} onChange={set(k)} data-testid={`cf-${k}`} /><span className="font-semibold text-slate-700">{l}</span></label>;
 
-  const mukellef = gibMukellefLabel(!!f.is_e_invoice_user);
+  const mukellefKnown = gibMeta ? !!gibMeta.is_e_invoice_user : !!f.is_e_invoice_user;
+  const mukellef = gibMukellefLabel(mukellefKnown);
+  const gibStatusLine = `Son GİB sorgusu: ${mukellefKnown ? "mükellef" : "değil"}${gibQueriedAt ? `, ${formatGibQueryStamp(gibQueriedAt)}` : ""}`;
   const mukellefTone = mukellef.tone === "emerald"
     ? "bg-emerald-50 text-emerald-800 border-emerald-200"
     : "bg-blue-50 text-blue-800 border-blue-200";
@@ -103,7 +113,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
     <div className={`sm:col-span-2 rounded-xl border px-3 py-2.5 space-y-1 ${mukellefTone}`} data-testid="cf-gib-mukellef">
       <div className="flex flex-wrap items-center gap-2">
         <ShieldCheck className="w-4 h-4 shrink-0" />
-        <span className="font-bold text-xs" data-testid="cf-is_e_invoice_user">{mukellef.title}</span>
+        <span className="font-bold text-xs" data-testid="cf-is_e_invoice_user">{gibStatusLine}</span>
         {gibBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" data-testid="cf-gib-busy" />}
         {gibMeta?.source === "simulated" && (
           <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-1.5 py-0.5">
@@ -123,7 +133,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
           <RefreshCw className={`w-3 h-3 ${gibBusy ? "animate-spin" : ""}`} /> GİB’den yenile
         </button>
       </div>
-      <p className="text-[11px] opacity-90">{mukellef.hint} Mükellefiyet entegratör üzerinden GİB’den otomatik gelir; elle işaretlenmez.</p>
+      <p className="text-[11px] opacity-90">Bilgi amaçlıdır. e-Fatura / e-Arşiv kararı her faturada canlı GİB sorgusuyla verilir; elle işaretlenmez.</p>
       <input type="checkbox" className="sr-only" checked={!!f.is_e_invoice_user} readOnly data-testid="cf-is_e_invoice_user-check" tabIndex={-1} aria-hidden />
     </div>
   );

@@ -105,11 +105,11 @@ describe("orderInvoice draft / post / e-belge", () => {
     expect(orderInvoiceBadgeLabel(null)).toBeNull();
   });
 
-  it("e-belge defaults to e-archive unless mükellef", () => {
+  it("e-belge ignores the cari mükellef flag", () => {
     const { orderEBelgeTypeFromContact, canShowEFaturaOption } = require("./orderInvoice");
     expect(orderEBelgeTypeFromContact(null)).toBe("e_archive");
     expect(orderEBelgeTypeFromContact({ is_e_invoice_user: false })).toBe("e_archive");
-    expect(orderEBelgeTypeFromContact({ is_e_invoice_user: true })).toBe("e_invoice");
-    expect(canShowEFaturaOption({})).toBe(false);
+    expect(orderEBelgeTypeFromContact({ is_e_invoice_user: true })).toBe("e_archive");
+    expect(canShowEFaturaOption({ is_e_invoice_user: true })).toBe(false);
   });
 });

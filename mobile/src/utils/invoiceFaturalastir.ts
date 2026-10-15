@@ -1,6 +1,7 @@
 import { post, put, type ApiClient } from "../api/client";
 import type { Invoice } from "../types";
 import type { EfaturaOnayPayload } from "./efaturaOnay";
+import { contactMukellefPatch } from "./gibMukellef";
 import { incomingPurchaseLedgerPosted, isGibIssued, isIncomingPurchaseInvoice } from "./invoiceDraft";
 import { nowIssueDateTime } from "./invoiceIssueNow";
 
@@ -43,12 +44,10 @@ export async function issueInvoiceFromOnay(
 ): Promise<void> {
   const id = inv.id || inv._id;
   if (!id) throw new Error("Fatura bulunamadı.");
-  if (payload.alias && inv.contact_id) {
+  const mukellefPatch = contactMukellefPatch(payload.gibMeta);
+  if (mukellefPatch && inv.contact_id) {
     try {
-      await put(client, `/contacts/${inv.contact_id}`, {
-        e_invoice_alias: payload.alias,
-        is_e_invoice_user: payload.eType === "e_invoice",
-      });
+      await put(client, `/contacts/${inv.contact_id}`, mukellefPatch);
     } catch {
       /* gönderim yine denenecek */
     }

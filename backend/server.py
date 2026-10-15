@@ -13855,7 +13855,8 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     year = datetime.now(timezone.utc).strftime("%Y")
     count = await db.invoices.count_documents({"company_id": order.get("company_id")}) + 1
     invoice_number = format_sales_invoice_number(count, year)
-    e_type = "e_invoice" if contact.get("is_e_invoice_user") else "e_archive"
+    # Taslak türü cari bayrağından gelmez; e-Fatura/e-Arşiv kesimde canlı GİB sorgusuyla belirlenir.
+    e_type = "e_archive"
     now = datetime.now(ZoneInfo("Europe/Istanbul"))
     subtotal = float(inv_totals.get("subtotal") or 0)
     vat_total = float(inv_totals.get("vat_total") or 0)
@@ -17242,7 +17243,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         "contact_id": _oc["_id"],
         "contact_name": _oc.get("name") or order.get("customer_name"),
         "contact_tax_id": _oc.get("tax_number_or_id") or "11111111111",
-        "e_type": e_type_req or ("e_invoice" if _oc.get("is_e_invoice_user") else "e_archive"),
+        "e_type": e_type_req or "e_archive",
         "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).strftime("%Y-%m-%d"),
         "items": inv_items,

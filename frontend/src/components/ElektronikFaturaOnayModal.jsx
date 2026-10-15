@@ -18,12 +18,14 @@ import {
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { resolveOrderContact } from "../utils/orderEBelge";
 import {
-  orderCanIssueEFatura,
-  orderEBelgeType,
-  efaturaOnayMessage,
-  resolveOrderContact,
-} from "../utils/orderEBelge";
+  buyerNeedsLiveMukellefQuery,
+  docBuyerTaxId,
+  dropGibMukellef,
+  eTypeFromGib,
+  fetchGibMukellef,
+} from "../utils/gibMukellef";
 import {
   WITHHOLDING_OPTIONS,
   invoiceNeedsWithholdingPrompt,
@@ -36,22 +38,6 @@ import {
 } from "../utils/invoiceExemption";
 import { formatIssueStamp, nowIssueDateTime, showEfaturaStampNow } from "../utils/invoiceIssueNow";
 import { docDocumentDate, docHasOldDocumentDate } from "../utils/orderBulkActions";
-
-function digitsTax(raw) {
-  return String(raw || "").replace(/\D/g, "");
-}
-
-function orderBuyerTaxId(order, contacts = []) {
-  const c = resolveOrderContact(order, contacts);
-  const tax =
-    c?.tax_number_or_id ||
-    c?.tax_id ||
-    order?.contact_tax_id ||
-    order?.buyer_tax_id ||
-    order?.customer_tax_id ||
-    "";
-  return digitsTax(tax);
-}
 
 function confirmErrorDetail(err) {
   const d = err?.response?.data?.detail ?? err?.response?.data?.message ?? err?.message;
@@ -248,7 +234,9 @@ export function ElektronikFaturaOnayModal({
   const [creditsSource, setCreditsSource] = useState("");
   const [loadingMeta, setLoadingMeta] = useState(!isPrint);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [gibMeta, setGibMeta] = useState(null);
+  const [docGib, setDocGib] = useState({});
+  const [gibError, setGibError] = useState("");
+  const [gibRetry, setGibRetry] = useState(0);
   const askExemption = !isPrint && !isBulk && invoiceNeedsExemptionPrompt(invoice || doc);
   const askWithholding = !isPrint && !isBulk && invoiceNeedsWithholdingPrompt(invoice || doc);
   const [exemptionCode, setExemptionCode] = useState(
@@ -316,20 +304,59 @@ export function ElektronikFaturaOnayModal({
       })),
   ].slice(-6);
 
-  const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
-  const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
-  const suggestedEType = gibMeta?.suggested_e_type || orderEBelgeType(doc, contacts);
+  const docsForGib = useMemo(() => {
+    if (isPrint) return [];
+    if (bulkDocs.length) return bulkDocs;
+    return doc ? [doc] : [];
+  }, [isPrint, bulkDocs, doc]);
+
+  const decisionFor = (d, idx) => {
+    const tax = docBuyerTaxId(d, resolveOrderContact(d, contacts));
+    const needsLive = buyerNeedsLiveMukellefQuery(tax);
+    const entry = docGib[docKey(d, idx)];
+    if (!entry) {
+      if (!needsLive) {
+        return {
+          tax,
+          needsLive,
+          status: "ok",
+          eType: "e_archive",
+          data: { is_e_invoice_user: false, suggested_e_type: "e_archive", tax_id: tax },
+        };
+      }
+      return { tax, needsLive, status: "loading", eType: null, data: null };
+    }
+    if (entry.status === "error") {
+      return { tax, needsLive, status: "error", error: entry.error, eType: null, data: null };
+    }
+    if (entry.status !== "ok") {
+      return { tax, needsLive, status: "loading", eType: null, data: null };
+    }
+    const data = entry.data || {};
+    const eType = eTypeFromGib(data);
+    return { tax, needsLive, status: "ok", eType, data, isMukellef: eType === "e_invoice" };
+  };
+
+  const gibDecisions = docsForGib.map((d, idx) => decisionFor(d, idx));
+  const gibBlocked = !isPrint && gibDecisions.some((d) => d.status !== "ok");
+  const anyTaxpayer = gibDecisions.some((d) => d.status === "ok" && d.eType === "e_invoice");
+  const archiveOnly = !isPrint && !anyTaxpayer;
+
   const message = isPrint
     ? isBulk || bulkDocs.length
       ? `${bulkDocs.length || 1} fatura yazdırılacak. İşlem bitene kadar bu pencere açık kalır; her belgenin durumu listede görünür.`
       : "Fatura yazdırılacak. İşlem bitene kadar bu pencere açık kalır."
-    : gibMeta?.message
-      ? (isEFatura
-        ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
-        : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?")
-      : isBulk
-        ? `${bulkDocs.length} fatura için e-belge gönderimi başlatılacak. Onaylıyor musunuz? İşlem bitene kadar durum akışı burada görünür.`
-        : efaturaOnayMessage(doc, contacts);
+    : gibError
+      ? gibError
+      : gibBlocked
+        ? "GİB mükellef sorgusu tamamlanmadan gönderilemez."
+        : isBulk
+          ? (anyTaxpayer
+            ? `${bulkDocs.length} belge: e-Fatura mükelleflerine seçilen senaryo, diğerlerine e-Arşiv kesilir.`
+            : `${bulkDocs.length} belge e-Arşiv olarak kesilecek. Onaylıyor musunuz?`)
+          : (anyTaxpayer
+            ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
+            : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?");
 
   useEffect(() => {
     const next = prefillReturnBillingRef(doc);
@@ -341,14 +368,16 @@ export function ElektronikFaturaOnayModal({
   useEffect(() => {
     if (isPrint) {
       setLoadingMeta(false);
-      return;
+      return undefined;
     }
     if (!companyId) {
       setLoadingMeta(false);
-      return;
+      setGibError("Şirket seçili değil.");
+      return undefined;
     }
     let cancelled = false;
-    const tax = orderBuyerTaxId(doc, contacts);
+    setLoadingMeta(true);
+    setGibError("");
 
     const loadCredits = axios
       .get(`${API_URL}/e-invoice/integrator-credits`, { params: { company_id: companyId } })
@@ -365,25 +394,51 @@ export function ElektronikFaturaOnayModal({
         }
       });
 
-    const loadGib = (!isBulk && (tax.length === 10 || tax.length === 11))
-      ? axios
-        .get(`${API_URL}/gib/lookup`, { params: { tax_id: tax, company_id: companyId } })
-        .then((r) => {
-          if (!cancelled) setGibMeta(r.data || null);
-        })
-        .catch(() => {
-          if (!cancelled) setGibMeta(null);
-        })
-      : Promise.resolve();
+    const loadAll = Promise.all(docsForGib.map(async (d, idx) => {
+      const key = docKey(d, idx);
+      const tax = docBuyerTaxId(d, resolveOrderContact(d, contacts));
+      try {
+        const entry = await fetchGibMukellef(companyId, tax);
+        return [key, entry];
+      } catch (err) {
+        const detail = err?.gibEntry?.error
+          || err?.response?.data?.detail
+          || err?.message
+          || "GİB sorgusu başarısız.";
+        return [key, {
+          status: "error",
+          error: typeof detail === "string" ? detail : "GİB sorgusu başarısız.",
+        }];
+      }
+    }));
 
-    Promise.all([loadCredits, loadGib]).finally(() => {
+    Promise.all([loadCredits, loadAll]).then(([, pairs]) => {
+      if (cancelled) return;
+      const next = {};
+      let errMsg = "";
+      (pairs || []).forEach(([key, entry]) => {
+        next[key] = entry;
+        if (entry?.status === "error" && entry.error && !errMsg) errMsg = entry.error;
+      });
+      setDocGib(next);
+      setGibError(errMsg);
+    }).finally(() => {
       if (!cancelled) setLoadingMeta(false);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [companyId, doc, contacts, isPrint, isBulk]);
+  }, [companyId, contacts, docsForGib, isPrint, gibRetry]);
+
+  const retryGib = () => {
+    docsForGib.forEach((d) => {
+      dropGibMukellef(companyId, docBuyerTaxId(d, resolveOrderContact(d, contacts)));
+    });
+    setDocGib({});
+    setGibError("");
+    setGibRetry((n) => n + 1);
+  };
 
   const runJob = async (payload) => {
     setMenuOpen(false);
@@ -444,7 +499,7 @@ export function ElektronikFaturaOnayModal({
     }
   };
 
-  const submit = (scenario) => {
+  const submit = (scenario, forcedEType) => {
     if (isPrint) {
       runJob({ mode: "print" });
       return;
@@ -473,7 +528,12 @@ export function ElektronikFaturaOnayModal({
       setMenuOpen(false);
       return;
     }
-    // GİB Schematron: iade → yalnızca Temel (Ticari yasak)
+    if (gibBlocked) {
+      toast.error(gibError || "GİB sorgusu tamamlanmadan gönderilemez.");
+      setMenuOpen(false);
+      return;
+    }
+    // GİB Schematron: iade e-faturası → yalnızca Temel (Ticari yasak)
     const sc = isReturnInvoice || scenario === "TEMEL" ? "TEMEL" : "TICARI";
     setMenuOpen(false);
     const wh = askWithholding ? parseWithholdingValue(withholdingValue) : null;
@@ -493,17 +553,34 @@ export function ElektronikFaturaOnayModal({
           notes: buildIadeNote(returnInvoiceNo, returnInvoiceDate),
         }
       : undefined;
+    const sourceDocs = bulkDocs.length ? bulkDocs : doc ? [doc] : [];
+    const documents = sourceDocs.map((d, idx) => {
+      const dec = decisionFor(d, idx);
+      const eType = forcedEType === "e_archive" || dec.eType !== "e_invoice" ? "e_archive" : "e_invoice";
+      const docIsReturn = isReturnInvoiceDoc(d);
+      const docScenario = eType === "e_invoice"
+        ? (docIsReturn || sc === "TEMEL" ? "TEMEL" : "TICARI")
+        : undefined;
+      return {
+        ...d,
+        eType,
+        scenario: docScenario,
+        alias: dec.data?.alias || undefined,
+        gibMeta: dec.data || undefined,
+      };
+    });
+    const single = documents.length === 1 ? documents[0] : null;
+    const allArchive = documents.every((d) => d.eType !== "e_invoice");
     const payload = {
-      // Kullanıcı Temel/Ticari seçti → her zaman e-fatura senaryosu (lookup e-arşiv dese bile).
-      eType: "e_invoice",
-      scenario: sc,
-      suggestedEType,
-      alias: gibMeta?.alias || undefined,
-      gibMeta: gibMeta || undefined,
+      eType: single ? single.eType : (allArchive ? "e_archive" : "e_invoice"),
+      scenario: single ? single.scenario : (allArchive ? undefined : sc),
+      suggestedEType: single?.eType || (allArchive ? "e_archive" : "e_invoice"),
+      alias: single?.alias,
+      gibMeta: single?.gibMeta,
       withholding: wh || undefined,
       exemption,
       returnRef,
-      documents: bulkDocs.length ? bulkDocs : doc ? [doc] : [],
+      documents,
       mode: "send",
       stampNow: !!(offerStampNow && stampNow),
     };
@@ -655,7 +732,11 @@ export function ElektronikFaturaOnayModal({
                   <Loader2 className="w-4 h-4 animate-spin" /> Entegratör sorgulanıyor…
                 </p>
               ) : (
-                <p className="text-sm text-slate-700 leading-relaxed" data-testid="efatura-onay-msg">
+                <p
+                  className={`text-sm leading-relaxed ${gibError ? "text-rose-700" : "text-slate-700"}`}
+                  data-testid="efatura-onay-msg"
+                  data-gib-error={gibError ? "1" : "0"}
+                >
                   {message}
                 </p>
               )}
@@ -720,14 +801,25 @@ export function ElektronikFaturaOnayModal({
                     {bulkDocs.length} belge
                   </p>
                   <ul className="space-y-1">
-                    {bulkDocs.slice(0, 40).map((d, idx) => (
+                    {bulkDocs.slice(0, 40).map((d, idx) => {
+                      const dec = gibDecisions[idx];
+                      const kind = dec?.status === "error"
+                        ? "Sorgu hatası"
+                        : dec?.status !== "ok"
+                          ? "Sorgulanıyor"
+                          : dec.eType === "e_invoice"
+                            ? "E-Fatura"
+                            : "E-Arşiv";
+                      return (
                       <li key={docKey(d, idx)} className="text-xs text-slate-700 flex justify-between gap-2">
                         <span className="font-semibold truncate">{docLabel(d)}</span>
                         <span className="text-slate-400 truncate shrink min-w-0">
-                          {d?.contact_name || d?.customer_name || ""}
+                          {kind}
+                          {d?.contact_name || d?.customer_name ? ` · ${d.contact_name || d.customer_name}` : ""}
                         </span>
                       </li>
-                    ))}
+                      );
+                    })}
                     {bulkDocs.length > 40 && (
                       <li className="text-[11px] text-slate-400">+{bulkDocs.length - 40} belge daha…</li>
                     )}
@@ -988,6 +1080,37 @@ export function ElektronikFaturaOnayModal({
                 >
                   <Printer className="w-4 h-4" />
                   Yazdır
+                </button>
+              ) : gibBlocked ? (
+                <>
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-200 text-slate-500 text-sm font-semibold cursor-not-allowed"
+                    data-testid="efatura-onay-blocked"
+                  >
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {gibError ? "GİB sorgusu başarısız" : "GİB sorgulanıyor…"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={retryGib}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-sm font-semibold"
+                    data-testid="efatura-onay-retry"
+                  >
+                    Tekrar sorgula
+                  </button>
+                </>
+              ) : archiveOnly ? (
+                <button
+                  type="button"
+                  disabled={loadingMeta}
+                  onClick={() => submit(null, "e_archive")}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
+                  data-testid="efatura-onay-earsiv"
+                >
+                  <Check className="w-4 h-4" />
+                  e-Arşiv Fatura Gönder
                 </button>
               ) : (
                 <div className="relative">

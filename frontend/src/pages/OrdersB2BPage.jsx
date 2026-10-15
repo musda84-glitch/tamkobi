@@ -52,7 +52,8 @@ import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
-import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
+import { eBelgeMenuItems, orderEBelgeType, resolveOrderContact } from "../utils/orderEBelge";
+import { contactMukellefPatch, docBuyerTaxId, faturalastirMenuLabel, fetchGibMukellef } from "../utils/gibMukellef";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 import { OrderInvoiceNumberMarks } from "../components/OrderInvoiceNumberMarks";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
@@ -115,9 +116,15 @@ function orderExportRows(ord) {
 }
 
 /** Masaüstü / mobil ortak «Diğer işlemler» menüsü. */
-function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side = "left", testSuffix = "", canDelete = true }) {
+function orderGibEntry(ord, contacts, gibByTax) {
+  const tax = docBuyerTaxId(ord, resolveOrderContact(ord, contacts));
+  return gibByTax?.[tax] || null;
+}
+
+function OrderMoreMenuButton({ ord, contacts, gibByTax = {}, onAction, align = "center", side = "left", testSuffix = "", canDelete = true }) {
+  const gibLookup = orderGibEntry(ord, contacts, gibByTax);
   const { kind, items } = orderMoreMenuItems(ord, {
-    eBelgeItems: eBelgeMenuItems(ord, contacts),
+    eBelgeItems: eBelgeMenuItems(ord, contacts, gibLookup),
     canDelete,
   });
   let lastSection = null;
@@ -157,7 +164,7 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
               >
                 <Ico className={`w-4 h-4 shrink-0 ${it.color || "text-slate-500"}`} />
                 <span className="min-w-0 flex-1">
-                  <span className="truncate block">{it.label}</span>
+                  <span className="truncate block">{it.id === "faturalastir" ? faturalastirMenuLabel(gibLookup) : it.label}</span>
                   {it.hint ? <span className="block text-[10px] font-normal text-slate-400 truncate">{it.hint}</span> : null}
                 </span>
               </DropdownMenuItem>
@@ -194,11 +201,12 @@ function isB2BCartOrder(ord) {
   return !!(ord?.is_held_cart || ord?.is_active_cart || ord?.order_status === "held_cart" || ord?.order_status === "active_cart");
 }
 
-function mobilePrimaryAction(ord) {
+function mobilePrimaryAction(ord, gibLookup) {
   const kind = orderMoreMenuKind(ord);
+  const faturaLabel = faturalastirMenuLabel(gibLookup);
   if (kind === "held_cart") return null;
-  if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
-  if (kind === "integration_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
+  if (kind === "panel_draft") return { id: "faturalastir", label: faturaLabel, className: "bg-emerald-600 text-white" };
+  if (kind === "integration_draft") return { id: "faturalastir", label: faturaLabel, className: "bg-emerald-600 text-white" };
   if (kind === "integration_invoiced" || kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura Oluştur", className: "bg-rose-500 text-white" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket", className: "bg-sky-600 text-white" };
@@ -775,6 +783,35 @@ export default function OrdersB2BPage() {
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [gibByTax, setGibByTax] = useState({});
+
+  const orderTaxKey = useMemo(() => {
+    const taxes = (orders || []).map((o) => docBuyerTaxId(o, resolveOrderContact(o, contacts)));
+    return [...new Set(taxes)].sort().join(",");
+  }, [orders, contacts]);
+
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let cancelled = false;
+    const taxes = orderTaxKey ? orderTaxKey.split(",") : [];
+    if (!taxes.length) {
+      setGibByTax({});
+      return undefined;
+    }
+    Promise.all(taxes.map(async (tax) => {
+      try {
+        return [tax, await fetchGibMukellef(companyId, tax)];
+      } catch (err) {
+        return [tax, err?.gibEntry || { status: "error", error: "GİB sorgusu başarısız." }];
+      }
+    })).then((pairs) => {
+      if (cancelled) return;
+      const next = {};
+      pairs.forEach(([tax, entry]) => { next[tax] = entry; });
+      setGibByTax(next);
+    });
+    return () => { cancelled = true; };
+  }, [companyId, orderTaxKey]);
 
   // B2B Cart State
   const [cart, setCart] = useState({});
@@ -1108,16 +1145,8 @@ export default function OrdersB2BPage() {
       return;
     }
     const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-    const explicitScenario = opts.scenario === "TEMEL" || opts.scenario === "TICARI";
-    const resolved = explicitScenario
-      ? "e_invoice"
-      : (eType === "e_invoice" && orderEBelgeType(ord, contacts) !== "e_invoice"
-        ? "e_archive"
-        : (eType || orderEBelgeType(ord, contacts)));
+    const resolved = eType === "e_invoice" ? "e_invoice" : "e_archive";
     const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
-    if (!explicitScenario && resolved !== eType && eType === "e_invoice") {
-      toast.message("Cari e-fatura mükellefi değil; E-Arşiv kesilecek.");
-    }
     if (!opts.skipConfirm && !window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;
     try {
       let invoiceId = ord.invoice_id;
@@ -1593,15 +1622,28 @@ export default function OrdersB2BPage() {
           onConfirm={async (payload, ctx) => {
             const bulkList = eFaturaOrders;
             if (bulkList?.length) {
-              const { eType, scenario } = payload || {};
+              const docs = payload?.documents || [];
               ctx?.setStep?.("prepare", "active");
               let ok = 0;
               let fail = 0;
               ctx?.setStep?.("send", "active");
-              for (const ord of bulkList) {
+              for (let i = 0; i < bulkList.length; i += 1) {
+                const ord = bulkList[i];
                 const key = orderRowId(ord) || ord.invoice_id;
+                const spec = docs[i] || {};
+                const eType = spec.eType || payload?.eType;
+                const scenario = spec.scenario || (eType === "e_invoice" ? payload?.scenario : undefined);
+                const gibMeta = spec.gibMeta || null;
                 try {
                   ctx?.setItem?.(key, { status: "running", detail: "Gönderiliyor…" });
+                  const patch = contactMukellefPatch(gibMeta);
+                  if (patch && ord.contact_id) {
+                    try {
+                      await axios.put(`${API_URL}/contacts/${ord.contact_id}`, patch);
+                    } catch {
+                      /* gönderim yine denenecek */
+                    }
+                  }
                   await handleEBelgeInvoice(ord, eType, {
                     scenario,
                     skipConfirm: true,
@@ -1622,13 +1664,11 @@ export default function OrdersB2BPage() {
             }
             const ord = eFaturaOrder;
             if (!ord) return;
-            const { eType, scenario, alias, stampNow } = payload || {};
-            if (alias && ord.contact_id) {
+            const { eType, scenario, stampNow, gibMeta } = payload || {};
+            const patch = contactMukellefPatch(gibMeta);
+            if (patch && ord.contact_id) {
               try {
-                await axios.put(`${API_URL}/contacts/${ord.contact_id}`, {
-                  e_invoice_alias: alias,
-                  is_e_invoice_user: eType === "e_invoice",
-                });
+                await axios.put(`${API_URL}/contacts/${ord.contact_id}`, patch);
               } catch {
                 /* gönderim yine denenecek */
               }
@@ -1840,7 +1880,7 @@ export default function OrdersB2BPage() {
             </div>
           )}
           {pagedOrders.map((ord) => {
-            const primary = mobilePrimaryAction(ord);
+            const primary = mobilePrimaryAction(ord, orderGibEntry(ord, contacts, gibByTax));
             return (
               <div
                 key={ord.id || ord._id || ord.order_number}
@@ -1957,6 +1997,7 @@ export default function OrdersB2BPage() {
                         <OrderMoreMenuButton
                           ord={ord}
                           contacts={contacts}
+                          gibByTax={gibByTax}
                           onAction={handleOrderMoreAction}
                           align="end"
                           side="top"
@@ -2208,7 +2249,7 @@ export default function OrdersB2BPage() {
                                 className="flex-col items-start gap-0 py-1.5"
                                 data-testid={`inv-faturalastir-draft-${ord.order_number}`}
                               >
-                                <span className="text-xs font-semibold text-slate-800">Faturalaştır</span>
+                                <span className="text-xs font-semibold text-slate-800">{faturalastirMenuLabel(orderGibEntry(ord, contacts, gibByTax))}</span>
                                 <span className="text-[10px] text-slate-400">Cari bakiyesi + stok işlenir</span>
                               </DropdownMenuItem>
                               <DropdownMenuItem
@@ -2247,7 +2288,7 @@ export default function OrdersB2BPage() {
                                 className="flex-col items-start gap-0 py-1.5"
                                 data-testid={`inv-faturalastir-${ord.order_number}`}
                               >
-                                <span className="text-xs font-semibold text-slate-800">Faturalaştır</span>
+                                <span className="text-xs font-semibold text-slate-800">{faturalastirMenuLabel(orderGibEntry(ord, contacts, gibByTax))}</span>
                                 <span className="text-[10px] text-slate-400">Cariye işle · yeşil Faturalaştı</span>
                               </DropdownMenuItem>
                               <DropdownMenuItem
@@ -2323,6 +2364,7 @@ export default function OrdersB2BPage() {
                           <OrderMoreMenuButton
                             ord={ord}
                             contacts={contacts}
+                            gibByTax={gibByTax}
                             onAction={handleOrderMoreAction}
                             canDelete={canDeleteOrder}
                           />
