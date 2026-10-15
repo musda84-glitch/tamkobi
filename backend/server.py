@@ -48,6 +48,7 @@ from order_list_filter import (
 from b2b_catalog import b2b_catalog_mongo_filter
 from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
 from contact_tax import contact_tax_patch
+from buyer_tax import buyer_tax_choice, invoice_contact_tax_id
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -8238,7 +8239,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
     settings = await db.einvoice_settings.find_one({"company_id": inv["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
     doc = {"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
-           "contact_tax_id": inv.get("contact_tax_id") or (contact or {}).get("tax_number_or_id") or (contact or {}).get("tax_id"),
+           "contact_tax_id": buyer_tax_choice(inv, contact)["tax"] or invoice_contact_tax_id(contact),
            "shipping_address": (contact or {}).get("address"), "city": (contact or {}).get("city"), "items": [{**it, "vat_rate": 0} for it in inv.get("items", [])],
            "subtotal": inv.get("subtotal", 0), "vat_total": 0, "grand_total": inv.get("subtotal", 0), "currency": inv.get("currency", "TRY"), "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
            "invoice_id": invoice_id, "invoice_ref_number": inv.get("invoice_number"), "source_channel": inv.get("source_channel", "manual"), "dispatch_status": "draft",
@@ -8377,7 +8378,7 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
         if not contact:
             raise HTTPException(status_code=400, detail="Hedef cari bulunamadı.")
         contact_name = contact.get("name") or ""
-        contact_tax_id = contact.get("tax_number_or_id") or contact.get("tax_id")
+        contact_tax_id = invoice_contact_tax_id(contact)
         contact_tax_office = contact.get("tax_office")
     elif not contact_id:
         raise HTTPException(status_code=400, detail="Faturada cari yok; farklı cari seçerek kopyalayın.")
@@ -14062,7 +14063,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "invoice_number": invoice_number,
         "contact_id": contact["_id"],
         "contact_name": contact.get("name") or order.get("customer_name") or "",
-        "contact_tax_id": contact.get("tax_number_or_id") or "11111111111",
+        "contact_tax_id": invoice_contact_tax_id(contact),
         "shipping_address": _ship or None,
         "city": _city or None,
         "customer_phone": order.get("customer_phone") or contact.get("phone") or None,
@@ -14432,7 +14433,7 @@ async def create_dispatch(order_id: str, user: dict = Depends(get_current_user))
     ship = str(o.get("shipping_address") or "").strip() or str((contact or {}).get("address") or "").strip()
     doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"],
            "contact_name": contact.get("name") or o.get("customer_name"),
-           "contact_tax_id": contact.get("tax_number_or_id") or contact.get("tax_id"),
+           "contact_tax_id": invoice_contact_tax_id(contact),
            "customer_phone": o.get("customer_phone") or contact.get("phone"), "shipping_address": ship, "city": o.get("city") or contact.get("city"),
            "items": items,
            "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
@@ -17594,7 +17595,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         "invoice_number": invoice_number,
         "contact_id": _oc["_id"],
         "contact_name": _oc.get("name") or order.get("customer_name"),
-        "contact_tax_id": _oc.get("tax_number_or_id") or "11111111111",
+        "contact_tax_id": invoice_contact_tax_id(_oc),
         "e_type": e_type_req or "e_archive",
         "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).strftime("%Y-%m-%d"),

@@ -22,7 +22,28 @@ test("docBuyerTaxId fatura VKN'sini cariden önce alır", () => {
   const contact = { tax_number_or_id: "12345678901" };
   expect(docBuyerTaxId(doc, contact)).toBe("3680486408");
   expect(buyerTaxChoice(doc, contact).mismatch).toBe(true);
+  expect(buyerTaxChoice(doc, contact).source).toBe("Belge");
   expect(docBuyerTaxId({ contact_tax_id: "" }, contact)).toBe("12345678901");
+});
+
+test("yer tutucu belge VKN'si cariye düşer; mismatch yalnız iki gerçek VKN'de", () => {
+  const contact = { tax_number_or_id: "3680486408" };
+  const fromPlaceholder = buyerTaxChoice({ contact_tax_id: "11111111111" }, contact);
+  expect(fromPlaceholder.tax).toBe("3680486408");
+  expect(fromPlaceholder.mismatch).toBe(false);
+  expect(fromPlaceholder.source).toBe("Cari");
+  const fromTaxId = buyerTaxChoice({ contact_tax_id: "" }, { tax_id: "3680486408" });
+  expect(fromTaxId.tax).toBe("3680486408");
+  expect(fromTaxId.source).toBe("Cari");
+  const bothEmpty = buyerTaxChoice({ contact_tax_id: "" }, {});
+  expect(bothEmpty.tax).toBe("");
+  expect(bothEmpty.placeholder).toBe(true);
+  const bothReal = buyerTaxChoice(
+    { contact_tax_id: "6320984412" },
+    { tax_number_or_id: "3680486408" },
+  );
+  expect(bothReal.tax).toBe("6320984412");
+  expect(bothReal.mismatch).toBe(true);
 });
 
 test("eTypeFromGib mesaj metnine bakmaz; unknown e-Arşiv değildir", () => {

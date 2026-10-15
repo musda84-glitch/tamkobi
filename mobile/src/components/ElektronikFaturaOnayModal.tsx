@@ -16,6 +16,7 @@ import {
 } from "../utils/efaturaOnay";
 import { WITHHOLDING, withholdingSelectGroups } from "../utils/invoiceDraft";
 import {
+  contactIdOf,
   docBuyerTaxId,
   dropGibMukellef,
   eTypeFromGib,
@@ -29,6 +30,17 @@ import { formatIssueStamp, nowIssueDateTime, showEfaturaStampNow } from "../util
 import { B2BSheet } from "./b2b/B2BSheet";
 import { GroupedSelect } from "./GroupedSelect";
 import { Field, Muted, PrimaryButton, Row } from "./kit";
+
+type ContactLike = {
+  id?: string;
+  _id?: string;
+  tax_number_or_id?: string;
+  tax_id?: string;
+  tax_number?: string;
+  vkn?: string;
+  tckn?: string;
+  name?: string;
+};
 
 type DocLike = {
   id?: string;
@@ -79,7 +91,7 @@ export function ElektronikFaturaOnayModal({
   visible: boolean;
   order?: DocLike | null;
   invoice?: DocLike | null;
-  contact?: { tax_number_or_id?: string; tax_id?: string; name?: string } | null;
+  contact?: ContactLike | null;
   preferredEType?: "e_invoice" | "e_archive" | null;
   contactIsEInvoiceUser?: boolean | null;
   /** Hızlı gönderim tarih sorusu sonucu (web #1154 stamp_now). */
@@ -117,6 +129,10 @@ export function ElektronikFaturaOnayModal({
   const [returnInvoiceDate, setReturnInvoiceDate] = useState(prefilled.date);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [fetchedContact, setFetchedContact] = useState<ContactLike | null>(null);
+  const [contactFetchDone, setContactFetchDone] = useState(false);
+  const resolvedContact = contact || fetchedContact || null;
+  const contactPending = !contact && !!contactIdOf(doc) && !contactFetchDone;
 
   useEffect(() => {
     if (!visible) return;
@@ -131,13 +147,46 @@ export function ElektronikFaturaOnayModal({
   }, [visible, doc, prefilled.number, prefilled.date, initialStampNow]);
 
   useEffect(() => {
+    if (!visible) return;
+    setFetchedContact(null);
+    setContactFetchDone(false);
+  }, [visible, doc?.contact_id, contact]);
+
+  useEffect(() => {
+    if (!visible || contact || !contactIdOf(doc)) {
+      if (visible && (!contactIdOf(doc) || contact)) setContactFetchDone(true);
+      return;
+    }
+    let cancelled = false;
+    get<ContactLike>(client, `/contacts/${contactIdOf(doc)}`)
+      .then((row) => {
+        if (cancelled) return;
+        setFetchedContact(row || null);
+        setContactFetchDone(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFetchedContact(null);
+          setContactFetchDone(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, client, doc, contact]);
+
+  useEffect(() => {
     if (!visible || !companyId) {
       setLoadingMeta(false);
       return;
     }
+    if (contactPending) {
+      setLoadingMeta(true);
+      return;
+    }
     let cancelled = false;
     setLoadingMeta(true);
-    const tax = docBuyerTaxId(doc, contact);
+    const tax = docBuyerTaxId(doc, resolvedContact);
     const refresh = gibRefreshRef.current;
     gibRefreshRef.current = false;
 
@@ -198,9 +247,14 @@ export function ElektronikFaturaOnayModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, companyId, client, doc, contact, gibRetry]);
+  }, [visible, companyId, client, doc, resolvedContact, contactPending, gibRetry]);
 
-  const gibView = gibLookupPresentation(doc, contact, gibStatus === "loading" ? null : gibEntry);
+  const gibView = gibLookupPresentation(
+    doc,
+    resolvedContact,
+    gibStatus === "loading" || contactPending ? null : gibEntry,
+    { contactPending },
+  );
   const resolvedType = gibStatus === "ok" ? eTypeFromGib(gibMeta) : null;
   const gibBlocked = resolvedType !== "e_invoice" && resolvedType !== "e_archive";
   const isTaxpayer = resolvedType === "e_invoice";
@@ -296,7 +350,7 @@ export function ElektronikFaturaOnayModal({
 
   const retryGib = (forceRefresh = false) => {
     gibRefreshRef.current = !!forceRefresh;
-    dropGibMukellef(companyId || "", docBuyerTaxId(doc, contact));
+    dropGibMukellef(companyId || "", docBuyerTaxId(doc, resolvedContact));
     setGibEntry(null);
     setGibMeta(null);
     setGibError("");
@@ -371,9 +425,12 @@ export function ElektronikFaturaOnayModal({
         </View>
       }
     >
-      <Muted testID="efatura-onay-message">{loadingMeta ? "Mükellef ve kontör kontrol ediliyor…" : message}</Muted>
+      <Muted testID="efatura-onay-message">{loadingMeta || contactPending ? "Yükleniyor…" : message}</Muted>
       <View style={{ marginTop: 10, gap: 4 }} testID="efatura-onay-gib-meta">
         <Text testID="efatura-onay-vkn" style={{ color: colors.text, fontSize: 12 }}>VKN: {gibView.tax || "—"}</Text>
+        <Text testID="efatura-onay-vkn-origin" style={{ color: colors.text, fontSize: 12 }}>
+          VKN kaynağı: {gibView.taxSource || "—"}
+        </Text>
         <Text testID="efatura-onay-unvan" style={{ color: colors.text, fontSize: 12 }}>Unvan: {gibView.name || "—"}</Text>
         <Text testID="efatura-onay-source" style={{ color: colors.text, fontSize: 12 }}>Kaynak: {gibView.source || "—"}</Text>
         <Text testID="efatura-onay-aliases" style={{ color: colors.text, fontSize: 12 }}>

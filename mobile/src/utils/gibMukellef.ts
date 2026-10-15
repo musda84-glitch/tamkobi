@@ -51,21 +51,63 @@ function taxField(src: object | null | undefined, key: string): string {
   return val == null ? "" : String(val);
 }
 
-/** Sorgu VKN'si: önce belgenin contact_tax_id'si, yoksa cari. */
+export const DOC_TAX_FIELDS = ["contact_tax_id", "buyer_tax_id", "customer_tax_id", "tax_number_or_id", "tax_id"] as const;
+export const CONTACT_TAX_FIELDS = ["tax_number_or_id", "tax_id", "tax_number", "vkn", "tckn"] as const;
+
+function firstTaxDigits(src: object | null | undefined, fields: readonly string[]): string {
+  for (const key of fields) {
+    const d = digitsTax(taxField(src, key));
+    if (d) return d;
+  }
+  return "";
+}
+
+function usableTax(raw?: string | null): string {
+  const d = digitsTax(raw);
+  if (!d || isPlaceholderTaxId(d)) return "";
+  return d;
+}
+
+export function contactCardTaxId(contact?: object | null): string {
+  return firstTaxDigits(contact, CONTACT_TAX_FIELDS);
+}
+
+export function contactIdOf(doc?: object | null): string {
+  return String(taxField(doc, "contact_id") || taxField(doc, "contactId") || "").trim();
+}
+
+export function findListedContact(doc?: object | null, contacts?: Array<object | null> | null): object | null {
+  const id = contactIdOf(doc);
+  if (!id) return null;
+  return (contacts || []).find((c) => String(taxField(c, "id") || taxField(c, "_id")) === id) || null;
+}
+
+export function buyerContactPending(doc?: object | null, contacts?: Array<object | null> | null): boolean {
+  return !!contactIdOf(doc) && !findListedContact(doc, contacts);
+}
+
+/** Sorgu VKN'si: belgede gerçek kimlik varsa o, değilse cari. Yer tutucu cariyi ezmez. */
 export function buyerTaxChoice(doc?: object | null, contact?: object | null) {
-  const docTax = digitsTax(
-    taxField(doc, "contact_tax_id")
-    || taxField(doc, "buyer_tax_id")
-    || taxField(doc, "customer_tax_id")
-    || taxField(doc, "tax_number_or_id")
-    || taxField(doc, "tax_id"),
-  );
-  const contactTax = digitsTax(taxField(contact, "tax_number_or_id") || taxField(contact, "tax_id"));
+  const docTax = firstTaxDigits(doc, DOC_TAX_FIELDS);
+  const contactTax = contactCardTaxId(contact);
+  const docReal = usableTax(docTax);
+  const contactReal = usableTax(contactTax);
+  let tax = "";
+  let source = "";
+  if (docReal) {
+    tax = docReal;
+    source = "Belge";
+  } else if (contactReal) {
+    tax = contactReal;
+    source = "Cari";
+  }
   return {
-    tax: docTax || contactTax,
+    tax,
     docTax,
     contactTax,
-    mismatch: !!(docTax && contactTax && docTax !== contactTax),
+    mismatch: !!(docReal && contactReal && docReal !== contactReal),
+    source,
+    placeholder: !docReal && !contactReal,
   };
 }
 
@@ -126,6 +168,7 @@ export type GibLookupView = {
   docTax: string;
   contactTax: string;
   mismatch: boolean;
+  taxSource: string;
   name: string;
   source: string;
   aliases: string[];
@@ -139,6 +182,7 @@ export function gibLookupPresentation(
   doc?: object | null,
   contact?: object | null,
   entry?: GibEntry | null,
+  opts?: { contactPending?: boolean },
 ): GibLookupView {
   const choice = buyerTaxChoice(doc, contact);
   const data = entry && entry.status === "ok" ? entry.data : null;
@@ -149,16 +193,18 @@ export function gibLookupPresentation(
   const error = entry && entry.status === "error"
     ? entry.error
     : (data && !eType ? (data.message || "GİB mükellefiyeti doğrulanamadı.") : "");
+  const pending = !!opts?.contactPending && !buyerNeedsLiveMukellefQuery(choice.tax);
   return {
     tax: choice.tax,
     docTax: choice.docTax,
     contactTax: choice.contactTax,
     mismatch: choice.mismatch,
+    taxSource: choice.source,
     name: data?.name || "",
     source: data?.source || "",
     aliases,
-    eType,
-    blocked: !eType,
+    eType: pending ? null : eType,
+    blocked: pending || !eType,
     error,
   };
 }

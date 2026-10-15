@@ -23,7 +23,7 @@ import n11faturam
 import isnet
 import isnet_portal
 import ubl_export
-from buyer_tax import buyer_tax_choice
+from buyer_tax import buyer_tax_choice, usable_tax
 from invoice_edit_lock import invoice_gib_locked
 from safe_error import mask_sensitive_text, public_provider_detail
 
@@ -179,6 +179,7 @@ async def resolve_buyer_mukellef(
     tax_id: str,
     *,
     contact: Optional[dict] = None,
+    contact_id: Optional[str] = None,
     refresh: bool = False,
 ) -> Dict[str, Any]:
     """GİB e-Fatura mükellef sorgusu → suggested_e_type (e_invoice | e_archive).
@@ -187,11 +188,16 @@ async def resolve_buyer_mukellef(
     Entegratör yapılandırılmışsa canlı sorgu (aynı VKN, aynı turda tek kez);
     değilse yalnız VKN/TCKN uzunluğu ile simüle. Yer tutucu kimlikler e-Arşiv.
     unknown / hata önbelleğe yazılmaz. refresh=True önbelleği okumaz, sonucu yeniden yazar.
+    Cari contact_id + company_id ile çekilir; yoksa VKN ile yedeklenir.
     """
     tid = digits(tax_id)
     local = contact
-    if local is None and _db is not None and tid:
-        local = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
+    cid = str(contact_id or (local or {}).get("_id") or (local or {}).get("id") or "").strip()
+    if local is None and _db is not None:
+        if cid:
+            local = await _db.contacts.find_one({"_id": cid, "company_id": company_id})
+        elif tid:
+            local = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
     from contact_tax import is_placeholder_tax_id
     # Boş kimlik yer tutucu gibi sorgusuz e-Arşiv. Dolu ama 10/11 hane değilse hata.
     if not tid or is_placeholder_tax_id(tid):
@@ -728,7 +734,7 @@ async def issue_invoice(
             e_type = requested or inv.get("e_type")
     elif should_resolve_e_type_from_gib(requested):
         # e_type=e_invoice açıkça gelse bile alıcı VKN/TCKN için GİB sorgusu çalışır.
-        # Önce faturanın contact_tax_id'si; yoksa cari. Farklıysa cari bayrağı yazılmaz.
+        # Belgede yer tutucu/boş, caride gerçek VKN varsa cari kullanılır ve taslak güncellenir.
         choice = buyer_tax_choice(inv, contact)
         tax = choice["tax"]
         if choice["mismatch"]:
@@ -739,12 +745,25 @@ async def issue_invoice(
                 invoice_id,
             )
         from contact_tax import is_placeholder_tax_id
+        if (
+            tax
+            and not is_placeholder_tax_id(tax)
+            and not usable_tax(choice.get("doc_tax"))
+            and inv.get("contact_tax_id") != tax
+        ):
+            await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"contact_tax_id": tax}})
+            inv = {**inv, "contact_tax_id": tax}
         if not tax or is_placeholder_tax_id(tax):
             gib_meta = _placeholder_mukellef(tax, contact)
         elif len(tax) not in (10, 11):
             raise HTTPException(status_code=422, detail="VKN/TCKN 10 veya 11 haneli olmalı")
         else:
-            gib_meta = await resolve_buyer_mukellef(inv.get("company_id") or "", tax, contact=contact)
+            gib_meta = await resolve_buyer_mukellef(
+                inv.get("company_id") or "",
+                tax,
+                contact=contact,
+                contact_id=inv.get("contact_id"),
+            )
         if (
             contact
             and contact.get("_id")

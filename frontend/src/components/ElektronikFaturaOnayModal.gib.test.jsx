@@ -317,6 +317,61 @@ test("boş VKN sorgusuz e-Arşiv gönderir", async () => {
   expect(onConfirm.mock.calls[0][0].eType).toBe("e_archive");
 });
 
+test("contacts boşken contact_id ile cari çekilir; yer tutucu cariyi ezmez", async () => {
+  const calls = [];
+  axios.get.mockImplementation((url, cfg) => {
+    if (String(url).includes("/contacts/cnt-ersay")) {
+      calls.push({ kind: "contact", url });
+      return Promise.resolve({
+        data: { id: "cnt-ersay", _id: "cnt-ersay", name: "ERSAY HOME", tax_number_or_id: "3680486408" },
+      });
+    }
+    if (String(url).includes("/gib/lookup")) {
+      calls.push({ kind: "lookup", params: cfg?.params || {} });
+      return Promise.resolve({
+        data: {
+          tax_id: "3680486408",
+          is_e_invoice_user: true,
+          suggested_e_type: "e_invoice",
+          lookup_status: "mukellef",
+          name: "ERSAY HOME",
+          source: "isnet",
+          alias: "urn:mail:pk@ersay.home",
+          aliases: ["urn:mail:pk@ersay.home"],
+        },
+      });
+    }
+    return Promise.resolve({ data: { balance: 4, source: "wallet" } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ElektronikFaturaOnayModal
+        mode="send"
+        invoice={{
+          id: "inv-ph",
+          invoice_number: "TA1",
+          contact_tax_id: "11111111111",
+          contact_id: "cnt-ersay",
+          contact_name: "ERSAY HOME",
+        }}
+        contacts={[]}
+        companyId="c1"
+        onClose={() => {}}
+        onConfirm={jest.fn(async () => ({}))}
+      />,
+    );
+  });
+  await flush();
+  await flush();
+  expect(calls.some((c) => c.kind === "contact")).toBe(true);
+  expect(calls.find((c) => c.kind === "lookup")?.params?.tax_id).toBe("3680486408");
+  expect(host.querySelector('[data-testid="efatura-onay-earsiv"]')).toBeNull();
+  expect(host.querySelector('[data-testid="efatura-onay-vkn"]')?.textContent).toMatch(/3680486408/);
+  expect(host.querySelector('[data-testid="efatura-onay-vkn-origin"]')?.textContent).toMatch(/Cari/);
+  expect(host.querySelector('[data-testid="efatura-onay-continue"]')).not.toBeNull();
+});
+
 test("9 haneli VKN gönderimi kilitler ve sorgu atmaz", async () => {
   axios.get.mockImplementation((url) => {
     if (String(url).includes("/gib/lookup")) return Promise.reject(new Error("lookup çağrılmamalı"));
