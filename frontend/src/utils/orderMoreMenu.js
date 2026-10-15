@@ -21,6 +21,8 @@ import {
   Zap,
   ArrowLeftRight,
   Upload,
+  Ban,
+  XCircle,
 } from "lucide-react";
 import { INVOICE_PRINT_SHARE_HINT } from "./invoicePrintShare";
 import { isWarehouseShipped } from "./warehouseShip";
@@ -419,6 +421,18 @@ export function orderDownloadMoreItems() {
  * Siparişe göre menü satırları.
  * @returns {{ kind: string, items: array }}
  */
+export function hasPendingCancelRequest(ord) {
+  return String(ord?.cancel_request?.status || "") === "pending";
+}
+
+export function orderCancelRequestMoreItems(ord) {
+  if (!hasPendingCancelRequest(ord)) return [];
+  return [
+    item("accept_cancel_request", "İptal talebini onayla", Ban, { color: "text-emerald-600", testId: "accept-cancel-menu" }),
+    item("reject_cancel_request", "İptal talebini reddet", XCircle, { color: "text-rose-600", testId: "reject-cancel-menu" }),
+  ];
+}
+
 export function canDeleteFromMoreMenu(ord) {
   return !!ord && !ord.is_invoiced;
 }
@@ -429,6 +443,7 @@ export function orderDeleteMoreItem() {
 
 export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
+  const cancelItems = orderCancelRequestMoreItems(ord);
   let items;
   if (kind === "held_cart") {
     // Aktif / bekleyen sepet: satırda Yazdır + Eksik ürünleri üretime al; menü boş
@@ -436,23 +451,23 @@ export function orderMoreMenuItems(ord, opts = {}) {
   }
   if (kind === "panel_einvoice") {
     // E-belge onayı sonrası: yazdır / kargo / XML (Excel/PDF yok — referans menü)
-    return { kind, items: panelEInvoiceMoreItems(ord) };
+    return { kind, items: [...cancelItems, ...panelEInvoiceMoreItems(ord)] };
   }
   if (kind === "integration_draft") {
     // Pazaryeri fulfillment menüsü (Excel/PDF / sil yok — referans ekran)
-    return { kind, items: integrationDraftMoreItems() };
+    return { kind, items: [...cancelItems, ...integrationDraftMoreItems()] };
   }
   if (kind === "integration_invoiced") {
     // Pazaryeri Faturalaştı: E-Fatura Oluştur + fulfillment (Excel/PDF yok)
-    return { kind, items: integrationInvoicedMoreItems() };
+    return { kind, items: [...cancelItems, ...integrationInvoicedMoreItems()] };
   }
   if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems(ord);
   else if (kind === "panel_invoiced") {
     // B2B Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok)
-    return { kind, items: panelInvoicedMoreItems(ord) };
+    return { kind, items: [...cancelItems, ...panelInvoicedMoreItems(ord)] };
   } else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
   if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
-  return { kind, items: [...items, ...orderDownloadMoreItems()] };
+  return { kind, items: [...cancelItems, ...items, ...orderDownloadMoreItems()] };
 }

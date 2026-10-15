@@ -237,7 +237,7 @@ export type Order = {
   invoice_e_type?: string;
   einvoice_state?: string;
   status?: string;
-  cancel_request?: { status?: string; reason?: string; at?: string } | null;
+  cancel_request?: { status?: string; reason?: string; at?: string; resolve_note?: string } | null;
   tracking?: {
     carrier?: string;
     tracking_number?: string;

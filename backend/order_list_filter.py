@@ -79,6 +79,13 @@ def is_dispatched_order(order: Optional[dict]) -> bool:
     return is_shipped_order(order)
 
 
+def has_pending_cancel_request(order: Optional[dict]) -> bool:
+    if not order:
+        return False
+    cr = order.get("cancel_request") or {}
+    return str(cr.get("status") or "") == "pending"
+
+
 def order_has_einvoice(order: Optional[dict]) -> bool:
     """Gerçek e-belge. Kural: order_ebelge_enrich.invoice_is_ebelge_issued."""
     return invoice_is_ebelge_issued(order)
@@ -288,6 +295,7 @@ class OrderListFilter:
     customer: str = ""
     sort: str = "date_desc"
     scope: str = ""
+    cancel_request: str = "all"
 
 
 def order_matches(order: dict, filt: OrderListFilter) -> bool:
@@ -337,6 +345,9 @@ def order_matches(order: dict, filt: OrderListFilter) -> bool:
         return False
 
     if filt.customer and (order.get("customer_name") or "") != filt.customer:
+        return False
+
+    if (filt.cancel_request or "all") == "pending" and not has_pending_cancel_request(order):
         return False
 
     if not in_istanbul_range(order, filt.date_from, filt.date_to):
@@ -417,6 +428,8 @@ def panel_summary(orders: Iterable[dict]) -> Dict[str, Any]:
             counts["incoming"] = counts.get("incoming", 0) + 1
         if is_dispatched_order(order):
             counts["dispatched"] = counts.get("dispatched", 0) + 1
+        if has_pending_cancel_request(order):
+            counts["cancel_request"] = counts.get("cancel_request", 0) + 1
     return {
         "counts": counts,
         "channels": sorted(channels),

@@ -226,6 +226,11 @@ test("list query sends each filter and export asks for the full filtered set", (
   expect(exp.export).toBe(1);
   expect(exp.page_size).toBe(5000);
   expect(toggleColumnSort("date_desc", "order_date")).toBe("date_asc");
+  const pending = buildOrderListParams(
+    { ...ORDER_FILTER_DEFAULTS, cancel_request: "pending" },
+    { companyId: "c1" },
+  );
+  expect(pending.cancel_request).toBe("pending");
 });
 
 test("prepareOrdersForPanel decorates held carts and sorts", () => {

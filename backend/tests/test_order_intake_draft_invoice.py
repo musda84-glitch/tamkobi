@@ -50,7 +50,14 @@ def test_create_order_attaches_draft_invoice():
     ), patch.object(server, "_next_order_number", AsyncMock(return_value="ORD-99")), patch.object(
         server, "_ensure_order_contact", AsyncMock(return_value={"_id": "cnt"})
     ), patch.object(server, "_attach_draft_invoice_on_intake", AsyncMock(return_value={"_id": "inv_new"})) as attach:
-        out = asyncio.get_event_loop().run_until_complete(server.create_order(order))
+        admin = {
+            "id": "u1",
+            "is_super_admin": True,
+            "role": "admin",
+            "company_ids": ["comp_1"],
+            "active_company_id": "comp_1",
+        }
+        out = asyncio.get_event_loop().run_until_complete(server.create_order(order, admin))
 
     attach.assert_awaited_once()
     assert attach.await_args.kwargs.get("source") == "intake" or (

@@ -13,6 +13,7 @@ import { orderNumberLabel, statusTr, marketplaceStatusTr } from "../utils/labels
 import { orderStatusLabel } from "../utils/orderCargo";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
+import { CANCEL_REQUEST_BADGE_LABEL, cancelRequestBadgeVisible } from "../utils/orderCancelRequest";
 import {
   ORDER_LIST_FILTERS,
   ORDER_LIST_FILTER_DEFAULT,
@@ -97,6 +98,11 @@ export function OrdersScreen() {
                 tone={invTone === "green" ? "green" : invTone === "red" ? "red" : "amber"}
               />
             </Row>
+          ) : null}
+          {cancelRequestBadgeVisible(o) ? (
+            <View testID={`order-cancel-request-badge-${idOf(o)}`} style={{ paddingHorizontal: 4, paddingBottom: 2 }}>
+              <Badge label={CANCEL_REQUEST_BADGE_LABEL} tone="amber" />
+            </View>
           ) : null}
           <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} />
         </View>

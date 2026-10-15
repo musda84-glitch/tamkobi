@@ -33,6 +33,8 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
     "Toplu E-Fatura PDF İndir",
     "Toplu Fatura Linki gönder",
     "Siparişlerin Güncel Durumlarını Getir",
+    "İptal taleplerini onayla",
+    "İptal taleplerini reddet",
     "Seçili Siparişleri İptal Et",
   ]);
   expect(ORDER_BULK_ACTIONS.map((a) => a.id)).not.toContain("hepsijet");

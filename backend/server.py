@@ -9274,6 +9274,10 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
 
 FATURALASMIS_DELETE_MSG = "Faturalaşmış belge silinemez; iptal/iade kullanın."
 ONCE_FATURALASTIRIN = "Önce Faturalaştırın"
+CANCEL_REQUEST_INVOICED_MSG = (
+    "Fatura faturalaştırılmış veya e-belge kesilmiş; önce Faturalar'dan faturayı İptal Et, sonra talebi onaylayın."
+)
+CANCEL_REQUEST_BUSY_MSG = "Talep zaten işleniyor/işlendi"
 
 
 def _invoice_is_faturalasmis(inv: Optional[dict]) -> bool:
@@ -9298,7 +9302,7 @@ def _invoice_delete_http_status(reason: Optional[str]) -> int:
     return 400
 
 
-def _user_may_delete_module(user: Optional[dict], module: str) -> bool:
+def _user_may_module(user: Optional[dict], module: str, need: str) -> bool:
     if not user or not isinstance(user, dict):
         return False
     if user.get("is_super_admin"):
@@ -9307,7 +9311,17 @@ def _user_may_delete_module(user: Optional[dict], module: str) -> bool:
     if role in ("admin", "owner"):
         return True
     perms = user.get("permissions") or {}
-    return rbac.level_allows(perms.get(module), "delete")
+    return rbac.level_allows(perms.get(module), need)
+
+
+def _user_may_delete_module(user: Optional[dict], module: str) -> bool:
+    return _user_may_module(user, module, "delete")
+
+
+def _require_write_modules(user: Optional[dict], *modules: str) -> None:
+    for mod in modules:
+        if not _user_may_module(user, mod, "edit"):
+            raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
 
 
 def _require_delete_modules(user: Optional[dict], *modules: str) -> None:
@@ -9457,6 +9471,47 @@ async def _order_sent_dispatch_block(order: dict) -> Optional[str]:
     if disp and _doc_is_gib_issued(disp):
         return "Gönderilmiş irsaliyesi olan belge silinemez."
     return None
+
+
+async def _cancel_request_accept_block_reason(order: dict) -> Optional[str]:
+    """Faturalaştırılmış / e-belge / sevk irsaliyesi — None = taslaklarla silinebilir."""
+    if not order:
+        return CANCEL_REQUEST_INVOICED_MSG
+    if order.get("is_invoiced"):
+        return CANCEL_REQUEST_INVOICED_MSG
+    invoices = await _live_invoices_linked_to_order(order)
+    for inv in invoices:
+        status = inv.get("status") or "draft"
+        if status != "draft" or inv.get("effects_applied") or _doc_is_gib_issued(inv):
+            return CANCEL_REQUEST_INVOICED_MSG
+        if _invoice_delete_block_reason(inv):
+            return CANCEL_REQUEST_INVOICED_MSG
+        finance = await _invoice_finance_block(inv)
+        if finance:
+            return CANCEL_REQUEST_INVOICED_MSG
+    if await _order_sent_dispatch_block(order):
+        return CANCEL_REQUEST_INVOICED_MSG
+    return None
+
+
+async def _audit_cancel_request_resolve(user: dict, order: dict, action: str, note: str = "") -> None:
+    try:
+        verb = "onaylandı" if action == "accept" else "reddedildi"
+        extra = f" Not: {note}" if note else ""
+        await company_audit.write(
+            db,
+            company_id=str(order.get("company_id") or ""),
+            user=user,
+            module="/orders",
+            action="approve" if action == "accept" else "update",
+            record_id=str(order.get("_id") or ""),
+            record_no=str(order.get("order_number") or ""),
+            record_label=str(order.get("customer_name") or ""),
+            summary=f"İptal talebi {verb}.{extra}",
+            path=f"/api/orders/{order.get('_id')}/resolve-cancel-request",
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("İptal talebi audit yazılamadı: %s", order.get("_id"))
 
 
 async def _soft_delete_invoice_doc(
@@ -14586,23 +14641,87 @@ async def delete_order(order_id: str, user: dict = Depends(get_current_user)):
 @api_router.post("/orders/{order_id}/resolve-cancel-request")
 async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
-    cr = o.get("cancel_request") or {}
-    if cr.get("status") != "pending":
-        raise HTTPException(status_code=400, detail="Bekleyen iptal talebi yok.")
+    _require_write_modules(user, "/orders")
     req = req or {}
     action = (req.get("action") or "").strip().lower()
-    now = datetime.now(timezone.utc).isoformat()
+    if action not in ("accept", "reject"):
+        raise HTTPException(status_code=400, detail="action accept veya reject olmalı.")
     if action == "accept":
-        if o.get("is_invoiced") or o.get("invoice_id"):
-            raise HTTPException(status_code=400, detail="Faturalanmış sipariş iptal edilemez.")
-        cr.update({"status": "accepted", "resolved_at": now, "resolve_note": req.get("note") or ""})
-        await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "cancelled", "cancelled_at": now, "cancel_request": cr}})
-        return {"status": "success", "message": f"{o.get('order_number')} iptal edildi.", "order_status": "cancelled"}
-    if action == "reject":
-        cr.update({"status": "rejected", "resolved_at": now, "resolve_note": req.get("note") or ""})
-        await db.orders.update_one({"_id": order_id}, {"$set": {"cancel_request": cr}})
+        _require_delete_modules(user, "/orders", "/invoices")
+    cr = dict(o.get("cancel_request") or {})
+    if cr.get("status") == "resolving":
+        raise HTTPException(status_code=409, detail=CANCEL_REQUEST_BUSY_MSG)
+    if cr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen iptal talebi yok.")
+    company_id = o.get("company_id")
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Sipariş şirketi yok.")
+    now = datetime.now(timezone.utc).isoformat()
+    claim = await db.orders.update_one_atomic(
+        {"_id": order_id, "company_id": company_id, "cancel_request.status": "pending"},
+        {"$set": {"cancel_request.status": "resolving", "cancel_request.resolving_at": now}},
+    )
+    if not getattr(claim, "matched_count", 0):
+        raise HTTPException(status_code=409, detail=CANCEL_REQUEST_BUSY_MSG)
+    uid = str(user.get("id") or user.get("_id") or "")
+    raw_note = req.get("note") if req.get("note") is not None else ""
+    note = str(raw_note).strip()
+
+    async def _revert_pending():
+        pending = {**cr, "status": "pending"}
+        pending.pop("resolving_at", None)
+        pending.pop("resolved_at", None)
+        pending.pop("resolved_by", None)
+        pending.pop("resolve_note", None)
+        await db.orders.update_one(
+            {"_id": order_id, "company_id": company_id},
+            {"$set": {"cancel_request": pending}},
+        )
+
+    try:
+        if action == "accept":
+            fresh = await db.orders.find_one({"_id": order_id, "company_id": company_id}) or o
+            block = await _cancel_request_accept_block_reason(fresh)
+            if block:
+                raise HTTPException(status_code=409, detail=block)
+            accepted = {
+                **cr,
+                "status": "accepted",
+                "resolved_at": now,
+                "resolved_by": uid,
+                "resolve_note": note,
+            }
+            await db.orders.update_one(
+                {"_id": order_id, "company_id": company_id},
+                {"$set": {"cancel_request": accepted}},
+            )
+            try:
+                result = await _delete_order_core(order_id, user)
+            except HTTPException as exc:
+                if exc.status_code in (400, 409):
+                    raise HTTPException(status_code=409, detail=CANCEL_REQUEST_INVOICED_MSG) from exc
+                raise
+            await _audit_cancel_request_resolve(user, o, "accept", note)
+            return {
+                "status": "success",
+                "message": result.get("message") or f"{o.get('order_number')} iptal talebi onaylandı.",
+            }
+        rejected = {
+            **cr,
+            "status": "rejected",
+            "resolved_at": now,
+            "resolved_by": uid,
+            "resolve_note": note,
+        }
+        await db.orders.update_one(
+            {"_id": order_id, "company_id": company_id},
+            {"$set": {"cancel_request": rejected}},
+        )
+        await _audit_cancel_request_resolve(user, o, "reject", note)
         return {"status": "success", "message": "İptal talebi reddedildi."}
-    raise HTTPException(status_code=400, detail="action accept veya reject olmalı.")
+    except Exception:
+        await _revert_pending()
+        raise
 
 
 async def _create_draft_invoice_for_order(order: dict, source: str = "approve") -> Optional[dict]:
@@ -17817,6 +17936,7 @@ async def _list_orders_filtered(
     page_size: int,
     export: bool,
     scope: Optional[str],
+    cancel_request: Optional[str] = None,
 ):
     """Panel listesi: şirket siparişleri taranır, filtre + sayfa sunucuda uygulanır."""
     query: Dict[str, Any] = {"company_id": company_id}
@@ -17863,6 +17983,7 @@ async def _list_orders_filtered(
         customer=customer or "",
         sort=sort or "date_desc",
         scope=scope or "",
+        cancel_request=(cancel_request or "all").strip().lower() or "all",
     )
     need_ebelge = needs_invoice_ebelge_filter(filt.invoiced, filt.doc_status)
     if need_ebelge:
@@ -17909,6 +18030,7 @@ async def list_orders(
     page_size: int = 50,
     export: bool = False,
     scope: Optional[str] = None,
+    cancel_request: Optional[str] = None,
 ):
     """Sipariş listesi.
 
@@ -17921,8 +18043,11 @@ async def list_orders(
         return await _list_orders_filtered(
             company_id, status, include_active_cart, q, channel, invoiced, cargo,
             doc_status, date_from, date_to, customer, sort, page, page_size, export, scope,
+            cancel_request,
         )
     query: Dict[str, Any] = {"company_id": company_id}
+    if (cancel_request or "").strip().lower() == "pending":
+        query["cancel_request.status"] = "pending"
     if status and status != "all":
         query["order_status"] = status
         # Açık status=active_cart istenirse include bayrağına bakmadan getir

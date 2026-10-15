@@ -1,4 +1,4 @@
-import { Zap, FileText, Truck, Mail, Receipt, Printer, History, ThumbsUp, Code2, RefreshCw, Trash2, Link2 } from "lucide-react";
+import { Zap, FileText, Truck, Mail, Receipt, Printer, History, ThumbsUp, Code2, RefreshCw, Trash2, Link2, Ban, XCircle } from "lucide-react";
 import { orderHasEInvoiceIssued } from "./orderMoreMenu";
 
 /**
@@ -22,6 +22,8 @@ export const ORDER_BULK_ACTIONS = [
   { id: "efatura_pdf", label: "Toplu E-Fatura PDF İndir", icon: FileText },
   { id: "invoice_link", label: "Toplu Fatura Linki gönder", icon: Link2 },
   { id: "refresh", label: "Siparişlerin Güncel Durumlarını Getir", icon: RefreshCw },
+  { id: "accept_cancel_request", label: "İptal taleplerini onayla", icon: Ban },
+  { id: "reject_cancel_request", label: "İptal taleplerini reddet", icon: XCircle },
   { id: "cancel", label: "Seçili Siparişleri İptal Et", icon: Trash2 },
 ];
 
@@ -59,6 +61,8 @@ export const ORDER_BULK_HANDLER_KIND = {
   approve: "loop",
   kargola: "loop",
   cargo_create: "loop", // eski id — kargola ile aynı
+  accept_cancel_request: "immediate",
+  reject_cancel_request: "immediate",
   cancel: "loop",
 };
 
