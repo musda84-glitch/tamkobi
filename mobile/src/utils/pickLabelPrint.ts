@@ -53,9 +53,8 @@ function printHtmlWeb(html: string): boolean {
 
 async function loadTemplates(client: ApiClient, companyId?: string): Promise<LabelTemplateLike[]> {
   try {
-    const list = await get<LabelTemplateLike[]>(client, "/label-templates", {
-      company_id: companyId || "comp_nexus_main_01",
-    });
+    const cid = (companyId || "").trim();
+    const list = await get<LabelTemplateLike[]>(client, "/label-templates", cid ? { company_id: cid } : {});
     return Array.isArray(list) ? list : [];
   } catch {
     return [];

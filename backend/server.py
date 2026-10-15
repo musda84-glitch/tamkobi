@@ -15521,12 +15521,13 @@ async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main
             "low_margin": [r for r in rows if r["margin_pct"] < 10][:20]}
 
 @api_router.get("/label-templates")
-async def list_label_templates(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_label_templates(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     return clean_docs(await db.label_templates.find({"company_id": company_id}).sort("created_at", 1).to_list(200))
 
 @api_router.post("/label-templates")
-async def create_label_template(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_label_template(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "name": (req.get("name") or "Yeni Etiket").strip(), "width_mm": float(req.get("width_mm") or 100), "height_mm": float(req.get("height_mm") or 30), "elements": req.get("elements") or [],
            "page": req.get("page") or {"mode": "thermal", "cols": 1, "rows": 1, "gap_mm": 2}, "is_default": bool(req.get("is_default")), "created_at": datetime.now(timezone.utc).isoformat()}
     if doc["is_default"]:
