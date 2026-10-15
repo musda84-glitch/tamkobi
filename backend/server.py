@@ -3714,6 +3714,10 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
     else:
         if not email or "@" not in email:
             return out
+        # Kutu yoksa kullanıcı aranmaz: yanıt her adres için aynı kalır.
+        ready = await platform_mail.begin_password_reset_delivery(context="erp_reset")
+        if not ready["ok"]:
+            return password_reset.forgot_mail_unavailable_response()
         user = await db.users.find_one({"email": email})
         if not user or user.get("is_active") is False or not user.get("password_hash"):
             return out
@@ -3763,12 +3767,10 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
         ))
         return await _sms_done(password_reset.finalize_forgot_sms_result(out, sms_status="queued", sms_detail=""))
 
-    mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
+    mail_status, mail_detail = "failed", "Gönderilemedi."
     try:
-        if not company_id:
-            raise HTTPException(status_code=404, detail="E-posta hesabı tanımlı değil.")
-        a = await _mail_account(company_id)
-        company = await db.companies.find_one({"_id": company_id}) or {}
+        company = await db.companies.find_one({"_id": company_id}) if company_id else {}
+        company = company or {}
         brand = company.get("name") or "TamKobi"
         subject = f"{brand} şifre sıfırlama"
         body = (
@@ -3781,16 +3783,20 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
             "<p>Şifrenizi sıfırlamak için aşağıdaki düğmeye tıklayın. Bağlantı 1 saat geçerlidir.</p>"
             f"<p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
         )
-        await _send_tracked_mail(
-            company_id=company_id, to=[email], subject=subject, body=body, html=html,
-            account=a, context="erp_reset", ref_id=token, base_url=base,
+        sent = await platform_mail.dispatch_password_reset_mail(
+            ready["sender"],
+            to=[email],
+            subject=subject,
+            body=body,
+            html=html,
+            context="erp_reset",
+            company_id=company_id,
         )
+        if not sent.get("ok"):
+            raise HTTPException(status_code=424, detail=str(sent.get("error") or "Gönderilemedi.")[:140])
         mail_status, mail_detail = "sent", f"{email} adresine gönderildi."
     except HTTPException as e:
-        if getattr(e, "status_code", None) == 424:
-            mail_status, mail_detail = "failed", str(e.detail)[:140]
-        else:
-            mail_status, mail_detail = "skipped", str(e.detail)
+        mail_status, mail_detail = "failed", str(e.detail)[:140]
     except Exception as e:
         mail_status, mail_detail = "failed", str(e)[:140]
     if mail_status != "sent":
@@ -4738,14 +4744,15 @@ FORGOT_MSG = "Eşleşen bir B2B hesabı varsa şifre sıfırlama bağlantısı e
 @api_router.post("/public/b2b/forgot-password")
 async def b2b_forgot_password(req: Dict[str, Any], request: Request):
     ident = (req.get("email") or "").strip()
-    out = {"status": "ok", "message": FORGOT_MSG, "mail_status": "skipped"}
+    out = {"status": "ok", "message": FORGOT_MSG, "channel": "email"}
+    ready = await platform_mail.begin_password_reset_delivery(context="b2b_reset")
+    if not ready["ok"]:
+        return password_reset.forgot_mail_unavailable_response()
     c = await _b2b_find_contact(ident)
     if not c or not c.get("b2b_password_hash"):
         return out
     to = (c.get("b2b_login_email") or c.get("email") or "").strip().lower()
     if not to or "@" not in to:
-        out["mail_status"] = "skipped"
-        out["detail"] = "Bu hesapta e-posta yok; tedarikçinizden şifre isteyin."
         return out
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
@@ -4757,22 +4764,25 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
     base = await _public_base_url(request, context="b2b")
     link = f"{base}/b2b/sifre/{token}" if base else f"/b2b/sifre/{token}"
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
+    mail_status, mail_detail = "failed", "Gönderilemedi."
     try:
-        a = await _mail_account(c["company_id"])
         subject = f"{company.get('name') or 'Tedarikçiniz'} B2B şifre sıfırlama"
         body = f"Merhaba {c.get('name') or ''},\nB2B portal şifrenizi sıfırlamak için bu bağlantıyı 1 saat içinde kullanın:\n{link}\nBu isteği siz yapmadıysanız bu e-postayı yok sayın."
         html = f"<p>Merhaba {c.get('name') or ''},</p><p>B2B portal şifrenizi sıfırlamak için aşağıdaki düğmeye tıklayın. Bağlantı 1 saat geçerlidir.</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
-        await _send_tracked_mail(company_id=c["company_id"], to=[to], subject=subject, body=body, html=html, account=a, contact_id=c.get("_id"), contact_name=c.get("name"), context="b2b_reset", ref_id=token, base_url=base)
+        sent = await platform_mail.dispatch_password_reset_mail(
+            ready["sender"],
+            to=[to],
+            subject=subject,
+            body=body,
+            html=html,
+            context="b2b_reset",
+            company_id=c.get("company_id"),
+        )
+        if not sent.get("ok"):
+            raise HTTPException(status_code=424, detail=str(sent.get("error") or "Gönderilemedi.")[:140])
         mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
     except HTTPException as e:
-        if getattr(e, "status_code", None) == 409:
-            _log_mail_reauth(c["company_id"], "b2b_reset", e.detail)
-            mail_status, mail_detail = "skipped", str(e.detail)[:140]
-        elif getattr(e, "status_code", None) == 424:
-            mail_status, mail_detail = "failed", str(e.detail)[:140]
-        else:
-            mail_status, mail_detail = "skipped", str(e.detail)
+        mail_status, mail_detail = "failed", str(e.detail)[:140]
     except Exception as e:
         mail_status, mail_detail = "failed", str(e)[:140]
     if mail_status != "sent":

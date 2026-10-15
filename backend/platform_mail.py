@@ -3,6 +3,7 @@
 Exchange “Send As” / Google “Send mail as” / Odoo outgoing mail server modelinin
 sistem paneli karşılığı. Müşteri şirketinin İletişim Merkezi hesabından bağımsızdır.
 """
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import comm_service
 import saas
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -127,6 +130,165 @@ async def _smtp_dict(box: dict, server: Optional[dict] = None) -> dict:
         "smtp_user": box.get("smtp_user") or server.get("smtp_user") or server.get("email") or box["email"],
         "password": password,
         "reply_to": box.get("reply_to") or "",
+    }
+
+
+RESET_MAILBOX_MISSING = (
+    "Şifre sıfırlama maili gönderilemedi: platform Destek kutusu ve sistem varsayılanı yok"
+)
+
+
+async def _try_smtp(box: dict) -> Optional[dict]:
+    """Kutunun SMTP hesabı. Sunucu/şifre yoksa None; firma hesabına düşmez."""
+    if not box or box.get("is_active") is False:
+        return None
+    server = await _db.platform_mail_servers.find_one(
+        {"_id": box.get("server_id"), "is_active": {"$ne": False}}
+    )
+    if not server:
+        logger.warning("platform mailbox unusable email=%s: posta sunucusu yok", box.get("email"))
+        return None
+    try:
+        account = await _smtp_dict(box, server)
+    except Exception as exc:
+        detail = getattr(exc, "detail", exc)
+        logger.warning("platform mailbox unusable email=%s: %s", box.get("email"), detail)
+        return None
+    account["mailbox_id"] = box.get("_id")
+    return account
+
+
+def _box_sort_key(box: dict):
+    return (box.get("created_at") or "", box.get("email") or "")
+
+
+async def resolve_password_reset_sender() -> Optional[dict]:
+    """Şifre sıfırlama: Destek amaçlı kutu, yoksa sistem varsayılanı.
+
+    Firma mail hesabı bu seçime girmez. İkisi de kullanılamıyorsa None.
+    """
+    boxes = await _db.platform_mailboxes.find({"is_active": {"$ne": False}}).to_list(200)
+    support = sorted(
+        (b for b in boxes if "support" in (b.get("purposes") or [])),
+        key=_box_sort_key,
+    )
+    for box in support:
+        account = await _try_smtp(box)
+        if account:
+            account["source"] = "support"
+            return account
+    defaults = sorted((b for b in boxes if b.get("is_default")), key=_box_sort_key)
+    for box in defaults:
+        account = await _try_smtp(box)
+        if account:
+            account["source"] = "default"
+            if support:
+                logger.warning(
+                    "forgot-password mail: Destek kutusu kullanılamadı, sistem varsayılanına düşülüyor from=%s",
+                    account.get("email"),
+                )
+            else:
+                logger.warning(
+                    "forgot-password mail: Destek kutusu yok, sistem varsayılanı kullanılıyor from=%s",
+                    account.get("email"),
+                )
+            return account
+    return None
+
+
+async def _write_platform_mail_log(
+    *,
+    mailbox_id: Optional[str],
+    from_email: Optional[str],
+    to: List[str],
+    subject: str,
+    status: str,
+    error: Optional[str],
+    context: str,
+    company_id: Optional[str],
+) -> str:
+    log_id = f"pml_{uuid.uuid4().hex[:10]}"
+    await _db.platform_mail_logs.insert_one({
+        "_id": log_id,
+        "mailbox_id": mailbox_id,
+        "from_email": from_email,
+        "to": list(to or []),
+        "subject": (subject or "")[:500],
+        "status": status,
+        "error": (error or "")[:400] if error else None,
+        "context": context or "forgot_password",
+        "company_id": company_id,
+        "created_at": _now(),
+    })
+    return log_id
+
+
+async def begin_password_reset_delivery(*, context: str) -> dict:
+    """Gönderen kutu var mı. Yoksa açık hata loglar ve platform_mail_logs'a yazar."""
+    sender = await resolve_password_reset_sender()
+    if sender:
+        return {"ok": True, "sender": sender}
+    logger.error("forgot-password mail failed context=%s: %s", context, RESET_MAILBOX_MISSING)
+    await _write_platform_mail_log(
+        mailbox_id=None,
+        from_email=None,
+        to=[],
+        subject="şifre sıfırlama",
+        status="failed",
+        error=RESET_MAILBOX_MISSING,
+        context=context,
+        company_id=None,
+    )
+    return {"ok": False}
+
+
+async def dispatch_password_reset_mail(
+    sender: dict,
+    *,
+    to: List[str],
+    subject: str,
+    body: str,
+    html: Optional[str] = None,
+    context: str = "erp_reset",
+    company_id: Optional[str] = None,
+) -> dict:
+    """Platform kutusundan gönder ve platform_mail_logs'a kaydet. Firma SMTP kullanılmaz."""
+    from_email = (sender or {}).get("email")
+    mailbox_id = (sender or {}).get("mailbox_id")
+    try:
+        await comm_service.smtp_send(sender, list(to), subject or "", body or "", html=html)
+    except Exception as exc:
+        err = str(getattr(exc, "detail", exc))[:300]
+        logger.error(
+            "forgot-password mail failed from=%s context=%s: %s",
+            from_email, context, err,
+        )
+        await _write_platform_mail_log(
+            mailbox_id=mailbox_id,
+            from_email=from_email,
+            to=list(to),
+            subject=subject,
+            status="failed",
+            error=err,
+            context=context,
+            company_id=company_id,
+        )
+        return {"ok": False, "error": err, "from_email": from_email}
+    await _write_platform_mail_log(
+        mailbox_id=mailbox_id,
+        from_email=from_email,
+        to=list(to),
+        subject=subject,
+        status="sent",
+        error=None,
+        context=context,
+        company_id=company_id,
+    )
+    return {
+        "ok": True,
+        "from_email": from_email,
+        "source": (sender or {}).get("source"),
+        "mailbox_id": mailbox_id,
     }
 
 
