@@ -37,6 +37,7 @@ import {
   type GdMode,
 } from "../utils/invoiceDraft";
 import { askInvoiceDatePrompt, INVOICE_DATE_PROMPT, shouldAskInvoiceDatePrompt } from "../utils/invoiceDocDate";
+import { invoiceDeleteConfirmMessage } from "../utils/orderEdit";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
@@ -284,8 +285,7 @@ export function InvoiceDetailScreen() {
 
   const remove = () => {
     if (!canDeleteInvoice(inv) || !canDelete) return;
-    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
-    confirmAction("Faturayı sil", `${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`, () => {
+    confirmAction("Faturayı sil", invoiceDeleteConfirmMessage(inv), () => {
       run(async () => {
         await del(client, `/invoices/${id}`);
         router.back();

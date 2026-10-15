@@ -49,6 +49,7 @@ import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
 import { formatOrderDateTime, orderTerminRemaining } from "../utils/orderTermin";
 import { orderEditBlockedReason } from "../utils/orderEdit";
+import { canStaffDeleteOrder, orderBulkDeleteConfirmMessage, orderDeleteConfirmMessage } from "../utils/orderInvoiceTrash";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
@@ -497,9 +498,9 @@ export default function OrdersB2BPage() {
         return;
       }
       if (action === "delete") {
-        const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
-        if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
-        if (!window.confirm(`${deletable.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`)) return;
+        const deletable = list.filter((o) => canStaffDeleteOrder(o));
+        if (!deletable.length) { toast.error("GİB'e gönderilmiş siparişler silinemez."); return; }
+        if (!window.confirm(orderBulkDeleteConfirmMessage(deletable))) return;
         try {
           const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => orderRowId(o)).filter(Boolean) });
           toast.success(r.data.message);
@@ -1365,11 +1366,11 @@ export default function OrdersB2BPage() {
         setCargoChangeOrder(ord);
         return;
       case "delete": {
-        if (ord.is_invoiced || ord.invoice_id || orderHasEInvoiceIssued(ord)) {
-          toast.error("Faturalanmış veya GİB'e gönderilmiş sipariş silinemez.");
+        if (!canStaffDeleteOrder(ord)) {
+          toast.error("GİB'e gönderilmiş sipariş silinemez.");
           return;
         }
-        if (!window.confirm(`${ord.order_number || "Sipariş"} silinsin mi?`)) return;
+        if (!window.confirm(orderDeleteConfirmMessage(ord))) return;
         try {
           await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
           toast.success("Sipariş silindi.");
@@ -2201,7 +2202,7 @@ export default function OrdersB2BPage() {
                           </>
                         ) : (
                           <>
-                        {!ord.is_invoiced && !ord.invoice_id && !orderHasEInvoiceIssued(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
+                        {canStaffDeleteOrder(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(orderDeleteConfirmMessage(ord))) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {(() => {
                           const invBadge = orderInvoiceBadge(ord);
                           if (invBadge && invBadge.interactive === false) {

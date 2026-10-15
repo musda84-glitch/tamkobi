@@ -230,6 +230,11 @@ describe("orderMoreMenu", () => {
     expect(labels).not.toContain("Siparişi Sil");
   });
 
+  it("panel draft with invoice_id still offers delete", () => {
+    const ord = { channel: "b2b", is_invoiced: false, invoice_id: "inv1", invoice_number: "TA1", order_number: "B2B-1" };
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi Sil");
+  });
+
   it("panel draft (B2B/manual) hides mini cargo labels until shipment", () => {
     const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-1" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");

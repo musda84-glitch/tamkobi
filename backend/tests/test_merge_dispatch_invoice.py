@@ -329,7 +329,7 @@ def test_delete_draft_releases_dispatches_and_orders():
         with patch.object(server, "db", db), patch.object(
             server, "_cancel_promissory_for_query", AsyncMock()
         ), patch.object(server.trash, "soft_delete", AsyncMock(return_value="trash1")):
-            return await server._soft_delete_invoice_doc(doc, note="Taslak fatura")
+            return await server._soft_delete_invoice_doc(doc, note="Taslak fatura", cascade=False)
 
     _run(_delete())
     d1r = next(x for x in db.invoices.docs if x["_id"] == "d1")

@@ -11,7 +11,9 @@ def test_attach_draft_on_intake_calls_create():
     order = {"_id": "ord_in", "company_id": "c1", "order_number": "ORD-1", "items": [{"product_name": "A", "quantity": 1, "unit_price": 10, "vat_rate": 20}]}
     draft = {"_id": "inv_d", "status": "draft", "invoice_number": "NX1"}
 
-    with patch.object(server, "_create_draft_invoice_for_order", AsyncMock(return_value=draft)) as create:
+    with patch.object(server, "_order_auto_draft_invoice_on", AsyncMock(return_value=True)), patch.object(
+        server, "_create_draft_invoice_for_order", AsyncMock(return_value=draft)
+    ) as create:
         out = asyncio.get_event_loop().run_until_complete(server._attach_draft_invoice_on_intake(order, source="b2b"))
 
     assert out is draft
@@ -22,7 +24,9 @@ def test_attach_draft_on_intake_calls_create():
 def test_attach_draft_on_intake_swallows_errors():
     import server
 
-    with patch.object(server, "_create_draft_invoice_for_order", AsyncMock(side_effect=RuntimeError("boom"))):
+    with patch.object(server, "_order_auto_draft_invoice_on", AsyncMock(return_value=True)), patch.object(
+        server, "_create_draft_invoice_for_order", AsyncMock(side_effect=RuntimeError("boom"))
+    ):
         out = asyncio.get_event_loop().run_until_complete(
             server._attach_draft_invoice_on_intake({"_id": "x"}, source="intake")
         )
@@ -50,7 +54,8 @@ def test_create_order_attaches_draft_invoice():
     ), patch.object(server, "_next_order_number", AsyncMock(return_value="ORD-99")), patch.object(
         server, "_ensure_order_contact", AsyncMock(return_value={"_id": "cnt"})
     ), patch.object(server, "_attach_draft_invoice_on_intake", AsyncMock(return_value={"_id": "inv_new"})) as attach:
-        out = asyncio.get_event_loop().run_until_complete(server.create_order(order))
+        user = {"_id": "u1", "is_super_admin": True, "role": "admin", "company_ids": ["comp_1"], "active_company_id": "comp_1"}
+        out = asyncio.get_event_loop().run_until_complete(server.create_order(order, user))
 
     attach.assert_awaited_once()
     assert attach.await_args.kwargs.get("source") == "intake" or (

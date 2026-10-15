@@ -4,6 +4,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
+import { invoiceBulkDeleteConfirmMessage, invoiceDeleteConfirmMessage } from "../utils/orderInvoiceTrash";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "../components/IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
@@ -689,9 +690,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   }, [editParam]);
 
   const handleDeleteInvoice = async (inv) => {
-    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
-    const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
-    if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
+    if (!window.confirm(invoiceDeleteConfirmMessage(inv))) return;
     try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const handleCancelInvoice = async (inv) => {
@@ -1123,19 +1122,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const deletable = list.filter((inv) => canDeleteInvoice(inv));
       if (!deletable.length) { toast.error("Silinebilir (taslak/kağıt) fatura seçin."); return; }
       if (!canDeleteInv) { toast.error("Silme yetkiniz yok."); return; }
-      if (!window.confirm(`${deletable.length} fatura çöp kutusuna taşınsın mı?`)) return;
+      if (!window.confirm(invoiceBulkDeleteConfirmMessage(deletable))) return;
       setBulkBusy(true);
-      let ok = 0, fail = 0;
-      for (const inv of deletable) {
-        try {
-          await axios.delete(`${API_URL}/invoices/${inv.id || inv._id}`);
-          ok++;
-        } catch { fail++; }
+      try {
+        const r = await axios.post(`${API_URL}/invoices/bulk-delete`, { ids: deletable.map((inv) => inv.id || inv._id).filter(Boolean) });
+        toast[r.data?.failed ? "error" : "success"](r.data?.message || "Faturalar silindi.");
+        setSelected([]);
+        loadData();
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Silinemedi.");
+      } finally {
+        setBulkBusy(false);
       }
-      setBulkBusy(false);
-      toast[fail ? "error" : "success"](`${ok} fatura silindi${fail ? `, ${fail} hata` : ""}.`);
-      setSelected([]);
-      loadData();
       return;
     }
     if (action === "cancel") {

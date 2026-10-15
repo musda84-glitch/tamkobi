@@ -30,7 +30,7 @@ import {
 } from "../utils/orderCargo";
 import { waDigits } from "../utils/contactStatement";
 import { idOf } from "../utils/money";
-import { canStaffDeleteOrder } from "../utils/orderEdit";
+import { canStaffDeleteOrder, orderDeleteConfirmMessage } from "../utils/orderEdit";
 import {
   canIssueOrderEBelge,
   convertToDraftBody,
@@ -286,7 +286,7 @@ export function OrderActions({
       onError?.("Faturalanmış sipariş silinemez.");
       return;
     }
-    confirmAction("Siparişi sil", `${order.order_number || "Sipariş"} çöp kutusuna taşınsın mı?`, async () => {
+    confirmAction("Siparişi sil", orderDeleteConfirmMessage(order), async () => {
       setBusy("delete");
       try {
         const r = await del<{ message?: string }>(client, `/orders/${oid}`);

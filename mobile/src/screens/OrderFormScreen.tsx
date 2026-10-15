@@ -18,6 +18,7 @@ import {
   canStaffDeleteOrder,
   canStaffEditOrder,
   cartFromOrderItems,
+  orderDeleteConfirmMessage,
   orderStatusOf,
   orderUpdatePayload,
   setCartLineQty,
@@ -109,7 +110,7 @@ export function OrderFormScreen() {
     if (!order || !deletable) { setError("Bu sipariş silinemez."); return; }
     confirmAction(
       "Siparişi sil",
-      `${orderNumberLabel(order)} çöp kutusuna taşınsın mı?`,
+      orderDeleteConfirmMessage(order),
       async () => {
         setBusy(true);
         try {

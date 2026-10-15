@@ -16,6 +16,7 @@ import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice } from "./InvoiceContextMenu";
+import { canStaffDeleteOrder, invoiceDeleteConfirmMessage, orderDeleteConfirmMessage } from "../utils/orderInvoiceTrash";
 import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "./IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
@@ -135,8 +136,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Durum güncellenemedi."); }
   };
   const deleteContactOrder = async (o) => {
-    if (o.is_invoiced || o.invoice_id) { toast.error("Faturalanmış sipariş silinemez."); return; }
-    if (!window.confirm(`${o.order_number} silinsin mi?`)) return;
+    if (!canStaffDeleteOrder(o)) { toast.error("GİB'e gönderilmiş sipariş silinemez."); return; }
+    if (!window.confirm(orderDeleteConfirmMessage(o))) return;
     try {
       const r = await axios.delete(`${API_URL}/orders/${o.id}`);
       toast.success(r.data.message || "Sipariş silindi.");
@@ -605,9 +606,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
 
   const deleteInvoice = async (inv) => {
-    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
-    const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
-    if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
+    if (!window.confirm(invoiceDeleteConfirmMessage(inv))) return;
     try {
       const r = await axios.delete(`${API_URL}/invoices/${inv.id}`);
       toast.success(r.data.message || "Fatura silindi.");

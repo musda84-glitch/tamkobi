@@ -70,8 +70,9 @@ class TestB2BOrders:
         if not inv:
             pytest.skip("no invoiced order available")
         r = api.delete(f"{BASE}/orders/{inv['id']}")
-        assert r.status_code == 400
-        assert "Faturalanmış" in r.json().get("detail", "")
+        assert r.status_code in (400, 409)
+        detail = str(r.json().get("detail", ""))
+        assert detail and ("silinemez" in detail.lower() or "Faturalanmış" in detail or "GİB" in detail)
 
 
 # ---------------- Cargo integrations ----------------

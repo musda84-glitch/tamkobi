@@ -1,6 +1,10 @@
+import { canStaffDeleteOrder as orderCanStaffDelete } from "./orderInvoiceTrash";
+
 const STATUS_LOCK = new Set(["cancelled", "returned", "delivered", "completed"]);
 const MARKETPLACE = new Set(["trendyol", "hepsiburada", "n11", "amazon", "ciceksepeti", "pazarama", "pttavm", "shopify", "shopphp", "trendyol_market", "trendyol_yemek"]);
 const E_ISSUED_STATES = new Set(["sent", "queued", "accepted"]);
+
+export const canStaffDeleteOrder = orderCanStaffDelete;
 
 /** Boş string: düzenlenebilir. Onay, taslak ve GİB'e gitmemiş fatura kilit değildir. */
 export function orderEditBlockedReason(order) {

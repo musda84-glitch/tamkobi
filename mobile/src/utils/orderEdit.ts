@@ -1,6 +1,7 @@
 import type { Order } from "../types";
 import { computeLine, type CartLine } from "./cart";
 import { isMarketplaceChannel } from "./orderApprove";
+import { orderHasEInvoiceIssued } from "./orderMoreMenu";
 
 const LOCKED_STATUSES = new Set(["cancelled", "returned", "delivered", "completed"]);
 
@@ -20,8 +21,36 @@ export function canStaffEditOrder(o: Pick<Order, "channel" | "order_status" | "i
 }
 
 export function canStaffDeleteOrder(o: { is_invoiced?: boolean; invoice_id?: string; [key: string]: unknown } | null | undefined): boolean {
-  // Taslak faturalı sipariş de silinmez (web ile aynı).
-  return !!o && !o.is_invoiced && !o.invoice_id;
+  if (!o) return false;
+  if (orderHasEInvoiceIssued(o as Parameters<typeof orderHasEInvoiceIssued>[0])) return false;
+  return true;
+}
+
+export function orderDraftInvoiceNumber(order: { invoice_number?: string; local_invoice_number?: string; order_number?: string; [key: string]: unknown } | null | undefined): string {
+  if (!order || orderHasEInvoiceIssued(order as Parameters<typeof orderHasEInvoiceIssued>[0])) return "";
+  const no = String(order.invoice_number || order.local_invoice_number || "").trim();
+  if (!no) return "";
+  const orderNo = String(order.order_number || "").trim();
+  if (no === orderNo) return "";
+  return no;
+}
+
+export function orderDeleteConfirmMessage(order: { order_number?: string; invoice_number?: string; [key: string]: unknown } | null | undefined): string {
+  const no = String(order?.order_number || "Sipariş").trim() || "Sipariş";
+  const invNo = orderDraftInvoiceNumber(order);
+  const base = `${no} silinsin mi?`;
+  if (!invNo) return base;
+  return `${base}\nBağlı taslak fatura ${invNo} da çöp kutusuna taşınacak.`;
+}
+
+export function invoiceDeleteConfirmMessage(inv: { invoice_number?: string; status?: string; invoice_type?: string; e_type?: string; order_number?: string; source_order_number?: string } | null | undefined): string {
+  const no = String(inv?.invoice_number || "").trim() || "Belge";
+  const isDisp = inv?.invoice_type === "dispatch" || inv?.e_type === "e_dispatch";
+  const kind = isDisp ? (inv?.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv?.status === "draft" ? "taslak fatura" : "kağıt fatura");
+  const base = `${no} numaralı ${kind} çöp kutusuna taşınsın mı?`;
+  const orderNo = String(inv?.order_number || inv?.source_order_number || "").trim();
+  if (!orderNo) return base;
+  return `${base}\nBağlı sipariş ${orderNo} da çöp kutusuna taşınacak.`;
 }
 
 export function cartFromOrderItems(items?: Array<Record<string, unknown>> | null): CartLine[] {

@@ -236,8 +236,8 @@ describe("orderMoreMenu web variants", () => {
     expect(isYmd("24.09.2026")).toBe(false);
   });
 
-  it("hides delete when a draft or issued invoice exists", () => {
-    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1" }).items.map((i) => i.id)).not.toContain("delete");
+  it("allows delete with draft invoice_id; hides it for GİB-issued e-documents", () => {
+    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1" }).items.map((i) => i.id)).toContain("delete");
     expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", gib_uuid: "u-1" }).items.map((i) => i.id)).not.toContain("delete");
   });
 

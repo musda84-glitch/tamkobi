@@ -39,7 +39,7 @@ const EinvoiceDesignSupportNote = () => (
     Fatura tasarımı değişikliği için destek ile iletişime geçin.
   </p>
 );
-const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["orders_b2b", "Sipariş / B2B", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -659,6 +659,58 @@ const WorkshopZonesSettings = ({ companyId }) => {
   );
 };
 
+export const OrderB2BSettings = ({ companyId }) => {
+  const { user } = useAuth();
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const canEdit = String(user?.role || "").toLowerCase() === "admin" || user?.is_super_admin;
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let cancel = false;
+    axios.get(`${API_URL}/companies/${companyId}`)
+      .then((r) => {
+        if (cancel) return;
+        setOn(Boolean(r.data?.settings?.order_auto_draft_invoice ?? r.data?.order_auto_draft_invoice));
+      })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [companyId]);
+  const save = async (next) => {
+    if (!canEdit) { toast.error("Bu ayarı yalnızca firma yöneticisi değiştirebilir."); return; }
+    const prev = on;
+    setOn(next);
+    setBusy(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}/order-settings`, { order_auto_draft_invoice: next });
+      setOn(Boolean(r.data?.order_auto_draft_invoice));
+      toast.success(r.data?.message || (next ? "Otomatik taslak fatura açık." : "Otomatik taslak fatura kapalı."));
+    } catch (err) {
+      setOn(prev);
+      toast.error(err.response?.data?.detail || "Ayar kaydedilemedi.");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 text-xs max-w-2xl" data-testid="order-b2b-settings">
+      <div className="text-sm font-bold text-slate-900">Sipariş alışında otomatik taslak fatura</div>
+      <p className="text-slate-500">Kapalıyken B2B, pazaryeri, içe aktarım ve panel siparişlerinde taslak fatura açılmaz. Faturalaştır ile elle kesim çalışır. Varsayılan kapalıdır.</p>
+      <label className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${on ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50"}`}>
+        <span>
+          <span className="block font-semibold text-slate-800">Otomatik taslak fatura</span>
+          <span className="block text-[10px] text-slate-500">{on ? "Açık — sipariş alışında cariye taslak düşer" : "Kapalı — sipariş yalnız sipariş olarak kalır"}</span>
+        </span>
+        <input
+          type="checkbox"
+          className="rounded"
+          checked={on}
+          disabled={busy || !canEdit}
+          onChange={(e) => save(e.target.checked)}
+          data-testid="order-auto-draft-invoice"
+        />
+      </label>
+    </div>
+  );
+};
+
 export const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
@@ -789,6 +841,7 @@ export default function SettingsPage({ embedded = false }) {
           {shownTab === "workshop_zones" && <WorkshopZonesSettings companyId={companyId} />}
           {shownTab === "users" && <UsersRolesPanel companyId={companyId} />}
           {shownTab === "pos_rules" && <PosRulesPanel companyId={companyId} />}
+          {shownTab === "orders_b2b" && <OrderB2BSettings companyId={companyId} />}
           {shownTab === "migration" && <MigrationPanel companyId={companyId} />}
           {shownTab === "storage" && <MyStoragePanel />}
           {shownTab === "summary" && <MorningSummarySettings companyId={companyId} />}

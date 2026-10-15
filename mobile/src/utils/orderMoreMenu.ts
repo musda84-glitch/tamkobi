@@ -397,7 +397,9 @@ export function orderDownloadMoreItems(): OrderMoreItem[] {
 }
 
 export function canDeleteFromMoreMenu(ord?: OrderMoreOrder | null): boolean {
-  return !!ord && !ord.is_invoiced && !ord.invoice_id;
+  if (!ord) return false;
+  if (orderHasEInvoiceIssued(ord)) return false;
+  return true;
 }
 
 export function orderDeleteMoreItem(): OrderMoreItem {

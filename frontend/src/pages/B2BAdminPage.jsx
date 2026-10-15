@@ -3,7 +3,7 @@ import React from "react";
 import { toast } from "sonner";
 import { ShoppingCart, Copy, ExternalLink, FileSpreadsheet, KeyRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { B2BSettings } from "./SettingsPage";
+import { B2BSettings, OrderB2BSettings } from "./SettingsPage";
 import { LegalTextsPanel } from "../components/LegalTextsPanel";
 
 export default function B2BAdminPage() {
@@ -19,6 +19,7 @@ export default function B2BAdminPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         {[[KeyRound, "1. Erişim ver", "Aşağıdaki listeden veya cari kartı → B2B Portal sekmesinden müşteriye erişim + şifre verin; özellikler cariye özel ayarlanır."], [ExternalLink, "2. Müşteri girer", "Müşteri giriş adresinden e-posta/VKN + şifre ile girer; o cariye özel fiyat, stok, ekstre ve sepet kurallarını görür."], [FileSpreadsheet, "3. AI ile sipariş", "Excel/PDF sipariş listesini yükler (cari için AI sepet açıksa), AI ürünlerle eşler; sipariş Siparişler ekranına B2B kanalıyla düşer."]].map(([I, t, d]) => <div key={t} className="bg-white border border-slate-200 rounded-2xl p-4 flex gap-3"><span className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0"><I className="w-4 h-4" /></span><div><div className="font-bold text-slate-900">{t}</div><div className="text-slate-500 mt-0.5">{d}</div></div></div>)}
       </div>
+      <OrderB2BSettings companyId={companyId} />
       <B2BSettings companyId={companyId} />
       <LegalTextsPanel companyId={companyId} />
     </div>

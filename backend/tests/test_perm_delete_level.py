@@ -34,6 +34,8 @@ def test_bulk_delete_requires_delete_level():
     perms = {"/orders": "edit"}
     assert mutation_allowed("/orders", "/api/orders/bulk-delete", perms, "POST") is False
     assert mutation_allowed("/orders", "/api/orders/bulk-delete", {"/orders": "delete"}, "POST") is True
+    assert mutation_allowed("/invoices", "/api/invoices/bulk-delete", {"/invoices": "edit"}, "POST") is False
+    assert mutation_allowed("/invoices", "/api/invoices/bulk-delete", {"/invoices": "delete"}, "POST") is True
 
 
 def test_delete_implies_edit_mutations():

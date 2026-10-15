@@ -12,11 +12,21 @@ def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
 
+USER = {"_id": "u1", "is_super_admin": True, "role": "admin", "company_ids": ["c1"], "active_company_id": "c1"}
+
+
+def _mock_db():
+    mock_db = MagicMock()
+    mock_db.__getitem__.side_effect = lambda name: getattr(mock_db, name)
+    return mock_db
+
+
 def test_update_order_status_pending_deletes_linked_draft():
     import server
 
     order = {
         "_id": "ord_1",
+        "company_id": "c1",
         "order_status": "approved",
         "invoice_id": "inv_draft_1",
         "invoice_number": "NX20260001",
@@ -24,6 +34,7 @@ def test_update_order_status_pending_deletes_linked_draft():
     }
     draft = {
         "_id": "inv_draft_1",
+        "company_id": "c1",
         "status": "draft",
         "invoice_number": "NX20260001",
         "contact_name": "Cari",
@@ -31,7 +42,7 @@ def test_update_order_status_pending_deletes_linked_draft():
         "e_type": "e_archive",
     }
 
-    mock_db = MagicMock()
+    mock_db = _mock_db()
     mock_db.orders.find_one = AsyncMock(side_effect=[order, {**order, "order_status": "pending", "invoice_id": None}])
     mock_db.orders.update_one = AsyncMock()
     mock_db.invoices.find_one = AsyncMock(return_value=draft)
@@ -39,7 +50,7 @@ def test_update_order_status_pending_deletes_linked_draft():
     with patch.object(server, "db", mock_db), patch.object(
         server, "_soft_delete_invoice_doc", AsyncMock(return_value="trash_1")
     ) as soft_del, patch.object(server, "_push_order_to_shopphp", AsyncMock()):
-        result = _run(server.update_order_status("ord_1", {"status": "pending"}))
+        result = _run(server.update_order_status("ord_1", {"status": "pending"}, USER))
 
     soft_del.assert_awaited_once()
     assert soft_del.await_args.args[0]["_id"] == "inv_draft_1"
@@ -57,18 +68,19 @@ def test_update_order_status_pending_keeps_issued_invoice():
 
     order = {
         "_id": "ord_2",
+        "company_id": "c1",
         "order_status": "approved",
         "invoice_id": "inv_ok",
         "is_invoiced": True,
     }
-    mock_db = MagicMock()
+    mock_db = _mock_db()
     mock_db.orders.find_one = AsyncMock(side_effect=[order, {**order, "order_status": "pending"}])
     mock_db.orders.update_one = AsyncMock()
 
     with patch.object(server, "db", mock_db), patch.object(
         server, "_soft_delete_invoice_doc", AsyncMock()
     ) as soft_del, patch.object(server, "_push_order_to_shopphp", AsyncMock()):
-        result = _run(server.update_order_status("ord_2", {"status": "pending"}))
+        result = _run(server.update_order_status("ord_2", {"status": "pending"}, USER))
 
     soft_del.assert_not_awaited()
     assert result.get("draft_invoice_cleared") is False
@@ -104,6 +116,7 @@ def test_delete_invoice_allows_paper_and_reverses_effects():
 
     inv = {
         "_id": "inv_paper",
+        "company_id": "c1",
         "status": "approved",
         "e_type": "paper",
         "invoice_number": "KAGIT-1",
@@ -113,13 +126,13 @@ def test_delete_invoice_allows_paper_and_reverses_effects():
         "paid_amount": 0,
         "payment_status": "unpaid",
     }
-    mock_db = MagicMock()
+    mock_db = _mock_db()
     mock_db.invoices.find_one = AsyncMock(return_value=inv)
 
     with patch.object(server, "db", mock_db), patch.object(
         server, "_soft_delete_invoice_doc", AsyncMock(return_value="t1")
     ) as soft_del:
-        result = _run(server.delete_invoice("inv_paper"))
+        result = _run(server.delete_invoice("inv_paper", USER))
 
     soft_del.assert_awaited_once()
     assert result["status"] == "success"
@@ -131,16 +144,17 @@ def test_delete_invoice_rejects_einvoice():
 
     inv = {
         "_id": "inv_e",
+        "company_id": "c1",
         "status": "approved",
         "e_type": "e_invoice",
         "invoice_number": "EF-1",
         "contact_name": "Cari",
         "grand_total": 200,
     }
-    mock_db = MagicMock()
+    mock_db = _mock_db()
     mock_db.invoices.find_one = AsyncMock(return_value=inv)
 
     with patch.object(server, "db", mock_db):
         with pytest.raises(HTTPException) as ei:
-            _run(server.delete_invoice("inv_e"))
+            _run(server.delete_invoice("inv_e", USER))
     assert ei.value.status_code == 400
