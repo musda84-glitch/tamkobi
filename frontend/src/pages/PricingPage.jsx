@@ -11,6 +11,7 @@ import { LegalFooterLinks } from "../components/LegalConsent";
 import { Seo, buildFaqJsonLd, buildOrgSoftwareJsonLd } from "../components/Seo";
 import { buildSiteFaq } from "../utils/siteFaq";
 import { billableCatalog, highlightModules } from "../utils/pricingHighlights";
+import { announceVitrinPreview } from "../utils/vitrinPreview";
 
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 const lim = (n, unit) => (Number(n) > 0 ? `${tl(n)} ${unit}` : `Sınırsız ${unit}`);
@@ -44,6 +45,10 @@ export default function PricingPage() {
     axios.get(`${API_URL}/public/plans`)
       .then((r) => setD(r.data))
       .catch(() => setD({ plans: [], catalog: [], trial_days: 14, brand_name: "TamKobi" }));
+  }, []);
+
+  useEffect(() => {
+    announceVitrinPreview();
   }, []);
 
   const brand = siteBrand(d?.brand_name);
