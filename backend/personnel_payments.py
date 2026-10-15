@@ -16,6 +16,7 @@ import partner_pay
 import pay_claim
 import rbac
 import tenant_access
+import trash
 
 KIND_LABELS = {
     "salary": "Maaş",
@@ -1400,3 +1401,72 @@ async def reverse_linked_personnel_payments(
         await reverse_payment(db, mov, actor=actor)
         n += 1
     return n
+
+
+def _bonus_trash_label(bonus: dict) -> str:
+    amount = float(bonus.get("amount") or 0)
+    return f"{bonus.get('employee_name')} · {bonus.get('type')} · {amount:,.2f} ₺"
+
+
+async def delete_bonus_record(db, bonus: dict) -> bool:
+    """Prim kaydını mevcut silme yoluyla çöpe taşır.
+
+    Önce bağlı personel ödeme hareketi (varsa kasa/banka/ortak etkisiyle) geri alınır.
+    Kayıt duruyorsa ve ödenmişse bağlı kasa/banka/ortak hareketleri prepare_source_trash
+    ile birlikte taşınır. Kayıt zaten yoksa işlem tekrarlanabilir.
+    """
+    if not bonus or not bonus.get("_id"):
+        return False
+    bonus_id = bonus["_id"]
+    await reverse_linked_personnel_payments(db, bonus, collection="bonus_payments")
+    fresh = await db.bonus_payments.find_one({"_id": bonus_id})
+    if not fresh:
+        return True
+    related: List[dict] = []
+    if fresh.get("status") == "paid":
+        related = await linked_moves.prepare_source_trash(
+            db, "personnel_bonus", bonus_id, company_id=fresh.get("company_id"),
+        )
+    await trash.soft_delete(
+        "bonus_payments",
+        fresh,
+        "bonus",
+        _bonus_trash_label(fresh),
+        related=related,
+        note=fresh.get("status") or "",
+    )
+    if related:
+        await linked_moves.recalc_after_trash(db, related)
+    return True
+
+
+EMPLOYEE_BONUS_BLOCK = "Ödenmiş/hareketli primler var, önce onları yönetin"
+
+
+async def bonus_has_money_move(db, bonus_id: str, company_id: str) -> bool:
+    """Bağlı kasa/banka veya ortak hareketi var mı. Kayıtları değiştirmez."""
+    found = await linked_moves.find_linked(
+        db, "personnel_bonus", str(bonus_id), company_id=company_id or None,
+    )
+    return bool(found.get("bank_transactions") or found.get("partner_transactions"))
+
+
+async def delete_employee_bonuses(db, employee: dict) -> List[dict]:
+    """Personelle birlikte çöpe gidecek ödenmemiş ve hareketsiz primleri döndürür.
+
+    Ödenmiş veya kasa/banka/ortak hareketi olan prim varsa 409. Bakiye değişmez,
+    hareket geri alınmaz. Dönen kayıtlar personelin çöp kaydına related olarak bağlanır.
+    """
+    emp_id = str((employee or {}).get("_id") or "").strip()
+    cid = str((employee or {}).get("company_id") or "").strip()
+    if not emp_id or not cid:
+        return []
+    rows = await db.bonus_payments.find({"employee_id": emp_id, "company_id": cid}).to_list(5000)
+    safe: List[dict] = []
+    for row in list(rows):
+        if str(row.get("company_id") or "") != cid or str(row.get("employee_id") or "") != emp_id:
+            continue
+        if str(row.get("status") or "") == "paid" or await bonus_has_money_move(db, str(row.get("_id") or ""), cid):
+            raise HTTPException(status_code=409, detail=EMPLOYEE_BONUS_BLOCK)
+        safe.append(row)
+    return safe

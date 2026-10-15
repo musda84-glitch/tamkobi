@@ -44,7 +44,7 @@ _TENANT_CALL_ALLOW = {
 # `${API_URL}/foo` — API_URL already includes /api
 _API_CALL_RE = re.compile(r"""\$\{(?:API_URL|apiUrl)\}/([a-zA-Z0-9_./${}-]+)""")
 _API_PLUS_RE = re.compile(r"""(?:API_URL|apiUrl)\s*\+\s*["'](/[^"']+)["']""")
-# IntegrityPanel apiBase="/system/integrity" ve varsayılan parametre
+# Bileşenin apiBase="/..." prop'u (ör. platform paneli)
 _API_BASE_PROP_RE = re.compile(r"""apiBase\s*=\s*["'](/[^"']+)["']""")
 # SystemAdminPage: axios.get(`${API_URL}${path}`) + grab("/system/overview")
 _QUOTED_API_RE = re.compile(
@@ -275,11 +275,6 @@ def test_ynt_frontend_api_paths_in_allowlist_or_public():
             continue
         if _tenant_exempt(name, path):
             continue
-        # IntegrityPanel şirket yöneticisi tabanını da tanımlar; ynt çağrısı systemSections'tadır.
-        if name == "IntegrityPanel.jsx" and (
-            path == "/api/admin/integrity" or path.startswith("/api/admin/integrity/")
-        ):
-            continue
         allowed = (
             ha.is_ynt_allowed_path(path)
             or rbac.is_public_api_path(path, "GET")
@@ -291,14 +286,9 @@ def test_ynt_frontend_api_paths_in_allowlist_or_public():
     names = {name for name, _path in found}
     assert "CompanyDetailPage.jsx" in names
     assert "SystemAdminPage.jsx" in names
-    # IntegrityPanel hem şirket hem platform tabanını tanımlar; ynt çağrı yeri systemSections.
-    admin_hits = [
+    integrity_hits = [
         f"{name}: {path}"
         for name, path in found
-        if path.startswith("/api/admin/integrity") and name != "IntegrityPanel.jsx"
+        if "/integrity" in path
     ]
-    assert not admin_hits, f"ynt UI hâlâ /api/admin/integrity çağırıyor: {admin_hits}"
-    assert any(
-        name == "systemSections.jsx" and path.startswith("/api/system/integrity")
-        for name, path in found
-    ), "platform veri tutarlılığı /api/system/integrity kullanmıyor"
+    assert not integrity_hits, f"veri tutarlılığı aracı kalkmış olmalı: {integrity_hits}"

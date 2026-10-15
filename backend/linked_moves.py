@@ -1,23 +1,20 @@
 """Kaynak kayıt (prim/bordro/kredi/taksit) ↔ kasa/banka/cari/ortak hareket bağları.
 
-Silme / geri alma / geri getirme sırasında orphan hareket bırakmamak için
-ortak link alanları, bulma, tersine çevirme ve bütünlük tarama araçları.
+Silme / geri alma / geri getirme sırasında bağlı kasa, banka ve ortak
+hareketlerini birlikte geri almak için ortak link alanları.
 """
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import account_balance
 import contact_balance
 import partner_pay
-import rbac
-import tenant_access
 import trash
 
 logger = logging.getLogger("linked_moves")
@@ -25,7 +22,6 @@ logger = logging.getLogger("linked_moves")
 router = APIRouter(prefix="/api")
 
 _db = None
-_current_user = None
 _reverse_tx_effects: Optional[Callable[..., Awaitable[None]]] = None
 
 # source_type → specialty field on bank/partner txs
@@ -47,32 +43,12 @@ SOURCE_LABELS = {
     "personnel_payment": "Personel ödeme",
 }
 
-SOURCE_COLLECTION = {
-    "personnel_bonus": "bonus_payments",
-    "bonus": "bonus_payments",
-    "payroll": "payrolls",
-    "loan": "loans",
-    "installment": "installments",
-    "personnel_payment": "personnel_movements",
-}
 
-# Eski format: Personel Prim/Avans/... (Gayri Resmi)
-_GAYRI_RESMI_CAT = re.compile(r"^Personel .+ \(Gayri Resmi\)$")
-
-
-def init(db, reverse_tx_fn=None, get_current_user=None):
-    global _db, _current_user, _reverse_tx_effects
+def init(db, reverse_tx_fn=None):
+    global _db, _reverse_tx_effects
     _db = db
     if reverse_tx_fn is not None:
         _reverse_tx_effects = reverse_tx_fn
-    if get_current_user is not None:
-        _current_user = get_current_user
-
-
-async def _user_dep(request: Request) -> dict:
-    if _current_user is None:
-        raise HTTPException(status_code=500, detail="linked_moves auth bağlanmadı.")
-    return await _current_user(request)
 
 
 def _now() -> str:
@@ -130,7 +106,7 @@ def _link_query(source_type: str, source_id: str, company_id: Optional[str] = No
     ]
     if field:
         clauses.append({field: sid})
-    # Eski bonus hareketleri source=manual + bonus_id yok; integrity heuristik ile bulunur.
+    # bonus_id veya source_id taşımayan eski hareketler bu sorguya girmez.
     q: Dict[str, Any] = {"$or": clauses}
     if company_id:
         q["company_id"] = str(company_id)
@@ -588,536 +564,6 @@ def assert_not_source_linked(tx: dict):
         raise HTTPException(status_code=400, detail=detail)
 
 
-# ---------------- Integrity scan / cleanup ----------------
-
-def _heuristic_bonus_match(bonus: dict, tx: dict) -> Tuple[bool, float]:
-    """Eski unlinked bonus hareketi: description+amount+account+category."""
-    score = 0.0
-    amt_b = round(float(bonus.get("amount") or 0), 2)
-    amt_t = round(float(tx.get("amount") or 0), 2)
-    if abs(amt_b - amt_t) > 0.01:
-        return False, 0.0
-    score += 0.4
-    if bonus.get("account_id") and tx.get("account_id") == bonus.get("account_id"):
-        score += 0.25
-    desc = (tx.get("description") or "").lower()
-    ename = (bonus.get("employee_name") or "").lower()
-    period = (bonus.get("period") or "").lower()
-    label = (bonus.get("type_label") or bonus.get("type") or "").lower()
-    if ename and ename in desc:
-        score += 0.2
-    if period and period in desc:
-        score += 0.1
-    if label and label in desc:
-        score += 0.05
-    cat = (tx.get("category") or "").lower()
-    if "personel" in cat or "prim" in cat or "avans" in cat or "yevmiye" in cat:
-        score += 0.1
-    return score >= 0.55, round(min(score, 1.0), 2)
-
-
-def _is_gayri_resmi_personnel_category(cat: Optional[str]) -> bool:
-    return bool(_GAYRI_RESMI_CAT.match(str(cat or "").strip()))
-
-
-def _bonus_desc_amount_account_match(bonus: dict, tx: dict) -> bool:
-    """Canlı/çöp bonus ↔ hareket: açıklama + tutar + hesap."""
-    if abs(round(float(bonus.get("amount") or 0), 2) - round(float(tx.get("amount") or 0), 2)) > 0.01:
-        return False
-    b_acc = bonus.get("account_id")
-    t_acc = tx.get("account_id")
-    if b_acc and t_acc and str(b_acc) != str(t_acc):
-        return False
-    if b_acc and not t_acc:
-        return False
-    desc = (tx.get("description") or "").strip().lower()
-    ename = (bonus.get("employee_name") or "").strip()
-    period = (bonus.get("period") or "").strip()
-    label = (bonus.get("type_label") or bonus.get("type") or "").strip()
-    expected = f"{ename} - {period} {label}".strip().lower()
-    if expected and expected == desc:
-        return True
-    if ename and ename.lower() in desc:
-        if period and period.lower() not in desc:
-            return False
-        return True
-    return False
-
-
-def _index_linked_ids(rows: List[dict], field: str) -> Dict[str, List[dict]]:
-    out: Dict[str, List[dict]] = {}
-    for row in rows:
-        sid = row.get(field)
-        if not sid and row.get("source_id"):
-            st = _norm_source_type(row.get("source_type") or row.get("source") or "")
-            if specialty_field(st) == field:
-                sid = row.get("source_id")
-        if sid:
-            out.setdefault(str(sid), []).append(row)
-    return out
-
-
-async def scan_orphans(db, company_id: str) -> Dict[str, Any]:
-    """Şirket hareketlerini tek sorguda çekip bellekte eşler (kayıt başı find_linked yok)."""
-    cid = str(company_id)
-    orphan_bonus_moves: List[dict] = []
-    orphan_payroll_moves: List[dict] = []
-    orphan_loan_moves: List[dict] = []
-    orphan_personnel_payment_moves: List[dict] = []
-    legacy_bonus_orphans: List[dict] = []
-    paid_bonus_missing: List[dict] = []
-    paid_payroll_missing: List[dict] = []
-    balance_drift: List[dict] = []
-    heuristic_links: List[dict] = []
-
-    bank_txs = await db.bank_transactions.find({"company_id": cid}).to_list(20000)
-    partner_txs = await db.partner_transactions.find({"company_id": cid}).to_list(20000)
-    bonuses = await db.bonus_payments.find({"company_id": cid}).to_list(5000)
-    payrolls = await db.payrolls.find({"company_id": cid}).to_list(5000)
-    loans = await db.loans.find({"company_id": cid}).to_list(5000)
-    personnel_moves = await db.personnel_movements.find({"company_id": cid}).to_list(5000)
-    trash_bonus = await db.trash.find({
-        "company_id": cid,
-        "$or": [
-            {"collection": "bonus_payments"},
-            {"entity_type": "bonus"},
-        ],
-    }).to_list(5000)
-
-    bonus_ids = {str(b["_id"]) for b in bonuses}
-    payroll_ids = {str(p["_id"]) for p in payrolls}
-    loan_ids = {str(l["_id"]) for l in loans}
-    live_pp_ids = {
-        str(m["_id"]) for m in personnel_moves
-        if str(m.get("status") or "") not in ("reversed", "cancelled")
-    }
-
-    def _orphan_row(doc: dict, field: str, sid: str, kind: str) -> dict:
-        return {
-            "tx_id": doc.get("_id"),
-            "field": field,
-            "source_id": sid,
-            "amount": doc.get("amount"),
-            "description": doc.get("description"),
-            "account_id": doc.get("account_id"),
-            "kind": kind,
-        }
-
-    for field, id_set, bucket in (
-        ("bonus_id", bonus_ids, orphan_bonus_moves),
-        ("payroll_id", payroll_ids, orphan_payroll_moves),
-        ("loan_id", loan_ids, orphan_loan_moves),
-        ("personnel_movement_id", live_pp_ids, orphan_personnel_payment_moves),
-    ):
-        for tx in bank_txs:
-            sid = tx.get(field)
-            if not sid and field == "personnel_movement_id":
-                st = _norm_source_type(tx.get("source_type") or tx.get("source") or "")
-                if st == "personnel_payment":
-                    sid = tx.get("source_id")
-            if sid and str(sid) not in id_set:
-                bucket.append(_orphan_row(tx, field, sid, "bank"))
-        for ptx in partner_txs:
-            sid = ptx.get(field)
-            if not sid and field == "personnel_movement_id":
-                st = _norm_source_type(ptx.get("source_type") or ptx.get("source") or "")
-                if st == "personnel_payment":
-                    sid = ptx.get("source_id")
-            if sid and str(sid) not in id_set:
-                bucket.append(_orphan_row(ptx, field, sid, "partner"))
-
-    bank_by_bonus = _index_linked_ids(bank_txs, "bonus_id")
-    partner_by_bonus = _index_linked_ids(partner_txs, "bonus_id")
-    bank_by_payroll = _index_linked_ids(bank_txs, "payroll_id")
-    partner_by_payroll = _index_linked_ids(partner_txs, "payroll_id")
-
-    paid_bonuses = [b for b in bonuses if b.get("status") == "paid"]
-    for b in paid_bonuses:
-        bid = str(b["_id"])
-        if bank_by_bonus.get(bid) or partner_by_bonus.get(bid):
-            continue
-        candidates = []
-        for tx in bank_txs:
-            if tx.get("type") != "outflow":
-                continue
-            if tx.get("bonus_id"):
-                continue
-            if b.get("account_id") and tx.get("account_id") != b.get("account_id"):
-                continue
-            ok, conf = _heuristic_bonus_match(b, tx)
-            if ok:
-                candidates.append({"tx_id": tx["_id"], "confidence": conf, "description": tx.get("description")})
-                heuristic_links.append({
-                    "bonus_id": bid,
-                    "tx_id": tx["_id"],
-                    "confidence": conf,
-                    "amount": b.get("amount"),
-                    "description": tx.get("description"),
-                })
-        paid_bonus_missing.append({
-            "id": bid,
-            "employee_name": b.get("employee_name"),
-            "amount": b.get("amount"),
-            "account_id": b.get("account_id"),
-            "partner_id": b.get("partner_id"),
-            "heuristic_candidates": candidates,
-        })
-
-    for p in payrolls:
-        if p.get("status") != "paid":
-            continue
-        pid = str(p["_id"])
-        if not bank_by_payroll.get(pid) and not partner_by_payroll.get(pid):
-            paid_payroll_missing.append({
-                "id": pid,
-                "employee_name": p.get("employee_name"),
-                "amount": p.get("final_payable") or p.get("net_salary"),
-                "account_id": p.get("account_id"),
-                "partner_id": p.get("partner_id"),
-            })
-
-    # Eski format: Gayri Resmi kategori, bonus_id yok, canlı bonus ile eşleşmez
-    for tx in bank_txs:
-        if tx.get("type") != "outflow":
-            continue
-        if not _is_gayri_resmi_personnel_category(tx.get("category")):
-            continue
-        if tx.get("bonus_id"):
-            continue
-        if any(_bonus_desc_amount_account_match(b, tx) for b in bonuses):
-            continue
-        trash_id = None
-        for tr in trash_bonus:
-            doc = tr.get("doc") or {}
-            if _bonus_desc_amount_account_match(doc, tx):
-                trash_id = tr.get("_id")
-                break
-        legacy_bonus_orphans.append({
-            "tx_id": tx.get("_id"),
-            "amount": tx.get("amount"),
-            "description": tx.get("description"),
-            "account_id": tx.get("account_id"),
-            "category": tx.get("category"),
-            "trash_id": trash_id,
-            "kind": "bank",
-        })
-
-    cash_accs = await db.bank_accounts.find({"company_id": cid, "type": "cash_box"}).to_list(500)
-    for acc in cash_accs:
-        aid = acc["_id"]
-        moved = await account_balance.recalc_account_balance(db, aid)
-        stored = round(float(acc.get("current_balance") or 0), 2)
-        if abs(moved - stored) >= 0.01:
-            balance_drift.append({
-                "account_id": aid,
-                "account_name": acc.get("account_name"),
-                "stored": stored,
-                "from_movements": moved,
-                "drift": round(moved - stored, 2),
-            })
-
-    orphan_specialty = (
-        len(orphan_bonus_moves) + len(orphan_payroll_moves) + len(orphan_loan_moves)
-        + len(orphan_personnel_payment_moves)
-    )
-    return {
-        "company_id": cid,
-        "orphan_bonus_moves": orphan_bonus_moves,
-        "orphan_payroll_moves": orphan_payroll_moves,
-        "orphan_loan_moves": orphan_loan_moves,
-        "orphan_personnel_payment_moves": orphan_personnel_payment_moves,
-        "legacy_bonus_orphans": legacy_bonus_orphans,
-        "paid_bonus_without_moves": paid_bonus_missing,
-        "paid_payroll_without_moves": paid_payroll_missing,
-        "cash_balance_drift": balance_drift,
-        "heuristic_bonus_links": heuristic_links,
-        "summary": {
-            "orphan_moves": orphan_specialty + len(legacy_bonus_orphans),
-            "legacy_bonus_orphans": len(legacy_bonus_orphans),
-            "paid_missing_moves": len(paid_bonus_missing) + len(paid_payroll_missing),
-            "drift_accounts": len(balance_drift),
-            "heuristic_links": len(heuristic_links),
-        },
-    }
-
-
-async def _validate_cleanup_target(db, cid: str, t: dict) -> Optional[str]:
-    """Kaynak doküman veya tx_id şirket dışıysa 'foreign_company' / 'tx_not_found'."""
-    tx_id = t.get("tx_id")
-    source_id = t.get("source_id")
-    source_type = t.get("source_type")
-
-    if tx_id and not source_id:
-        tx = await db.bank_transactions.find_one({"_id": tx_id})
-        if tx:
-            if str(tx.get("company_id") or "") != cid:
-                return "foreign_company"
-            return None
-        ptx = await db.partner_transactions.find_one({"_id": tx_id})
-        if ptx:
-            if str(ptx.get("company_id") or "") != cid:
-                return "foreign_company"
-            return None
-        return "tx_not_found"
-
-    if source_type and source_id:
-        coll = SOURCE_COLLECTION.get(_norm_source_type(source_type))
-        if coll:
-            src = await db[coll].find_one({"_id": source_id})
-            if src and str(src.get("company_id") or "") != cid:
-                return "foreign_company"
-            # Orphan kaynak yoksa: yalnızca bu şirketin hareketleri reverse edilir (find_linked company_id).
-            # Çapraz şirket specialty id'si taşıyan yabancı hareketlere dokunulmaz.
-        return None
-    return "invalid_target"
-
-
-async def cleanup_orphans(
-    db,
-    company_id: str,
-    *,
-    dry_run: bool = True,
-    items: Optional[List[dict]] = None,
-    actor: Optional[dict] = None,
-) -> Dict[str, Any]:
-    """Seçili orphan / kaynakları reverse_linked ile temizle. dry_run varsayılan True."""
-    cid = str(company_id)
-    report = await scan_orphans(db, cid)
-    selected = items or []
-    actions: List[dict] = []
-    touched_bank: List[dict] = []
-
-    def _default_targets():
-        out = []
-        for row in report["orphan_bonus_moves"]:
-            out.append({"source_type": "personnel_bonus", "source_id": row["source_id"], "via": "orphan_move"})
-        for row in report["orphan_payroll_moves"]:
-            out.append({"source_type": "payroll", "source_id": row["source_id"], "via": "orphan_move"})
-        for row in report["orphan_loan_moves"]:
-            out.append({"source_type": "loan", "source_id": row["source_id"], "via": "orphan_move"})
-        for row in report.get("orphan_personnel_payment_moves") or []:
-            out.append({"source_type": "personnel_payment", "source_id": row["source_id"], "via": "orphan_move"})
-        for row in report.get("legacy_bonus_orphans") or []:
-            out.append({"tx_id": row["tx_id"], "via": "legacy_bonus_orphan"})
-        return out
-
-    targets = selected if selected else _default_targets()
-    seen = set()
-    uniq = []
-    for t in targets:
-        key = (t.get("source_type"), t.get("source_id"), t.get("tx_id"))
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(t)
-
-    for t in uniq:
-        entry = {"target": t, "dry_run": dry_run}
-        skip_reason = await _validate_cleanup_target(db, cid, t)
-        if skip_reason:
-            entry["result"] = {"status": "skip", "reason": skip_reason}
-            actions.append(entry)
-            continue
-
-        if t.get("tx_id") and not t.get("source_id"):
-            tx = await db.bank_transactions.find_one({"_id": t["tx_id"], "company_id": cid})
-            kind = "bank"
-            if not tx:
-                tx = await db.partner_transactions.find_one({"_id": t["tx_id"], "company_id": cid})
-                kind = "partner"
-            if not tx:
-                entry["result"] = {"status": "skip", "reason": "tx_not_found"}
-            elif dry_run:
-                entry["result"] = {"status": "would_reverse", "amount": tx.get("amount"), "kind": kind}
-            else:
-                if kind == "bank":
-                    if _reverse_tx_effects:
-                        await _reverse_tx_effects(tx, -1)
-                    await _soft_delete_move("bank_transactions", tx, "bank_transaction", note="integrity_cleanup")
-                    touched_bank.append(tx)
-                else:
-                    amount = float(tx.get("amount") or 0)
-                    ptype = tx.get("type")
-                    if ptype in partner_pay.MUTABLE_TYPES:
-                        inc = {k: -v for k, v in partner_pay.posting_inc(tx).items()}
-                        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": inc})
-                    await _soft_delete_move("partner_transactions", tx, "partner_transaction", note="integrity_cleanup")
-                entry["result"] = {"status": "reversed", "tx_id": t["tx_id"], "kind": kind}
-        elif t.get("source_type") and t.get("source_id"):
-            if dry_run:
-                found = await find_linked(db, t["source_type"], t["source_id"], company_id=cid)
-                entry["result"] = {
-                    "status": "would_reverse",
-                    "bank": len(found["bank_transactions"]),
-                    "partner": len(found["partner_transactions"]),
-                    "expenses": len(found["expenses"]),
-                }
-            else:
-                entry["result"] = await reverse_linked(
-                    db,
-                    t["source_type"],
-                    t["source_id"],
-                    mode="delete",
-                    actor=actor,
-                    reason="integrity_cleanup",
-                    company_id=cid,
-                )
-        else:
-            entry["result"] = {"status": "skip", "reason": "invalid_target"}
-        actions.append(entry)
-
-    if touched_bank and not dry_run:
-        await _recalc_touched_accounts(db, touched_bank)
-
-    drift_fixes = []
-    for d in report["cash_balance_drift"]:
-        if dry_run:
-            drift_fixes.append({**d, "action": "would_sync"})
-        else:
-            acc = await db.bank_accounts.find_one({"_id": d["account_id"], "company_id": cid})
-            if acc:
-                await account_balance.sync_cash_box_balances(db, [acc])
-                drift_fixes.append({**d, "action": "synced", "new_balance": d["from_movements"]})
-
-    await _audit(
-        db,
-        company_id=cid,
-        actor=actor,
-        action="integrity_cleanup",
-        detail=f"dry_run={dry_run} actions={len(actions)} drift={len(drift_fixes)}",
-        extra={"dry_run": dry_run, "action_count": len(actions)},
-    )
-    return {
-        "company_id": cid,
-        "dry_run": dry_run,
-        "scan_summary": report["summary"],
-        "actions": actions,
-        "drift_fixes": drift_fixes,
-    }
-
-
-def _require_integrity_access(user: dict, company_id: str):
-    """SA tüm şirketler; şirket admin yalnızca kendi şirketi."""
-    if user.get("is_super_admin"):
-        return
-    if not tenant_access.user_may_access_company(user, company_id):
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    role = rbac.normalize_role_code(user.get("role"))
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Bu işlem için şirket yöneticisi olmalısınız.")
-
-
-@router.get("/admin/integrity/orphans")
-async def api_integrity_orphans(
-    company_id: str = Query(...),
-    user: dict = Depends(_user_dep),
-):
-    _require_integrity_access(user, company_id)
-    if not await _db.companies.find_one({"_id": company_id}):
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    return await scan_orphans(_db, company_id)
-
-
-@router.post("/admin/integrity/cleanup")
-async def api_integrity_cleanup(req: Dict[str, Any], user: dict = Depends(_user_dep)):
-    company_id = str(req.get("company_id") or "").strip()
-    if not company_id:
-        raise HTTPException(status_code=400, detail="company_id gerekli.")
-    _require_integrity_access(user, company_id)
-    if not await _db.companies.find_one({"_id": company_id}):
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    dry_run = req.get("dry_run", True)
-    if dry_run is None:
-        dry_run = True
-    return await cleanup_orphans(
-        _db,
-        company_id,
-        dry_run=bool(dry_run),
-        items=req.get("items") or req.get("targets"),
-        actor=user,
-    )
-
-
-async def _require_system_integrity_admin(request: Request) -> dict:
-    """Platform paneli: yalnızca süper admin. /api/system zaten ynt allowlist'inde."""
-    import saas
-    return await saas.require_super_admin(request)
-
-
-async def _system_company_or_404(company_id: str) -> str:
-    cid = str(company_id or "").strip()
-    if not cid:
-        raise HTTPException(status_code=400, detail="company_id gerekli.")
-    if _db is None:
-        raise HTTPException(status_code=500, detail="linked_moves bağlanmadı.")
-    if not await _db.companies.find_one({"_id": cid}):
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    return cid
-
-
-def _cleanup_dry_run(req: Dict[str, Any]) -> bool:
-    dry_run = req.get("dry_run", True)
-    if dry_run is None:
-        dry_run = True
-    return bool(dry_run)
-
-
-@router.get("/system/integrity/orphans")
-async def api_system_integrity_orphans(
-    company_id: str = Query(...),
-    _admin: dict = Depends(_require_system_integrity_admin),
-):
-    cid = await _system_company_or_404(company_id)
-    return await scan_orphans(_db, cid)
-
-
-async def list_isnet_missing_mode(db) -> Dict[str, Any]:
-    """Ortamı seçilmemiş İşNet e-fatura kayıtları. Yalnızca okur."""
-    import isnet
-
-    rows = await db.einvoice_settings.find(
-        {"provider": {"$in": ["isnet", "isnet_portal"]}}
-    ).to_list(500)
-    ids = [str(r.get("company_id") or "") for r in rows if r.get("company_id")]
-    names: Dict[str, str] = {}
-    if ids:
-        companies = await db.companies.find({"_id": {"$in": ids}}).to_list(500)
-        for company in companies:
-            names[str(company.get("_id") or "")] = str(company.get("name") or "")
-    items = isnet.missing_mode_settings(rows, names)
-    return {
-        "readonly": True,
-        "count": len(items),
-        "detail": isnet.MODE_REQUIRED_DETAIL,
-        "items": items,
-    }
-
-
-@router.get("/system/integrity/isnet-mode")
-async def api_system_isnet_mode_missing(
-    _admin: dict = Depends(_require_system_integrity_admin),
-):
-    """Süper admin: mode'u boş İşNet kayıtları. Yazma yok."""
-    if _db is None:
-        raise HTTPException(status_code=500, detail="linked_moves bağlanmadı.")
-    return await list_isnet_missing_mode(_db)
-
-
-@router.post("/system/integrity/cleanup")
-async def api_system_integrity_cleanup(
-    req: Dict[str, Any],
-    admin: dict = Depends(_require_system_integrity_admin),
-):
-    cid = await _system_company_or_404(str(req.get("company_id") or ""))
-    return await cleanup_orphans(
-        _db,
-        cid,
-        dry_run=_cleanup_dry_run(req),
-        items=req.get("items") or req.get("targets"),
-        actor=admin,
-    )
-
-
 # Stock helpers used by delete paths
 async def reverse_stock_movements_for(db, *, order_id: Optional[str] = None, work_order_id: Optional[str] = None, reason_prefix: str = "Geri alma") -> int:
     """Üretim/sayım kaynaklı stok hareketlerini tersine çevir (ürün bakiyesi + karşı hareket)."""
@@ -1193,3 +639,41 @@ async def reverse_applied_stock_count(db, sc: dict) -> int:
         })
         n += 1
     return n
+
+
+async def list_isnet_missing_mode(db) -> Dict[str, Any]:
+    """Ortamı seçilmemiş İşNet e-fatura kayıtları. Yalnızca okur."""
+    import isnet
+
+    rows = await db.einvoice_settings.find(
+        {"provider": {"$in": ["isnet", "isnet_portal"]}}
+    ).to_list(500)
+    ids = [str(r.get("company_id") or "") for r in rows if r.get("company_id")]
+    names: Dict[str, str] = {}
+    if ids:
+        companies = await db.companies.find({"_id": {"$in": ids}}).to_list(500)
+        for company in companies:
+            names[str(company.get("_id") or "")] = str(company.get("name") or "")
+    items = isnet.missing_mode_settings(rows, names)
+    return {
+        "readonly": True,
+        "count": len(items),
+        "detail": isnet.MODE_REQUIRED_DETAIL,
+        "items": items,
+    }
+
+
+async def _require_system_integrity_admin(request: Request) -> dict:
+    """Platform paneli: yalnızca süper admin. /api/system zaten ynt allowlist'inde."""
+    import saas
+    return await saas.require_super_admin(request)
+
+
+@router.get("/system/integrity/isnet-mode")
+async def api_system_isnet_mode_missing(
+    _admin: dict = Depends(_require_system_integrity_admin),
+):
+    """Süper admin: mode'u boş İşNet kayıtları. Yazma yok."""
+    if _db is None:
+        raise HTTPException(status_code=500, detail="linked_moves bağlanmadı.")
+    return await list_isnet_missing_mode(_db)

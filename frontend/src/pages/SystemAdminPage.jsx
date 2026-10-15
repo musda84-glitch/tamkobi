@@ -37,6 +37,9 @@ export default function SystemAdminPage() {
     ]);
   }, []);
   useEffect(() => { if (user?.is_super_admin && authenticated) load(); }, [load, user, authenticated]);
+  useEffect(() => {
+    if (page === "veri-tutarliligi") navigate("/settings", { replace: true });
+  }, [page, navigate]);
   const changed = () => { load(); refreshLicense(); };
   const section = findSystemSection(page);
   const title = section ? section.label : "Bölüm bulunamadı";

@@ -12,6 +12,15 @@ export const SETTINGS_PARAM = "tab";
 export const EMBEDDED_SETTINGS_PARAM = "ayar";
 export const DEFAULT_SETTINGS_TAB = "company";
 
+/** Kaldırılmış ayar bölümleri Firma ayarlarının varsayılan sekmesine döner. */
+const RETIRED_SETTINGS_TABS = {
+  integrity: DEFAULT_SETTINGS_TAB,
+};
+
+export function resolveSettingsTab(tab) {
+  return RETIRED_SETTINGS_TABS[tab] || tab || DEFAULT_SETTINGS_TAB;
+}
+
 /** Bölüm adının hangi sorgu parametresinde durduğu. */
 export function settingsParamFor(embedded) {
   return embedded ? EMBEDDED_SETTINGS_PARAM : SETTINGS_PARAM;
