@@ -3,7 +3,14 @@ import { EyeOff, GripVertical, ImagePlus, Plus, ArrowDown, ArrowUp } from "lucid
 import { QRCodeSVG } from "qrcode.react";
 import { compressImageFile } from "../../utils/compressImage";
 import { prepareStampFile } from "../../utils/einvoiceStampImage";
-import { sampleXmlForKind, transformXsltToHtml } from "../../utils/einvoiceXsltPreview";
+import {
+  preparePreviewXml,
+  readPreviewXmlFile,
+  sampleXmlForKind,
+  stripEmbeddedDocuments,
+  transformXsltToHtml,
+  xmlUploadAccept,
+} from "../../utils/einvoiceXsltPreview";
 import {
   BLOCK_LABELS,
   BLOCK_FONT_SIZE_OPTIONS,
@@ -602,6 +609,9 @@ const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHe
 export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", preferXsltPreview = false }) => {
   const L = normalizeLayout(layout, kind);
   const logoRef = useRef(null);
+  const xmlRef = useRef(null);
+  const xmlReq = useRef(0);
+  const kindRef = useRef(kind);
   const [dragId, setDragId] = useState("");
   const [overId, setOverId] = useState("");
   const [overStack, setOverStack] = useState(null);
@@ -610,6 +620,8 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const [paperMode, setPaperMode] = useState(preferXsltPreview && xsltHtml ? "xslt" : "layout");
   const [realXmlHtml, setRealXmlHtml] = useState("");
   const [realXmlErr, setRealXmlErr] = useState("");
+  const [uploadedXml, setUploadedXml] = useState("");
+  const [xmlErr, setXmlErr] = useState("");
   const visible = L.blocks.filter((b) => !b.hidden);
   const rows = packBlockRows(L.blocks);
   const hidden = L.blocks.filter((b) => b.hidden);
@@ -621,6 +633,16 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   useEffect(() => {
     setPaperMode(preferXsltPreview && xsltHtml ? "xslt" : "layout");
   }, [preferXsltPreview, xsltHtml]);
+
+  useEffect(() => {
+    if (kindRef.current === kind) return;
+    kindRef.current = kind;
+    setUploadedXml("");
+    setXmlErr("");
+    setRealXmlHtml("");
+    setRealXmlErr("");
+    setPaperMode((mode) => (mode === "real" ? "layout" : mode));
+  }, [kind]);
 
   const patch = (partial) => {
     setPaperMode("layout");
@@ -720,10 +742,11 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     else patchBlocks(setBlockHidden(L.blocks, from, true));
   };
 
-  const onRealXml = () => {
+  const showRealPreview = (xmlText) => {
     try {
       const xslt = layoutToXslt(L, kind);
-      const html = transformXsltToHtml(xslt, sampleXmlForKind(kind));
+      const source = stripEmbeddedDocuments(xmlText || sampleXmlForKind(kind));
+      const html = transformXsltToHtml(xslt, source);
       if (!html) {
         setRealXmlHtml("");
         setRealXmlErr("Gerçek XML önizlemesi bu tarayıcıda üretilemedi.");
@@ -736,6 +759,37 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
       setRealXmlHtml("");
       setRealXmlErr(err?.message || "XSLT üretilemedi.");
       setPaperMode("real");
+    }
+  };
+
+  const onRealXml = () => {
+    setXmlErr("");
+    showRealPreview(uploadedXml);
+  };
+
+  const onUseSampleXml = () => {
+    setUploadedXml("");
+    setXmlErr("");
+    showRealPreview("");
+  };
+
+  const onXmlFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const req = ++xmlReq.current;
+    try {
+      const raw = await readPreviewXmlFile(file);
+      if (req !== xmlReq.current) return;
+      const clean = preparePreviewXml(raw, kind);
+      if (req !== xmlReq.current) return;
+      setUploadedXml(clean);
+      setXmlErr("");
+      showRealPreview(clean);
+    } catch (err) {
+      if (req !== xmlReq.current) return;
+      setUploadedXml("");
+      setXmlErr(err?.message || "XML okunamadı.");
     }
   };
 
@@ -1038,14 +1092,22 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
         <div className="lg:col-span-9">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
             <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri) — en: Tam / 1/2 / 1/3. Aynı sütuna yığmak için Üstüne/altına yerleştir veya sürükleyip bırakın.</div>
-            <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
+            <div className="flex flex-wrap gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
               <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
               <button type="button" onClick={onRealXml} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "real" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-preview-real-xml">Önizle (örnek XML)</button>
               {xsltHtml ? (
                 <button type="button" onClick={() => setPaperMode("xslt")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-xslt">Yüklenen XSLT</button>
               ) : null}
+              <input ref={xmlRef} type="file" accept={xmlUploadAccept(false)} className="hidden" onChange={onXmlFile} data-testid="einvoice-design-xml-upload-input" />
+              <button type="button" onClick={() => xmlRef.current?.click()} className="px-2 py-1 rounded-md font-semibold text-slate-700" title="XML tarayıcıda önizlenir, sunucuya gönderilmez" data-testid="einvoice-design-xml-upload">XML yükle</button>
+              {uploadedXml ? (
+                <button type="button" onClick={onUseSampleXml} className="px-2 py-1 rounded-md font-semibold text-slate-700" data-testid="einvoice-design-xml-use-sample">Örneğe dön</button>
+              ) : null}
             </div>
           </div>
+          {xmlErr ? (
+            <p className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 mb-1" data-testid="einvoice-design-xml-upload-error">{xmlErr}</p>
+          ) : null}
           {paperMode === "real" ? (
             realXmlHtml ? (
               <iframe

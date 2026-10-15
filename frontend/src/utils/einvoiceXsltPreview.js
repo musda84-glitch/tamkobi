@@ -85,6 +85,7 @@ export const SAMPLE_UBL_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </cac:InvoiceLine>
 </n1:Invoice>`;
 
+/** e-İrsaliye önizlemesi: kök DespatchAdvice. Fatura örneğinden ayrı tutulur. */
 export const SAMPLE_DESPATCH_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <n1:DespatchAdvice xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"
   xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -134,8 +135,177 @@ export const SAMPLE_DESPATCH_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </cac:DespatchLine>
 </n1:DespatchAdvice>`;
 
+/** Önizlemeye alınan dosya. Zip açılmazsa yalnız .xml. */
+export const PREVIEW_XML_MAX_BYTES = 2 * 1024 * 1024;
+
 export function sampleXmlForKind(kind) {
   return kind === "e_dispatch" ? SAMPLE_DESPATCH_XML : SAMPLE_UBL_XML;
+}
+
+export function expectedUblRoot(kind) {
+  return kind === "e_dispatch" ? "DespatchAdvice" : "Invoice";
+}
+
+function kindLabel(kind) {
+  if (kind === "e_dispatch") return "e-İrsaliye";
+  if (kind === "e_archive") return "e-Arşiv";
+  return "e-Fatura";
+}
+
+function xmlParser() {
+  if (typeof window !== "undefined" && typeof window.DOMParser === "function") return new window.DOMParser();
+  if (typeof DOMParser === "function") return new DOMParser();
+  return null;
+}
+
+function xmlSerializer() {
+  if (typeof window !== "undefined" && typeof window.XMLSerializer === "function") return new window.XMLSerializer();
+  if (typeof XMLSerializer === "function") return new XMLSerializer();
+  return null;
+}
+
+function localNameOf(el) {
+  if (!el || el.nodeType !== 1) return "";
+  if (el.localName) return el.localName;
+  const name = String(el.nodeName || "");
+  const i = name.indexOf(":");
+  return i >= 0 ? name.slice(i + 1) : name;
+}
+
+function rootLocalNameRegex(xml) {
+  const text = String(xml || "").replace(/^\uFEFF/, "");
+  const re = /<(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)\b/g;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m[2] === "xml" && text.slice(m.index, m.index + 5) === "<?xml") continue;
+    return m[2];
+  }
+  return "";
+}
+
+function parseXmlDocument(xml) {
+  const parser = xmlParser();
+  if (!parser) return null;
+  try {
+    const doc = parser.parseFromString(String(xml || "").replace(/^\uFEFF/, ""), "text/xml");
+    if (!doc?.documentElement) return null;
+    const root = localNameOf(doc.documentElement).toLowerCase();
+    if (root === "parsererror" || root === "html") return null;
+    if (typeof doc.getElementsByTagName === "function" && doc.getElementsByTagName("parsererror").length) return null;
+    return doc;
+  } catch {
+    return null;
+  }
+}
+
+/** Kök elemanın yerel adı (Invoice, DespatchAdvice, …). */
+export function ublRootLocalName(xml) {
+  const viaRe = rootLocalNameRegex(xml);
+  const doc = parseXmlDocument(xml);
+  const dom = doc ? localNameOf(doc.documentElement) : "";
+  if (dom && viaRe && dom.toLowerCase() === viaRe.toLowerCase()) return viaRe;
+  return dom || viaRe;
+}
+
+/**
+ * Gömülü XSLT/görsel (AdditionalDocumentReference/EmbeddedDocumentBinaryObject)
+ * önizlemeden önce DOM'dan çıkarılır. Bakiye gibi gömülü ikili içermeyen ekler kalır.
+ */
+export function stripEmbeddedDocuments(xml) {
+  const text = String(xml || "");
+  if (!/EmbeddedDocumentBinaryObject/i.test(text)) return text;
+  const doc = parseXmlDocument(text);
+  const serializer = xmlSerializer();
+  if (!doc || !serializer) return text;
+  const blobs = Array.from(doc.getElementsByTagName("*")).filter((el) => localNameOf(el) === "EmbeddedDocumentBinaryObject");
+  let removed = 0;
+  for (const blob of blobs) {
+    if (!blob.parentNode) continue;
+    let adr = blob.parentNode;
+    while (adr && adr.nodeType === 1 && localNameOf(adr) !== "AdditionalDocumentReference") adr = adr.parentNode;
+    if (adr && adr.nodeType === 1 && adr.parentNode) {
+      adr.parentNode.removeChild(adr);
+      removed += 1;
+    }
+  }
+  if (!removed) return text;
+  return serializer.serializeToString(doc);
+}
+
+/** Kök, tasarımdaki türle uyuşmuyorsa Türkçe hata. Uyuşuyorsa gömülü ekler ayıklanmış XML. */
+export function preparePreviewXml(xml, kind) {
+  const root = ublRootLocalName(xml);
+  if (!root) throw new Error("XML okunamadı.");
+  const expected = expectedUblRoot(kind);
+  if (root !== expected) {
+    throw new Error(`Yüklenen XML bu tasarımla uyuşmuyor. ${kindLabel(kind)} için kök eleman ${expected} olmalı (bulunan: ${root}).`);
+  }
+  return stripEmbeddedDocuments(xml);
+}
+
+/**
+ * jszip bu projenin bağımlılıklarında yok; yeni paket eklenmez.
+ * Paket sonradan kurulursa burada döndürmek zip içindeki ilk .xml'i açar.
+ */
+export async function loadJsZip() {
+  return null;
+}
+
+export function xmlUploadAccept(jsZipAvailable = false) {
+  return jsZipAvailable
+    ? ".xml,.zip,application/xml,text/xml,application/zip"
+    : ".xml,application/xml,text/xml";
+}
+
+async function readBlobText(file) {
+  if (file && typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(r.error || new Error("XML okunamadı."));
+    r.readAsText(file);
+  });
+}
+
+function assertPreviewXmlSize(size) {
+  if (Number(size) > PREVIEW_XML_MAX_BYTES) {
+    throw new Error("Dosya 2 MB sınırını aşıyor.");
+  }
+}
+
+async function readFirstXmlFromZip(file) {
+  const JSZip = await loadJsZip();
+  if (!JSZip) throw new Error("Zip dosyası desteklenmiyor. Yalnızca .xml yükleyin.");
+  let zip;
+  try {
+    const buf = typeof file.arrayBuffer === "function" ? await file.arrayBuffer() : file;
+    zip = await JSZip.loadAsync(buf);
+  } catch {
+    throw new Error("Zip içindeki XML okunamadı.");
+  }
+  const name = Object.keys(zip.files || {}).find((entryName) => {
+    const entry = zip.files[entryName];
+    if (!entry || entry.dir) return false;
+    const base = entryName.split("/").pop() || "";
+    return base.toLowerCase().endsWith(".xml");
+  });
+  if (!name) throw new Error("Zip içinde XML bulunamadı.");
+  const xml = await zip.files[name].async("string");
+  assertPreviewXmlSize(new TextEncoder().encode(xml).length);
+  return xml;
+}
+
+/** .xml okur. jszip varsa zip içindeki ilk .xml; yoksa zip reddedilir. Sınır 2 MB. */
+export async function readPreviewXmlFile(file) {
+  if (!file) throw new Error("Dosya seçilmedi.");
+  assertPreviewXmlSize(file.size);
+  const name = String(file.name || "").toLowerCase();
+  const type = String(file.type || "").toLowerCase();
+  if (name.endsWith(".zip") || type === "application/zip" || type === "application/x-zip-compressed") {
+    return readFirstXmlFromZip(file);
+  }
+  if (name && !name.endsWith(".xml")) throw new Error("Yalnızca .xml dosyası yüklenebilir.");
+  return readBlobText(file);
 }
 
 function toHex(raw) {
@@ -208,7 +378,7 @@ export function transformXsltToHtml(xslt, xml = SAMPLE_UBL_XML) {
     const parser = new window.DOMParser();
     const sheet = parser.parseFromString(prepareXsltForBrowser(xslt), "text/xml");
     if (sheet.getElementsByTagName("parsererror").length) return "";
-    const doc = parser.parseFromString(xml, "text/xml");
+    const doc = parser.parseFromString(stripEmbeddedDocuments(xml), "text/xml");
     if (doc.getElementsByTagName("parsererror").length) return "";
     const proc = new window.XSLTProcessor();
     proc.importStylesheet(sheet);
