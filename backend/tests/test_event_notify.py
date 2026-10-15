@@ -1120,6 +1120,7 @@ def test_saas_notify_prefs_requires_super_admin_dep():
     wanted = {
         ("/api/saas/companies/{company_id}/notify-prefs", "GET"),
         ("/api/saas/companies/{company_id}/notify-prefs", "PUT"),
+        ("/api/saas/companies/{company_id}/notify-mail-log", "GET"),
     }
     seen = set()
     for route in event_notify.router.routes:
@@ -1147,6 +1148,8 @@ def test_saas_notify_prefs_requires_super_admin_dep():
     assert r.status_code in (401, 403)
     r2 = client.put("/api/saas/companies/c1/notify-prefs", json={})
     assert r2.status_code in (401, 403)
+    r3 = client.get("/api/saas/companies/c1/notify-mail-log")
+    assert r3.status_code in (401, 403)
 
 
 def test_existing_notify_prefs_read_unchanged(setup_en):
@@ -1175,8 +1178,12 @@ def test_existing_notify_prefs_read_unchanged(setup_en):
         assert out["events"]["order_new"]["sms"] is True
         assert out["events"]["einvoice_incoming"]["email"] is False
         assert out["daily_email_cap"] is None
+        assert out["events"]["order_new"]["quiet_hours"] == {
+            "enabled": False, "start": "22:00", "end": "08:00",
+        }
         stored = db.company_notify_prefs.docs["cnp_c1"]
         assert "daily_email_cap" not in stored
+        assert "quiet_hours" not in (stored.get("events") or {}).get("order_new", {})
 
     asyncio.run(_run())
 
@@ -1326,6 +1333,264 @@ def test_invalid_daily_email_cap_400(setup_en):
         with pytest.raises(HTTPException) as ei2:
             await saas_billing.put_settings({"notify_daily_email_cap_default": "abc"}, {})
         assert ei2.value.status_code == 400
+
+    asyncio.run(_run())
+
+
+def test_pending_order_card_status_and_summary_escape():
+    pending = _order("o1", order_status="pending", customer_name="<script>x</script>")
+    approved = _order("o2", order_status="approved")
+    preparing = _order("o3", order_status="preparing")
+    html = event_notify._order_card_html(pending, "https://app.tamkobi.com/orders?open=o1", "https://app.tamkobi.com", {})
+    assert "Onay bekliyor" in html
+    assert 'bgcolor="#fef3c7"' in html
+    assert "<script>" not in html and "&lt;script&gt;" in html
+    assert "Onaylı" in event_notify._order_card_html(approved, "", "https://app.tamkobi.com", {})
+    assert "Onaylı" in event_notify._order_card_html(preparing, "", "https://app.tamkobi.com", {})
+    summary = event_notify._summary_line([pending, approved, preparing])
+    assert "1 onay bekliyor" in summary
+    assert "onay bekliyor" not in event_notify._summary_line([approved, preparing])
+    text = event_notify._order_batch_text("Demo", [pending, approved], {}, {})
+    assert "Durum: Onay bekliyor" in text
+    assert "Durum: Onaylı" in text
+    assert "1 onay bekliyor" in text
+
+
+def test_stock_warning_uses_loaded_products_no_warning_without_field():
+    products = {
+        "p1": {"_id": "p1", "company_id": "c1", "name": "Kalem", "stock_quantity": 2},
+        "p2": {"_id": "p2", "company_id": "c1", "name": "Yok"},
+        "p3": {
+            "_id": "p3", "company_id": "c1", "name": "Varyantlı", "stock_quantity": 99,
+            "variants": [{"variant_id": "v1", "name": "Kırmızı", "stock": 1}],
+        },
+    }
+    order = _order("o1", items=[
+        {"product_id": "p1", "product_name": "Kalem", "quantity": 5, "unit_price": 1, "total": 5},
+        {"product_id": "p2", "product_name": "Yok", "quantity": 9, "unit_price": 1, "total": 9},
+        {"product_id": "p3", "product_name": "Varyantlı", "variant_id": "v1", "quantity": 2, "unit_price": 1, "total": 2},
+    ])
+    html = event_notify._order_card_html(order, "", "https://app.tamkobi.com", products)
+    assert "Stok yetersiz (mevcut 2)" in html
+    assert "Stok yetersiz (mevcut 1)" in html
+    assert html.count("Stok yetersiz") == 2
+    assert "color:#b91c1c" in html
+    summary = event_notify._summary_line([order], products)
+    assert "2 kalemde stok yetersiz" in summary
+    no_stock = _order("o2", items=[
+        {"product_id": "p2", "product_name": "Yok", "quantity": 9, "unit_price": 1, "total": 9},
+    ])
+    html2 = event_notify._order_card_html(no_stock, "", "https://app.tamkobi.com", products)
+    assert "Stok yetersiz" not in html2
+    assert "stok yetersiz" not in event_notify._summary_line([no_stock], products)
+    text = event_notify._order_batch_text("Demo", [order], {}, products)
+    assert "Stok yetersiz (mevcut 2)" in text
+    assert "2 kalemde stok yetersiz" in text
+
+
+def test_quiet_hours_window_overnight_and_same_day():
+    qh = {"enabled": True, "start": "22:00", "end": "08:00"}
+    night = datetime(2026, 10, 15, 23, 0, tzinfo=event_notify.IST)
+    until = event_notify._quiet_hours_until(qh, night)
+    local = until.astimezone(event_notify.IST)
+    assert (local.hour, local.minute) == (8, 0)
+    assert local.date() == date(2026, 10, 16)
+    morning = datetime(2026, 10, 16, 7, 0, tzinfo=event_notify.IST)
+    until_m = event_notify._quiet_hours_until(qh, morning)
+    local_m = until_m.astimezone(event_notify.IST)
+    assert local_m.date() == date(2026, 10, 16)
+    assert (local_m.hour, local_m.minute) == (8, 0)
+    assert event_notify._quiet_hours_until(qh, datetime(2026, 10, 16, 10, 0, tzinfo=event_notify.IST)) is None
+    assert event_notify._quiet_hours_until(
+        {"enabled": False, "start": "22:00", "end": "08:00"}, night,
+    ) is None
+    same = {"enabled": True, "start": "12:00", "end": "14:00"}
+    until_s = event_notify._quiet_hours_until(same, datetime(2026, 10, 16, 13, 0, tzinfo=event_notify.IST))
+    local_s = until_s.astimezone(event_notify.IST)
+    assert local_s.date() == date(2026, 10, 16)
+    assert (local_s.hour, local_s.minute) == (14, 0)
+
+
+def _flush_at(send, when_utc, oid="o1"):
+    async def _run():
+        with patch.object(event_notify, "_now_utc", return_value=when_utc), \
+             _mail_patch(send), \
+             patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            await event_notify.notify_event(
+                "c1", "order_new", "Sipariş", "m", link="/orders",
+                ref_type="order", ref_id=oid,
+            )
+            inapps = list(event_notify._db.notifications.docs.values())
+            await event_notify.flush_notify_outbox()
+            return inapps
+    return asyncio.run(_run())
+
+
+def test_quiet_hours_flush_defers_overnight_and_morning(setup_en):
+    db, send, _ = setup_en
+    db.orders.docs["o1"] = _order("o1")
+
+    async def _prep():
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {
+                "inapp": True, "email": True, "sms": False, "digest": "batch", "batch_minutes": 0,
+                "quiet_hours": {"enabled": True, "start": "22:00", "end": "08:00"},
+            }},
+        })
+    asyncio.run(_prep())
+
+    night_utc = datetime(2026, 10, 15, 20, 0, tzinfo=timezone.utc)  # 23:00 IST
+    inapps = _flush_at(send, night_utc, "o1")
+    assert inapps
+    assert send.await_count == 0
+    row = next(iter(db.notify_outbox.docs.values()))
+    assert row["status"] == "deferred"
+    nxt = event_notify._parse_ts(row["next_try_at"]).astimezone(event_notify.IST)
+    assert (nxt.year, nxt.month, nxt.day, nxt.hour, nxt.minute) == (2026, 10, 16, 8, 0)
+
+    db.notify_outbox.docs.clear()
+    db.notifications.docs.clear()
+    db.notify_event_dedupe.docs.clear()
+    send.reset_mock()
+    db.orders.docs["o2"] = _order("o2")
+    morning_utc = datetime(2026, 10, 16, 4, 0, tzinfo=timezone.utc)  # 07:00 IST
+    _flush_at(send, morning_utc, "o2")
+    assert send.await_count == 0
+    row2 = next(iter(db.notify_outbox.docs.values()))
+    assert row2["status"] == "deferred"
+    nxt2 = event_notify._parse_ts(row2["next_try_at"]).astimezone(event_notify.IST)
+    assert (nxt2.year, nxt2.month, nxt2.day, nxt2.hour, nxt2.minute) == (2026, 10, 16, 8, 0)
+
+
+def test_quiet_hours_outside_sends_and_disabled_unchanged(setup_en):
+    db, send, _ = setup_en
+    db.orders.docs["o1"] = _order("o1")
+    db.orders.docs["o2"] = _order("o2")
+
+    async def _prep_on():
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {
+                "email": True, "sms": False, "digest": "batch", "batch_minutes": 0,
+                "quiet_hours": {"enabled": True, "start": "22:00", "end": "08:00"},
+            }},
+        })
+    asyncio.run(_prep_on())
+    day_utc = datetime(2026, 10, 16, 7, 0, tzinfo=timezone.utc)  # 10:00 IST
+    _flush_at(send, day_utc, "o1")
+    assert send.await_count >= 1
+    assert next(iter(db.notify_outbox.docs.values()))["status"] == "sent"
+
+    db.notify_outbox.docs.clear()
+    db.notifications.docs.clear()
+    db.notify_event_dedupe.docs.clear()
+    send.reset_mock()
+
+    async def _prep_off():
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {
+                "email": True, "sms": False, "digest": "batch", "batch_minutes": 0,
+                "quiet_hours": {"enabled": False, "start": "22:00", "end": "08:00"},
+            }},
+        })
+    asyncio.run(_prep_off())
+    night_utc = datetime(2026, 10, 15, 20, 0, tzinfo=timezone.utc)
+    _flush_at(send, night_utc, "o2")
+    assert send.await_count >= 1
+    assert next(iter(db.notify_outbox.docs.values()))["status"] == "sent"
+
+
+def test_invalid_quiet_hours_400(setup_en):
+    async def _run():
+        with pytest.raises(HTTPException) as ei:
+            await event_notify.save_prefs("c1", {
+                "events": {"order_new": {"quiet_hours": {"enabled": True, "start": "25:00", "end": "08:00"}}},
+            })
+        assert ei.value.status_code == 400
+        with pytest.raises(HTTPException) as ei2:
+            event_notify._norm_event_prefs({
+                "order_new": {"quiet_hours": {"enabled": True, "start": "22:00", "end": "8:00"}},
+            })
+        assert ei2.value.status_code == 400
+        with pytest.raises(HTTPException) as ei3:
+            event_notify._norm_event_prefs({"order_new": {"quiet_hours": "gece"}})
+        assert ei3.value.status_code == 400
+
+    asyncio.run(_run())
+
+
+def test_company_admin_cannot_write_quiet_hours(setup_en):
+    async def _run():
+        admin = {"_id": "u_admin", "company_ids": ["c1"], "active_company_id": "c1", "role": "admin"}
+        with pytest.raises(HTTPException) as ei:
+            await event_notify.put_notify_prefs_route(
+                {"company_id": "c1", "events": {"order_new": {
+                    "quiet_hours": {"enabled": True, "start": "22:00", "end": "08:00"},
+                }}},
+                user=admin,
+            )
+        assert ei.value.status_code == 403
+        assert ei.value.detail == event_notify.COMPANY_NOTIFY_FORBIDDEN
+        saved = await event_notify.put_saas_notify_prefs(
+            "c1",
+            {"events": {"order_new": {
+                "inapp": True, "email": True, "sms": False, "digest": "batch",
+                "quiet_hours": {"enabled": True, "start": "22:00", "end": "08:00"},
+            }}},
+            _sa(),
+        )
+        assert saved["events"]["order_new"]["quiet_hours"]["enabled"] is True
+        assert saved["events"]["order_new"]["quiet_hours"]["start"] == "22:00"
+
+    asyncio.run(_run())
+
+
+def test_notify_mail_log_super_admin_scoped(setup_en):
+    db, _send, _ = setup_en
+    db.mail_logs.docs["nl1"] = {
+        "_id": "nl1", "company_id": "c1", "context": "event_notify", "status": "sent",
+        "to": ["admin@demo.com"], "subject": "Sipariş A",
+        "created_at": "2026-10-15T12:00:00+00:00",
+    }
+    db.mail_logs.docs["nl2"] = {
+        "_id": "nl2", "company_id": "c2", "context": "event_notify", "status": "sent",
+        "to": ["x@other.com"], "subject": "Başka firma",
+        "created_at": "2026-10-15T13:00:00+00:00",
+    }
+    db.mail_logs.docs["nl3"] = {
+        "_id": "nl3", "company_id": "c1", "context": "invoice", "status": "sent",
+        "to": ["admin@demo.com"], "subject": "Fatura",
+        "created_at": "2026-10-15T14:00:00+00:00",
+    }
+    db.notify_outbox.docs["d1"] = {
+        "_id": "d1", "company_id": "c1", "status": "deferred", "event": "order_new",
+        "title": "Yeni sipariş", "next_try_at": "2026-10-16T05:00:00+00:00",
+        "created_at": "2026-10-15T20:00:00+00:00",
+    }
+    db.notify_outbox.docs["d2"] = {
+        "_id": "d2", "company_id": "c2", "status": "deferred", "event": "order_new",
+        "next_try_at": "2026-10-16T05:00:00+00:00",
+        "created_at": "2026-10-15T20:00:00+00:00",
+    }
+
+    async def _run():
+        with pytest.raises(HTTPException) as e404:
+            await event_notify.get_saas_notify_mail_log("missing", 50, _sa())
+        assert e404.value.status_code == 404
+        out = await event_notify.get_saas_notify_mail_log("c1", 50, _sa())
+        sent_ids = [r["id"] for r in out["sent"]]
+        assert sent_ids == ["nl1"]
+        assert out["sent"][0]["recipients"] == "admin@demo.com"
+        assert out["sent"][0]["subject"] == "Sipariş A"
+        assert out["sent"][0]["status"] == "sent"
+        assert out["sent"][0]["date_tr"]
+        def_ids = [r["id"] for r in out["deferred"]]
+        assert def_ids == ["d1"]
+        assert out["deferred"][0]["status"] == "deferred"
+        assert out["deferred"][0]["next_try_at"]
+        assert "08:00" in out["deferred"][0]["next_try_at_tr"]
+        too_many = await event_notify.get_saas_notify_mail_log("c1", 999, _sa())
+        assert len(too_many["sent"]) <= 200
 
     asyncio.run(_run())
 

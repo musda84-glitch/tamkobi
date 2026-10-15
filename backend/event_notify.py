@@ -51,6 +51,11 @@ DEFAULT_ORDER_BATCH_MINUTES = 10
 ORDER_BATCH_DETAIL = "Gruplama süresi 0, 5, 10, 15, 30 veya 60 dakika olabilir."
 DAILY_EMAIL_CAP_DETAIL = "Günlük e-posta limiti boş (limitsiz) veya 0 ve üzeri tam sayı olmalıdır."
 COMPANY_NOTIFY_FORBIDDEN = "Bildirim ayarları Platform Yönetimi'nden yapılır."
+QUIET_HOURS_DETAIL = "Sessiz saatler HH:MM biçiminde olmalıdır (ör. 22:00)."
+DEFAULT_QUIET_HOURS = {"enabled": False, "start": "22:00", "end": "08:00"}
+NOTIFY_MAIL_LOG_LIMIT_MAX = 200
+_PENDING_ORDER_STATUSES = {"pending"}
+_APPROVED_ORDER_STATUSES = {"approved", "preparing"}
 IST = ZoneInfo("Europe/Istanbul")
 BATCH_SUMMARY_THRESHOLD = 5
 ORDER_MAIL_MAX_ORDERS = 20
@@ -79,7 +84,15 @@ async def _user_dep(request: Request) -> dict:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return _now_utc().isoformat()
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _default_quiet_hours() -> dict:
+    return dict(DEFAULT_QUIET_HOURS)
 
 
 def _today() -> str:
@@ -153,6 +166,77 @@ def _parse_daily_email_cap(val, *, strict: bool) -> Optional[int]:
     return n
 
 
+def _parse_hhmm(val, *, strict: bool) -> Optional[Tuple[int, int]]:
+    text = str(val if val is not None else "").strip()
+    m = re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", text)
+    if not m:
+        if strict:
+            raise HTTPException(status_code=400, detail=QUIET_HOURS_DETAIL)
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def _norm_quiet_hours(raw, *, strict: bool) -> Optional[dict]:
+    """{enabled, start, end}. Yoksa None (kayıt kayıpsız); geçersiz HH:MM → 400."""
+    if raw is None or raw == "":
+        return None if not strict else _default_quiet_hours()
+    if not isinstance(raw, dict):
+        if strict:
+            raise HTTPException(status_code=400, detail=QUIET_HOURS_DETAIL)
+        return None
+    start_raw = raw["start"] if "start" in raw and raw.get("start") not in (None, "") else DEFAULT_QUIET_HOURS["start"]
+    end_raw = raw["end"] if "end" in raw and raw.get("end") not in (None, "") else DEFAULT_QUIET_HOURS["end"]
+    start = _parse_hhmm(start_raw, strict=strict)
+    end = _parse_hhmm(end_raw, strict=strict)
+    if start is None or end is None:
+        if strict:
+            raise HTTPException(status_code=400, detail=QUIET_HOURS_DETAIL)
+        return None
+    sh, sm = start
+    eh, em = end
+    return {
+        "enabled": bool(raw["enabled"]) if "enabled" in raw else False,
+        "start": f"{sh:02d}:{sm:02d}",
+        "end": f"{eh:02d}:{em:02d}",
+    }
+
+
+def _quiet_hours_of(prefs: Optional[Mapping]) -> dict:
+    events = (prefs or {}).get("events") if isinstance(prefs, Mapping) else None
+    raw = events.get("order_new") if isinstance(events, dict) else None
+    qh = raw.get("quiet_hours") if isinstance(raw, dict) else None
+    return _norm_quiet_hours(qh, strict=False) or _default_quiet_hours()
+
+
+def _quiet_hours_until(qh: Optional[Mapping], now: Optional[datetime] = None) -> Optional[datetime]:
+    """Sessiz aralıktaysa aralık sonunu UTC olarak döner (gece yarısı aşımı dahil)."""
+    if not isinstance(qh, Mapping) or not qh.get("enabled"):
+        return None
+    start = _parse_hhmm(qh.get("start") or DEFAULT_QUIET_HOURS["start"], strict=False)
+    end = _parse_hhmm(qh.get("end") or DEFAULT_QUIET_HOURS["end"], strict=False)
+    if start is None or end is None:
+        return None
+    sh, sm = start
+    eh, em = end
+    start_sec = sh * 3600 + sm * 60
+    end_sec = eh * 3600 + em * 60
+    if start_sec == end_sec:
+        return None
+    local = (now or _now_utc()).astimezone(IST)
+    now_sec = local.hour * 3600 + local.minute * 60 + local.second
+    overnight = start_sec > end_sec
+    if overnight:
+        in_window = now_sec >= start_sec or now_sec < end_sec
+    else:
+        in_window = start_sec <= now_sec < end_sec
+    if not in_window:
+        return None
+    end_dt = local.replace(hour=eh, minute=em, second=0, microsecond=0)
+    if overnight and now_sec >= start_sec:
+        end_dt = end_dt + timedelta(days=1)
+    return end_dt.astimezone(timezone.utc)
+
+
 def _norm_event_prefs(raw: Optional[dict]) -> dict:
     out = {}
     src = raw if isinstance(raw, dict) else {}
@@ -173,6 +257,11 @@ def _norm_event_prefs(raw: Optional[dict]) -> dict:
             if parsed is None:
                 raise HTTPException(status_code=400, detail=ORDER_BATCH_DETAIL)
             item["batch_minutes"] = parsed
+        if ev == "order_new" and "quiet_hours" in cur:
+            parsed_qh = _norm_quiet_hours(cur.get("quiet_hours"), strict=True)
+            if parsed_qh is None:
+                raise HTTPException(status_code=400, detail=QUIET_HOURS_DETAIL)
+            item["quiet_hours"] = parsed_qh
         out[ev] = item
     return out
 
@@ -223,6 +312,13 @@ async def save_prefs(company_id: str, body: dict) -> dict:
     cid = str(company_id or "").strip()
     cur = await get_prefs(cid)
     events = _norm_event_prefs(body.get("events") if isinstance(body.get("events"), dict) else cur.get("events"))
+    order_ev = events.get("order_new") if isinstance(events.get("order_new"), dict) else None
+    if order_ev is not None and "quiet_hours" not in order_ev:
+        prev_qh = ((cur.get("events") or {}).get("order_new") or {}).get("quiet_hours")
+        if prev_qh is not None:
+            kept = _norm_quiet_hours(prev_qh, strict=False)
+            if kept:
+                order_ev["quiet_hours"] = kept
     extra = _norm_extra_emails(body["extra_emails"] if "extra_emails" in body else cur.get("extra_emails"))
     ef = str(body.get("email_from") if "email_from" in body else cur.get("email_from") or "platform").strip().lower()
     if ef not in EMAIL_FROM_MODES:
@@ -454,6 +550,7 @@ async def present_prefs(doc: dict, *, with_usage: bool = False) -> dict:
     events = out.get("events") or {}
     order = dict(events.get("order_new") or {})
     order["batch_minutes"] = await resolve_order_batch_minutes(cid, prefs=doc)
+    order["quiet_hours"] = _norm_quiet_hours(order.get("quiet_hours"), strict=False) or _default_quiet_hours()
     events["order_new"] = order
     out["events"] = events
     plat = await _platform_daily_email_cap()
@@ -1346,7 +1443,92 @@ def _currency_totals(orders: List[dict]) -> Dict[str, float]:
     return out
 
 
-def _summary_line(orders: List[dict]) -> str:
+def _order_status_key(order: Mapping) -> str:
+    return str(order.get("order_status") or order.get("status") or "").strip().lower()
+
+
+def _order_status_label(order: Mapping) -> str:
+    st = _order_status_key(order)
+    if st in _PENDING_ORDER_STATUSES:
+        return "Onay bekliyor"
+    if st in _APPROVED_ORDER_STATUSES:
+        return "Onaylı"
+    return ""
+
+
+def _pending_approval_count(orders: List[dict]) -> int:
+    return sum(1 for o in orders if _order_status_key(o) in _PENDING_ORDER_STATUSES)
+
+
+def _stock_number(obj: Optional[Mapping], *keys: str) -> Optional[float]:
+    if not isinstance(obj, Mapping):
+        return None
+    for key in keys:
+        if key not in obj:
+            continue
+        val = obj.get(key)
+        if val in (None, ""):
+            continue
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _line_available_stock(item: Mapping, product: Mapping, variant: Optional[Mapping]) -> Optional[float]:
+    if variant:
+        vs = _stock_number(variant, "stock", "stock_quantity")
+        if vs is not None:
+            return vs
+    return _stock_number(product, "stock_quantity", "stock")
+
+
+def _line_stock_warning(item: Mapping, product: Mapping, variant: Optional[Mapping]) -> str:
+    stock = _line_available_stock(item, product, variant)
+    if stock is None:
+        return ""
+    try:
+        qty = float(item.get("quantity") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if qty > stock:
+        return f"Stok yetersiz (mevcut {_fmt_qty(stock)})"
+    return ""
+
+
+def _stock_shortage_count(orders: List[dict], products: Optional[Mapping] = None) -> int:
+    products = products or {}
+    n = 0
+    for order in orders:
+        for it in order.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            product = _product_of(it, products)
+            variant = _match_variant(it, product)
+            if _line_stock_warning(it, product, variant):
+                n += 1
+    return n
+
+
+def _status_badge_html(order: Mapping) -> str:
+    label = _order_status_label(order)
+    if not label:
+        return ""
+    if label == "Onay bekliyor":
+        bg, fg = "#fef3c7", "#92400e"
+    else:
+        bg, fg = "#d1fae5", "#065f46"
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        f'<td bgcolor="{bg}" style="background-color:{bg};padding:2px 8px;'
+        f'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;'
+        f'font-weight:bold;color:{fg};">{_esc(label)}</td>'
+        "</tr></table>"
+    )
+
+
+def _summary_line(orders: List[dict], products: Optional[Mapping] = None) -> str:
     parts = [f"{len(orders)} sipariş"]
     totals = _currency_totals(orders)
     for cur, amount in totals.items():
@@ -1354,6 +1536,12 @@ def _summary_line(orders: List[dict]) -> str:
     clock = _clock_span(orders)
     if clock:
         parts.append(clock)
+    pending = _pending_approval_count(orders)
+    if pending:
+        parts.append(f"{pending} onay bekliyor")
+    short = _stock_shortage_count(orders, products)
+    if short:
+        parts.append(f"{short} kalemde stok yetersiz")
     return " · ".join(parts)
 
 
@@ -1513,6 +1701,11 @@ def _lines_html(order: dict, base: str, products: Optional[Mapping] = None) -> s
             meta_html = (
                 f'<br><span class="tk-muted" style="font-size:12px;line-height:16px;color:#64748b;">{_esc(meta)}</span>'
             )
+        warn = _line_stock_warning(it, product, variant)
+        if warn:
+            meta_html += (
+                f'<br><span style="font-size:11px;line-height:14px;color:#b91c1c;">{_esc(warn)}</span>'
+            )
         rows.append(
             "<tr>"
             f"{_visual_cell(url, name)}"
@@ -1564,6 +1757,9 @@ def _order_card_html(order: dict, link: str, base: str, products: Mapping) -> st
         _kv_row("Kanal", _esc(channel_label(order.get("channel")))),
         _kv_row("Müşteri", _esc(order.get("customer_name") or "")),
     ]
+    badge = _status_badge_html(order)
+    if badge:
+        rows.append(_kv_row("Durum", badge))
     if when:
         rows.append(_kv_row("Tarih/saat", _esc(_fmt_tr_dt(when))))
     if note:
@@ -1601,7 +1797,7 @@ def _order_batch_html(
     shown = orders[:ORDER_MAIL_MAX_ORDERS]
     extra_orders = len(orders) - len(shown)
     subject = _batch_subject(orders)
-    summary = _summary_line(orders)
+    summary = _summary_line(orders, products)
     logo = order_image_url(logo_url, base, thumb=False) if logo_url else ""
     if logo:
         logo_html = (
@@ -1692,12 +1888,15 @@ def _order_batch_text(
     products = products or {}
     shown = orders[:ORDER_MAIL_MAX_ORDERS]
     extra_orders = len(orders) - len(shown)
-    lines = [company_name, "", _batch_subject(orders), _summary_line(orders), ""]
+    lines = [company_name, "", _batch_subject(orders), _summary_line(orders, products), ""]
     for order in shown:
         oid = str(order.get("_id") or "")
         no = str(order.get("order_number") or oid)
         cur = str(order.get("currency") or "TRY")
         lines.append(f"Sipariş No: {no}")
+        st_label = _order_status_label(order)
+        if st_label:
+            lines.append(f"Durum: {st_label}")
         lines.append(f"Kanal: {channel_label(order.get('channel'))}")
         lines.append(f"Müşteri: {order.get('customer_name') or ''}")
         when = _order_local_dt(order)
@@ -1714,9 +1913,13 @@ def _order_batch_text(
             name = _line_name(it, product)
             meta = _line_meta(it, product, variant)
             label = f"{name} ({meta})" if meta else name
-            lines.append(
+            warn = _line_stock_warning(it, product, variant)
+            line = (
                 f"- {label} · {_fmt_qty(it.get('quantity'))} · {_fmt_money(unit, cur)} · {_fmt_money(line_total, cur)}"
             )
+            if warn:
+                line += f" · {warn}"
+            lines.append(line)
         extra = len(items) - ORDER_MAIL_MAX_LINES
         if extra > 0:
             lines.append(f"ve {extra} kalem daha")
@@ -1937,7 +2140,8 @@ async def _products_for_orders(company_id: str, orders: List[dict]) -> Dict[str,
             {"company_id": company_id, "_id": {"$in": ids}},
             {
                 "name": 1, "sku": 1, "thumbnail_url": 1, "image_url": 1,
-                "images": 1, "variants": 1, "company_id": 1,
+                "images": 1, "variants": 1, "stock_quantity": 1, "stock": 1,
+                "company_id": 1,
             },
         )
         rows = await _to_list(cursor, max(len(ids), 1) + 5)
@@ -2046,6 +2250,11 @@ async def _deliver_order_batch(company_id: str, rows: List[dict], claim_id: str)
         await _mark_rows(active, claim_id, "skipped")
         return len(rows)
 
+    qh_until = _quiet_hours_until(_quiet_hours_of(prefs))
+    if qh_until is not None and (want_email or want_sms):
+        await _defer_rows(active, claim_id, qh_until.isoformat())
+        return len(rows)
+
     if want_email and not all(r.get("email_sent") for r in active):
         blocked, nxt = await _email_over_cap(company_id, prefs)
         if blocked:
@@ -2144,7 +2353,7 @@ async def _deliver_generic(company_id: str, event: str, rows: List[dict], claim_
 async def flush_notify_outbox(*, force: bool = False) -> dict:
     """Saatlik/günlük özet ve order_new gruplamasını claim ile işler."""
     await _release_stale_sending()
-    now = datetime.now(timezone.utc)
+    now = _now_utc()
     now_iso = now.isoformat()
     try:
         pending = await _to_list(
@@ -2281,3 +2490,84 @@ async def put_saas_notify_prefs(
     saved = await save_prefs(cid, req or {})
     await _audit_prefs_put(cid, admin, before, saved, f"/api/saas/companies/{cid}/notify-prefs")
     return await present_prefs(await get_prefs(cid), with_usage=True)
+
+
+def _iso_tr(raw) -> str:
+    if not raw:
+        return ""
+    try:
+        return _fmt_tr_dt(_parse_ts(str(raw)).astimezone(IST))
+    except (TypeError, ValueError):
+        return str(raw)
+
+
+def _recipients_text(raw) -> str:
+    if isinstance(raw, list):
+        return ", ".join(str(x).strip() for x in raw if str(x or "").strip())
+    return str(raw or "").strip()
+
+
+def _clamp_mail_log_limit(limit) -> int:
+    try:
+        lim = int(limit)
+    except (TypeError, ValueError):
+        lim = 50
+    return min(max(lim, 1), NOTIFY_MAIL_LOG_LIMIT_MAX)
+
+
+@router.get("/saas/companies/{company_id}/notify-mail-log")
+async def get_saas_notify_mail_log(
+    company_id: str,
+    limit: int = 50,
+    _: dict = Depends(saas.require_super_admin),
+):
+    cid = await _require_existing_company(company_id)
+    lim = _clamp_mail_log_limit(limit)
+    try:
+        logs = await _to_list(
+            _db.mail_logs.find({"company_id": cid, "context": "event_notify"}),
+            20000,
+        )
+    except Exception:
+        logger.exception("notify mail log company=%s", cid)
+        logs = []
+    logs.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    sent = []
+    for row in logs[:lim]:
+        to_raw = row.get("to") if "to" in row else row.get("recipients")
+        sent.append({
+            "id": str(row.get("_id") or row.get("id") or ""),
+            "created_at": str(row.get("created_at") or ""),
+            "date_tr": _iso_tr(row.get("created_at")),
+            "to": list(to_raw) if isinstance(to_raw, list) else ([to_raw] if to_raw else []),
+            "recipients": _recipients_text(to_raw),
+            "subject": str(row.get("subject") or "")[:500],
+            "status": str(row.get("status") or ""),
+        })
+    try:
+        deferred_rows = await _to_list(
+            _db.notify_outbox.find({"company_id": cid, "status": "deferred"}),
+            5000,
+        )
+    except Exception:
+        logger.exception("notify deferred log company=%s", cid)
+        deferred_rows = []
+    deferred_rows.sort(key=lambda r: str(r.get("next_try_at") or r.get("created_at") or ""), reverse=True)
+    deferred = []
+    for row in deferred_rows[:lim]:
+        title = str(row.get("title") or row.get("subject") or "").strip()
+        ev = str(row.get("event") or "")
+        if not title:
+            title = EVENT_LABELS.get(ev, ev)
+        deferred.append({
+            "id": str(row.get("_id") or ""),
+            "created_at": str(row.get("created_at") or ""),
+            "date_tr": _iso_tr(row.get("created_at")),
+            "next_try_at": str(row.get("next_try_at") or ""),
+            "next_try_at_tr": _iso_tr(row.get("next_try_at")),
+            "status": "deferred",
+            "event": ev,
+            "subject": title[:500],
+            "recipients": "",
+        })
+    return {"sent": sent, "deferred": deferred}

@@ -13,6 +13,26 @@ function orderBatchMinutes(events) {
   return ORDER_BATCH_MINUTES.includes(raw) ? raw : 10;
 }
 
+function quietHours(events) {
+  const raw = (events?.order_new || {}).quiet_hours || {};
+  return {
+    enabled: !!raw.enabled,
+    start: raw.start || "22:00",
+    end: raw.end || "08:00",
+  };
+}
+
+function mailLogUrl(companyId) {
+  return `${API_URL}/saas/companies/${companyId}/notify-mail-log`;
+}
+
+const MAIL_STATUS_TR = {
+  sent: "Gönderildi",
+  deferred: "Ertelendi",
+  failed: "Hata",
+  skipped: "Atlandı",
+};
+
 const FALLBACK_LABELS = {
   einvoice_incoming: "Gelen e-Fatura",
   order_new: "Yeni sipariş",
@@ -33,6 +53,7 @@ function prefsUrl(mode, companyId) {
 export function NotifyPrefsPanel({ companyId, mode = "company" }) {
   const [prefs, setPrefs] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [mailLog, setMailLog] = useState({ sent: [], deferred: [] });
   const isPlatform = mode === "platform";
   const url = prefsUrl(mode, companyId);
 
@@ -42,6 +63,12 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
       ? axios.get(url, cred)
       : axios.get(url, { params: { company_id: companyId } });
     req.then((r) => setPrefs(r.data)).catch(() => toast.error("Bildirim tercihleri yüklenemedi."));
+    if (isPlatform) {
+      axios
+        .get(mailLogUrl(companyId), { params: { limit: 50 }, ...cred })
+        .then((r) => setMailLog({ sent: r.data?.sent || [], deferred: r.data?.deferred || [] }))
+        .catch(() => setMailLog({ sent: [], deferred: [] }));
+    }
   }, [companyId, isPlatform, url]);
 
   if (!prefs) {
@@ -75,6 +102,7 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
         order_new: {
           ...((prefs.events || {}).order_new || {}),
           batch_minutes: orderBatchMinutes(prefs.events),
+          ...(isPlatform ? { quiet_hours: quietHours(prefs.events) } : {}),
         },
       };
       const extra = String(prefs.extra_emails_text ?? (prefs.extra_emails || []).join(", "))
@@ -187,6 +215,43 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
       </div>
 
       {isPlatform ? (
+        <div className="rounded-xl border border-slate-200 p-3 space-y-2" data-testid="notify-quiet-hours">
+          <label className="flex items-center gap-2 font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={quietHours(events).enabled}
+              onChange={(e) => setEvent("order_new", "quiet_hours", { ...quietHours(events), enabled: e.target.checked })}
+              data-testid="notify-quiet-hours-enabled"
+            />
+            Sessiz saatler
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-500 mb-1">Başlangıç</label>
+              <input
+                type="time"
+                value={quietHours(events).start}
+                onChange={(e) => setEvent("order_new", "quiet_hours", { ...quietHours(events), start: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                data-testid="notify-quiet-hours-start"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-500 mb-1">Bitiş</label>
+              <input
+                type="time"
+                value={quietHours(events).end}
+                onChange={(e) => setEvent("order_new", "quiet_hours", { ...quietHours(events), end: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                data-testid="notify-quiet-hours-end"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500">Bu saatlerde (Europe/Istanbul) e-posta ve SMS aralık sonuna ertelenir; uygulama içi bildirim ve push gider.</p>
+        </div>
+      ) : null}
+
+      {isPlatform ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="notify-email-cap-block">
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Günlük e-posta limiti</label>
@@ -244,6 +309,65 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
           />
         </div>
       </div>
+
+      {isPlatform ? (
+        <div className="space-y-3" data-testid="notify-mail-log">
+          <div>
+            <div className="text-sm font-bold text-slate-900 mb-1">Son gönderimler</div>
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left" data-testid="notify-mail-log-sent">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Tarih</th>
+                    <th className="px-3 py-2 font-semibold">Alıcılar</th>
+                    <th className="px-3 py-2 font-semibold">Konu</th>
+                    <th className="px-3 py-2 font-semibold">Durum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(mailLog.sent || []).length === 0 ? (
+                    <tr><td colSpan={4} className="px-3 py-3 text-slate-400">Kayıt yok</td></tr>
+                  ) : (mailLog.sent || []).map((row) => (
+                    <tr key={row.id || row.created_at} className="border-t border-slate-100" data-testid="notify-mail-log-sent-row">
+                      <td className="px-3 py-2 whitespace-nowrap">{row.date_tr || "—"}</td>
+                      <td className="px-3 py-2">{row.recipients || (row.to || []).join(", ") || "—"}</td>
+                      <td className="px-3 py-2">{row.subject || "—"}</td>
+                      <td className="px-3 py-2">{MAIL_STATUS_TR[row.status] || row.status || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Ertelenen</div>
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left" data-testid="notify-mail-log-deferred">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Tarih</th>
+                    <th className="px-3 py-2 font-semibold">Konu</th>
+                    <th className="px-3 py-2 font-semibold">Sonraki deneme</th>
+                    <th className="px-3 py-2 font-semibold">Durum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(mailLog.deferred || []).length === 0 ? (
+                    <tr><td colSpan={4} className="px-3 py-3 text-slate-400">Ertelenen yok</td></tr>
+                  ) : (mailLog.deferred || []).map((row) => (
+                    <tr key={row.id || row.next_try_at} className="border-t border-slate-100" data-testid="notify-mail-log-deferred-row">
+                      <td className="px-3 py-2 whitespace-nowrap">{row.date_tr || "—"}</td>
+                      <td className="px-3 py-2">{row.subject || "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{row.next_try_at_tr || "—"}</td>
+                      <td className="px-3 py-2">{MAIL_STATUS_TR[row.status] || row.status || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex justify-end">
         <button type="submit" disabled={busy} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold disabled:opacity-60" data-testid="notify-prefs-save">
