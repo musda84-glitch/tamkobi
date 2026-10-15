@@ -197,3 +197,146 @@ def test_other_company_employee_does_not_protect_this_company():
     assert report["count"] == 1
     assert db.bonus_payments.docs == []
     assert db.employees.docs[0]["company_id"] == "c2"
+
+
+def test_cli_dry_run_real_mysql_lists_name_amount_and_prim_id(monkeypatch, tmp_path):
+    """Script gerçek MySQLClient[db] ile çalışır; dry-run ad, tutar ve prim id yazar.
+
+    Veritabanı nesnesi MySQLDatabase'dir (sahte koleksiyon yok). Olmayan firma
+    id'si sıfırdan farklı çıkar. Dry-run kayıt silmez.
+    """
+    import json
+    import subprocess
+    import uuid
+
+    from mysql_store import MySQLClient, MySQLDatabase, mysql_settings_from_env
+
+    db_name = "tamkobi_orphan_prim_test"
+    monkeypatch.setenv("TAMKOBI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MYSQL_HOST", os.environ.get("MYSQL_HOST", "127.0.0.1"))
+    monkeypatch.setenv("MYSQL_PORT", os.environ.get("MYSQL_PORT", "3306"))
+    monkeypatch.setenv("MYSQL_USER", os.environ.get("MYSQL_USER", "tamkobi"))
+    monkeypatch.setenv("MYSQL_PASSWORD", os.environ.get("MYSQL_PASSWORD", "tamkobi"))
+    monkeypatch.setenv("MYSQL_DATABASE", db_name)
+    monkeypatch.setenv("DB_NAME", db_name)
+    monkeypatch.setenv("MYSQL_URL", "")
+    monkeypatch.setenv("DATABASE_URL", "")
+
+    company = f"co_prim_{uuid.uuid4().hex[:8]}"
+    missing = f"co_yok_{uuid.uuid4().hex[:8]}"
+    live_id = f"emp_live_{uuid.uuid4().hex[:8]}"
+    bonus_id = f"prim_{uuid.uuid4().hex[:10]}"
+    live_bonus_id = f"prim_live_{uuid.uuid4().hex[:10]}"
+    employee_name = "Silinmiş Kerem"
+    amount = 1375
+
+    async def seed():
+        import pymysql
+
+        cfg = mysql_settings_from_env()
+        assert cfg["db"] == db_name
+        conn = pymysql.connect(
+            host=cfg["host"],
+            port=int(cfg["port"]),
+            user=cfg["user"],
+            password=cfg["password"],
+            charset="utf8mb4",
+            autocommit=True,
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"CREATE DATABASE IF NOT EXISTS `{db_name}` "
+                    "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                )
+        finally:
+            conn.close()
+
+        client = MySQLClient()
+        assert type(client).__name__ == "MySQLClient"
+        try:
+            client.employees
+        except AttributeError:
+            pass
+        else:
+            raise AssertionError("MySQLClient.employees AttributeError vermeli")
+        db = client[db_name]
+        assert isinstance(db, MySQLDatabase)
+        assert type(db).__name__ == "MySQLDatabase"
+        await db._ensure()
+        await db.companies.delete_many({"_id": company})
+        await db.employees.delete_many({"company_id": company})
+        await db.bonus_payments.delete_many({"company_id": company})
+        await db.companies.insert_one({"_id": company, "name": "Prim Test Firma"})
+        await db.employees.insert_one({
+            "_id": live_id, "company_id": company, "full_name": "Ayşe Canlı",
+        })
+        await db.bonus_payments.insert_one({
+            "_id": bonus_id,
+            "company_id": company,
+            "employee_id": f"gone_{uuid.uuid4().hex[:6]}",
+            "employee_name": employee_name,
+            "type": "bonus",
+            "status": "pending",
+            "amount": amount,
+        })
+        await db.bonus_payments.insert_one({
+            "_id": live_bonus_id,
+            "company_id": company,
+            "employee_id": live_id,
+            "employee_name": "Ayşe Canlı",
+            "type": "bonus",
+            "status": "pending",
+            "amount": 40,
+        })
+        await client.close_async()
+
+    _run(seed())
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "cleanup_orphan_prims.py"
+    env = os.environ.copy()
+    proc = subprocess.run(
+        [sys.executable, str(script), "--company", company, "--dry-run"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "dry-run" in proc.stdout
+    assert "has no attribute" not in proc.stderr
+    payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+    assert payload["dry_run"] is True
+    assert payload["count"] == 1
+    row = payload["rows"][0]
+    assert row["bonus_id"] == bonus_id
+    assert row["employee_name"] == employee_name
+    assert row["amount"] == amount
+    assert employee_name in proc.stdout
+    assert str(amount) in proc.stdout
+    assert bonus_id in proc.stdout
+    assert live_bonus_id not in proc.stdout
+
+    missing_proc = subprocess.run(
+        [sys.executable, str(script), "--company", missing],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert missing_proc.returncode != 0
+    assert missing in missing_proc.stderr
+    assert "firma bulunamadı" in missing_proc.stderr
+    assert "has no attribute" not in missing_proc.stderr
+
+    async def check():
+        client = MySQLClient()
+        db = client[db_name]
+        left = await db.bonus_payments.find({"company_id": company}).to_list(20)
+        await db.bonus_payments.delete_many({"company_id": company})
+        await db.employees.delete_many({"company_id": company})
+        await db.companies.delete_many({"_id": company})
+        await client.close_async()
+        return {row["_id"] for row in left}
+
+    assert _run(check()) == {bonus_id, live_bonus_id}
