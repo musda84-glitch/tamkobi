@@ -4,6 +4,7 @@ import { act } from "react";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import axios from "axios";
+import { toast } from "sonner";
 import { PlatformMailInbox } from "./PlatformMailInbox";
 import { PlatformMailPanel } from "./PlatformMailPanel";
 
@@ -164,4 +165,60 @@ test("posta paneli gelen kutusunu mevcut formların yanında gösterir", async (
   expect(host.querySelector("[data-testid='mail-server-form']")).toBeTruthy();
   expect(host.querySelector("[data-testid='mail-box-form']")).toBeTruthy();
   expect(host.querySelector("[data-testid='platform-mail-inbox']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='platform-mail-inbox']").className).toContain("max-md:hidden");
+  expect(host.querySelector("[data-testid='mail-inbox-password-hint']")).toBeNull();
+});
+
+test("şifresi olmayan kutu hata mesajını, yönlendirmeyi ve düzenle düğmesini gösterir", async () => {
+  toast.error.mockClear();
+  const onEdit = jest.fn();
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/messages")) {
+      return Promise.reject({ response: { data: { detail: "Bu kutunun şifresi tanımlı değil." } } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  await render(<PlatformMailInbox mailboxes={mailboxes} onEdit={onEdit} />);
+  const section = host.querySelector("[data-testid='platform-mail-inbox']");
+  const hint = host.querySelector("[data-testid='mail-inbox-password-hint']");
+  expect(section.className).toContain("max-md:hidden");
+  expect(section.contains(hint)).toBe(true);
+  expect(hint.textContent).toContain("Bu kutunun şifresi tanımlı değil.");
+  expect(hint.textContent).toContain("Kutuyu düzenleyip şifre girin.");
+  expect(host.querySelector("[data-testid='mail-inbox-edit-password']").textContent).toContain("Düzenle");
+  expect(host.querySelector("[data-testid='mail-inbox-empty']")).toBeNull();
+  expect(toast.error).toHaveBeenCalledWith("Bu kutunun şifresi tanımlı değil.");
+  expect(host.textContent).not.toMatch(/password_enc|box-mail-secret|server-smtp-secret/);
+  await act(async () => {
+    host.querySelector("[data-testid='mail-inbox-edit-password']").click();
+  });
+  expect(onEdit).toHaveBeenCalledWith("pmb1");
+});
+
+test("gönderim şifre hatasında aynı yönlendirme ve düzenle düğmesi açılır", async () => {
+  toast.error.mockClear();
+  axios.post.mockRejectedValue({
+    response: { data: { detail: "SMTP şifresi tanımlı değil (sunucu veya kutu)." } },
+  });
+  await render(<PlatformMailPanel />);
+  expect(host.querySelector("[data-testid='mail-inbox-row-5']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='mail-inbox-password-hint']")).toBeNull();
+  await act(async () => {
+    host.querySelector("[data-testid='mail-box-test-pmb1']").click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const section = host.querySelector("[data-testid='platform-mail-inbox']");
+  const hint = host.querySelector("[data-testid='mail-inbox-password-hint']");
+  expect(section.className).toContain("max-md:hidden");
+  expect(section.contains(hint)).toBe(true);
+  expect(hint.textContent).toContain("SMTP şifresi tanımlı değil (sunucu veya kutu).");
+  expect(hint.textContent).toContain("Kutuyu düzenleyip şifre girin.");
+  expect(toast.error).toHaveBeenCalledWith("SMTP şifresi tanımlı değil (sunucu veya kutu).");
+  await act(async () => {
+    host.querySelector("[data-testid='mail-inbox-edit-password']").click();
+  });
+  expect(host.querySelector("[data-testid='mail-box-email']").value).toBe("destek@tamkobi.com");
+  expect(host.querySelector("[data-testid='mail-box-password']").value).toBe("");
+  expect(host.textContent).toContain("Gönderen kimliğini düzenle");
 });

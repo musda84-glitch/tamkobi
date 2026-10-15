@@ -26,6 +26,9 @@ PURPOSES = {
     "general": "Genel",
 }
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAILBOX_PASSWORD_MISSING = "Bu kutunun şifresi tanımlı değil."
+SMTP_PASSWORD_MISSING = "SMTP şifresi tanımlı değil (sunucu veya kutu)."
+MAILBOX_PASSWORD_UNREADABLE = "Kutu şifresi okunamadı."
 
 
 def init(db):
@@ -111,17 +114,62 @@ async def _box(bid: str) -> dict:
     return row
 
 
+def _smtp_login_matches(box: dict, server: Optional[dict]) -> bool:
+    """Kutu adresi, sunucunun SMTP kullanıcı adıyla aynı mı (büyük/küçük harf duyarsız)."""
+    if not server:
+        return False
+    mailbox = _norm_email(box.get("email") or "")
+    login = (server.get("smtp_user") or "").strip().lower()
+    return bool(mailbox) and mailbox == login
+
+
+def _mailbox_password(box: dict) -> str:
+    """Kutunun kendi şifresi. Bozuk kayıt sunucu şifresine düşmez; metin loglanmaz."""
+    text = str(box.get("password_enc") or "").strip()
+    if not text:
+        return ""
+    try:
+        return (comm_service.decrypt(text) or "").strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail=MAILBOX_PASSWORD_UNREADABLE) from None
+
+
+def _server_password(server: Optional[dict]) -> str:
+    if not server:
+        return ""
+    text = str(server.get("password_enc") or "").strip()
+    if not text:
+        return ""
+    try:
+        return (comm_service.decrypt(text) or "").strip()
+    except Exception:
+        return ""
+
+
+async def resolve_mailbox_password(box: dict, server: Optional[dict] = None) -> str:
+    """Kutu şifresi; boşsa ve adres SMTP kullanıcısıyla aynıysa sunucu şifresi.
+
+    Dönen değer çağıranın SMTP/IMAP oturumunda kalır. Yanıta ve loga yazılmaz.
+    """
+    own = _mailbox_password(box)
+    if own:
+        return own
+    if server is None:
+        sid = str(box.get("server_id") or "").strip()
+        if sid and _db is not None:
+            server = await _db.platform_mail_servers.find_one({"_id": sid})
+    if not _smtp_login_matches(box, server):
+        return ""
+    return _server_password(server)
+
+
 async def _smtp_dict(box: dict, server: Optional[dict] = None) -> dict:
     server = server or (await _db.platform_mail_servers.find_one({"_id": box["server_id"]}) if box.get("server_id") else None)
     if not server:
         raise HTTPException(status_code=400, detail="Kutu bir posta sunucusuna bağlı değil.")
-    password = None
-    if box.get("password_enc"):
-        password = comm_service.decrypt(box["password_enc"])
-    elif server.get("password_enc"):
-        password = comm_service.decrypt(server["password_enc"])
+    password = await resolve_mailbox_password(box, server)
     if not password:
-        raise HTTPException(status_code=400, detail="SMTP şifresi tanımlı değil (sunucu veya kutu).")
+        raise HTTPException(status_code=400, detail=SMTP_PASSWORD_MISSING)
     return {
         "email": box["email"],
         "display_name": box.get("display_name") or box["email"],
