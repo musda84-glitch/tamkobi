@@ -154,7 +154,7 @@ def test_invoiced_yes_no_and_einvoice():
     rows = [
         _row(order_number="NONE"),
         _row(order_number="INV", invoice_id="inv1", is_invoiced=True),
-        _row(order_number="GIB", invoice_id="inv2", is_invoiced=True, einvoice_state="sent", gib_invoice_id="GIB1"),
+        _row(order_number="GIB", invoice_id="inv2", is_invoiced=True, invoice_e_type="e_archive", einvoice_state="sent", gib_invoice_id="GIB1"),
     ]
     assert _ids(query_orders(rows, OrderListFilter(invoiced="yes", sort="number_asc"))) == ["GIB", "INV"]
     assert _ids(query_orders(rows, OrderListFilter(invoiced="no"))) == ["NONE"]
@@ -219,6 +219,7 @@ def test_combined_filters_are_and():
         channel="trendyol",
         invoice_id="inv",
         is_invoiced=True,
+        invoice_e_type="e_invoice",
         einvoice_state="accepted",
         cargo_tracking_number="",
         items=[{"product_name": "Ürün", "sku": "SKU-77"}],
@@ -420,4 +421,4 @@ def test_einvoice_unsent_is_edoc_not_sent_to_gib():
     yes = set(_ids(query_orders(rows, OrderListFilter(invoiced="yes", sort="number_asc"), page=1, page_size=50)))
     assert yes == {"DRAFT", "PAPER", "SLIP", "NEVER", "ERR", "SENT", "QUEUE", "ACC", "UUID"}
     einv = set(_ids(query_orders(rows, OrderListFilter(invoiced="einvoice", sort="number_asc"), page=1, page_size=50)))
-    assert einv == {"SENT", "QUEUE", "ACC", "UUID", "ERR"}
+    assert einv == {"SENT", "ACC", "UUID"}

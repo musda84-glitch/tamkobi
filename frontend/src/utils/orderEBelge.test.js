@@ -33,7 +33,12 @@ test("menu: faturalaşmış siparişte yalnızca e-archive unless mükellef", ()
 });
 
 test("menu: GİB kesilmiş siparişte e-belge kesimi yok", () => {
-  expect(eBelgeMenuItems({ is_invoiced: true, einvoice_state: "sent" }, [])).toEqual([]);
+  expect(eBelgeMenuItems({
+    is_invoiced: true,
+    e_type: "e_archive",
+    einvoice_state: "sent",
+    gib_uuid: "u-1",
+  }, [])).toEqual([]);
 });
 
 test("resolveOrderContact falls back to order flags", () => {

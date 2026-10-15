@@ -57,46 +57,113 @@ export function filterPanelCargoLabelItems(ord, items) {
 }
 
 /**
- * E-fatura / e-arşiv GİB üzerinden kesilmiş mi?
- * Yalnızca gerçek GİB / entegratör gönderim sinyalleri sayılır.
- * Cariye faturalaşma (is_invoiced) veya e_type tek başına e-belge değildir —
- * aksi halde pazaryeri siparişleri yanlışlıkla kırmızı «Faturalaşmış (E-Arşiv)»
- * rozeti alır (yeşil «Faturalaştı» olması gerekir).
+ * E-belge kesildi mi?
+ * Aynı kural: backend `order_ebelge_enrich.invoice_is_ebelge_issued`.
+ * e_type e_invoice / e_archive / e_export olmalı VE
+ * (gib_uuid veya gib_invoice_id dolu VEYA einvoice_state=accepted VEYA GİB başarı durumu).
+ * paper, expense_slip, draft, error ve yalnız queued e-belge sayılmaz.
  */
-export function orderHasEInvoiceIssued(ord) {
-  if (!ord) return false;
-  const state = String(ord.einvoice_state || "").toLowerCase();
-  if (state === "sent" || state === "queued" || state === "accepted") return true;
-  if (ord.invoice_gib_uuid || ord.gib_uuid || ord.invoice_gib_tracking_id || ord.gib_tracking_id) return true;
-  if (ord.gib_invoice_id) return true;
-  const gs = String(ord.invoice_gib_status || ord.gib_status || "");
-  // "GİB'e Gönderildi" / iletildi / ziplenmiş — yerel "Gönderilmedi" ile karışmaz
-  if (/ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland/i.test(gs) && !/^\s*hata\s*:/i.test(gs)) return true;
-  return false;
+const EDOC_TYPES = new Set(["e_invoice", "e_archive", "e_export"]);
+const NOT_ISSUED_STATES = new Set(["paper", "draft", "error", "queued", "not_applicable"]);
+const GIB_OK = /ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland/i;
+const GIB_ERR = /^\s*hata\s*:/i;
+
+function orderDocEType(ord) {
+  return String(ord?.invoice_e_type || ord?.e_type || "").trim().toLowerCase();
 }
 
-/** Sipariş satırında gösterilecek GİB / entegratör fatura numarası. */
+export function orderHasEInvoiceIssued(ord) {
+  if (!ord) return false;
+  if (!EDOC_TYPES.has(orderDocEType(ord))) return false;
+  const state = String(ord.einvoice_state || "").trim().toLowerCase();
+  if (NOT_ISSUED_STATES.has(state)) return false;
+  const gs = String(ord.invoice_gib_status || ord.gib_status || "");
+  if (GIB_ERR.test(gs)) return false;
+  if (state === "accepted") return true;
+  const uuid = String(ord.gib_uuid || ord.invoice_gib_uuid || "").trim();
+  const gibNo = String(ord.gib_invoice_id || "").trim();
+  if (uuid || gibNo) return true;
+  return GIB_OK.test(gs);
+}
+
+/** Entegratörden dönen resmi GİB numarası. Yerel TA numarası buraya girmez. */
 export function orderGibInvoiceNumber(ord) {
   if (!ord) return "";
+  return String(ord.gib_invoice_id || "").trim();
+}
+
+/** Yerel fatura numarası (TA…). Resmi GİB no ile aynıysa boş. */
+export function orderLocalInvoiceNumber(ord) {
+  if (!ord) return "";
   const gib = String(ord.gib_invoice_id || "").trim();
-  if (gib) return gib;
-  // Yerel fatura no yalnızca GİB gönderimi sonrası (resmi no henüz düşmemiş olabilir)
-  if (!orderHasEInvoiceIssued(ord)) return "";
+  const saved = String(ord.local_invoice_number || "").trim();
+  if (saved && saved !== gib) return saved;
   const no = String(ord.invoice_number || "").trim();
-  if (!no || no === String(ord.order_number || "").trim()) return "";
+  const orderNo = String(ord.order_number || "").trim();
+  if (!no || no === orderNo || no === gib) return "";
   return no;
 }
 
-/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil buton) → faturalaşmış e-belge (kırmızı bilgi). */
+/** Sipariş hücresindeki numara satırları. GİB yalnız resmi no; yerel «Fatura:». */
+export function orderInvoiceNumberLines(ord) {
+  if (!ord) return [];
+  const lines = [];
+  const gib = orderGibInvoiceNumber(ord);
+  if (gib) {
+    lines.push({
+      kind: "gib",
+      label: `GİB: ${gib}`,
+      title: "GİB fatura numarası",
+      testId: "order-gib-no",
+    });
+  }
+  const local = orderLocalInvoiceNumber(ord);
+  if (local) {
+    lines.push({
+      kind: "local",
+      label: `Fatura: ${local}`,
+      title: "Yerel fatura numarası",
+      testId: "order-local-no",
+    });
+  }
+  return lines;
+}
+
+/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → kağıt / hata / kuyruk / e-belge. */
 export function orderEBelgeKindLabel(ord) {
-  const eType = String(ord?.e_type || ord?.invoice_e_type || "").toLowerCase();
+  const eType = orderDocEType(ord);
   if (eType === "e_invoice" || eType === "e_export") return "E-Fatura";
   if (eType === "e_archive") return "E-Arşiv";
+  if (eType === "paper") return "Kağıt";
   return "E-Belge";
 }
 
 export function orderInvoiceBadge(ord) {
   if (!ord) return null;
+  const eType = orderDocEType(ord);
+  const state = String(ord.einvoice_state || "").trim().toLowerCase();
+  const gs = String(ord.invoice_gib_status || ord.gib_status || "");
+  const edoc = EDOC_TYPES.has(eType);
+  if (edoc && (state === "error" || GIB_ERR.test(gs))) {
+    return {
+      label: "E-belge hatası",
+      title: GIB_ERR.test(gs) ? gs : "E-belge hatası",
+      line1: "E-belge hatası",
+      className: "bg-rose-600 text-white border-rose-700",
+      interactive: false,
+      testId: "ebelge-error",
+    };
+  }
+  if (edoc && state === "queued") {
+    return {
+      label: "Gönderiliyor",
+      title: "Gönderiliyor",
+      line1: "Gönderiliyor",
+      className: "bg-amber-100 text-amber-900 border-amber-300",
+      interactive: false,
+      testId: "ebelge-queued",
+    };
+  }
   if (orderHasEInvoiceIssued(ord)) {
     const kind = orderEBelgeKindLabel(ord);
     return {
@@ -108,6 +175,17 @@ export function orderInvoiceBadge(ord) {
       className: "bg-rose-600 text-white border-rose-700",
       interactive: false,
       testId: kind === "E-Fatura" ? "ebelge-efatura" : kind === "E-Arşiv" ? "ebelge-earsiv" : "ebelge",
+    };
+  }
+  if (eType === "paper" && (ord.is_invoiced || state === "paper" || state === "not_applicable")) {
+    return {
+      label: "Faturalaştı (Kağıt)",
+      title: "Faturalaştı (Kağıt)",
+      line1: "Faturalaştı",
+      line2: "(Kağıt)",
+      className: "bg-slate-100 text-emerald-800 border-slate-300",
+      interactive: false,
+      testId: "paper",
     };
   }
   if (ord.is_invoiced) {

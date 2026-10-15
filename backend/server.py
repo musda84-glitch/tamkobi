@@ -329,6 +329,11 @@ async def startup_event():
                 await _phone_norm.backfill_phone_norm(db)
             except Exception as _pn_exc:
                 logger.warning("phone_norm backfill skipped: %s", _pn_exc)
+            try:
+                import e_invoice as _einv
+                await _einv.migrate_mislabelled_paper_invoices(db)
+            except Exception as _paper_exc:
+                logger.warning("paper einvoice_state migration skipped: %s", _paper_exc)
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
@@ -8758,6 +8763,8 @@ def _doc_is_gib_issued(inv: dict) -> bool:
     """GİB'e iletilmiş / kuyruğa alınmış e-belge (hata durumu hariç)."""
     if not inv:
         return False
+    if str(inv.get("e_type") or "") in ("paper", "expense_slip") or str(inv.get("einvoice_state") or "") == "paper":
+        return False
     gs = str(inv.get("gib_status") or "")
     if str(inv.get("einvoice_state") or "") == "error" or re.match(r"^\s*hata\s*:", gs, re.I):
         return False
@@ -16690,6 +16697,7 @@ async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict
             "gib_status": 1,
             "gib_invoice_id": 1,
             "invoice_number": 1,
+            "local_invoice_number": 1,
             "gib_uuid": 1,
             "gib_tracking_id": 1,
         },

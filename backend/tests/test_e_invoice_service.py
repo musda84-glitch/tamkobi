@@ -220,7 +220,15 @@ class TestIssueInvoiceSimulated:
         async def _run():
             with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
                 paper = await e_invoice.issue_invoice("inv_sim", e_type="paper")
-                assert paper["einvoice_state"] == "sent"
+                assert paper["einvoice_state"] == "paper"
+                paper_sets = [
+                    c.args[1]["$set"]
+                    for c in fake_db.invoices.update_one.await_args_list
+                    if (c.args[1].get("$set") or {}).get("gib_status") == "Kağıt Fatura (Matbu)"
+                ]
+                assert paper_sets
+                assert paper_sets[-1]["einvoice_state"] == "paper"
+                assert paper_sets[-1]["status"] == "approved"
                 inv["e_type"] = "e_archive"
                 sim = await e_invoice.issue_invoice("inv_sim", e_type="auto", scenario="TICARI")
                 assert sim["einvoice_state"] == "sent"

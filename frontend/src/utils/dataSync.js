@@ -16,6 +16,7 @@ export const isIncomingGibInvoice = (inv) => {
 /** Giden e-Fatura sekmesi: yalnızca GİB'e gerçekten iletilmiş belgeler. */
 export const isOutgoingGibInvoice = (inv) => {
   if (!inv || inv.invoice_type === "dispatch") return false;
+  if (inv.e_type === "paper" || inv.e_type === "expense_slip" || inv.einvoice_state === "paper") return false;
   if (isIncomingGibInvoice(inv)) return false;
   const gs = String(inv.gib_status || "")
     .replace(/^test\s*·\s*/i, "")

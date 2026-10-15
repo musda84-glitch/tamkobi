@@ -37,7 +37,10 @@ test("sales and purchase tabs hide GIB sent/received invoices", () => {
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(true);
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_invoice", status: "draft" })).toBe(true);
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_archive", einvoice_state: "sent" })).toBe(false);
-  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "paper", gib_uuid: "u1" })).toBe(false);
+  // Kağıt fatura GİB'e gitmez; satış listesinde kalır (uuid kalıntısı da giden e-belge yapmaz).
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "paper", gib_uuid: "u1" })).toBe(true);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "paper", einvoice_state: "sent" })).toBe(false);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "paper", gib_uuid: "u1" })).toBe(false);
   expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", e_type: "paper" })).toBe(true);
   expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", direction: "incoming" })).toBe(false);
   expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", source: "edoc_inbox" })).toBe(false);

@@ -4,6 +4,9 @@ import {
   isPanelOrder,
   orderHasEInvoiceIssued,
   orderGibInvoiceNumber,
+  orderLocalInvoiceNumber,
+  orderInvoiceNumberLines,
+  orderEBelgeKindLabel,
   orderInvoiceBadge,
   orderMoreMenuKind,
   orderMoreMenuItems,
@@ -25,17 +28,24 @@ describe("orderMoreMenu", () => {
 
   it("detects e-invoice issued only after real GİB / integrator send", () => {
     expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive", channel: "b2b" })).toBe(false);
-    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive", channel: "b2b", einvoice_state: "sent" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ einvoice_state: "sent" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper", channel: "b2b" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive", channel: "b2b", einvoice_state: "sent" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ einvoice_state: "sent" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper", channel: "b2b", einvoice_state: "paper" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper", einvoice_state: "sent", invoice_number: "TA2026000000069" })).toBe(false);
     expect(orderHasEInvoiceIssued({ invoice_id: "x", is_invoiced: false })).toBe(false);
-    // Pazaryeri: is_invoiced + e_type tek başına GİB kesilmiş sayılmaz (yeşil Faturalaştı)
     expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive" })).toBe(false);
-    expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ invoice_gib_status: "Ziplenmiş — GİB iletimi bekleniyor" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ invoice_gib_status: "GİB'e Gönderildi", channel: "b2b" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ gib_invoice_id: "U052026000000090" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ e_type: "e_archive", invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ e_type: "e_archive", invoice_gib_status: "Ziplenmiş — GİB iletimi bekleniyor" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ e_type: "e_invoice", invoice_gib_status: "GİB'e Gönderildi", channel: "b2b" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ gib_invoice_id: "U052026000000090" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ e_type: "e_invoice", gib_invoice_id: "U052026000000090" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ e_type: "e_invoice", einvoice_state: "accepted" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ e_type: "e_archive", einvoice_state: "queued", gib_uuid: "u" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ e_type: "e_archive", einvoice_state: "error", gib_uuid: "u", invoice_gib_status: "Hata: şema" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ e_type: "e_archive", einvoice_state: "draft" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ e_type: "expense_slip", einvoice_state: "sent", gib_uuid: "u" })).toBe(false);
   });
 
   it("exposes GİB invoice number for the order cell", () => {
@@ -44,13 +54,40 @@ describe("orderMoreMenu", () => {
       invoice_number: "U052026000000090",
       order_number: "B2B-1",
       einvoice_state: "sent",
-    })).toBe("U052026000000090");
+      e_type: "e_archive",
+    })).toBe("");
     expect(orderGibInvoiceNumber({
       invoice_number: "NX202623431210",
       order_number: "ORD-2026-0060",
       invoice_gib_status: "GİB'e Gönderildi",
-    })).toBe("NX202623431210");
-    // Taslak / yalnızca invoice_id — GİB satırı yok
+      e_type: "e_archive",
+    })).toBe("");
+    expect(orderLocalInvoiceNumber({
+      invoice_number: "TA2026000000069",
+      order_number: "B2B-2026-0080",
+      e_type: "paper",
+      einvoice_state: "paper",
+    })).toBe("TA2026000000069");
+    expect(orderGibInvoiceNumber({
+      invoice_number: "TA2026000000069",
+      order_number: "B2B-2026-0080",
+      e_type: "paper",
+    })).toBe("");
+    const paperLines = orderInvoiceNumberLines({
+      order_number: "B2B-2026-0080",
+      e_type: "paper",
+      einvoice_state: "paper",
+      invoice_number: "TA2026000000069",
+    });
+    expect(paperLines.map((l) => l.label)).toEqual(["Fatura: TA2026000000069"]);
+    expect(paperLines.map((l) => l.label).join(" ")).not.toMatch(/GİB:/);
+    expect(orderInvoiceNumberLines({
+      order_number: "B2B-1",
+      e_type: "e_invoice",
+      gib_invoice_id: "U052026000000090",
+      local_invoice_number: "TA2026000000001",
+      invoice_number: "U052026000000090",
+    }).map((l) => l.label)).toEqual(["GİB: U052026000000090", "Fatura: TA2026000000001"]);
     expect(orderGibInvoiceNumber({
       invoice_number: "NX202600000682",
       order_number: "ORD-1",
@@ -72,6 +109,9 @@ describe("orderMoreMenu", () => {
       expect.objectContaining({ label: "Faturalaştı", testId: "invoiced", interactive: true }),
     );
     expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive", einvoice_state: "sent" })).toEqual(
+      expect.objectContaining({ label: "Faturalaştı", testId: "invoiced", interactive: true }),
+    );
+    expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive", einvoice_state: "sent", gib_uuid: "u-1" })).toEqual(
       expect.objectContaining({
         label: "Faturalaşmış (E-Arşiv)",
         line1: "Faturalaşmış",
@@ -81,7 +121,7 @@ describe("orderMoreMenu", () => {
         className: expect.stringContaining("rose-600"),
       }),
     );
-    expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_invoice", einvoice_state: "sent" })).toEqual(
+    expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_invoice", einvoice_state: "accepted" })).toEqual(
       expect.objectContaining({
         label: "Faturalaşmış (E-Fatura)",
         line1: "Faturalaşmış",
@@ -91,6 +131,42 @@ describe("orderMoreMenu", () => {
         className: expect.stringContaining("rose-600"),
       }),
     );
+    expect(orderEBelgeKindLabel({ e_type: "paper" })).toBe("Kağıt");
+    expect(orderInvoiceBadge({
+      is_invoiced: true,
+      channel: "b2b",
+      e_type: "paper",
+      einvoice_state: "paper",
+      invoice_number: "TA2026000000069",
+      order_number: "B2B-2026-0080",
+    })).toEqual(expect.objectContaining({
+      label: "Faturalaştı (Kağıt)",
+      line2: "(Kağıt)",
+      testId: "paper",
+      interactive: false,
+      className: expect.stringMatching(/emerald|slate/),
+    }));
+    expect(orderInvoiceBadge({
+      is_invoiced: true,
+      e_type: "e_archive",
+      einvoice_state: "error",
+      invoice_gib_status: "Hata: şema",
+    })).toEqual(expect.objectContaining({
+      label: "E-belge hatası",
+      testId: "ebelge-error",
+      interactive: false,
+      className: expect.stringContaining("rose"),
+    }));
+    expect(orderInvoiceBadge({
+      is_invoiced: true,
+      e_type: "e_invoice",
+      einvoice_state: "queued",
+    })).toEqual(expect.objectContaining({
+      label: "Gönderiliyor",
+      testId: "ebelge-queued",
+      interactive: false,
+      className: expect.stringContaining("amber"),
+    }));
   });
 
   it("integration invoiced without GİB shows Faturalaştı fulfillment menu", () => {
@@ -115,7 +191,7 @@ describe("orderMoreMenu", () => {
   });
 
   it("integration + GİB e-invoice uses marketplace fulfillment menu", () => {
-    const ord = { channel: "trendyol", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", order_number: "TY-1" };
+    const ord = { channel: "trendyol", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", gib_uuid: "u-ty", order_number: "TY-1" };
     expect(orderMoreMenuKind(ord)).toBe("integration_einvoice");
     const { items } = orderMoreMenuItems(ord);
     const labels = items.map((i) => i.label);
@@ -218,7 +294,7 @@ describe("orderMoreMenu", () => {
   });
 
   it("B2B + GİB e-belge hides mini cargo labels before shipment", () => {
-    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", order_number: "B2B-2026-0009" };
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", gib_uuid: "u-b2b", order_number: "B2B-2026-0009" };
     expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
       "Mini E-Arşiv Yazdır (10X15cm)",
@@ -241,6 +317,7 @@ describe("orderMoreMenu", () => {
       is_invoiced: true,
       e_type: "e_invoice",
       einvoice_state: "sent",
+      gib_invoice_id: "GIB2026000000025",
       order_number: "B2B-2026-0025",
       cargo_tracking_number: "GLV-1",
     };

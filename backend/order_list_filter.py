@@ -16,6 +16,8 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from order_ebelge_enrich import invoice_is_ebelge_issued
+
 IST = ZoneInfo("Europe/Istanbul")
 
 ORDER_LIST_SCAN_CAP = 20000
@@ -40,7 +42,6 @@ _TR_FOLD = str.maketrans({
     "ç": "c", "Ç": "c",
 })
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_GIB_OK = re.compile(r"ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland", re.IGNORECASE)
 _GIB_ERR = re.compile(r"^\s*hata\s*:", re.IGNORECASE)
 
 
@@ -79,19 +80,8 @@ def is_dispatched_order(order: Optional[dict]) -> bool:
 
 
 def order_has_einvoice(order: Optional[dict]) -> bool:
-    if not order:
-        return False
-    state = str(order.get("einvoice_state") or "").lower()
-    if state in ("sent", "queued", "accepted"):
-        return True
-    if order.get("invoice_gib_uuid") or order.get("gib_uuid") or order.get("invoice_gib_tracking_id") or order.get("gib_tracking_id"):
-        return True
-    if order.get("gib_invoice_id"):
-        return True
-    gs = str(order.get("invoice_gib_status") or order.get("gib_status") or "")
-    if _GIB_OK.search(gs) and not _GIB_ERR.search(gs):
-        return True
-    return False
+    """Gerçek e-belge. Kural: order_ebelge_enrich.invoice_is_ebelge_issued."""
+    return invoice_is_ebelge_issued(order)
 
 
 # e-Fatura / e-Arşiv. Kağıt, gider pusulası ve e-irsaliye e-belge sayılmaz.
@@ -118,6 +108,9 @@ def order_einvoice_unsent(order: Optional[dict]) -> bool:
         return False
     state = str(order.get("einvoice_state") or "").lower()
     gs = str(order.get("invoice_gib_status") or order.get("gib_status") or "")
+    # Kuyruk «Gönderiliyor» — ne kesilmiş ne de «gitmemiş» filtresine girer.
+    if state == "queued":
+        return False
     if state == "error" or _GIB_ERR.search(gs):
         return True
     return not order_has_einvoice(order)

@@ -277,6 +277,7 @@ export function orderInvoiceNotSentToGib(o) {
   if (!EDOC_E_TYPES.has(orderInvoiceEType(o))) return false;
   const state = String(o.einvoice_state || "").toLowerCase();
   const gs = String(o.invoice_gib_status || o.gib_status || "");
+  if (state === "queued") return false;
   if (state === "error" || GIB_ERR.test(gs)) return true;
   return !orderHasEInvoiceIssued(o);
 }

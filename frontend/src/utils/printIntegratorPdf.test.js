@@ -17,6 +17,8 @@ describe("shouldUseIntegratorPdf", () => {
 
   test("keeps template print for draft / paper / non-invoice", () => {
     expect(shouldUseIntegratorPdf("invoice", { e_type: "paper", status: "approved" })).toBe(false);
+    expect(shouldUseIntegratorPdf("invoice", { e_type: "paper", status: "approved", einvoice_state: "sent", gib_status: "Kağıt Fatura (Matbu)" })).toBe(false);
+    expect(shouldUseIntegratorPdf("invoice", { e_type: "paper", status: "approved", einvoice_state: "paper" })).toBe(false);
     expect(shouldUseIntegratorPdf("invoice", { e_type: "e_archive", status: "draft" })).toBe(false);
     expect(shouldUseIntegratorPdf("order", { e_type: "e_archive", einvoice_state: "sent" })).toBe(false);
   });

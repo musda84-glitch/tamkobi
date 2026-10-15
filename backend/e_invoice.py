@@ -47,6 +47,45 @@ def init(db, deps: Optional[dict] = None):
         _deps.update(deps)
 
 
+def _blank_gib_id(value: Any) -> bool:
+    return not str(value or "").strip()
+
+
+async def migrate_mislabelled_paper_invoices(db) -> int:
+    """e_type=paper, einvoice_state=sent, gib_uuid ve gib_invoice_id boş → einvoice_state=paper.
+
+    Yalnız einvoice_state yazılır. İkinci çalıştırmada eşleşme kalmaz (idempotent).
+    """
+    if db is None:
+        return 0
+    try:
+        rows = await db.invoices.find({"e_type": "paper", "einvoice_state": "sent"}).to_list(20000)
+    except Exception:
+        logger.exception("paper einvoice_state migration query failed")
+        return 0
+    updated = 0
+    for inv in rows or []:
+        if not _blank_gib_id(inv.get("gib_uuid")) or not _blank_gib_id(inv.get("gib_invoice_id")):
+            continue
+        if str(inv.get("e_type") or "") != "paper" or str(inv.get("einvoice_state") or "") != "sent":
+            continue
+        inv_id = inv.get("_id")
+        if not inv_id:
+            continue
+        await db.invoices.update_one(
+            {"_id": inv_id, "e_type": "paper", "einvoice_state": "sent"},
+            {"$set": {"einvoice_state": "paper"}},
+        )
+        updated += 1
+        logger.info(
+            "paper einvoice_state migration: invoice %s sent → paper (gib_uuid/gib_invoice_id empty)",
+            inv_id,
+        )
+    if updated:
+        logger.info("paper einvoice_state migration updated %s invoice(s)", updated)
+    return updated
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -634,18 +673,20 @@ async def issue_invoice(
     company = await _db.companies.find_one({"_id": inv.get("company_id")}) or {}
 
     if et == "paper":
+        # Kağıt / matbu GİB'e gitmez. "sent" gerçek e-belge sanılıp kırmızı rozet
+        # ve «GİB:» etiketi üretiyordu.
         await _db.invoices.update_one(
             {"_id": invoice_id},
             {"$set": {
                 "status": "approved",
                 "gib_status": "Kağıt Fatura (Matbu)",
-                "einvoice_state": "sent",
+                "einvoice_state": "paper",
                 "gib_scenario": None,
                 "gib_tracking_id": None,
                 "issued_at": _now(),
             }},
         )
-        return {"status": "success", "einvoice_state": "sent", "message": "Kağıt fatura olarak kesildi.", "invoice_id": invoice_id, "tracking_id": None}
+        return {"status": "success", "einvoice_state": "paper", "message": "Kağıt fatura olarak kesildi.", "invoice_id": invoice_id, "tracking_id": None}
 
     settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
     provider = settings.get("provider") or ""

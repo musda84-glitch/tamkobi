@@ -311,7 +311,11 @@ export function InvoiceDetailScreen() {
         ) : (
           <Muted>Vade {fmtDate(inv.due_date)}</Muted>
         )}
-        {inv.gib_status ? <Muted>GİB: {inv.gib_status}{inv.gib_tracking_id ? ` · ${inv.gib_tracking_id}` : ""}</Muted> : null}
+        {inv.e_type === "paper" || inv.einvoice_state === "paper" ? (
+          <Muted>Kağıt fatura — GİB e-belgesi değil</Muted>
+        ) : inv.gib_status ? (
+          <Muted>GİB: {inv.gib_status}{inv.gib_tracking_id ? ` · ${inv.gib_tracking_id}` : ""}</Muted>
+        ) : null}
         {inv.project_number ? <Muted>Proje {inv.project_number}</Muted> : null}
       </Card>
 

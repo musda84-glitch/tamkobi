@@ -72,12 +72,36 @@ describe("orderInvoice draft / post / e-belge", () => {
       is_invoiced: true,
       e_type: "e_archive",
       einvoice_state: "sent",
+      gib_invoice_id: "U052026000000090",
     })).toBe("red");
     expect(orderInvoiceBadgeLabel({
       is_invoiced: true,
       e_type: "e_archive",
       einvoice_state: "sent",
+      gib_invoice_id: "U052026000000090",
     })).toMatch(/Faturalaşmış/);
+    expect(orderInvoiceBadgeTone({
+      is_invoiced: true,
+      e_type: "paper",
+      einvoice_state: "paper",
+      invoice_number: "TA2026000000069",
+    })).toBe("green");
+    expect(orderInvoiceBadgeLabel({
+      is_invoiced: true,
+      e_type: "paper",
+      einvoice_state: "paper",
+      invoice_number: "TA2026000000069",
+    })).toBe("Faturalaştı (Kağıt)");
+    expect(orderInvoiceBadgeLabel({
+      is_invoiced: true,
+      e_type: "e_invoice",
+      einvoice_state: "queued",
+    })).toBe("Gönderiliyor");
+    expect(orderInvoiceBadgeTone({
+      is_invoiced: true,
+      e_type: "e_archive",
+      einvoice_state: "error",
+    })).toBe("red");
     expect(orderInvoiceBadgeLabel(null)).toBeNull();
   });
 
