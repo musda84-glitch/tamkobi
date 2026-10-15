@@ -117,10 +117,29 @@ describe("match draft / payload", () => {
         { id: "p2", name: "Pasif", is_active: false },
       ]
     );
-    expect(groups.map((g) => g.label)).toEqual(["Kasa / Hesap", "Ortaklar Hesabı"]);
+    expect(groups.map((g) => g.label)).toEqual(["Banka hesabı", "Ortaklar Hesabı"]);
     expect(groups[1].options.map((o) => o.value)).toEqual(["partner:p1"]);
     expect(groups[1].options[0].label).toContain("Mustafa");
     expect(groups[1].options[0].label).toContain("Ortak");
+    const iban = "TR330006200519786457841234";
+    const labeled = transferSelectGroups([
+      {
+        id: "b9",
+        type: "bank",
+        bank_name: "Kuveyt Türk",
+        account_name: "Vadesiz TL Hesabı",
+        iban,
+        is_integrated: true,
+      },
+      { id: "k1", type: "cash_box", account_name: "Merkez kasa" },
+    ]);
+    expect(labeled.map((g) => g.label)).toEqual(["Banka hesabı", "Kasa"]);
+    expect(labeled[0].options[0].label).toContain("Kuveyt Türk");
+    expect(labeled[0].options[0].label).toContain("…1234");
+    expect(labeled[0].options[0].label).toContain("entegre");
+    expect(labeled[0].options[0].label).not.toContain(iban);
+    expect(labeled[0].options[0].disabled).toBe(true);
+    expect(labeled[1].options[0].disabled).toBe(false);
     const transfer = matchPayload({
       ...emptyMatchDraft(),
       mode: "transfer",

@@ -1,6 +1,6 @@
 import type { Contact, Invoice } from "../types";
 import type { BankAccount, BankTx, ExpenseCategory, Partner } from "./finance";
-import { partnerOptionLabel } from "./finance";
+import { paymentTargetGroups } from "./finance";
 import { fmtMoney, idOf } from "./money";
 
 export const MATCH_MODES = [
@@ -83,7 +83,7 @@ export type MatchDraft = {
   learn: boolean;
 };
 
-export type SelectGroup = { label: string; options: { value: string; label: string }[] };
+export type SelectGroup = { label: string; options: { value: string; label: string; disabled?: boolean }[] };
 
 /** Masraf kategorisi personel ödemesi mi? */
 export function isPersonnelExpenseCategory(category?: string | null): boolean {
@@ -233,24 +233,9 @@ export function invoiceSelectGroups(invoices: Invoice[]): SelectGroup[] {
   return [{ label: "Açık faturalar", options }];
 }
 
+/** Web PaymentTargetSelect: Türkçe hesap türü + banka adı · maskeli hesap · entegre. */
 export function transferSelectGroups(accounts: BankAccount[], partners: Partner[] = []): SelectGroup[] {
-  const groups: SelectGroup[] = [];
-  const options = (accounts || []).map((a) => ({
-    value: idOf(a),
-    label: `${a.bank_name || "Hesap"} — ${a.account_name || ""}`.trim(),
-  }));
-  if (options.length) groups.push({ label: "Kasa / Hesap", options });
-  const active = (partners || []).filter((p) => p.is_active !== false);
-  if (active.length) {
-    groups.push({
-      label: "Ortaklar Hesabı",
-      options: active.map((p) => ({
-        value: `partner:${idOf(p)}`,
-        label: partnerOptionLabel(p),
-      })),
-    });
-  }
-  return groups;
+  return paymentTargetGroups(accounts, partners);
 }
 
 /** Masraf kategorileri — Personel Masrafı etiketi Personel. */

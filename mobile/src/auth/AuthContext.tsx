@@ -383,11 +383,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       switchCompany,
       setServer,
       reload: bootstrap,
-      can: (path, level = "view") => (state.sessionKind === "b2b" ? false : canPerm(state.user, path, level)),
-      feature: (key) => (state.sessionKind === "b2b" ? false : featurePerm(state.user, key)),
-      moduleOn: (path) => (state.sessionKind === "b2b" ? false : moduleOnPerm(state.license, path)),
+      can: (path, level = "view") => (state.sessionKind === "b2b" || !state.user ? false : canPerm(state.user, path, level)),
+      feature: (key) => (state.sessionKind === "b2b" || !state.user ? false : featurePerm(state.user, key)),
+      moduleOn: (path) => (state.sessionKind === "b2b" || !state.user ? false : moduleOnPerm(state.license, path)),
       addonOn: (key) => {
-        if (state.sessionKind === "b2b") return false;
+        if (state.sessionKind === "b2b" || !state.user) return false;
         const addons = state.license?.addons;
         if (!addons) return true;
         return addons[key] !== false;

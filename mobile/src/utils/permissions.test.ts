@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, feature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showProductionAiAdvisor, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, feature, hasPortalFeature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, personelMenuPathAllowed, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showProductionAiAdvisor, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -136,6 +136,44 @@ describe("permissions", () => {
     expect(isMoreLinkVisible({ path: "/sayim" }, sales, null)).toBe(false);
     expect(isMoreLinkVisible({ path: "/sayim" }, { role: "admin" }, { modules: { "/sayim": false } })).toBe(false);
     expect(visibleModules({ role: "admin" }, null).some((m) => m.key === "sayim")).toBe(true);
+  });
+
+  it("denies screens when there is no session, matching web", () => {
+    expect(can(null, "/orders")).toBe(false);
+    expect(can({ role: "sales" }, "/orders")).toBe(false);
+    expect(feature(null, "header_invoice")).toBe(false);
+    expect(hasPortalFeature({ role: "owner" }, "portal_atolye")).toBe(true);
+    expect(hasPortalFeature({ role: "sales", is_super_admin: true }, "portal_sayim")).toBe(true);
+    expect(hasPortalFeature({ role: "sales", features: {} }, "portal_sayim")).toBe(false);
+  });
+
+  it("limits the personel role to the same screens as the web menu", () => {
+    const personel = {
+      role: "personel",
+      employee_id: "e1",
+      permissions: { "/invoices": "edit", "/banking": "edit", "/mesai": "edit", "/sayim": "edit", "/atolye": "edit", "/sevk": "edit", "/stock": "edit" },
+      features: { portal_atolye: true },
+    };
+    expect(personelMenuPathAllowed("/invoices", personel)).toBe(false);
+    expect(personelMenuPathAllowed("/mesai", personel)).toBe(true);
+    expect(personelMenuPathAllowed("/atolye", personel)).toBe(true);
+    expect(personelMenuPathAllowed("/sayim", personel)).toBe(false);
+    expect(can(personel, "/invoices")).toBe(false);
+    expect(can(personel, "/banking", "edit")).toBe(false);
+    expect(can(personel, "/stock", "edit")).toBe(false);
+    expect(can(personel, "/mesai", "edit")).toBe(true);
+    expect(can(personel, "/atolye", "edit")).toBe(true);
+    expect(can(personel, "/sayim")).toBe(false);
+    expect(can(personel, "/sevk")).toBe(false);
+    expect(can({ ...personel, features: { portal_sayim: true, portal_pick: true } }, "/sayim", "edit")).toBe(true);
+    expect(can({ ...personel, features: { portal_pick: true } }, "/sevk")).toBe(true);
+    expect(isMoreLinkVisible({ path: "/invoices" }, personel, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/atolye" }, personel, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/atolye" }, personel, { modules: { "/atolye": false } })).toBe(false);
+    expect(visibleModules(personel, null).map((m) => m.key)).not.toContain("invoices");
+    expect(visibleModules(personel, null).map((m) => m.key)).toContain("atolye");
+    expect(visibleModules(personel, null).map((m) => m.key)).not.toContain("sayim");
+    expect(showHomeFinanceSummary({ role: "personel" })).toBe(false);
   });
 
   it("hides field modules from personel until the portal feature is on", () => {

@@ -36,6 +36,7 @@ import { ProgressBar } from "./SevkScreen";
 
 export function SevkPickScreen() {
   const { client, can, user, activeCompany, companyId } = useAuth();
+  const canView = can("/sevk");
   const canEdit = can("/sevk", "edit");
   const showOpenOrder = canSevkOpenOrder(user);
   const showDraftInvoice = canSevkDraftInvoice(user);
@@ -53,6 +54,7 @@ export function SevkPickScreen() {
   const [shipError, setShipError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!canView) return;
     try {
       const s = await get<PickSession>(client, `/order-picks/${id}`);
       setSession(s);
@@ -61,7 +63,7 @@ export function SevkPickScreen() {
     } catch (err) {
       setError(apiErrorMessage(err, "Toplama oturumu açılamadı."));
     }
-  }, [client, id]);
+  }, [canView, client, id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -172,6 +174,15 @@ export function SevkPickScreen() {
   const percent = pickPercent(session?.progress);
   const shipReady = canShip(session?.progress);
   const awaitDeliver = canMarkDeliveredFromPick(session);
+
+  if (!canView) {
+    return (
+      <Screen>
+        <H1>Sipariş toplama</H1>
+        <ErrorBanner message="Sipariş toplama yetkiniz yok." />
+      </Screen>
+    );
+  }
 
   return (
     <Screen onRefresh={load}>
