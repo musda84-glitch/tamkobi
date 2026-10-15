@@ -1,7 +1,7 @@
 /** Frontend bundle identity vs the running API. */
 
 export const MESSAGE_MAX = 160;
-export const DEFAULT_VERSION = "2.0.1";
+export const DEFAULT_VERSION = "2.0.2";
 
 export function cleanMessage(raw) {
   if (!raw) return null;

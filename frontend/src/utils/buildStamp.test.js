@@ -13,19 +13,19 @@ test("versionLabel v öneki ekler", () => {
 
 test("ikisi de yoksa missing", () => {
   expect(compareStamps({}, {}).reason).toBe("missing");
-  expect(stampLabel({}, {})).toBe("v2.0.1");
+  expect(stampLabel({}, {})).toBe("v2.0.2");
 });
 
 test("yalnızca api varsa partial", () => {
   const api = { git_sha: "abcdef1234" };
   expect(compareStamps({}, api).reason).toBe("partial");
-  expect(stampLabel({}, api)).toBe("v2.0.1 · api abcdef1");
+  expect(stampLabel({}, api)).toBe("v2.0.2 · api abcdef1");
 });
 
 test("yalnızca arayüz varsa partial", () => {
   const ui = { git_sha: "abcdef1234" };
   expect(compareStamps(ui, {}).reason).toBe("partial");
-  expect(stampLabel(ui, {})).toBe("v2.0.1 · arayüz abcdef1");
+  expect(stampLabel(ui, {})).toBe("v2.0.2 · arayüz abcdef1");
 });
 
 test("aynı kısa sha eşleşir", () => {
@@ -39,9 +39,9 @@ test("farklı sha mismatch", () => {
   const ui = { git_sha: "aaaaaaa111" };
   const api = { git_sha: "bbbbbbb222" };
   expect(compareStamps(ui, api).reason).toBe("mismatch");
-  expect(stampLabel(ui, api)).toBe("v2.0.1 · arayüz aaaaaaa ≠ api bbbbbbb");
+  expect(stampLabel(ui, api)).toBe("v2.0.2 · arayüz aaaaaaa ≠ api bbbbbbb");
   expect(stampTitle(ui, api)).toMatch(/farklı commit/);
-  expect(stampTitle(ui, api)).toMatch(/sürüm: v2\.0\.1/);
+  expect(stampTitle(ui, api)).toMatch(/sürüm: v2\.0\.2/);
 });
 
 test("frontendStamp env yokken unknown", () => {
@@ -49,7 +49,7 @@ test("frontendStamp env yokken unknown", () => {
   expect(stamp.source).toBe("unknown");
   expect(stamp.git_sha).toBe(null);
   expect(stamp.git_message).toBe(null);
-  expect(stamp.version).toBe("2.0.1");
+  expect(stamp.version).toBe("2.0.2");
 });
 
 test("cleanMessage tek satır ve kısaltır", () => {
@@ -70,7 +70,7 @@ test("updateCard API konusunu ve eşleşmeyi gösterir", () => {
     built_at: "2026-09-11T15:00:00Z",
   };
   const card = updateCard(ui, api);
-  expect(card.version).toBe("v2.0.1");
+  expect(card.version).toBe("v2.0.2");
   expect(card.sha).toBe("abcdef1");
   expect(card.branch).toBe("main");
   expect(card.message).toMatch(/Merge pull request #8/);
