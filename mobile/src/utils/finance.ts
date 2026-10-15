@@ -4,11 +4,11 @@ import { collectableAccounts } from "./contactDraft";
 import { fmtMoney, formatTrAmount, idOf } from "./money";
 
 export const ACCOUNT_TYPES = [
-  { key: "bank", label: "Banka" },
+  { key: "bank", label: "Banka hesabı" },
   { key: "cash_box", label: "Kasa" },
   { key: "pos", label: "POS" },
-  { key: "okc_pos", label: "ÖKC POS" },
-  { key: "credit_card", label: "Kredi Kartı" },
+  { key: "okc_pos", label: "ÖKC" },
+  { key: "credit_card", label: "Kredi kartı" },
 ] as const;
 
 export const ACCOUNT_TYPE_TR: Record<string, string> = Object.fromEntries(ACCOUNT_TYPES.map((t) => [t.key, t.label]));
@@ -643,7 +643,7 @@ export function paymentTargetGroups(
     label: g.label,
     options: g.items.map((a) => ({
       value: idOf(a),
-      label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)}`,
+      label: `${accountDisplayLabel(a)} · ${fmtMoney(accountBalance(a), a.currency)}`,
     })),
   }));
   const active = (partners || []).filter((p) => p.is_active !== false);
@@ -678,7 +678,7 @@ export function virmanSelectGroups(
       label: "Entegre banka",
       options: integrated.map((a) => ({
         value: `integrated:${idOf(a)}`,
-        label: `${a.account_name || a.bank_name || "Hesap"} · ${fmtMoney(accountBalance(a), a.currency)} (entegre)`,
+        label: `${accountDisplayLabel(a)} · ${fmtMoney(accountBalance(a), a.currency)}`,
         disabled: true,
       })),
     });
@@ -1007,6 +1007,50 @@ export function accountTypeTr(v?: string | null): string {
   if (!v) return "—";
   const key = normalizeAccountType(v);
   return ACCOUNT_TYPE_TR[key] || v;
+}
+
+export function maskedAccountRef(value?: string | null): string {
+  const token = String(value || "").replace(/\s+/g, "").toUpperCase();
+  if (!token || token === "-") return "";
+  return `…${token.slice(-4)}`;
+}
+
+function isIbanToken(value?: string | null): boolean {
+  const token = String(value || "").replace(/\s+/g, "").toUpperCase();
+  return token.startsWith("TR") && token.length >= 15 && /^[A-Z0-9]+$/.test(token);
+}
+
+export function accountMaskedRef(account?: { iban?: string | null; account_number?: string | null; masked_ref?: string | null } | null): string {
+  if (!account) return "";
+  const preset = String(account.masked_ref || "").trim();
+  if (preset) return preset;
+  if (isIbanToken(account.iban)) return maskedAccountRef(account.iban);
+  const number = String(account.account_number || "").replace(/\s+/g, "").toUpperCase();
+  if (number && number !== "-") return maskedAccountRef(number);
+  return "";
+}
+
+/** Ör. Kuveyt Türk · Vadesiz TL Hesabı · …1234 · entegre */
+export function accountDisplayLabel(account?: {
+  bank_name?: string | null;
+  account_name?: string | null;
+  name?: string | null;
+  iban?: string | null;
+  account_number?: string | null;
+  masked_ref?: string | null;
+  is_integrated?: boolean | null;
+} | null): string {
+  if (!account) return "Hesap";
+  const bank = String(account.bank_name || "").trim();
+  const name = String(account.account_name || account.name || "").trim();
+  const ref = accountMaskedRef(account);
+  const parts: string[] = [];
+  if (bank) parts.push(bank);
+  if (name && name !== bank) parts.push(name);
+  else if (!bank && name) parts.push(name);
+  if (ref) parts.push(ref);
+  if (account.is_integrated) parts.push("entegre");
+  return parts.join(" · ") || name || bank || "Hesap";
 }
 
 export function txTypeTr(v?: string | null): string {

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
 
 const money = (n) => formatTrAmount(n || 0);
 
@@ -15,6 +16,10 @@ function Drift({ value }) {
 
 function canSaveOpening(row) {
   return Math.abs(Number(row?.fark) || 0) >= 0.01 && !row?.acilis_var;
+}
+
+function accountRowLabel(row) {
+  return accountDisplayLabel(row);
 }
 
 export function ReconciliationPanel({ companyId }) {
@@ -99,8 +104,8 @@ export function ReconciliationPanel({ companyId }) {
           <tbody>
             {(report.accounts || []).map((row) => (
               <tr key={row.id} className="border-t border-slate-100" data-testid={`recon-account-${row.id}`}>
-                <td className="p-2">{row.ad}{row.entegre_mi ? " · entegre" : ""}</td>
-                <td className="p-2">{row.tur}</td>
+                <td className="p-2">{accountRowLabel(row)}</td>
+                <td className="p-2">{accountTypeLabel(row.tur)}</td>
                 <td className="p-2 text-right">{money(row.gosterilen)}</td>
                 <td className="p-2 text-right">{money(row.hareket_toplami)}</td>
                 <td className="p-2 text-right">{row.banka_bildirdigi == null ? "—" : money(row.banka_bildirdigi)}</td>
@@ -134,7 +139,7 @@ export function ReconciliationPanel({ companyId }) {
           <div className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-slate-900">Farkı açılış bakiyesi olarak kaydet</h3>
             <p className="text-xs text-slate-600">
-              {openingRow.ad}: {money(openingRow.fark)} tutarındaki fark, ilk hareketten bir gün öncesine açılış hareketi olarak yazılacak.
+              {accountRowLabel(openingRow)}: {money(openingRow.fark)} tutarındaki fark, ilk hareketten bir gün öncesine açılış hareketi olarak yazılacak.
               Gösterilen bakiye değişmez.
             </p>
             <div className="flex justify-end gap-2">

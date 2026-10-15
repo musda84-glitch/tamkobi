@@ -81,12 +81,14 @@ const ACCOUNT_REPORT = {
   summary: { account_count: 3, account_drift: 2, partner_count: 0, partner_drift: 0, contact_count: 0, contact_drift: 0 },
   partners: [],
   contacts: [],
-  uyarilar: [{ tur: "cift_iban", anahtar: "TR330006100519786457841326", mesaj: "Aynı IBAN (TR330006100519786457841326) 2 banka bağlantısına bağlı." }],
+  uyarilar: [{ tur: "cift_iban", anahtar: "…1326:a1,a2", mesaj: "Aynı IBAN 2 hesaba bağlı: Enpara · …1326, Kuveyt Türk · …1326." }],
   accounts: [
     {
       id: "bank75",
-      ad: "Enpara",
+      ad: "Vadesiz TL Hesabı",
       tur: "bank",
+      bank_name: "Kuveyt Türk",
+      masked_ref: "…1234",
       entegre_mi: true,
       gosterilen: 75,
       hareket_toplami: 0,
@@ -137,7 +139,15 @@ test("shows unmatched and bank-diff columns, and opening action only when fark r
   expect(host.textContent).toMatch(/Eşleşmemiş banka hareketi/);
   expect(host.textContent).toMatch(/Banka farkı/);
   expect(host.textContent).toMatch(/Eşleşmemiş banka hareketleri bakiyeye dahildir/);
-  expect(host.querySelector('[data-testid="recon-duplicate-warning"]').textContent).toMatch(/Aynı IBAN/);
+  const warn = host.querySelector('[data-testid="recon-duplicate-warning"]').textContent;
+  expect(warn).toMatch(/Aynı IBAN/);
+  expect(warn).toMatch(/Kuveyt Türk/);
+  expect(warn).toMatch(/…1326/);
+  expect(warn).not.toMatch(/TR330006100519786457841326/);
+  const bankRow = host.querySelector('[data-testid="recon-account-bank75"]');
+  expect(bankRow.textContent).toContain("Kuveyt Türk · Vadesiz TL Hesabı · …1234 · entegre");
+  expect(bankRow.textContent).toContain("Banka hesabı");
+  expect(host.querySelector('[data-testid="recon-account-bank0"]').textContent).toContain("Kasa");
   const open = host.querySelector('[data-testid="recon-unmatched-bank75"]');
   expect(open.textContent).toContain("2");
   expect(open.textContent).toContain(formatTrAmount(150.5));

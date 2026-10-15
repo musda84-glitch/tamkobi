@@ -637,3 +637,73 @@ def test_script_uses_named_db_and_reads_only(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "hesap" in out
     assert holder["db"].bank_accounts.docs["a"]["current_balance"] == 0
+
+
+IBAN_A = "TR110006200000000000000001"
+IBAN_B = "TR330006100519786457841326"
+IBAN_SHARED = "TR330006200519786457841234"
+
+
+def test_same_name_different_banks_do_not_warn():
+    accounts = [
+        _acc("a1", "bank", bank_name="Kuveyt Türk", account_name="Vadesiz TL Hesabı", iban=IBAN_A),
+        _acc("a2", "bank", bank_name="Enpara", account_name="Vadesiz TL Hesabı", iban=IBAN_B),
+    ]
+    conns = [
+        {"_id": "c1", "linked_account_id": "a1"},
+        {"_id": "c2", "linked_account_id": "a2"},
+    ]
+    assert balance_reconciliation.link_warnings(accounts, conns) == []
+
+
+def test_same_iban_warns_with_bank_name_and_last4():
+    accounts = [
+        _acc("a1", "bank", bank_name="Kuveyt Türk", account_name="Vadesiz TL Hesabı", iban=IBAN_SHARED),
+        _acc("a2", "bank", bank_name="Enpara", account_name="Vadesiz TL Hesabı", iban=IBAN_SHARED),
+    ]
+    conns = [
+        {"_id": "c1", "linked_account_id": "a1", "bank_account_number": IBAN_SHARED},
+        {"_id": "c2", "linked_account_id": "a2", "bank_account_number": "TR33 0006 2005 1978 6457 8412 34"},
+    ]
+    warnings = balance_reconciliation.link_warnings(accounts, conns)
+    assert [w["tur"] for w in warnings] == ["cift_iban"]
+    msg = warnings[0]["mesaj"]
+    assert "Kuveyt Türk" in msg and "Enpara" in msg
+    assert "…1234" in msg
+    assert IBAN_SHARED not in msg
+    assert "cift_hesap_adi" not in {w["tur"] for w in warnings}
+    assert "Aynı adlı" not in msg
+
+
+def test_reconciliation_row_and_csv_use_turkish_labels():
+    import account_label
+
+    assert account_label.account_type_label("bank") == "Banka hesabı"
+    assert account_label.account_type_label("cash_box") == "Kasa"
+    assert account_label.account_type_label("pos") == "POS"
+    assert account_label.account_type_label("okc_pos") == "ÖKC"
+    assert account_label.account_type_label("credit_card") == "Kredi kartı"
+    acc = _acc(
+        "kt",
+        "bank",
+        bank_name="Kuveyt Türk",
+        account_name="Vadesiz TL Hesabı",
+        iban=IBAN_SHARED,
+        current_balance=10,
+    )
+    row = balance_reconciliation._account_row(acc, [], integrated=True)
+    assert row["bank_name"] == "Kuveyt Türk"
+    assert row["masked_ref"] == "…1234"
+    assert row["tur"] == "bank"
+    assert IBAN_SHARED not in row["masked_ref"]
+    csv = balance_reconciliation.render_csv({
+        "accounts": [row],
+        "partners": [],
+        "contacts": [],
+        "summary": {},
+    })
+    assert "Kuveyt Türk · Vadesiz TL Hesabı · …1234 · entegre" in csv
+    assert "Banka hesabı" in csv
+    assert "bank_name" in csv.splitlines()[0]
+    assert "masked_ref" in csv.splitlines()[0]
+    assert IBAN_SHARED not in csv

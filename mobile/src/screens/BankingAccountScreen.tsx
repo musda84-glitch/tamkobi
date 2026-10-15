@@ -11,7 +11,7 @@ import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Scree
 import { go } from "../nav";
 import { colors } from "../theme";
 import { txUserColumnLabel } from "../utils/bankMatchLabel";
-import { accountBalance, accountCashTxRequest, accountTypeTr, normalizeAccountType, sortBankTransactions, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
+import { accountBalance, accountCashTxRequest, accountDisplayLabel, accountTypeTr, normalizeAccountType, sortBankTransactions, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function BankingAccountScreen() {
@@ -95,8 +95,8 @@ export function BankingAccountScreen() {
 
   return (
     <Screen onRefresh={load}>
-      <H1>{acc.account_name || "Hesap"}</H1>
-      <Muted>{[accountTypeTr(acc.type), acc.bank_name, acc.iban].filter(Boolean).join(" · ")}</Muted>
+      <H1>{accountDisplayLabel(acc)}</H1>
+      <Muted>{accountTypeTr(acc.type)}</Muted>
       <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(accountBalance(acc), acc.currency)}</Text>
       {acc.is_integrated ? <Muted>Entegre hesap ({acc.integration_provider || "canlı veri"}) — manuel tahsilat kapalı.</Muted> : null}
       <ErrorBanner message={error} />

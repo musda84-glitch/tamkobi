@@ -4,9 +4,11 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { partnerOptionLabel } from "../utils/partnerTx";
+import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
 
 const fmt = (n) => formatTrAmount(n || 0);
-const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", okc_pos: "ÖKC POS", credit_card: "Kredi Kartı", customer_credit_card: "Müşteri Kredi Kartı" };
+const GROUP_LABEL = { customer_credit_card: "Müşteri Kredi Kartı" };
+const groupLabel = (t) => GROUP_LABEL[t] || accountTypeLabel(t) || t;
 const CONTACT_TYPE_LABEL = { customer: "Müşteri", supplier: "Tedarikçi", both: "Cari" };
 /** Tahsilatta kredi kartı yok (backend reddeder); ödemede kart + ortaklar açık. */
 const COLLECT_TYPES = ["cash_box", "bank", "pos", "okc_pos"];
@@ -23,12 +25,10 @@ const spendGroupKey = (a) => (
 const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);
 const accId = (a) => a?.id || a?._id || "";
 const accLabel = (a) => {
-  const name = a.account_name || a.name || "Hesap";
-  const bank = a.bank_name && a.bank_name !== name ? a.bank_name : "";
   const owner = a.linked_contact_name && String(a.card_owner || "") === "customer"
     ? ` · ${a.linked_contact_name}`
     : "";
-  return `${bank ? `${bank} — ` : ""}${name}${owner} (${fmt(bal(a))} ₺)`;
+  return `${accountDisplayLabel(a)}${owner} (${fmt(bal(a))} ₺)`;
 };
 
 /** Company credit cards are spend-only; tahsilat goes to kasa / bank / POS. */
@@ -125,13 +125,13 @@ export const PaymentTargetSelect = ({
     <select value={value || ""} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium ${className}`} data-testid={testId}>
       {emptyLabel != null && <option value="">{emptyLabel}</option>}
       {groups.map(([t, list]) => (
-        <optgroup key={t} label={TYPE_LABEL[t] || t}>
-          {list.map((a) => <option key={accId(a)} value={accId(a)} disabled={!!a.is_integrated}>{accLabel(a)}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
+        <optgroup key={t} label={groupLabel(t)}>
+          {list.map((a) => <option key={accId(a)} value={accId(a)} disabled={!!a.is_integrated}>{accLabel(a)}{a.is_integrated ? " (seçilemez)" : ""}</option>)}
         </optgroup>
       ))}
       {orphan.length > 0 && (
         <optgroup label="Diğer Hesaplar">
-          {orphan.map((a) => <option key={accId(a)} value={accId(a)} disabled={!!a.is_integrated}>{accLabel(a)}{a.is_integrated ? " (entegre — seçilemez)" : ""}</option>)}
+          {orphan.map((a) => <option key={accId(a)} value={accId(a)} disabled={!!a.is_integrated}>{accLabel(a)}{a.is_integrated ? " (seçilemez)" : ""}</option>)}
         </optgroup>
       )}
       {partnersAllowed && partners.length > 0 && (

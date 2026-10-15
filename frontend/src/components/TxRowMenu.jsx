@@ -9,6 +9,7 @@ import { ReceiptPrint } from "./ReceiptPrint";
 import { BankMatchModal } from "./BankMatchModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { MoneyInput } from "./MoneyInput";
+import { accountDisplayLabel } from "../utils/accountLabel";
 
 export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
 
@@ -246,7 +247,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
               <select value={editTx.account_id} onChange={(e) => setEditTx({ ...editTx, account_id: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tx-edit-account">
                 {accounts.map((a) => {
                   const id = a.id || a._id;
-                  return <option key={id} value={id}>{a.bank_name ? `${a.bank_name} — ${a.account_name}` : a.account_name}</option>;
+                  return <option key={id} value={id}>{accountDisplayLabel(a)}</option>;
                 })}
               </select>
             </div>
