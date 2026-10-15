@@ -209,6 +209,9 @@ export default function BankingPage() {
   }, [loading, txReady, transactions, focusTx]);
 
   const silentReloadRef = useRef(null);
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const driftKeyRef = useRef("");
   const loadBankingData = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
@@ -226,10 +229,19 @@ export default function BankingPage() {
           return rows;
         })
         .catch(() => []);
+      const onReconciliation = tabRef.current === "reconciliation";
       const [accRes, psRes] = await Promise.all([
-        axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
+        onReconciliation
+          ? Promise.resolve(null)
+          : axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`).catch(() => ({ data: null }))
       ]);
+      if (!accRes || tabRef.current === "reconciliation") {
+        setPartnerSummary(psRes.data);
+        if (!silent) setLoading(false);
+        await Promise.all([txPromise, contactsPromise]);
+        return;
+      }
       setAccounts(accRes.data);
       setPartnerSummary(psRes.data);
       // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Cari URL'den gelirse kaynak olur.
@@ -269,14 +281,18 @@ export default function BankingPage() {
   useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
   useEffect(() => {
     if (tab !== "reconciliation") return undefined;
+    const key = `${companyId}:${cashTick}`;
+    if (driftKeyRef.current === key) return undefined;
     let cancelled = false;
     axios.get(`${API_URL}/banking/accounts?company_id=${companyId}&with_drift=1`)
       .then((r) => {
-        if (!cancelled && Array.isArray(r.data)) setAccounts(r.data);
+        if (cancelled) return;
+        driftKeyRef.current = key;
+        if (Array.isArray(r.data)) setAccounts(r.data);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [tab, companyId]);
+  }, [tab, companyId, cashTick]);
   const bumpCashData = useCallback(async (matchedTx) => {
     // Eşleşince satır listeden düşmesin: hemen matched durumunu yerelde yaz.
     if (matchedTx && (matchedTx.id || matchedTx._id)) {

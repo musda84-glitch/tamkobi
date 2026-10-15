@@ -201,10 +201,21 @@ def test_list_and_summary_query_count_stays_flat_and_get_does_not_write():
         list_ms = (time.perf_counter() - t0) * 1000
         finds10 = _finds(db10.log, "bank_transactions")
 
-        assert len(finds2) == len(finds10) == 1
-        assert finds10[0][2] == {"company_id": "co"}
-        assert "$or" not in (finds10[0][2] or {})
-        assert finds10[0][3] and finds10[0][3].get("amount") == 1
+        assert len(finds2) == len(finds10) == 2
+        by_field = {}
+        for row in finds10:
+            query = row[2] or {}
+            assert query.get("company_id") == "co"
+            assert "$or" not in query
+            assert row[3] and row[3].get("amount") == 1
+            if "account_id" in query:
+                by_field["account_id"] = query
+            if "target_account_id" in query:
+                by_field["target_account_id"] = query
+        cash_ids = {f"cash{i}" for i in range(10)}
+        assert set(by_field["account_id"]["account_id"]["$in"]) == cash_ids
+        assert set(by_field["target_account_id"]["target_account_id"]["$in"]) == cash_ids
+        assert set((finds2[0][2] or {})) != {"company_id"}
         assert not any(row[0] == "find_one" and row[1] == "bank_transactions" for row in db10.log)
         assert _writes(db10.log) == []
         assert "other" not in db10.scanned.get("bank_transactions", set())
@@ -226,7 +237,9 @@ def test_list_and_summary_query_count_stays_flat_and_get_does_not_write():
         db_drift.col("bank_connections", [])
         server.db = db_drift
         drifted = _run(server.list_bank_accounts("co", with_drift=1))
-        assert len(_finds(db_drift.log, "bank_transactions")) == 1
+        drift_finds = _finds(db_drift.log, "bank_transactions")
+        assert len(drift_finds) == 1
+        assert drift_finds[0][2] == {"company_id": "co"}
         bank = next(r for r in drifted if r["id"] == "bank")
         assert bank["ledger_balance"] == 0
         assert bank["bank_balance_drift"] is True

@@ -236,3 +236,34 @@ test("5 cash olayı tek yenileme tetikler", async () => {
   await flush(6);
   expect(accountGets()).toBe(before + 1);
 });
+
+function driftGets() {
+  return axios.get.mock.calls.filter((c) => String(c[0]).includes("with_drift=1")).length;
+}
+
+test("mutabakat with_drift sekme tekrarında değil veri değişince yenilenir", async () => {
+  await renderPage();
+  expect(driftGets()).toBe(0);
+  const recon = host.querySelector('[data-testid="banking-tab-reconciliation"]');
+  const accountsTab = host.querySelector('[data-testid="banking-tab-accounts"]');
+  await act(async () => { recon.click(); });
+  await flush(6);
+  expect(driftGets()).toBe(1);
+  const accountsBefore = accountGets();
+
+  await act(async () => { accountsTab.click(); });
+  await flush(2);
+  await act(async () => { recon.click(); });
+  await flush(4);
+  expect(driftGets()).toBe(1);
+  expect(accountGets()).toBe(accountsBefore);
+
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT, {
+      detail: { companyId: "c1", scopes: ["cash"], at: Date.now() },
+    }));
+    await new Promise((r) => setTimeout(r, 800));
+  });
+  await flush(8);
+  expect(driftGets()).toBe(2);
+});

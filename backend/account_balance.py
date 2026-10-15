@@ -164,7 +164,9 @@ async def apply_balance_delta(db, account_id: str, delta: float) -> str:
 
 
 # Bakiye işareti için yeterli alanlar. Tam belge (ekstre metni vb.) çekilmez.
+# _id kasa→kasa virmanın iki sorguda tekilleştirilmesi için durur.
 BANK_TX_BALANCE_PROJECTION = {
+    "_id": 1,
     "company_id": 1,
     "account_id": 1,
     "target_account_id": 1,
@@ -177,8 +179,7 @@ BANK_TX_BALANCE_PROJECTION = {
     "customer_card_account_id": 1,
     "via_customer_card": 1,
 }
-# Şirket başına tek yükleme. Eski hesap başına 20_000 tavanı burada da korunur;
-# başka şirketin hareketi company_id indeksiyle hiç okunmaz.
+# Sorgu başına tavan (eski hesap başına 20_000). company_id başka şirketi okumaz.
 COMPANY_TX_LIMIT = 20000
 
 
@@ -202,11 +203,78 @@ def group_txs_by_account(txs: Iterable[dict]) -> Dict[str, List[dict]]:
 
 
 async def fetch_company_bank_txs(db, company_id: str) -> List[dict]:
-    """Şirketin banka hareketleri, tek company_id sorgusu (indeks). $or yok."""
+    """Şirketin banka hareketleri, tek company_id sorgusu (indeks). $or yok.
+
+    Mutabakat (?with_drift=1) tüm hesapların defterini bu yolla okur.
+    Kasa bakiyesi bunu kullanmaz; fetch_cash_box_txs yeter.
+    """
     if not company_id:
         return []
     cursor = db.bank_transactions.find({"company_id": company_id}, BANK_TX_BALANCE_PROJECTION)
     return await cursor.to_list(COMPANY_TX_LIMIT)
+
+
+def _cash_box_ids(accounts: Iterable[dict]) -> List[str]:
+    ids: List[str] = []
+    seen = set()
+    for acc in accounts or []:
+        if str((acc or {}).get("type") or "") != "cash_box":
+            continue
+        aid = str((acc or {}).get("_id") or (acc or {}).get("id") or "")
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        ids.append(aid)
+    return ids
+
+
+def _dedupe_txs(rows: Iterable[dict], merged: Dict[str, dict], order: List[str], anon: List[int]) -> None:
+    """Aynı _id iki sorguda (kasa→kasa virman) bir kez kalır."""
+    for tx in rows or []:
+        if not isinstance(tx, dict):
+            continue
+        raw = tx.get("_id")
+        if raw is None or raw == "":
+            anon[0] += 1
+            key = f"__anon_{anon[0]}"
+        else:
+            key = str(raw)
+        if key in merged:
+            continue
+        merged[key] = tx
+        order.append(key)
+
+
+async def fetch_cash_box_txs(db, company_id: str, cash_ids: Iterable[str]) -> List[dict]:
+    """Kasa bakiyesi: yalnız kasa hesaplarına değen hareketler.
+
+    İki sorgu, $or yok: account_id IN (kasa id'leri) ve target_account_id IN (kasa id'leri).
+    company_id her iki sorgudadır; başka şirketin hareketi okunmaz.
+    Sonuç _id ile tekilleştirilir. skips_account_balance burada uygulanmaz;
+    movement_balance aynı kurallarla işaretler (iptal, havuz, ekstre, ledger).
+    """
+    ids = []
+    seen = set()
+    for raw in cash_ids or []:
+        sid = str(raw or "")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        ids.append(sid)
+    cid = str(company_id or "")
+    if not cid or not ids:
+        return []
+    merged: Dict[str, dict] = {}
+    order: List[str] = []
+    anon = [0]
+    for field in ("account_id", "target_account_id"):
+        cursor = db.bank_transactions.find(
+            {"company_id": cid, field: {"$in": ids}},
+            BANK_TX_BALANCE_PROJECTION,
+        )
+        rows = await cursor.to_list(COMPANY_TX_LIMIT)
+        _dedupe_txs(rows, merged, order, anon)
+    return [merged[key] for key in order]
 
 
 async def _lookup_company_id(db, account_id: str) -> str:
@@ -379,11 +447,11 @@ async def sync_cash_box_balances(
     *,
     persist: bool = True,
 ) -> List[dict]:
-    """Kasa kartı bakiyesi = hareket toplamı. Tüm kasalar tek company sorgusu.
+    """Kasa kartı bakiyesi = hareket toplamı.
 
-    Kasa başına sorgu ve recalc_account_balance içindeki find_one yok.
-    txs verilirse (liste ucu) aynı yükleme paylaşılır. persist=False salt okur:
-    cevapta bakiye güncellenir, bank_accounts yazılmaz.
+    txs yoksa yalnız kasa id'leri: account_id IN + target_account_id IN.
+    txs verilirse (with_drift liste ucu) paylaşılan şirket yüklemesi kullanılır;
+    ikinci bank_transactions sorgusu açılmaz. persist=False salt okur.
     """
     cash = []
     for acc in accounts or []:
@@ -396,7 +464,7 @@ async def sync_cash_box_balances(
         return accounts
     if txs is None:
         company_id = await _company_id_for_accounts(db, accounts)
-        txs = await fetch_company_bank_txs(db, company_id) if company_id else []
+        txs = await fetch_cash_box_txs(db, company_id, _cash_box_ids(cash)) if company_id else []
     grouped = group_txs_by_account(txs)
     for acc in cash:
         aid = str(acc.get("_id") or acc.get("id"))

@@ -65,6 +65,8 @@ export const PaymentTargetSelect = ({
   allowedTypes = null,
   emptyLabel,
   disabled = false,
+  /** false: üst bileşen hesapları bir kez yükler (fatura tahsilat modalı). */
+  fetchAccounts = true,
 }) => {
   const [partners, setPartners] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -72,11 +74,11 @@ export const PaymentTargetSelect = ({
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   useEffect(() => { setLiveAccounts(accounts || []); }, [accounts]);
   const reloadAccounts = useCallback(() => {
-    if (!companyId) return;
+    if (!fetchAccounts || !companyId) return;
     axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)
       .then((r) => setLiveAccounts(Array.isArray(r.data) ? r.data : []))
       .catch(() => {});
-  }, [companyId]);
+  }, [companyId, fetchAccounts]);
   const typeFilter = Array.isArray(allowedTypes) && allowedTypes.length
     ? allowedTypes.map((t) => normalizeType(t)).filter(Boolean)
     : null;
