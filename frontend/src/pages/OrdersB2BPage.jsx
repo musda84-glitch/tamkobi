@@ -56,6 +56,7 @@ import { eBelgeMenuItems, orderEBelgeType, resolveOrderContact } from "../utils/
 import { contactMukellefPatch, docBuyerTaxId, faturalastirMenuLabel, fetchGibMukellef } from "../utils/gibMukellef";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 import { OrderInvoiceNumberMarks } from "../components/OrderInvoiceNumberMarks";
+import { InvoiceOrderMismatchBadge } from "../components/InvoiceOrderMismatchBadge";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId, todayYmd } from "../utils/orderBulkActions";
 import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal";
@@ -1914,6 +1915,7 @@ export default function OrdersB2BPage() {
                   </div>
                   <div className="text-right shrink-0 font-bold text-slate-900">
                     {showPrices ? `${formatTrAmount(ord.grand_total ?? ord.total_amount)} ₺` : "—"}
+                    <InvoiceOrderMismatchBadge ord={ord} />
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100" data-testid={`order-actions-mobile-${ord.order_number}`}>
@@ -2139,6 +2141,7 @@ export default function OrdersB2BPage() {
                           {Number(ord.vat_total) > 0 && <div className="text-[10px] font-semibold text-slate-400">KDV dahil</div>}
                         </>
                       ) : "—"}
+                      <InvoiceOrderMismatchBadge ord={ord} />
                     </td>
                     <td className="px-4 py-3">
                       {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (

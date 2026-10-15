@@ -70,6 +70,13 @@ from line_totals import (
     ORDER_ITEM_FIELDS,
     pick_fields,
 )
+from order_invoice_mismatch import (
+    attach_invoice_mismatch_warnings,
+    order_is_shipped_for_sync,
+    order_items_signature,
+    order_sync_skip_reason,
+    pick_status_is_open,
+)
 from stock_codes import fill_stock_codes as _fill_stock_codes_impl, _variant_source as _b2b_variant_source
 from auth_utils import (
     hash_password, verify_password, create_access_token,
@@ -6193,6 +6200,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             o["invoice_e_type"] = inv.get("e_type")
             o["einvoice_state"] = inv.get("einvoice_state") or o.get("einvoice_state")
             o["invoice_gib_status"] = inv.get("gib_status")
+    await _annotate_orders_invoice_mismatch(orders, preloaded=inv_by_id)
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
     mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(200)
     email_deliveries = [m for m in mails if mail_tracking.within_days(m.get("created_at") or "")][:80]
@@ -8977,12 +8985,18 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
                     "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
                 )
             raise HTTPException(status_code=500, detail="Fatura etkileri uygulanamadı; değişiklik geri alındı.")
-    if updated and updated.get("status") == "draft" and "items" in allowed:
+    # Geri alma (rollback) bu noktaya gelmez. GİB kilidi yukarıda döner; kalem zaten yazılmaz.
+    line_or_discount = bool({"items", "general_discount_rate", "general_discount_amount"} & set(allowed))
+    if updated and line_or_discount and not _invoice_gib_locked(updated):
+        rows = allowed.get("items") or updated.get("items") or []
         try:
-            await _sync_draft_order_items(updated, allowed.get("items") or updated.get("items") or [])
+            wrote = await _sync_order_from_invoice(updated, rows)
+            if wrote and updated.get("status") == "draft":
+                # Taslak bağ alanları: is_invoiced False, fatura no. Onaylıda yazılmaz.
+                await _stamp_draft_order_invoice_link(updated)
         except Exception:
             logging.getLogger(__name__).exception(
-                "Taslak fatura→sipariş senkronu başarısız: %s", invoice_id
+                "Fatura→sipariş senkronu başarısız: %s", invoice_id
             )
     return clean_doc(updated)
 
@@ -13338,6 +13352,7 @@ async def delete_leave(leave_id: str, user: dict = Depends(get_current_user)):
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, user: dict = Depends(get_current_user)):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    await _annotate_orders_invoice_mismatch([o])
     return clean_doc(o)
 
 _MARKETPLACE_EDIT_BLOCK = {
@@ -13990,6 +14005,135 @@ async def _sync_draft_order_items(invoice: dict, items: list) -> None:
         "invoice_number": invoice.get("invoice_number") or order.get("invoice_number"),
         "is_invoiced": False,
     }})
+
+
+def _order_sync_note(invoice: dict) -> str:
+    number = str(invoice.get("invoice_number") or "").strip() or "fatura"
+    return f"Fatura {number} düzenlemesinden güncellendi"
+
+
+def _same_money(a, b, places: int = 2) -> bool:
+    try:
+        return round(float(a or 0), places) == round(float(b or 0), places)
+    except (TypeError, ValueError):
+        return a == b
+
+
+async def _invoice_sync_pick_session_open(order: dict) -> bool:
+    """Açık toplama oturumu var mı? Oturum satırları burada değiştirilmez."""
+    if pick_status_is_open(order):
+        return True
+    oid = order.get("_id") or order.get("id")
+    if not oid:
+        return False
+    q: Dict[str, Any] = {"order_id": oid, "status": {"$nin": ["shipped", "delivered"]}}
+    company_id = order.get("company_id")
+    if company_id:
+        q["company_id"] = company_id
+    ses = await db.order_pick_sessions.find_one(q)
+    if not ses:
+        return False
+    if company_id and ses.get("company_id") and ses.get("company_id") != company_id:
+        return False
+    return str(ses.get("status") or "").strip().lower() not in ("shipped", "delivered")
+
+
+async def _stamp_draft_order_invoice_link(invoice: dict) -> None:
+    """Taslak senkronunda sipariş bağını koru. Onaylı faturada çağrılmaz."""
+    order_id = invoice.get("order_id") or invoice.get("source_order_id")
+    company_id = invoice.get("company_id")
+    if not order_id or not company_id:
+        return
+    link: Dict[str, Any] = {"is_invoiced": False}
+    inv_id = invoice.get("_id") or invoice.get("id")
+    if inv_id:
+        link["invoice_id"] = inv_id
+    if invoice.get("invoice_number"):
+        link["invoice_number"] = invoice.get("invoice_number")
+    await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": link})
+
+
+async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
+    """Taslak ve GİB'e gitmemiş onaylı (kâğıt dahil) fatura kalemlerini bağlı siparişe yaz.
+
+    Onaylı faturada is_invoiced olsa da kalemler güncellenir. Taslakta sipariş
+    zaten faturalıysa mevcut erken dönüş korunur; bağ alanlarını
+    `_sync_draft_order_items` yazar.
+    is_invoiced, invoice_id, invoice_number ve order_status değişmez.
+    Stok, cari ve rezervasyon yeniden uygulanmaz; o etkiler faturadadır.
+    Başka firma, iptal/iade, başka faturaya bağlı sipariş, pazaryeri ve
+    sevk/açık toplamada kalem değişimi yazılmaz (uyarı liste/detayda kalır).
+    """
+    if not invoice or not items or _invoice_gib_locked(invoice):
+        return False
+    order_id = invoice.get("order_id") or invoice.get("source_order_id")
+    company_id = invoice.get("company_id")
+    if not order_id or not company_id:
+        return False
+    order = await db.orders.find_one({"_id": order_id, "company_id": company_id})
+    if not order:
+        return False
+    # Taslak + faturalanmış sipariş: eski `_sync_draft_order_items` de dokunmaz.
+    if invoice.get("status") == "draft" and order.get("is_invoiced"):
+        return False
+    early = order_sync_skip_reason(order, invoice, items_changed=False, pick_open=False)
+    if early:
+        return False
+    ord_rows = invoice_items_to_order_items(items)
+    await _fill_stock_codes(company_id, ord_rows)
+    ord_items = [it.model_dump() for it in _order_item_models(ord_rows)]
+    subtotal, vat_total, discount_total, grand_total = order_document_totals(ord_items)
+    items_changed = order_items_signature(ord_items) != order_items_signature(order.get("items"))
+    pick_open = False
+    if items_changed and not order_is_shipped_for_sync(order):
+        pick_open = await _invoice_sync_pick_session_open(order)
+    if order_sync_skip_reason(order, invoice, items_changed=items_changed, pick_open=pick_open):
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    total_amount = grand_total if vat_total else subtotal
+    patch: Dict[str, Any] = {
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "grand_total": grand_total,
+        "total_amount": total_amount,
+        "updated_at": now,
+    }
+    if items_changed:
+        patch["items"] = ord_items
+    currency = str(invoice.get("currency") or "").strip()
+    if currency:
+        patch["currency"] = currency
+    if invoice.get("fx_rate") not in (None, ""):
+        patch["fx_rate"] = float(invoice.get("fx_rate") or 1)
+    if invoice.get("fx_source"):
+        patch["fx_source"] = invoice.get("fx_source")
+    if invoice.get("fx_date"):
+        patch["fx_date"] = invoice.get("fx_date")
+    rate = float(patch.get("fx_rate") if patch.get("fx_rate") not in (None, "") else (order.get("fx_rate") or 1))
+    patch["local_total"] = round(float(grand_total) * rate, 2)
+    material = items_changed
+    for key in ("subtotal", "vat_total", "discount_total", "grand_total", "total_amount", "local_total"):
+        if not _same_money(patch.get(key), order.get(key)):
+            material = True
+    if patch.get("currency") and patch.get("currency") != (order.get("currency") or "TRY"):
+        material = True
+    if "fx_rate" in patch and not _same_money(patch.get("fx_rate"), order.get("fx_rate") or 1, 6):
+        material = True
+    if patch.get("fx_source") and patch.get("fx_source") != order.get("fx_source"):
+        material = True
+    if not material:
+        # Kalem aynıysa onaylıda kayıt açma. Taslakta bağ alanları yine yazılsın.
+        return str(invoice.get("status") or "") == "draft"
+    note = _order_sync_note(invoice)
+    await db.orders.update_one(
+        {"_id": order["_id"], "company_id": company_id},
+        {
+            "$set": patch,
+            "$push": {"order_history": {"updated_at": now, "message": note}},
+        },
+    )
+    return True
 
 
 @api_router.post("/orders/{order_id}/approve")
@@ -17016,8 +17160,35 @@ async def list_orders(
     return _sort_b2b_cart_orders(docs)
 
 
+async def _annotate_orders_invoice_mismatch(
+    docs: List[Dict[str, Any]],
+    preloaded: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Sipariş grand_total bağlı faturadan ayrılıyorsa uyarı alanı. Tek $in sorgusu."""
+    if not docs:
+        return docs
+    by_id: Dict[str, Any] = {}
+    for key, inv in (preloaded or {}).items():
+        if inv and key:
+            by_id[key] = inv
+    missing = []
+    for order in docs:
+        inv_id = order.get("invoice_id")
+        if inv_id and inv_id not in by_id:
+            missing.append(inv_id)
+    missing = list(dict.fromkeys(missing))
+    if missing:
+        rows = await db.invoices.find(
+            {"_id": {"$in": missing}},
+            {"grand_total": 1, "company_id": 1, "invoice_number": 1},
+        ).to_list(len(missing))
+        for row in rows:
+            by_id[row["_id"]] = row
+    return attach_invoice_mismatch_warnings(docs, by_id)
+
+
 async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Liste rozeti: fatura e_type / einvoice_state siparişe yansısın (Faturalaşmış E-Fatura/E-Arşiv)."""
+    """Liste rozeti: fatura e_type / einvoice_state ve tutar farkı (tek $in sorgusu)."""
     from order_ebelge_enrich import enrich_orders_with_invoices
 
     if not docs:
@@ -17037,10 +17208,13 @@ async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict
             "local_invoice_number": 1,
             "gib_uuid": 1,
             "gib_tracking_id": 1,
+            "grand_total": 1,
+            "company_id": 1,
         },
     ).to_list(len(inv_ids))
     by_id = {i["_id"]: i for i in invs}
-    return enrich_orders_with_invoices(docs, by_id)
+    enriched = enrich_orders_with_invoices(docs, by_id)
+    return attach_invoice_mismatch_warnings(enriched, by_id)
 
 
 async def _enrich_orders_production_flags(
