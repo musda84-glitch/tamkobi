@@ -31,8 +31,10 @@ export function resolveOrderContact(ord, contacts = []) {
  */
 export function orderEBelgeType(ord, _contacts = [], gibLookup = null) {
   const lookup = gibLookup || ord?.gib_lookup || ord?.gibMeta || null;
+  if (lookup && (lookup.status === "error" || lookup.lookup_status === "unknown")) return null;
   const data = lookup?.data || lookup;
-  if (data && (data.suggested_e_type || typeof data.is_e_invoice_user === "boolean")) {
+  if (data && (data.lookup_status === "unknown" || data.lookup_status === "error")) return null;
+  if (data && (data.suggested_e_type || typeof data.is_e_invoice_user === "boolean" || data.lookup_status)) {
     return eTypeFromGib(data);
   }
   return "e_archive";
@@ -57,6 +59,7 @@ export function orderCanShowEBelgeMenu(ord) {
 export function eBelgeMenuItems(ord, contacts = [], gibLookup = null) {
   if (!orderCanShowEBelgeMenu(ord)) return [];
   const type = orderEBelgeType(ord, contacts, gibLookup);
+  if (type == null) return [];
   if (gibLookup && type === "e_invoice") {
     return [
       { eType: "e_invoice", label: "E-Fatura kes (GİB)", testIdSuffix: "efatura" },

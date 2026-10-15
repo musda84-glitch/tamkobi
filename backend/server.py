@@ -8944,18 +8944,25 @@ async def _mark_order_invoiced_from_invoice(inv: dict) -> None:
     await dispatch_invoice.mark_orders_invoiced(db, inv)
 
 @api_router.get("/gib/lookup")
-async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_01"):
-    tid = "".join(ch for ch in tax_id if ch.isdigit())
-    if len(tid) not in (10, 11):
-        raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
-    result = await e_invoice.resolve_buyer_mukellef(company_id, tid)
+async def gib_lookup(
+    tax_id: str,
+    company_id: Optional[str] = None,
+    refresh: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    tid = "".join(ch for ch in (tax_id or "") if ch.isdigit())
+    result = await e_invoice.resolve_buyer_mukellef(company_id, tid, refresh=bool(refresh))
     local = result.get("local_contact")
+    status = result.get("lookup_status") or ("mukellef" if result.get("is_e_invoice_user") else "not_mukellef")
     return {
         "tax_id": result["tax_id"],
         "kind": result["kind"],
         "is_e_invoice_user": result["is_e_invoice_user"],
         "suggested_e_type": result["suggested_e_type"],
         "alias": result.get("alias"),
+        "aliases": result.get("aliases") or [],
+        "lookup_status": status,
         "source": result.get("source"),
         "name": result.get("name") or "",
         "local_contact": clean_doc(local) if local else None,

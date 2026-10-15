@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 import re
 import time
@@ -20,6 +21,8 @@ from urllib.parse import urljoin
 
 import httpx
 from fastapi import HTTPException
+
+from safe_error import mask_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -608,6 +611,31 @@ class IsnetPortalClient:
         except Exception:
             data = {"raw": (r.text or "")[:500]}
         return data if isinstance(data, dict) else {"data": data}
+
+    async def lookup_gib_registered_user(self, tax_id: str) -> Optional[Dict[str, Any]]:
+        """GİB kayıtlı kullanıcı. Tüm HTML adayları 404 ise Mobile API, o da 404 ise None (SOAP)."""
+        tid = _digits(tax_id)
+        for path in GIB_REGISTERED_USER_PATHS:
+            try:
+                r = await self._client.get(
+                    path,
+                    params={"vknTckn": tid, "VknTckn": tid},
+                    headers={
+                        "Accept": "application/json, text/javascript, */*; q=0.01",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": urljoin(self.base + "/", "Invoice/CreateQuick"),
+                    },
+                )
+            except httpx.RequestError as exc:
+                logger.warning("isnet_portal gib path failed: %s", mask_sensitive_text(str(exc))[:300])
+                raise HTTPException(status_code=502, detail="GİB kayıtlı kullanıcı sorgusu başarısız.") from exc
+            hit = classify_portal_gib_response(r.status_code, r.text or "", str(getattr(r, "url", "") or ""), tid)
+            if hit is None:
+                continue
+            hit["source"] = "isnet_portal"
+            hit["tax_id"] = tid
+            return hit
+        return await _mobile_gib_registered_user(self.settings, self.password, tid)
 
 
     async def list_inbox(self, days: int = 14) -> List[Dict[str, Any]]:
@@ -1460,31 +1488,188 @@ async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
     }
 
 
+# Portal HTML'de GİB kayıtlı kullanıcı listesi. 404 ise sıradaki aday, hepsi yoksa SOAP.
+GIB_REGISTERED_USER_PATHS = (
+    "/Recipient/GetGibUserByVknTckn",
+    "/Recipient/GetGibUserList",
+    "/Invoice/GetGibUserByVknTckn",
+    "/Company/GetGibUserByVknTckn",
+)
+_NOT_FOUND_RE = re.compile(r"bulunamad", re.I)
+_NOT_REGISTERED_RE = re.compile(
+    r"kay[ıi]tl[ıi]\s+de[gğ]il|m[üu]kellefi?\s+de[gğ]ildir|m[üu]kellef\s+de[gğ]il|"
+    r"e-?fatura\s+kullan[ıi]c[ıi]s[ıi]\s+de[gğ]il|listesinde\s+yok",
+    re.I,
+)
+
+
+def _is_login_page(text: str, url: str = "") -> bool:
+    low = (text or "").lower()
+    if "<html" not in low and "<!doctype html" not in low:
+        return False
+    if "__requestverificationtoken" in low and "vkntckn" in low:
+        return True
+    if "account/login" in (url or "").lower():
+        return True
+    return False
+
+
+def _alias_list_from_obj(src: Any) -> List[str]:
+    if not isinstance(src, dict):
+        return []
+    out: List[str] = []
+    for key in (
+        "AliasList",
+        "aliases",
+        "EtiketListesi",
+        "InboxTagList",
+        "PkList",
+        "Alias",
+        "ReceiverTag",
+        "GibAlias",
+    ):
+        val = src.get(key)
+        items = val if isinstance(val, list) else [val] if isinstance(val, str) else []
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+            elif isinstance(item, dict):
+                a = item.get("Etiket") or item.get("Alias") or item.get("Tag") or item.get("Value")
+                if a and str(a).strip():
+                    out.append(str(a).strip())
+    uniq: List[str] = []
+    for a in out:
+        if a not in uniq:
+            uniq.append(a)
+    return uniq
+
+
+def _classify_gib_payload(data: Dict[str, Any], tax: str) -> Dict[str, Any]:
+    """GİB kayıtlı kullanıcı JSON'u. Alan yok / bulunamadı → 422. Ham gövde dönülmez."""
+    msg = str(data.get("ErrorMessage") or data.get("Message") or data.get("message") or "")
+    if _NOT_FOUND_RE.search(msg):
+        raise HTTPException(status_code=422, detail="GİB kaydı bulunamadı; mükellefiyet doğrulanamadı.")
+    recipient = data.get("Recipient") if isinstance(data.get("Recipient"), dict) else None
+    if recipient is None and isinstance(data.get("GibUser"), dict):
+        recipient = data.get("GibUser")
+    aliases = _alias_list_from_obj(recipient) + [a for a in _alias_list_from_obj(data) if a not in _alias_list_from_obj(recipient)]
+    name = ""
+    if isinstance(recipient, dict):
+        name = str(
+            recipient.get("GibUserName")
+            or recipient.get("Title")
+            or recipient.get("Unvan")
+            or recipient.get("TaxPayerName")
+            or ""
+        ).strip()
+    name = name or str(data.get("GibUserName") or data.get("TaxPayerName") or "").strip()
+    flag = data.get("IsEInvoiceUser")
+    if flag is None:
+        flag = data.get("EFaturaMukellefi")
+    if _NOT_REGISTERED_RE.search(msg) or flag is False:
+        return {
+            "tax_id": tax,
+            "name": name,
+            "is_e_invoice_user": False,
+            "alias": "",
+            "aliases": [],
+            "lookup_status": "not_mukellef",
+            "source": "isnet_portal",
+        }
+    identified = bool(name or aliases or (isinstance(recipient, dict) and (recipient.get("GibUserName") or recipient.get("VknTckn"))))
+    if flag is True or identified:
+        return {
+            "tax_id": tax,
+            "name": name,
+            "is_e_invoice_user": True,
+            "alias": aliases[0] if aliases else "",
+            "aliases": aliases,
+            "lookup_status": "mukellef",
+            "source": "isnet_portal",
+        }
+    raise HTTPException(status_code=422, detail="GİB yanıtında kayıtlı kullanıcı alanı yok; mükellefiyet doğrulanamadı.")
+
+
+def classify_portal_gib_response(status_code: int, body_text: str, final_url: str = "", tax: str = "") -> Optional[Dict[str, Any]]:
+    """None → uç nokta yok (404), çağıran SOAP'a düşebilir.
+
+    HTTP≠200, login sayfası, JSON değil veya alan yok → unknown (502/422).
+    """
+    if int(status_code or 0) == 404:
+        return None
+    if int(status_code or 0) != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GİB kayıtlı kullanıcı sorgusu başarısız (HTTP {int(status_code or 0)}).",
+        )
+    if _is_login_page(body_text or "", final_url or ""):
+        raise HTTPException(status_code=502, detail="GİB sorgusu portal oturumuna düştü; mükellefiyet doğrulanamadı.")
+    text = (body_text or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="GİB yanıtı boş; mükellefiyet doğrulanamadı.")
+    if text[:1] not in "{[":
+        raise HTTPException(status_code=422, detail="GİB yanıtı JSON değil; mükellefiyet doğrulanamadı.")
+    try:
+        data = json.loads(text)
+    except Exception:
+        raise HTTPException(status_code=422, detail="GİB yanıtı JSON değil; mükellefiyet doğrulanamadı.")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="GİB yanıtında kayıtlı kullanıcı alanı yok; mükellefiyet doğrulanamadı.")
+    if "raw" in data and "Recipient" not in data and "GibUserName" not in data and "ErrorMessage" not in data:
+        raise HTTPException(status_code=422, detail="GİB yanıtı JSON değil; mükellefiyet doğrulanamadı.")
+    return _classify_gib_payload(data, tax)
+
+
+async def _mobile_gib_registered_user(settings: dict, password: str, tax: str) -> Optional[Dict[str, Any]]:
+    """Mobile API GetGibUserByVknTckn. 404 → None (SOAP). Diğer hatalar unknown."""
+    try:
+        session = await _mobile_login(settings, password)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return None
+        raise HTTPException(status_code=502, detail="GİB kayıtlı kullanıcı servisine ulaşılamadı.") from exc
+    token = str(session.get("token") or "")
+    api = mobile_api_base(settings)
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": UA}) as client:
+            status, data = await _mobile_post_json(
+                client,
+                f"{api}/api/Company/GetGibUserByVknTckn",
+                token,
+                {"ReceiverTaxCode": tax},
+            )
+    except httpx.RequestError as exc:
+        logger.warning("isnet_portal gib mobile failed: %s", mask_sensitive_text(str(exc))[:300])
+        raise HTTPException(status_code=502, detail="GİB kayıtlı kullanıcı sorgusu başarısız.") from exc
+    if status == 404:
+        return None
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="GİB yanıtı JSON değil; mükellefiyet doğrulanamadı.")
+    if status != 200:
+        raise HTTPException(status_code=502, detail=f"GİB kayıtlı kullanıcı sorgusu başarısız (HTTP {status}).")
+    hit = _classify_gib_payload(data, tax)
+    hit["source"] = "isnet_portal"
+    return hit
+
+
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
+    """GİB kayıtlı kullanıcı listesi. Uç nokta yoksa SOAP GetTaxPayer.
+
+    TÜRMOB (GetUserInfoFromTurmobService) mükellef kararı vermez.
+    """
     require_explicit_mode(settings)
+    tax = _digits(tax_id)
+    if len(tax) not in (10, 11):
+        raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
     async with IsnetPortalClient(settings, password) as client:
         await client.login()
-        data = await client.lookup_turmob(tax_id)
-        name = (
-            data.get("KimlikUnvani")
-            or " ".join(x for x in (data.get("Ad"), data.get("Soyad")) if x).strip()
-            or data.get("Unvan")
-            or ""
-        )
-        aliases = data.get("EtiketListesi") or data.get("aliases") or []
-        alias = None
-        if isinstance(aliases, list) and aliases:
-            first = aliases[0]
-            alias = first.get("Etiket") if isinstance(first, dict) else str(first)
-        return {
-            "tax_id": _digits(tax_id),
-            "name": name,
-            "tax_office": data.get("VergiDairesiAdi") or "",
-            "is_e_invoice_user": bool(alias or data.get("EFaturaMukellefi")),
-            "alias": alias,
-            "source": "isnet_portal",
-            "raw": data,
-        }
+        hit = await client.lookup_gib_registered_user(tax)
+    if hit is None:
+        import isnet as _isnet
+        remote = await _isnet.lookup_user(settings, password, tax)
+        remote["source"] = remote.get("source") or "isnet"
+        return remote
+    return hit
 
 
 

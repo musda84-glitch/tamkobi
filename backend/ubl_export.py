@@ -977,9 +977,10 @@ def build_invoice_ubl(
 
 def _buyer_from(inv: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     c = contact or {}
+    from buyer_tax import buyer_tax_choice
     return {
         "name": c.get("name") or inv.get("contact_name") or "",
-        "tax_number_or_id": c.get("tax_number_or_id") or inv.get("contact_tax_id") or "",
+        "tax_number_or_id": buyer_tax_choice(inv, c)["tax"],
         "tax_office": c.get("tax_office") or "",
         "address": c.get("address") or inv.get("shipping_address") or "",
         "city": c.get("city") or inv.get("city") or "",
