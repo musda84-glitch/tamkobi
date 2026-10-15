@@ -146,20 +146,47 @@ def _server_password(server: Optional[dict]) -> str:
         return ""
 
 
-async def resolve_mailbox_password(box: dict, server: Optional[dict] = None) -> str:
-    """Kutu şifresi; boşsa ve adres SMTP kullanıcısıyla aynıysa sunucu şifresi.
+async def _server_for_box(box: dict, server: Optional[dict]) -> Optional[dict]:
+    if server is not None:
+        return server
+    sid = str(box.get("server_id") or "").strip()
+    if sid and _db is not None:
+        return await _db.platform_mail_servers.find_one({"_id": sid})
+    return None
 
-    Dönen değer çağıranın SMTP/IMAP oturumunda kalır. Yanıta ve loga yazılmaz.
+
+async def resolve_mailbox_password(box: dict, server: Optional[dict] = None) -> str:
+    """IMAP girişi (kutu e-postası): kutu şifresi.
+
+    Boşsa yalnız kutu e-postası sunucunun SMTP kullanıcı adıyla aynıysa sunucu
+    şifresi. Dönen değer oturumda kalır; yanıta ve loga yazılmaz.
     """
     own = _mailbox_password(box)
     if own:
         return own
-    if server is None:
-        sid = str(box.get("server_id") or "").strip()
-        if sid and _db is not None:
-            server = await _db.platform_mail_servers.find_one({"_id": sid})
+    server = await _server_for_box(box, server)
     if not _smtp_login_matches(box, server):
         return ""
+    return _server_password(server)
+
+
+def _box_has_own_smtp_user(box: dict) -> bool:
+    return bool(str(box.get("smtp_user") or "").strip())
+
+
+async def resolve_smtp_password(box: dict, server: Optional[dict] = None) -> str:
+    """SMTP girişi (box.smtp_user veya sunucu smtp_user).
+
+    Kutu şifresi varsa o kullanılır. Yoksa ve kutunun kendi smtp_user alanı
+    boşsa giriş sunucu kullanıcı adıyla yapılır ve sunucu şifresi kullanılır.
+    Kutunun smtp_user'ı doluysa sunucu şifresine düşülmez.
+    """
+    own = _mailbox_password(box)
+    if own:
+        return own
+    if _box_has_own_smtp_user(box):
+        return ""
+    server = await _server_for_box(box, server)
     return _server_password(server)
 
 
@@ -167,7 +194,7 @@ async def _smtp_dict(box: dict, server: Optional[dict] = None) -> dict:
     server = server or (await _db.platform_mail_servers.find_one({"_id": box["server_id"]}) if box.get("server_id") else None)
     if not server:
         raise HTTPException(status_code=400, detail="Kutu bir posta sunucusuna bağlı değil.")
-    password = await resolve_mailbox_password(box, server)
+    password = await resolve_smtp_password(box, server)
     if not password:
         raise HTTPException(status_code=400, detail=SMTP_PASSWORD_MISSING)
     return {
