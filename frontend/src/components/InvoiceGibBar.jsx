@@ -4,6 +4,7 @@ import { Inbox, Send, Truck, RefreshCw, Loader2 } from "lucide-react";
 import {
   einvoiceProviderLabel,
   isEinvoiceConfigured,
+  shouldShowEinvoiceUnconfiguredWarning,
   supportsGibInbox,
   supportsEDispatch,
 } from "../utils/einvoiceIntegrator";
@@ -14,8 +15,25 @@ import {
  *   Gelen e-Fatura · Gelen e-İrsaliye · Giden e-Fatura · Giden e-İrsaliye
  * Ref: github.com/mbrksntrk/dolibarr-isnet-nettefatura
  */
+export function EinvoiceUnconfiguredNotice({ loading = false, settings = null }) {
+  if (!shouldShowEinvoiceUnconfiguredWarning({ loading, settings })) return null;
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50/80 text-[11px] text-amber-900"
+      data-testid="invoice-gib-bar-unconfigured"
+    >
+      <span className="font-semibold">GİB entegratörü bağlı değil.</span>
+      <Link to="/settings?tab=einvoice" className="underline font-semibold hover:text-amber-950" data-testid="invoice-gib-bar-settings">
+        Ayarlar → e-Fatura
+      </Link>
+      <span className="text-amber-700">bağlayın (İşNet / n11).</span>
+    </div>
+  );
+}
+
 export function InvoiceGibBar({
   settings,
+  loading = false,
   busy = "",
   onPullIncoming,
   onRefreshOutgoing,
@@ -23,19 +41,8 @@ export function InvoiceGibBar({
   onFilterOutgoing,
   onFilterIncoming,
 }) {
-  if (!isEinvoiceConfigured(settings)) {
-    return (
-      <div
-        className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50/80 text-[11px] text-amber-900"
-        data-testid="invoice-gib-bar-unconfigured"
-      >
-        <span className="font-semibold">GİB entegratörü bağlı değil.</span>
-        <Link to="/settings?tab=einvoice" className="underline font-semibold hover:text-amber-950" data-testid="invoice-gib-bar-settings">
-          Ayarlar → e-Fatura
-        </Link>
-        <span className="text-amber-700">bağlayın (İşNet / n11).</span>
-      </div>
-    );
+  if (loading || !isEinvoiceConfigured(settings)) {
+    return <EinvoiceUnconfiguredNotice loading={loading} settings={settings} />;
   }
 
   const label = einvoiceProviderLabel(settings.provider);

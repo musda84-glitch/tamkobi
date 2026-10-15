@@ -1,6 +1,7 @@
 import {
   einvoiceProviderLabel,
   isEinvoiceConfigured,
+  shouldShowEinvoiceUnconfiguredWarning,
   supportsGibInbox,
   supportsEDispatch,
 } from "./einvoiceIntegrator";
@@ -15,6 +16,16 @@ test("configured check", () => {
   expect(isEinvoiceConfigured({ provider: "isnet", status: "configured" })).toBe(true);
   expect(isEinvoiceConfigured({ provider: "isnet", status: "draft" })).toBe(false);
   expect(isEinvoiceConfigured({ provider: "simulated", status: "configured" })).toBe(false);
+});
+
+test("unconfigured warning waits until integrator status is known", () => {
+  const connected = { provider: "isnet", status: "configured" };
+  expect(shouldShowEinvoiceUnconfiguredWarning({ loading: true, settings: null })).toBe(false);
+  expect(shouldShowEinvoiceUnconfiguredWarning({ loading: true, settings: connected })).toBe(false);
+  expect(shouldShowEinvoiceUnconfiguredWarning({ loading: false, settings: connected })).toBe(false);
+  expect(shouldShowEinvoiceUnconfiguredWarning({ loading: false, settings: null })).toBe(true);
+  expect(shouldShowEinvoiceUnconfiguredWarning({ loading: false, settings: { provider: "isnet", status: "draft" } })).toBe(true);
+  expect(shouldShowEinvoiceUnconfiguredWarning({ loading: false, settings: { provider: "simulated", status: "configured" } })).toBe(true);
 });
 
 test("inbox and e-dispatch support", () => {
