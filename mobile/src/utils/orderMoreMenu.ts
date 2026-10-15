@@ -44,6 +44,7 @@ export type OrderMoreOrder = {
   invoice_gib_tracking_id?: string | null;
   gib_tracking_id?: string | null;
   gib_invoice_id?: string | null;
+  local_invoice_number?: string | null;
   invoice_gib_status?: string | null;
   gib_status?: string | null;
 };
@@ -82,36 +83,58 @@ export function filterPanelCargoLabelItems(ord: OrderMoreOrder | null | undefine
 }
 
 /**
- * E-fatura / e-arşiv GİB üzerinden kesilmiş mi?
- * Yalnızca gerçek GİB / entegratör gönderim sinyalleri sayılır.
- * Cariye faturalaşma (is_invoiced) veya e_type tek başına e-belge değildir.
+ * E-belge kesildi mi?
+ * Aynı kural: backend `order_ebelge_enrich.invoice_is_ebelge_issued` ve web `orderHasEInvoiceIssued`.
+ * e_type e_invoice / e_archive / e_export olmalı VE
+ * (gib_uuid veya gib_invoice_id dolu VEYA einvoice_state=accepted VEYA GİB başarı durumu).
+ * paper, expense_slip, draft, error ve yalnız queued e-belge sayılmaz.
  */
-export function orderHasEInvoiceIssued(ord?: OrderMoreOrder | null): boolean {
-  if (!ord) return false;
-  const state = String(ord.einvoice_state || "").toLowerCase();
-  if (state === "sent" || state === "queued" || state === "accepted") return true;
-  if (ord.invoice_gib_uuid || ord.gib_uuid || ord.invoice_gib_tracking_id || ord.gib_tracking_id) return true;
-  if (ord.gib_invoice_id) return true;
-  const gs = String(ord.invoice_gib_status || ord.gib_status || "");
-  if (/ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland/i.test(gs) && !/^\s*hata\s*:/i.test(gs)) return true;
-  return false;
+const EDOC_TYPES = new Set(["e_invoice", "e_archive", "e_export"]);
+const NOT_ISSUED_STATES = new Set(["paper", "draft", "error", "queued", "not_applicable"]);
+const GIB_OK = /ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland/i;
+const GIB_ERR = /^\s*hata\s*:/i;
+
+function orderDocEType(ord?: OrderMoreOrder | null): string {
+  return String(ord?.invoice_e_type || ord?.e_type || "").trim().toLowerCase();
 }
 
-/** Sipariş satırında gösterilecek GİB / entegratör fatura numarası. */
+export function orderHasEInvoiceIssued(ord?: OrderMoreOrder | null): boolean {
+  if (!ord) return false;
+  if (!EDOC_TYPES.has(orderDocEType(ord))) return false;
+  const state = String(ord.einvoice_state || "").trim().toLowerCase();
+  if (NOT_ISSUED_STATES.has(state)) return false;
+  const gs = String(ord.invoice_gib_status || ord.gib_status || "");
+  if (GIB_ERR.test(gs)) return false;
+  if (state === "accepted") return true;
+  const uuid = String(ord.gib_uuid || ord.invoice_gib_uuid || "").trim();
+  const gibNo = String(ord.gib_invoice_id || "").trim();
+  if (uuid || gibNo) return true;
+  return GIB_OK.test(gs);
+}
+
+/** Entegratörden dönen resmi GİB numarası. Yerel TA numarası buraya girmez. */
 export function orderGibInvoiceNumber(ord?: OrderMoreOrder | null): string {
   if (!ord) return "";
+  return String(ord.gib_invoice_id || "").trim();
+}
+
+/** Yerel fatura numarası (TA…). Resmi GİB no ile aynıysa boş. */
+export function orderLocalInvoiceNumber(ord?: OrderMoreOrder | null): string {
+  if (!ord) return "";
   const gib = String(ord.gib_invoice_id || "").trim();
-  if (gib) return gib;
-  if (!orderHasEInvoiceIssued(ord)) return "";
+  const saved = String(ord.local_invoice_number || "").trim();
+  if (saved && saved !== gib) return saved;
   const no = String(ord.invoice_number || "").trim();
-  if (!no || no === String(ord.order_number || "").trim()) return "";
+  const orderNo = String(ord.order_number || "").trim();
+  if (!no || no === orderNo || no === gib) return "";
   return no;
 }
 
 export function orderEBelgeKindLabel(ord?: OrderMoreOrder | null): string {
-  const eType = String(ord?.e_type || ord?.invoice_e_type || "").toLowerCase();
+  const eType = orderDocEType(ord);
   if (eType === "e_invoice" || eType === "e_export") return "E-Fatura";
   if (eType === "e_archive") return "E-Arşiv";
+  if (eType === "paper") return "Kağıt";
   return "E-Belge";
 }
 
@@ -128,6 +151,30 @@ export type OrderInvoiceBadge = {
 /** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → faturalaşmış e-belge (kırmızı bilgi). */
 export function orderInvoiceBadge(ord?: OrderMoreOrder | null): OrderInvoiceBadge | null {
   if (!ord) return null;
+  const eType = orderDocEType(ord);
+  const state = String(ord.einvoice_state || "").trim().toLowerCase();
+  const gs = String(ord.invoice_gib_status || ord.gib_status || "");
+  const edoc = EDOC_TYPES.has(eType);
+  if (edoc && (state === "error" || GIB_ERR.test(gs))) {
+    return {
+      label: "E-belge hatası",
+      title: GIB_ERR.test(gs) ? gs : "E-belge hatası",
+      line1: "E-belge hatası",
+      interactive: false,
+      testId: "ebelge-error",
+      tone: "rose",
+    };
+  }
+  if (edoc && state === "queued") {
+    return {
+      label: "Gönderiliyor",
+      title: "Gönderiliyor",
+      line1: "Gönderiliyor",
+      interactive: false,
+      testId: "ebelge-queued",
+      tone: "amber",
+    };
+  }
   if (orderHasEInvoiceIssued(ord)) {
     const kind = orderEBelgeKindLabel(ord);
     return {
@@ -138,6 +185,17 @@ export function orderInvoiceBadge(ord?: OrderMoreOrder | null): OrderInvoiceBadg
       interactive: false,
       testId: kind === "E-Fatura" ? "ebelge-efatura" : kind === "E-Arşiv" ? "ebelge-earsiv" : "ebelge",
       tone: "rose",
+    };
+  }
+  if (eType === "paper" && (ord.is_invoiced || state === "paper" || state === "not_applicable")) {
+    return {
+      label: "Faturalaştı (Kağıt)",
+      title: "Faturalaştı (Kağıt)",
+      line1: "Faturalaştı",
+      line2: "(Kağıt)",
+      interactive: false,
+      testId: "paper",
+      tone: "green",
     };
   }
   if (ord.is_invoiced) {

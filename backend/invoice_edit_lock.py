@@ -13,7 +13,10 @@ def invoice_gib_locked(inv: Optional[Mapping[str, Any]]) -> bool:
         return False
     if inv.get("status") == "draft":
         return False
+    e_type = str(inv.get("e_type") or "").strip().lower()
     state = str(inv.get("einvoice_state") or "").strip().lower()
+    if e_type in ("paper", "expense_slip") or state in ("paper", "not_applicable"):
+        return False
     if state in ("sent", "queued"):
         return True
     if inv.get("gib_tracking_id") or inv.get("gib_uuid"):
@@ -33,7 +36,6 @@ def invoice_gib_locked(inv: Optional[Mapping[str, Any]]) -> bool:
             "kuyrukta",
             "zarf ",
             "hedeften",
-            "matbu",
         )
     ):
         return True

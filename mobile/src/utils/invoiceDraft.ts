@@ -371,7 +371,6 @@ export function defaultInvoiceTypeForFilter(filterType: string): Partial<Invoice
 
 const GIB_ISSUED = new Set([
   "Başarıyla İletildi (GİB Onaylı)",
-  "Kağıt Fatura (Matbu)",
   "n11 Faturam ile GİB'e iletildi",
   "İşNet SOAP API ile GİB'e iletildi",
   "İşNet Web Portal ile GİB'e iletildi",
@@ -382,12 +381,15 @@ const GIB_ISSUED = new Set([
 
 export function isGibIssued(inv?: Invoice | null): boolean {
   if (!inv) return false;
+  const et = String(inv.e_type || "");
+  const state = String(inv.einvoice_state || "");
+  if (et === "paper" || et === "expense_slip" || state === "paper" || state === "not_applicable") return false;
   const gs = String(inv.gib_status || "");
   if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gs)) return false;
   if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
   if (inv.gib_tracking_id) return true;
   if (GIB_ISSUED.has(gs)) return true;
-  return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
+  return /ileti|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
 }
 
 export function canEditInvoiceItems(inv?: Invoice | null): boolean {

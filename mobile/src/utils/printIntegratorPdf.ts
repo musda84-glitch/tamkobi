@@ -4,6 +4,7 @@ import type { Invoice } from "../types";
 export function shouldUseIntegratorPdf(docType: string, doc?: Invoice | null): boolean {
   if (docType !== "invoice" || !doc) return false;
   const et = doc.e_type || "";
+  if (et === "paper" || et === "expense_slip" || doc.einvoice_state === "paper") return false;
   if (!["e_invoice", "e_archive", "e_export"].includes(et)) return false;
   if (doc.status === "draft" || doc.status === "cancelled") return false;
   const gs = String(doc.gib_status || "");

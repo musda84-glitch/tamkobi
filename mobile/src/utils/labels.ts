@@ -128,7 +128,7 @@ export const INVOICE_TYPE_TR: Record<string, string> = {
 export const E_TYPE_TR: Record<string, string> = {
   e_invoice: "E-Fatura",
   e_archive: "E-Arşiv",
-  paper: "Kağıt Fatura",
+  paper: "Kağıt",
   e_dispatch: "E-İrsaliye",
   e_export: "e-İhracat",
 };

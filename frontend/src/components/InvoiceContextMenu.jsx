@@ -32,6 +32,11 @@ const GIB_STATUS_TR = {
 
 export function formatGibStatusLabel(inv) {
   if (!inv) return "Taslak";
+  const et = String(inv.e_type || "").toLowerCase();
+  const earlyState = String(inv.einvoice_state || "").toLowerCase();
+  if ((et === "paper" || earlyState === "paper" || earlyState === "not_applicable") && !isIncomingPurchaseInvoice(inv)) {
+    return "Kağıt";
+  }
   const raw = String(inv.gib_status || "").trim();
   const mode = String(inv.gib_mode || inv.mode || "").toLowerCase();
   const isTest = mode === "test" || mode === "sandbox" || mode === "demo";
@@ -244,6 +249,7 @@ export function invoiceETypeLabel(inv) {
     if (inv.e_type === "e_dispatch") return E_TYPE_LABELS.e_dispatch;
     return "Gelen e-Fatura";
   }
+  if (inv.e_type === "paper" || inv.einvoice_state === "paper") return "Kağıt";
   return E_TYPE_LABELS[inv.e_type] || "İrsaliye";
 }
 
@@ -267,7 +273,6 @@ export const GIB_ISSUED_STATUSES = new Set([
   "Başarıyla Tamamlandı",
   "Başarıyla İletildi (GİB Onaylı)",
   "GİB onaylı",
-  "Kağıt Fatura (Matbu)",
   "n11 Faturam ile GİB'e iletildi",
   "İşNet SOAP API ile GİB'e iletildi",
   "İşNet Web Portal ile GİB'e iletildi",
@@ -278,6 +283,9 @@ export const GIB_ISSUED_STATUSES = new Set([
 
 export function isGibIssued(inv) {
   if (!inv) return false;
+  const et = String(inv.e_type || "");
+  const state = String(inv.einvoice_state || "");
+  if (et === "paper" || et === "expense_slip" || state === "paper" || state === "not_applicable") return false;
   const gs = String(inv.gib_status || "");
   const gsBare = gs.replace(/^test\s*·\s*/i, "").trim();
   const code = String(inv.gib_status_code || "").trim();
@@ -294,7 +302,7 @@ export function isGibIssued(inv) {
   if (/zarf başarıyla işlendi/i.test(gsBare)) return true;
   // Ziplenmiş / zarflanmış — iletim yolu başlamış
   if (/ziplen|zarflan/i.test(gsBare)) return true;
-  return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gsBare) && !/onaylandı$/i.test(gsBare);
+  return /ileti|n11 faturam|e-ihracat.*ileti/i.test(gsBare) && !/onaylandı$/i.test(gsBare);
 }
 
 /** Taslak ve GİB'e gitmemiş irsaliye / (ödenmemiş) kağıt fatura silinebilir. Gelen GİB e-belge silinmez. */

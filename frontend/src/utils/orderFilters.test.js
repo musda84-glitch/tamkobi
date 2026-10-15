@@ -121,7 +121,7 @@ test("channel invoice cargo and doc filters", () => {
   const rows = [
     { order_number: "B", order_status: "pending", channel: "", invoice_id: "", cargo_tracking_number: "" },
     { order_number: "T", order_status: "shipped", channel: "trendyol", invoice_id: "i1", is_invoiced: true, cargo_tracking_number: "C1" },
-    { order_number: "G", order_status: "approved", channel: "trendyol", invoice_id: "i2", is_invoiced: true, einvoice_state: "sent", cargo_tracking_number: "" },
+    { order_number: "G", order_status: "approved", channel: "trendyol", invoice_id: "i2", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", gib_invoice_id: "GIB1", cargo_tracking_number: "" },
     { order_number: "D", order_status: "approved", channel: "b2b", dispatch_number: "IRS-1" },
   ];
   const base = { ...ORDER_FILTER_DEFAULTS };
@@ -152,7 +152,7 @@ test("einvoice_unsent keeps e-archive draft and error, drops paper slip and GİB
   expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice_unsent" }).map((o) => o.order_number).sort())
     .toEqual(["DRAFT", "ERR", "NEVER"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "einvoice" }).map((o) => o.order_number).sort())
-    .toEqual(["ERR", "QUEUE", "SENT", "UUID"]);
+    .toEqual(["SENT", "UUID"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "yes" }).map((o) => o.order_number).sort())
     .toEqual(["DRAFT", "ERR", "NEVER", "PAPER", "QUEUE", "SENT", "SLIP", "UUID"]);
   expect(applyOrderFilters(rows, { ...base, invoiced: "no" }).map((o) => o.order_number)).toEqual(["NONE"]);

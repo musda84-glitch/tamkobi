@@ -53,7 +53,8 @@ import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
 import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
-import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
+import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
+import { OrderInvoiceNumberMarks } from "../components/OrderInvoiceNumberMarks";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId, todayYmd } from "../utils/orderBulkActions";
 import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal";
@@ -2024,14 +2025,7 @@ export default function OrdersB2BPage() {
                           </div>
                         );
                       })()}
-                      {(() => {
-                        const gibNo = orderGibInvoiceNumber(ord);
-                        return gibNo ? (
-                          <div className="text-[10px] text-emerald-700 font-mono font-semibold mt-0.5" data-testid={`order-gib-no-${ord.order_number}`} title="GİB fatura numarası">
-                            GİB: {gibNo}
-                          </div>
-                        ) : null;
-                      })()}
+                      <OrderInvoiceNumberMarks ord={ord} />
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
                           {channelTr(ord.channel)}
@@ -2166,7 +2160,7 @@ export default function OrdersB2BPage() {
                         {!ord.is_invoiced && !ord.invoice_id && !orderHasEInvoiceIssued(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {(() => {
                           const invBadge = orderInvoiceBadge(ord);
-                          if (orderHasEInvoiceIssued(ord) && invBadge) {
+                          if (invBadge && invBadge.interactive === false) {
                             return (
                               <span
                                 className={`inline-flex flex-col items-center justify-center px-1.5 py-0.5 rounded-lg text-[8px] font-bold border leading-tight text-center max-w-[5.25rem] pointer-events-none select-none ${invBadge.className}`}
@@ -2175,8 +2169,8 @@ export default function OrdersB2BPage() {
                                 data-badge={invBadge.testId}
                                 aria-label={invBadge.label}
                               >
-                                <span>{invBadge.line1 || "Faturalaşmış"}</span>
-                                <span>{invBadge.line2 || ""}</span>
+                                <span>{invBadge.line1 || invBadge.label}</span>
+                                {invBadge.line2 ? <span>{invBadge.line2}</span> : null}
                               </span>
                             );
                           }

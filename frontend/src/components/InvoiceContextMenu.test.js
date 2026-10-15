@@ -35,6 +35,34 @@ describe("displayInvoiceNumber", () => {
 });
 
 describe("formatGibStatusLabel", () => {
+  test("paper invoices show Kağıt, not a GİB transmission", () => {
+    expect(formatGibStatusLabel({
+      e_type: "paper",
+      einvoice_state: "paper",
+      gib_status: "Kağıt Fatura (Matbu)",
+      status: "approved",
+    })).toBe("Kağıt");
+    expect(formatGibStatusLabel({
+      e_type: "paper",
+      einvoice_state: "sent",
+      gib_status: "Kağıt Fatura (Matbu)",
+    })).toBe("Kağıt");
+    expect(invoiceETypeLabel({ e_type: "paper", invoice_type: "sales", status: "approved" })).toBe("Kağıt");
+    expect(isGibIssued({
+      e_type: "paper",
+      einvoice_state: "paper",
+      gib_status: "Kağıt Fatura (Matbu)",
+      status: "approved",
+    })).toBe(false);
+    expect(canDownloadGibDocuments({
+      e_type: "paper",
+      einvoice_state: "paper",
+      status: "approved",
+      invoice_type: "sales",
+      gib_status: "Kağıt Fatura (Matbu)",
+    })).toBe(false);
+  });
+
   test("marks test mode when status empty but sent", () => {
     expect(formatGibStatusLabel({ einvoice_state: "sent", gib_mode: "test" })).toBe("Test · GİB durumu bekleniyor");
   });

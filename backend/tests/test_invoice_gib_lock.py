@@ -26,3 +26,18 @@ def test_sent_or_tracking_locked():
 
 def test_error_status_not_locked_by_hata_text():
     assert invoice_gib_locked({"status": "approved", "einvoice_state": "error", "gib_status": "Hata: Schematron"}) is False
+
+
+def test_paper_is_not_gib_locked():
+    assert invoice_gib_locked({
+        "status": "approved",
+        "e_type": "paper",
+        "einvoice_state": "sent",
+        "gib_status": "Kağıt Fatura (Matbu)",
+    }) is False
+    assert invoice_gib_locked({
+        "status": "approved",
+        "e_type": "paper",
+        "einvoice_state": "paper",
+        "gib_status": "Kağıt Fatura (Matbu)",
+    }) is False
