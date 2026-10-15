@@ -293,31 +293,44 @@ async def dispatch_password_reset_mail(
 
 
 async def resolve_smtp_account(purpose: Optional[str] = None) -> Optional[dict]:
-    """Sistem işleri için aktif kutu. Yoksa None (eski şirket SMTP'sine düşülür)."""
-    q: Dict[str, Any] = {"is_active": {"$ne": False}}
-    boxes = await _db.platform_mailboxes.find(q).to_list(100)
+    """Sistem işleri için aktif kutu. Yoksa None (eski şirket SMTP'sine düşülür).
+
+    Sıra: purpose eşleşmesi (önce varsayılan, sonra en eski), sistem varsayılanı,
+    transactional, en eski aktif kutu. Sunucusu pasif veya bulunamayan kutu atlanır.
+    Şifre sıfırlama bu fonksiyona bakmaz; Destek kutusu resolve_password_reset_sender'da kalır.
+    """
+    boxes = await _db.platform_mailboxes.find({"is_active": {"$ne": False}}).to_list(100)
     if not boxes:
         return None
-    ranked = []
-    for b in boxes:
-        purposes = b.get("purposes") or []
-        score = 0
-        if b.get("is_default"):
-            score += 4
-        if purpose and purpose in purposes:
-            score += 3
-        if "transactional" in purposes:
-            score += 1
-        ranked.append((score, b.get("created_at") or "", b))
-    ranked.sort(key=lambda x: (-x[0], x[1]))
-    box = ranked[0][2]
-    server = await _db.platform_mail_servers.find_one({"_id": box.get("server_id"), "is_active": {"$ne": False}})
-    if not server:
-        return None
-    try:
-        return await _smtp_dict(box, server)
-    except HTTPException:
-        return None
+
+    ordered: List[dict] = []
+    seen = set()
+
+    def _push(rows: List[dict]) -> None:
+        for box in rows:
+            key = box.get("_id")
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(box)
+
+    if purpose:
+        matched = [b for b in boxes if purpose in (b.get("purposes") or [])]
+        matched.sort(key=lambda b: (0 if b.get("is_default") else 1, *_box_sort_key(b)))
+        _push(matched)
+    defaults = [b for b in boxes if b.get("is_default")]
+    transactional = [b for b in boxes if "transactional" in (b.get("purposes") or [])]
+    _push(sorted(defaults, key=_box_sort_key))
+    _push(sorted(transactional, key=_box_sort_key))
+    _push(sorted(boxes, key=_box_sort_key))
+
+    for box in ordered:
+        account = await _try_smtp(box)
+        if not account:
+            continue
+        account.pop("mailbox_id", None)
+        return account
+    return None
 
 
 @router.get("/system/mail")
