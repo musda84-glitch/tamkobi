@@ -18,6 +18,7 @@ export function Seo({
   image = DEFAULT_IMAGE,
   noindex = false,
   jsonLd = null,
+  siteName = "TamKobi",
 }) {
   const resolvedDescription = description || defaultSeoDescription(trialDays);
   const origin = typeof window !== "undefined" ? window.location.origin : DEFAULT_URL;
@@ -33,7 +34,7 @@ export function Seo({
       <link rel="canonical" href={url} />
       <meta property="og:type" content="website" />
       <meta property="og:locale" content="tr_TR" />
-      <meta property="og:site_name" content="TamKobi" />
+      <meta property="og:site_name" content={siteName} />
       <meta property="og:title" content={title} />
       <meta property="og:description" content={resolvedDescription} />
       <meta property="og:url" content={url} />

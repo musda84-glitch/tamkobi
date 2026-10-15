@@ -103,9 +103,33 @@ COLLECTIONS = {
     },
     "platform_settings": {
         "scope": SCOPE_PLATFORM,
-        "description": "Tek satırlık platform ayarı (_id=platform): marka, deneme, GİB paketleri, AI, bakım penceresi.",
+        "description": "Tek satırlık platform ayarı (_id=platform): marka, deneme, GİB paketleri, AI, bakım penceresi. Vitrin kimliği sites ile eşlenir.",
         "keys": ("_id", "brand_name", "trial_days", "trial_plan_id", "gib_packs", "ai", "public_url", "maintenance"),
-        "refs": ("saas_plans._id",),
+        "refs": ("saas_plans._id", "sites._id"),
+    },
+    "sites": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Pazarlama siteleri (tamkobi vitrini, taiyazilim.com). id, slug, marka, canlı adres, tema, aktif.",
+        "keys": ("_id", "slug", "brand_name", "public_url", "theme", "active", "hosts"),
+        "refs": (),
+    },
+    "site_content": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Kurumsal site metinleri, hizmet kartları, referanslar ve iletişim bilgisi.",
+        "keys": ("_id", "site_id", "pages", "services", "references", "products"),
+        "refs": ("sites._id",),
+    },
+    "site_inquiries": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Kurumsal site iletişim formu talepleri.",
+        "keys": ("_id", "site_id", "name", "email", "phone", "message", "created_at", "mail_status"),
+        "refs": ("sites._id",),
+    },
+    "site_inquiry_rate": {
+        "scope": SCOPE_PLATFORM,
+        "description": "İletişim formu IP hız sınırı sayacı.",
+        "keys": ("_id", "window_start", "count", "updated_at"),
+        "refs": (),
     },
     "platform_announcements": {
         "scope": SCOPE_PLATFORM,

@@ -59,6 +59,15 @@ describe("resolveVitrinPreviewUrl", () => {
     expect(resolveVitrinPreviewUrl("javascript:alert(1)", ynt)).toBe("https://tamkobi.com");
     expect(resolveVitrinPreviewUrl("data:text/html,hi", ynt)).toBe("https://tamkobi.com");
   });
+
+  test("seçili sitenin yedek adresi boş ve ynt değerinde kullanılır", () => {
+    const tai = "https://taiyazilim.com";
+    expect(resolveVitrinPreviewUrl("", ynt, tai)).toBe(tai);
+    expect(resolveVitrinPreviewUrl("/web", ynt, tai)).toBe(tai);
+    expect(resolveVitrinPreviewUrl("https://ynt.taiyazilim.com", ynt, tai)).toBe(tai);
+    expect(resolveVitrinPreviewUrl("https://taiyazilim.com/hakkimizda/", ynt, tai)).toBe("https://taiyazilim.com/hakkimizda");
+    expect(vitrinChildUrl("", "/kayit", ynt, tai)).toBe("https://taiyazilim.com/kayit");
+  });
 });
 
 describe("vitrinChildUrl", () => {

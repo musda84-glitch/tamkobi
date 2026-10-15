@@ -66,6 +66,8 @@ _YNT_ALLOWED_PREFIXES = (
     "/api/comm/sms/",
     "/api/files/upload",
     "/api/public/plans",
+    # Panel önizlemesi seçili sitenin herkese açık içeriğini okur.
+    "/api/public/site",
     # ynt /yasal* sayfası
     "/api/public/legal",
     # Yardım merkezi dağıtımı (TamKobi / TamEticaret ürün etiketleri)
@@ -270,6 +272,8 @@ def default_cors_origins() -> list:
         f"https://b2b.{root}",
         f"https://ik.{root}",
         public_host_url(KIND_YNT),
+        "https://taiyazilim.com",
+        "https://www.taiyazilim.com",
     ]
     # Deduplicate while preserving order
     seen = set()

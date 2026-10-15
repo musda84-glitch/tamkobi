@@ -33,6 +33,8 @@ describe("getHostKind", () => {
     expect(getHostKind(fakeWin("ik.tamkobi.com"))).toBe("ik");
     expect(getHostKind(fakeWin("ynt.taiyazilim.com"))).toBe("ynt");
     expect(getHostKind(fakeWin(YNT_HOST))).toBe("ynt");
+    expect(getHostKind(fakeWin("taiyazilim.com"))).toBe("site");
+    expect(getHostKind(fakeWin("www.taiyazilim.com"))).toBe("site");
   });
 
   test("localhost __host override", () => {
@@ -91,6 +93,10 @@ describe("pathAllowedOnHost / preferredHostForPath", () => {
     expect(preferredHostForPath("/b2b/giris")).toBe("b2b");
     expect(preferredHostForPath("/personelim")).toBe("ik");
     expect(preferredHostForPath("/mesai")).toBe("ik");
+    expect(preferredHostForPath("/hakkimizda")).toBe("site");
+    expect(preferredHostForPath("/iletisim")).toBe("site");
+    expect(pathAllowedOnHost("/hizmetler", "site")).toBe(true);
+    expect(pathAllowedOnHost("/referanslar", "site")).toBe(true);
     expect(pathAllowedOnHost("/personelim", "ik")).toBe(true);
     expect(pathAllowedOnHost("/personelim", "app")).toBe(false);
     expect(pathAllowedOnHost("/atolye", "ik")).toBe(true);

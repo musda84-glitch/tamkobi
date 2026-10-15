@@ -106,6 +106,10 @@ export const HOST_ROUTE_RULES = {
     /^\/kurulum(\/|$)/,
     /^\/sistem(\/|$)/,
     /^\/sso(\/|$)/,
+    /^\/hakkimizda(\/|$)/,
+    /^\/hizmetler(\/|$)/,
+    /^\/referanslar(\/|$)/,
+    /^\/iletisim(\/|$)/,
   ],
   app: [
     /^\/$/,
@@ -196,7 +200,11 @@ export function preferredHostForPath(pathname) {
     p.startsWith("/fiyatlar") ||
     p.startsWith("/kayit") ||
     p.startsWith("/yasal") ||
-    p.startsWith("/kurulum")
+    p.startsWith("/kurulum") ||
+    p.startsWith("/hakkimizda") ||
+    p.startsWith("/hizmetler") ||
+    p.startsWith("/referanslar") ||
+    p.startsWith("/iletisim")
   ) {
     return "site";
   }

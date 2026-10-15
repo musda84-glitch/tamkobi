@@ -21731,6 +21731,8 @@ company_audit.init(db, get_current_user)
 pos_cashier.init(db, get_current_user, {"do_return": _pos_do_return, "do_cancel_sale": _pos_do_cancel_sale})
 desktop_release.init(get_current_user)
 saas.init(db, get_current_user)
+import public_sites
+public_sites.init(db)
 import platform_notices
 platform_notices.init(db)
 import help_center
@@ -22002,6 +22004,8 @@ app.include_router(addons.router)
 app.include_router(support_tickets.router)
 app.include_router(staff_messages.router)
 app.include_router(saas_billing.router)
+app.include_router(public_sites.router)
+app.include_router(public_sites.seo_router)
 app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)
 app.include_router(support_access.router)

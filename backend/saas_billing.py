@@ -270,6 +270,9 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
         if packs:
             upd["gib_packs"] = packs
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {**upd, "updated_at": _now()}}, upsert=True)
+    if "brand_name" in upd or "public_url" in upd:
+        import public_sites
+        await public_sites.sync_tamkobi_from_settings(upd)
     if "gib_credits_sales" in upd:
         saas.invalidate()
     return await _settings_body()
@@ -373,6 +376,13 @@ async def public_plans():
     import platform_public
     st = await settings()
     contact = platform_public.public_contact(st)
+    import public_sites
+    ident = await public_sites.tamkobi_identity()
+    if ident:
+        if (ident.get("brand_name") or "").strip():
+            contact["brand_name"] = ident["brand_name"]
+        if (ident.get("public_url") or "").strip():
+            contact["public_url"] = str(ident["public_url"]).rstrip("/")
     plans = [_clean(p) for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
     return {
         "plans": plans,

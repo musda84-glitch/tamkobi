@@ -44,14 +44,27 @@ function setNativeValue(input, value) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-async function renderPanel() {
+function settingsMock() {
+  axios.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.includes("/system/settings")) {
+      return Promise.resolve({ data: { brand_name: "TamKobi", public_url: publicUrl } });
+    }
+    if (path.includes("/public/plans")) return Promise.resolve({ data: { plans: [], trial_days: 14 } });
+    if (path.includes("/system/plans")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: {} });
+  });
+  axios.put.mockResolvedValue({ data: {} });
+}
+
+async function renderPanel(plans = []) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () => {
-    root.render(<WebsiteAdminPanel plans={[]} onChanged={() => {}} />);
+    root.render(<WebsiteAdminPanel plans={plans} onChanged={() => {}} />);
   });
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < 12; i += 1) {
     if (host.querySelector('[data-testid="web-preview-frame"]')) break;
     await act(async () => {
       await Promise.resolve();
@@ -72,16 +85,7 @@ describe("WebsiteAdminPanel canlı önizleme", () => {
   beforeEach(() => {
     publicUrl = "";
     mockLocation("ynt.taiyazilim.com");
-    axios.get.mockImplementation((url) => {
-      const path = String(url);
-      if (path.includes("/system/settings")) {
-        return Promise.resolve({ data: { brand_name: "TamKobi", public_url: publicUrl } });
-      }
-      if (path.includes("/public/plans")) return Promise.resolve({ data: { plans: [], trial_days: 14 } });
-      if (path.includes("/system/plans")) return Promise.resolve({ data: [] });
-      return Promise.resolve({ data: {} });
-    });
-    axios.put.mockResolvedValue({ data: {} });
+    settingsMock();
   });
 
   function expectLiveAddress(host, expected) {
@@ -198,6 +202,107 @@ describe("WebsiteAdminPanel canlı önizleme", () => {
     } finally {
       await view.cleanup();
       jest.useRealTimers();
+    }
+  });
+});
+
+const TAI_CONTENT = {
+  pages: {
+    home: { seo_title: "TAI", seo_description: "Kurumsal", hero_title: "Hero", hero_text: "Metin", hero_image: "", published: true },
+    about: { seo_title: "", seo_description: "", title: "Hakkımızda", text: "", image: "", published: true },
+    services: { seo_title: "", seo_description: "", title: "Hizmetler", text: "", published: true },
+    references: { seo_title: "", seo_description: "", title: "Referanslar", text: "", published: true },
+    contact: { seo_title: "", seo_description: "", title: "İletişim", text: "", email: "info@taiyazilim.com", phone: "", address: "", published: true },
+  },
+  services: [],
+  references: [],
+  products: [{ id: "prd_tamkobi", title: "TamKobi", text: "ERP", image: "", href: "https://tamkobi.com", sort: 0, published: true }],
+};
+
+describe("WebsiteAdminPanel site seçici", () => {
+  beforeEach(() => {
+    mockLocation("ynt.taiyazilim.com");
+    axios.get.mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/inquiries")) {
+        return Promise.resolve({ data: [{ id: "inq_1", name: "Ada", email: "ada@ornek.com", message: "Merhaba", mail_status: "sent" }] });
+      }
+      if (u.includes("/system/sites/tai")) {
+        return Promise.resolve({
+          data: {
+            slug: "tai",
+            brand_name: "TAI Yazılım",
+            public_url: "https://taiyazilim.com",
+            theme: "corporate",
+            active: true,
+            content: TAI_CONTENT,
+          },
+        });
+      }
+      if (u.includes("/system/sites")) {
+        return Promise.resolve({
+          data: [
+            { slug: "tamkobi", brand_name: "TamKobi", public_url: "https://tamkobi.com", theme: "vitrin", active: true },
+            { slug: "tai", brand_name: "TAI Yazılım", public_url: "https://taiyazilim.com", theme: "corporate", active: true },
+          ],
+        });
+      }
+      if (u.includes("/system/settings")) {
+        return Promise.resolve({ data: { brand_name: "TamKobi", public_url: "https://tamkobi.com" } });
+      }
+      if (u.includes("/public/plans")) return Promise.resolve({ data: { plans: [], trial_days: 14 } });
+      if (u.includes("/system/plans")) {
+        return Promise.resolve({ data: [{ id: "plan_pro", name: "Pro", is_public: true, price_monthly: 100, modules: ["a"], color: "emerald" }] });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    axios.put.mockResolvedValue({ data: {} });
+  });
+
+  test("site seçici paket vitrinini TamKobi'de tutar ve TAI önizlemesi taiyazilim.com olur", async () => {
+    const view = await renderPanel([{ id: "plan_pro", name: "Pro", is_public: true, price_monthly: 100, modules: ["a"], color: "emerald" }]);
+    try {
+      expect(view.host.querySelector('[data-testid="site-switch-tamkobi"]').textContent).toBe("TamKobi");
+      expect(view.host.querySelector('[data-testid="site-switch-tai"]').textContent).toBe("TAI Yazılım");
+      expect(view.host.querySelector('[data-testid="web-plan-toggles"]')).not.toBeNull();
+      expect(view.host.querySelector('[data-testid="tai-content-editor"]')).toBeNull();
+      expect(view.host.querySelector('[data-testid="web-preview-frame"]').getAttribute("src")).toBe("https://tamkobi.com");
+      expect(view.host.querySelector('[data-testid="web-open-site"]').getAttribute("href")).toBe("https://tamkobi.com");
+      expect(view.host.querySelector('[data-testid="web-open-signup"]').getAttribute("href")).toBe("https://tamkobi.com/kayit");
+
+      await act(async () => {
+        view.host.querySelector('[data-testid="site-switch-tai"]').click();
+      });
+      for (let i = 0; i < 8; i += 1) {
+        await act(async () => { await Promise.resolve(); });
+      }
+
+      const frame = view.host.querySelector('[data-testid="web-preview-frame"]');
+      expect(view.host.querySelector('[data-testid="web-plan-toggles"]')).toBeNull();
+      expect(view.host.querySelector('[data-testid="tai-content-editor"]')).not.toBeNull();
+      expect(view.host.querySelector('[data-testid="site-inquiries"]').textContent).toContain("Gelen talepler");
+      expect(view.host.querySelector('[data-testid="inquiry-inq_1"]').textContent).toContain("Ada");
+      expect(frame.getAttribute("src")).toBe("https://taiyazilim.com");
+      expect(frame.getAttribute("src").startsWith("/")).toBe(false);
+      expect(frame.getAttribute("src")).not.toContain("ynt.taiyazilim.com");
+      expect(view.host.querySelector('[data-testid="web-open-site"]').getAttribute("href")).toBe("https://taiyazilim.com");
+      expect(view.host.querySelector('[data-testid="web-open-signup"]')).toBeNull();
+      expect(view.host.querySelector('[data-testid="tai-hero-title"]').value).toBe("Hero");
+
+      const input = view.host.querySelector('[data-testid="web-public-url"]');
+      await act(async () => {
+        setNativeValue(input, "/iletisim");
+      });
+      expect(view.host.querySelector('[data-testid="web-preview-frame"]').getAttribute("src")).toBe("https://taiyazilim.com");
+
+      await act(async () => {
+        view.host.querySelector('[data-testid="site-switch-tamkobi"]').click();
+      });
+      expect(view.host.querySelector('[data-testid="web-plan-toggles"]')).not.toBeNull();
+      expect(view.host.querySelector('[data-testid="web-brand-name"]').value).toBe("TamKobi");
+      expect(view.host.querySelector('[data-testid="web-preview-frame"]').getAttribute("src")).toBe("https://tamkobi.com");
+    } finally {
+      await view.cleanup();
     }
   });
 });

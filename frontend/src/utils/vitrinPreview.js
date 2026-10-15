@@ -39,33 +39,35 @@ function formatPreviewUrl(url) {
 
 /**
  * Canlı adres alanından mutlak http(s) URL. Boş, göreli veya ynt host'u
- * varsayılan vitrine düşer; sayfa origin'i asla kullanılmaz.
+ * yedek vitrine düşer (varsayılan tamkobi.com); sayfa origin'i asla kullanılmaz.
+ * Üçüncü argüman seçili sitenin yedeğidir (ör. taiyazilim.com).
  */
-export function resolveVitrinPreviewUrl(publicUrl, win) {
+export function resolveVitrinPreviewUrl(publicUrl, win, fallback = DEFAULT_VITRIN_URL) {
   const page = pageWindow(win);
+  const safeFallback = fallback || DEFAULT_VITRIN_URL;
   const raw = String(publicUrl ?? "").trim();
   let candidate = raw;
   if (candidate.startsWith("//")) candidate = `https:${candidate}`;
   else if (!raw || raw.startsWith("/") || raw.startsWith("./") || raw.startsWith("../") || raw.startsWith("?") || raw.startsWith("#")) {
-    return DEFAULT_VITRIN_URL;
+    return safeFallback;
   } else if (!/^[a-z][a-z0-9+.-]*:/i.test(candidate)) {
-    if (!/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#].*)?$/i.test(candidate)) return DEFAULT_VITRIN_URL;
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#].*)?$/i.test(candidate)) return safeFallback;
     candidate = `https://${candidate}`;
   }
   let url;
   try {
     url = new URL(candidate);
   } catch {
-    return DEFAULT_VITRIN_URL;
+    return safeFallback;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return DEFAULT_VITRIN_URL;
-  if (!url.hostname || isYntHostName(url.hostname, page)) return DEFAULT_VITRIN_URL;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return safeFallback;
+  if (!url.hostname || isYntHostName(url.hostname, page)) return safeFallback;
   return formatPreviewUrl(url);
 }
 
 /** Vitrin köküne göre mutlak alt sayfa (ör. /kayit). Ynt origin'ine çözülmez. */
-export function vitrinChildUrl(publicUrl, path, win) {
-  const base = resolveVitrinPreviewUrl(publicUrl, win);
+export function vitrinChildUrl(publicUrl, path, win, fallback = DEFAULT_VITRIN_URL) {
+  const base = resolveVitrinPreviewUrl(publicUrl, win, fallback);
   const u = new URL(base);
   u.pathname = path.startsWith("/") ? path : `/${path}`;
   u.search = "";
