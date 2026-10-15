@@ -380,6 +380,17 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1", order_number: "B2B-1" }).items.map((i) => i.id)).toContain("delete");
   });
 
+  it("exposes accept/reject cancel-request actions when pending", () => {
+    const ids = orderMoreMenuItems({
+      channel: "b2b",
+      is_invoiced: false,
+      invoice_id: "inv1",
+      order_number: "B2B-1",
+      cancel_request: { status: "pending", reason: "yanlış" },
+    }).items.map((i) => i.id);
+    expect(ids.slice(0, 2)).toEqual(["accept_cancel_request", "reject_cancel_request"]);
+  });
+
   it("confirm texts mention linked draft invoice and e-belge as a separate step", () => {
     const ord = { order_number: "B2B-1", invoice_number: "TA1", is_invoiced: false };
     expect(faturalastirConfirmMessage(ord)).toMatch(/E-belge gönderimi ayrı adımdır/);

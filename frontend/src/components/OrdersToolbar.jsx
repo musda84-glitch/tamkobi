@@ -135,6 +135,7 @@ export const OrdersToolbar = ({
     m[o.order_status] = (m[o.order_status] || 0) + 1;
     if (isIncomingOrder(o)) m.incoming = (m.incoming || 0) + 1;
     if (isDispatchedOrder(o)) m.dispatched = (m.dispatched || 0) + 1;
+    if (String(o?.cancel_request?.status || "") === "pending") m.cancel_request = (m.cancel_request || 0) + 1;
     return m;
   }, {});
   return (
@@ -152,6 +153,18 @@ export const OrdersToolbar = ({
           <option value="no">Faturalanmadı</option>
         </select>
         <select value={f.cargo} onChange={(e) => set("cargo", e.target.value)} className={sel} data-testid="ord-cargo"><option value="all">Kargo: Tümü</option><option value="yes">Kargolandı</option><option value="no">Kargo Bekliyor</option></select>
+        <button
+          type="button"
+          onClick={() => set("cancel_request", f.cancel_request === "pending" ? "all" : "pending")}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${
+            f.cancel_request === "pending"
+              ? "bg-amber-100 text-amber-900 border-amber-300"
+              : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+          }`}
+          data-testid="ord-cancel-request-chip"
+        >
+          İptal talepleri ({counts.cancel_request || 0})
+        </button>
         <div className="flex items-center gap-1 text-xs"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" /><select value={f.sort} onChange={(e) => set("sort", e.target.value)} className={sel} data-testid="ord-sort">{SORT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">

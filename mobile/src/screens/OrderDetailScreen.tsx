@@ -1,13 +1,13 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import { get, put } from "../api/client";
+import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ChannelLogo } from "../components/ChannelLogo";
 import { confirmAction } from "../components/chips";
 import { OrderActions } from "../components/OrderActions";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
-import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Order, Product } from "../types";
 import { channelTr, orderNumberLabel, statusTr, marketplaceStatusTr } from "../utils/labels";
@@ -16,6 +16,13 @@ import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { canStaffEditOrder, cartFromOrderItems, orderUpdatePayload, removeOrderLine } from "../utils/orderEdit";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
 import { orderDraftInvoiceCaption } from "../utils/orderMoreMenu";
+import {
+  CANCEL_REQUEST_ACCEPT_CONFIRM,
+  CANCEL_REQUEST_BADGE_LABEL,
+  cancelRequestActionsVisible,
+  cancelRequestBadgeVisible,
+  cancelRequestReason,
+} from "../utils/orderCancelRequest";
 import { pickLineNote } from "../utils/orderPick";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
@@ -54,6 +61,29 @@ export function OrderDetailScreen() {
       .catch(() => { if (!cancelled) setCatalog({}); });
     return () => { cancelled = true; };
   }, [client, companyId, order?.items]);
+
+  const resolveCancel = (action: "accept" | "reject") => {
+    if (!order) return;
+    const title = action === "accept" ? "İptal talebini onayla" : "İptal talebini reddet";
+    const msg = action === "accept"
+      ? CANCEL_REQUEST_ACCEPT_CONFIRM
+      : "İptal talebi reddedilecek.";
+    confirmAction(title, msg, async () => {
+      try {
+        const r = await post<{ message?: string }>(
+          client,
+          `/orders/${idOf(order)}/resolve-cancel-request`,
+          { action },
+        );
+        setMessage(r.message || (action === "accept" ? "İptal talebi onaylandı." : "İptal talebi reddedildi."));
+        setError(null);
+        if (action === "accept") router.back();
+        else await load();
+      } catch (err) {
+        setError(apiErrorMessage(err, "İptal talebi işlenemedi."));
+      }
+    });
+  };
 
   const removeItem = (index: number) => {
     if (!order || !canEditItems) return;
@@ -105,6 +135,24 @@ export function OrderDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
       <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} />
+      {cancelRequestActionsVisible(order) ? (
+        <Row style={{ gap: 8, flexWrap: "wrap" }}>
+          <PrimaryButton
+            title="İptal talebini onayla"
+            testID="order-accept-cancel-btn"
+            color="#059669"
+            compact
+            onPress={() => resolveCancel("accept")}
+          />
+          <PrimaryButton
+            title="Reddet"
+            testID="order-reject-cancel-btn"
+            color="#E11D48"
+            compact
+            onPress={() => resolveCancel("reject")}
+          />
+        </Row>
+      ) : null}
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
         <Badge label={orderStatusLabel(order, statusTr(order.order_status))} tone="amber" />
@@ -114,6 +162,11 @@ export function OrderDetailScreen() {
           if (!invLabel || !invTone) return null;
           return <Badge label={invLabel} tone={invTone === "green" ? "green" : invTone === "red" ? "red" : "amber"} />;
         })()}
+        {cancelRequestBadgeVisible(order) ? (
+          <View testID="order-cancel-request-badge">
+            <Badge label={cancelRequestReason(order) ? `${CANCEL_REQUEST_BADGE_LABEL}: ${cancelRequestReason(order)}` : CANCEL_REQUEST_BADGE_LABEL} tone="amber" />
+          </View>
+        ) : null}
         {order.marketplace_status ? <Badge label={marketplaceStatusTr(order.marketplace_status)} tone="slate" /> : null}
         {order.cargo_carrier_name || order.cargo_carrier ? <Badge label={String(order.cargo_carrier_name || order.cargo_carrier)} tone="teal" /> : null}
         {order.cargo_tracking_number ? <Badge label={order.cargo_tracking_number} tone="green" /> : null}

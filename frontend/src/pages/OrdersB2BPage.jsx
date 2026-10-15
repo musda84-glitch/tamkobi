@@ -60,6 +60,15 @@ import { InvoiceOrderMismatchBadge } from "../components/InvoiceOrderMismatchBad
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId, todayYmd } from "../utils/orderBulkActions";
 import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal";
+import { BulkResultModal } from "../components/BulkResultModal";
+import { OrderCancelRequestBadge, OrderCancelRequestDialog } from "../components/OrderCancelRequestDialog";
+import {
+  CANCEL_REQUEST_ACCEPT_CONFIRM,
+  pendingCancelRequestOrders,
+  postResolveCancelRequest,
+  resolveCancelRequestError,
+  resolveCancelRequestsBulk,
+} from "../utils/orderCancelRequest";
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
@@ -253,6 +262,8 @@ export default function OrdersB2BPage() {
   const [selected, setSelected] = useState([]);
   const [bulkLabels, setBulkLabels] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
+  const [cancelDialog, setCancelDialog] = useState(null);
   /** Yalnızca Yenile / menü yenile — sayfa açılışı veya F5 bunu true yapmaz. */
   const [mpSyncing, setMpSyncing] = useState(false);
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
@@ -414,6 +425,25 @@ export default function OrdersB2BPage() {
       }
       const list = selectedOrders();
       if (!list.length) { toast.error("Sipariş seçin."); return; }
+      if (action === "accept_cancel_request" || action === "reject_cancel_request") {
+        const pending = pendingCancelRequestOrders(list);
+        if (!pending.length) { toast.info("Seçili siparişlerde bekleyen iptal talebi yok."); return; }
+        const resolveAction = action === "accept_cancel_request" ? "accept" : "reject";
+        if (resolveAction === "accept" && !window.confirm(CANCEL_REQUEST_ACCEPT_CONFIRM)) return;
+        setBulkBusy(true);
+        try {
+          const items = await resolveCancelRequestsBulk(axios, API_URL, list, resolveAction);
+          setBulkResult({
+            title: resolveAction === "accept" ? "İptal talebi onay sonucu" : "İptal talebi red sonucu",
+            items,
+          });
+          setSelected([]);
+          loadData();
+        } finally {
+          setBulkBusy(false);
+        }
+        return;
+      }
       // Oluştur + Gönder → aynı GİB onay modalı (sessiz send-to-gib döngüsü hata üretiyordu)
       if (action === "einvoice_create" || action === "einvoice_send") {
         const eligible = list.filter(orderBulkEInvoiceEligible);
@@ -767,6 +797,7 @@ export default function OrdersB2BPage() {
     ordF.channel,
     ordF.invoiced,
     ordF.cargo,
+    ordF.cancel_request,
     (ordF.docStatus || []).join(","),
     ordF.from,
     ordF.to,
@@ -1366,6 +1397,12 @@ export default function OrdersB2BPage() {
       case "cargo_change":
         setCargoChangeOrder(ord);
         return;
+      case "accept_cancel_request":
+        setCancelDialog({ ord, action: "accept" });
+        return;
+      case "reject_cancel_request":
+        setCancelDialog({ ord, action: "reject" });
+        return;
       case "delete": {
         if (!canDeleteFromMoreMenu(ord) || orderHasEInvoiceIssued(ord)) {
           toast.error("Faturalanmış sipariş silinemez.");
@@ -1686,6 +1723,31 @@ export default function OrdersB2BPage() {
           }}
         />
       )}
+      {cancelDialog && (
+        <OrderCancelRequestDialog
+          action={cancelDialog.action}
+          order={cancelDialog.ord}
+          onClose={() => setCancelDialog(null)}
+          onConfirm={async (note) => {
+            const { ord, action } = cancelDialog;
+            setCancelDialog(null);
+            try {
+              const r = await postResolveCancelRequest(axios, API_URL, ord, action, note);
+              toast.success(r?.message || (action === "accept" ? "İptal talebi onaylandı." : "İptal talebi reddedildi."));
+              loadData();
+            } catch (err) {
+              toast.error(resolveCancelRequestError(err));
+            }
+          }}
+        />
+      )}
+      {bulkResult && (
+        <BulkResultModal
+          title={bulkResult.title}
+          items={bulkResult.items || []}
+          onClose={() => setBulkResult(null)}
+        />
+      )}
       {returnOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
           <h3 className="text-sm font-bold">İade — {returnOrder.order_number}</h3><p className="text-slate-500">Tüm kalemler iade alınır, stok geri eklenir ve iade kaydı oluşturulur.</p>
@@ -1910,6 +1972,7 @@ export default function OrdersB2BPage() {
                     <div className="mt-0.5 flex flex-wrap items-center gap-1">
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{channelTr(ord.channel)}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
+                      <OrderCancelRequestBadge ord={ord} />
                     </div>
                     <button type="button" onClick={() => goContact(ord)} className="mt-1 font-semibold text-slate-800 hover:text-indigo-700 truncate text-left block max-w-full">
                       {ord.customer_name || "—"}
@@ -2151,10 +2214,15 @@ export default function OrdersB2BPage() {
                           <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {marketplaceStatusTr(ord.marketplace_status)}</div>}
                           {ord.channel === "shopphp" && <button onClick={async () => { try { const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/push-shopphp`); toast.success(r.data.message); loadData(); } catch (e) { toast.error(e.response?.data?.detail || "Bildirilemedi."); } }} className={`mt-1 text-[10px] font-semibold underline ${ord.shopphp_push?.ok ? "text-emerald-700" : ord.shopphp_push?.ok === false ? "text-rose-600" : "text-indigo-600"}`} title={ord.shopphp_push ? `Son bildirim: ${new Date(ord.shopphp_push.at).toLocaleString("tr-TR")}${ord.shopphp_push.error ? " — " + ord.shopphp_push.error : ""}` : "Onay/kargo/fatura bilgisini ShopPHP mağazasına yaz"} data-testid={`shopphp-push-${ord.order_number}`}>{ord.shopphp_push?.ok ? "Mağazaya bildirildi ✓" : ord.shopphp_push?.ok === false ? "Bildirim hatası — tekrar dene" : "Mağazaya Bildir"}</button>}
+                          <div className="mt-1"><OrderCancelRequestBadge ord={ord} /></div>
                         </div>
                       ) : isB2BCartOrder(ord) ? (
-                        <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`} data-testid={`order-status-badge-${ord.order_number}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
+                        <div>
+                          <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`} data-testid={`order-status-badge-${ord.order_number}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
+                          <div className="mt-1"><OrderCancelRequestBadge ord={ord} /></div>
+                        </div>
                       ) : (
+                      <div>
                       <select
                         value={ord.order_status}
                         onChange={(e) => handleUpdateOrderStatus(ord.id || ord._id, e.target.value)}
@@ -2164,7 +2232,9 @@ export default function OrdersB2BPage() {
                         {orderStatusSelectOptions(ord).map(([k, l]) => (
                           <option key={k} value={k}>{l}</option>
                         ))}
-                      </select>)}
+                      </select>
+                      <div className="mt-1"><OrderCancelRequestBadge ord={ord} /></div>
+                      </div>)}
                     </td>
                     <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>

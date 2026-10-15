@@ -63,6 +63,7 @@ export const ORDER_FILTER_DEFAULTS = {
   channel: "all",
   invoiced: "all",
   cargo: "all",
+  cancel_request: "all",
   docStatus: [...ORDER_DOC_STATUS_ALL],
   from: "",
   to: "",
@@ -201,6 +202,8 @@ export function orderFiltersFromSearch(params) {
   if (["all", "yes", "no", "einvoice", "einvoice_unsent"].includes(invoiced)) next.invoiced = invoiced;
   const cargo = get("cargo");
   if (["all", "yes", "no"].includes(cargo)) next.cargo = cargo;
+  const cancelReq = get("cancel_request");
+  if (["all", "pending"].includes(cancelReq)) next.cancel_request = cancelReq;
   const doc = get("doc");
   if (doc) {
     next.docStatus = doc.split(",").map((s) => s.trim()).filter((k) => ORDER_DOC_STATUS_ALL.includes(k));
@@ -224,6 +227,7 @@ export function writeOrderFiltersToParams(current, filters) {
   setOrDel("channel", filters?.channel, "all");
   setOrDel("invoiced", filters?.invoiced, "all");
   setOrDel("cargo", filters?.cargo, "all");
+  setOrDel("cancel_request", filters?.cancel_request, "all");
   if (!docStatusFilterActive(filters?.docStatus)) params.delete("doc");
   else params.set("doc", filters.docStatus.join(","));
   setOrDel("from", filters?.from, "");
@@ -234,7 +238,7 @@ export function writeOrderFiltersToParams(current, filters) {
 }
 
 export function orderFiltersRestChanged(a, b) {
-  const keys = ["status", "channel", "invoiced", "cargo", "from", "to", "sort"];
+  const keys = ["status", "channel", "invoiced", "cargo", "cancel_request", "from", "to", "sort"];
   if (keys.some((k) => (a?.[k] || "") !== (b?.[k] || ""))) return true;
   const left = [...(a?.docStatus || [])].sort().join(",");
   const right = [...(b?.docStatus || [])].sort().join(",");
@@ -254,6 +258,7 @@ export function buildOrderListParams(f, { companyId, page = 1, pageSize = 50, cu
   if (f?.channel && f.channel !== "all") params.channel = f.channel;
   if (f?.invoiced && f.invoiced !== "all") params.invoiced = f.invoiced;
   if (f?.cargo && f.cargo !== "all") params.cargo = f.cargo;
+  if (f?.cancel_request && f.cancel_request !== "all") params.cancel_request = f.cancel_request;
   if (docStatusFilterActive(f?.docStatus)) params.doc_status = f.docStatus.join(",");
   if (f?.from) params.date_from = f.from;
   if (f?.to) params.date_to = f.to;
@@ -313,6 +318,7 @@ export const applyOrderFilters = (orders, f) => {
     if (f.invoiced === "no" && o.invoice_id) return false;
     if (f.cargo === "yes" && !isShippedOrder(o)) return false;
     if (f.cargo === "no" && isShippedOrder(o)) return false;
+    if (f.cancel_request === "pending" && o?.cancel_request?.status !== "pending") return false;
     if (!orderMatchesDocStatus(o, f.docStatus)) return false;
     if (f.from || f.to) {
       const ms = orderInstantMs(o.order_date || o.created_at);

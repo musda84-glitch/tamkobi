@@ -1,4 +1,4 @@
-"""ERP: approve or reject a pending B2B cancel request."""
+"""ERP: approve or reject a pending B2B cancel request (HTTP)."""
 import requests
 
 from conftest import API, TEST_COMPANY_ID
@@ -23,15 +23,30 @@ def _create():
     return r.json()
 
 
-def test_accept_cancel_request_cancels_order():
-    o = _create()
-    acc = requests.post(f"{API}/orders/{o['id']}/resolve-cancel-request", json={"action": "accept"}, timeout=20)
-    assert acc.status_code == 200, acc.text
-    assert acc.json()["order_status"] == "cancelled"
+def _list_ids():
     got = requests.get(f"{API}/orders", params={"company_id": TEST_COMPANY_ID}, timeout=20).json()
-    row = next(x for x in got if x["id"] == o["id"])
-    assert row["order_status"] == "cancelled"
-    assert row["cancel_request"]["status"] == "accepted"
+    rows = got if isinstance(got, list) else got.get("items") or []
+    return {x.get("id") or x.get("_id") for x in rows}
+
+
+def test_accept_cancel_request_trashes_order_and_draft():
+    o = _create()
+    oid = o["id"]
+    acc = requests.post(f"{API}/orders/{oid}/resolve-cancel-request", json={"action": "accept"}, timeout=20)
+    assert acc.status_code == 200, acc.text
+    assert oid not in _list_ids()
+    trash = requests.get(f"{API}/trash", params={"company_id": TEST_COMPANY_ID}, timeout=20).json()
+    items = trash.get("items") or []
+    related = [t for t in items if t.get("original_id") == oid or (t.get("preview") or {}).get("order_number") == o.get("order_number")]
+    assert related, trash
+    pending = requests.get(
+        f"{API}/orders",
+        params={"company_id": TEST_COMPANY_ID, "cancel_request": "pending"},
+        timeout=20,
+    )
+    assert pending.status_code == 200, pending.text
+    rows = pending.json() if isinstance(pending.json(), list) else pending.json().get("items") or []
+    assert oid not in {x.get("id") or x.get("_id") for x in rows}
 
 
 def test_reject_cancel_request_keeps_approved():
@@ -39,13 +54,35 @@ def test_reject_cancel_request_keeps_approved():
     rej = requests.post(f"{API}/orders/{o['id']}/resolve-cancel-request", json={"action": "reject"}, timeout=20)
     assert rej.status_code == 200, rej.text
     got = requests.get(f"{API}/orders", params={"company_id": TEST_COMPANY_ID}, timeout=20).json()
-    row = next(x for x in got if x["id"] == o["id"])
+    rows = got if isinstance(got, list) else got.get("items") or []
+    row = next(x for x in rows if x["id"] == o["id"])
     assert row["order_status"] == "approved"
     assert row["cancel_request"]["status"] == "rejected"
 
 
 def test_resolve_without_pending_request_fails():
     o = _create()
-    assert requests.post(f"{API}/orders/{o['id']}/resolve-cancel-request", json={"action": "accept"}, timeout=20).status_code == 200
+    assert requests.post(f"{API}/orders/{o['id']}/resolve-cancel-request", json={"action": "reject"}, timeout=20).status_code == 200
     again = requests.post(f"{API}/orders/{o['id']}/resolve-cancel-request", json={"action": "accept"}, timeout=20)
     assert again.status_code == 400
+
+
+def test_list_orders_cancel_request_pending_param():
+    o = _create()
+    r = requests.get(
+        f"{API}/orders",
+        params={"company_id": TEST_COMPANY_ID, "cancel_request": "pending"},
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    rows = r.json() if isinstance(r.json(), list) else r.json().get("items") or []
+    assert o["id"] in {x.get("id") or x.get("_id") for x in rows}
+    paged = requests.get(
+        f"{API}/orders",
+        params={"company_id": TEST_COMPANY_ID, "paged": 1, "cancel_request": "pending", "page_size": 50},
+        timeout=20,
+    )
+    assert paged.status_code == 200, paged.text
+    items = paged.json().get("items") or []
+    assert o["id"] in {x.get("id") or x.get("_id") for x in items}
+    assert paged.json().get("counts", {}).get("cancel_request", 0) >= 1

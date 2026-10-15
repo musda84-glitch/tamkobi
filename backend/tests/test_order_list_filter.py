@@ -422,3 +422,15 @@ def test_einvoice_unsent_is_edoc_not_sent_to_gib():
     assert yes == {"DRAFT", "PAPER", "SLIP", "NEVER", "ERR", "SENT", "QUEUE", "ACC", "UUID"}
     einv = set(_ids(query_orders(rows, OrderListFilter(invoiced="einvoice", sort="number_asc"), page=1, page_size=50)))
     assert einv == {"SENT", "ACC", "UUID"}
+
+
+def test_cancel_request_pending_filter_and_count():
+    rows = [
+        _row(order_number="PEND", order_status="approved", cancel_request={"status": "pending"}),
+        _row(order_number="REJ", order_status="approved", cancel_request={"status": "rejected"}),
+        _row(order_number="NONE", order_status="approved"),
+    ]
+    out = query_orders(rows, OrderListFilter(cancel_request="pending"))
+    assert _ids(out) == ["PEND"]
+    summary = query_orders(rows, OrderListFilter())
+    assert summary["counts"].get("cancel_request") == 1
