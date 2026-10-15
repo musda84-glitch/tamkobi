@@ -85,6 +85,59 @@ export const SAMPLE_UBL_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </cac:InvoiceLine>
 </n1:Invoice>`;
 
+export const SAMPLE_DESPATCH_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<n1:DespatchAdvice xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"
+  xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+  xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:CustomizationID>TR1.2</cbc:CustomizationID>
+  <cbc:ProfileID>TEMELIRSALIYE</cbc:ProfileID>
+  <cbc:ID>ABC2026000000001</cbc:ID>
+  <cbc:UUID>550e8400-e29b-41d4-a716-446655440000</cbc:UUID>
+  <cbc:IssueDate>2026-10-06</cbc:IssueDate>
+  <cbc:IssueTime>14:32:05</cbc:IssueTime>
+  <cbc:DespatchAdviceTypeCode>SEVK</cbc:DespatchAdviceTypeCode>
+  <cbc:DocumentCurrencyCode>TRY</cbc:DocumentCurrencyCode>
+  <cbc:Note>İşbu belge elektronik olarak düzenlenmiştir.</cbc:Note>
+  <cac:OrderReference><cbc:ID>SIP-2026-0142</cbc:ID></cac:OrderReference>
+  <cac:DespatchSupplierParty><cac:Party>
+    <cac:PartyIdentification><cbc:ID schemeID="VKN">1234567890</cbc:ID></cac:PartyIdentification>
+    <cac:PartyName><cbc:Name>Örnek Yazılım A.Ş.</cbc:Name></cac:PartyName>
+    <cac:PostalAddress><cbc:StreetName>Atatürk Cad.</cbc:StreetName><cbc:BuildingNumber>1</cbc:BuildingNumber><cbc:CityName>İstanbul</cbc:CityName></cac:PostalAddress>
+    <cac:PartyTaxScheme><cac:TaxScheme><cbc:Name>Kadıköy</cbc:Name></cac:TaxScheme></cac:PartyTaxScheme>
+  </cac:Party></cac:DespatchSupplierParty>
+  <cac:DeliveryCustomerParty><cac:Party>
+    <cac:PartyIdentification><cbc:ID schemeID="VKN">9876543210</cbc:ID></cac:PartyIdentification>
+    <cac:PartyName><cbc:Name>Alıcı Ticaret Ltd. Şti.</cbc:Name></cac:PartyName>
+    <cac:PostalAddress><cbc:StreetName>İnönü Bulvarı</cbc:StreetName><cbc:BuildingNumber>2</cbc:BuildingNumber><cbc:CityName>Ankara</cbc:CityName></cac:PostalAddress>
+    <cac:PartyTaxScheme><cac:TaxScheme><cbc:Name>Çankaya</cbc:Name></cac:TaxScheme></cac:PartyTaxScheme>
+  </cac:Party></cac:DeliveryCustomerParty>
+  <cac:DespatchLine>
+    <cbc:ID>1</cbc:ID><cbc:DeliveredQuantity unitCode="C62">1</cbc:DeliveredQuantity>
+    <cac:Item><cbc:Name>Yazılım lisans bedeli</cbc:Name>
+      <cac:SellersItemIdentification><cbc:ID>YZL-001</cbc:ID></cac:SellersItemIdentification>
+      <cac:StandardItemIdentification><cbc:ID>8680000000001</cbc:ID></cac:StandardItemIdentification>
+    </cac:Item>
+    <cac:Price><cbc:PriceAmount currencyID="TRY">10000.00</cbc:PriceAmount></cac:Price>
+    <cac:Shipment><cbc:ID>1</cbc:ID>
+      <cac:GoodsItem><cbc:ValueAmount currencyID="TRY">10000.00</cbc:ValueAmount></cac:GoodsItem>
+    </cac:Shipment>
+  </cac:DespatchLine>
+  <cac:DespatchLine>
+    <cbc:ID>2</cbc:ID><cbc:DeliveredQuantity unitCode="C62">2</cbc:DeliveredQuantity>
+    <cac:Item><cbc:Name>Kurulum ve eğitim</cbc:Name>
+      <cac:SellersItemIdentification><cbc:ID>KUR-110</cbc:ID></cac:SellersItemIdentification>
+    </cac:Item>
+    <cac:Price><cbc:PriceAmount currencyID="TRY">1500.00</cbc:PriceAmount></cac:Price>
+    <cac:Shipment><cbc:ID>2</cbc:ID>
+      <cac:GoodsItem><cbc:ValueAmount currencyID="TRY">3000.00</cbc:ValueAmount></cac:GoodsItem>
+    </cac:Shipment>
+  </cac:DespatchLine>
+</n1:DespatchAdvice>`;
+
+export function sampleXmlForKind(kind) {
+  return kind === "e_dispatch" ? SAMPLE_DESPATCH_XML : SAMPLE_UBL_XML;
+}
+
 function toHex(raw) {
   const s = String(raw || "").trim().replace(/['"]/g, "").split(/\s/)[0];
   if (!s) return "";
@@ -215,7 +268,7 @@ export function buildXsltPreview(xslt, kind) {
   if (raw.length < 400 || (!/<style/i.test(raw) && !/data:image\//i.test(raw) && raw.length < 4000)) {
     return { html: "", hints, transformed: false };
   }
-  const transformed = transformXsltToHtml(raw);
+  const transformed = transformXsltToHtml(raw, sampleXmlForKind(kind));
   if (transformed) return { html: transformed, hints, transformed: true };
   return { html: xsltFallbackPreviewHtml(raw, kind), hints, transformed: false };
 }

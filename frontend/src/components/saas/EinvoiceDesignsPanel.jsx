@@ -49,6 +49,7 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   const [previewErr, setPreviewErr] = useState("");
   const fileRef = useRef(null);
   const importRef = useRef(null);
+  const xsltOverwriteWarnedRef = useRef(false);
   const isCompany = mode === "company" && !!companyId;
   const listUrl = isCompany
     ? `${API_URL}/einvoice/designs?company_id=${encodeURIComponent(companyId)}`
@@ -90,6 +91,25 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   const snapOf = (f, src) => JSON.stringify({ name: f.name, source: src, xslt: f.xslt, layout: f.layout });
   const dirty = openId && snapOf(form, source) !== savedSnap;
 
+  const confirmLeaveUnsaved = () => {
+    if (!dirty) return true;
+    return window.confirm("Kaydedilmemiş değişiklikler kaybolacak. Devam?");
+  };
+
+  useEffect(() => {
+    xsltOverwriteWarnedRef.current = false;
+  }, [openId]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
   const applyLoaded = (data, kind0) => {
     const parsed = fromApi(data, kind0);
     setForm({ name: parsed.name, xslt: parsed.xslt, layout: parsed.layout });
@@ -99,6 +119,7 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   };
 
   const openDesign = async (id) => {
+    if (!confirmLeaveUnsaved()) return;
     setBusy(`open-${id}`);
     try {
       const r = await axios.get(itemUrl(id), cred);
@@ -152,6 +173,7 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   };
 
   const duplicate = async (id) => {
+    if (!confirmLeaveUnsaved()) return;
     setBusy(`dup-${id}`);
     try {
       const r = await axios.post(collectionUrl, withCompany({ copy_from_id: id }), cred);
@@ -268,6 +290,7 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    if (!confirmLeaveUnsaved()) return;
     setBusy("import");
     try {
       const text = await file.text();
@@ -339,7 +362,10 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
           <button
             key={k.id}
             type="button"
-            onClick={() => { setKind(k.id); setOpenId(""); setForm(emptyForm(k.id)); setTab("visual"); setSavedSnap(""); }}
+            onClick={() => {
+              if (!confirmLeaveUnsaved()) return;
+              setKind(k.id); setOpenId(""); setForm(emptyForm(k.id)); setTab("visual"); setSavedSnap("");
+            }}
             className={`px-3 py-1.5 rounded-lg font-semibold ${kind === k.id ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}
             data-testid={`einvoice-design-kind-${k.id}`}
           >
@@ -427,7 +453,16 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
                   kind={kind}
                   xsltHtml={xsltPreview.html}
                   preferXsltPreview={source === "xslt" && !!xsltPreview.html}
-                  onChange={(layout) => { setForm((f) => ({ ...f, layout })); setSource("visual"); }}
+                  onChange={(layout) => {
+                    if (source === "xslt" && !xsltOverwriteWarnedRef.current) {
+                      if (!window.confirm("Görsel düzenleme kaydedilince elle yazılmış XSLT yerine üretilen XSLT kaydedilir")) {
+                        return;
+                      }
+                      xsltOverwriteWarnedRef.current = true;
+                    }
+                    setForm((f) => ({ ...f, layout }));
+                    setSource("visual");
+                  }}
                 />
               ) : (
                 <div>

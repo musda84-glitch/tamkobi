@@ -14,14 +14,20 @@ jest.mock("../../utils/einvoiceStampImage", () => {
     prepareStampFile: jest.fn(),
   };
 });
-jest.mock("../../utils/einvoiceXsltPreview", () => ({
-  transformXsltToHtml: (xslt) => {
-    const text = String(xslt || "");
-    const m = text.match(/<div class="inv-stamp"[\s\S]*?<\/div>/);
-    const stack = text.includes('class="inv-stack"') ? "inv-stack" : "";
-    return `<html><body><div id="real-xml">${stack}${m ? m[0] : "NO-STAMP"}</div></body></html>`;
-  },
-}));
+jest.mock("../../utils/einvoiceXsltPreview", () => {
+  const actual = jest.requireActual("../../utils/einvoiceXsltPreview");
+  return {
+    ...actual,
+    transformXsltToHtml: (xslt, xml) => {
+      const text = String(xslt || "");
+      const xmlText = String(xml || "");
+      if (text.includes("DespatchAdvice") && !xmlText.includes("DespatchAdvice")) return "";
+      const m = text.match(/<div class="inv-stamp"[\s\S]*?<\/div>/);
+      const stack = text.includes('class="inv-stack"') ? "inv-stack" : "";
+      return `<html><body><div id="real-xml">${stack}${m ? m[0] : "NO-STAMP"}</div></body></html>`;
+    },
+  };
+});
 
 let host;
 let last;
@@ -578,6 +584,26 @@ test("stamp upload embeds the image, size and align, and warns past the limit", 
   expect(host.querySelector('[data-testid="einvoice-design-stamp-img"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-stamp-clear"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-stamp"]')?.textContent).toContain("Resim yükle");
+});
+
+test("dispatch preview produces iframe and hides the error box", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <EinvoiceDesignCanvas
+        layout={defaultLayout("e_dispatch")}
+        kind="e_dispatch"
+        onChange={(n) => { last = n; }}
+      />
+    );
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-preview-real-xml"]')?.textContent).toBe("Önizle (örnek XML)");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-preview-real-xml"]').click();
+  });
+  const frame = host.querySelector('[data-testid="einvoice-design-preview"]');
+  expect(frame?.tagName).toBe("IFRAME");
+  expect(host.querySelector('[data-testid="einvoice-design-real-xml-error"]')).toBeNull();
 });
 
 test("Kaşe stacks under GİB e-Arşiv and the real XML preview matches", async () => {
