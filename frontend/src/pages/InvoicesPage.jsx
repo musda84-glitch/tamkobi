@@ -29,7 +29,22 @@ import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
-import { invoiceBulkNeedsSelection, bulkApiErrorDetail } from "../utils/invoiceBulkActions";
+import {
+  invoiceBulkNeedsSelection,
+  bulkApiErrorDetail,
+  bulkApiErrorDetailAsync,
+  invoiceBulkRefreshGate,
+  runInvoiceRefreshBulk,
+  runInvoiceXmlBulk,
+  fetchInvoiceXmlResponse,
+  invoiceXmlFileName,
+  triggerBrowserDownload,
+  classifyInvoiceDateBulk,
+  runInvoiceDateBulk,
+  runInvoiceDeleteBulk,
+} from "../utils/invoiceBulkActions";
+import { BulkResultModal } from "../components/BulkResultModal";
+import { BulkInvoiceDateModal } from "../components/BulkInvoiceDateModal";
 import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { contactMukellefPatch } from "../utils/gibMukellef";
 import { shouldAskBulkEInvoiceDate, todayYmd } from "../utils/orderBulkActions";
@@ -214,6 +229,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [despatchTarget, setDespatchTarget] = useState(null);
   const [bulkEInvoiceConfirm, setBulkEInvoiceConfirm] = useState(null);
   const [bulkEInvoiceBusy, setBulkEInvoiceBusy] = useState(false);
+  const [bulkDateConfirm, setBulkDateConfirm] = useState(null);
+  const [bulkResult, setBulkResult] = useState(null);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [mergeBusy, setMergeBusy] = useState(false);
@@ -1001,31 +1018,46 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
 
   const downloadInvoiceXmlBulk = async (list) => {
-    const ids = [...new Set(list.map((o) => o.id || o._id).filter(Boolean))];
-    if (!ids.length) { toast.error("Seçili faturalarda e-belge yok."); return; }
-    let ok = 0, fail = 0;
-    for (const id of ids) {
-      try {
-        let r;
-        try {
-          r = await axios.get(`${API_URL}/e-invoice/${id}/xml`, { responseType: "blob" });
-        } catch (firstErr) {
-          r = await axios.get(`${API_URL}/invoices/${id}/xml`, { responseType: "blob" });
-        }
-        const url = URL.createObjectURL(r.data);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `efatura-${id}.xml`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        ok++;
-      } catch {
-        fail++;
-      }
+    setBulkBusy(true);
+    try {
+      const items = await runInvoiceXmlBulk(list, {
+        download: async (inv) => {
+          const id = inv.id || inv._id;
+          try {
+            const r = await fetchInvoiceXmlResponse(axios, API_URL, id);
+            triggerBrowserDownload(r.data, invoiceXmlFileName(inv));
+          } catch (err) {
+            const detail = await bulkApiErrorDetailAsync(err);
+            const wrapped = new Error(detail || "Hata");
+            wrapped.response = err?.response;
+            throw wrapped;
+          }
+        },
+      });
+      setBulkResult({ title: "XML indirme sonucu", items });
+    } finally {
+      setBulkBusy(false);
     }
-    toast[fail && !ok ? "error" : fail ? "error" : "success"](`${ok} XML indirildi${fail ? `, ${fail} hata` : ""}.`);
+  };
+
+  const confirmBulkInvoiceDate = async (date) => {
+    if (!bulkDateConfirm) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      toast.error("Tarih YYYY-AA-GG olmalı.");
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const items = await runInvoiceDateBulk(bulkDateConfirm.list || [], {
+        date,
+        put: (inv, issueDate) => axios.put(`${API_URL}/invoices/${inv.id || inv._id}`, { issue_date: issueDate }),
+      });
+      setBulkDateConfirm(null);
+      setBulkResult({ title: "Toplu fatura tarihi", items });
+      loadData();
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const bulk = async (action) => {
@@ -1036,22 +1068,21 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     const list = selectedInvoices();
 
     if (action === "refresh") {
+      const gate = invoiceBulkRefreshGate({ selected: list, visible: visibleInvoices });
+      if (gate.empty) {
+        toast.info("Güncellenecek GİB belgesi yok.");
+        return;
+      }
+      if (gate.cancelled) return;
       setBulkBusy(true);
       try {
-        const targets = list.length ? list : visibleInvoices.filter((inv) => inv.gib_uuid || inv.gib_tracking_id).slice(0, 40);
-        if (!targets.length) {
-          toast.info("Güncellenecek GİB belgesi yok.");
-          return;
-        }
-        let ok = 0;
-        for (const inv of targets) {
-          try {
-            await refreshInvoiceGibStatus(API_URL, inv);
-            ok++;
-          } catch { /* devam */ }
-        }
+        const workList = list.length ? list : gate.targets;
+        const items = await runInvoiceRefreshBulk(workList, {
+          remainder: gate.remainder,
+          refresh: (inv) => refreshInvoiceGibStatus(API_URL, inv, { silent: true }),
+        });
+        setBulkResult({ title: "GİB durum güncelleme", items });
         await loadData({ silent: true });
-        toast.success(`${ok} belgenin GİB durumu güncellendi.`);
       } finally {
         setBulkBusy(false);
       }
@@ -1083,21 +1114,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       return;
     }
     if (action === "invoice_date") {
-      const date = window.prompt("Yeni fatura tarihi (YYYY-AA-GG)", new Date().toISOString().slice(0, 10));
-      if (!date) return;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast.error("Tarih YYYY-AA-GG olmalı."); return; }
-      let ok = 0, fail = 0, firstErr = "";
-      for (const inv of list) {
-        try {
-          await axios.put(`${API_URL}/invoices/${inv.id || inv._id}`, { issue_date: date });
-          ok++;
-        } catch (err) {
-          fail++;
-          if (!firstErr) firstErr = bulkApiErrorDetail(err);
-        }
-      }
-      toast[fail ? "error" : "success"](`${ok} faturanın tarihi güncellendi${fail ? `, ${fail} değiştirilemedi${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
-      loadData();
+      setBulkDateConfirm({ list, classified: classifyInvoiceDateBulk(list) });
       return;
     }
     if (action === "invoice_link") {
@@ -1137,17 +1154,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       if (!canDeleteInv) { toast.error("Silme yetkiniz yok."); return; }
       if (!window.confirm(invoicesBulkDeleteConfirmMessage(deletable))) return;
       setBulkBusy(true);
-      let ok = 0, fail = 0;
-      for (const inv of deletable) {
-        try {
-          await axios.delete(`${API_URL}/invoices/${inv.id || inv._id}`);
-          ok++;
-        } catch { fail++; }
+      try {
+        const items = await runInvoiceDeleteBulk(list, {
+          remove: (inv) => axios.delete(`${API_URL}/invoices/${inv.id || inv._id}`),
+        });
+        setBulkResult({ title: "Toplu silme sonucu", items });
+        setSelected([]);
+        loadData();
+      } finally {
+        setBulkBusy(false);
       }
-      setBulkBusy(false);
-      toast[fail ? "error" : "success"](`${ok} fatura silindi${fail ? `, ${fail} hata` : ""}.`);
-      setSelected([]);
-      loadData();
       return;
     }
     if (action === "cancel") {
@@ -1892,6 +1908,22 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           busy={bulkEInvoiceBusy}
           onClose={() => !bulkEInvoiceBusy && setBulkEInvoiceConfirm(null)}
           onConfirm={confirmBulkEInvoiceDates}
+        />
+      )}
+      {bulkDateConfirm && (
+        <BulkInvoiceDateModal
+          updateCount={bulkDateConfirm.classified?.updateCount || 0}
+          skipCount={bulkDateConfirm.classified?.skipCount || 0}
+          busy={bulkBusy}
+          onClose={() => !bulkBusy && setBulkDateConfirm(null)}
+          onConfirm={confirmBulkInvoiceDate}
+        />
+      )}
+      {bulkResult && (
+        <BulkResultModal
+          title={bulkResult.title}
+          items={bulkResult.items || []}
+          onClose={() => setBulkResult(null)}
         />
       )}
       {eFaturaJob && (

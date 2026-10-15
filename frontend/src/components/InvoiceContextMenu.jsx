@@ -90,9 +90,10 @@ function triggerBlobDownload(blob, filename) {
 }
 
 /** NetteFatura / GİB iletim durumunu (DetailStatus → 1300) senkronla. */
-export async function refreshInvoiceGibStatus(apiBase, inv, { onUpdated } = {}) {
+export async function refreshInvoiceGibStatus(apiBase, inv, { onUpdated, silent = false } = {}) {
   const id = inv?.id || inv?._id;
   if (!apiBase || !id) {
+    if (silent) throw new Error("Fatura bulunamadı.");
     toast.error("Fatura bulunamadı.");
     return null;
   }
@@ -100,15 +101,18 @@ export async function refreshInvoiceGibStatus(apiBase, inv, { onUpdated } = {}) 
     const r = await axios.post(`${apiBase}/e-invoice/${id}/refresh-status`);
     const gs = r.data?.gib_status || "";
     const no = r.data?.invoice_number || r.data?.gib_invoice_id || "";
-    if (r.data?.updated) {
-      toast.success(gs ? `GİB durumu: ${gs}` : (r.data?.message || "GİB durumu güncellendi."));
-      if (no) toast.message(`Fatura no: ${no}`);
-    } else {
-      toast.message(r.data?.message || gs || "Yeni GİB durumu yok.");
+    if (!silent) {
+      if (r.data?.updated) {
+        toast.success(gs ? `GİB durumu: ${gs}` : (r.data?.message || "GİB durumu güncellendi."));
+        if (no) toast.message(`Fatura no: ${no}`);
+      } else {
+        toast.message(r.data?.message || gs || "Yeni GİB durumu yok.");
+      }
     }
     if (typeof onUpdated === "function") onUpdated(r.data);
     return r.data;
   } catch (err) {
+    if (silent) throw err;
     toast.error(err?.response?.data?.detail || "GİB durumu alınamadı.");
     return null;
   }
