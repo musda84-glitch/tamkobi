@@ -78,10 +78,27 @@ async def _admins() -> List[dict]:
 
 
 async def _server(sid: str) -> dict:
-    row = await _db.platform_mail_servers.find_one({"_id": sid})
+    row = await _db.platform_mail_servers.find_one({"_id": sid}) if sid else None
     if not row:
-        raise HTTPException(status_code=404, detail="Posta sunucusu bulunamadı.")
+        raise HTTPException(status_code=404, detail="Seçili posta sunucusu bulunamadı.")
     return row
+
+
+async def _mailbox_by_email(email: str) -> Optional[dict]:
+    """Aynı adres (büyük/küçük harf duyarsız) zaten kayıtlı mı."""
+    found = await _db.platform_mailboxes.find_one({"email": email})
+    if found:
+        return found
+    rows = await _db.platform_mailboxes.find({}).to_list(500)
+    return next((r for r in rows if _norm_email(r.get("email")) == email), None)
+
+
+async def _clear_default_flags(except_id: Optional[str] = None) -> None:
+    """Sistem varsayılanı tek kutuda kalsın. Yalnızca bayrak kapanır; kutu silinmez."""
+    q: Dict[str, Any] = {"is_default": True}
+    if except_id:
+        q["_id"] = {"$ne": except_id}
+    await _db.platform_mailboxes.update_many(q, {"$set": {"is_default": False}})
 
 
 async def _box(bid: str) -> dict:
@@ -245,9 +262,9 @@ async def create_mailbox(req: Dict[str, Any], admin: dict = Depends(saas.require
     email = _norm_email(req.get("email") or "")
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Geçerli bir e-posta adresi girin.")
-    if await _db.platform_mailboxes.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Bu adres zaten tanımlı.")
-    server_id = req.get("server_id")
+    if await _mailbox_by_email(email):
+        raise HTTPException(status_code=409, detail="Bu adres zaten tanımlı.")
+    server_id = (req.get("server_id") or "").strip()
     if not server_id:
         raise HTTPException(status_code=400, detail="Posta sunucusu seçin.")
     await _server(server_id)
@@ -257,6 +274,7 @@ async def create_mailbox(req: Dict[str, Any], admin: dict = Depends(saas.require
     if not allow_all:
         allowed = await _valid_admin_ids(allowed)
     is_default = bool(req.get("is_default"))
+    # İstemcinin gönderdiği id yok sayılır: ekleme her zaman yeni kayıttır.
     doc = {
         "_id": f"pmb_{uuid.uuid4().hex[:10]}",
         "email": email,
@@ -277,7 +295,7 @@ async def create_mailbox(req: Dict[str, Any], admin: dict = Depends(saas.require
     if pwd:
         doc["password_enc"] = comm_service.encrypt(pwd)
     if is_default:
-        await _db.platform_mailboxes.update_many({}, {"$set": {"is_default": False}})
+        await _clear_default_flags()
     await _db.platform_mailboxes.insert_one(doc)
     return _public_box(doc)
 
@@ -290,9 +308,9 @@ async def update_mailbox(box_id: str, req: Dict[str, Any], _: dict = Depends(saa
         email = _norm_email(req.get("email") or "")
         if not EMAIL_RE.match(email):
             raise HTTPException(status_code=400, detail="Geçerli bir e-posta adresi girin.")
-        other = await _db.platform_mailboxes.find_one({"email": email, "_id": {"$ne": box_id}})
-        if other:
-            raise HTTPException(status_code=400, detail="Bu adres başka bir kutuda kayıtlı.")
+        other = await _mailbox_by_email(email)
+        if other and other.get("_id") != box_id:
+            raise HTTPException(status_code=409, detail="Bu adres başka bir kutuda kayıtlı.")
         upd["email"] = email
     for k in ("display_name", "smtp_user"):
         if k in req and req[k] is not None:
@@ -300,8 +318,9 @@ async def update_mailbox(box_id: str, req: Dict[str, Any], _: dict = Depends(saa
     if "reply_to" in req:
         upd["reply_to"] = _norm_email(req.get("reply_to") or "") or None
     if "server_id" in req:
-        await _server(req["server_id"])
-        upd["server_id"] = req["server_id"]
+        server_id = (req.get("server_id") or "").strip()
+        await _server(server_id)
+        upd["server_id"] = server_id
     if "purposes" in req:
         upd["purposes"] = [p for p in (req.get("purposes") or []) if p in PURPOSES] or ["general"]
     if "allow_all_admins" in req:
@@ -317,7 +336,7 @@ async def update_mailbox(box_id: str, req: Dict[str, Any], _: dict = Depends(saa
     if pwd:
         upd["password_enc"] = comm_service.encrypt(pwd)
     if req.get("is_default"):
-        await _db.platform_mailboxes.update_many({"_id": {"$ne": box_id}}, {"$set": {"is_default": False}})
+        await _clear_default_flags(except_id=box_id)
         upd["is_default"] = True
     elif "is_default" in req:
         upd["is_default"] = False

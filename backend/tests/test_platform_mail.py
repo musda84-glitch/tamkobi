@@ -43,6 +43,9 @@ class TestPlatformMail:
         suffix = uuid.uuid4().hex[:8]
         r = s.get(f"{API}/system/mail", timeout=20)
         assert r.status_code == 200, r.text
+        prior_boxes = r.json().get("mailboxes") or []
+        prior_ids = {b["id"] for b in prior_boxes}
+        prior_defaults = [b["id"] for b in prior_boxes if b.get("is_default")]
         body = r.json()
         assert "servers" in body and "mailboxes" in body and "admins" in body
         assert any(p["id"] == "transactional" for p in body["purposes"])
@@ -69,7 +72,7 @@ class TestPlatformMail:
         bid = box["id"]
 
         r = s.post(f"{API}/system/mail/mailboxes", json={"email": f"destek@{suffix}.com", "server_id": sid}, timeout=20)
-        assert r.status_code == 400
+        assert r.status_code == 409
 
         r = s.post(f"{API}/system/mail/mailboxes", json={"email": f"info@{suffix}.com", "display_name": "Info", "server_id": sid, "purposes": ["general"], "allow_all_admins": True, "is_default": False}, timeout=20)
         assert r.status_code == 200, r.text
@@ -107,3 +110,83 @@ class TestPlatformMail:
         assert s.delete(f"{API}/system/mail/servers/{sid}", timeout=20).status_code == 200
         gone = s.get(f"{API}/system/mail", timeout=20).json()
         assert not any(x["id"] == sid for x in gone["servers"])
+        assert prior_ids <= {b["id"] for b in gone["mailboxes"]}
+        for bid in prior_defaults:
+            s.put(f"{API}/system/mail/mailboxes/{bid}", json={"is_default": True}, timeout=20)
+
+    def test_second_mailbox_appends_single_default_duplicate_409(self):
+        """İkinci gönderen kutusu birincinin yerini almaz; varsayılan tek kalır; tekrar 409."""
+        s = _admin()
+        before = s.get(f"{API}/system/mail", timeout=20)
+        assert before.status_code == 200, before.text
+        prior = before.json().get("mailboxes") or []
+        prior_ids = {b["id"] for b in prior}
+        prior_defaults = [b["id"] for b in prior if b.get("is_default")]
+        suffix = uuid.uuid4().hex[:8]
+        sid = None
+        created = []
+        try:
+            r = s.post(
+                f"{API}/system/mail/servers",
+                json={"name": "Append SMTP", "provider": "custom", "smtp_host": f"smtp.append.{suffix}.invalid", "smtp_port": 587, "smtp_user": f"smtp@{suffix}.invalid", "password": "secret-pass"},
+                timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            sid = r.json()["id"]
+
+            first = s.post(
+                f"{API}/system/mail/mailboxes",
+                json={"email": f"bildirim@{suffix}.com", "display_name": "Bildirim", "server_id": sid, "purposes": ["transactional"], "is_default": True},
+                timeout=20,
+            )
+            assert first.status_code == 200, first.text
+            created.append(first.json()["id"])
+
+            second = s.post(
+                f"{API}/system/mail/mailboxes",
+                json={"email": f"destek@{suffix}.com", "display_name": "Destek", "server_id": sid, "purposes": ["support"], "is_default": True, "_id": created[0], "id": created[0]},
+                timeout=20,
+            )
+            assert second.status_code == 200, second.text
+            assert second.json()["id"] != created[0]
+            created.append(second.json()["id"])
+
+            ov = s.get(f"{API}/system/mail", timeout=20).json()
+            by_email = {b["email"]: b for b in ov["mailboxes"]}
+            assert f"bildirim@{suffix}.com" in by_email
+            assert f"destek@{suffix}.com" in by_email
+            assert by_email[f"bildirim@{suffix}.com"]["id"] == created[0]
+            assert by_email[f"bildirim@{suffix}.com"]["is_default"] is False
+            assert by_email[f"destek@{suffix}.com"]["is_default"] is True
+            assert sum(1 for b in ov["mailboxes"] if b.get("is_default")) == 1
+            assert prior_ids <= {b["id"] for b in ov["mailboxes"]}
+
+            dup = s.post(
+                f"{API}/system/mail/mailboxes",
+                json={"email": f"Destek@{suffix}.com", "server_id": sid, "is_default": True},
+                timeout=20,
+            )
+            assert dup.status_code == 409, dup.text
+            after_dup = s.get(f"{API}/system/mail", timeout=20).json()["mailboxes"]
+            assert {b["email"] for b in after_dup} >= {f"bildirim@{suffix}.com", f"destek@{suffix}.com"}
+            assert prior_ids <= {b["id"] for b in after_dup}
+            assert sum(1 for b in after_dup if b.get("is_default")) == 1
+
+            missing = s.post(
+                f"{API}/system/mail/mailboxes",
+                json={"email": f"fatura@{suffix}.com", "server_id": "pms_deleted_not_real", "is_default": True},
+                timeout=20,
+            )
+            assert missing.status_code == 404, missing.text
+            after_miss = s.get(f"{API}/system/mail", timeout=20).json()["mailboxes"]
+            assert {b["id"]: b.get("is_default") for b in after_miss} == {b["id"]: b.get("is_default") for b in after_dup}
+        finally:
+            for bid in reversed(created):
+                s.delete(f"{API}/system/mail/mailboxes/{bid}", timeout=20)
+            if sid:
+                s.delete(f"{API}/system/mail/servers/{sid}", timeout=20)
+            left = s.get(f"{API}/system/mail", timeout=20).json()["mailboxes"]
+            assert prior_ids <= {b["id"] for b in left}
+            assert not any(b["email"].endswith(f"@{suffix}.com") for b in left)
+            for bid in prior_defaults:
+                s.put(f"{API}/system/mail/mailboxes/{bid}", json={"is_default": True}, timeout=20)
