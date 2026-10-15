@@ -70,6 +70,7 @@ class _Db:
         self.bank_transactions = _Col()
         self.partner_transactions = _Col()
         self.expenses = _Col()
+        self.trash = _Col()
 
     def __getitem__(self, name):
         return getattr(self, name)
@@ -149,6 +150,42 @@ def test_apply_deletes_only_orphan_without_moves_and_is_idempotent(caplog):
     again = _run(mod.cleanup_orphan_prims(db, "c1", apply=True))
     assert again["count"] == 0
     assert {row["_id"] for row in db.bonus_payments.docs} == left
+
+
+def test_skips_trashed_employee_and_deletes_paid_bonus_of_purged_employee():
+    mod = _load()
+    db = _Db()
+    db.trash.docs.extend([
+        {
+            "_id": "t1", "company_id": "c1", "entity_type": "employee",
+            "original_id": "e_trash",
+            "doc": {"_id": "e_trash", "company_id": "c1", "full_name": "Çöp"},
+        },
+        {
+            "_id": "t2", "company_id": "c1", "entity_type": "employee",
+            "doc": {"_id": "e_doc", "company_id": "c1", "full_name": "Belge"},
+        },
+        {
+            "_id": "t3", "company_id": "c2", "entity_type": "employee",
+            "original_id": "e_other_trash",
+            "doc": {"_id": "e_other_trash", "company_id": "c2"},
+        },
+    ])
+    db.bonus_payments.docs.extend([
+        _bonus(_id="b_trash", employee_id="e_trash", status="paid", amount=70),
+        _bonus(_id="b_doc", employee_id="e_doc", status="pending", amount=30),
+        _bonus(_id="b_paid", employee_id="gone_paid", status="paid", amount=90),
+        _bonus(_id="b_free", employee_id="e_other_trash", status="paid", amount=40),
+    ])
+    listed = _run(mod.cleanup_orphan_prims(db, "c1", apply=False))
+    assert listed["dry_run"] is True
+    assert {row["bonus_id"] for row in listed["rows"]} == {"b_paid", "b_free"}
+    assert {row["_id"] for row in db.bonus_payments.docs} == {"b_trash", "b_doc", "b_paid", "b_free"}
+    report = _run(mod.cleanup_orphan_prims(db, "c1", apply=True))
+    assert report["count"] == 2
+    assert {row["bonus_id"] for row in report["rows"]} == {"b_paid", "b_free"}
+    assert {row["_id"] for row in db.bonus_payments.docs} == {"b_trash", "b_doc"}
+    assert db.trash.docs
 
 
 def test_other_company_employee_does_not_protect_this_company():

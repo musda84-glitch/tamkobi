@@ -675,6 +675,8 @@ def test_delete_endpoints_call_linked_payment_reverse():
     emp_start = server.index("async def delete_employee")
     emp_chunk = server[emp_start:emp_start + 1200]
     assert "delete_employee_bonuses" in emp_chunk
+    assert '[{"collection": "bonus_payments", "docs": bonuses}]' in emp_chunk
+    assert "related=related" in emp_chunk
 
 
 def _raises(fn):
@@ -1082,68 +1084,99 @@ def test_delete_recurring_template_keeps_history():
     assert paid[0]["_id"] in {e["_id"] for e in history}
 
 
-def test_delete_employee_bonuses_trashes_unpaid_prim_and_skips_other_company():
+def _trash_employee(db, emp, bonuses):
+    import trash
+    related = [{"collection": "bonus_payments", "docs": bonuses}] if bonuses else None
+    return asyncio.run(trash.soft_delete(
+        "employees", emp, "employee", emp.get("full_name") or emp["_id"], related=related,
+    ))
+
+
+def test_paid_or_linked_bonus_blocks_employee_delete_without_money_change():
     import trash
     db = FakeDb()
     _init_linked(db)
     trash.init(db)
-    db.bonus_payments.docs.append({
-        "_id": "b_pending", "company_id": "c1", "employee_id": "e1", "employee_name": "Ali",
-        "type": "bonus", "status": "pending", "amount": 80,
-    })
-    db.bonus_payments.docs.append({
-        "_id": "b_other", "company_id": "c2", "employee_id": "e1", "type": "bonus",
-        "status": "pending", "amount": 50,
+    emp = _emp()
+    db.employees.docs.append(emp)
+    db.bank_accounts.docs.append(_acc(current_balance=4800))
+    db.bonus_payments.docs.extend([
+        {
+            "_id": "b_paid", "company_id": "c1", "employee_id": "e1", "employee_name": "Ali",
+            "type": "bonus", "status": "paid", "amount": 200, "account_id": "bank",
+        },
+        {
+            "_id": "b_open", "company_id": "c1", "employee_id": "e1", "employee_name": "Ali",
+            "type": "bonus", "status": "pending", "amount": 40,
+        },
+    ])
+    db.bank_transactions.docs.append({
+        "_id": "tx1", "company_id": "c1", "account_id": "bank", "type": "outflow",
+        "amount": 200, **linked_moves.link_fields("personnel_bonus", "b_paid"),
     })
     db.payrolls.docs.append({
         "_id": "p1", "company_id": "c1", "employee_id": "e1", "status": "pending", "final_payable": 1000,
     })
-    n = asyncio.run(personnel_payments.delete_employee_bonuses(db, _emp()))
-    assert n == 1
-    assert [b["_id"] for b in db.bonus_payments.docs] == ["b_other"]
+    exc = _raises(lambda: asyncio.run(personnel_payments.delete_employee_bonuses(db, emp)))
+    assert exc.status_code == 409
+    assert exc.detail == "Ödenmiş/hareketli primler var, önce onları yönetin"
+    assert {b["_id"] for b in db.bonus_payments.docs} == {"b_paid", "b_open"}
+    assert db.employees.docs[0]["_id"] == "e1"
+    assert db.bank_transactions.docs[0]["_id"] == "tx1"
+    assert db.bank_accounts.docs[0]["current_balance"] == 4800
     assert db.payrolls.docs[0]["_id"] == "p1"
-    assert db.trash.docs and db.trash.docs[0]["doc"]["_id"] == "b_pending"
+    assert db.trash.docs == []
+
+    db.bonus_payments.docs[:] = [{
+        "_id": "b_move", "company_id": "c1", "employee_id": "e1", "status": "pending", "amount": 15,
+    }]
+    db.partner_transactions.docs.append({
+        "_id": "pt1", "company_id": "c1", "partner_id": "p1", "type": "withdrawal", "amount": 15,
+        **linked_moves.link_fields("personnel_bonus", "b_move"),
+    })
+    exc2 = _raises(lambda: asyncio.run(personnel_payments.delete_employee_bonuses(db, emp)))
+    assert exc2.status_code == 409
+    assert db.partner_transactions.docs[0]["_id"] == "pt1"
+    assert db.bonus_payments.docs[0]["_id"] == "b_move"
+    assert db.trash.docs == []
 
 
-def test_delete_employee_bonuses_clears_paid_bonus_with_bank_move():
+def test_unpaid_bonus_follows_employee_to_trash_and_restores():
     import trash
     db = FakeDb()
     _init_linked(db)
     trash.init(db)
-    db.bank_accounts.docs.append(_acc(current_balance=4800))
-    db.bonus_payments.docs.append({
-        "_id": "b1", "company_id": "c1", "employee_id": "e1", "employee_name": "Ali",
-        "type": "bonus", "status": "paid", "amount": 200, "account_id": "bank",
+    emp = _emp()
+    db.employees.docs.append(dict(emp))
+    db.bonus_payments.docs.extend([
+        {
+            "_id": "b_pending", "company_id": "c1", "employee_id": "e1", "employee_name": "Ali",
+            "type": "bonus", "status": "pending", "amount": 80,
+        },
+        {
+            "_id": "b_other", "company_id": "c2", "employee_id": "e1", "type": "bonus",
+            "status": "pending", "amount": 50,
+        },
+    ])
+    db.payrolls.docs.append({
+        "_id": "p1", "company_id": "c1", "employee_id": "e1", "status": "pending", "final_payable": 1000,
     })
-    db.bank_transactions.docs.append({
-        "_id": "tx1", "company_id": "c1", "account_id": "bank", "type": "outflow",
-        "amount": 200, **linked_moves.link_fields("personnel_bonus", "b1"),
-    })
-    n = asyncio.run(personnel_payments.delete_employee_bonuses(db, _emp()))
-    assert n == 1
-    assert db.bonus_payments.docs == []
-    assert not any(t.get("_id") == "tx1" for t in db.bank_transactions.docs)
-    assert db.bank_accounts.docs[0]["current_balance"] == 5000
-    bonus_trash = next(t for t in db.trash.docs if t.get("entity_type") == "bonus")
-    assert any(r.get("collection") == "bank_transactions" for r in (bonus_trash.get("related") or []))
-
-
-def test_delete_employee_bonuses_reverses_advance_payment():
-    import trash
-    db = FakeDb()
-    _init_linked(db)
-    trash.init(db)
-    db.bank_accounts.docs.append(_acc("bank", type="bank", account_name="Banka", current_balance=5000))
-    _run(
-        db, _emp(),
-        [{"kind": "advance", "amount": 1500, "account_id": "bank", "description": "Avans"}],
-        balance={"remaining": 0, "unpaid_payroll": 0},
-    )
-    assert db.bank_accounts.docs[0]["current_balance"] == 3500
-    assert db.bonus_payments.docs
-    n = asyncio.run(personnel_payments.delete_employee_bonuses(db, _emp()))
-    assert n == 1
-    assert db.bonus_payments.docs == []
-    assert db.bank_transactions.docs == []
-    assert db.personnel_movements.docs[0]["status"] == "reversed"
-    assert db.bank_accounts.docs[0]["current_balance"] == 5000
+    bonuses = asyncio.run(personnel_payments.delete_employee_bonuses(db, emp))
+    assert [b["_id"] for b in bonuses] == ["b_pending"]
+    assert {b["_id"] for b in db.bonus_payments.docs} == {"b_pending", "b_other"}
+    _trash_employee(db, emp, bonuses)
+    assert [b["_id"] for b in db.bonus_payments.docs] == ["b_other"]
+    assert db.employees.docs == []
+    assert db.payrolls.docs[0]["_id"] == "p1"
+    rec = db.trash.docs[0]
+    assert rec["entity_type"] == "employee"
+    assert rec["doc"]["_id"] == "e1"
+    related = rec["related"]
+    assert related[0]["collection"] == "bonus_payments"
+    assert related[0]["docs"][0]["_id"] == "b_pending"
+    user = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
+    out = asyncio.run(trash.restore_trash_item(rec["_id"], user=user))
+    assert out["status"] == "success"
+    assert db.employees.docs[0]["_id"] == "e1"
+    assert {b["_id"] for b in db.bonus_payments.docs} == {"b_pending", "b_other"}
+    assert db.trash.docs == []

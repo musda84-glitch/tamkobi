@@ -1440,17 +1440,33 @@ async def delete_bonus_record(db, bonus: dict) -> bool:
     return True
 
 
-async def delete_employee_bonuses(db, employee: dict) -> int:
-    """Personel silinirken aynı firmadaki primleri mevcut prim silme yoluyla temizler."""
+EMPLOYEE_BONUS_BLOCK = "Ödenmiş/hareketli primler var, önce onları yönetin"
+
+
+async def bonus_has_money_move(db, bonus_id: str, company_id: str) -> bool:
+    """Bağlı kasa/banka veya ortak hareketi var mı. Kayıtları değiştirmez."""
+    found = await linked_moves.find_linked(
+        db, "personnel_bonus", str(bonus_id), company_id=company_id or None,
+    )
+    return bool(found.get("bank_transactions") or found.get("partner_transactions"))
+
+
+async def delete_employee_bonuses(db, employee: dict) -> List[dict]:
+    """Personelle birlikte çöpe gidecek ödenmemiş ve hareketsiz primleri döndürür.
+
+    Ödenmiş veya kasa/banka/ortak hareketi olan prim varsa 409. Bakiye değişmez,
+    hareket geri alınmaz. Dönen kayıtlar personelin çöp kaydına related olarak bağlanır.
+    """
     emp_id = str((employee or {}).get("_id") or "").strip()
     cid = str((employee or {}).get("company_id") or "").strip()
     if not emp_id or not cid:
-        return 0
+        return []
     rows = await db.bonus_payments.find({"employee_id": emp_id, "company_id": cid}).to_list(5000)
-    removed = 0
+    safe: List[dict] = []
     for row in list(rows):
         if str(row.get("company_id") or "") != cid or str(row.get("employee_id") or "") != emp_id:
             continue
-        await delete_bonus_record(db, row)
-        removed += 1
-    return removed
+        if str(row.get("status") or "") == "paid" or await bonus_has_money_move(db, str(row.get("_id") or ""), cid):
+            raise HTTPException(status_code=409, detail=EMPLOYEE_BONUS_BLOCK)
+        safe.append(row)
+    return safe

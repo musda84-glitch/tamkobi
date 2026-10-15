@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import account_balance
 import contact_balance
@@ -18,6 +18,8 @@ import partner_pay
 import trash
 
 logger = logging.getLogger("linked_moves")
+
+router = APIRouter(prefix="/api")
 
 _db = None
 _reverse_tx_effects: Optional[Callable[..., Awaitable[None]]] = None
@@ -637,3 +639,41 @@ async def reverse_applied_stock_count(db, sc: dict) -> int:
         })
         n += 1
     return n
+
+
+async def list_isnet_missing_mode(db) -> Dict[str, Any]:
+    """Ortamı seçilmemiş İşNet e-fatura kayıtları. Yalnızca okur."""
+    import isnet
+
+    rows = await db.einvoice_settings.find(
+        {"provider": {"$in": ["isnet", "isnet_portal"]}}
+    ).to_list(500)
+    ids = [str(r.get("company_id") or "") for r in rows if r.get("company_id")]
+    names: Dict[str, str] = {}
+    if ids:
+        companies = await db.companies.find({"_id": {"$in": ids}}).to_list(500)
+        for company in companies:
+            names[str(company.get("_id") or "")] = str(company.get("name") or "")
+    items = isnet.missing_mode_settings(rows, names)
+    return {
+        "readonly": True,
+        "count": len(items),
+        "detail": isnet.MODE_REQUIRED_DETAIL,
+        "items": items,
+    }
+
+
+async def _require_system_integrity_admin(request: Request) -> dict:
+    """Platform paneli: yalnızca süper admin. /api/system zaten ynt allowlist'inde."""
+    import saas
+    return await saas.require_super_admin(request)
+
+
+@router.get("/system/integrity/isnet-mode")
+async def api_system_isnet_mode_missing(
+    _admin: dict = Depends(_require_system_integrity_admin),
+):
+    """Süper admin: mode'u boş İşNet kayıtları. Yazma yok."""
+    if _db is None:
+        raise HTTPException(status_code=500, detail="linked_moves bağlanmadı.")
+    return await list_isnet_missing_mode(_db)

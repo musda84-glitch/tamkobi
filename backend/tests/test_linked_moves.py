@@ -313,3 +313,71 @@ def test_stock_count_reverse(db):
     assert n == 1
     assert db.products.docs[0]["stock_quantity"] == pytest.approx(8.0)
     assert db.stock_movements.docs and db.stock_movements.docs[0]["change"] == pytest.approx(-2.0)
+
+
+def test_system_isnet_missing_mode_endpoint(monkeypatch):
+    """ynt süper admin /api/system/integrity/isnet-mode ile ortamı boş İşNet kayıtlarını okur."""
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.testclient import TestClient
+
+    import auth_utils
+    import host_audience as ha
+    import saas
+    from auth_utils import create_access_token
+
+    monkeypatch.setenv("JWT_SECRET", "test-isnet-missing-mode-jwt-secret-not-default-32b")
+    monkeypatch.setenv("YNT_HOST", "ynt.taiyazilim.com")
+    db = FakeDb()
+    db.platform_settings = FakeCollection()
+    db["users"].docs.append({
+        "_id": "sa1", "email": "sa@test.com", "name": "SA",
+        "is_super_admin": True, "is_active": True, "role": "admin",
+    })
+    db.companies.docs.append({"_id": "c_missing", "name": "Acme"})
+    db.companies.docs.append({"_id": "c_live", "name": "Beta"})
+    db["einvoice_settings"].docs.extend([
+        {"_id": "ei1", "company_id": "c_missing", "provider": "isnet", "mode": "", "status": "active"},
+        {"_id": "ei2", "company_id": "c_live", "provider": "isnet", "mode": "live", "status": "active"},
+        {"_id": "ei3", "company_id": "c_other", "provider": "other", "mode": "", "status": "active"},
+    ])
+
+    async def current_user(request: Request):
+        token = auth_utils.session_token(request)
+        if not token:
+            raise HTTPException(status_code=401, detail="Giriş gerekli")
+        return await auth_utils.get_user_from_token(
+            token, db, request=request, path=request.url.path,
+        )
+
+    prev_lm = linked_moves._db
+    prev_saas = (saas._db, saas._current_user)
+    linked_moves.init(db)
+    saas.init(db, current_user)
+    app = FastAPI()
+    app.include_router(linked_moves.router)
+    client = TestClient(app)
+    try:
+        token = create_access_token(
+            "sa1", "sa@test.com", "admin", is_super_admin=True, mfa=True, aud=ha.AUD_YNT,
+        )
+        response = client.get(
+            "/api/system/integrity/isnet-mode",
+            headers={"host": "ynt.taiyazilim.com"},
+            cookies={"access_token": token},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["readonly"] is True
+        assert body["count"] == 1
+        assert body["items"] == [{
+            "company_id": "c_missing",
+            "company_name": "Acme",
+            "provider": "isnet",
+            "status": "active",
+            "mode": "",
+        }]
+        assert db.einvoice_settings.docs and db.companies.docs
+    finally:
+        linked_moves._db = prev_lm
+        saas._db, saas._current_user = prev_saas
+        client.close()

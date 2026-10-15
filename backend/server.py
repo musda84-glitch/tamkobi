@@ -19926,9 +19926,10 @@ async def delete_employee(emp_id: str, user: dict = Depends(get_current_user)):
     label = emp.get("full_name") or emp_id
     note = " · ".join(x for x in [emp.get("position"), emp.get("department"), emp.get("tc_kimlik")] if x)
     import personnel_payments
-    removed = await personnel_payments.delete_employee_bonuses(db, emp)
-    await trash.soft_delete("employees", emp, "employee", label, note=note)
-    if removed:
+    bonuses = await personnel_payments.delete_employee_bonuses(db, emp)
+    related = [{"collection": "bonus_payments", "docs": bonuses}] if bonuses else None
+    await trash.soft_delete("employees", emp, "employee", label, related=related, note=note)
+    if bonuses:
         return {"status": "success", "message": "Personel ve bağlı prim kayıtları çöp kutusuna taşındı."}
     return {"status": "success", "message": "Personel çöp kutusuna taşındı."}
 
@@ -21970,6 +21971,7 @@ app.include_router(finance.router)
 app.include_router(cheques.router)
 app.include_router(attendance.router)
 app.include_router(trash.router)
+app.include_router(linked_moves.router)
 app.include_router(mobile_logs.router)
 app.include_router(network_printers.router)
 app.include_router(label_printer_settings.router)

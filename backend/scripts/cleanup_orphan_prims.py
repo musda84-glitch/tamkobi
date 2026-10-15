@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Silinmiş personele ait, kasa/banka/ortak hareketi olmayan prim kayıtlarını temizler.
+"""Kalıcı silinmiş personele ait, kasa/banka/ortak hareketi olmayan primleri temizler.
 
 Yalnızca --company ile verilen firmanın bonus_payments satırlarına bakar.
-Personeli hâlâ duran primlere ve bağlı hareketi olan kayıtlara dokunmaz.
+Personeli duran, çöp kutusundaki veya bağlı hareketi olan primlere dokunmaz.
+Çöpteki personel: entity_type=employee ve original_id (yoksa doc._id) eşleşmesi.
+Kalıcı silinmiş personelin ödenmiş ama hareketsiz primi --apply ile silinebilir.
 Varsayılan dry-run'dur; veritabanı --apply ile değişir. İkinci çalıştırma
 silinecek kayıt kalmadığında no-op'tur.
 
@@ -53,6 +55,30 @@ async def _live_employee_ids(db, company_id: str) -> set:
     return {str(row.get("_id")) for row in rows if row.get("_id")}
 
 
+def _trash_employee_id(row: dict) -> str:
+    """Çöp kaydındaki personel kimliği. original_id yoksa belgenin _id'si."""
+    original = str(row.get("original_id") or "").strip()
+    if original:
+        return original
+    doc = row.get("doc") if isinstance(row.get("doc"), dict) else {}
+    return str(doc.get("_id") or "").strip()
+
+
+async def _trashed_employee_ids(db, company_id: str) -> set:
+    """Bu firmanın çöpündeki personel kimlikleri. Başka firmanın çöpü sayılmaz."""
+    rows = await db.trash.find({"company_id": company_id, "entity_type": "employee"}).to_list(20000)
+    out = set()
+    for row in rows:
+        if str(row.get("entity_type") or "") != "employee":
+            continue
+        if str(row.get("company_id") or "") != company_id:
+            continue
+        employee_id = _trash_employee_id(row)
+        if employee_id:
+            out.add(employee_id)
+    return out
+
+
 async def has_linked_money_move(db, bonus_id: str, company_id: str) -> bool:
     """Bağlı kasa/banka veya ortak hareketi varsa kayıt silinmez."""
     import linked_moves
@@ -62,18 +88,22 @@ async def has_linked_money_move(db, bonus_id: str, company_id: str) -> bool:
 
 
 async def orphan_prim_candidates(db, company_id: str) -> List[dict]:
-    """Personeli yok ve bağlı kasa/banka/ortak hareketi olmayan primler."""
+    """Personeli kalıcı silinmiş ve bağlı kasa/banka/ortak hareketi olmayan primler.
+
+    Çöp kutusundaki personelin primleri aday değildir. Ödenmiş olmak engel değildir.
+    """
     cid = str(company_id or "").strip()
     if not cid:
         raise ValueError("company_id gerekli")
     live = await _live_employee_ids(db, cid)
+    trashed = await _trashed_employee_ids(db, cid)
     bonuses = await db.bonus_payments.find({"company_id": cid}).to_list(20000)
     out: List[dict] = []
     for row in bonuses:
         if str(row.get("company_id") or "") != cid:
             continue
         employee_id = str(row.get("employee_id") or "").strip()
-        if not employee_id or employee_id in live:
+        if not employee_id or employee_id in live or employee_id in trashed:
             continue
         if await has_linked_money_move(db, str(row.get("_id")), cid):
             continue
@@ -94,6 +124,8 @@ async def cleanup_orphan_prims(db, company_id: str, *, apply: bool) -> Dict[str,
         bonus_id = row.get("_id")
         still = await db.employees.find_one({"_id": employee_id, "company_id": cid})
         if still or not bonus_id:
+            continue
+        if employee_id in await _trashed_employee_ids(db, cid):
             continue
         if await has_linked_money_move(db, str(bonus_id), cid):
             continue
