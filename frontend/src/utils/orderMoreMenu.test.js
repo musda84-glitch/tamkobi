@@ -117,8 +117,16 @@ describe("orderMoreMenu", () => {
 
   it("invoice badge: taslak sarı → faturalaştı yeşil → faturalaşmış e-fatura/e-arşiv kırmızı bilgi", () => {
     expect(orderInvoiceBadge({ invoice_id: "i1", is_invoiced: false })).toEqual(
-      expect.objectContaining({ label: "Taslak", testId: "draft", interactive: true }),
+      expect.objectContaining({ label: "Taslak", title: "Taslak", testId: "draft", interactive: true }),
     );
+    const draftBadge = orderInvoiceBadge({
+      invoice_id: "inv1",
+      is_invoiced: false,
+      invoice_number: "TA2026000000001",
+      order_number: "B2B-1",
+    });
+    expect(JSON.stringify(draftBadge)).not.toContain("TA2026000000001");
+    expect(draftBadge.title).not.toContain("TA");
     expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive" })).toEqual(
       expect.objectContaining({ label: "Faturalaştı", testId: "invoiced", interactive: true }),
     );

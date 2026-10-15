@@ -50,6 +50,9 @@ def test_restore_clears_tombstone_and_stamps_updated_at():
     trash_coll = MagicMock()
     trash_coll.find_one = AsyncMock(return_value=trash_rec)
     trash_coll.delete_one = AsyncMock()
+    trash_coll.delete_many = AsyncMock()
+    trash_coll.find = MagicMock()
+    trash_coll.find.return_value.to_list = AsyncMock(return_value=[])
 
     tombs = MagicMock()
     tombs.delete_many = AsyncMock()
@@ -78,4 +81,4 @@ def test_restore_clears_tombstone_and_stamps_updated_at():
     assert inserted.get("restored_at")
     assert inserted.get("updated_at")
     tombs.delete_many.assert_awaited()
-    trash_coll.delete_one.assert_awaited_once_with({"_id": "trash1"})
+    trash_coll.delete_many.assert_awaited_once_with({"_id": {"$in": ["trash1"]}})

@@ -31,6 +31,9 @@ test("draft TA number is hidden on the list", () => {
   );
   expect(host.textContent).not.toContain("TA2026000000001");
   expect(host.querySelector("[data-testid='order-local-no-B2B-1']")).toBeNull();
+  const titles = [...host.querySelectorAll("[title]")].map((el) => el.getAttribute("title") || "").join(" ");
+  expect(titles).not.toContain("TA2026000000001");
+  expect(host.innerHTML).not.toContain("TA2026000000001");
 });
 
 test("OrdersB2BPage paper invoice row shows Fatura TA and never GİB", () => {
