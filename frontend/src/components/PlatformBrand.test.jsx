@@ -112,7 +112,8 @@ describe("platform brand by host", () => {
         <div>panel</div>
       </SystemLayout>,
     );
-    expect(layout.host.querySelector('[data-testid="tai-logo"]').getAttribute("src")).toContain("logo-v1.svg");
+    expect(layout.host.querySelector('[data-testid="tai-logo"]').getAttribute("src")).toBe("/brand/tai/logo-v2.png");
+    expect(layout.host.querySelector('[data-testid="tai-logo"]').getAttribute("srcset")).toContain("logo-v2@2x.png");
     expect(layout.host.querySelector('[data-testid="sys-brand"]').textContent).toBe("TAI Yazılım · Platform Yönetimi");
     expect(document.title).toBe("TAI Yazılım · Platform Yönetimi");
     await layout.cleanup();
@@ -141,36 +142,44 @@ describe("platform brand by host", () => {
     expect(css).toContain("html.ynt-host");
     const brand = readFileSync(join(__dirname, "PlatformBrand.jsx"), "utf8");
     expect(brand).not.toMatch(/#13295B|#CC1F26/i);
-    const svg = readFileSync(join(__dirname, "../../public/brand/tai/logo-v1.svg"), "utf8");
-    expect(svg).toContain("#13295B");
-    expect(svg).toContain("#CC1F26");
-    expect(svg).toContain('aria-label="TAI Yazılım"');
-    const mark = readFileSync(join(__dirname, "../../public/brand/tai/mark-v1.svg"), "utf8");
-    expect(mark).toContain("#13295B");
-    expect(mark).toContain("#CC1F26");
-    expect((mark.match(/<path/g) || []).length).toBe(2);
-    expect(mark).not.toContain(">TAI<");
-    expect(mark).not.toContain("YAZILIM</");
-    for (const name of ["tai-icon-512.png", "tai-icon-192.png", "favicon.png", "favicon.ico", "logo-v1.svg", "mark-v1.svg", "favicon-v1.png", "favicon-v1.ico", "apple-touch-v1.png", "og-v1.png"]) {
-      const buf = readFileSync(join(__dirname, "../../public/brand/tai", name));
+    const brandDir = join(__dirname, "../../public/brand/tai");
+    const pngSize = (buf) => ({ w: buf.readUInt32BE(16), h: buf.readUInt32BE(20), color: buf[25] });
+    const logo = readFileSync(join(brandDir, "logo-v2.png"));
+    const logo2x = readFileSync(join(brandDir, "logo-v2@2x.png"));
+    const logoBox = pngSize(logo);
+    const logo2xBox = pngSize(logo2x);
+    expect(logoBox.color).toBe(6);
+    expect(logo2xBox.color).toBe(6);
+    expect(logo2xBox.w).toBe(logoBox.w * 2);
+    expect(logo2xBox.h).toBe(logoBox.h * 2);
+    const legacy = readFileSync(join(brandDir, "tai_yazilim_logo.svg"), "utf8");
+    expect(legacy).toContain('aria-label="TAI Yazılım"');
+    expect(legacy).toContain("logo-v2@2x.png");
+    expect(legacy).not.toContain("<path");
+    const mark = readFileSync(join(brandDir, "mark-v2.png"));
+    const markBox = pngSize(mark);
+    expect(markBox.color).toBe(6);
+    expect(markBox.w).toBeLessThan(logo2xBox.w);
+    for (const name of ["tai-icon-512.png", "tai-icon-192.png", "favicon.png", "favicon.ico", "logo-v2.png", "logo-v2@2x.png", "mark-v2.png", "favicon-v2.png", "favicon-v2.ico", "apple-touch-v2.png", "og-v2.png", "tai_yazilim_logo.svg"]) {
+      const buf = readFileSync(join(brandDir, name));
       expect(buf.length).toBeGreaterThan(32);
     }
-    const og = readFileSync(join(__dirname, "../../public/brand/tai/og-v1.png"));
-    expect(og.readUInt32BE(16)).toBe(1200);
-    expect(og.readUInt32BE(20)).toBe(1200);
+    const og = readFileSync(join(brandDir, "og-v2.png"));
+    expect(pngSize(og).w).toBe(1024);
+    expect(pngSize(og).h).toBe(1024);
   });
 
   test("arrow favicon is only on the taiyazilim.com host", () => {
     document.head.innerHTML = '<link rel="icon" href="/favicon.ico" sizes="any" /><link rel="icon" type="image/png" href="/favicon.png" /><link rel="apple-touch-icon" href="/brand/tamkobi-icon-192.png" />';
     setHost("taiyazilim.com", "/");
     applyPlatformDocumentBrand();
-    expect(document.querySelector('link[rel="icon"][type="image/png"]').getAttribute("href")).toBe("/brand/tai/favicon-v1.png");
-    expect(document.querySelector('link[rel="icon"][type="image/svg+xml"]').getAttribute("href")).toBe("/brand/tai/mark-v1.svg");
-    expect(document.querySelector('link[rel="apple-touch-icon"]').getAttribute("href")).toBe("/brand/tai/apple-touch-v1.png");
+    expect(document.querySelector('link[rel="icon"][type="image/png"]').getAttribute("href")).toBe("/brand/tai/favicon-v2.png");
+    expect(document.querySelector('link[rel="icon"][type="image/svg+xml"]')).toBeNull();
+    expect(document.querySelector('link[rel="apple-touch-icon"]').getAttribute("href")).toBe("/brand/tai/apple-touch-v2.png");
 
     setHost("www.taiyazilim.com", "/hakkimizda");
     applyPlatformDocumentBrand();
-    expect(document.querySelector('link[rel="icon"][type="image/png"]').getAttribute("href")).toBe("/brand/tai/favicon-v1.png");
+    expect(document.querySelector('link[rel="icon"][type="image/png"]').getAttribute("href")).toBe("/brand/tai/favicon-v2.png");
 
     setHost("tamkobi.com", "/");
     applyPlatformDocumentBrand();

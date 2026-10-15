@@ -7,14 +7,16 @@ import { getHostKind, hostnameOf } from "./hosts";
 import { TAI_HOSTS } from "./marketingSite";
 
 export const TAI_PLATFORM_TITLE = "TAI Yazılım · Platform Yönetimi";
-/** Yatay kilit; taiyazilim.com ve ynt aynı dosyayı kullanır. */
-export const TAI_LOGO_SRC = "/brand/tai/logo-v1.svg";
-export const TAI_OG_IMAGE = "/brand/tai/og-v1.png";
-/** Ok işareti. Yalnız taiyazilim.com sekme ikonu. */
-export const TAI_SITE_FAVICON_SVG = "/brand/tai/mark-v1.svg";
-export const TAI_SITE_FAVICON_ICO = "/brand/tai/favicon-v1.ico";
-export const TAI_SITE_FAVICON_PNG = "/brand/tai/favicon-v1.png";
-export const TAI_SITE_APPLE = "/brand/tai/apple-touch-v1.png";
+/** Ekteki logonun şeffaf kırpımı. taiyazilim.com ve ynt aynı dosyayı kullanır. */
+export const TAI_LOGO_SRC = "/brand/tai/logo-v2.png";
+export const TAI_LOGO_2X = "/brand/tai/logo-v2@2x.png";
+export const TAI_LOGO_SRCSET = `${TAI_LOGO_SRC} 1x, ${TAI_LOGO_2X} 2x`;
+/** Devre desenli orijinal kare. */
+export const TAI_OG_IMAGE = "/brand/tai/og-v2.png";
+/** Ok işareti, aynı görselden. Yalnız taiyazilim.com sekme ikonu. */
+export const TAI_SITE_FAVICON_ICO = "/brand/tai/favicon-v2.ico";
+export const TAI_SITE_FAVICON_PNG = "/brand/tai/favicon-v2.png";
+export const TAI_SITE_APPLE = "/brand/tai/apple-touch-v2.png";
 export const TAI_FAVICON_ICO = "/brand/tai/favicon.ico";
 export const TAI_FAVICON_PNG = "/brand/tai/favicon.png";
 export const TAI_APPLE_TOUCH = "/brand/tai/tai-icon-192.png";
@@ -55,7 +57,7 @@ export function applyPlatformDocumentBrand(doc = typeof document !== "undefined"
   const icons = ynt
     ? { ico: TAI_FAVICON_ICO, png: TAI_FAVICON_PNG, apple: TAI_APPLE_TOUCH, svg: "" }
     : taiSite
-      ? { ico: TAI_SITE_FAVICON_ICO, png: TAI_SITE_FAVICON_PNG, apple: TAI_SITE_APPLE, svg: TAI_SITE_FAVICON_SVG }
+      ? { ico: TAI_SITE_FAVICON_ICO, png: TAI_SITE_FAVICON_PNG, apple: TAI_SITE_APPLE, svg: "" }
       : { ico: TAM_FAVICON_ICO, png: TAM_FAVICON_PNG, apple: TAM_APPLE_TOUCH, svg: "" };
   upsertLink(doc, { rel: "icon", href: icons.ico, sizes: "any" });
   upsertLink(doc, { rel: "icon", type: "image/png", href: icons.png });

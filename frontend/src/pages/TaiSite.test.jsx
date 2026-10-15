@@ -79,7 +79,10 @@ describe("TAI site logo", () => {
     expect(header.getAttribute("alt")).toBe("TAI Yazılım");
     expect(footer.getAttribute("alt")).toBe("TAI Yazılım");
     expect(header.getAttribute("src")).toBe(TAI_LOGO_SRC);
+    expect(header.getAttribute("src")).toBe("/brand/tai/logo-v2.png");
+    expect(header.getAttribute("srcset")).toContain("logo-v2@2x.png");
     expect(footer.getAttribute("src")).toBe(header.getAttribute("src"));
+    expect(footer.getAttribute("srcset")).toBe(header.getAttribute("srcset"));
     expect(header.className).toContain("h-10");
     expect(header.className).toContain("sm:h-14");
     expect(footer.className).toContain("h-9");
@@ -87,8 +90,8 @@ describe("TAI site logo", () => {
     expect(view.host.querySelector("[data-tai-icon]")).toBeNull();
     const image = document.head.querySelector('meta[property="og:image"]');
     expect(image.getAttribute("content")).toContain(TAI_OG_IMAGE);
-    expect(document.head.querySelector('meta[property="og:image:width"]').getAttribute("content")).toBe("1200");
-    expect(document.head.querySelector('meta[property="og:image:height"]').getAttribute("content")).toBe("1200");
+    expect(document.head.querySelector('meta[property="og:image:width"]').getAttribute("content")).toBe("1024");
+    expect(document.head.querySelector('meta[property="og:image:height"]').getAttribute("content")).toBe("1024");
     await view.cleanup();
   });
 });

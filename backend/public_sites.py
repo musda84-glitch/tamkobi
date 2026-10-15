@@ -34,7 +34,7 @@ THEME_CORPORATE = "corporate"
 
 TAI_HOSTS = ("taiyazilim.com", "www.taiyazilim.com")
 TAMKOBI_HOSTS = ("tamkobi.com", "www.tamkobi.com")
-TAI_LOGO = "/brand/tai/logo-v1.svg"
+TAI_LOGO = "/brand/tai/logo-v2.png"
 TAI_COLORS = {"navy": "#13295B", "red": "#CC1F26"}
 
 PAGE_KEYS = ("home", "about", "services", "references", "contact")

@@ -11,7 +11,7 @@ import {
   publishedCards,
   taiPageKey,
 } from "../utils/marketingSite";
-import { TAI_LOGO_SRC, TAI_OG_IMAGE } from "../utils/platformBrand";
+import { TAI_LOGO_SRC, TAI_LOGO_SRCSET, TAI_OG_IMAGE } from "../utils/platformBrand";
 import { announceVitrinPreview } from "../utils/vitrinPreview";
 
 const NAVY = "#13295B";
@@ -101,11 +101,11 @@ export default function TaiSite({ page }) {
 
   return (
     <div className="min-h-screen bg-white text-slate-900" data-testid="tai-site" data-page={key}>
-      <Seo title={seo.title} description={seo.description} path={pathname || "/"} siteName={brand} image={TAI_OG_IMAGE} imageWidth={1200} imageHeight={1200} />
+      <Seo title={seo.title} description={seo.description} path={pathname || "/"} siteName={brand} image={TAI_OG_IMAGE} imageWidth={1024} imageHeight={1024} />
       <header className="bg-white border-b border-slate-200" data-testid="tai-header">
         <div className="max-w-6xl mx-auto px-4 sm:px-5 h-16 sm:h-20 flex items-center justify-between gap-3">
           <Link to={`/${linkQuery()}`} className="flex items-center min-w-0 shrink-0" data-testid="tai-brand">
-            <img src={TAI_LOGO_SRC} alt="TAI Yazılım" className="h-10 sm:h-14 w-auto" />
+            <img src={TAI_LOGO_SRC} srcSet={TAI_LOGO_SRCSET} alt="TAI Yazılım" className="h-10 sm:h-14 w-auto" />
           </Link>
           <nav className="flex items-center gap-3 sm:gap-4 text-[11px] sm:text-xs font-semibold overflow-x-auto">
             {nav.map((item) => (
@@ -221,7 +221,7 @@ export default function TaiSite({ page }) {
 
       <footer className="border-t py-8" data-testid="tai-footer">
         <div className="max-w-6xl mx-auto px-5 flex justify-center">
-          <img src={TAI_LOGO_SRC} alt="TAI Yazılım" className="h-9 sm:h-11 w-auto" />
+          <img src={TAI_LOGO_SRC} srcSet={TAI_LOGO_SRCSET} alt="TAI Yazılım" className="h-9 sm:h-11 w-auto" />
         </div>
       </footer>
     </div>
