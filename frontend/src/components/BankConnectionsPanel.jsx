@@ -12,6 +12,7 @@ import { matchActorTitle, txCreatedByLabel, txDescriptionLabel } from "../utils/
 import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { sortBankTransactions } from "../utils/bankAccountTx";
+import { bankLinkWarnings } from "../utils/bankLinkWarnings";
 
 /** İlk ekranda DOM'u hafif tut — her satırda eşleştirme kontrolleri var. */
 const UNMATCHED_PAGE_INITIAL = 25;
@@ -287,6 +288,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     toast.success("kuveyt-public.crt indirildi — API Market’e yükleyin.");
   };
 
+  const linkWarnings = useMemo(() => bankLinkWarnings(connections, accounts), [connections, accounts]);
+
   const load = useCallback(async () => {
     try {
       const [p, c, u, r, m, sug] = await Promise.all([
@@ -505,6 +508,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
           <button onClick={() => { const linkables = linkableAccounts(accounts, { provider: form.provider }); setForm({ ...form, linked_account_id: linkables[0]?.id || linkables[0]?._id || "" }); setShowAdd(true); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-bank-connection-btn"><Plus className="w-4 h-4" /> Banka Bağla</button>
         </div>
       </div>
+
+      {linkWarnings.length > 0 && (
+        <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1" data-testid="bank-link-duplicate-warning">
+          {linkWarnings.map((w) => <div key={`${w.tur}-${w.anahtar}`}>{w.mesaj}</div>)}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {connections.map((c) => (

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 
@@ -283,11 +283,25 @@ async def annotate_listed_accounts(db, company_id: str, accounts: List[dict], tx
     return apply_drift_fields(accounts, group_txs_by_account(txs))
 
 
-def opening_tx_doc(acc: dict, amount: float) -> Optional[Dict[str, Any]]:
+OPENING_ACCOUNT_TYPES = frozenset({"cash_box", "bank", "pos", "okc_pos", "credit_card"})
+
+
+def opening_eligible(acc: Optional[dict]) -> bool:
+    """Kasa, banka, POS, ÖKC ve şirket kredi kartı. Müşteri kart havuzu hariç."""
+    if not isinstance(acc, dict):
+        return False
+    if _is_pool_account(acc):
+        return False
+    return str(acc.get("type") or "") in OPENING_ACCOUNT_TYPES
+
+
+def opening_tx_doc(acc: dict, amount: float, *, on_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
     amt = round(_num(amount), 2)
     if abs(amt) < 0.009:
         return None
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = str(on_date or "")[:10]
+    if len(day) != 10 or day[4] != "-" or day[7] != "-":
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return {
         "_id": str(uuid.uuid4()),
         "company_id": acc.get("company_id"),
@@ -299,14 +313,47 @@ def opening_tx_doc(acc: dict, amount: float) -> Optional[Dict[str, Any]]:
         "currency": acc.get("currency") or "TRY",
         "description": "Hesap açılış bakiyesi",
         "source": "opening",
-        "date": today,
+        "date": day,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-async def ensure_opening_tx(db, acc: dict) -> Optional[dict]:
-    """Yeni hesapta current_balance varsa deftere açılış hareketi yaz (bakiye zaten set)."""
-    doc = opening_tx_doc(acc, acc.get("current_balance"))
+def earliest_tx_day(txs: Iterable[dict]) -> Optional[str]:
+    days: List[str] = []
+    for tx in txs or []:
+        raw = str((tx or {}).get("date") or "")[:10]
+        if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+            days.append(raw)
+    return min(days) if days else None
+
+
+def day_before(iso_day: str) -> str:
+    raw = str(iso_day or "")[:10]
+    try:
+        day = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return (day - timedelta(days=1)).isoformat()
+
+
+async def ensure_opening_tx(db, acc: dict, *, on_date: Optional[str] = None) -> Optional[dict]:
+    """Yeni hesapta current_balance varsa deftere açılış hareketi yaz (bakiye zaten set, $inc yok)."""
+    doc = opening_tx_doc(acc, acc.get("current_balance"), on_date=on_date)
+    if not doc:
+        return None
+    await db.bank_transactions.insert_one(doc)
+    return doc
+
+
+async def rewrite_opening_tx(db, acc: dict, amount: float, *, on_date: Optional[str] = None) -> Optional[dict]:
+    """Eski source=opening satırlarını siler; tutar ≠ 0 ise yenisini yazar. Bakiye $inc yok."""
+    aid = str((acc or {}).get("_id") or (acc or {}).get("id") or "")
+    if aid:
+        await db.bank_transactions.delete_many({"account_id": aid, "source": "opening"})
+    stamped = dict(acc or {})
+    if aid:
+        stamped["_id"] = aid
+    doc = opening_tx_doc(stamped, amount, on_date=on_date)
     if not doc:
         return None
     await db.bank_transactions.insert_one(doc)

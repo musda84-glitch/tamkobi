@@ -13,12 +13,14 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 jest.mock("axios", () => {
   const impl = {
     get: jest.fn(() => Promise.resolve({ data: {} })),
+    post: jest.fn(() => Promise.resolve({ data: { status: "ok" } })),
     defaults: { withCredentials: false },
     interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
   };
   return { __esModule: true, default: impl, ...impl };
 });
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
+jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 
 let host;
 let root;
@@ -72,4 +74,98 @@ test("partner table uses Giriş / Çıkış and kayıtlı bakiye, not lehine / a
   expect(row.textContent).toContain(formatTrAmount(-716189.78));
   expect(row.textContent).toContain(formatTrAmount(278400));
   expect(row.textContent).toContain(formatTrAmount(994589.78));
+});
+
+const ACCOUNT_REPORT = {
+  read_only: true,
+  summary: { account_count: 3, account_drift: 2, partner_count: 0, partner_drift: 0, contact_count: 0, contact_drift: 0 },
+  partners: [],
+  contacts: [],
+  uyarilar: [{ tur: "cift_iban", anahtar: "TR330006100519786457841326", mesaj: "Aynı IBAN (TR330006100519786457841326) 2 banka bağlantısına bağlı." }],
+  accounts: [
+    {
+      id: "bank75",
+      ad: "Enpara",
+      tur: "bank",
+      entegre_mi: true,
+      gosterilen: 75,
+      hareket_toplami: 0,
+      banka_bildirdigi: 75,
+      fark: 75,
+      eslesmemis_adet: 2,
+      eslesmemis_tutar: 150.5,
+      banka_farki: 75,
+      acilis_var: false,
+    },
+    {
+      id: "bank0",
+      ad: "Kasa",
+      tur: "cash_box",
+      entegre_mi: false,
+      gosterilen: 10,
+      hareket_toplami: 10,
+      banka_bildirdigi: null,
+      fark: 0,
+      eslesmemis_adet: 0,
+      eslesmemis_tutar: 0,
+      banka_farki: null,
+      acilis_var: false,
+    },
+    {
+      id: "hasopen",
+      ad: "Ziraat",
+      tur: "bank",
+      entegre_mi: true,
+      gosterilen: 200,
+      hareket_toplami: 100,
+      banka_bildirdigi: 180,
+      fark: 100,
+      eslesmemis_adet: 1,
+      eslesmemis_tutar: -20,
+      banka_farki: 80,
+      acilis_var: true,
+    },
+  ],
+};
+
+test("shows unmatched and bank-diff columns, and opening action only when fark remains without an opening tx", async () => {
+  axios.get.mockResolvedValue({ data: ACCOUNT_REPORT });
+  root = createRoot(host);
+  await act(async () => {
+    root.render(<ReconciliationPanel companyId="co" />);
+  });
+  expect(host.textContent).toMatch(/Eşleşmemiş banka hareketi/);
+  expect(host.textContent).toMatch(/Banka farkı/);
+  expect(host.textContent).toMatch(/Eşleşmemiş banka hareketleri bakiyeye dahildir/);
+  expect(host.querySelector('[data-testid="recon-duplicate-warning"]').textContent).toMatch(/Aynı IBAN/);
+  const open = host.querySelector('[data-testid="recon-unmatched-bank75"]');
+  expect(open.textContent).toContain("2");
+  expect(open.textContent).toContain(formatTrAmount(150.5));
+  expect(host.querySelector('[data-testid="recon-bank-diff-bank75"]').textContent).toContain(formatTrAmount(75));
+  expect(host.querySelector('[data-testid="recon-unmatched-bank0"]').textContent).toBe("0");
+  expect(host.querySelector('[data-testid="recon-bank-diff-bank0"]').textContent).toBe("—");
+  expect(host.querySelector('[data-testid="recon-save-opening-bank75"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-save-opening-bank0"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-save-opening-hasopen"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-unmatched-hasopen"]').textContent).toContain(formatTrAmount(-20));
+
+  await act(async () => {
+    host.querySelector('[data-testid="recon-save-opening-bank75"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(host.querySelector('[data-testid="recon-opening-modal"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-opening-modal"]').textContent).toContain(formatTrAmount(75));
+  axios.get.mockResolvedValue({
+    data: {
+      ...ACCOUNT_REPORT,
+      accounts: ACCOUNT_REPORT.accounts.map((row) => (
+        row.id === "bank75" ? { ...row, fark: 0, acilis_var: true, hareket_toplami: 75 } : row
+      )),
+    },
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="recon-opening-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(axios.post).toHaveBeenCalledWith("/api/banking/accounts/bank75/opening-balance");
+  expect(host.querySelector('[data-testid="recon-save-opening-bank75"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-opening-modal"]')).toBeNull();
 });
