@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Mail, Server, Plus, Trash2, Loader2, Save, Shield, Send, PlugZap, Pencil, X } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
+import { pickMailServerId } from "../../utils/platformMail";
 import { inputCls, Toggle } from "./saasUi";
 
 const cred = { withCredentials: true };
@@ -32,7 +33,10 @@ export const PlatformMailPanel = () => {
   const load = useCallback(() => {
     axios.get(`${API_URL}/system/mail`, cred).then((r) => {
       setD(r.data);
-      setBox((b) => ({ ...b, server_id: b.server_id || r.data.servers[0]?.id || "" }));
+      setBox((b) => {
+        const server_id = pickMailServerId(b.server_id, r.data.servers);
+        return server_id === b.server_id ? b : { ...b, server_id };
+      });
     }).catch((e) => toast.error(e.response?.data?.detail || "Posta ayarları alınamadı."));
   }, []);
 
@@ -51,7 +55,7 @@ export const PlatformMailPanel = () => {
 
   const resetBoxForm = () => {
     setEditingBoxId(null);
-    setBox(emptyBox(d.servers[0]?.id || ""));
+    setBox(emptyBox(pickMailServerId("", d.servers)));
   };
 
   const applyPreset = (code) => {
@@ -124,7 +128,7 @@ export const PlatformMailPanel = () => {
     setBox({
       email: b.email || "",
       display_name: b.display_name || "",
-      server_id: b.server_id || d.servers[0]?.id || "",
+      server_id: pickMailServerId(b.server_id, d.servers),
       purposes: Array.isArray(b.purposes) && b.purposes.length ? [...b.purposes] : ["general"],
       allow_all_admins: b.allow_all_admins !== false,
       allowed_user_ids: Array.isArray(b.allowed_user_ids) ? [...b.allowed_user_ids] : [],
@@ -139,13 +143,18 @@ export const PlatformMailPanel = () => {
     e.preventDefault();
     setBusy("box");
     try {
+      const server_id = pickMailServerId(box.server_id, d.servers);
+      if (!server_id) {
+        toast.error("Posta sunucusu seçin.");
+        return;
+      }
+      const payload = { ...box, server_id };
+      if (!(payload.password || "").trim()) delete payload.password;
       if (editingBoxId) {
-        const payload = { ...box };
-        if (!(payload.password || "").trim()) delete payload.password;
         await axios.put(`${API_URL}/system/mail/mailboxes/${editingBoxId}`, payload, cred);
         toast.success("Kutu güncellendi.");
       } else {
-        await axios.post(`${API_URL}/system/mail/mailboxes`, box, cred);
+        await axios.post(`${API_URL}/system/mail/mailboxes`, payload, cred);
         toast.success("E-posta kutusu eklendi.");
       }
       resetBoxForm();
@@ -275,7 +284,7 @@ export const PlatformMailPanel = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div><label className="block font-semibold text-slate-700 mb-1">E-posta</label><input type="email" required value={box.email} onChange={(e) => setBox({ ...box, email: e.target.value })} placeholder="destek@tamkobi.com" className={inputCls} data-testid="mail-box-email" /></div>
           <div><label className="block font-semibold text-slate-700 mb-1">Görünen ad</label><input value={box.display_name} onChange={(e) => setBox({ ...box, display_name: e.target.value })} placeholder="TamKobi Destek" className={inputCls} data-testid="mail-box-name" /></div>
-          <div><label className="block font-semibold text-slate-700 mb-1">Sunucu</label><select required value={box.server_id} onChange={(e) => setBox({ ...box, server_id: e.target.value })} className={inputCls} data-testid="mail-box-server">{d.servers.length === 0 && <option value="">Önce sunucu ekleyin</option>}{d.servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+          <div><label className="block font-semibold text-slate-700 mb-1">Sunucu</label><select required value={pickMailServerId(box.server_id, d.servers)} onChange={(e) => setBox({ ...box, server_id: e.target.value })} className={inputCls} data-testid="mail-box-server">{d.servers.length === 0 && <option value="">Önce sunucu ekleyin</option>}{d.servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
           <div><label className="block font-semibold text-slate-700 mb-1">SMTP kullanıcı (boş = sunucu)</label><input value={box.smtp_user} onChange={(e) => setBox({ ...box, smtp_user: e.target.value })} className={inputCls} data-testid="mail-box-smtp-user" /></div>
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Kutu şifresi (boş = sunucu şifresi)</label>
