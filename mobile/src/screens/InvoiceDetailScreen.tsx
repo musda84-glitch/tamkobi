@@ -7,6 +7,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
 import { DraftInvoiceFaturalastir } from "../components/DraftInvoiceFaturalastir";
+import { IncomingInvoiceFaturalastir } from "../components/IncomingInvoiceFaturalastir";
 import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
@@ -30,6 +31,7 @@ import {
   invoiceDetailTotals,
   invoiceDipPayload,
   isGibIssued,
+  isIncomingPurchaseInvoice,
   isIncomingPurchasePending,
   remainingAmount,
   type GdMode,
@@ -406,7 +408,16 @@ export function InvoiceDetailScreen() {
         />
       ) : null}
 
-      {canEdit && !draft && !issued && !incomingPending && inv.invoice_type !== "dispatch" ? (
+      {canEdit && isIncomingPurchaseInvoice(inv) ? (
+        <IncomingInvoiceFaturalastir
+          invoice={inv}
+          testID="incoming-faturalastir"
+          onPosted={(msg) => { setError(null); setMessage(msg); load(); }}
+          onError={setError}
+        />
+      ) : null}
+
+      {canEdit && !draft && !issued && !incomingPending && !isIncomingPurchaseInvoice(inv) && inv.invoice_type !== "dispatch" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>GİB'e kes</Text>
           <Muted>E-Fatura / e-Arşiv onay penceresi; e-İhracat veya kağıt doğrudan kesilir.</Muted>

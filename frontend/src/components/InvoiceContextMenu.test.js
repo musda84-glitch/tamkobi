@@ -15,6 +15,7 @@ import {
   invoiceETypeLabel,
   invoiceHasPayment,
   isIncomingPurchaseInvoice,
+  incomingPurchaseLedgerPosted,
   canMatchIncomingProducts,
   unmatchedIncomingLineCount,
   placeContextMenu,
@@ -246,6 +247,21 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
       invoice_type: "sales",
       e_type: "paper",
     })).toBe(false);
+  });
+
+  test("incoming purchase is not the sales type chooser and stays posted once", () => {
+    const draft = {
+      status: "draft",
+      invoice_type: "purchase",
+      direction: "incoming",
+      e_type: "e_invoice",
+      effects_applied: false,
+    };
+    expect(canFaturalastirDraftInvoice(draft)).toBe(false);
+    expect(canIssueInvoice(draft)).toBe(false);
+    expect(incomingPurchaseLedgerPosted(draft)).toBe(false);
+    expect(incomingPurchaseLedgerPosted({ ...draft, effects_applied: true })).toBe(true);
+    expect(incomingPurchaseLedgerPosted({ ...draft, status: "approved" })).toBe(true);
   });
 
   test("sales drafts can use Faturalaştır type chooser", () => {

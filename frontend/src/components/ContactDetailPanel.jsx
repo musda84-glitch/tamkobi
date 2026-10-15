@@ -15,8 +15,9 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice } from "./InvoiceContextMenu";
 import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
+import { IncomingInvoiceFaturalastirButton } from "./IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
@@ -568,6 +569,25 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     }
     return sendToGib(inv, eType);
   };
+  const postingIncomingRef = useRef(new Set());
+  const faturalastirIncoming = async (inv) => {
+    if (!inv || incomingPurchaseLedgerPosted(inv)) return;
+    const id = inv.id || inv._id;
+    if (!id || postingIncomingRef.current.has(id)) return;
+    if (!window.confirm(`${inv.invoice_number} alış faturası olarak cariye işlensin mi?\nCari bakiyesi ve stok işlenecek.`)) return;
+    postingIncomingRef.current.add(id);
+    setBusy(id);
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${id}/approve`);
+      toast.success(r.data?.message || "Cariye işlendi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    } finally {
+      postingIncomingRef.current.delete(id);
+      setBusy(null);
+    }
+  };
   const acceptIncoming = async (inv) => {
     if (!window.confirm(`${inv.invoice_number} gelen e-faturası onaylansın mı?`)) return;
     setBusy(inv.id);
@@ -769,6 +789,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         {onMessage && !incoming ? (
                           <button onClick={() => onMessage(c)} className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition" title="SMS / E-posta gönder" data-testid={`detail-inv-notify-${inv.invoice_number}`}><MessageSquare className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
+                        {incoming ? (
+                          <IncomingInvoiceFaturalastirButton
+                            inv={inv}
+                            disabled={busy === inv.id}
+                            onPress={faturalastirIncoming}
+                            testId={`detail-incoming-faturalastir-${inv.invoice_number}`}
+                          />
+                        ) : null}
                         {canIssueInv && canFaturalastirDraftInvoice(inv) ? (
                           <DraftInvoiceFaturalastirButton
                             inv={inv}
@@ -1132,7 +1160,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           </div>
         )}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={issueFromMenu} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onEdit={(inv) => openEditInvoice(inv)} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={issueFromMenu} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onFaturalastirIncoming={faturalastirIncoming} onEdit={(inv) => openEditInvoice(inv)} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
         {eFaturaInvoice && (
           <ElektronikFaturaOnayModal
             invoice={eFaturaInvoice}

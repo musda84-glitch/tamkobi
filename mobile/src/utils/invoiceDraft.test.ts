@@ -20,6 +20,7 @@ import {
   invoiceTotals,
   invoiceUpdateBody,
   isIncomingPurchasePending,
+  incomingPurchaseLedgerPosted,
   parseWithholding,
   plusDaysIso,
   remainingAmount,
@@ -201,6 +202,14 @@ describe("invoiceDraft", () => {
   it("flags incoming purchase e-invoices pending GİB response", () => {
     expect(isIncomingPurchasePending({ invoice_type: "purchase", e_type: "e_invoice", gib_status: "Gelen" })).toBe(true);
     expect(isIncomingPurchasePending({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
+  });
+
+  it("marks a posted incoming purchase so Faturalaştır stays disabled", () => {
+    const draft = { status: "draft", invoice_type: "purchase", direction: "incoming", e_type: "e_invoice", effects_applied: false };
+    expect(incomingPurchaseLedgerPosted(draft)).toBe(false);
+    expect(incomingPurchaseLedgerPosted({ ...draft, effects_applied: true })).toBe(true);
+    expect(incomingPurchaseLedgerPosted({ ...draft, status: "approved" })).toBe(true);
+    expect(incomingPurchaseLedgerPosted({ status: "draft", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
   });
 
   it("computes remaining payment and withholding parse", () => {

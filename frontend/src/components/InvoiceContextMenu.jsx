@@ -268,6 +268,14 @@ export function isIncomingPurchasePending(inv) {
   return incomingPurchaseResponse(inv) === "pending";
 }
 
+/** Gelen alış faturası cariye/stoğa işlendiyse Faturalaştır pasif kalır. */
+export function incomingPurchaseLedgerPosted(inv) {
+  if (!isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.status === "cancelled") return true;
+  if (inv.effects_applied) return true;
+  return Boolean(inv.status && inv.status !== "draft");
+}
+
 /** Yalnızca GİB'e gerçekten iletilmiş / kağıt kesilmiş faturalar "kesildi" sayılır. */
 export const GIB_ISSUED_STATUSES = new Set([
   "Başarıyla Tamamlandı",
@@ -485,6 +493,7 @@ export const InvoiceContextMenu = (props) => {
   } = props;
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
+  const onFaturalastirIncoming = props.onFaturalastirIncoming;
   const einvoiceSettings = props.einvoiceSettings || null;
   const apiBase = props.apiBase || "";
   const companyId = props.companyId || menu?.inv?.company_id || "";
@@ -599,18 +608,27 @@ export const InvoiceContextMenu = (props) => {
     <div ref={ref} style={{ left: placed.left, top: placed.top, maxHeight: placed.maxHeight }} className="fixed z-[70] w-64 overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100" data-testid="invoice-context-menu" onContextMenu={(e) => e.preventDefault()}>
       <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 truncate">{inv.invoice_number} • {inv.contact_name}</div>
       {incoming ? (
-        pending ? (
-          <div className="border-b border-slate-100 pb-1">
-            <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-amber-800">GELEN E-FATURA</div>
-            <p className="px-3 pb-1 text-[10px] text-slate-500">Bu belge GİB'den geldi; kesilmez. 8 gün içinde ticari yanıt verin.</p>
-            {onAcceptIncoming && <Item icon={CheckCircle2} color="text-emerald-600" label="Onayla (Kabul)" sub="Ticari kabul yanıtı GİB'e iletilir" onClick={() => onAcceptIncoming(inv)} testId="ctx-accept-incoming" />}
-            {onRejectIncoming && <Item icon={XCircle} color="text-rose-600" label="Reddet" sub="Ticari ret — alış kaydı iptal edilir" onClick={() => onRejectIncoming(inv)} testId="ctx-reject-incoming" />}
-          </div>
-        ) : (
-          <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-incoming-info">
-            Gelen e-fatura — kesilmez. Durum: <span className="font-semibold text-slate-700">{formatGibStatusLabel(inv) || incomingPurchaseResponse(inv)}</span>
-          </div>
-        )
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-incoming-faturalastir">
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-amber-800">GELEN E-FATURA</div>
+          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-incoming-no-resend">
+            Bu belge GİB&apos;den geldi. Yeniden e-Fatura, e-Arşiv veya kağıt olarak kesilmez.
+          </p>
+          {incomingPurchaseLedgerPosted(inv) ? (
+            <p className="px-3 pb-2 text-[11px] font-semibold text-emerald-700" data-testid="ctx-incoming-posted">Cariye işlendi — yeniden işlenmez.</p>
+          ) : onFaturalastirIncoming ? (
+            <Item icon={FileText} color="text-emerald-600" label="Faturalaştır" sub="Alış faturası · cari bakiyesi ve stok" onClick={() => onFaturalastirIncoming(inv)} testId="ctx-incoming-faturalastir-btn" />
+          ) : null}
+          {pending ? (
+            <>
+              {onAcceptIncoming && <Item icon={CheckCircle2} color="text-emerald-600" label="Onayla (Kabul)" sub="Ticari kabul yanıtı GİB'e iletilir" onClick={() => onAcceptIncoming(inv)} testId="ctx-accept-incoming" />}
+              {onRejectIncoming && <Item icon={XCircle} color="text-rose-600" label="Reddet" sub="Ticari ret — alış kaydı iptal edilir" onClick={() => onRejectIncoming(inv)} testId="ctx-reject-incoming" />}
+            </>
+          ) : (
+            <p className="px-3 pb-2 text-[11px] text-slate-500" data-testid="ctx-incoming-info">
+              Durum: <span className="font-semibold text-slate-700">{formatGibStatusLabel(inv) || incomingPurchaseResponse(inv)}</span>
+            </p>
+          )}
+        </div>
       ) : isPurchase ? (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-purchase-actions">
           {onEdit && editable && (

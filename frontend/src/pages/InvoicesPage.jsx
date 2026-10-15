@@ -3,8 +3,9 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
+import { IncomingInvoiceFaturalastirButton } from "../components/IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -1096,6 +1097,27 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     loadData();
   };
 
+  const postingIncomingRef = useRef(new Set());
+  const [postingIncomingId, setPostingIncomingId] = useState(null);
+  const handleFaturalastirIncoming = async (inv) => {
+    if (!inv || incomingPurchaseLedgerPosted(inv)) return;
+    const id = inv.id || inv._id;
+    if (!id || postingIncomingRef.current.has(id)) return;
+    if (!window.confirm(`${inv.invoice_number} alış faturası olarak cariye işlensin mi?\nCari bakiyesi ve stok işlenecek.`)) return;
+    postingIncomingRef.current.add(id);
+    setPostingIncomingId(id);
+    try {
+      const res = await axios.post(`${API_URL}/invoices/${id}/approve`);
+      toast.success(res.data?.message || "Cariye işlendi.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    } finally {
+      postingIncomingRef.current.delete(id);
+      setPostingIncomingId((cur) => (cur === id ? null : cur));
+    }
+  };
+
   const handleAcceptIncoming = async (inv) => {
     const id = inv.id || inv._id;
     if (!window.confirm(`${inv.invoice_number} gelen e-faturası onaylansın mı? Ticari kabul GİB'e iletilir.`)) return;
@@ -1258,7 +1280,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           </div>
         )}
         <div className="flex items-center gap-1.5 px-4 py-2 bg-slate-50/70 border-b border-slate-100 text-[11px] text-slate-500" data-testid="ctx-hint">
-          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Taslaklarda <b>Taslağı faturalaştır</b> ile belge türü seçilir (siparişteki gibi). Kesilmiş satış faturasını satırdaki <b>⋮</b> menüden E-Fatura / E-Arşiv / Kağıt olarak kesebilirsiniz. GİB'den gelen alış e-faturaları kesilmez; <b>Onayla</b> veya <b>Reddet</b> kullanılır.
+          <MousePointerClick className="w-3.5 h-3.5 text-emerald-600" /> İpucu: Satış taslaklarında <b>Taslağı faturalaştır</b> ile belge türü seçilir. Gelen faturada <b>Faturalaştır</b> tek tıkla alış faturası olarak cariye ve stoğa işler; e-Fatura / e-Arşiv / kağıt seçilmez. Ticari yanıt için <b>Onayla</b> veya <b>Reddet</b> kullanılır.
         </div>
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-left text-xs text-slate-600">
@@ -1416,13 +1438,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         </span>
                       ) : (
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
-                        inv.payment_status === "paid"
+                        isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
+                          ? "bg-amber-100 text-amber-800"
+                          : inv.payment_status === "paid"
                           ? "bg-emerald-100 text-emerald-800"
                           : inv.payment_status === "partially_paid"
                           ? "bg-amber-100 text-amber-800"
                           : "bg-rose-100 text-rose-800"
-                      }`}>
-                        {inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
+                      }`} data-testid={`inv-pay-${inv.invoice_number}`}>
+                        {isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
+                          ? "İşlenmedi"
+                          : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
                       </span>
                       )}
                     </td>
@@ -1461,6 +1487,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                               className="flex flex-wrap items-center justify-center gap-1.5"
                               data-testid={`inv-actions-${inv.invoice_number}`}
                             >
+                              <IncomingInvoiceFaturalastirButton
+                                inv={inv}
+                                disabled={postingIncomingId === (inv.id || inv._id)}
+                                onPress={handleFaturalastirIncoming}
+                                testId={`incoming-faturalastir-${inv.invoice_number}`}
+                              />
                               {pendingIncoming ? (
                                 <>
                                   <button
@@ -1715,6 +1747,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         onInstallments={setInstallmentInv}
         onAcceptIncoming={handleAcceptIncoming}
         onRejectIncoming={handleRejectIncoming}
+        onFaturalastirIncoming={handleFaturalastirIncoming}
         apiBase={API_URL}
         onEdit={openEditInvoice}
         onDelete={canDeleteInv ? handleDeleteInvoice : undefined}
