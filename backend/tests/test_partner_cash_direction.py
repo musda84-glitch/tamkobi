@@ -95,15 +95,15 @@ def test_card_is_giris_minus_cikis_and_display_is_absolute():
     assert cash["cash_net"] == pytest.approx(133400)
     assert cash["card_pocket"] == pytest.approx(cash["cash_in"] - cash["cash_out"])
     view = present_partner_balance(cash["cash_net"])
-    assert view["label"] == "Alacaklı"
+    assert view["label"] == "Ortak borçlu"
     assert view["display"] == pytest.approx(133400)
     assert view["display"] > 0
 
     debt = present_partner_balance(-30257.85)
-    assert debt["label"] == "Borçlu"
+    assert debt["label"] == "Ortak alacaklı"
     assert debt["display"] == pytest.approx(30257.85)
     alacak = present_partner_balance(30257.85)
-    assert alacak["label"] == "Alacaklı"
+    assert alacak["label"] == "Ortak borçlu"
     assert alacak["display"] == pytest.approx(30257.85)
     assert "-" not in str(alacak["display"])
 

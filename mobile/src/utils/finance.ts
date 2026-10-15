@@ -145,11 +145,17 @@ export type PartnerSummary = {
   total_cash_out?: number;
 };
 
+/** Kart altı: Giriş toplamı ortağın aldığı, Çıkış toplamı ödediği paradır. Web ile aynı. */
+export const PARTNER_RECEIVED_LABEL = "Aldığı";
+export const PARTNER_PAID_LABEL = "Ödediği";
+
 /**
- * Ortak bakiyesi = cebindeki para (yazma):
- *   artı → Alacaklı (ortağa yazılan / çekilebilir)
- *   eksi → Borçlu (fazla çekmiş)
- * Kartta tutar her zaman mutlak değerdir; yön yalnızca Alacaklı / Borçlu etiketindedir.
+ * Ortak bakiyesi gösterimi (web partnerBalanceMeta). Hesap değişmez.
+ * Giriş (+) ortağın şirketten aldığı, Çıkış (−) şirkete ödediği paradır.
+ *   bakiye > 0 → Ortak borçlu (kırmızı)
+ *   bakiye < 0 → Ortak alacaklı (yeşil)
+ *   bakiye = 0 → Kapalı (gri)
+ * Tutar mutlak değerdir. API balance_label kullanılmaz.
  */
 export function partnerBalanceMeta(balance?: number | null): {
   amount: number;
@@ -157,17 +163,23 @@ export function partnerBalanceMeta(balance?: number | null): {
   display: number;
   label: string;
   badge: string;
+  hint: string;
+  color: string;
+  receivedLabel: string;
+  paidLabel: string;
   side: "credit" | "debit" | "zero";
 } {
   const n = Number(balance);
   const amount = Number.isFinite(n) ? n : 0;
+  const abs = Math.abs(amount);
+  const flow = { receivedLabel: PARTNER_RECEIVED_LABEL, paidLabel: PARTNER_PAID_LABEL, hint: "" };
   if (amount > 0) {
-    return { amount, abs: amount, display: amount, label: "Alacaklı", badge: "Alacaklı", side: "credit" };
+    return { ...flow, amount, abs, display: abs, label: "Ortak borçlu", badge: "Ortak borçlu", color: "#E11D48", side: "debit" };
   }
   if (amount < 0) {
-    return { amount, abs: Math.abs(amount), display: Math.abs(amount), label: "Borçlu", badge: "Borçlu", side: "debit" };
+    return { ...flow, amount, abs, display: abs, label: "Ortak alacaklı", badge: "Ortak alacaklı", color: "#059669", side: "credit" };
   }
-  return { amount: 0, abs: 0, display: 0, label: "Denk", badge: "Denk", side: "zero" };
+  return { ...flow, amount: 0, abs: 0, display: 0, label: "Kapalı", badge: "Kapalı", color: "#64748B", side: "zero" };
 }
 
 /** Amber kart: backend present_partner_balance (imzalı bakiye toplamı). */
@@ -177,6 +189,10 @@ export function partnerSummaryCardMeta(summary?: PartnerSummary | null): {
   display: number;
   label: string;
   badge: string;
+  hint: string;
+  color: string;
+  receivedLabel: string;
+  paidLabel: string;
   side: "credit" | "debit" | "zero";
   cashIn: number;
   cashOut: number;
@@ -194,16 +210,13 @@ export function partnerSummaryCardMeta(summary?: PartnerSummary | null): {
   };
 }
 
-/** Seçici: işaret yok, mutlak tutar + Borçlu/Alacaklı, Türkçe biçim. */
+/** Seçici: işaret yok, mutlak tutar + partnerBalanceMeta etiketi. */
 export function partnerOptionLabel(p: Pick<Partner, "name" | "share_percent" | "balance" | "balance_abs" | "balance_label">): string {
   const meta = partnerBalanceMeta(p?.balance);
-  const absRaw = p?.balance_abs != null ? Number(p.balance_abs) : meta.abs;
-  const abs = Number.isFinite(absRaw) ? absRaw : 0;
-  const label = p?.balance_label || meta.label;
   const share = p?.share_percent ?? 0;
   const name = p?.name || "Ortak";
-  const amount = formatTrAmount(abs);
-  const tag = label && label !== "Denk" ? ` ${label}` : "";
+  const amount = formatTrAmount(meta.display);
+  const tag = meta.label ? ` ${meta.label}` : "";
   return `${name} (Ortak · %${share} · ${amount} ₺${tag})`;
 }
 
@@ -509,7 +522,7 @@ export function partnerLedgerBreakdown(
 }
 
 /**
- * Ortak kartı: bakiye present_partner_balance, giriş/çıkış hareket yönü.
+ * Ortak kartı: bakiye partnerBalanceMeta, aldığı/ödediği hareket yönü.
  */
 export function partnerCardCashFlow(
   partner: Pick<Partner, "balance" | "balance_display" | "balance_label" | "total_capital_in" | "total_withdrawn"> | null | undefined,
@@ -521,18 +534,22 @@ export function partnerCardCashFlow(
   badge: string;
   display: number;
   fromTx: boolean;
+  color: string;
+  receivedLabel: string;
+  paidLabel: string;
 } {
   const mine = filterPartnerTxs(txs, partnerId);
   const br = partnerLedgerBreakdown(mine, partner?.balance);
   const bm = partnerBalanceMeta(partner?.balance);
-  const raw = partner?.balance_display != null ? Number(partner.balance_display) : bm.display;
-  const display = Number.isFinite(raw) ? Math.abs(raw) : Math.abs(bm.display);
   return {
     giris: br.count > 0 ? br.girisDisplay : 0,
     cikis: br.count > 0 ? br.cikisDisplay : 0,
-    badge: partner?.balance_label || bm.badge,
-    display,
+    badge: bm.badge,
+    display: bm.display,
     fromTx: br.count > 0,
+    color: bm.color,
+    receivedLabel: bm.receivedLabel,
+    paidLabel: bm.paidLabel,
   };
 }
 

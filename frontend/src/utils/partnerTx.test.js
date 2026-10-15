@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerOptionLabel, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, partnerTxBalanceDelta, partnerTxEffect, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerOptionLabel, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, partnerTxBalanceDelta, partnerTxEffect, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, PARTNER_TX_LABEL } from "./partnerTx";
 
 /** Mobil finance.test.ts ile aynı Ali BAL hareketleri. */
 export const ALI_BAL_TXS = [
@@ -105,7 +105,7 @@ describe("partnerTx", () => {
     expect(br.drift).toBe(false);
     expect(partnerTxLabel(txs[2])).toBe("Giriş");
     expect(partnerBalanceMeta(857659.78).display).toBeCloseTo(857659.78, 2);
-    expect(partnerBalanceMeta(857659.78).label).toBe("Alacaklı");
+    expect(partnerBalanceMeta(857659.78).label).toBe("Ortak borçlu");
   });
 
   it("Ali BAL: kart = Σ liste delta = Toplam Giriş − Toplam Çıkış", () => {
@@ -127,13 +127,13 @@ describe("partnerTx", () => {
     expect(br.cardPocket).toBeCloseTo(ALI_NET, 2);
     expect(br.netMatchesCard).toBe(true);
     expect(br.drift).toBe(false);
-    expect(partnerBalanceMeta(br.cardPocket).badge).toBe("Borçlu");
+    expect(partnerBalanceMeta(br.cardPocket).badge).toBe("Ortak alacaklı");
     expect(partnerBalanceMeta(br.cardPocket).display).toBeCloseTo(Math.abs(ALI_NET), 2);
   });
 
   it("amber card uses the same balance presentation as partner balances", () => {
     const legacy = partnerSummaryCardMeta({ total_balance: -199822.37 });
-    expect(legacy.badge).toBe("Borçlu");
+    expect(legacy.badge).toBe("Ortak alacaklı");
     expect(legacy.display).toBeCloseTo(199822.37, 2);
     expect(legacy.fromCash).toBe(false);
 
@@ -145,38 +145,55 @@ describe("partnerTx", () => {
       total_cash_out: 949159.78,
     });
     expect(cash.fromCash).toBe(true);
-    expect(cash.badge).toBe("Borçlu");
+    expect(cash.badge).toBe("Ortak alacaklı");
     expect(cash.display).toBeCloseTo(258082.37, 2);
   });
 
-  it("selector uses Borçlu/Alacaklı instead of a sign", () => {
-    const ali = partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22 });
-    const mus = partnerOptionLabel({ name: "Mustafa Bal", share_percent: 50, balance: 30257.85 });
-    expect(ali).toBe("Ali BAL (Ortak • %50 · 288.340,22 ₺ Borçlu)");
-    expect(mus).toBe("Mustafa Bal (Ortak • %50 · 30.257,85 ₺ Alacaklı)");
+  it("selector uses Ortak borçlu / Ortak alacaklı instead of a sign", () => {
+    const ali = partnerOptionLabel({ name: "Ali BAL", share_percent: 50, balance: -288340.22, balance_label: "Borçlu" });
+    const mus = partnerOptionLabel({ name: "Mustafa Bal", share_percent: 50, balance: 30257.85, balance_label: "Alacaklı" });
+    expect(ali).toBe("Ali BAL (Ortak • %50 · 288.340,22 ₺ Ortak alacaklı)");
+    expect(mus).toBe("Mustafa Bal (Ortak • %50 · 30.257,85 ₺ Ortak borçlu)");
     expect(ali).not.toContain("-");
     expect(mus).not.toContain("-");
+    expect(partnerOptionLabel({ name: "Kapalı Ortak", share_percent: 10, balance: 0, balance_label: "Denk" })).toBe("Kapalı Ortak (Ortak • %10 · 0,00 ₺ Kapalı)");
   });
 
-  it("shows only Alacaklı or Borçlu; display is always absolute", () => {
-    const credit = partnerBalanceMeta(1200);
-    expect(credit.label).toBe("Alacaklı");
-    expect(credit.badge).toBe("Alacaklı");
+  it("positive balance is Ortak borçlu, negative is Ortak alacaklı, zero is Kapalı", () => {
+    const debt = partnerBalanceMeta(1200);
+    expect(debt.label).toBe("Ortak borçlu");
+    expect(debt.badge).toBe("Ortak borçlu");
+    expect(debt.hint).toBe("");
+    expect(debt.side).toBe("debit");
+    expect(debt.display).toBe(1200);
+    expect(debt.color).toBe("#E11D48");
+    expect(debt.amountCls).toBe("text-rose-700");
+    expect(debt.badgeCls).toContain("rose");
+    expect(debt.receivedLabel).toBe(PARTNER_RECEIVED_LABEL);
+    expect(debt.paidLabel).toBe(PARTNER_PAID_LABEL);
+    expect(PARTNER_RECEIVED_LABEL).toBe("Aldığı");
+    expect(PARTNER_PAID_LABEL).toBe("Ödediği");
+
+    const credit = partnerBalanceMeta(-705389.78);
+    expect(credit.badge).toBe("Ortak alacaklı");
+    expect(credit.label).toBe("Ortak alacaklı");
     expect(credit.hint).toBe("");
     expect(credit.side).toBe("credit");
-    expect(credit.display).toBe(1200);
+    expect(credit.abs).toBeCloseTo(705389.78);
+    expect(credit.display).toBeCloseTo(705389.78);
+    expect(credit.color).toBe("#059669");
+    expect(credit.amountCls).toBe("text-emerald-700");
+    expect(credit.badgeCls).toContain("emerald");
 
-    const debit = partnerBalanceMeta(-705389.78);
-    expect(debit.badge).toBe("Borçlu");
-    expect(debit.label).toBe("Borçlu");
-    expect(debit.hint).toBe("");
-    expect(debit.side).toBe("debit");
-    expect(debit.abs).toBeCloseTo(705389.78);
-    expect(debit.display).toBeCloseTo(705389.78);
-
-    expect(partnerBalanceMeta(0).badge).toBe("Denk");
-    expect(partnerBalanceMeta(0).hint).toBe("");
-    expect(partnerBalanceMeta(0).display).toBe(0);
+    const closed = partnerBalanceMeta(0);
+    expect(closed.badge).toBe("Kapalı");
+    expect(closed.label).toBe("Kapalı");
+    expect(closed.hint).toBe("");
+    expect(closed.display).toBe(0);
+    expect(closed.color).toBe("#64748B");
+    expect(closed.amountCls).toBe("text-slate-500");
+    expect(closed.badgeCls).toContain("slate");
+    expect(partnerBalanceMeta("nope").badge).toBe("Kapalı");
   });
   it("treats credit as Çıkış and capital_in as Giriş", () => {
     expect(partnerTxIncreasesBalance("credit")).toBe(false);

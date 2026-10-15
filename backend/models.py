@@ -373,7 +373,7 @@ class Partner(BaseDocument):
     share_percent: float = 0.0
     phone: Optional[str] = None
     email: Optional[str] = None
-    balance: float = 0.0  # Pozitif: şirket ortağa borçlu (sermaye/kâr alacağı)
+    balance: float = 0.0  # Pozitif (Giriş > Çıkış): ortak şirkete borçlu
     total_capital_in: float = 0.0
     total_withdrawn: float = 0.0
     total_profit_share: float = 0.0

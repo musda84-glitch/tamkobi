@@ -13,7 +13,7 @@ import { formatTrAmount } from "../utils/money";
 import { MoneyInput } from "./MoneyInput";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
 import { sortBankTransactions } from "../utils/bankAccountTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
@@ -334,9 +334,9 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             const giris = summary.total_cash_in != null ? summary.total_cash_in : summary.total_capital_in;
             const cikis = summary.total_cash_out != null ? summary.total_cash_out : summary.total_withdrawn;
             return [
-              ["net", net.side === "zero" ? "Net bakiye" : `Net ${net.label}`, netAmount, net.amountCls],
-              ["capital", "Toplam Giriş", giris, "text-emerald-700"],
-              ["withdrawn", "Toplam Çıkış", cikis, "text-rose-700"],
+              ["net", net.label, netAmount, net.amountCls],
+              ["capital", `Toplam ${PARTNER_RECEIVED_LABEL}`, giris, "text-emerald-700"],
+              ["withdrawn", `Toplam ${PARTNER_PAID_LABEL}`, cikis, "text-rose-700"],
             ].map(([id, l, v, c]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>
@@ -397,14 +397,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </div>
             {(() => {
               const bm = partnerBalanceMeta(p.balance);
-              const badge = p.balance_label || bm.badge;
-              const rawAmount = p.balance_display != null && p.balance_display !== "" ? Number(p.balance_display) : bm.display;
-              const amount = Math.abs(Number.isFinite(rawAmount) ? rawAmount : 0);
               return (
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`}>
               <div className="min-w-0">
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{badge}</span>
-                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(amount)} ₺</div>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
+                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(bm.display)} ₺</div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600 shrink-0" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
             </div>
@@ -429,8 +426,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               const c = br ? br.cikisDisplay : 0;
               return (
             <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
-              <div>Giriş: <b className="text-emerald-700" data-testid={`partner-card-giris-${p.id}`}>{fmt(Math.abs(g))}</b></div>
-              <div>Çıkış: <b className="text-rose-700" data-testid={`partner-card-cikis-${p.id}`}>{fmt(Math.abs(c))}</b></div>
+              <div>{PARTNER_RECEIVED_LABEL}: <b className="text-emerald-700" data-testid={`partner-card-giris-${p.id}`}>{fmt(Math.abs(g))}</b></div>
+              <div>{PARTNER_PAID_LABEL}: <b className="text-rose-700" data-testid={`partner-card-cikis-${p.id}`}>{fmt(Math.abs(c))}</b></div>
             </div>
               );
             })()}
@@ -472,11 +469,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </div>
             <div className="grid grid-cols-2 gap-2" data-testid="partner-ledger-buckets">
               <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">Toplam Giriş</div>
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">{PARTNER_RECEIVED_LABEL}</div>
                 <div className="font-bold text-emerald-700" data-testid="partner-ledger-inflow">{fmt(Math.abs(selectedLedger.girisDisplay))} ₺</div>
               </div>
               <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">Toplam Çıkış</div>
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">{PARTNER_PAID_LABEL}</div>
                 <div className="font-bold text-rose-700" data-testid="partner-ledger-outflow">{fmt(Math.abs(selectedLedger.cikisDisplay))} ₺</div>
               </div>
             </div>
