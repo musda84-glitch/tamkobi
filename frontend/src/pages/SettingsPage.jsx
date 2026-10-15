@@ -25,7 +25,6 @@ import { IntegrityPanel } from "../components/saas/IntegrityPanel";
 import IsnetIntegrationPanel from "../components/IsnetIntegrationPanel";
 import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { EinvoicePull30dButton } from "../components/EinvoicePull30dButton";
-import { EinvoiceDesignsPanel } from "../components/saas/EinvoiceDesignsPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 import { NotifyPrefsPanel } from "../components/NotifyPrefsPanel";
@@ -34,6 +33,12 @@ import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } 
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
+
+const EinvoiceDesignSupportNote = () => (
+  <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 max-w-xl" data-testid="einvoice-design-support-hint">
+    Fatura tasarımı değişikliği için destek ile iletişime geçin.
+  </p>
+);
 const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["integrity", "Veri Tutarlılığı", Wrench], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
@@ -118,7 +123,7 @@ const EInvoiceSettings = ({ companyId }) => {
           <EinvoicePull30dButton companyId={companyId} />
         </div>
         <IsnetIntegrationPanel companyId={companyId} variant="company" />
-        <EinvoiceDesignsPanel mode="company" companyId={companyId} />
+        <EinvoiceDesignSupportNote />
       </div>
     );
   }
@@ -134,7 +139,7 @@ const EInvoiceSettings = ({ companyId }) => {
           <EinvoicePull30dButton companyId={companyId} />
         </div>
         <IsnetPortalPanel companyId={companyId} />
-        <EinvoiceDesignsPanel mode="company" companyId={companyId} />
+        <EinvoiceDesignSupportNote />
       </div>
     );
   }
@@ -220,7 +225,7 @@ const EInvoiceSettings = ({ companyId }) => {
         </>
       )}
     </form>
-    <EinvoiceDesignsPanel mode="company" companyId={companyId} />
+    <EinvoiceDesignSupportNote />
     </div>
   );
 };

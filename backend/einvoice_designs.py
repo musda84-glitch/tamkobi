@@ -635,23 +635,83 @@ async def _list(company_id: Optional[str] = None) -> List[dict]:
     return items
 
 
+def _guard_design_http(user: Optional[dict], request: Optional[Request] = None) -> None:
+    """Yönetim uçları: firma kullanıcısı 403. Fatura kesimi selected_xslt* ile okumaya devam eder.
+
+    İstek yoksa (birim testi / iç çağrı) süper admin yeter. app / b2b / ik hostunda süper admin
+    bile reddedilir; ynt oturumu ve yerel site hostu geçer. Site + SUPERADMIN_YNT_ONLY kapısı
+    audience katmanında kalır.
+    """
+    if not (user or {}).get("is_super_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Fatura tasarımı yalnızca platform yönetiminde (süper admin) kullanılabilir.",
+        )
+    if request is None:
+        return
+    import host_audience as ha
+
+    if ha.host_kind(request) in (ha.KIND_APP, ha.KIND_B2B, ha.KIND_IK):
+        raise HTTPException(
+            status_code=403,
+            detail="Fatura tasarımı yalnızca platform yönetimi oturumunda kullanılabilir.",
+        )
+
+
+def _scope_company_id(*values: Any) -> Optional[str]:
+    for value in values:
+        cid = str(value or "").strip()
+        if cid:
+            return cid
+    return None
+
+
+async def _get_scoped(design_id: str, company_id: Optional[str]) -> dict:
+    """Platform kayıtları ve seçilen şirketin kopyaları. Başka şirket 404."""
+    doc = await _get(design_id)
+    cid = str(company_id or "").strip()
+    if cid:
+        if _is_platform(doc) or _doc_company_id(doc) == cid:
+            return doc
+        raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+    if not _is_platform(doc):
+        raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+    return doc
+
+
 @router.get("/system/einvoice-designs")
-async def list_designs(_: dict = Depends(saas.require_super_admin)):
-    items = await _list()
-    selected = {k: next((i["id"] for i in items if i["kind"] == k and i["is_selected"]), None) for k in KINDS}
-    return {"items": items, "selected": selected, "kinds": [{"id": k, "label": KIND_LABELS[k]} for k in KINDS]}
+async def list_designs(
+    company_id: Optional[str] = None,
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
+    items = await _list(_scope_company_id(company_id))
+    return _catalog(items)
 
 
 @router.get("/system/einvoice-designs/{design_id}")
-async def get_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
+async def get_design(
+    design_id: str,
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
     await ensure_defaults()
-    return _public(await _get(design_id), include_xslt=True)
+    return _public(await _get_scoped(design_id, company_id), include_xslt=True)
 
 
 @router.get("/system/einvoice-designs/{design_id}/download")
-async def download_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
+async def download_design(
+    design_id: str,
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
     await ensure_defaults()
-    doc = await _get(design_id)
+    doc = await _get_scoped(design_id, company_id)
     body = (doc.get("xslt") or "").encode("utf-8")
     filename = _slug_filename(doc.get("name") or "", doc.get("kind") or "e_invoice")
     return Response(
@@ -724,8 +784,19 @@ async def _create_design_impl(req: Dict[str, Any], company_id: Optional[str] = N
 
 
 @router.post("/system/einvoice-designs")
-async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
-    return await _create_design_impl(req)
+async def create_design(
+    req: Dict[str, Any],
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
+    await ensure_defaults()
+    cid = _scope_company_id(company_id, (req or {}).get("company_id"))
+    copy_from = str((req or {}).get("copy_from_id") or "").strip()
+    if copy_from:
+        await _get_scoped(copy_from, cid)
+    return await _create_design_impl(req or {}, company_id=cid)
 
 
 async def _update_design_impl(design_id: str, req: Dict[str, Any]) -> dict:
@@ -757,12 +828,30 @@ async def _update_design_impl(design_id: str, req: Dict[str, Any]) -> dict:
     return _public(await _get(design_id), include_xslt=True)
 
 
+async def _update_scoped(design_id: str, req: Dict[str, Any], company_id: Optional[str]) -> dict:
+    cid = str(company_id or "").strip()
+    doc = await _get_scoped(design_id, cid or None)
+    if cid and _is_platform(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="Platform varsayılanı yalnız platform kapsamında değiştirilir. Kopyalayıp şirket tasarımı kaydedin.",
+        )
+    if cid and _doc_company_id(doc) != cid:
+        raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+    return await _update_design_impl(design_id, req or {})
+
+
 @router.put("/system/einvoice-designs/{design_id}")
-async def update_design(design_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
-    doc = await _get(design_id)
-    if not _is_platform(doc):
-        raise HTTPException(status_code=403, detail="Şirket tasarımı yalnızca şirket yöneticisi tarafından değiştirilir.")
-    return await _update_design_impl(design_id, req)
+async def update_design(
+    design_id: str,
+    req: Dict[str, Any],
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
+    cid = _scope_company_id(company_id, (req or {}).get("company_id"))
+    return await _update_scoped(design_id, req or {}, cid)
 
 
 async def _unselect_scope(kind: str, company_id: Optional[str] = None) -> None:
@@ -780,26 +869,51 @@ async def _unselect_scope(kind: str, company_id: Optional[str] = None) -> None:
             )
 
 
-@router.post("/system/einvoice-designs/{design_id}/select")
-async def select_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
+async def _select_scoped(design_id: str, company_id: Optional[str]) -> dict:
     await ensure_defaults()
-    doc = await _get(design_id)
-    if not _is_platform(doc):
-        raise HTTPException(status_code=403, detail="Platform varsayılanı yalnızca platform tasarımlarından seçilir.")
+    cid = str(company_id or "").strip()
+    doc = await _get_scoped(design_id, cid or None)
     try:
         await validate_xslt_async(doc.get("xslt") or "")
     except HTTPException as e:
         raise HTTPException(status_code=400, detail=f"Bozuk tasarım seçilemez: {e.detail}") from e
     kind = doc.get("kind")
+    if cid:
+        await _unselect_scope(kind, cid)
+        if not _is_platform(doc):
+            await _db[COLLECTION].update_one(
+                {"_id": design_id},
+                {"$set": {"is_selected": True, "updated_at": _now()}},
+            )
+        return {"status": "success", "id": design_id, "kind": kind, "items": await _list(cid)}
+    if not _is_platform(doc):
+        raise HTTPException(status_code=403, detail="Platform varsayılanı yalnızca platform tasarımlarından seçilir.")
     await _unselect_scope(kind)
     await _db[COLLECTION].update_one({"_id": design_id}, {"$set": {"is_selected": True, "updated_at": _now()}})
     return {"status": "success", "id": design_id, "kind": kind, "items": await _list()}
 
 
+@router.post("/system/einvoice-designs/{design_id}/select")
+async def select_design(
+    design_id: str,
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
+    return await _select_scoped(design_id, company_id)
+
+
 @router.get("/system/einvoice-designs/{design_id}/export")
-async def export_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
+async def export_design(
+    design_id: str,
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
     await ensure_defaults()
-    doc = await _get(design_id)
+    doc = await _get_scoped(design_id, company_id)
     source = _normalize_source(doc.get("source"), has_layout=isinstance(doc.get("layout"), dict))
     payload = {
         "schema_version": 1,
@@ -819,9 +933,16 @@ async def export_design(design_id: str, _: dict = Depends(saas.require_super_adm
 
 
 @router.post("/system/einvoice-designs/import")
-async def import_design(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+async def import_design(
+    req: Dict[str, Any],
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
     """Import .tkdesign.json body or raw {name, kind, xslt, layout, source}."""
+    _guard_design_http(user, request)
     await ensure_defaults()
+    cid = _scope_company_id(company_id, (req or {}).get("company_id"))
     payload = req.get("design") if isinstance(req.get("design"), dict) else req
     if isinstance(payload.get("content"), str) and not payload.get("xslt"):
         # Ham .xslt metni
@@ -854,33 +975,59 @@ async def import_design(req: Dict[str, Any], _: dict = Depends(saas.require_supe
         "created_at": _now(),
         "updated_at": _now(),
     }
+    if cid:
+        doc["company_id"] = cid
     await _db[COLLECTION].insert_one(doc)
     return _public(doc, include_xslt=True)
 
 
 @router.get("/system/einvoice-designs/settings/embed")
-async def get_embed_settings(_: dict = Depends(saas.require_super_admin)):
+async def get_embed_settings(user: dict = Depends(saas.require_super_admin), request: Request = None):
+    _guard_design_http(user, request)
     return {"xslt_embed": await get_xslt_embed_mode()}
 
 
 @router.put("/system/einvoice-designs/settings/embed")
-async def put_embed_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
+async def put_embed_settings(
+    req: Dict[str, Any],
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     mode = await set_xslt_embed_mode(req.get("xslt_embed"))
     return {"xslt_embed": mode}
 
 
-@router.delete("/system/einvoice-designs/{design_id}")
-async def delete_design(design_id: str, _: dict = Depends(saas.require_super_admin)):
+async def _delete_scoped(design_id: str, company_id: Optional[str]) -> dict:
     await ensure_defaults()
-    doc = await _get(design_id)
-    if not _is_platform(doc):
-        raise HTTPException(status_code=403, detail="Şirket tasarımı Sistem panelinden silinemez.")
+    cid = str(company_id or "").strip()
+    doc = await _get_scoped(design_id, cid or None)
+    if cid:
+        if _is_platform(doc) or doc.get("is_builtin"):
+            raise HTTPException(status_code=400, detail="Varsayılan tasarım silinemez. Kopyalayıp düzenleyin.")
+        if _doc_company_id(doc) != cid:
+            raise HTTPException(status_code=404, detail="Tasarım bulunamadı.")
+        if doc.get("is_selected"):
+            raise HTTPException(status_code=400, detail="Seçili tasarım silinemez. Önce başka bir tasarımı seçin.")
+        await _db[COLLECTION].delete_one({"_id": design_id})
+        return {"status": "success", "items": await _list(cid)}
     if doc.get("is_builtin"):
         raise HTTPException(status_code=400, detail="Varsayılan tasarım silinemez. Kopyalayıp düzenleyin.")
     if doc.get("is_selected"):
         raise HTTPException(status_code=400, detail="Seçili tasarım silinemez. Önce başka bir tasarımı seçin.")
     await _db[COLLECTION].delete_one({"_id": design_id})
     return {"status": "success", "items": await _list()}
+
+
+@router.delete("/system/einvoice-designs/{design_id}")
+async def delete_design(
+    design_id: str,
+    user: dict = Depends(saas.require_super_admin),
+    request: Request = None,
+    company_id: Optional[str] = None,
+):
+    _guard_design_http(user, request)
+    return await _delete_scoped(design_id, company_id)
 
 
 def _catalog(items: List[dict]) -> dict:
@@ -902,21 +1049,38 @@ async def _get_for_company(design_id: str, company_id: str) -> dict:
 
 
 @router.get("/einvoice/designs")
-async def list_company_designs(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+async def list_company_designs(
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, company_id)
     items = await _list(cid)
     return _catalog(items)
 
 
 @router.get("/einvoice/designs/{design_id}")
-async def get_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+async def get_company_design(
+    design_id: str,
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, company_id)
     await ensure_defaults()
     return _public(await _get_for_company(design_id, cid), include_xslt=True)
 
 
 @router.get("/einvoice/designs/{design_id}/download")
-async def download_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+async def download_company_design(
+    design_id: str,
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, company_id)
     await ensure_defaults()
     doc = await _get_for_company(design_id, cid)
@@ -930,7 +1094,13 @@ async def download_company_design(design_id: str, company_id: Optional[str] = No
 
 
 @router.get("/einvoice/designs/{design_id}/export")
-async def export_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+async def export_company_design(
+    design_id: str,
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, company_id)
     await ensure_defaults()
     doc = await _get_for_company(design_id, cid)
@@ -953,7 +1123,8 @@ async def export_company_design(design_id: str, company_id: Optional[str] = None
 
 
 @router.post("/einvoice/designs")
-async def create_company_design(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def create_company_design(req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, (req or {}).get("company_id"))
     copy_from = str((req or {}).get("copy_from_id") or "").strip()
     if copy_from:
@@ -962,7 +1133,13 @@ async def create_company_design(req: Dict[str, Any], user: dict = Depends(_user_
 
 
 @router.put("/einvoice/designs/{design_id}")
-async def update_company_design(design_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def update_company_design(
+    design_id: str,
+    req: Dict[str, Any],
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, (req or {}).get("company_id"))
     doc = await _get_for_company(design_id, cid)
     if _is_platform(doc):
@@ -976,7 +1153,14 @@ async def update_company_design(design_id: str, req: Dict[str, Any], user: dict 
 
 
 @router.post("/einvoice/designs/{design_id}/select")
-async def select_company_design(design_id: str, req: Optional[Dict[str, Any]] = None, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+async def select_company_design(
+    design_id: str,
+    req: Optional[Dict[str, Any]] = None,
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, company_id or (req or {}).get("company_id"))
     await ensure_defaults()
     doc = await _get_for_company(design_id, cid)
@@ -997,7 +1181,8 @@ async def select_company_design(design_id: str, req: Optional[Dict[str, Any]] = 
 
 
 @router.post("/einvoice/designs/import")
-async def import_company_design(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def import_company_design(req: Dict[str, Any], user: dict = Depends(_user_dep), request: Request = None):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, (req or {}).get("company_id"))
     created = await import_design(req or {}, user)
     await _db[COLLECTION].update_one({"_id": created["id"]}, {"$set": {"company_id": cid, "updated_at": _now()}})
@@ -1005,7 +1190,13 @@ async def import_company_design(req: Dict[str, Any], user: dict = Depends(_user_
 
 
 @router.delete("/einvoice/designs/{design_id}")
-async def delete_company_design(design_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+async def delete_company_design(
+    design_id: str,
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    _guard_design_http(user, request)
     cid = await _company_scope(user, company_id)
     await ensure_defaults()
     doc = await _get_for_company(design_id, cid)

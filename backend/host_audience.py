@@ -57,6 +57,8 @@ _YNT_ALLOWED_PREFIXES = (
     "/api/einvoice/providers",
     "/api/einvoice/settings",
     "/api/einvoice/test",
+    # e-Fatura tasarım yönetimi: yalnız süper admin. Kiracı /einvoice/designs 403.
+    "/api/einvoice/designs",
     "/api/integrations/isnet/",
     "/api/integrations/isnet-portal/",
     # Şirket SMS uçları allowlist'te kalır ki ynt yazması handler'da 403 + audit olsun.
@@ -250,6 +252,8 @@ def is_super_admin_api_path(path: str) -> bool:
         return False
     if p.startswith("/api/auth/2fa"):
         return False
+    if p == "/api/einvoice/designs" or p.startswith("/api/einvoice/designs/"):
+        return True
     return (
         p.startswith("/api/system")
         or p.startswith("/api/platform/admin")

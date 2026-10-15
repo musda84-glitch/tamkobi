@@ -37,7 +37,9 @@ const slugName = (name, kind, ext) => {
   return base.toLowerCase().endsWith(ext) ? base : `${base}${ext}`;
 };
 
-export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
+export const EinvoiceDesignsPanel = () => {
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState("");
   const [d, setD] = useState(null);
   const [kind, setKind] = useState("e_invoice");
   const [openId, setOpenId] = useState("");
@@ -50,18 +52,13 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   const fileRef = useRef(null);
   const importRef = useRef(null);
   const xsltOverwriteWarnedRef = useRef(false);
-  const isCompany = mode === "company" && !!companyId;
-  const listUrl = isCompany
-    ? `${API_URL}/einvoice/designs?company_id=${encodeURIComponent(companyId)}`
-    : `${API_URL}/system/einvoice-designs`;
-  const itemUrl = (id, suffix = "") => {
-    const base = isCompany ? `${API_URL}/einvoice/designs/${id}${suffix}` : `${API_URL}/system/einvoice-designs/${id}${suffix}`;
-    if (!isCompany) return base;
-    const sep = base.includes("?") ? "&" : "?";
-    return `${base}${sep}company_id=${encodeURIComponent(companyId)}`;
-  };
-  const collectionUrl = isCompany ? `${API_URL}/einvoice/designs` : `${API_URL}/system/einvoice-designs`;
-  const withCompany = (body) => (isCompany ? { ...body, company_id: companyId } : body);
+  const scopedId = companyId && companyId !== "__platform__" ? companyId : "";
+  const isCompany = !!scopedId;
+  const q = scopedId ? `?company_id=${encodeURIComponent(scopedId)}` : "";
+  const listUrl = `${API_URL}/system/einvoice-designs${q}`;
+  const itemUrl = (id, suffix = "") => `${API_URL}/system/einvoice-designs/${id}${suffix}${q}`;
+  const collectionUrl = `${API_URL}/system/einvoice-designs`;
+  const withCompany = (body) => (scopedId ? { ...body, company_id: scopedId } : body);
 
   const load = useCallback(async () => {
     const r = await axios.get(listUrl, cred);
@@ -70,8 +67,16 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
   }, [listUrl]);
 
   useEffect(() => {
+    axios.get(`${API_URL}/system/companies`, cred)
+      .then((r) => setCompanies(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setCompanies([]));
+  }, []);
+
+  useEffect(() => {
+    if (!companyId) return undefined;
     load().catch((e) => toast.error(e.response?.data?.detail || "Tasarımlar yüklenemedi."));
-  }, [load]);
+    return undefined;
+  }, [load, companyId]);
 
   const items = useMemo(() => (d?.items || []).filter((i) => i.kind === kind), [d, kind]);
   const openRow = items.find((i) => i.id === openId);
@@ -320,10 +325,47 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
     }
   };
 
-  if (!d) return <div className="text-xs text-slate-400 p-4" data-testid="einvoice-designs-loading">Yükleniyor…</div>;
+  const pickCompany = (next) => {
+    if (next === companyId) return;
+    if (!confirmLeaveUnsaved()) return;
+    setCompanyId(next);
+    setOpenId("");
+    setForm(emptyForm(kind));
+    setTab("visual");
+    setSavedSnap("");
+    setSource("visual");
+    setD(null);
+  };
+  const companySelect = (
+    <div className="max-w-md">
+      <label className="block font-semibold text-slate-700 mb-1" htmlFor="einvoice-design-company-select">Firma</label>
+      <select
+        id="einvoice-design-company-select"
+        value={companyId}
+        onChange={(e) => pickCompany(e.target.value)}
+        className={inputCls}
+        data-testid="einvoice-design-company-select"
+      >
+        <option value="">Firma seçin</option>
+        <option value="__platform__">Platform varsayılanı</option>
+        {companies.map((c) => (
+          <option key={c.id} value={c.id}>{c.name || c.id}</option>
+        ))}
+      </select>
+    </div>
+  );
 
   return (
     <div className="space-y-4 text-xs" data-testid="einvoice-designs-panel">
+      {companySelect}
+      {!companyId ? (
+        <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2" data-testid="einvoice-design-company-hint">
+          Tasarım yönetimi için firma seçin. Yalnız seçilen firmanın tasarımları listelenir.
+        </p>
+      ) : !d ? (
+        <div className="text-xs text-slate-400 p-4" data-testid="einvoice-designs-loading">Yükleniyor…</div>
+      ) : (
+      <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
@@ -491,6 +533,8 @@ export const EinvoiceDesignsPanel = ({ companyId, mode = "system" } = {}) => {
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };
