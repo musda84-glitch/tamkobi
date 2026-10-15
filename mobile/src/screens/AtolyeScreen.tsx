@@ -225,7 +225,8 @@ function WoCard({
 }
 
 export function AtolyeScreen() {
-  const { client, companyId, user, baseUrl } = useAuth();
+  const { client, companyId, user, baseUrl, can } = useAuth();
+  const canView = can("/atolye");
   const [wos, setWos] = useState<WorkOrder[]>([]);
   /** İstasyon filtresinden bağımsız in_progress — operatör kilit UI */
   const [lockWos, setLockWos] = useState<WorkOrder[]>([]);
@@ -275,6 +276,7 @@ export function AtolyeScreen() {
   }, [client, companyId]);
 
   const load = useCallback(async () => {
+    if (!canView) return;
     setRefreshing(true);
     try {
       const [w, lockRows, e, s, parks, me, settings] = await Promise.all([
@@ -307,7 +309,7 @@ export function AtolyeScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [client, companyId, station]);
+  }, [canView, client, companyId, station]);
 
   useFocusEffect(
     useCallback(() => {
@@ -614,6 +616,14 @@ export function AtolyeScreen() {
       setTrashReqBusy(false);
     }
   };
+
+  if (!canView) {
+    return (
+      <Screen>
+        <ErrorBanner message="Atölye yetkiniz yok." />
+      </Screen>
+    );
+  }
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>

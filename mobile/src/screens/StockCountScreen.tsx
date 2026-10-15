@@ -3,25 +3,32 @@ import React, { useCallback, useState } from "react";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { confirmAction } from "../components/chips";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
-import { countIdOf, scannedItems, type CountListRow } from "../utils/stockCount";
+import { countIdOf, scannedItems, stockCountCreatePayload, warehouseSelectGroups, type CountListRow, type WarehouseOption } from "../utils/stockCount";
 
 export function StockCountScreen() {
   const { client, companyId, can } = useAuth();
-  const canEdit = can("/sayim", "edit") || can("/stock", "edit");
-  const canView = can("/sayim") || can("/stock");
+  const canEdit = can("/sayim", "edit");
+  const canView = can("/sayim");
   const [rows, setRows] = useState<CountListRow[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [name, setName] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!canView) return;
     try {
-      const data = await get<CountListRow[]>(client, "/warehouses/stock-counts", { company_id: companyId });
+      const [data, deps] = await Promise.all([
+        get<CountListRow[]>(client, "/warehouses/stock-counts", { company_id: companyId }),
+        get<WarehouseOption[]>(client, "/warehouses", { company_id: companyId }).catch(() => []),
+      ]);
       setRows(Array.isArray(data) ? data : []);
+      setWarehouses(Array.isArray(deps) ? deps : []);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Sayımlar yüklenemedi."));
@@ -32,15 +39,14 @@ export function StockCountScreen() {
 
   const create = () => {
     if (!canEdit) return;
-    confirmAction("Yeni sayım", "Boş sayım oturumu açılsın mı?", async () => {
+    const depot = warehouses.find((w) => String(w.id || w._id || "") === warehouseId);
+    const where = depot?.name ? ` (${depot.name})` : " (tüm depolar)";
+    confirmAction("Yeni sayım", `Boş sayım oturumu açılsın mı?${where}`, async () => {
       setBusy(true);
       try {
-        const created = await post<CountListRow>(client, "/warehouses/stock-counts", {
-          company_id: companyId,
-          name: name.trim() || undefined,
-          preload_all: false,
-        });
+        const created = await post<CountListRow>(client, "/warehouses/stock-counts", stockCountCreatePayload(companyId, name, warehouseId));
         setName("");
+        setWarehouseId("");
         setError(null);
         const id = countIdOf(created);
         if (id) go("StockCountSession", { id, name: created.name || "Sayım" });
@@ -74,6 +80,14 @@ export function StockCountScreen() {
       {canEdit ? (
         <Card testID="sayim-new-card">
           <Field label="Sayım adı (opsiyonel)" testID="sayim-name" value={name} onChangeText={setName} placeholder="Örn: Depo A — akşam" />
+          <GroupedSelect
+            label="Depo"
+            testID="sayim-warehouse"
+            value={warehouseId}
+            onChange={setWarehouseId}
+            groups={warehouseSelectGroups(warehouses)}
+            emptyLabel="Tüm depolar"
+          />
           <PrimaryButton title="Yeni sayım başlat" onPress={create} loading={busy} color={colors.indigo} testID="sayim-create" />
         </Card>
       ) : null}

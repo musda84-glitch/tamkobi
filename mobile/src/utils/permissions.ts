@@ -5,6 +5,7 @@ export type SessionUser = {
   permissions?: Record<string, PermissionLevel>;
   features?: Record<string, boolean>;
   employee_id?: string | null;
+  is_super_admin?: boolean;
 } | null;
 
 export type License = {
@@ -25,14 +26,39 @@ export const PORTAL_FIELD_BY_PATH: Record<string, string> = {
 
 const PORTAL_FEATURE_KEYS = new Set(Object.values(PORTAL_FIELD_BY_PATH));
 
+/** Web PERSONEL_MENU_PATHS: personel rolü yalnız bu ekranları ve açık saha özelliklerini görür. */
+const PERSONEL_MENU_PATHS = new Set([
+  "/",
+  "/panel",
+  "/mesai",
+  "/personelim",
+  "/communication",
+  "/support",
+  "/yardim",
+]);
+
 function isPersonelRole(user: SessionUser): boolean {
   return String(user?.role || "").trim().toLowerCase() === "personel";
 }
 
 export function hasPortalFeature(user: SessionUser, key: string): boolean {
   if (!user || !key) return false;
-  if (user.role === "admin") return true;
+  if (user.is_super_admin) return true;
+  const role = String(user.role || "").trim().toLowerCase();
+  if (role === "admin" || role === "owner") return true;
   return user.features?.[key] === true;
+}
+
+/** Web personelMenuPathAllowed. Diğer roller için kısıt yok. */
+export function personelMenuPathAllowed(path: string, user: SessionUser): boolean {
+  if (!user) return false;
+  if (!isPersonelRole(user)) return true;
+  const p = String(path || "").split("?")[0];
+  if (p === "/hesap" || p.startsWith("/hesap/")) return true;
+  if (p === "/yardim" || p.startsWith("/yardim/")) return true;
+  const fieldKey = PORTAL_FIELD_BY_PATH[permPath(p)] || PORTAL_FIELD_BY_PATH[p];
+  if (fieldKey) return hasPortalFeature(user, fieldKey);
+  return PERSONEL_MENU_PATHS.has(p) || PERSONEL_MENU_PATHS.has(permPath(p));
 }
 
 export function permPath(path: string): string {
@@ -63,15 +89,17 @@ function levelAllows(value: PermissionLevel | undefined, level: "view" | "edit" 
 }
 
 export function can(user: SessionUser, path: string, level: "view" | "edit" | "delete" = "view"): boolean {
-  if (user?.role === "admin") return true;
+  if (!user) return false;
+  if (user.role === "admin") return true;
   const portalKey = PORTAL_FIELD_BY_PATH[permPath(path)];
   if (portalKey && hasPortalFeature(user, portalKey)) return true;
   if (portalKey && isPersonelRole(user)) return false;
+  if (isPersonelRole(user) && !personelMenuPathAllowed(path, user)) return false;
   if (path === "/personnel") {
     if (level === "view") return hasPersonnelAccess(user);
     return levelAllows(permissionLevel(user, path), level);
   }
-  if (!user?.permissions) return true;
+  if (!user.permissions) return false;
   const value = permissionLevel(user, path);
   // Sunucu backfill: /cheques anahtarı yoksa banka yetkisi geçer.
   if (value == null && path === "/cheques") {
@@ -87,7 +115,9 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" | "d
 
 /** Rol özellik bayrağı (Özellik Yetkileri). Anahtar yoksa backend feature_default ile uyumlu. */
 export function feature(user: SessionUser, key: string): boolean {
-  if (!user || user.role === "admin") return true;
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  if (PORTAL_FEATURE_KEYS.has(key)) return hasPortalFeature(user, key);
   if (user.features && Object.prototype.hasOwnProperty.call(user.features, key)) {
     return user.features[key] !== false;
   }
@@ -98,7 +128,6 @@ export function feature(user: SessionUser, key: string): boolean {
   }
   if (key === "view_prices" && (role === "personel" || role === "production")) return false;
   if ((key === "account_companies" || key === "export_personal_data") && role === "personel") return false;
-  if (PORTAL_FEATURE_KEYS.has(key)) return false;
   return true;
 }
 
@@ -119,6 +148,7 @@ export function showFinanceSubstituteTabs(user: SessionUser): boolean {
 
 /** Özet ciro / kâr / tahsilat kartı: personel kaydı bağlı girişte gizlenir. */
 export function showHomeFinanceSummary(user: SessionUser): boolean {
+  if (isPersonelRole(user)) return false;
   return !hasSelfPersonnelRecord(user);
 }
 

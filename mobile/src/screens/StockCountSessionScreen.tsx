@@ -20,7 +20,8 @@ import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 export function StockCountSessionScreen() {
   const { client, can } = useAuth();
-  const canEdit = can("/sayim", "edit") || can("/stock", "edit");
+  const canView = can("/sayim");
+  const canEdit = can("/sayim", "edit");
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [session, setSession] = useState<CountSession | null>(null);
   const [code, setCode] = useState("");
@@ -32,6 +33,7 @@ export function StockCountSessionScreen() {
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!canView) return;
     try {
       const s = await get<CountSession>(client, `/warehouses/stock-counts/${id}`);
       setSession(s);
@@ -39,7 +41,7 @@ export function StockCountSessionScreen() {
     } catch (err) {
       setError(apiErrorMessage(err, "Sayım oturumu açılamadı."));
     }
-  }, [client, id]);
+  }, [canView, client, id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -113,6 +115,15 @@ export function StockCountSessionScreen() {
   const scanned = scannedItems(session);
   const diffs = diffItems(session);
   const qtyLabel = scanQtyShown(scanQty) || "1";
+
+  if (!canView) {
+    return (
+      <Screen>
+        <H1>Stok Sayımı</H1>
+        <ErrorBanner message="Sayım yetkiniz yok." />
+      </Screen>
+    );
+  }
 
   return (
     <Screen onRefresh={load}>

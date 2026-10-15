@@ -21,7 +21,10 @@ export function ProgressBar({ percent }: { percent: number }) {
 }
 
 export function SevkScreen() {
-  const { client, companyId } = useAuth();
+  const { client, companyId, can } = useAuth();
+  const canView = can("/sevk");
+  const showOrders = can("/orders");
+  const showStock = can("/stock");
   const [rows, setRows] = useState<PickRow[]>([]);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +34,7 @@ export function SevkScreen() {
   const [printError, setPrintError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!canView) return;
     setRefreshing(true);
     try {
       const data = await get<PickRow[]>(client, "/order-picks", { company_id: companyId });
@@ -41,7 +45,7 @@ export function SevkScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [client, companyId]);
+  }, [canView, client, companyId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -50,6 +54,14 @@ export function SevkScreen() {
     if (!s) return rows;
     return rows.filter((r) => [r.order_number, r.customer_name, r.city].some((v) => String(v || "").toLowerCase().includes(s)));
   }, [q, rows]);
+
+  if (!canView) {
+    return (
+      <Screen>
+        <ErrorBanner message="Sipariş toplama yetkiniz yok." />
+      </Screen>
+    );
+  }
 
   return (
     <Screen
@@ -61,8 +73,8 @@ export function SevkScreen() {
             columns={3}
             items={[
               { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "sevk-refresh", onPress: load },
-              { key: "orders", label: "Siparişler", icon: "cart", tone: "amber", testID: "sevk-orders", onPress: () => go("Orders") },
-              { key: "stock", label: "Stok", icon: "cube", tone: "indigo", testID: "sevk-stock", onPress: () => go("Stock") },
+              ...(showOrders ? [{ key: "orders", label: "Siparişler", icon: "cart" as const, tone: "amber" as const, testID: "sevk-orders", onPress: () => go("Orders") }] : []),
+              ...(showStock ? [{ key: "stock", label: "Stok", icon: "cube" as const, tone: "indigo" as const, testID: "sevk-stock", onPress: () => go("Stock") }] : []),
             ]}
           />
           <Field label="Ara" testID="sevk-search" value={q} onChangeText={setQ} placeholder="Sipariş no, müşteri, şehir" />

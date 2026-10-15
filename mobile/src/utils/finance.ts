@@ -644,6 +644,7 @@ export function paymentTargetGroups(
     options: g.items.map((a) => ({
       value: idOf(a),
       label: `${accountDisplayLabel(a)} · ${fmtMoney(accountBalance(a), a.currency)}`,
+      disabled: !!a.is_integrated,
     })),
   }));
   const active = (partners || []).filter((p) => p.is_active !== false);

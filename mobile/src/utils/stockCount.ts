@@ -52,3 +52,23 @@ export function adjustCountPayload(item: CountItem, counted: number) {
     counted: Math.max(0, Number(counted) || 0),
   };
 }
+
+export type WarehouseOption = { id?: string; _id?: string; name?: string };
+
+/** Web kiosk depo seçici: boş değer tüm depolar. */
+export function warehouseSelectGroups(rows?: WarehouseOption[] | null) {
+  const options = (rows || [])
+    .map((w) => ({ value: String(w.id || w._id || ""), label: String(w.name || "Depo").trim() || "Depo" }))
+    .filter((o) => o.value);
+  return options.length ? [{ label: "Depolar", options }] : [];
+}
+
+export function stockCountCreatePayload(companyId: string, name: string, warehouseId?: string | null) {
+  const warehouse = String(warehouseId || "").trim();
+  return {
+    company_id: companyId,
+    name: name.trim() || undefined,
+    warehouse_id: warehouse || null,
+    preload_all: false,
+  };
+}
