@@ -1,21 +1,23 @@
 /** Pick / quick-print: stok kartına atanmış şablon, yoksa varsayılan / ilk / hazır. */
 
-export function resolveLabelTemplate(templates = [], product, builtins = []) {
+export function resolveLabelTemplateInfo(templates = [], product, builtins = []) {
   const list = Array.isArray(templates) ? templates : [];
   const builtinList = Array.isArray(builtins) ? builtins : [];
   const assignedId = String(product?.label_template_id || "").trim();
   if (assignedId) {
     const assigned = list.find((t) => String(t?.id || t?._id || "") === assignedId);
-    if (assigned) return assigned;
+    if (assigned) return { tpl: assigned, source: "assigned", missingAssigned: false };
   }
+  const missingAssigned = Boolean(assignedId);
   const def = list.find((t) => t?.is_default);
-  if (def) return def;
-  if (list[0]) return list[0];
-  return (
-    builtinList.find((t) => t?.id === "builtin-50x30")
-    || builtinList[0]
-    || null
-  );
+  if (def) return { tpl: def, source: "default", missingAssigned };
+  if (list[0]) return { tpl: list[0], source: "first", missingAssigned };
+  const builtin = builtinList.find((t) => t?.id === "builtin-50x30") || builtinList[0] || null;
+  return { tpl: builtin, source: "builtin", missingAssigned };
+}
+
+export function resolveLabelTemplate(templates = [], product, builtins = []) {
+  return resolveLabelTemplateInfo(templates, product, builtins).tpl;
 }
 
 /** Pick satırından LabelCanvas / LabelQuickPrint ürün nesnesi. */

@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { API_URL } from "../context/AuthContext";
 import { LabelCanvas, builtinTemplates, printLabelJobs } from "./LabelDesigner";
 import { labelCopyCount } from "../utils/pickLabels";
-import { pickLineToLabelProduct, resolveLabelTemplate } from "../utils/resolveLabelTemplate";
+import { pickLineToLabelProduct, resolveLabelTemplateInfo } from "../utils/resolveLabelTemplate";
+
+const TEMPLATE_FETCH_CONFIRM = "Etiket şablonları alınamadı (oturum/firma). Hazır şablonla basılsın mı?";
 
 /**
  * Sevkiyat toplama: stok kartına atanmış etiket şablonu (yoksa varsayılan) ile yazdır.
@@ -19,6 +21,7 @@ export function PickLabelPrintHost({
   const builtins = useMemo(() => builtinTemplates(), []);
   const [templates, setTemplates] = useState([]);
   const [templatesReady, setTemplatesReady] = useState(false);
+  const [templatesError, setTemplatesError] = useState(false);
   const [batch, setBatch] = useState(null);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
@@ -27,18 +30,22 @@ export function PickLabelPrintHost({
   useEffect(() => {
     if (!companyId) {
       setTemplates([]);
+      setTemplatesError(false);
       setTemplatesReady(true);
       return undefined;
     }
     let cancelled = false;
     setTemplatesReady(false);
+    setTemplatesError(false);
     axios.get(`${API_URL}/label-templates?company_id=${companyId}`).then((r) => {
       if (cancelled) return;
       setTemplates(Array.isArray(r.data) ? r.data : []);
+      setTemplatesError(false);
       setTemplatesReady(true);
     }).catch(() => {
       if (cancelled) return;
       setTemplates([]);
+      setTemplatesError(true);
       setTemplatesReady(true);
     });
     return () => { cancelled = true; };
@@ -51,11 +58,31 @@ export function PickLabelPrintHost({
     if (lastIdRef.current === reqId) return undefined;
     lastIdRef.current = reqId;
 
+    if (templatesError) {
+      toast.error(TEMPLATE_FETCH_CONFIRM);
+      const ok = typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(TEMPLATE_FETCH_CONFIRM)
+        : false;
+      if (!ok) {
+        onDoneRef.current?.();
+        return undefined;
+      }
+    }
+
+    const warned = new Set();
     const groups = new Map();
     for (const line of items) {
       const product = pickLineToLabelProduct(line);
       if (!product) continue;
-      const tpl = resolveLabelTemplate(templates, product, builtins);
+      const info = resolveLabelTemplateInfo(templates, product, builtins);
+      if (info.missingAssigned) {
+        const key = String(product.id || product.name);
+        if (!warned.has(key)) {
+          warned.add(key);
+          toast.warning(`${product.name}: atanan etiket şablonu bulunamadı, varsayılan kullanıldı`);
+        }
+      }
+      const tpl = info.tpl;
       if (!tpl) continue;
       const key = String(tpl.id || tpl._id || "default");
       if (!groups.has(key)) groups.set(key, { tpl, products: [] });
@@ -104,7 +131,7 @@ export function PickLabelPrintHost({
     };
     runNext();
     return () => { cancelled = true; };
-  }, [printRequest, templates, builtins, templatesReady]);
+  }, [printRequest, templates, builtins, templatesReady, templatesError]);
 
   if (!batch) return null;
   return (
