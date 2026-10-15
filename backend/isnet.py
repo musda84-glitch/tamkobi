@@ -2249,7 +2249,7 @@ async def send_despatch_document(
         await _fill_invoice_stock_codes(inv_for_ubl)
         xml, _local_ettn, inv_id = build_despatch_ubl(inv_for_ubl, company_for_ubl, contact, xslt=xslt)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.exception("isnet build_despatch_ubl")
         raise HTTPException(status_code=500, detail=f"e-İrsaliye UBL hatası: {e}") from e

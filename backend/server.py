@@ -8873,11 +8873,21 @@ def _invoice_gib_locked(inv: dict) -> bool:
     return invoice_gib_locked(inv)
 
 
+_DESPATCH_EDIT_KEYS = {
+    "despatch_mode", "despatch_plate", "despatch_trailer", "despatch_driver_first", "despatch_driver_last",
+    "despatch_driver_tckn", "despatch_carrier_name", "despatch_carrier_vkn", "cargo_tracking_number",
+}
+
+
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    from despatch_shipment import is_incoming_dispatch
+
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
+    if is_incoming_dispatch(inv):
+        raise HTTPException(status_code=400, detail="Gelen e-irsaliye düzenlenemez.")
     # GİB'e gönderilmemiş faturalar (taslak veya yalnızca yerel onay) tam düzenlenebilir
     if _invoice_gib_locked(inv):
         allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
@@ -8885,7 +8895,10 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}
+    if _is_dispatch_doc(inv):
+        editable = editable | _DESPATCH_EDIT_KEYS
+    allowed = {k: v for k, v in req.items() if k in editable}
     reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
         _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
@@ -9214,8 +9227,21 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
 async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """GİB'e e-belge gönderimi — e_invoice.issue_invoice üzerinden."""
+    from despatch_shipment import despatch_gib_accepted, is_incoming_dispatch, shipment_patch_from_request
+
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    if _is_dispatch_doc(inv):
+        if is_incoming_dispatch(inv):
+            raise HTTPException(status_code=400, detail="Gelen e-irsaliye gönderilemez.")
+        if despatch_gib_accepted(inv):
+            raise HTTPException(status_code=409, detail="Bu irsaliye GİB tarafından kabul edilmiş; tekrar gönderilemez.")
+        patch = shipment_patch_from_request(req)
+        if patch:
+            await db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+            inv = await db.invoices.find_one({"_id": invoice_id}) or inv
+        if not req.get("e_type"):
+            req = {**req, "e_type": "e_dispatch"}
     if inv.get("status") == "draft" and not inv.get("effects_applied"):
         # İrsaliye bakiyeye yazılmaz; effects_applied işaretleme de yapılmaz.
         if not _is_dispatch_doc(inv):
@@ -14082,27 +14108,54 @@ async def list_returns(company_id: Optional[str] = "comp_nexus_main_01"):
 
 @api_router.post("/orders/{order_id}/create-dispatch")
 async def create_dispatch(order_id: str, user: dict = Depends(get_current_user)):
+    """Siparişten yalnız taslak e-İrsaliye. İşNet/GİB gönderimi detaydaki nakliye formundan yapılır."""
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     if o.get("dispatch_id"):
-        d = await db.invoices.find_one({"_id": o["dispatch_id"]})
-        if d and d.get("status") == "draft" and d.get("e_type") == "e_dispatch" and not d.get("gib_uuid"):
-            sent = await _send_dispatch_to_isnet_if_configured(d)
-            if sent.get("sent"):
-                return {
-                    "status": "success",
-                    "dispatch": sent.get("dispatch") or clean_doc(d),
-                    "message": (sent.get("result") or {}).get("message") or "e-İrsaliye İşNet'e iletildi.",
-                }
-        return {"status": "exists", "dispatch": clean_doc(d), "message": "Bu sipariş için irsaliye zaten mevcut."}
+        d = await db.invoices.find_one({"_id": o["dispatch_id"], "company_id": o["company_id"]})
+        if not d:
+            d = await db.invoices.find_one({"_id": o["dispatch_id"]})
+        return {
+            "status": "exists",
+            "dispatch": clean_doc(d) if d else {"id": o["dispatch_id"]},
+            "message": "Bu sipariş için irsaliye zaten mevcut.",
+        }
+    contact_id = str(o.get("contact_id") or "").strip()
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="Önce cari seçin")
+    contact = await db.contacts.find_one({"_id": contact_id, "company_id": o["company_id"]})
+    if not contact:
+        raise HTTPException(status_code=400, detail="Önce cari seçin")
     number = await _next_number("IRS", db.invoices)
-    contact = await db.contacts.find_one({"name": o.get("customer_name"), "company_id": o["company_id"]})
     settings = await db.einvoice_settings.find_one({"company_id": o["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
-    doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"] if contact else None,
-           "contact_name": o.get("customer_name"),
-           "contact_tax_id": (contact or {}).get("tax_number_or_id") or (contact or {}).get("tax_id"),
-           "customer_phone": o.get("customer_phone"), "shipping_address": o.get("shipping_address"), "city": o.get("city"),
-           "items": [{"product_id": it.get("product_id"), "name": it.get("product_name"), "quantity": it.get("quantity"), "unit": "Adet", "unit_price": it.get("unit_price"), "vat_rate": 0, "total": it.get("total")} for it in o.get("items", [])],
+    items = []
+    for it in o.get("items") or []:
+        product = None
+        pid = str(it.get("product_id") or "").strip()
+        if pid:
+            product = await db.products.find_one({"_id": pid, "company_id": o["company_id"]})
+        if product is not None and product.get("vat_rate") is not None:
+            vat_rate = product.get("vat_rate")
+        elif it.get("vat_rate") is not None:
+            vat_rate = it.get("vat_rate")
+        else:
+            vat_rate = 0
+        unit = (product or {}).get("unit") or it.get("unit") or "Adet"
+        items.append({
+            "product_id": it.get("product_id"),
+            "name": it.get("product_name") or it.get("name"),
+            "quantity": it.get("quantity"),
+            "unit": unit,
+            "unit_price": it.get("unit_price"),
+            "vat_rate": vat_rate,
+            "total": it.get("total"),
+        })
+    ship = str(o.get("shipping_address") or "").strip() or str((contact or {}).get("address") or "").strip()
+    doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"],
+           "contact_name": contact.get("name") or o.get("customer_name"),
+           "contact_tax_id": contact.get("tax_number_or_id") or contact.get("tax_id"),
+           "customer_phone": o.get("customer_phone") or contact.get("phone"), "shipping_address": ship, "city": o.get("city") or contact.get("city"),
+           "items": items,
            "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
            "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier") or defaults.get("carrier_name"), "cargo_tracking_number": o.get("cargo_tracking_number"), "source_channel": o.get("channel", "b2b"),
            "despatch_defaults": defaults,
@@ -14116,19 +14169,6 @@ async def create_dispatch(order_id: str, user: dict = Depends(get_current_user))
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
-    sent = await _send_dispatch_to_isnet_if_configured(doc)
-    if sent.get("sent"):
-        return {
-            "status": "success",
-            "dispatch": sent.get("dispatch") or clean_doc(doc),
-            "message": (sent.get("result") or {}).get("message") or f"{number} e-İrsaliye İşNet'e iletildi.",
-        }
-    if sent.get("reason") == "send_failed":
-        return {
-            "status": "success",
-            "dispatch": clean_doc(doc),
-            "message": f"{number} taslak oluşturuldu; İşNet: {sent.get('detail')}",
-        }
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
 
 

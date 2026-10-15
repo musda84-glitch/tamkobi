@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { Fragment, useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
@@ -16,6 +16,7 @@ import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoice
 import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
+import { dispatchDirFromParam, splitDispatchLists } from "../utils/despatchShipment";
 
 const EXTRA_FILTERS = [
   { key: "outgoing_e", label: "Giden e" },
@@ -48,10 +49,13 @@ function isIncomingE(inv: Invoice): boolean {
 
 export function InvoicesScreen() {
   const { client, companyId, can } = useAuth();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ dir?: string }>();
   const canEdit = can("/invoices", "edit");
   const canDelete = can("/invoices", "delete");
   const [rows, setRows] = useState<Invoice[]>([]);
   const [type, setType] = useState("all");
+  const dispatchDir = dispatchDirFromParam(params.dir);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -110,7 +114,7 @@ export function InvoicesScreen() {
     }
   };
 
-  const filtered = useMemo(() => {
+  const searched = useMemo(() => {
     const s = q.trim().toLowerCase();
     let list = [...rows];
     if (type === "outgoing_e") list = list.filter(isOutgoingE);
@@ -122,6 +126,14 @@ export function InvoicesScreen() {
     list.sort((a, b) => compareInvoiceActivity(a, b, "desc"));
     return list;
   }, [q, rows, type]);
+
+  const dispatchSplit = useMemo(
+    () => (type === "dispatch" ? splitDispatchLists(searched) : { incoming: [] as Invoice[], outgoing: [] as Invoice[] }),
+    [searched, type],
+  );
+  const filtered = type === "dispatch"
+    ? (dispatchDir === "in" ? dispatchSplit.incoming : dispatchSplit.outgoing)
+    : searched;
 
   const filterTabs = [...INVOICE_FILTERS, ...EXTRA_FILTERS];
 
@@ -163,6 +175,33 @@ export function InvoicesScreen() {
               );
             })}
           </View>
+          {type === "dispatch" ? (
+            <View style={{ flexDirection: "row", gap: 8 }} testID="dispatch-dir-tabs">
+              {([
+                { id: "out" as const, label: "Giden", count: dispatchSplit.outgoing.length },
+                { id: "in" as const, label: "Gelen", count: dispatchSplit.incoming.length },
+              ]).map((tab) => (
+                <Pressable
+                  key={tab.id}
+                  testID={`dispatch-dir-${tab.id}`}
+                  accessibilityState={{ selected: dispatchDir === tab.id }}
+                  onPress={() => router.setParams({ dir: tab.id })}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    backgroundColor: dispatchDir === tab.id ? "#A21CAF" : colors.slate100,
+                  }}
+                >
+                  <Text style={{ fontWeight: "800", fontSize: 12, color: dispatchDir === tab.id ? "#fff" : colors.slate800 }}>{tab.label}</Text>
+                  <Text testID={`dispatch-dir-count-${tab.id}`} style={{ fontWeight: "800", fontSize: 11, color: dispatchDir === tab.id ? "#fff" : colors.slate800 }}>{tab.count}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
           {canEdit ? (
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1 }}>

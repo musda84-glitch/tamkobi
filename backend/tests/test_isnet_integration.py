@@ -869,7 +869,13 @@ def test_isnet_build_despatch_ubl_send_path_has_no_visual_embed():
         "invoice_type": "dispatch",
         "e_type": "e_dispatch",
         "issue_date": "2026-10-14",
+        "issue_time": "10:00:00",
+        "shipping_address": "Teslim adresi 1",
+        "despatch_mode": "own",
         "despatch_plate": "34ABC123",
+        "despatch_driver_first": "Ali",
+        "despatch_driver_last": "Yilmaz",
+        "despatch_driver_tckn": "10000000146",
         "items": [{"name": "Koli", "quantity": 1, "unit": "Adet", "unit_price": 10, "total": 10}],
     }
     company = {"name": "Demo", "tax_number": "4810173324", "city": "İstanbul", "address": "Cadde 1", "tax_office": "Tuzla"}
@@ -1719,7 +1725,12 @@ def test_build_despatch_ubl_requires_plate_when_send_ready():
         "invoice_number": "IRS1",
         "issue_date": "2026-10-05",
         "issue_time": "14:30:00",
+        "shipping_address": "Teslim adresi 1",
+        "despatch_mode": "own",
         "despatch_plate": "34ABC123",
+        "despatch_driver_first": "Ali",
+        "despatch_driver_last": "Yilmaz",
+        "despatch_driver_tckn": "10000000146",
         "items": [{"name": "X", "quantity": 1, "unit": "Adet", "unit_price": 1, "total": 1}],
     }
     xml = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
@@ -1751,7 +1762,13 @@ def test_build_despatch_ubl_includes_invoice_document_reference():
     inv = {
         "invoice_number": "IRS-2026-0006",
         "issue_date": "2026-10-05",
+        "issue_time": "10:00:00",
+        "shipping_address": "Teslim adresi 1",
+        "despatch_mode": "own",
         "despatch_plate": "34ABC123",
+        "despatch_driver_first": "Ali",
+        "despatch_driver_last": "Yilmaz",
+        "despatch_driver_tckn": "10000000146",
         "invoice_ref_number": "TA202600000013",
         "invoice_ref_date": "2026-10-04",
         "items": [{"name": "X", "quantity": 1, "unit": "Adet", "unit_price": 1, "total": 1}],

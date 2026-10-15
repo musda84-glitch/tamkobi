@@ -17,6 +17,12 @@ def invoice_gib_locked(inv: Optional[Mapping[str, Any]]) -> bool:
     state = str(inv.get("einvoice_state") or "").strip().lower()
     if e_type in ("paper", "expense_slip") or state in ("paper", "not_applicable"):
         return False
+    gs_early = str(inv.get("gib_status") or "").strip().lower()
+    # Hata: GİB kabul etmedi. Kalan UUID belgeyi kilitlemez; nakliye düzeltilip tekrar gönderilir.
+    if state == "error" or gs_early.startswith("hata"):
+        if str(inv.get("gib_status_code") or "").strip() == "1300":
+            return True
+        return False
     if state in ("sent", "queued"):
         return True
     if inv.get("gib_tracking_id") or inv.get("gib_uuid"):
