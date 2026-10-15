@@ -9951,15 +9951,17 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01", w
     # Masraf, tahsilat ve virman ekranlarındaki kasa/banka seçicisini bu uç besliyor;
     # eksik dönen bir hesap kullanıcı için "kasam kayboldu" demek.
     # Salt okunur: kasa bakiyesi cevapta hareket toplamıdır, bank_accounts yazılmaz.
-    # Drift (ledger_balance, balance_drift, bank_balance_drift) yalnız ?with_drift=1.
+    # Kasa bakiyesi yalnız kasa hesaplarının hareketleri (iki IN sorgusu).
+    # Drift (ledger_balance, balance_drift, bank_balance_drift) yalnız ?with_drift=1
+    # ve o yol şirketin tüm bank_transactions kayıtlarını okumaya devam eder.
     accounts = await db.bank_accounts.find({"company_id": company_id}).sort("account_name", 1).to_list(2000)
     want_drift = bool(int(with_drift or 0))
     has_cash = any(str(a.get("type") or "") == "cash_box" for a in (accounts or []))
     txs = None
-    if has_cash or want_drift:
+    if want_drift:
         txs = await account_balance.fetch_company_bank_txs(db, company_id or "")
-        if has_cash:
-            accounts = await account_balance.sync_cash_box_balances(db, accounts, txs, persist=False)
+    if has_cash:
+        accounts = await account_balance.sync_cash_box_balances(db, accounts, txs, persist=False)
     conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(2000)}
     out = []
     for a in clean_docs(accounts):

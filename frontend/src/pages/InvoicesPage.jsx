@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
@@ -454,8 +454,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const loadData = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
-      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-      const [invRows, cntRows, prodRows, bankRes, projRes, quoteRes] = await Promise.all([
+      const cid = companyId;
+      const [invRows, cntRows, prodRows, quoteRes] = await Promise.all([
         cachedList("invoices", cid, {
           filter: invoiceTypeFilter(filterType),
           // Proforma sekmesinde tekliflerle birleştiriyoruz; onCached yalnızca faturaları basmasın.
@@ -463,8 +463,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         }),
         cachedList("contacts", cid, { onCached: setContacts }),
         cachedList("products", cid, { onCached: setProducts }),
-        axios.get(`${API_URL}/banking/accounts?company_id=${cid}`),
-        axios.get(`${API_URL}/projects?company_id=${cid}`),
         filterType === "proforma"
           ? axios.get(`${API_URL}/quotes`, { params: { company_id: cid, summary: 1 } }).catch(() => ({ data: [] }))
           : Promise.resolve({ data: [] }),
@@ -473,19 +471,50 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       setInvoices([...quoteRows, ...(invRows || [])]);
       setContacts(cntRows);
       setProducts(prodRows);
-      setProjects(projRes.data);
-      setBankAccounts(bankRes.data);
-      if (bankRes.data.length > 0) setPaymentAccount(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {
       toast.error("Veriler yüklenirken hata oluştu.");
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [activeCompany, filterType]);
+  }, [companyId, filterType]);
   useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => { setSelected([]); }, [listResetKey]);
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/projects?company_id=${companyId}`)
+      .then((r) => { if (!cancelled) setProjects(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => { if (!cancelled) setProjects([]); });
+    return () => { cancelled = true; };
+  }, [companyId]);
+  const loadedAccountsFor = useRef("");
+  useEffect(() => {
+    if (loadedAccountsFor.current && loadedAccountsFor.current !== companyId) {
+      loadedAccountsFor.current = "";
+      setBankAccounts([]);
+      setPaymentAccount("");
+    }
+  }, [companyId]);
+  useEffect(() => {
+    if (!paymentModalInvoice) return undefined;
+    if (loadedAccountsFor.current === companyId) return undefined;
+    let cancelled = false;
+    const cid = companyId;
+    axios.get(`${API_URL}/banking/accounts?company_id=${cid}`)
+      .then((r) => {
+        if (cancelled) return;
+        const rows = Array.isArray(r.data) ? r.data : [];
+        loadedAccountsFor.current = cid;
+        setBankAccounts(rows);
+        setPaymentAccount((prev) => {
+          if (prev && rows.some((a) => (a.id || a._id) === prev)) return prev;
+          return rows[0] ? (rows[0].id || rows[0]._id || "") : "";
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [paymentModalInvoice, companyId]);
   const refreshInvoicesSilent = useCallback(() => loadData({ silent: true }), [loadData]);
-  useDataRefresh(refreshInvoicesSilent, { companyId, scopes: ["cash", "invoices", "contacts"] });
+  useDataRefresh(refreshInvoicesSilent, { companyId, scopes: ["invoices", "contacts"] });
 
   const handleScanAddItem = (code) => {
     const c = String(code || "").trim();
@@ -2414,7 +2443,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{paymentModalInvoice.invoice_type === "sales" ? "Kasa / Banka / POS / Ortak (tahsilat)" : "Kasa / Banka / Kart / Ortak"}</label>
-                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={paymentModalInvoice.invoice_type === "sales"} />
+                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={paymentModalInvoice.invoice_type === "sales"} fetchAccounts={false} />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">
