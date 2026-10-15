@@ -60,6 +60,7 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     # Super-admin YNT — require_super_admin; şirket üyeliği aranmaz.
     ("GET", "/saas/companies/{company_id}/notify-prefs"),
     ("PUT", "/saas/companies/{company_id}/notify-prefs"),
+    ("GET", "/saas/companies/{company_id}/notify-mail-log"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -75,4 +76,5 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("PUT", "/companies/{company_id}/location"): "RBAC middleware path company_id üyeliği",
     ("GET", "/saas/companies/{company_id}/notify-prefs"): "Süper-admin platform firma bildirimi; require_super_admin",
     ("PUT", "/saas/companies/{company_id}/notify-prefs"): "Süper-admin platform firma bildirimi; require_super_admin",
+    ("GET", "/saas/companies/{company_id}/notify-mail-log"): "Süper-admin olay e-posta logu; require_super_admin",
 }
