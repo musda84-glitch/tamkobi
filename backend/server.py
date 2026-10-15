@@ -12063,13 +12063,16 @@ async def _find_rule(company_id: str, description: str):
 async def _learn_rule(company_id: str, description: str, contact_id: Optional[str], contact_name: Optional[str], category: Optional[str], target_account_id: Optional[str] = None, target_account_name: Optional[str] = None):
     pattern = _match_pattern(description)
     if not pattern or not (contact_id or category or target_account_id):
-        return
+        return None
+    now = datetime.now(timezone.utc).isoformat()
     await db.bank_match_rules.update_one(
         {"company_id": company_id, "pattern": pattern},
-        {"$set": {"contact_id": contact_id, "contact_name": contact_name, "category": category, "target_account_id": target_account_id, "target_account_name": target_account_name, "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"$set": {"contact_id": contact_id, "contact_name": contact_name, "category": category, "target_account_id": target_account_id, "target_account_name": target_account_name, "updated_at": now},
          "$inc": {"hits": 1},
-         "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "pattern": pattern, "created_at": datetime.now(timezone.utc).isoformat()}},
+         "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "pattern": pattern, "source": "learned", "created_at": now}},
         upsert=True)
+    saved = await db.bank_match_rules.find_one({"company_id": company_id, "pattern": pattern})
+    return (saved or {}).get("_id")
 
 async def _optional_actor(request: Optional[Request] = None):
     if request is None:
@@ -12314,10 +12317,153 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
     if learn:
         # Kural öğrenmede orijinal banka açıklaması (Eşleşti eki olmadan)
-        await _learn_rule(tx["company_id"], base_desc, contact_id, contact_name, category, target_account_id, target_name)
+        learned_id = await _learn_rule(tx["company_id"], base_desc, contact_id, contact_name, category, target_account_id, target_name)
+        if learned_id:
+            await db.bank_transactions.update_one(
+                {"_id": tx["_id"], "company_id": tx.get("company_id")},
+                {"$set": {"learned_rule_id": learned_id}},
+            )
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
-async def _unmatch(tx: dict) -> dict:
+
+def _rule_source(rule: Optional[dict]) -> str:
+    """source yoksa öğrenilmiş say (eski kayıtlar)."""
+    if (rule or {}).get("source") == "manual":
+        return "manual"
+    return "learned"
+
+
+def _norm_rule_target(value) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _rule_target_matches_tx(rule: dict, tx: dict) -> bool:
+    """Kuralın yazdığı hedef (cari / kategori / virman) hareketle aynı mı?"""
+    specified = False
+    for key in ("contact_id", "target_account_id", "category"):
+        rv = _norm_rule_target(rule.get(key))
+        if rv is None:
+            continue
+        specified = True
+        if rv != _norm_rule_target(tx.get(key)):
+            return False
+    return specified
+
+
+def _rule_target_label(rule: dict) -> str:
+    bits = [
+        rule.get("contact_name") or rule.get("contact_id"),
+        rule.get("category"),
+        rule.get("target_account_name") or rule.get("target_account_id"),
+    ]
+    return ", ".join(str(b) for b in bits if b) or "-"
+
+
+async def _other_tx_uses_rule(company_id: str, rule: dict, skip_tx_id: Optional[str]) -> bool:
+    """Aynı firmada bu kuralla hâlâ eşleşmiş başka hareket var mı?"""
+    from bank_match_desc import strip_match_suffix
+    rule_id = rule.get("_id")
+    if rule_id:
+        other = await db.bank_transactions.find_one({
+            "company_id": company_id,
+            "match_status": "matched",
+            "_id": {"$ne": skip_tx_id},
+            "$or": [
+                {"matched_rule_id": rule_id},
+                {"learned_rule_id": rule_id},
+            ],
+        })
+        if other:
+            return True
+    pattern = rule.get("pattern") or ""
+    if not pattern:
+        return False
+    prev = await db.bank_transactions.find({
+        "company_id": company_id,
+        "source": "bank_sync",
+        "match_status": "matched",
+    }).to_list(800)
+    for t in prev:
+        if skip_tx_id and t.get("_id") == skip_tx_id:
+            continue
+        if rule_id and (t.get("matched_rule_id") == rule_id or t.get("learned_rule_id") == rule_id):
+            return True
+        if _match_pattern(strip_match_suffix(t.get("description") or "")) != pattern:
+            continue
+        if _rule_target_matches_tx(rule, t):
+            return True
+    return False
+
+
+async def _release_rule_for_tx(tx: dict, actor: Optional[dict] = None) -> str:
+    """Eşleşme geri alınca öğrenilen/manuel kuralı güncelle veya sil.
+
+    Dönüş: deleted / decremented / none
+    """
+    company_id = tx.get("company_id")
+    if not company_id:
+        return "none"
+    from bank_match_desc import strip_match_suffix
+    rule = None
+    rule_id = tx.get("matched_rule_id") or tx.get("learned_rule_id")
+    if rule_id:
+        rule = await db.bank_match_rules.find_one({"_id": rule_id, "company_id": company_id})
+    if not rule:
+        pattern = _match_pattern(strip_match_suffix(tx.get("description") or ""))
+        if pattern:
+            rows = await db.bank_match_rules.find({"company_id": company_id, "pattern": pattern}).to_list(20)
+            rule = next((r for r in rows if _rule_target_matches_tx(r, tx)), None)
+    action = "none"
+    if rule:
+        hits = max(0, int(rule.get("hits") or 0) - 1)
+        source = _rule_source(rule)
+        still_used = await _other_tx_uses_rule(company_id, rule, tx.get("_id"))
+        delete = source != "manual" and (not still_used or hits <= 0)
+        if delete:
+            await db.bank_match_rules.delete_one({"_id": rule["_id"], "company_id": company_id})
+            action = "deleted"
+        else:
+            await db.bank_match_rules.update_one(
+                {"_id": rule["_id"], "company_id": company_id},
+                {"$set": {"hits": hits, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            action = "decremented"
+        try:
+            verb = "silindi" if action == "deleted" else "güncellendi"
+            user_label = (
+                (actor or {}).get("name")
+                or (actor or {}).get("email")
+                or (actor or {}).get("id")
+                or (actor or {}).get("_id")
+                or "-"
+            )
+            await company_audit.write(
+                db,
+                company_id=company_id,
+                user=actor,
+                module="/banking",
+                action="delete" if action == "deleted" else "update",
+                record_id=str(rule.get("_id") or ""),
+                record_label=str(rule.get("pattern") or ""),
+                summary=(
+                    f"Banka kuralı {verb} (kalıp: {rule.get('pattern') or '-'}, "
+                    f"hedef: {_rule_target_label(rule)}, hareket: {tx.get('_id')}, "
+                    f"kullanıcı: {user_label})"
+                ),
+                path="/api/banking/transactions/unmatch",
+            )
+        except Exception:
+            logger.exception("bank match rule audit failed")
+    if tx.get("matched_rule_id") or tx.get("learned_rule_id"):
+        await db.bank_transactions.update_one(
+            {"_id": tx["_id"], "company_id": company_id},
+            {"$unset": {"matched_rule_id": "", "learned_rule_id": ""}},
+        )
+    return action
+
+
+async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
     from bank_match_desc import strip_match_suffix, strip_trailing_actor
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
@@ -12368,8 +12514,17 @@ async def _unmatch(tx: dict) -> dict:
             "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
             "description": cleaned_desc,
         },
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
-    return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": ""}})
+    rule_action = "none"
+    try:
+        rule_action = await _release_rule_for_tx(tx, actor=actor) or "none"
+    except Exception:
+        logger.exception("_release_rule_for_tx failed")
+        rule_action = "none"
+    out = clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
+    if isinstance(out, dict):
+        out["rule_action"] = rule_action
+    return out
 
 async def _prior_match_from_history(company_id: str, description: str, skip_id: Optional[str] = None):
     """Aynı açıklama kalıbıyla daha önce işlenmiş hareketin cari / kasa / kategorisi."""
@@ -12422,7 +12577,14 @@ async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule", ac
         except HTTPException:
             continue
         if source == "rule" and payload.get("_id"):
-            await db.bank_match_rules.update_one({"_id": payload["_id"]}, {"$inc": {"hits": 1}})
+            await db.bank_match_rules.update_one(
+                {"_id": payload["_id"], "company_id": company_id},
+                {"$inc": {"hits": 1}},
+            )
+            await db.bank_transactions.update_one(
+                {"_id": tx["_id"], "company_id": company_id},
+                {"$set": {"matched_rule_id": payload["_id"]}},
+            )
         matched += 1
         details.append({
             "tx_id": tx["_id"],
@@ -12566,7 +12728,7 @@ async def unmatch_bank_transaction(tx_id: str, user: dict = Depends(get_current_
         raise HTTPException(status_code=404, detail="Banka hareketi bulunamadı.")
     if tx.get("match_status") != "matched":
         raise HTTPException(status_code=400, detail="Bu hareket eşleştirilmemiş.")
-    return await _unmatch(tx)
+    return await _unmatch(tx, actor=user)
 
 
 @api_router.post("/banking/transactions/migrate-match-descriptions")
@@ -12669,6 +12831,7 @@ async def _create_match_rule_core(req: Dict[str, Any], user: dict):
             target_name = a.get("account_name") if a else None
     doc = {"pattern": pattern, "contact_id": req.get("contact_id") or None, "contact_name": contact_name, "category": req.get("category") or None,
            "target_account_id": req.get("target_account_id") or None, "target_account_name": target_name,
+           "source": "manual",
            "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.bank_match_rules.update_one(
         {"company_id": company_id, "pattern": pattern},
