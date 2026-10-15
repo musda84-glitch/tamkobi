@@ -557,3 +557,8 @@ async def _valid_admin_ids(ids: List[str]) -> List[str]:
         return []
     found = await _db.users.find({"_id": {"$in": ids}, "is_super_admin": True}, {"_id": 1}).to_list(200)
     return [u["_id"] for u in found]
+
+
+import platform_mail_inbox as _inbox
+
+_inbox.register(router)
