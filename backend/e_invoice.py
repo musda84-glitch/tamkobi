@@ -6,8 +6,10 @@ POST /invoices/{id}/send-to-gib bu modüle delege eder.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
@@ -179,12 +181,18 @@ async def resolve_buyer_mukellef(
 ) -> Dict[str, Any]:
     """GİB e-Fatura mükellef sorgusu → suggested_e_type (e_invoice | e_archive).
 
-    Entegratör yapılandırılmışsa canlı sorgu; değilse cari bayrağı / VKN uzunluğu ile simüle.
+    Karar cari kartındaki is_e_invoice_user bayrağından gelmez.
+    Entegratör yapılandırılmışsa canlı sorgu (aynı VKN, aynı turda tek kez);
+    değilse yalnız VKN/TCKN uzunluğu ile simüle. Yer tutucu kimlikler e-Arşiv.
+    Canlı sorgu 502 dönerse sonuç uydurulmaz.
     """
     tid = digits(tax_id)
     local = contact
     if local is None and _db is not None and tid:
         local = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
+    from contact_tax import is_placeholder_tax_id
+    if is_placeholder_tax_id(tid):
+        return _placeholder_mukellef(tid, local)
     if len(tid) not in (10, 11):
         return {
             "tax_id": tid,
@@ -201,21 +209,56 @@ async def resolve_buyer_mukellef(
     settings = (await _db.einvoice_settings.find_one({"company_id": company_id}) if _db else None) or {}
     live = settings.get("status") == "configured"
     provider = settings.get("provider") or ""
+    cache_key = f"{company_id}:{tid}:{provider}" if live and provider in ("n11faturam", "isnet", "isnet_portal") else ""
+    if cache_key:
+        now = time.monotonic()
+        hit = _mukellef_cache.get(cache_key)
+        if hit and hit[0] > now:
+            cached = dict(hit[1])
+            cached["local_contact"] = local
+            return cached
+        inflight = _mukellef_inflight.get(cache_key)
+        if inflight is not None and not inflight.done():
+            shared = await asyncio.shield(inflight)
+            out = dict(shared)
+            out["local_contact"] = local
+            return out
+        task = asyncio.create_task(_resolve_buyer_mukellef_uncached(company_id, tid, local=local, settings=settings))
+        _mukellef_inflight[cache_key] = task
+        try:
+            result = await task
+        finally:
+            if _mukellef_inflight.get(cache_key) is task:
+                _mukellef_inflight.pop(cache_key, None)
+        stored = {k: v for k, v in result.items() if k != "local_contact"}
+        _mukellef_cache[cache_key] = (time.monotonic() + _MUKELLEF_TTL_S, stored)
+        return result
+    return await _resolve_buyer_mukellef_uncached(company_id, tid, local=local, settings=settings)
+
+
+async def _resolve_buyer_mukellef_uncached(
+    company_id: str,
+    tid: str,
+    *,
+    local: Optional[dict],
+    settings: dict,
+) -> Dict[str, Any]:
+    """Canlı veya simüle mükellef çözümü. Yer tutucu / hatalı uzunluk çağıran tarafta elenir."""
+    live = settings.get("status") == "configured"
+    provider = settings.get("provider") or ""
     if live and provider in ("n11faturam", "isnet", "isnet_portal"):
         password_fn: Optional[Callable] = _deps.get("password_fn")
         if not password_fn:
             raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
         pwd = password_fn(settings)
+        src_label = {"isnet": "İşNet SOAP", "isnet_portal": "İşNet Portal"}.get(provider, "n11 Faturam")
         try:
             if provider == "isnet":
                 remote = await isnet.lookup_user(settings, pwd, tid)
-                src_label = "İşNet SOAP"
             elif provider == "isnet_portal":
                 remote = await isnet_portal.lookup_user(settings, pwd, tid)
-                src_label = "İşNet Portal"
             else:
                 remote = await n11faturam.lookup_user(settings, pwd, tid)
-                src_label = "n11 Faturam"
         except HTTPException:
             raise
         except Exception as e:
@@ -246,7 +289,8 @@ async def resolve_buyer_mukellef(
             "message": msg,
         }
 
-    is_efatura = bool(local.get("is_e_invoice_user")) if local else len(tid) == 10
+    # Simüle: cari bayrağı kullanılmaz. 10 hane VKN e-Fatura, 11 hane TCKN e-Arşiv.
+    is_efatura = len(tid) == 10
     return {
         "tax_id": tid,
         "kind": "VKN" if len(tid) == 10 else "TCKN",
@@ -273,8 +317,40 @@ def should_resolve_e_type_from_gib(e_type: Optional[str]) -> bool:
 
 
 def honor_explicit_einvoice(e_type: Optional[str]) -> bool:
-    """Onay modalı Temel/Ticari → e_type=e_invoice açıkça gelir; GİB e-arşiv önerisini geçme."""
+    """Eski: Temel/Ticari onayı GİB sorgusunu atlıyordu.
+
+    issue_invoice artık açık e_invoice isteğinde de resolve_buyer_mukellef çalıştırır.
+    Bu yardımcı yalnız geriye dönük testler için durur; kesim kararında kullanılmaz.
+    """
     return (e_type or "").strip().lower() == "e_invoice"
+
+
+NOT_EINVOICE_MUKELLEF_DETAIL = "Alıcı e-Fatura mükellefi değil, e-Arşiv kesilmeli"
+
+# Aynı faturalama turunda (toplu kesim dahil) aynı VKN için tek canlı sorgu.
+_MUKELLEF_TTL_S = 120.0
+_mukellef_cache: Dict[str, tuple] = {}
+_mukellef_inflight: Dict[str, "asyncio.Task"] = {}
+
+
+def clear_mukellef_cache() -> None:
+    _mukellef_cache.clear()
+    _mukellef_inflight.clear()
+
+
+def _placeholder_mukellef(tax_id: str, contact: Optional[dict] = None) -> Dict[str, Any]:
+    tid = digits(tax_id)
+    return {
+        "tax_id": tid,
+        "kind": "VKN" if len(tid) == 10 else "TCKN" if len(tid) == 11 else "UNKNOWN",
+        "is_e_invoice_user": False,
+        "suggested_e_type": "e_archive",
+        "alias": None,
+        "source": "placeholder",
+        "name": (contact or {}).get("name") or "",
+        "local_contact": contact,
+        "message": "Yer tutucu VKN/TCKN — e-Fatura kesilmez, e-Arşiv kesilmeli.",
+    }
 
 
 def format_integrator_gib_status(
@@ -599,36 +675,57 @@ async def issue_invoice(
             await _db.contacts.update_one(contact_filt, {"$set": tax_patch})
             contact = {**contact, **tax_patch}
     requested = e_type if e_type is not None else inv.get("e_type")
+    requested_l = (requested or "").strip().lower()
     gib_meta: Optional[Dict[str, Any]] = None
     # İrsaliye belgesi — GİB mükellef çözümlemesi e_archive'a çevirmesin
     if inv.get("invoice_type") == "dispatch" or (requested or inv.get("e_type")) == "e_dispatch":
         e_type = "e_dispatch"
-    # Temel/Ticari onayı e_type=e_invoice gönderir — GİB e-arşiv dese bile korunur.
-    elif honor_explicit_einvoice(requested):
-        e_type = "e_invoice"
+    # İhracat / kağıt kuralları aynı kalır; mükellef sorgusu bunları e-Arşiv'e çevirmez.
+    elif requested_l in MANUAL_ISSUE_TYPES or (
+        inv.get("trade_kind") == "export" and requested_l in ("", "auto", "e_export", "e_ihracat")
+    ):
+        if requested_l in ("", "auto") and inv.get("trade_kind") == "export":
+            e_type = "e_export"
+        elif requested_l == "e_ihracat":
+            e_type = "e_export"
+        else:
+            e_type = requested or inv.get("e_type")
     elif should_resolve_e_type_from_gib(requested):
+        # e_type=e_invoice açıkça gelse bile alıcı VKN/TCKN için GİB sorgusu çalışır.
         tax = digits(
             (contact or {}).get("tax_number_or_id")
             or (contact or {}).get("tax_id")
             or inv.get("contact_tax_id")
             or ""
         )
-        gib_meta = await resolve_buyer_mukellef(inv.get("company_id") or "", tax, contact=contact)
-        e_type = gib_meta["suggested_e_type"]
-        if contact and bool(contact.get("is_e_invoice_user")) != bool(gib_meta["is_e_invoice_user"]):
+        from contact_tax import is_placeholder_tax_id
+        if is_placeholder_tax_id(tax):
+            gib_meta = _placeholder_mukellef(tax, contact)
+        else:
+            gib_meta = await resolve_buyer_mukellef(inv.get("company_id") or "", tax, contact=contact)
+        if contact and contact.get("_id") and bool(contact.get("is_e_invoice_user")) != bool(gib_meta["is_e_invoice_user"]):
+            alias_set = gib_meta.get("alias")
             await _db.contacts.update_one(
                 {"_id": contact["_id"]},
                 {"$set": {
                     "is_e_invoice_user": bool(gib_meta["is_e_invoice_user"]),
-                    "e_invoice_alias": gib_meta.get("alias"),
+                    "e_invoice_alias": alias_set,
                     "updated_at": _now(),
                 }},
             )
             contact = {
                 **contact,
                 "is_e_invoice_user": bool(gib_meta["is_e_invoice_user"]),
-                "e_invoice_alias": gib_meta.get("alias"),
+                "e_invoice_alias": alias_set,
             }
+        # Alias kesimde cari kartındaki eski etiketten değil, bu sorgunun sonucundan gelir.
+        if gib_meta.get("alias"):
+            contact = {**(contact or {}), "e_invoice_alias": gib_meta.get("alias")}
+        elif contact is not None and not gib_meta.get("is_e_invoice_user"):
+            contact = {**contact, "e_invoice_alias": None}
+        if requested_l == "e_invoice" and not gib_meta.get("is_e_invoice_user"):
+            raise HTTPException(status_code=409, detail=NOT_EINVOICE_MUKELLEF_DETAIL)
+        e_type = gib_meta["suggested_e_type"]
 
     if inv.get("invoice_type") == "purchase" and (e_type or inv.get("e_type")) == "e_invoice":
         raise HTTPException(status_code=400, detail="Alış e-faturası GİB'den gelir; kesim yalnızca satış belgelerinde yapılır.")

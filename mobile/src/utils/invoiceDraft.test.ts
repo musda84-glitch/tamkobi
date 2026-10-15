@@ -91,11 +91,11 @@ describe("invoiceDraft", () => {
     expect(applyTradeKind(d, "export").e_type).toBe("paper");
   });
 
-  it("picks e-fatura vs e-arşiv from cari for sales", () => {
+  it("does not pick e-fatura from the cari flag", () => {
     const d = emptyInvoiceDraft();
     d.invoice_type = "sales";
     d.e_type = "e_archive";
-    expect(eTypeForContact(d, true)).toBe("e_invoice");
+    expect(eTypeForContact(d, true)).toBe("e_archive");
     expect(eTypeForContact(d, false)).toBe("e_archive");
     d.e_type = "paper";
     expect(eTypeForContact(d, true)).toBe("paper");

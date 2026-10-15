@@ -175,7 +175,10 @@ export function ContactFormScreen({ contactId }: { contactId?: string }) {
         <Card>
           <Field label="VKN / TCKN *" testID="cf-tax_number_or_id" value={draft.tax_number_or_id} onChangeText={(v) => set("tax_number_or_id", v)} keyboardType="number-pad" />
           <Field label="Vergi dairesi" testID="cf-tax_office" value={draft.tax_office} onChangeText={(v) => set("tax_office", v)} />
-          <Flag label="e-Fatura mükellefi" value={draft.is_e_invoice_user} onChange={(v) => set("is_e_invoice_user", v)} testID="cf-is_e_invoice_user" />
+          <Muted testID="cf-is_e_invoice_user">
+            {`Son GİB sorgusu: ${draft.is_e_invoice_user ? "mükellef" : "değil"}`}
+          </Muted>
+          <Muted>Bilgi amaçlıdır. e-Fatura / e-Arşiv kararı her faturada canlı GİB sorgusuyla verilir.</Muted>
           <Muted>Para birimi</Muted>
           <Row style={{ flexWrap: "wrap" }}>
             {CONTACT_CURRENCIES.map((c) => (

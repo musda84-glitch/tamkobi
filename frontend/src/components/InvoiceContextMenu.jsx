@@ -9,6 +9,7 @@ import {
 import { canCopyInvoice, INVOICE_COPY_MODES } from "./invoiceCopyModes";
 import { supportsEDispatch } from "../utils/einvoiceIntegrator";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
+import { buyerNeedsLiveMukellefQuery, dropGibMukellef, fetchGibMukellef } from "../utils/gibMukellef";
 
 /** Listede gösterilecek no: GİB/entegratör numarası varsa onu kullan. */
 export function displayInvoiceNumber(inv) {
@@ -501,6 +502,8 @@ export const InvoiceContextMenu = (props) => {
   const [pos, setPos] = useState(null);
   const [gibLookup, setGibLookup] = useState(null);
   const [gibBusy, setGibBusy] = useState(false);
+  const [gibError, setGibError] = useState("");
+  const [gibAttempt, setGibAttempt] = useState(0);
   useEffect(() => {
     if (!menu) return;
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
@@ -522,22 +525,28 @@ export const InvoiceContextMenu = (props) => {
       return undefined;
     }
     const tax = invoiceBuyerTaxId(menu.inv);
-    if (!apiBase || tax.length < 10) {
+    const cid = companyId || menu.inv.company_id || "";
+    if (!cid) {
       setGibLookup(null);
       setGibBusy(false);
+      setGibError("Şirket seçili değil.");
       return undefined;
     }
     let cancelled = false;
-    setGibBusy(true);
+    setGibBusy(buyerNeedsLiveMukellefQuery(tax));
+    setGibError("");
     setGibLookup(null);
-    const cid = companyId || menu.inv.company_id || "";
-    axios
-      .get(`${apiBase}/gib/lookup`, { params: { tax_id: tax, company_id: cid } })
-      .then((r) => { if (!cancelled) setGibLookup(r.data); })
-      .catch(() => { if (!cancelled) setGibLookup(null); })
+    fetchGibMukellef(cid, tax)
+      .then((entry) => { if (!cancelled) setGibLookup(entry?.data || null); })
+      .catch((err) => {
+        if (cancelled) return;
+        const detail = err?.gibEntry?.error || err?.response?.data?.detail || err?.message || "GİB sorgusu başarısız.";
+        setGibLookup(null);
+        setGibError(typeof detail === "string" ? detail : "GİB sorgusu başarısız.");
+      })
       .finally(() => { if (!cancelled) setGibBusy(false); });
     return () => { cancelled = true; };
-  }, [menu, apiBase, companyId]);
+  }, [menu, apiBase, companyId, gibAttempt]);
   useLayoutEffect(() => {
     if (!menu) return;
     const el = ref.current;
@@ -578,9 +587,11 @@ export const InvoiceContextMenu = (props) => {
   const gibType = suggestedIssueTypeFromGib(gibLookup);
   const gibSub = gibBusy
     ? "GİB mükellef sorgulanıyor…"
-    : gibLookup
-      ? (gibType === "e_invoice" ? "GİB: e-Fatura mükellefi → E-Fatura" : "GİB: kayıt yok → E-Arşiv")
-      : "Mükellef ise e-Fatura, değilse e-Arşiv";
+    : gibError
+      ? gibError
+      : gibLookup
+        ? (gibType === "e_invoice" ? "GİB: e-Fatura mükellefi → E-Fatura" : "GİB: kayıt yok → E-Arşiv")
+        : "Mükellef sorgusu bekleniyor";
   const placed = pos || placeContextMenu({
     x: menu.x,
     y: menu.y,
@@ -676,7 +687,7 @@ export const InvoiceContextMenu = (props) => {
           {ISSUE_OPTIONS.map((o) => {
             const isAuto = o.key === "auto";
             const label = isAuto
-              ? (gibBusy ? "GİB sorgulanıyor…" : gibLookup ? (gibType === "e_invoice" ? "E-Fatura olarak kes" : "E-Arşiv olarak kes") : o.label)
+              ? (gibBusy ? "GİB sorgulanıyor…" : gibError ? "GİB sorgusu başarısız" : gibLookup ? (gibType === "e_invoice" ? "E-Fatura olarak kes" : "E-Arşiv olarak kes") : o.label)
               : o.label;
             const sub = isAuto ? gibSub : o.sub;
             const Icon = isAuto && gibBusy
@@ -694,12 +705,25 @@ export const InvoiceContextMenu = (props) => {
                 color={`${color}${isAuto && gibBusy ? " animate-spin" : ""}`}
                 label={label}
                 sub={sub}
-                disabled={isAuto && gibBusy}
+                disabled={isAuto && (gibBusy || !!gibError)}
                 onClick={() => onIssue(inv, isAuto ? "auto" : o.key)}
                 testId={isAuto ? "ctx-issue-gib" : `ctx-issue-${o.key}`}
               />
             );
           })}
+          {gibError ? (
+            <button
+              type="button"
+              className="w-full px-3 py-1.5 text-left text-[11px] font-semibold text-sky-700 hover:bg-slate-50"
+              data-testid="ctx-gib-retry"
+              onClick={() => {
+                dropGibMukellef(companyId || inv.company_id, invoiceBuyerTaxId(inv));
+                setGibAttempt((n) => n + 1);
+              }}
+            >
+              Tekrar sorgula
+            </button>
+          ) : null}
           {/* Geriye dönük test id: eski e_invoice / e_archive düğmeleri GİB auto'ya yönlenir */}
           <button type="button" className="hidden" data-testid="ctx-issue-e_invoice" onClick={() => { onIssue(inv, "auto"); onClose(); }} aria-hidden />
           <button type="button" className="hidden" data-testid="ctx-issue-e_archive" onClick={() => { onIssue(inv, "auto"); onClose(); }} aria-hidden />

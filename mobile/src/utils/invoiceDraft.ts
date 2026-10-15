@@ -329,10 +329,11 @@ export function applyTradeKind(draft: InvoiceDraft, tradeKind: string): InvoiceD
   };
 }
 
-export function eTypeForContact(draft: InvoiceDraft, isEInvoiceUser?: boolean): string {
+/** Satış taslağı e-Fatura/e-Arşiv ayrımı cari bayrağından gelmez; kesimde canlı GİB sorulur. */
+export function eTypeForContact(draft: InvoiceDraft, _isEInvoiceUser?: boolean): string {
   if (draft.invoice_type !== "sales") return draft.e_type;
   if (["paper", "e_export", "e_dispatch"].includes(draft.e_type)) return draft.e_type;
-  return isEInvoiceUser ? "e_invoice" : "e_archive";
+  return "e_archive";
 }
 
 export function createInvoiceButtonLabel(filterType: string): string {

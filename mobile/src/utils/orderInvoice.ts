@@ -86,9 +86,9 @@ export function faturalaActionLabel(o: OrderInvoiceFlags | null | undefined): st
   return "Faturala";
 }
 
-/** Cari e-fatura mükellefi değilse / bilinmiyorsa → e-arşiv. */
-export function orderEBelgeTypeFromContact(contact?: { is_e_invoice_user?: boolean } | null): "e_invoice" | "e_archive" {
-  return contact?.is_e_invoice_user ? "e_invoice" : "e_archive";
+/** Cari bayrağı e-belge türünü seçmez. Canlı GİB sonucu gelene kadar e-Arşiv. */
+export function orderEBelgeTypeFromContact(_contact?: { is_e_invoice_user?: boolean } | null): "e_invoice" | "e_archive" {
+  return "e_archive";
 }
 
 export function canShowEFaturaOption(contact?: { is_e_invoice_user?: boolean } | null): boolean {

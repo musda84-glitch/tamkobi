@@ -113,7 +113,7 @@ describe("issueInvoiceFromOnay", () => {
     await issueInvoiceFromOnay(
       client,
       { _id: "inv_2", contact_id: "cnt_2" },
-      { eType: "e_archive", alias: "urn:mail:alias@pk" },
+      { eType: "e_archive", alias: "urn:mail:alias@pk", gibMeta: { is_e_invoice_user: false, alias: "urn:mail:alias@pk" } },
     );
     expect(mockedPut).toHaveBeenCalledWith(client, "/contacts/cnt_2", {
       e_invoice_alias: "urn:mail:alias@pk",

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { act } from "react";
 import axios from "axios";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
+import { clearGibMukellefCache } from "../utils/gibMukellef";
 
 jest.mock("axios");
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
@@ -10,6 +11,7 @@ jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info
 let host;
 
 beforeEach(() => {
+  clearGibMukellefCache();
   host = document.createElement("div");
   document.body.appendChild(host);
   axios.get.mockResolvedValue({

@@ -5,6 +5,12 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+def _tenant_db():
+    mock_db = MagicMock()
+    mock_db.__getitem__.side_effect = lambda name: getattr(mock_db, name)
+    return mock_db
+
+
 def test_convert_order_as_draft_creates_draft_not_approved():
     import server
 
@@ -44,7 +50,7 @@ def test_convert_order_as_draft_creates_draft_not_approved():
     async def _order_update(filt, update):
         order_sets.append(update.get("$set") or {})
 
-    mock_db = MagicMock()
+    mock_db = _tenant_db()
     mock_db.orders.find_one = AsyncMock(return_value=order)
     mock_db.invoices.find_one = AsyncMock(return_value=None)
     mock_db.invoices.insert_one = AsyncMock(side_effect=_insert)
@@ -58,7 +64,11 @@ def test_convert_order_as_draft_creates_draft_not_approved():
         server, "_post_marketplace_settlement", AsyncMock()
     ) as settle, patch.object(server, "_push_order_to_shopphp", AsyncMock()) as push:
         out = asyncio.get_event_loop().run_until_complete(
-            server.convert_order_to_invoice("ord_draft_cv", {"e_type": "e_invoice", "as_draft": True})
+            server.convert_order_to_invoice(
+                "ord_draft_cv",
+                {"e_type": "e_invoice", "as_draft": True},
+                {"is_super_admin": True},
+            )
         )
 
     assert out["draft"] is True
@@ -88,14 +98,18 @@ def test_convert_order_as_draft_returns_existing_draft():
         "invoice_number": "NX20260001",
         "e_type": "e_archive",
     }
-    mock_db = MagicMock()
+    mock_db = _tenant_db()
     mock_db.orders.find_one = AsyncMock(return_value=order)
     mock_db.invoices.find_one = AsyncMock(return_value=existing)
     mock_db.invoices.update_one = AsyncMock()
 
     with patch.object(server, "db", mock_db):
         out = asyncio.get_event_loop().run_until_complete(
-            server.convert_order_to_invoice("ord_2", {"e_type": "paper", "as_draft": True})
+            server.convert_order_to_invoice(
+                "ord_2",
+                {"e_type": "paper", "as_draft": True},
+                {"is_super_admin": True},
+            )
         )
 
     assert out["draft"] is True

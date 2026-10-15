@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, Switch, Text, View } from "react-native";
+import { Switch, Text, View } from "react-native";
 import { get } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import {
   buildIadeNote,
   digitsTax,
-  efaturaOnayMessage,
   invoiceNeedsExemptionPrompt,
   invoiceNeedsWithholdingPrompt,
   isReturnInvoiceDoc,
@@ -17,6 +16,13 @@ import {
   type EfaturaOnayPayload,
 } from "../utils/efaturaOnay";
 import { WITHHOLDING, withholdingSelectGroups } from "../utils/invoiceDraft";
+import {
+  buyerNeedsLiveMukellefQuery,
+  dropGibMukellef,
+  eTypeFromGib,
+  fetchGibMukellef,
+  type GibMukellef,
+} from "../utils/gibMukellef";
 import { docDocumentDate, docHasOldDocumentDate } from "../utils/invoiceDocDate";
 import { formatIssueStamp, nowIssueDateTime, showEfaturaStampNow } from "../utils/invoiceIssueNow";
 import { B2BSheet } from "./b2b/B2BSheet";
@@ -92,12 +98,10 @@ export function ElektronikFaturaOnayModal({
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [credits, setCredits] = useState<number | null>(null);
   const [creditsSource, setCreditsSource] = useState("");
-  const [gibMeta, setGibMeta] = useState<{
-    is_e_invoice_user?: boolean;
-    suggested_e_type?: string;
-    alias?: string;
-    message?: string;
-  } | null>(null);
+  const [gibMeta, setGibMeta] = useState<GibMukellef | null>(null);
+  const [gibStatus, setGibStatus] = useState<"loading" | "ok" | "error">("loading");
+  const [gibError, setGibError] = useState("");
+  const [gibRetry, setGibRetry] = useState(0);
   const [stampNow, setStampNow] = useState(initialStampNow);
   const [exemptionCode, setExemptionCode] = useState(
     String(doc?.tax_exemption_code || doc?.vat_exemption_code || "").trim(),
@@ -155,19 +159,25 @@ export function ElektronikFaturaOnayModal({
         }
       });
 
-    const loadGib = (tax.length === 10 || tax.length === 11)
-      ? get<{ is_e_invoice_user?: boolean; suggested_e_type?: string; alias?: string; message?: string }>(
-        client,
-        "/gib/lookup",
-        { tax_id: tax, company_id: companyId },
-      )
-        .then((r) => {
-          if (!cancelled) setGibMeta(r || null);
-        })
-        .catch(() => {
-          if (!cancelled) setGibMeta(null);
-        })
-      : Promise.resolve();
+    const needsLive = buyerNeedsLiveMukellefQuery(tax);
+    if (!cancelled) {
+      setGibStatus(needsLive ? "loading" : "ok");
+      setGibError("");
+      if (!needsLive) setGibMeta(null);
+    }
+    const loadGib = fetchGibMukellef(client, companyId, tax)
+      .then((entry) => {
+        if (cancelled || entry.status !== "ok") return;
+        setGibMeta(entry.data || null);
+        setGibStatus("ok");
+        setGibError("");
+      })
+      .catch((err: { message?: string; gibEntry?: { error?: string } }) => {
+        if (cancelled) return;
+        setGibMeta(null);
+        setGibStatus("error");
+        setGibError(err?.gibEntry?.error || err?.message || "GİB sorgusu başarısız.");
+      });
 
     Promise.all([loadCredits, loadGib]).finally(() => {
       if (!cancelled) setLoadingMeta(false);
@@ -176,23 +186,20 @@ export function ElektronikFaturaOnayModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, companyId, client, doc]);
+  }, [visible, companyId, client, doc, gibRetry]);
 
-  const isEFatura = gibMeta
-    ? !!gibMeta.is_e_invoice_user
-    : contactIsEInvoiceUser != null
-      ? !!contactIsEInvoiceUser
-      : !!(doc?.is_e_invoice_user ?? doc?.contact_is_e_invoice_user);
-  const suggested: "e_invoice" | "e_archive" =
-    preferredEType
-    || (gibMeta?.suggested_e_type === "e_invoice" || gibMeta?.suggested_e_type === "e_archive"
-      ? gibMeta.suggested_e_type
-      : (isEFatura ? "e_invoice" : "e_archive"));
-  const message = gibMeta?.message
-    ? (isEFatura
-      ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
-      : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?")
-    : efaturaOnayMessage(isEFatura);
+  const gibBlocked = gibStatus !== "ok";
+  const resolvedType = gibStatus === "ok" ? eTypeFromGib(gibMeta) : "e_archive";
+  const isTaxpayer = gibStatus === "ok" && resolvedType === "e_invoice";
+  const message = gibError
+    ? gibError
+    : gibBlocked
+      ? "GİB mükellef sorgusu tamamlanmadan gönderilemez."
+      : isTaxpayer
+        ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
+        : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?";
+  void preferredEType;
+  void contactIsEInvoiceUser;
 
   const submit = async (opts?: { scenario?: "TEMEL" | "TICARI"; forceArchive?: boolean }) => {
     setFormError(null);
@@ -217,14 +224,19 @@ export function ElektronikFaturaOnayModal({
       return;
     }
 
-    let resolvedEType: "e_invoice" | "e_archive" = suggested;
+    if (gibBlocked) {
+      setFormError(gibError || "GİB sorgusu tamamlanmadan gönderilemez.");
+      return;
+    }
+    let resolvedEType: "e_invoice" | "e_archive" = "e_archive";
     let sc: "TEMEL" | "TICARI" | undefined;
-    if (opts?.forceArchive) {
+    if (opts?.forceArchive || !isTaxpayer) {
       resolvedEType = "e_archive";
     } else if (opts?.scenario) {
       resolvedEType = "e_invoice";
       sc = isReturn || opts.scenario === "TEMEL" ? "TEMEL" : "TICARI";
-    } else if (suggested === "e_invoice") {
+    } else if (isTaxpayer) {
+      resolvedEType = "e_invoice";
       sc = isReturn ? "TEMEL" : "TICARI";
     }
 
@@ -251,6 +263,7 @@ export function ElektronikFaturaOnayModal({
       scenario: resolvedEType === "e_invoice" ? (sc || "TICARI") : undefined,
       stampNow: !!(offerStamp && stampNow),
       alias: gibMeta?.alias || undefined,
+      gibMeta: gibMeta || undefined,
       withholding: wh,
       exemption,
       returnRef,
@@ -283,43 +296,58 @@ export function ElektronikFaturaOnayModal({
               {formError}
             </Text>
           ) : null}
-          {suggested === "e_invoice" || isEFatura ? (
+          {gibBlocked ? (
+            <>
+              <PrimaryButton
+                title={gibError ? "GİB sorgusu başarısız" : "GİB sorgulanıyor…"}
+                testID="efatura-onay-continue"
+                disabled
+                onPress={() => {}}
+              />
+              <PrimaryButton
+                title="Tekrar sorgula"
+                testID="efatura-onay-retry"
+                color={colors.slate800}
+                onPress={() => {
+                  dropGibMukellef(companyId || "", digitsTax(
+                    doc?.contact_tax_id || doc?.buyer_tax_id || doc?.customer_tax_id || doc?.tax_number_or_id || doc?.tax_id || "",
+                  ));
+                  setGibRetry((n) => n + 1);
+                }}
+              />
+            </>
+          ) : isTaxpayer ? (
             <Row style={{ gap: 8 }}>
               <View style={{ flex: 1 }}>
                 <PrimaryButton
-                  title={submitting ? "…" : "Temel"}
+                  title={submitting ? "…" : (isReturn ? "İade — Temel" : "Temel")}
                   testID="efatura-onay-temel"
                   color={colors.slate800}
                   loading={submitting}
                   onPress={() => submit({ scenario: "TEMEL" })}
                 />
               </View>
-              <View style={{ flex: 1 }}>
-                <PrimaryButton
-                  title={submitting ? "…" : "Ticari"}
-                  testID="efatura-onay-ticari"
-                  color={colors.primary}
-                  loading={submitting}
-                  onPress={() => submit({ scenario: "TICARI" })}
-                />
-              </View>
+              {!isReturn ? (
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton
+                    title={submitting ? "…" : "Ticari"}
+                    testID="efatura-onay-ticari"
+                    color={colors.primary}
+                    loading={submitting}
+                    onPress={() => submit({ scenario: "TICARI" })}
+                  />
+                </View>
+              ) : null}
             </Row>
           ) : (
             <PrimaryButton
-              title={submitting ? "Gönderiliyor…" : "E-Arşiv gönder"}
+              title={submitting ? "Gönderiliyor…" : "e-Arşiv Fatura Gönder"}
               testID="efatura-onay-earsiv"
               color={colors.primary}
               loading={submitting}
               onPress={() => submit({ forceArchive: true })}
             />
           )}
-          {suggested === "e_invoice" || isEFatura ? (
-            <Pressable onPress={() => submit({ forceArchive: true })} testID="efatura-onay-earsiv-alt" style={{ paddingVertical: 6 }}>
-              <Text style={{ textAlign: "center", color: colors.muted, fontWeight: "600", fontSize: 12 }}>
-                Bunun yerine E-Arşiv gönder
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
       }
     >
