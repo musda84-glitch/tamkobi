@@ -57,6 +57,11 @@ describe("canFaturalastirDraftInvoice", () => {
       gib_uuid: "u1",
     })).toBe(false);
     expect(canFaturalastirDraftInvoice(null)).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "approving",
+      invoice_type: "sales",
+      e_type: "e_archive",
+    })).toBe(false);
   });
 });
 

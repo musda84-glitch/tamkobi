@@ -43,6 +43,7 @@ import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 import { printInvoiceForm } from "../utils/orderShare";
 import { integratorPdfKindLabel, shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
+import { invoiceCancelConfirmText } from "../utils/invoiceCancelConfirm";
 import {
   canSendOutgoingDispatch,
   despatchFormFrom,
@@ -297,7 +298,7 @@ export function InvoiceDetailScreen() {
     if (!canCancelInvoice(inv) || !canEdit) return;
     confirmAction(
       "Faturayı iptal et",
-      `${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`,
+      invoiceCancelConfirmText(inv, isGibIssued(inv)),
       () => {
         run(async () => {
           const r = await post<{ message?: string }>(client, `/invoices/${id}/cancel`, {});

@@ -325,7 +325,7 @@ export function isDispatchDocument(inv) {
 
 export function canDeleteInvoice(inv) {
   if (!inv) return false;
-  if (inv.status === "cancelled") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving") return false;
   if (isIncomingPurchaseInvoice(inv)) return false;
   if (isDispatchDocument(inv)) {
     if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return false;
@@ -363,7 +363,7 @@ export function invoicesBulkDeleteConfirmMessage(list) {
 export function canIssueInvoice(inv) {
   if (!inv) return false;
   if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
-  if (inv.status === "cancelled" || inv.e_type === "expense_slip") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving" || inv.e_type === "expense_slip") return false;
   // e-İrsaliye: İşNet SendDespatchAdviceXml — taslak irsaliye gönderilebilir
   if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") {
     if (inv.status === "cancelled") return false;
@@ -377,6 +377,7 @@ export function canIssueInvoice(inv) {
 /** Taslak satış faturası — POST /approve (cari + stok). E-belge ayrı adımdır. */
 export function canFaturalastirDraftInvoice(inv) {
   if (!inv) return false;
+  if (inv.status === "approving" || inv.status === "cancelling") return false;
   if (inv.status !== "draft") return false;
   if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
   if (inv.e_type === "expense_slip") return false;
@@ -433,7 +434,7 @@ export function invoiceHasPayment(inv) {
 /** Onaylı e-Fatura / e-Arşiv / e-İhracat / GİB'e gitmiş e-İrsaliye iptal edilebilir (silinmez). Kağıt silinir. */
 export function canCancelInvoice(inv) {
   if (!inv) return false;
-  if (inv.status === "cancelled" || inv.status === "draft") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving" || inv.status === "draft") return false;
   if (isDispatchDocument(inv)) return isGibIssued(inv);
   if (inv.e_type === "paper" || inv.e_type === "expense_slip") return false;
   if (inv.e_type === "e_invoice" || inv.e_type === "e_archive" || inv.e_type === "e_export") return true;
@@ -456,7 +457,7 @@ export function looksLikeOfficialGibInvoiceNumber(no) {
 /** GİB'e iletilmemiş satış/alış belgesi ⋮ menüden / satırdan düzenlenir. */
 export function canEditInvoice(inv) {
   if (!inv) return false;
-  if (inv.status === "cancelled") return false;
+  if (inv.status === "cancelled" || inv.status === "cancelling" || inv.status === "approving") return false;
   if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.invoice_type === "dispatch") return false;
   if (isGibIssued(inv)) return false;

@@ -64,6 +64,20 @@ def test_send_to_gib_rejects_sales_draft_409():
     assert ei.value.detail == server.ONCE_FATURALASTIRIN
 
 
+def test_send_to_gib_rejects_approving_409():
+    import server
+
+    inv = _draft_inv(status="approving")
+    with patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv)), patch.object(
+        server.e_invoice, "issue_invoice", AsyncMock()
+    ) as issue:
+        with pytest.raises(HTTPException) as ei:
+            _run(server.send_invoice_to_gib("inv_d1", {}, ADMIN))
+        issue.assert_not_called()
+    assert ei.value.status_code == 409
+    assert ei.value.detail == "Fatura onaylanıyor"
+
+
 def test_send_to_gib_skips_409_for_incoming_purchase():
     import server
 

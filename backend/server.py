@@ -7,6 +7,7 @@ apply_saved_secrets()
 import os
 import uuid
 import re
+import inspect
 import secrets
 import logging
 from datetime import datetime, timezone, timedelta, date
@@ -8943,60 +8944,158 @@ async def _post_incoming_purchase_invoice(invoice_id: str, inv: dict) -> dict:
     }
 
 
+_INVOICE_APPROVE_STALE = timedelta(minutes=10)
+_INVOICE_CANCELLED_DETAIL = "İptal edilmiş fatura"
+_INVOICE_CANCEL_CONFLICT = "Fatura zaten iptal edildi / iptal ediliyor"
+_INVOICE_APPROVE_BUSY = "Fatura başka bir işlemde onaylanıyor"
+_INVOICE_APPROVING_DETAIL = "Fatura onaylanıyor"
+_INVOICE_CANCELLING_DETAIL = "Fatura iptal ediliyor"
+_INVOICE_CLAIM_BLOCKED = ("cancelled", "cancelling", "deleting", "approving")
+
+
+async def _invoice_claim_update(coll, query: dict, update: dict):
+    """Atomik koşullu güncelleme (update_one_atomic); yoksa koşullu update_one."""
+    fn = getattr(coll, "update_one_atomic", None)
+    if not callable(fn):
+        fn = coll.update_one
+    result = fn(query, update)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+def _invoice_approving_is_stale(inv: dict, now: Optional[datetime] = None) -> bool:
+    """10 dk'dan uzun 'approving' takılı kalmış sayılır (yeniden draft gibi claim edilir)."""
+    if not inv or inv.get("status") != "approving":
+        return False
+    raw = inv.get("approving_at")
+    if raw in (None, ""):
+        return True
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return current - parsed.astimezone(timezone.utc) >= _INVOICE_APPROVE_STALE
+
+
+def _invoice_approve_claim_query(invoice_id: str, company_id: Any, now: datetime) -> dict:
+    cutoff = (now - _INVOICE_APPROVE_STALE).isoformat()
+    return {
+        "_id": invoice_id,
+        "company_id": company_id,
+        "$or": [
+            {"status": "draft"},
+            {"status": "approving", "approving_at": {"$lt": cutoff}},
+            {"status": "approving", "approving_at": None},
+            {"status": "approving", "approving_at": ""},
+            {"status": "approving", "approving_at": {"$exists": False}},
+        ],
+    }
+
+
+async def _approve_invoice_already_ok(inv: dict) -> dict:
+    if inv.get("order_id"):
+        order_q: Dict[str, Any] = {"_id": inv["order_id"], "is_invoiced": True}
+        if inv.get("company_id"):
+            order_q["company_id"] = inv["company_id"]
+        if not (await db.orders.find_one(order_q)):
+            await _mark_order_invoiced_from_invoice(inv)
+    return {"status": "success", "message": "Fatura zaten onaylı."}
+
+
 @api_router.post("/invoices/{invoice_id}/approve")
 async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    if inv.get("status") in ("cancelled", "cancelling"):
+        raise HTTPException(status_code=409, detail=_INVOICE_CANCELLED_DETAIL)
+    if inv.get("status") == "deleting":
+        raise HTTPException(status_code=409, detail="Fatura siliniyor")
     if _is_incoming_purchase_invoice(inv):
         return await _post_incoming_purchase_invoice(invoice_id, inv)
-    if inv.get("status") != "draft":
-        order_q: Dict[str, Any] = {"_id": inv["order_id"], "is_invoiced": True} if inv.get("order_id") else None
-        if order_q and inv.get("company_id"):
-            order_q["company_id"] = inv["company_id"]
-        if order_q and not (await db.orders.find_one(order_q)):
-            await _mark_order_invoiced_from_invoice(inv)
-        return {"status": "success", "message": "Fatura zaten onaylı."}
-    await _apply_invoice_effects(inv)
-    issued_notes = ubl_export.strip_issued_invoice_note(inv.get("notes"))
-    approved_set = {
-        "status": "approved",
-        "effects_applied": True,
-        "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"),
-        "approved_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if issued_notes != (inv.get("notes") or ""):
-        approved_set["notes"] = issued_notes
-        inv["notes"] = issued_notes
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": approved_set})
-    inv = await db.invoices.find_one({"_id": invoice_id}) or inv
-    await _mark_order_invoiced_from_invoice(inv)
-    settlement = None
-    if inv.get("order_id"):
-        order_q: Dict[str, Any] = {"_id": inv["order_id"]}
-        if inv.get("company_id"):
-            order_q["company_id"] = inv["company_id"]
-        order = await db.orders.find_one(order_q)
-        if order:
-            contact = None
-            if inv.get("contact_id"):
-                contact = await db.contacts.find_one({"_id": inv["contact_id"]})
-            if not contact:
-                contact = await _ensure_order_contact(order)
-            try:
-                settlement = await _post_marketplace_settlement(order, inv, contact or {})
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Pazaryeri hakediş yazılamadı (approve): %s", order.get("order_number")
-                )
-    msg = "Fatura onaylandı; cari bakiyesi ve stok işlendi."
-    if settlement:
-        msg += f" · {settlement['net']:,.2f} ₺ net hakediş {settlement['account_name']} hesabına işlendi."
-    return {
-        "status": "success",
-        "message": msg,
-        "invoice_id": invoice_id,
-        "order_id": inv.get("order_id"),
-        "settlement": settlement,
-    }
+    now = datetime.now(timezone.utc)
+    stale = _invoice_approving_is_stale(inv, now)
+    if inv.get("status") != "draft" and not stale:
+        if inv.get("status") == "approving":
+            raise HTTPException(status_code=409, detail=_INVOICE_APPROVE_BUSY)
+        return await _approve_invoice_already_ok(inv)
+    company_id = inv.get("company_id")
+    claim = await _invoice_claim_update(
+        db.invoices,
+        _invoice_approve_claim_query(invoice_id, company_id, now),
+        {"$set": {"status": "approving", "approving_at": now.isoformat()}},
+    )
+    if not getattr(claim, "matched_count", 0):
+        fresh = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or inv
+        if fresh.get("status") in ("cancelled", "cancelling"):
+            raise HTTPException(status_code=409, detail=_INVOICE_CANCELLED_DETAIL)
+        if fresh.get("status") == "deleting":
+            raise HTTPException(status_code=409, detail="Fatura siliniyor")
+        if fresh.get("status") == "approving":
+            raise HTTPException(status_code=409, detail=_INVOICE_APPROVE_BUSY)
+        return await _approve_invoice_already_ok(fresh)
+    try:
+        await _apply_invoice_effects(inv)
+        issued_notes = ubl_export.strip_issued_invoice_note(inv.get("notes"))
+        approved_set = {
+            "status": "approved",
+            "effects_applied": True,
+            "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"),
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if issued_notes != (inv.get("notes") or ""):
+            approved_set["notes"] = issued_notes
+            inv["notes"] = issued_notes
+        await db.invoices.update_one(
+            {"_id": invoice_id, "company_id": company_id},
+            {"$set": approved_set, "$unset": {"approving_at": ""}},
+        )
+        inv = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or inv
+        await _mark_order_invoiced_from_invoice(inv)
+        settlement = None
+        if inv.get("order_id"):
+            order_q: Dict[str, Any] = {"_id": inv["order_id"]}
+            if company_id:
+                order_q["company_id"] = company_id
+            order = await db.orders.find_one(order_q)
+            if order:
+                contact = None
+                if inv.get("contact_id"):
+                    contact = await db.contacts.find_one({"_id": inv["contact_id"]})
+                if not contact:
+                    contact = await _ensure_order_contact(order)
+                try:
+                    settlement = await _post_marketplace_settlement(order, inv, contact or {})
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "Pazaryeri hakediş yazılamadı (approve): %s", order.get("order_number")
+                    )
+        msg = "Fatura onaylandı; cari bakiyesi ve stok işlendi."
+        if settlement:
+            msg += f" · {settlement['net']:,.2f} ₺ net hakediş {settlement['account_name']} hesabına işlendi."
+        return {
+            "status": "success",
+            "message": msg,
+            "invoice_id": invoice_id,
+            "order_id": inv.get("order_id"),
+            "settlement": settlement,
+        }
+    except Exception:
+        logging.getLogger(__name__).exception("Fatura onay hatası, taslağa dönülüyor: %s", invoice_id)
+        try:
+            await _reverse_invoice_effects(inv)
+        except Exception:
+            logging.getLogger(__name__).exception("Fatura onay rollback etkileri geri alınamadı: %s", invoice_id)
+        await db.invoices.update_one(
+            {"_id": invoice_id, "company_id": company_id},
+            {"$set": {"status": "draft", "effects_applied": False}, "$unset": {"approving_at": ""}},
+        )
+        raise
 
 
 async def _mark_order_invoiced_from_invoice(inv: dict) -> None:
@@ -9048,6 +9147,12 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
+    if inv.get("status") == "cancelling":
+        raise HTTPException(status_code=409, detail=_INVOICE_CANCELLING_DETAIL)
+    if inv.get("status") == "approving":
+        raise HTTPException(status_code=409, detail=_INVOICE_APPROVING_DETAIL)
+    if inv.get("status") == "deleting":
+        raise HTTPException(status_code=409, detail="Fatura siliniyor")
     if is_incoming_dispatch(inv):
         raise HTTPException(status_code=400, detail="Gelen e-irsaliye düzenlenemez.")
     # GİB'e gönderilmemiş faturalar (taslak veya yalnızca yerel onay) tam düzenlenebilir
@@ -9182,7 +9287,13 @@ def _invoice_is_faturalasmis(inv: Optional[dict]) -> bool:
 
 
 def _invoice_delete_http_status(reason: Optional[str]) -> int:
-    if reason == FATURALASMIS_DELETE_MSG or reason == ONCE_FATURALASTIRIN:
+    if reason in (
+        FATURALASMIS_DELETE_MSG,
+        ONCE_FATURALASTIRIN,
+        _INVOICE_APPROVING_DETAIL,
+        _INVOICE_CANCELLING_DETAIL,
+        "Fatura siliniyor",
+    ):
         return 409
     return 400
 
@@ -9211,6 +9322,12 @@ def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
         return "Fatura bulunamadı."
     if inv.get("status") == "cancelled":
         return "İptal edilmiş belge silinmez."
+    if inv.get("status") == "cancelling":
+        return _INVOICE_CANCELLING_DETAIL
+    if inv.get("status") == "approving":
+        return _INVOICE_APPROVING_DETAIL
+    if inv.get("status") == "deleting":
+        return "Fatura siliniyor"
     if _is_dispatch_doc(inv):
         if inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox" or inv.get("edoc_id"):
             return "Gelen e-İrsaliye silinemez."
@@ -9358,30 +9475,59 @@ async def _soft_delete_invoice_doc(
     finance = await _invoice_finance_block(inv)
     if finance:
         raise HTTPException(status_code=400, detail=finance)
-    applied = bool(inv.get("effects_applied")) or (not is_draft and inv.get("status") in ("approved", "sent_to_gib", "paid"))
-    if applied:
-        await _reverse_invoice_effects(inv)
-    if unlink:
-        await _unlink_orders_from_invoice(invoice_id, inv.get("company_id"))
-        await dispatch_invoice.release_invoice_dispatches(db, inv)
-        if _is_dispatch_doc(inv):
-            await _unlink_dispatch_refs(invoice_id)
-        await _cancel_promissory_for_query({"invoice_id": invoice_id})
-    inst_q: Dict[str, Any] = {"invoice_id": invoice_id}
-    if inv.get("company_id"):
-        inst_q["company_id"] = inv["company_id"]
-    inst_docs = await db.installments.find(inst_q).to_list(500)
-    related = [{"collection": "installments", "docs": inst_docs}] if inst_docs else None
-    kind = note or ("Taslak fatura" if is_draft else "Kağıt fatura")
-    return await trash.soft_delete(
-        "invoices",
-        inv,
-        "invoice",
-        f"{inv.get('invoice_number')} · {inv.get('contact_name', '')} · {inv.get('grand_total', 0):,.2f} ₺",
-        related=related,
-        note=kind,
-        restore_group=restore_group,
+    company_id = inv.get("company_id")
+    claim = await _invoice_claim_update(
+        db.invoices,
+        {
+            "_id": invoice_id,
+            "company_id": company_id,
+            "status": {"$nin": list(_INVOICE_CLAIM_BLOCKED)},
+        },
+        {"$set": {"status": "deleting", "deleting_at": datetime.now(timezone.utc).isoformat()}},
     )
+    if not getattr(claim, "matched_count", 0):
+        fresh = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or inv
+        st = fresh.get("status")
+        if st == "cancelling":
+            raise HTTPException(status_code=409, detail=_INVOICE_CANCELLING_DETAIL)
+        if st == "approving":
+            raise HTTPException(status_code=409, detail=_INVOICE_APPROVING_DETAIL)
+        if st in ("cancelled", "canceled"):
+            raise HTTPException(status_code=409, detail=_INVOICE_CANCEL_CONFLICT)
+        raise HTTPException(status_code=409, detail="Fatura başka bir işlemde siliniyor")
+    prev_status = inv.get("status")
+    try:
+        applied = bool(inv.get("effects_applied")) or (not is_draft and prev_status in ("approved", "sent_to_gib", "paid"))
+        if applied:
+            await _reverse_invoice_effects(inv)
+        if unlink:
+            await _unlink_orders_from_invoice(invoice_id, inv.get("company_id"))
+            await dispatch_invoice.release_invoice_dispatches(db, inv)
+            if _is_dispatch_doc(inv):
+                await _unlink_dispatch_refs(invoice_id)
+            await _cancel_promissory_for_query({"invoice_id": invoice_id})
+        inst_q: Dict[str, Any] = {"invoice_id": invoice_id}
+        if inv.get("company_id"):
+            inst_q["company_id"] = inv["company_id"]
+        inst_docs = await db.installments.find(inst_q).to_list(500)
+        related = [{"collection": "installments", "docs": inst_docs}] if inst_docs else None
+        kind = note or ("Taslak fatura" if is_draft else "Kağıt fatura")
+        return await trash.soft_delete(
+            "invoices",
+            inv,
+            "invoice",
+            f"{inv.get('invoice_number')} · {inv.get('contact_name', '')} · {inv.get('grand_total', 0):,.2f} ₺",
+            related=related,
+            note=kind,
+            restore_group=restore_group,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("Fatura silme hatası, önceki duruma dönülüyor: %s", invoice_id)
+        await db.invoices.update_one(
+            {"_id": invoice_id, "company_id": company_id, "status": "deleting"},
+            {"$set": {"status": prev_status}, "$unset": {"deleting_at": ""}},
+        )
+        raise
 
 
 async def _soft_delete_order_doc(o: dict, note: str = "", *, restore_group: Optional[str] = None) -> str:
@@ -9501,72 +9647,111 @@ def _invoice_cancel_block_reason(inv: dict) -> Optional[str]:
 
 
 async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user: dict = None):
-    """Onaylı e-faturayı iptal et: cari/stok etkilerini geri al, sipariş bağını kopar, kaydı cancelled bırak (listede gizlenir)."""
+    """Onaylı e-faturayı iptal et: cari/stok etkilerini geri al, sipariş bağını kopar, kaydı cancelled bırak (listede gizlenir).
+
+    Yerel iptal — GİB/İşNet çağrısı yok; kayıt trash'e gitmez. Atomik claim ile etkiler bir kez geri alınır.
+    """
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    if inv.get("status") in ("cancelled", "cancelling"):
+        raise HTTPException(status_code=409, detail=_INVOICE_CANCEL_CONFLICT)
+    if inv.get("status") == "approving":
+        raise HTTPException(status_code=409, detail=_INVOICE_APPROVING_DETAIL)
+    if inv.get("status") == "deleting":
+        raise HTTPException(status_code=409, detail="Fatura siliniyor")
     reason = _invoice_cancel_block_reason(inv)
     if reason:
         raise HTTPException(status_code=400, detail=reason)
-    applied = bool(inv.get("effects_applied")) or inv.get("status") in ("approved", "sent_to_gib", "paid")
-    if applied:
-        await _reverse_invoice_effects(inv)
-    # Kasada duran tahsilat/ödeme satırlarının cari etkisini de geri al (kasa bakiyesi kalır).
-    pay_rows = await db.bank_transactions.find({"related_invoice_id": invoice_id}).to_list(200)
-    for ptx in pay_rows:
-        cid = ptx.get("contact_id")
-        if not cid or ptx.get("source") == "expense":
-            continue
-        amt = float(ptx.get("amount") or 0)
-        # create'te inflow → balance −amt; iptalde geri al → +amt
-        await db.contacts.update_one(
-            {"_id": cid},
-            {"$inc": {"balance": amt if ptx.get("type") == "inflow" else -amt}},
-        )
-        await db.bank_transactions.update_one(
-            {"_id": ptx["_id"]},
-            {"$unset": {"related_invoice_id": "", "related_invoice_number": ""},
-             "$set": {"category": "İptal fatura tahsilatı" if ptx.get("type") == "inflow" else "İptal fatura ödemesi"}},
-        )
-    for ptx in await db.partner_transactions.find({"related_invoice_id": invoice_id}).to_list(100):
-        delta = _contact_balance_delta_for_partner_tx(ptx)
-        if delta and ptx.get("contact_id"):
-            await db.contacts.update_one({"_id": ptx["contact_id"]}, {"$inc": {"balance": -delta}})
-        await db.partner_transactions.update_one(
-            {"_id": ptx["_id"]},
-            {"$unset": {"related_invoice_id": ""}},
-        )
-    await _unlink_orders_from_invoice(invoice_id)
-    await dispatch_invoice.release_invoice_dispatches(db, inv)
-    if _is_dispatch_doc(inv):
-        await _unlink_dispatch_refs(invoice_id)
-    await _cancel_promissory_for_query({"invoice_id": invoice_id})
-    # Ödenmiş / bekleyen taksit planını iptal say; sipariş silinebilsin diye fatura bağını temizle.
-    await db.installments.update_many(
-        {"invoice_id": invoice_id, "status": {"$ne": "paid"}},
-        {"$set": {"status": "cancelled"}},
+    company_id = inv.get("company_id")
+    prev_status = inv.get("status")
+    claim = await _invoice_claim_update(
+        db.invoices,
+        {
+            "_id": invoice_id,
+            "company_id": company_id,
+            "status": {"$nin": list(_INVOICE_CLAIM_BLOCKED)},
+        },
+        {"$set": {"status": "cancelling", "cancelling_at": datetime.now(timezone.utc).isoformat()}},
     )
-    now = datetime.now(timezone.utc).isoformat()
-    note = (req.get("reason") or "").strip()[:300]
-    updates = {
-        "status": "cancelled",
-        "effects_applied": False,
-        "cancelled_at": now,
-        "cancel_reason": note,
-        "gib_status": "İptal edildi",
-        "payment_status": "cancelled",
-        "paid_amount": 0,
-    }
-    # Gelen e-fatura: ticari ret değil; yerel iptal (onay sonrası düzeltme).
-    if _is_incoming_purchase_invoice(inv):
-        updates["gib_status"] = "Gelen E-Fatura İptal"
-        if inv.get("edoc_id"):
-            await db.incoming_edocs.update_one(
-                {"_id": inv["edoc_id"]},
-                {"$set": {"status": "cancelled", "cancelled_at": now, "cancel_reason": note}},
+    if not getattr(claim, "matched_count", 0):
+        fresh = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or inv
+        if fresh.get("status") == "deleting":
+            raise HTTPException(status_code=409, detail="Fatura siliniyor")
+        if fresh.get("status") == "approving":
+            raise HTTPException(status_code=409, detail=_INVOICE_APPROVING_DETAIL)
+        raise HTTPException(status_code=409, detail=_INVOICE_CANCEL_CONFLICT)
+    pay_rows = []
+    try:
+        applied = bool(inv.get("effects_applied")) or prev_status in ("approved", "sent_to_gib", "paid")
+        if applied:
+            await _reverse_invoice_effects(inv)
+        # Kasada duran tahsilat/ödeme satırlarının cari etkisini de geri al (kasa bakiyesi kalır).
+        pay_rows = await db.bank_transactions.find({"related_invoice_id": invoice_id}).to_list(200)
+        for ptx in pay_rows:
+            cid = ptx.get("contact_id")
+            if not cid or ptx.get("source") == "expense":
+                continue
+            amt = float(ptx.get("amount") or 0)
+            # create'te inflow → balance −amt; iptalde geri al → +amt
+            await db.contacts.update_one(
+                {"_id": cid},
+                {"$inc": {"balance": amt if ptx.get("type") == "inflow" else -amt}},
             )
-    elif inv.get("e_type") and inv.get("e_type") != "paper":
-        updates["einvoice_state"] = "cancelled"
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
+            await db.bank_transactions.update_one(
+                {"_id": ptx["_id"]},
+                {"$unset": {"related_invoice_id": "", "related_invoice_number": ""},
+                 "$set": {"category": "İptal fatura tahsilatı" if ptx.get("type") == "inflow" else "İptal fatura ödemesi"}},
+            )
+        for ptx in await db.partner_transactions.find({"related_invoice_id": invoice_id}).to_list(100):
+            delta = _contact_balance_delta_for_partner_tx(ptx)
+            if delta and ptx.get("contact_id"):
+                await db.contacts.update_one({"_id": ptx["contact_id"]}, {"$inc": {"balance": -delta}})
+            await db.partner_transactions.update_one(
+                {"_id": ptx["_id"]},
+                {"$unset": {"related_invoice_id": ""}},
+            )
+        await _unlink_orders_from_invoice(invoice_id, inv.get("company_id"))
+        await dispatch_invoice.release_invoice_dispatches(db, inv)
+        if _is_dispatch_doc(inv):
+            await _unlink_dispatch_refs(invoice_id)
+        await _cancel_promissory_for_query({"invoice_id": invoice_id})
+        # Ödenmiş / bekleyen taksit planını iptal say; sipariş silinebilsin diye fatura bağını temizle.
+        await db.installments.update_many(
+            {"invoice_id": invoice_id, "status": {"$ne": "paid"}},
+            {"$set": {"status": "cancelled"}},
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        note = (req.get("reason") or "").strip()[:300]
+        updates = {
+            "status": "cancelled",
+            "effects_applied": False,
+            "cancelled_at": now,
+            "cancel_reason": note,
+            "gib_status": "İptal edildi",
+            "payment_status": "cancelled",
+            "paid_amount": 0,
+        }
+        # Gelen e-fatura: ticari ret değil; yerel iptal (onay sonrası düzeltme).
+        if _is_incoming_purchase_invoice(inv):
+            updates["gib_status"] = "Gelen E-Fatura İptal"
+            if inv.get("edoc_id"):
+                await db.incoming_edocs.update_one(
+                    {"_id": inv["edoc_id"]},
+                    {"$set": {"status": "cancelled", "cancelled_at": now, "cancel_reason": note}},
+                )
+        elif inv.get("e_type") and inv.get("e_type") != "paper":
+            updates["einvoice_state"] = "cancelled"
+        await db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": updates, "$unset": {"cancelling_at": ""}},
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("Fatura iptal hatası, önceki duruma dönülüyor: %s", invoice_id)
+        await db.invoices.update_one(
+            {"_id": invoice_id, "company_id": company_id, "status": "cancelling"},
+            {"$set": {"status": prev_status}, "$unset": {"cancelling_at": ""}},
+        )
+        raise
     if inv.get("contact_id"):
         await contact_balance.sync_contact_balance(db, inv["contact_id"])
     if _is_dispatch_doc(inv):
@@ -9593,6 +9778,12 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
 
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    if inv.get("status") in ("cancelled", "cancelling"):
+        raise HTTPException(status_code=409, detail=_INVOICE_CANCELLED_DETAIL)
+    if inv.get("status") == "approving":
+        raise HTTPException(status_code=409, detail=_INVOICE_APPROVING_DETAIL)
+    if inv.get("status") == "deleting":
+        raise HTTPException(status_code=409, detail="Fatura siliniyor")
     if _is_dispatch_doc(inv):
         if is_incoming_dispatch(inv):
             raise HTTPException(status_code=400, detail="Gelen e-irsaliye gönderilemez.")
