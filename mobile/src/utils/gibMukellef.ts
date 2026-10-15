@@ -143,25 +143,12 @@ export function contactMukellefPatch(gibMeta?: GibMukellef | null): { is_e_invoi
   return patch;
 }
 
-export function faturalastirMenuLabel(gibLookup?: GibEntry | GibMukellef | null): string {
-  if (!gibLookup) return "Faturalaştır";
-  if ("status" in gibLookup && gibLookup.status === "error") return "Faturalaştır";
-  const data = gibLookup && "data" in gibLookup ? gibLookup.data : gibLookup;
-  if (!data || typeof data !== "object" || ("status" in data)) return "Faturalaştır";
-  if (
-    typeof data.is_e_invoice_user !== "boolean"
-    && data.suggested_e_type !== "e_invoice"
-    && data.suggested_e_type !== "e_archive"
-    && data.lookup_status !== "mukellef"
-    && data.lookup_status !== "not_mukellef"
-  ) {
-    return "Faturalaştır";
-  }
-  const decided = eTypeFromGib(data);
-  if (decided === "e_invoice") return "Faturalaştır (E-Fatura)";
-  if (decided === "e_archive") return "Faturalaştır (E-Arşiv)";
-  return "Faturalaştır";
+/** Taslak onay: GİB tür eki yok — e-belge ayrı adımdır. */
+export function faturalastirMenuLabel(_gibLookup?: GibEntry | GibMukellef | null): string {
+  return "Taslağı Faturalaştır";
 }
+
+export const FATURALASTIR_CONFIRM_DETAIL = "Cari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.";
 
 export type GibLookupView = {
   tax: string;

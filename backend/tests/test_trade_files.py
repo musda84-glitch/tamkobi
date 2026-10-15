@@ -155,6 +155,8 @@ def test_direct_e_export_invoice_prefix_and_vat(api, created):
     assert inv["e_type"] == "e_export"
     assert inv["vat_total"] == 0
     assert inv["grand_total"] == 200
+    a = api.post(f"{API}/invoices/{inv['id']}/approve")
+    assert a.status_code == 200, a.text
     gib = api.post(f"{API}/invoices/{inv['id']}/send-to-gib", json={"e_type": "e_export"})
     assert gib.status_code == 200, gib.text
     assert "e-İhracat" in gib.json()["message"]

@@ -130,6 +130,72 @@ export function orderLocalInvoiceNumber(ord?: OrderMoreOrder | null): string {
   return no;
 }
 
+/** Sipariş hücresindeki numara satırları. GİB yalnız resmi no; yerel «Fatura:» yalnız faturalaşmış. */
+export function orderInvoiceNumberLines(ord?: OrderMoreOrder | null): Array<{
+  kind: "gib" | "local";
+  label: string;
+  title: string;
+  testId: string;
+}> {
+  if (!ord) return [];
+  const lines: Array<{ kind: "gib" | "local"; label: string; title: string; testId: string }> = [];
+  const gib = orderGibInvoiceNumber(ord);
+  if (gib) {
+    lines.push({
+      kind: "gib",
+      label: `GİB: ${gib}`,
+      title: "GİB fatura numarası",
+      testId: "order-gib-no",
+    });
+  }
+  const local = orderLocalInvoiceNumber(ord);
+  if (local && ord.is_invoiced) {
+    lines.push({
+      kind: "local",
+      label: `Fatura: ${local}`,
+      title: "Yerel fatura numarası",
+      testId: "order-local-no",
+    });
+  }
+  return lines;
+}
+
+/** Detayda küçük gri satır; listede gösterilmez. */
+export function orderDraftInvoiceCaption(ord?: OrderMoreOrder | null): string {
+  if (!ord || ord.is_invoiced) return "";
+  const no = orderLocalInvoiceNumber(ord) || String(ord.invoice_number || "").trim();
+  const orderNo = String(ord.order_number || "").trim();
+  if (!no || no === orderNo) return "";
+  return `Taslak fatura: ${no}`;
+}
+
+export const FATURALASTIR_CONFIRM_DETAIL = "Cari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.";
+
+export function faturalastirConfirmMessage(ord?: OrderMoreOrder | null): string {
+  const no = ord?.order_number || ord?.invoice_number || "Belge";
+  return `${no} taslak faturası onaylansın mı?\n${FATURALASTIR_CONFIRM_DETAIL}`;
+}
+
+export function orderDeleteConfirmMessage(ord?: OrderMoreOrder | null): string {
+  const no = ord?.order_number || "Sipariş";
+  let msg = `${no} silinsin mi?`;
+  const invNo = !ord?.is_invoiced ? String(ord?.invoice_number || "").trim() : "";
+  if (invNo && invNo !== no) msg += `\nBağlı taslak fatura ${invNo} da silinecek`;
+  return msg;
+}
+
+export function ordersBulkDeleteConfirmMessage(list?: Array<OrderMoreOrder | null> | null): string {
+  const rows = Array.isArray(list) ? list : [];
+  let msg = `${rows.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`;
+  const nos = [...new Set(rows
+    .filter((o): o is OrderMoreOrder => !!o && !o.is_invoiced)
+    .map((o) => String(o.invoice_number || "").trim())
+    .filter((n) => n))];
+  if (nos.length === 1) msg += `\nBağlı taslak fatura ${nos[0]} da silinecek`;
+  else if (nos.length > 1) msg += `\nBağlı taslak faturalar da silinecek: ${nos.join(", ")}`;
+  return msg;
+}
+
 export function orderEBelgeKindLabel(ord?: OrderMoreOrder | null): string {
   const eType = orderDocEType(ord);
   if (eType === "e_invoice" || eType === "e_export") return "E-Fatura";
@@ -261,7 +327,7 @@ export const INVOICE_PRINT_SHARE_NOTE =
 export function integrationDraftMoreItems(): OrderMoreItem[] {
   return [
     item("refresh_status", "Siparişin Güncel Durumunu Getir", "refresh", { color: "#059669" }),
-    item("faturalastir", "Faturalaştır", "document-text", { color: "#059669" }),
+    item("faturalastir", "Taslağı Faturalaştır", "document-text", { color: "#059669" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", "car", { color: "#0EA5E9" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
     item("invoice_date", "Fatura Tarihi Değiştir", "time", { color: "#D97706" }),
@@ -309,7 +375,7 @@ export function integrationEInvoiceMoreItems(): OrderMoreItem[] {
 
 export function panelDraftMoreItems(ord?: OrderMoreOrder | null): OrderMoreItem[] {
   return filterPanelCargoLabelItems(ord, [
-    item("faturalastir", "Faturalaştır", "document-text", { color: "#059669" }),
+    item("faturalastir", "Taslağı Faturalaştır", "document-text", { color: "#059669" }),
     item(
       "dispatch",
       ord?.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "İrsaliye olarak kaydet",
@@ -397,7 +463,7 @@ export function orderDownloadMoreItems(): OrderMoreItem[] {
 }
 
 export function canDeleteFromMoreMenu(ord?: OrderMoreOrder | null): boolean {
-  return !!ord && !ord.is_invoiced && !ord.invoice_id;
+  return !!ord && !ord.is_invoiced;
 }
 
 export function orderDeleteMoreItem(): OrderMoreItem {
@@ -440,8 +506,8 @@ export function orderMoreMenuItems(
 export function mobilePrimaryAction(ord?: OrderMoreOrder | null): { id: string; label: string } | null {
   const kind = orderMoreMenuKind(ord);
   if (kind === "held_cart") return null;
-  if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır" };
-  if (kind === "integration_draft") return { id: "faturalastir", label: "Faturalaştır" };
+  if (kind === "panel_draft") return { id: "faturalastir", label: "Taslağı Faturalaştır" };
+  if (kind === "integration_draft") return { id: "faturalastir", label: "Taslağı Faturalaştır" };
   if (kind === "integration_invoiced" || kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket" };

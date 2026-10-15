@@ -17,6 +17,11 @@ import {
   isYmd,
   INVOICE_PRINT_SHARE_HINT,
   invoicePrintShareMessage,
+  orderDraftInvoiceCaption,
+  orderInvoiceNumberLines,
+  faturalastirConfirmMessage,
+  orderDeleteConfirmMessage,
+  canDeleteFromMoreMenu,
 } from "./orderMoreMenu";
 
 describe("orderMoreMenu web variants", () => {
@@ -126,7 +131,7 @@ describe("orderMoreMenu web variants", () => {
     const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-2026-0011" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
-      "Faturalaştır",
+      "Taslağı Faturalaştır",
       "İrsaliye olarak kaydet",
       "Fatura Tarihi Değiştir",
       "Kargola",
@@ -134,7 +139,7 @@ describe("orderMoreMenu web variants", () => {
       "Siparişi Excel İndir",
       "Siparişi PDF İndir",
     ]);
-    expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Faturalaştır" });
+    expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Taslağı Faturalaştır" });
   });
 
   it("panel draft shows mini cargo labels after cargo dispatch", () => {
@@ -207,7 +212,7 @@ describe("orderMoreMenu web variants", () => {
     expect(labels).toEqual(integrationDraftMoreItems().map((i) => i.label));
     expect(labels).toEqual([
       "Siparişin Güncel Durumunu Getir",
-      "Faturalaştır",
+      "Taslağı Faturalaştır",
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
@@ -220,7 +225,7 @@ describe("orderMoreMenu web variants", () => {
     expect(labels).not.toContain("Siparişi Düzenle");
     expect(labels).not.toContain("Siparişi Excel İndir");
     expect(labels).not.toContain("Siparişi Sil");
-    expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Faturalaştır" });
+    expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Taslağı Faturalaştır" });
   });
 
   it("panel draft ids match web", () => {
@@ -236,8 +241,8 @@ describe("orderMoreMenu web variants", () => {
     expect(isYmd("24.09.2026")).toBe(false);
   });
 
-  it("hides delete when a draft or issued invoice exists", () => {
-    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1" }).items.map((i) => i.id)).not.toContain("delete");
+  it("allows delete on draft invoice_id, hides it after Faturalaştı", () => {
+    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1" }).items.map((i) => i.id)).toContain("delete");
     expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", gib_uuid: "u-1" }).items.map((i) => i.id)).not.toContain("delete");
   });
 
@@ -260,5 +265,21 @@ describe("orderMoreMenu web variants", () => {
     expect(msg).toContain("E-Fatura");
     expect(msg).toContain("https://x/pdf");
     expect(msg.toLowerCase()).not.toContain("gib gönder");
+  });
+
+  it("hides TA from the list and keeps it as a detail caption", () => {
+    expect(orderInvoiceNumberLines({
+      order_number: "B2B-1",
+      is_invoiced: false,
+      invoice_number: "TA1",
+    })).toEqual([]);
+    expect(orderDraftInvoiceCaption({
+      order_number: "B2B-1",
+      is_invoiced: false,
+      invoice_number: "TA1",
+    })).toBe("Taslak fatura: TA1");
+    expect(canDeleteFromMoreMenu({ is_invoiced: false, invoice_id: "inv1" })).toBe(true);
+    expect(faturalastirConfirmMessage({ order_number: "B2B-1" })).toMatch(/E-belge gönderimi ayrı adımdır/);
+    expect(orderDeleteConfirmMessage({ order_number: "B2B-1", invoice_number: "TA1", is_invoiced: false })).toMatch(/Bağlı taslak fatura TA1 da silinecek/);
   });
 });

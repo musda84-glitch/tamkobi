@@ -6,6 +6,11 @@ import {
   orderGibInvoiceNumber,
   orderLocalInvoiceNumber,
   orderInvoiceNumberLines,
+  orderDraftInvoiceCaption,
+  faturalastirConfirmMessage,
+  orderDeleteConfirmMessage,
+  ordersBulkDeleteConfirmMessage,
+  canDeleteFromMoreMenu,
   orderEBelgeKindLabel,
   orderInvoiceBadge,
   orderMoreMenuKind,
@@ -77,6 +82,7 @@ describe("orderMoreMenu", () => {
       order_number: "B2B-2026-0080",
       e_type: "paper",
       einvoice_state: "paper",
+      is_invoiced: true,
       invoice_number: "TA2026000000069",
     });
     expect(paperLines.map((l) => l.label)).toEqual(["Fatura: TA2026000000069"]);
@@ -84,10 +90,22 @@ describe("orderMoreMenu", () => {
     expect(orderInvoiceNumberLines({
       order_number: "B2B-1",
       e_type: "e_invoice",
+      is_invoiced: true,
       gib_invoice_id: "U052026000000090",
       local_invoice_number: "TA2026000000001",
       invoice_number: "U052026000000090",
     }).map((l) => l.label)).toEqual(["GİB: U052026000000090", "Fatura: TA2026000000001"]);
+    expect(orderInvoiceNumberLines({
+      order_number: "B2B-1",
+      is_invoiced: false,
+      invoice_id: "inv1",
+      invoice_number: "TA2026000000001",
+    })).toEqual([]);
+    expect(orderDraftInvoiceCaption({
+      order_number: "B2B-1",
+      is_invoiced: false,
+      invoice_number: "TA2026000000001",
+    })).toBe("Taslak fatura: TA2026000000001");
     expect(orderGibInvoiceNumber({
       invoice_number: "NX202600000682",
       order_number: "ORD-1",
@@ -99,8 +117,16 @@ describe("orderMoreMenu", () => {
 
   it("invoice badge: taslak sarı → faturalaştı yeşil → faturalaşmış e-fatura/e-arşiv kırmızı bilgi", () => {
     expect(orderInvoiceBadge({ invoice_id: "i1", is_invoiced: false })).toEqual(
-      expect.objectContaining({ label: "Taslak", testId: "draft", interactive: true }),
+      expect.objectContaining({ label: "Taslak", title: "Taslak", testId: "draft", interactive: true }),
     );
+    const draftBadge = orderInvoiceBadge({
+      invoice_id: "inv1",
+      is_invoiced: false,
+      invoice_number: "TA2026000000001",
+      order_number: "B2B-1",
+    });
+    expect(JSON.stringify(draftBadge)).not.toContain("TA2026000000001");
+    expect(draftBadge.title).not.toContain("TA");
     expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive" })).toEqual(
       expect.objectContaining({ label: "Faturalaştı", testId: "invoiced", interactive: true }),
     );
@@ -187,7 +213,7 @@ describe("orderMoreMenu", () => {
       "Paketli Siparişin Kargo Firmasını Değiştir",
     ]);
     expect(labels).not.toContain("Siparişi Excel İndir");
-    expect(labels).not.toContain("Faturalaştır");
+    expect(labels).not.toContain("Taslağı Faturalaştır");
   });
 
   it("integration + GİB e-invoice uses marketplace fulfillment menu", () => {
@@ -215,7 +241,7 @@ describe("orderMoreMenu", () => {
     expect(labels).toEqual(integrationDraftMoreItems().map((i) => i.label));
     expect(labels).toEqual([
       "Siparişin Güncel Durumunu Getir",
-      "Faturalaştır",
+      "Taslağı Faturalaştır",
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
@@ -235,7 +261,7 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
     const { items } = orderMoreMenuItems(ord);
     expect(items.map((i) => i.label)).toEqual([
-      "Faturalaştır",
+      "Taslağı Faturalaştır",
       "İrsaliye olarak kaydet",
       "Fatura Tarihi Değiştir",
       "Kargola",
@@ -283,7 +309,7 @@ describe("orderMoreMenu", () => {
     expect(labels).not.toContain("E-Arşiv kes (GİB)");
     expect(labels).not.toContain("E-Fatura kes (GİB)");
     expect(labels).not.toContain("Siparişi Düzenle");
-    expect(labels).toContain("Faturalaştır");
+    expect(labels).toContain("Taslağı Faturalaştır");
   });
 
   it("panel invoiced ignores eBelgeItems — tek E-Fatura Oluştur satırı", () => {
@@ -346,5 +372,18 @@ describe("orderMoreMenu", () => {
       expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
       expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Siparişi Sil");
     }
+  });
+
+  it("deletes uninvoiced orders even with a draft invoice_id", () => {
+    expect(canDeleteFromMoreMenu({ is_invoiced: false, invoice_id: "inv1", invoice_number: "TA1" })).toBe(true);
+    expect(canDeleteFromMoreMenu({ is_invoiced: true, invoice_id: "inv1" })).toBe(false);
+    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1", order_number: "B2B-1" }).items.map((i) => i.id)).toContain("delete");
+  });
+
+  it("confirm texts mention linked draft invoice and e-belge as a separate step", () => {
+    const ord = { order_number: "B2B-1", invoice_number: "TA1", is_invoiced: false };
+    expect(faturalastirConfirmMessage(ord)).toMatch(/E-belge gönderimi ayrı adımdır/);
+    expect(orderDeleteConfirmMessage(ord)).toMatch(/Bağlı taslak fatura TA1 da silinecek/);
+    expect(ordersBulkDeleteConfirmMessage([ord])).toMatch(/Bağlı taslak fatura TA1 da silinecek/);
   });
 });

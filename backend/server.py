@@ -6032,11 +6032,25 @@ async def b2b_delete_order(token: str, order_id: str):
     if o.get("order_status") not in ("pending", "new", "held_cart", "active_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler silinebilir.")
     if o.get("is_invoiced"):
-        raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
+        raise HTTPException(status_code=409, detail=FATURALASMIS_DELETE_MSG)
     if o.get("invoice_id"):
-        inv = await db.invoices.find_one({"_id": o["invoice_id"]})
+        inv_q: Dict[str, Any] = {"_id": o["invoice_id"]}
+        if o.get("company_id"):
+            inv_q["company_id"] = o["company_id"]
+        inv = await db.invoices.find_one(inv_q)
         if inv and inv.get("status") == "draft" and not o.get("is_invoiced"):
-            await _soft_delete_invoice_doc(inv, note="B2B sipariş silindi — taslak fatura silindi")
+            gid = str(uuid.uuid4())
+            await _soft_delete_invoice_doc(
+                inv, note="B2B sipariş silindi — taslak fatura silindi", unlink=False, restore_group=gid
+            )
+            label = o.get("held_label") or o.get("order_number")
+            await trash.soft_delete(
+                "orders", o, "order", f"{label} · {o.get('customer_name')}",
+                note=f"B2B portal · {float(o.get('total_amount') or 0):,.2f} ₺",
+                restore_group=gid,
+            )
+            await _notify_company(c["company_id"], "b2b_order_delete", f"B2B sipariş silindi {label}", f"{c.get('name')} beklemedeki siparişi iptal edip sildi.", order_id)
+            return {"status": "success", "message": f"{label} silindi."}
     label = o.get("held_label") or o.get("order_number")
     await trash.soft_delete("orders", o, "order", f"{label} · {o.get('customer_name')}", note=f"B2B portal · {float(o.get('total_amount') or 0):,.2f} ₺")
     await _notify_company(c["company_id"], "b2b_order_delete", f"B2B sipariş silindi {label}", f"{c.get('name')} beklemedeki siparişi iptal edip sildi.", order_id)
@@ -8935,7 +8949,10 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
     if _is_incoming_purchase_invoice(inv):
         return await _post_incoming_purchase_invoice(invoice_id, inv)
     if inv.get("status") != "draft":
-        if inv.get("order_id") and not (await db.orders.find_one({"_id": inv["order_id"], "is_invoiced": True})):
+        order_q: Dict[str, Any] = {"_id": inv["order_id"], "is_invoiced": True} if inv.get("order_id") else None
+        if order_q and inv.get("company_id"):
+            order_q["company_id"] = inv["company_id"]
+        if order_q and not (await db.orders.find_one(order_q)):
             await _mark_order_invoiced_from_invoice(inv)
         return {"status": "success", "message": "Fatura zaten onaylı."}
     await _apply_invoice_effects(inv)
@@ -8954,7 +8971,10 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
     await _mark_order_invoiced_from_invoice(inv)
     settlement = None
     if inv.get("order_id"):
-        order = await db.orders.find_one({"_id": inv["order_id"]})
+        order_q: Dict[str, Any] = {"_id": inv["order_id"]}
+        if inv.get("company_id"):
+            order_q["company_id"] = inv["company_id"]
+        order = await db.orders.find_one(order_q)
         if order:
             contact = None
             if inv.get("contact_id"):
@@ -9147,8 +9167,46 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             )
     return clean_doc(updated)
 
+FATURALASMIS_DELETE_MSG = "Faturalaşmış belge silinemez; iptal/iade kullanın."
+ONCE_FATURALASTIRIN = "Önce Faturalaştırın"
+
+
+def _invoice_is_faturalasmis(inv: Optional[dict]) -> bool:
+    """Cariye işlenmiş (Faturalaştır) satış/alış belgesi — taslak irsaliye hariç."""
+    if not inv or _is_dispatch_doc(inv):
+        return False
+    if inv.get("effects_applied"):
+        return True
+    status = inv.get("status") or "draft"
+    return status not in ("draft",)
+
+
+def _invoice_delete_http_status(reason: Optional[str]) -> int:
+    if reason == FATURALASMIS_DELETE_MSG or reason == ONCE_FATURALASTIRIN:
+        return 409
+    return 400
+
+
+def _user_may_delete_module(user: Optional[dict], module: str) -> bool:
+    if not user or not isinstance(user, dict):
+        return False
+    if user.get("is_super_admin"):
+        return True
+    role = str(user.get("role") or "").strip().lower()
+    if role in ("admin", "owner"):
+        return True
+    perms = user.get("permissions") or {}
+    return rbac.level_allows(perms.get(module), "delete")
+
+
+def _require_delete_modules(user: Optional[dict], *modules: str) -> None:
+    for mod in modules:
+        if not _user_may_delete_module(user, mod):
+            raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
+
+
 def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
-    """None = silinebilir. Taslak, kağıt ve GİB'e gitmemiş irsaliye silinebilir; GİB e-belgeleri silinemez."""
+    """None = silinebilir. Taslak (effects yok) silinebilir; faturalaşmış 409."""
     if not inv:
         return "Fatura bulunamadı."
     if inv.get("status") == "cancelled":
@@ -9159,13 +9217,13 @@ def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
         if _doc_is_gib_issued(inv):
             return "GİB'e iletilmiş e-İrsaliye silinemez. İptal kullanın."
         return None
+    if _invoice_is_faturalasmis(inv):
+        return FATURALASMIS_DELETE_MSG
     if inv.get("status") == "draft":
+        if _doc_is_gib_issued(inv):
+            return "GİB'e iletilmiş e-belge silinemez. İptal kullanın."
         return None
-    if inv.get("e_type") == "paper":
-        if float(inv.get("paid_amount") or 0) > 0.01 or inv.get("payment_status") in ("paid", "partially_paid", "partial"):
-            return "Ödemesi olan kağıt fatura silinemez. Önce tahsilatı / ödemeyi geri alın."
-        return None
-    return "Kesilmiş e-fatura / e-arşiv silinemez. Muhasebe bütünlüğü için iptal ya da iade faturası düzenleyin."
+    return FATURALASMIS_DELETE_MSG
 
 
 def _is_dispatch_doc(inv: dict) -> bool:
@@ -9200,32 +9258,119 @@ async def _unlink_dispatch_refs(dispatch_id: str):
     )
 
 
-async def _unlink_orders_from_invoice(invoice_id: str):
+async def _unlink_orders_from_invoice(invoice_id: str, company_id: Optional[str] = None):
+    q: Dict[str, Any] = {"invoice_id": invoice_id}
+    if company_id:
+        q["company_id"] = company_id
     await db.orders.update_many(
-        {"invoice_id": invoice_id},
+        q,
         {"$unset": {"invoice_id": "", "invoice_number": ""}, "$set": {"is_invoiced": False}},
     )
 
 
-async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
-    """Taslak veya kağıt faturayı çöp kutusuna taşır; etkileri ve sipariş bağını temizler."""
+def _dedupe_docs(rows: List[dict]) -> List[dict]:
+    seen = set()
+    out: List[dict] = []
+    for r in rows or []:
+        rid = r.get("_id")
+        if rid in seen:
+            continue
+        seen.add(rid)
+        out.append(r)
+    return out
+
+
+async def _live_invoices_linked_to_order(order: dict) -> List[dict]:
+    cid = order.get("company_id")
+    oid = order.get("_id")
+    if not cid or not oid:
+        return []
+    or_terms: List[dict] = [{"order_id": oid}, {"source_order_id": oid}]
+    if order.get("invoice_id"):
+        or_terms.append({"_id": order["invoice_id"]})
+    rows = await db.invoices.find({"company_id": cid, "$or": or_terms}).to_list(50)
+    return _dedupe_docs(rows)
+
+
+async def _live_orders_linked_to_invoice(inv: dict) -> List[dict]:
+    cid = inv.get("company_id")
+    iid = inv.get("_id")
+    if not cid or not iid:
+        return []
+    or_terms: List[dict] = [{"invoice_id": iid}]
+    oid = inv.get("order_id") or inv.get("source_order_id")
+    if oid:
+        or_terms.append({"_id": oid})
+    rows = await db.orders.find({"company_id": cid, "$or": or_terms}).to_list(50)
+    return _dedupe_docs(rows)
+
+
+async def _invoice_finance_block(inv: dict) -> Optional[str]:
+    """Ödeme / taksit / kasa bağı veya GİB'e gitmiş irsaliye — None = yok."""
+    if not inv:
+        return None
+    iid = inv.get("_id")
+    cid = inv.get("company_id")
+    if float(inv.get("paid_amount") or 0) > 0.01 or inv.get("payment_status") in ("paid", "partially_paid", "partial"):
+        return "Ödemesi olan fatura silinemez. Önce tahsilatı / ödemeyi geri alın."
+    inst_q: Dict[str, Any] = {"invoice_id": iid, "status": "paid"}
+    if cid:
+        inst_q["company_id"] = cid
+    if await db.installments.count_documents(inst_q):
+        return "Ödenmiş taksiti olan fatura silinemez. Önce taksit tahsilatlarını geri alın."
+    tx_q: Dict[str, Any] = {"related_invoice_id": iid}
+    if cid:
+        tx_q["company_id"] = cid
+    if await db.bank_transactions.count_documents(tx_q):
+        return "Kasa / banka hareketi olan fatura silinemez."
+    did = inv.get("dispatch_id")
+    if did and cid:
+        disp = await db.invoices.find_one({"_id": did, "company_id": cid})
+        if disp and _doc_is_gib_issued(disp):
+            return "Gönderilmiş irsaliyesi olan belge silinemez."
+    return None
+
+
+async def _order_sent_dispatch_block(order: dict) -> Optional[str]:
+    did = order.get("dispatch_id")
+    cid = order.get("company_id")
+    if not did or not cid:
+        return None
+    disp = await db.invoices.find_one({"_id": did, "company_id": cid})
+    if disp and _doc_is_gib_issued(disp):
+        return "Gönderilmiş irsaliyesi olan belge silinemez."
+    return None
+
+
+async def _soft_delete_invoice_doc(
+    inv: dict,
+    note: str = "",
+    *,
+    unlink: bool = True,
+    restore_group: Optional[str] = None,
+) -> str:
+    """Taslak faturayı çöp kutusuna taşır. İç çağrılarda unlink=True (sipariş kalır)."""
     invoice_id = inv["_id"]
     is_draft = inv.get("status") == "draft"
     reason = _invoice_delete_block_reason(inv)
     if reason:
-        raise HTTPException(status_code=400, detail=reason)
-    paid_inst = await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"})
-    if paid_inst:
-        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan fatura silinemez. Önce taksit tahsilatlarını geri alın.")
+        raise HTTPException(status_code=_invoice_delete_http_status(reason), detail=reason)
+    finance = await _invoice_finance_block(inv)
+    if finance:
+        raise HTTPException(status_code=400, detail=finance)
     applied = bool(inv.get("effects_applied")) or (not is_draft and inv.get("status") in ("approved", "sent_to_gib", "paid"))
     if applied:
         await _reverse_invoice_effects(inv)
-    await _unlink_orders_from_invoice(invoice_id)
-    await dispatch_invoice.release_invoice_dispatches(db, inv)
-    if _is_dispatch_doc(inv):
-        await _unlink_dispatch_refs(invoice_id)
-    await _cancel_promissory_for_query({"invoice_id": invoice_id})
-    inst_docs = await db.installments.find({"invoice_id": invoice_id}).to_list(500)
+    if unlink:
+        await _unlink_orders_from_invoice(invoice_id, inv.get("company_id"))
+        await dispatch_invoice.release_invoice_dispatches(db, inv)
+        if _is_dispatch_doc(inv):
+            await _unlink_dispatch_refs(invoice_id)
+        await _cancel_promissory_for_query({"invoice_id": invoice_id})
+    inst_q: Dict[str, Any] = {"invoice_id": invoice_id}
+    if inv.get("company_id"):
+        inst_q["company_id"] = inv["company_id"]
+    inst_docs = await db.installments.find(inst_q).to_list(500)
     related = [{"collection": "installments", "docs": inst_docs}] if inst_docs else None
     kind = note or ("Taslak fatura" if is_draft else "Kağıt fatura")
     return await trash.soft_delete(
@@ -9235,7 +9380,48 @@ async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
         f"{inv.get('invoice_number')} · {inv.get('contact_name', '')} · {inv.get('grand_total', 0):,.2f} ₺",
         related=related,
         note=kind,
+        restore_group=restore_group,
     )
+
+
+async def _soft_delete_order_doc(o: dict, note: str = "", *, restore_group: Optional[str] = None) -> str:
+    return await trash.soft_delete(
+        "orders",
+        o,
+        "order",
+        f"{o.get('order_number')} · {o.get('customer_name')}",
+        note=note or f"{(o.get('channel') or 'manuel').title()} · {float(o.get('total_amount') or 0):,.2f} ₺",
+        restore_group=restore_group,
+    )
+
+
+async def _trash_linked_order_and_draft(
+    order: dict,
+    invoice: dict,
+    user: Optional[dict],
+    *,
+    order_note: str,
+    invoice_note: str,
+    check_perms: bool = True,
+) -> str:
+    """Önce iki engel, sonra iki silme. Ortak restore_group. Bağlar belgede kalır."""
+    if check_perms:
+        _require_delete_modules(user, "/orders", "/invoices")
+    inv_reason = _invoice_delete_block_reason(invoice)
+    if inv_reason:
+        raise HTTPException(status_code=_invoice_delete_http_status(inv_reason), detail=inv_reason)
+    finance = await _invoice_finance_block(invoice)
+    if finance:
+        raise HTTPException(status_code=400, detail=finance)
+    if order.get("is_invoiced"):
+        raise HTTPException(status_code=409, detail=FATURALASMIS_DELETE_MSG)
+    disp_reason = await _order_sent_dispatch_block(order)
+    if disp_reason:
+        raise HTTPException(status_code=400, detail=disp_reason)
+    gid = str(uuid.uuid4())
+    await _soft_delete_invoice_doc(invoice, note=invoice_note, unlink=False, restore_group=gid)
+    await _soft_delete_order_doc(order, note=order_note, restore_group=gid)
+    return gid
 
 
 @api_router.delete("/invoices/{invoice_id}")
@@ -9244,9 +9430,35 @@ async def delete_invoice(invoice_id: str, user: dict = Depends(get_current_user)
     is_draft = inv.get("status") == "draft"
     if _is_dispatch_doc(inv):
         kind = "Taslak irsaliye" if is_draft else "İrsaliye"
-    else:
-        kind = "Taslak fatura" if is_draft else "Kağıt fatura"
-    tid = await _soft_delete_invoice_doc(inv, note=kind)
+        tid = await _soft_delete_invoice_doc(inv, note=kind)
+        return {
+            "status": "success",
+            "trash_id": tid,
+            "message": f"{kind} çöp kutusuna taşındı (30 gün içinde geri alınabilir).",
+        }
+    kind = "Taslak fatura" if is_draft else "Kağıt fatura"
+    inv_reason = _invoice_delete_block_reason(inv)
+    if inv_reason:
+        raise HTTPException(status_code=_invoice_delete_http_status(inv_reason), detail=inv_reason)
+    finance = await _invoice_finance_block(inv)
+    if finance:
+        raise HTTPException(status_code=400, detail=finance)
+    orders = await _live_orders_linked_to_invoice(inv)
+    if len(orders) == 1:
+        others = [x for x in await _live_invoices_linked_to_order(orders[0]) if x.get("_id") != inv.get("_id")]
+        if not others:
+            await _trash_linked_order_and_draft(
+                orders[0],
+                inv,
+                user,
+                order_note=f"Taslak fatura {inv.get('invoice_number')} ile silindi",
+                invoice_note=kind,
+            )
+            return {
+                "status": "success",
+                "message": f"{kind} ve bağlı sipariş çöp kutusuna taşındı (30 gün içinde geri alınabilir).",
+            }
+    tid = await _soft_delete_invoice_doc(inv, note=kind, unlink=True)
     return {
         "status": "success",
         "trash_id": tid,
@@ -9392,6 +9604,8 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
             inv = await db.invoices.find_one({"_id": invoice_id}) or inv
         if not req.get("e_type"):
             req = {**req, "e_type": "e_dispatch"}
+    if not _is_dispatch_doc(inv) and not _is_incoming_purchase_invoice(inv) and (inv.get("status") or "draft") == "draft":
+        raise HTTPException(status_code=409, detail=ONCE_FATURALASTIRIN)
     if inv.get("status") == "draft" and not inv.get("effects_applied"):
         # İrsaliye bakiyeye yazılmaz; effects_applied işaretleme de yapılmaz.
         if not _is_dispatch_doc(inv):
@@ -14133,11 +14347,44 @@ async def unmapped_items(company_id: Optional[str] = "comp_nexus_main_01"):
             out.append({"channel": o.get("channel"), "marketplace_sku": it.get("sku") or "", "product_name": it.get("product_name"), "has_local_product": it.get("product_id") in products})
     return out
 
-async def _delete_order_core(order_id: str, user: dict):
+async def _delete_order_core(order_id: str, user: dict, *, cascade: bool = True):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
-    if o.get("is_invoiced") or o.get("invoice_id"):
-        raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
-    await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"{(o.get('channel') or 'manuel').title()} · {float(o.get('total_amount') or 0):,.2f} ₺")
+    if o.get("is_invoiced"):
+        raise HTTPException(status_code=409, detail=FATURALASMIS_DELETE_MSG)
+    if not cascade:
+        await _soft_delete_order_doc(o)
+        return {"status": "success", "message": "Sipariş çöp kutusuna taşındı."}
+    invoices = await _live_invoices_linked_to_order(o)
+    drafts = [
+        i for i in invoices
+        if (i.get("status") or "draft") == "draft" and not i.get("effects_applied")
+    ]
+    issued = [i for i in invoices if i not in drafts]
+    if issued:
+        raise HTTPException(status_code=409, detail=FATURALASMIS_DELETE_MSG)
+    disp_reason = await _order_sent_dispatch_block(o)
+    if disp_reason:
+        raise HTTPException(status_code=400, detail=disp_reason)
+    for inv in drafts:
+        inv_reason = _invoice_delete_block_reason(inv)
+        if inv_reason:
+            raise HTTPException(status_code=_invoice_delete_http_status(inv_reason), detail=inv_reason)
+        finance = await _invoice_finance_block(inv)
+        if finance:
+            raise HTTPException(status_code=400, detail=finance)
+    if drafts:
+        _require_delete_modules(user, "/orders", "/invoices")
+        gid = str(uuid.uuid4())
+        for inv in drafts:
+            await _soft_delete_invoice_doc(
+                inv,
+                note="Sipariş silindi — taslak fatura silindi",
+                unlink=False,
+                restore_group=gid,
+            )
+        await _soft_delete_order_doc(o, restore_group=gid)
+        return {"status": "success", "message": "Sipariş ve bağlı taslak fatura çöp kutusuna taşındı."}
+    await _soft_delete_order_doc(o)
     return {"status": "success", "message": "Sipariş çöp kutusuna taşındı."}
 
 
@@ -14176,7 +14423,10 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         return None
     existing_id = order.get("invoice_id")
     if existing_id:
-        existing = await db.invoices.find_one({"_id": existing_id})
+        exist_q: Dict[str, Any] = {"_id": existing_id}
+        if order.get("company_id"):
+            exist_q["company_id"] = order["company_id"]
+        existing = await db.invoices.find_one(exist_q)
         if existing:
             return existing
     # Sevkiyatta müşteri adı yoksa sipariş no ile cari açılsın (taslak fatura kaçmasın).
@@ -14284,7 +14534,10 @@ async def _sync_draft_invoice_items(order: dict, items: list) -> None:
     """Bekleyen sipariş kalemleri değişince bağlı taslak faturayı güncelle."""
     if not order or not order.get("invoice_id") or order.get("is_invoiced") or not items:
         return
-    invoice = await db.invoices.find_one({"_id": order["invoice_id"]})
+    inv_q: Dict[str, Any] = {"_id": order["invoice_id"]}
+    if order.get("company_id"):
+        inv_q["company_id"] = order["company_id"]
+    invoice = await db.invoices.find_one(inv_q)
     if not invoice or invoice.get("status") != "draft":
         return
     inv_rows = order_items_to_invoice_items(items)
@@ -14307,7 +14560,10 @@ async def _sync_draft_order_items(invoice: dict, items: list) -> None:
     order_id = invoice.get("order_id") or invoice.get("source_order_id")
     if not order_id:
         return
-    order = await db.orders.find_one({"_id": order_id})
+    ord_q: Dict[str, Any] = {"_id": order_id}
+    if invoice.get("company_id"):
+        ord_q["company_id"] = invoice["company_id"]
+    order = await db.orders.find_one(ord_q)
     if not order or order.get("is_invoiced"):
         return
     # Sipariş başka faturaya bağlıysa dokunma
@@ -14364,13 +14620,21 @@ async def _invoice_sync_pick_session_open(order: dict) -> bool:
 
 
 async def _stamp_draft_order_invoice_link(invoice: dict) -> None:
-    """Taslak senkronunda sipariş bağını koru. Onaylı faturada çağrılmaz."""
+    """Taslak senkronunda sipariş bağını koru. Çöpteki / başka faturaya bağlı siparişe yazılmaz."""
+    if not invoice or invoice.get("status") != "draft":
+        return
     order_id = invoice.get("order_id") or invoice.get("source_order_id")
     company_id = invoice.get("company_id")
     if not order_id or not company_id:
         return
-    link: Dict[str, Any] = {"is_invoiced": False}
+    order = await db.orders.find_one({"_id": order_id, "company_id": company_id})
+    if not order:
+        return
     inv_id = invoice.get("_id") or invoice.get("id")
+    linked = order.get("invoice_id")
+    if linked and inv_id and linked != inv_id:
+        return
+    link: Dict[str, Any] = {"is_invoiced": False}
     if inv_id:
         link["invoice_id"] = inv_id
     if invoice.get("invoice_number"):
@@ -17665,11 +17929,14 @@ async def update_order_status(order_id: str, req: Dict[str, str], user: dict = D
     draft_cleared = False
     # Onaylı sipariş beklemeye (pending) alınırsa bağlı taslak fatura silinsin
     if new_status == "pending" and order.get("invoice_id") and not order.get("is_invoiced"):
-        inv = await db.invoices.find_one({"_id": order["invoice_id"]})
+        hold_q: Dict[str, Any] = {"_id": order["invoice_id"]}
+        if order.get("company_id"):
+            hold_q["company_id"] = order["company_id"]
+        inv = await db.invoices.find_one(hold_q)
         if inv:
             tenant_access.assert_same_company(user, order, inv)
         if inv and inv.get("status") == "draft":
-            await _soft_delete_invoice_doc(inv, note="Sipariş beklemeye alındı — taslak fatura silindi")
+            await _soft_delete_invoice_doc(inv, note="Sipariş beklemeye alındı — taslak fatura silindi", unlink=True)
             unset = {"invoice_id": "", "invoice_number": ""}
             update["is_invoiced"] = False
             draft_cleared = True

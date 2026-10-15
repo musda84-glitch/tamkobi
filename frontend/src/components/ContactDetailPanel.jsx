@@ -15,7 +15,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice, invoiceDeleteConfirmMessage } from "./InvoiceContextMenu";
 import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "./IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
@@ -563,6 +563,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     }
   };
   const issueFromMenu = (inv, eType) => {
+    if (inv?.status === "draft" && canFaturalastirDraftInvoice(inv)) {
+      return approveDraftInvoice(inv);
+    }
     const openOnay = !eType || eType === "auto" || eType === "e_invoice" || eType === "e_archive";
     if (openOnay) {
       closeInvCtx();
@@ -570,6 +573,21 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       return;
     }
     return sendToGib(inv, eType);
+  };
+  const approveDraftInvoice = async (inv) => {
+    if (!inv) return;
+    const no = inv.invoice_number || "Belge";
+    if (!window.confirm(`${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`)) return;
+    setBusy(inv.id || inv._id);
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+      toast.success(r.data?.message || "Faturalaştı — cari bakiyesi işlendi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    } finally {
+      setBusy(null);
+    }
   };
   const postingIncomingRef = useRef(new Set());
   const faturalastirIncoming = async (inv) => {
@@ -605,9 +623,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
 
   const deleteInvoice = async (inv) => {
-    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
-    const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
-    if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
+    if (!window.confirm(invoiceDeleteConfirmMessage(inv))) return;
     try {
       const r = await axios.delete(`${API_URL}/invoices/${inv.id}`);
       toast.success(r.data.message || "Fatura silindi.");
@@ -802,10 +818,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         {canIssueInv && canFaturalastirDraftInvoice(inv) ? (
                           <DraftInvoiceFaturalastirButton
                             inv={inv}
-                            onIssue={issueFromMenu}
+                            onApprove={approveDraftInvoice}
                             disabled={busy === inv.id}
                             testId={`detail-faturalastir-btn-${inv.invoice_number}`}
-                            chooserTestId={`detail-faturalastir-chooser-${inv.invoice_number}`}
                           />
                         ) : busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin text-slate-400" /> : <span className="w-7 h-7" aria-hidden="true" />}
                         {canCancelInvoice(inv) ? (
@@ -1162,7 +1177,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           </div>
         )}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={issueFromMenu} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onFaturalastirIncoming={faturalastirIncoming} onEdit={(inv) => openEditInvoice(inv)} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={issueFromMenu} onApproveDraft={approveDraftInvoice} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onFaturalastirIncoming={faturalastirIncoming} onEdit={(inv) => openEditInvoice(inv)} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
         {eFaturaInvoice && (
           <ElektronikFaturaOnayModal
             invoice={eFaturaInvoice}
@@ -1516,6 +1531,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 );
               })()}
               <div className="flex justify-between text-slate-500"><span>Fatura: {orderDetail.is_invoiced ? "Kesildi" : "Kesilmedi"}</span></div>
+              {!orderDetail.is_invoiced && orderDetail.invoice_number && orderDetail.invoice_number !== orderDetail.order_number ? (
+                <div className="text-[11px] text-slate-400" data-testid="order-draft-invoice-caption">Taslak fatura: {orderDetail.invoice_number}</div>
+              ) : null}
+              {orderDetail.is_invoiced ? (
               <InvoiceActionPanel
                 orderId={orderDetail.id || orderDetail._id}
                 invoiceId={orderDetail.invoice_id || null}
@@ -1525,6 +1544,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 defaultScenario="TICARI"
                 onInvoiceCreated={() => { setOrderDetail(null); load(); }}
               />
+              ) : null}
             </div>
           </div>
         )}

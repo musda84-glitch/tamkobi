@@ -70,6 +70,9 @@ class TestGibCredits:
         draft = next((i for i in invs if i.get("status") == "draft" and i.get("e_type") != "paper"), None)
         if not draft:
             return
+        approved = s.post(f"{API}/invoices/{draft['id']}/approve", json={}, timeout=20)
+        if approved.status_code != 200:
+            return
         sent = s.post(f"{API}/invoices/{draft['id']}/send-to-gib", json={}, timeout=20)
         assert sent.status_code == 200, sent.text
         assert sent.json().get("gib_credits_left") == mid - 1

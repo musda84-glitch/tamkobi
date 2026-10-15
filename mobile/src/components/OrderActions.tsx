@@ -47,6 +47,8 @@ import {
   invoicePrintShareMessage,
   INVOICE_PRINT_SHARE_NOTE,
   todayYmd,
+  faturalastirConfirmMessage,
+  orderDeleteConfirmMessage,
   type OrderMoreItem,
 } from "../utils/orderMoreMenu";
 import { printCargoLabel, printInvoiceForm, printOrderForm } from "../utils/orderShare";
@@ -162,13 +164,17 @@ export function OrderActions({
       return undefined;
     }
     let cancelled = false;
+    if (!order.is_invoiced) {
+      setGibEntry(null);
+      return undefined;
+    }
     fetchGibMukellef(client, cid, buyerTax)
       .then((entry) => { if (!cancelled) setGibEntry(entry); })
       .catch((err: { gibEntry?: GibEntry; message?: string }) => {
         if (!cancelled) setGibEntry(err?.gibEntry || { status: "error", error: err?.message || "GİB sorgusu başarısız." });
       });
     return () => { cancelled = true; };
-  }, [client, companyId, activeCompany?.id, buyerTax]);
+  }, [client, companyId, activeCompany?.id, buyerTax, order.is_invoiced]);
 
   const ensure = async () => {
     if (order.items?.length) return order;
@@ -286,7 +292,7 @@ export function OrderActions({
       onError?.("Faturalanmış sipariş silinemez.");
       return;
     }
-    confirmAction("Siparişi sil", `${order.order_number || "Sipariş"} çöp kutusuna taşınsın mı?`, async () => {
+    confirmAction("Siparişi sil", orderDeleteConfirmMessage(order), async () => {
       setBusy("delete");
       try {
         const r = await del<{ message?: string }>(client, `/orders/${oid}`);
@@ -354,46 +360,31 @@ export function OrderActions({
     }
   };
 
-  const createDraftInvoice = () => {
-    confirmAction(
-      "Taslak fatura",
-      `${order.order_number || "Sipariş"} için taslak fatura oluşturulsun mu? Cari bakiyesine hemen işlenmez.`,
-      async () => {
-        setBusy("invoice");
-        try {
-          const r = await post<{ message?: string; invoice_number?: string }>(
-            client,
-            `/orders/${oid}/convert-to-invoice`,
-            convertToDraftBody("e_archive"),
-          );
-          onMessage?.(r.message || `Taslak fatura kaydedildi${r.invoice_number ? `: ${r.invoice_number}` : ""}.`);
-          onChanged?.();
-        } catch (err) {
-          onError?.(apiErrorMessage(err, "Taslak fatura oluşturulamadı."));
-        } finally {
-          setBusy(null);
-        }
-      },
-    );
-  };
-
   const postDraftInvoice = () => {
-    const invId = order.invoice_id;
-    if (!invId) {
-      onError?.("Bu siparişte taslak fatura yok.");
-      return;
-    }
     confirmAction(
-      "Cariye işle",
-      `${order.order_number || "Sipariş"} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek.`,
+      "Taslağı Faturalaştır",
+      faturalastirConfirmMessage(order),
       async () => {
         setBusy("invoice");
         try {
+          let invId = order.invoice_id;
+          if (!invId) {
+            const draft = await post<{ invoice_id?: string }>(
+              client,
+              `/orders/${oid}/convert-to-invoice`,
+              convertToDraftBody("e_archive"),
+            );
+            invId = draft.invoice_id;
+          }
+          if (!invId) {
+            onError?.("Fatura oluşturulamadı.");
+            return;
+          }
           const r = await post<{ message?: string }>(client, `/invoices/${invId}/approve`, {});
-          onMessage?.(r.message || "Fatura onaylandı; cari bakiyesi işlendi.");
+          onMessage?.(r.message || "Faturalaştı — cari bakiyesi işlendi.");
           onChanged?.();
         } catch (err) {
-          onError?.(apiErrorMessage(err, "Fatura onaylanamadı."));
+          onError?.(apiErrorMessage(err, "Faturalaştırılamadı."));
         } finally {
           setBusy(null);
         }
@@ -814,9 +805,8 @@ export function OrderActions({
     }
     switch (item.id) {
       case "faturalastir":
-        if (order.invoice_id && !order.is_invoiced) postDraftInvoice();
-        else if (!order.is_invoiced) createDraftInvoice();
-        else onMessage?.("Sipariş zaten faturalanmış.");
+        if (order.is_invoiced) onMessage?.("Sipariş zaten faturalanmış.");
+        else postDraftInvoice();
         return;
       case "efatura_olustur":
         issueEBelge();

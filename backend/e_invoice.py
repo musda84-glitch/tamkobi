@@ -1225,11 +1225,12 @@ async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any
         inv_id = converted.get("invoice_id")
         if not inv_id:
             raise HTTPException(status_code=400, detail=converted.get("message") or "Sipariş faturaya dönüştürülemedi.")
-    apply_effects = _deps.get("apply_effects")
-    inv = await _db.invoices.find_one({"_id": inv_id})
-    if apply_effects and inv and inv.get("status") == "draft" and not inv.get("effects_applied"):
-        await apply_effects(inv)
-        await _db.invoices.update_one({"_id": inv_id}, {"$set": {"effects_applied": True}})
+    inv_q = {"_id": inv_id}
+    if company_id:
+        inv_q["company_id"] = company_id
+    inv = await _db.invoices.find_one(inv_q)
+    if inv and inv.get("status") == "draft" and inv.get("invoice_type") != "dispatch" and inv.get("e_type") != "e_dispatch":
+        raise HTTPException(status_code=409, detail="Önce Faturalaştırın")
     result = await issue_invoice(
         inv_id,
         e_type=req.get("e_type"),
@@ -1326,15 +1327,16 @@ async def api_create_einvoice(payload: InvoiceCreateRequest):
         "issue_date": payload.issue_date,
         "issue_time": payload.issue_time,
     }
-    apply_effects = _deps.get("apply_effects")
     try:
         if invoice_id:
-            inv = await _db.invoices.find_one({"_id": invoice_id})
+            inv_q = {"_id": invoice_id}
+            if company_id:
+                inv_q["company_id"] = company_id
+            inv = await _db.invoices.find_one(inv_q)
             if inv and company_id and inv.get("company_id") and inv.get("company_id") != company_id:
                 raise HTTPException(status_code=403, detail="Fatura bu firmaya ait değil.")
-            if apply_effects and inv and inv.get("status") == "draft" and not inv.get("effects_applied"):
-                await apply_effects(inv)
-                await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
+            if inv and inv.get("status") == "draft" and inv.get("invoice_type") != "dispatch" and inv.get("e_type") != "e_dispatch":
+                raise HTTPException(status_code=409, detail="Önce Faturalaştırın")
         if order_id and not invoice_id:
             return await create_from_order(order_id, req)
         result = await issue_invoice(

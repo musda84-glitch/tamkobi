@@ -20,8 +20,8 @@ export function canStaffEditOrder(o: Pick<Order, "channel" | "order_status" | "i
 }
 
 export function canStaffDeleteOrder(o: { is_invoiced?: boolean; invoice_id?: string; [key: string]: unknown } | null | undefined): boolean {
-  // Taslak faturalı sipariş de silinmez (web ile aynı).
-  return !!o && !o.is_invoiced && !o.invoice_id;
+  // Faturalaşmış sipariş silinmez; taslak fatura siparişle birlikte çöpe gider.
+  return !!o && !o.is_invoiced;
 }
 
 export function cartFromOrderItems(items?: Array<Record<string, unknown>> | null): CartLine[] {

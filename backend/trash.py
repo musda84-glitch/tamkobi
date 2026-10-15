@@ -42,17 +42,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def stash(collection: str, doc: dict, entity_type: str, label: str, related: Optional[List[dict]] = None, note: str = "", deleted_by: Optional[str] = None) -> str:
+async def stash(collection: str, doc: dict, entity_type: str, label: str, related: Optional[List[dict]] = None, note: str = "", deleted_by: Optional[str] = None, restore_group: Optional[str] = None) -> str:
     now = _now()
     rec = {"_id": str(uuid.uuid4()), "collection": collection, "entity_type": entity_type, "label": label or doc.get("_id"), "company_id": doc.get("company_id"), "doc": doc,
            "related": related or [], "note": note, "deleted_by": deleted_by, "deleted_at": now.isoformat(), "expires_at": (now + timedelta(days=RETENTION_DAYS)).isoformat()}
+    if restore_group:
+        rec["restore_group"] = restore_group
     await _db.trash.insert_one(rec)
     return rec["_id"]
 
 
-async def soft_delete(collection: str, doc: dict, entity_type: str, label: str, related: Optional[List[dict]] = None, note: str = "") -> str:
+async def soft_delete(collection: str, doc: dict, entity_type: str, label: str, related: Optional[List[dict]] = None, note: str = "", restore_group: Optional[str] = None) -> str:
     """Belgeyi çöp kutusuna taşır ve koleksiyondan siler. related: [{"collection", "docs"}]."""
-    tid = await stash(collection, doc, entity_type, label, related, note)
+    tid = await stash(collection, doc, entity_type, label, related, note, restore_group=restore_group)
     await _db[collection].delete_one({"_id": doc["_id"]})
     for r in related or []:
         ids = [d["_id"] for d in r.get("docs") or []]
@@ -122,14 +124,13 @@ async def _clear_sync_tombstones(collection: str, doc_ids: List[Any]) -> None:
         logging.getLogger(__name__).exception("Beklenmeyen hata (trash.py)")
 
 
-@router.post("/trash/{trash_id}/restore")
-async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
-    rec = await _db.trash.find_one({"_id": trash_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+def _trash_company_id(rec: dict) -> Optional[str]:
     cid = rec.get("company_id") or (rec.get("doc") or {}).get("company_id")
-    if cid is not None and not tenant_access.user_may_access_company(user, str(cid)):
-        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+    return str(cid) if cid is not None else None
+
+
+async def _restore_one_trash_rec(rec: dict) -> tuple:
+    """Tek çöp kaydını koleksiyona yazar. (inserted_doc, related_count, related_ids)."""
     coll, doc = rec["collection"], dict(rec["doc"] or {})
     if not doc.get("_id"):
         raise HTTPException(status_code=400, detail="Çöp kaydında belge kimliği yok; geri getirilemez.")
@@ -137,7 +138,6 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
         raise HTTPException(status_code=409, detail="Aynı kimlikte bir kayıt zaten mevcut; geri getirilemez.")
     now = _now().isoformat()
     doc["restored_at"] = now
-    # Artımlı sync'in restored satırı görmesi için (JSON içinde de iz).
     doc["updated_at"] = now
     await _db[coll].insert_one(doc)
     restored_related = 0
@@ -153,20 +153,62 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
                 await _db[r["collection"]].insert_one(rd)
                 restored_related += 1
                 related_ids.append((r["collection"], rd["_id"]))
+    return doc, restored_related, related_ids
+
+
+@router.post("/trash/{trash_id}/restore")
+async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
+    rec = await _db.trash.find_one({"_id": trash_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+    cid = _trash_company_id(rec)
+    if cid is not None and not tenant_access.user_may_access_company(user, cid):
+        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+    records = [rec]
+    group = rec.get("restore_group")
+    if group and cid:
+        siblings = await _db.trash.find({
+            "restore_group": group,
+            "company_id": cid,
+            "_id": {"$ne": trash_id},
+        }).to_list(50)
+        for sib in siblings:
+            scid = _trash_company_id(sib)
+            if scid is not None and not tenant_access.user_may_access_company(user, scid):
+                continue
+            records.append(sib)
+    restored_docs = []
+    restored_related = 0
+    related_ids: List[tuple] = []
+    for item in records:
+        doc, rel_n, rel_ids = await _restore_one_trash_rec(item)
+        restored_docs.append((item, doc))
+        restored_related += rel_n
+        related_ids.extend(rel_ids)
     for cname, did in related_ids:
         await _clear_sync_tombstones(cname, [did])
-    hook = _hooks.get(rec["entity_type"])
-    if hook:
+    for item, doc in restored_docs:
+        hook = _hooks.get(item["entity_type"])
+        if not hook:
+            continue
         try:
-            await hook(doc, rec.get("related") or [])
+            await hook(doc, item.get("related") or [])
         except HTTPException as e:
-            await _db[coll].delete_one({"_id": doc["_id"]})
-            for r in rec.get("related") or []:
+            await _db[item["collection"]].delete_one({"_id": doc["_id"]})
+            for r in item.get("related") or []:
                 await _db[r["collection"]].delete_many({"_id": {"$in": [d["_id"] for d in r.get("docs") or []]}})
             raise HTTPException(status_code=400, detail=f"Geri getirilemedi: {e.detail}")
-    await _db.trash.delete_one({"_id": trash_id})
+    await _db.trash.delete_many({"_id": {"$in": [r["_id"] for r in records]}})
     label = TYPE_LABELS.get(rec["entity_type"], rec["entity_type"])
-    return {"status": "success", "entity_type": rec["entity_type"], "id": str(doc["_id"]), "message": f"{label} geri getirildi: {rec.get('label')}" + (f" (+{restored_related} bağlı kayıt)" if restored_related else "") + (" — bakiye etkileri yeniden uygulandı." if hook else ".")}
+    extra = restored_related
+    grouped = len(records) - 1
+    suffix = ""
+    if extra:
+        suffix += f" (+{extra} bağlı kayıt)"
+    if grouped:
+        suffix += f" (+{grouped} ortak grup)"
+    hook = _hooks.get(rec["entity_type"])
+    return {"status": "success", "entity_type": rec["entity_type"], "id": str((rec.get("doc") or {}).get("_id")), "message": f"{label} geri getirildi: {rec.get('label')}" + suffix + (" — bakiye etkileri yeniden uygulandı." if hook else ".")}
 
 
 @router.delete("/trash/{trash_id}")

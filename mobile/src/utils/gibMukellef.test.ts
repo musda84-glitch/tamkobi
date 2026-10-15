@@ -87,7 +87,7 @@ describe("gibMukellef", () => {
     }
     expect(entry?.status).toBe("error");
     expect(entry && "data" in entry).toBe(false);
-    expect(faturalastirMenuLabel(entry)).toBe("Faturalaştır");
+    expect(faturalastirMenuLabel(entry)).toBe("Taslağı Faturalaştır");
     // ElektronikFaturaOnayModal gönder düğmesini yalnız status === "ok" iken açar.
     expect(entry?.status === "ok").toBe(false);
   });
@@ -144,7 +144,7 @@ describe("gibMukellef", () => {
       lookup_status: "unknown",
       is_e_invoice_user: false,
       suggested_e_type: "e_archive",
-    })).toBe("Faturalaştır");
+    })).toBe("Taslağı Faturalaştır");
   });
 
   it("TTL dolunca yeniden sorgular; hata, unknown ve eksik VKN önbelleğe yazılmaz", async () => {

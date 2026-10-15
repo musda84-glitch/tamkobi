@@ -66,12 +66,12 @@ class TestB2BOrders:
 
     def test_delete_invoiced_order_400(self, api):
         orders = api.get(f"{BASE}/orders", params={"company_id": COMPANY}).json()
-        inv = next((o for o in orders if o.get("is_invoiced") or o.get("invoice_id")), None)
+        inv = next((o for o in orders if o.get("is_invoiced")), None)
         if not inv:
             pytest.skip("no invoiced order available")
         r = api.delete(f"{BASE}/orders/{inv['id']}")
-        assert r.status_code == 400
-        assert "Faturalanmış" in r.json().get("detail", "")
+        assert r.status_code == 409
+        assert "Faturalaşmış" in r.json().get("detail", "")
 
 
 # ---------------- Cargo integrations ----------------

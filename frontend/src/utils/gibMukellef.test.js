@@ -4,6 +4,8 @@ import {
   clearGibMukellefCache,
   docBuyerTaxId,
   eTypeFromGib,
+  faturalastirMenuLabel,
+  FATURALASTIR_CONFIRM_DETAIL,
   fetchGibMukellef,
   peekGibMukellef,
 } from "./gibMukellef";
@@ -113,6 +115,12 @@ test("başarılı sorgu 120 sn sonra yeniden gider; hata ve unknown önbelleğe 
   await expect(fetchGibMukellef("c1", "6320984412", axiosGet)).rejects.toThrow(/doğrulanamadı/);
   expect(peekGibMukellef("c1", "6320984412")).toBeNull();
   expect(eTypeFromGib({ lookup_status: "unknown", message: "bulunamadı" })).toBeNull();
+});
+
+test("Faturalaştır etiketi GİB türü eklemez", () => {
+  expect(faturalastirMenuLabel({ status: "ok", data: { lookup_status: "mukellef" } })).toBe("Taslağı Faturalaştır");
+  expect(faturalastirMenuLabel(null)).toBe("Taslağı Faturalaştır");
+  expect(FATURALASTIR_CONFIRM_DETAIL).toMatch(/E-belge gönderimi ayrı adımdır/);
 });
 
 test("boş VKN sorgusuz e-Arşiv; 9 hane 422 ve önbelleğe yazılmaz", async () => {

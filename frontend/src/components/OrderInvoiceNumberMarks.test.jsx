@@ -18,6 +18,24 @@ const render = (node) => {
   return root;
 };
 
+test("draft TA number is hidden on the list", () => {
+  render(
+    <OrderInvoiceNumberMarks
+      ord={{
+        order_number: "B2B-1",
+        is_invoiced: false,
+        invoice_id: "inv1",
+        invoice_number: "TA2026000000001",
+      }}
+    />,
+  );
+  expect(host.textContent).not.toContain("TA2026000000001");
+  expect(host.querySelector("[data-testid='order-local-no-B2B-1']")).toBeNull();
+  const titles = [...host.querySelectorAll("[title]")].map((el) => el.getAttribute("title") || "").join(" ");
+  expect(titles).not.toContain("TA2026000000001");
+  expect(host.innerHTML).not.toContain("TA2026000000001");
+});
+
 test("OrdersB2BPage paper invoice row shows Fatura TA and never GİB", () => {
   render(
     <OrderInvoiceNumberMarks
@@ -45,6 +63,7 @@ test("official integrator number is the only GİB label", () => {
         e_type: "e_invoice",
         einvoice_state: "sent",
         gib_invoice_id: "U052026000000090",
+        is_invoiced: true,
         local_invoice_number: "TA2026000000001",
         invoice_number: "U052026000000090",
       }}
