@@ -164,6 +164,17 @@ export type Invoice = {
   payment_plan?: { rows?: Array<{ no?: number | string; label?: string; due_date?: string; amount?: number; status?: string }> };
   images?: string[];
   contact_balance?: number | null;
+  shipping_address?: string;
+  address?: string;
+  issue_time?: string;
+  despatch_mode?: string;
+  despatch_plate?: string;
+  despatch_driver_first?: string;
+  despatch_driver_last?: string;
+  despatch_driver_tckn?: string;
+  despatch_carrier_vkn?: string;
+  despatch_carrier_name?: string;
+  cargo_tracking_number?: string;
 };
 
 export type Order = {

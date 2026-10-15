@@ -769,6 +769,23 @@ async def issue_invoice(
     buyer = validate_buyer(contact, inv, et)
     company = await _db.companies.find_one({"_id": inv.get("company_id")}) or {}
 
+    if et == "e_dispatch":
+        from despatch_shipment import despatch_gib_accepted, is_incoming_dispatch, shipment_problems
+
+        if is_incoming_dispatch(inv):
+            raise HTTPException(status_code=400, detail="Gelen e-irsaliye gönderilemez.")
+        if despatch_gib_accepted(inv):
+            raise HTTPException(
+                status_code=409,
+                detail="Bu irsaliye GİB tarafından kabul edilmiş; tekrar gönderilemez.",
+            )
+        problems = shipment_problems(inv, {
+            "name": company.get("name"),
+            "tax_number": company.get("tax_number") or company.get("tax_id"),
+        })
+        if problems:
+            raise HTTPException(status_code=422, detail=" ".join(problems))
+
     if et == "paper":
         # Kağıt / matbu GİB'e gitmez. "sent" gerçek e-belge sanılıp kırmızı rozet
         # ve «GİB:» etiketi üretiyordu.
@@ -984,7 +1001,7 @@ async def issue_invoice(
         if sent_vendor:
             patch["gib_vendor_number"] = sent_vendor
         # GİB / NetteFatura fatura numarası geldiyse liste numarası da onu göstersin
-        if gib_no:
+        if gib_no and et != "e_dispatch":
             if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
                 patch["local_invoice_number"] = inv.get("invoice_number")
             patch["invoice_number"] = gib_no
