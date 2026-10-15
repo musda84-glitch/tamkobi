@@ -102,6 +102,7 @@ const SETTINGS_TAB_HELP = {
   notifications: P("Bildirimler", "Hangi olayda e-posta/SMS gideceğini seçin."),
   print: P("Yazdırma", "Fatura ve etiket şablonları."),
   bank: P("Banka bağlantısı", "Canlı hesap hareketi için banka API bilgileri."),
+  desktop: P("Masaüstü uygulaması", "Atölye, depo ve hızlı satış ekranlarını Windows kiosk uygulamasından açın."),
 };
 
 const SYSTEM_HELP = {

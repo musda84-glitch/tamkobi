@@ -244,10 +244,13 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const posExitLocked = !!(pos?.session?.cashier_user_id && pos.session.exit_blocked);
   const routeKey = (permPath || ((p) => p))(location.pathname);
-  const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
-  const lockedModule = !moduleOn(location.pathname);
+  // Masaüstü indirmesi firma ayarları yetkisi gerektirmez; oturum açmış her kullanıcı görür.
+  const desktopDownload = location.pathname === "/settings" && new URLSearchParams(location.search).get("tab") === "desktop";
+  const denied = !desktopDownload && user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
+  const lockedModule = !desktopDownload && !moduleOn(location.pathname);
   const personelDenied =
     isPersonelRole(user)
+    && !desktopDownload
     && !personelMenuPathAllowed(location.pathname, user)
     && !location.pathname.startsWith("/hesap")
     && !location.pathname.startsWith("/yardim");
