@@ -71,6 +71,8 @@ def _mk_invoice(api, created, status="draft", total_items=None, **extra):
 class TestSendToGib:
     def test_paper(self, api, created):
         inv = _mk_invoice(api, created)
+        a = api.post(f"{BASE}/invoices/{inv['id']}/approve")
+        assert a.status_code == 200, a.text
         r = api.post(f"{BASE}/invoices/{inv['id']}/send-to-gib", json={"e_type": "paper"})
         assert r.status_code == 200, r.text
         body = r.json()
@@ -84,6 +86,8 @@ class TestSendToGib:
 
     def test_e_invoice(self, api, created):
         inv = _mk_invoice(api, created)
+        a = api.post(f"{BASE}/invoices/{inv['id']}/approve")
+        assert a.status_code == 200, a.text
         r = api.post(f"{BASE}/invoices/{inv['id']}/send-to-gib", json={"e_type": "e_invoice"})
         assert r.status_code == 200, r.text
         body = r.json()

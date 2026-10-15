@@ -68,6 +68,8 @@ def test_invoice_gib_and_preview_data(client):
     assert created.status_code == 200
     invoice_id = created.json().get("id") or created.json().get("_id")
     assert created.json()["grand_total"] == 240
+    a = client.post(f"{BASE_URL}/api/invoices/{invoice_id}/approve")
+    assert a.status_code == 200, a.text
     gib = client.post(f"{BASE_URL}/api/invoices/{invoice_id}/send-to-gib")
     assert gib.status_code == 200
     assert gib.json().get("tracking_id", "").startswith("GIB-")

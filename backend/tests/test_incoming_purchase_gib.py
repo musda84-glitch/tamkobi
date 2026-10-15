@@ -79,6 +79,8 @@ class TestIncomingPurchaseGib:
         })
         assert r.status_code == 200, r.text
         inv = r.json()
+        a = api.post(f"{BASE}/invoices/{inv['id']}/approve")
+        assert a.status_code == 200, a.text
         g = api.post(f"{BASE}/invoices/{inv['id']}/send-to-gib", json={"e_type": "paper"})
         assert g.status_code == 200, g.text
         assert "Kağıt fatura" in g.json()["message"]
@@ -127,6 +129,8 @@ class TestIncomingPurchaseGib:
         })
         assert r.status_code == 200, r.text
         inv = r.json()
+        a = api.post(f"{BASE}/invoices/{inv['id']}/approve")
+        assert a.status_code == 200, a.text
         g = api.post(f"{BASE}/invoices/{inv['id']}/send-to-gib", json={"e_type": "e_invoice"})
         assert g.status_code == 200, g.text
         assert g.json().get("tracking_id")

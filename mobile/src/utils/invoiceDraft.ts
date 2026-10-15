@@ -461,11 +461,25 @@ export function invoiceDetailTotals(inv: Invoice, gdMode?: GdMode, gdValue?: num
 
 export function canDeleteInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
-  if (inv.status === "draft") return true;
-  if (inv.e_type !== "paper") return false;
-  if (num(inv.paid_amount) > 0.01) return false;
-  if (["paid", "partially_paid", "partial"].includes(String(inv.payment_status || ""))) return false;
-  return true;
+  if (inv.status === "cancelled") return false;
+  if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") {
+    if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return false;
+    return !isGibIssued(inv);
+  }
+  return inv.status === "draft";
+}
+
+export function invoiceDeleteConfirmMessage(inv?: Invoice | null): string {
+  if (!inv) return "Belge silinsin mi?";
+  const no = inv.invoice_number || "Belge";
+  const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
+  const kind = isDisp
+    ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye")
+    : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
+  let msg = `${no} numaralı ${kind} çöp kutusuna taşınsın mı?`;
+  const orderNo = inv.status === "draft" ? String(inv.order_number || "").trim() : "";
+  if (orderNo) msg += `\nBağlı sipariş ${orderNo} da silinecek`;
+  return msg;
 }
 
 /** Onaylı e-Fatura / e-Arşiv iptal edilebilir (silinmez). Kağıt silinir. Ödemeli olsa da izin verilir. */

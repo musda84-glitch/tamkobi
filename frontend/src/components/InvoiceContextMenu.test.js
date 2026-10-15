@@ -9,6 +9,8 @@ import {
   INVOICE_ISSUE_TYPE_OPTIONS,
   canDownloadGibDocuments,
   canDeleteInvoice,
+  invoiceDeleteConfirmMessage,
+  invoicesBulkDeleteConfirmMessage,
   displayInvoiceNumber,
   formatGibStatusLabel,
   invoiceBuyerTaxId,
@@ -264,10 +266,10 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
     expect(incomingPurchaseLedgerPosted({ ...draft, status: "approved" })).toBe(true);
   });
 
-  test("sales drafts can use Faturalaştır type chooser", () => {
+  test("sales drafts can Faturalaştır (approve) without GİB issue flow", () => {
     const draft = { status: "draft", invoice_type: "sales", e_type: "e_archive" };
     expect(canFaturalastirDraftInvoice(draft)).toBe(true);
-    expect(canRunInvoiceIssueFlow(draft)).toBe(true);
+    expect(canRunInvoiceIssueFlow(draft)).toBe(false);
     expect(canFaturalastirDraftInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
     expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "purchase", e_type: "paper" })).toBe(false);
     expect(canFaturalastirDraftInvoice({
@@ -445,6 +447,12 @@ describe("incoming GİB purchase labels and delete guard", () => {
       invoice_type: "sales",
       e_type: "paper",
     })).toBe(true);
+    expect(canDeleteInvoice({
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "paper",
+      paid_amount: 0,
+    })).toBe(false);
   });
 
   test("isIncomingPurchaseInvoice catches gib_uuid even when e_type is paper", () => {
@@ -509,5 +517,21 @@ describe("dispatch cancel and delete", () => {
       e_type: "e_dispatch",
       direction: "incoming",
     })).toBe(false);
+  });
+});
+
+describe("draft invoice delete confirm", () => {
+  test("mentions linked order on a draft sales invoice", () => {
+    expect(invoiceDeleteConfirmMessage({
+      status: "draft",
+      invoice_number: "TA2026000000001",
+      order_number: "B2B-2026-0001",
+    })).toMatch(/Bağlı sipariş B2B-2026-0001 da silinecek/);
+  });
+
+  test("bulk confirm lists linked orders", () => {
+    expect(invoicesBulkDeleteConfirmMessage([
+      { status: "draft", invoice_number: "TA1", order_number: "B2B-1" },
+    ])).toMatch(/Bağlı sipariş B2B-1 da silinecek/);
   });
 });

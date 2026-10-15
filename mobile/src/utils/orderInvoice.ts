@@ -33,10 +33,7 @@ export function canIssueOrderEBelge(o: OrderInvoiceFlags | null | undefined): bo
 
 export function orderInvoiceBadgeLabel(o: OrderInvoiceFlags | null | undefined): string | null {
   const badge = orderInvoiceBadge(o);
-  if (!badge) return null;
-  if (badge.testId === "invoiced" && o?.invoice_number) return `Faturalaştı · ${o.invoice_number}`;
-  if (badge.testId === "draft" && o?.invoice_number) return `Taslak · ${o.invoice_number}`;
-  return badge.label;
+  return badge ? badge.label : null;
 }
 
 export function orderInvoiceBadgeTone(o: OrderInvoiceFlags | null | undefined): "amber" | "green" | "red" | null {

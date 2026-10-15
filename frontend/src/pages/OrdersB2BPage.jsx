@@ -54,7 +54,7 @@ import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printO
 import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
 import { eBelgeMenuItems, orderEBelgeType, resolveOrderContact } from "../utils/orderEBelge";
 import { contactMukellefPatch, docBuyerTaxId, faturalastirMenuLabel, fetchGibMukellef } from "../utils/gibMukellef";
-import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
+import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, faturalastirConfirmMessage, orderDeleteConfirmMessage, ordersBulkDeleteConfirmMessage, canDeleteFromMoreMenu } from "../utils/orderMoreMenu";
 import { OrderInvoiceNumberMarks } from "../components/OrderInvoiceNumberMarks";
 import { InvoiceOrderMismatchBadge } from "../components/InvoiceOrderMismatchBadge";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
@@ -497,9 +497,9 @@ export default function OrdersB2BPage() {
         return;
       }
       if (action === "delete") {
-        const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
+        const deletable = list.filter((o) => canDeleteFromMoreMenu(o));
         if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
-        if (!window.confirm(`${deletable.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`)) return;
+        if (!window.confirm(ordersBulkDeleteConfirmMessage(deletable))) return;
         try {
           const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => orderRowId(o)).filter(Boolean) });
           toast.success(r.data.message);
@@ -787,8 +787,10 @@ export default function OrdersB2BPage() {
   const [gibByTax, setGibByTax] = useState({});
 
   const orderTaxKey = useMemo(() => {
-    const taxes = (orders || []).map((o) => docBuyerTaxId(o, resolveOrderContact(o, contacts)));
-    return [...new Set(taxes)].sort().join(",");
+    const taxes = (orders || [])
+      .filter((o) => o?.is_invoiced)
+      .map((o) => docBuyerTaxId(o, resolveOrderContact(o, contacts)));
+    return [...new Set(taxes.filter(Boolean))].sort().join(",");
   }, [orders, contacts]);
 
   useEffect(() => {
@@ -1113,7 +1115,7 @@ export default function OrdersB2BPage() {
           return;
         }
       }
-      if (!window.confirm(`${ord.order_number} cariye faturalaşsın mı?\nCari bakiyesi ve stok işlenecek.`)) return;
+      if (!window.confirm(faturalastirConfirmMessage(ord))) return;
       const res = await axios.post(`${API_URL}/invoices/${invoiceId}/approve`);
       toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
       loadData();
@@ -1129,7 +1131,7 @@ export default function OrdersB2BPage() {
       toast.error("Bu siparişte taslak fatura yok.");
       return;
     }
-    if (!window.confirm(`${ord.order_number} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek.`)) return;
+    if (!window.confirm(faturalastirConfirmMessage(ord))) return;
     try {
       const res = await axios.post(`${API_URL}/invoices/${invoiceId}/approve`);
       toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
@@ -1365,11 +1367,11 @@ export default function OrdersB2BPage() {
         setCargoChangeOrder(ord);
         return;
       case "delete": {
-        if (ord.is_invoiced || ord.invoice_id || orderHasEInvoiceIssued(ord)) {
-          toast.error("Faturalanmış veya GİB'e gönderilmiş sipariş silinemez.");
+        if (!canDeleteFromMoreMenu(ord) || orderHasEInvoiceIssued(ord)) {
+          toast.error("Faturalanmış sipariş silinemez.");
           return;
         }
-        if (!window.confirm(`${ord.order_number || "Sipariş"} silinsin mi?`)) return;
+        if (!window.confirm(orderDeleteConfirmMessage(ord))) return;
         try {
           await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
           toast.success("Sipariş silindi.");
@@ -2201,7 +2203,7 @@ export default function OrdersB2BPage() {
                           </>
                         ) : (
                           <>
-                        {!ord.is_invoiced && !ord.invoice_id && !orderHasEInvoiceIssued(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
+                        {canDeleteFromMoreMenu(ord) && !orderHasEInvoiceIssued(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(orderDeleteConfirmMessage(ord))) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {(() => {
                           const invBadge = orderInvoiceBadge(ord);
                           if (invBadge && invBadge.interactive === false) {
@@ -2238,8 +2240,8 @@ export default function OrdersB2BPage() {
                               <button
                                 type="button"
                                 className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm border border-amber-600"
-                                title={`Taslak — Faturalaştır veya İrsaliye olarak kaydet${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
-                                aria-label="Faturalaştır"
+                                title="Taslak"
+                                aria-label="Taslağı Faturalaştır"
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
                                 <FileText className="w-4 h-4" />

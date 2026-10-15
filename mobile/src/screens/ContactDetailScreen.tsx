@@ -59,9 +59,10 @@ import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import { mergeContactProjects, projectsForContact, type ProjectDoc } from "../utils/workDocs";
 import type { BankAccount } from "../utils/finance";
-import { canDeleteInvoice, canEditInvoiceItems, invoiceRowDangerAction } from "../utils/invoiceDraft";
+import { canDeleteInvoice, canEditInvoiceItems, invoiceDeleteConfirmMessage, invoiceRowDangerAction } from "../utils/invoiceDraft";
 import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
+import { orderDeleteConfirmMessage } from "../utils/orderMoreMenu";
 import { printPaymentReceipt } from "../utils/chequeShare";
 import { applyReceiptDraft } from "../utils/receiptScan";
 
@@ -497,10 +498,9 @@ export function ContactDetailScreen() {
       setError("Bu fatura silinemez veya iptal edilemez.");
       return;
     }
-    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
     confirmAction(
       "Faturayı sil",
-      `${inv.invoice_number || "Fatura"} numaralı ${kind} çöp kutusuna taşınsın mı?`,
+      invoiceDeleteConfirmMessage(inv),
       async () => {
         try {
           await del(client, `/invoices/${idOf(inv)}`);
@@ -522,12 +522,12 @@ export function ContactDetailScreen() {
     else go("InvoiceDetail", { id: iid });
   };
 
-  const removeOrder = (o: { order_number?: string; is_invoiced?: boolean; invoice_id?: string }) => {
+  const removeOrder = (o: { id?: string; _id?: string; order_number?: string; is_invoiced?: boolean; invoice_id?: string }) => {
     if (!canDeleteOrder) { setError("Sipariş silme yetkiniz yok."); return; }
     if (!canStaffDeleteOrder(o)) { setError("Faturalanmış sipariş silinemez."); return; }
     confirmAction(
       "Siparişi sil",
-      `${orderNumberLabel(o)} çöp kutusuna taşınsın mı?`,
+      orderDeleteConfirmMessage(o),
       async () => {
         try {
           await del(client, `/orders/${idOf(o)}`);

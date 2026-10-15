@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "../components/IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
@@ -688,10 +688,20 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editParam]);
 
+  const handleApproveDraft = async (inv) => {
+    if (!inv) return;
+    const no = inv.invoice_number || "Belge";
+    if (!window.confirm(`${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`)) return;
+    try {
+      const res = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+      toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    }
+  };
   const handleDeleteInvoice = async (inv) => {
-    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
-    const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
-    if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
+    if (!window.confirm(invoiceDeleteConfirmMessage(inv))) return;
     try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const handleCancelInvoice = async (inv) => {
@@ -1054,11 +1064,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       return;
     }
     if (action === "einvoice_send") {
+      const drafts = list.filter((inv) => canFaturalastirDraftInvoice(inv));
       const issuable = list.filter((inv) => canIssueInvoice(inv) && !isIncomingPurchaseInvoice(inv));
       if (!issuable.length) {
-        toast.info("Seçili faturalarda e-belge gönderilecek uygun kayıt yok.");
+        toast.info(drafts.length ? "Önce Faturalaştırın" : "Seçili faturalarda e-belge gönderilecek uygun kayıt yok.");
         return;
       }
+      if (drafts.length) toast.info("Önce Faturalaştırın");
       if (shouldAskBulkEInvoiceDate(issuable)) {
         setBulkEInvoiceConfirm({ invoices: issuable });
         return;
@@ -1123,7 +1135,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const deletable = list.filter((inv) => canDeleteInvoice(inv));
       if (!deletable.length) { toast.error("Silinebilir (taslak/kağıt) fatura seçin."); return; }
       if (!canDeleteInv) { toast.error("Silme yetkiniz yok."); return; }
-      if (!window.confirm(`${deletable.length} fatura çöp kutusuna taşınsın mı?`)) return;
+      if (!window.confirm(invoicesBulkDeleteConfirmMessage(deletable))) return;
       setBulkBusy(true);
       let ok = 0, fail = 0;
       for (const inv of deletable) {
@@ -1653,9 +1665,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         {canIssueInv && canFaturalastirDraftInvoice(inv) ? (
                           <DraftInvoiceFaturalastirButton
                             inv={inv}
-                            onIssue={handleIssueFromMenu}
+                            onApprove={handleApproveDraft}
                             testId={`draft-faturalastir-btn-${inv.invoice_number}`}
-                            chooserTestId={`draft-faturalastir-chooser-${inv.invoice_number}`}
                           />
                         ) : null}
                         <div className="grid grid-cols-[repeat(6,1.75rem)] gap-1 justify-center justify-items-center items-center">
@@ -1822,6 +1833,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         onClose={closeCtx}
         companyId={activeCompany?.id || activeCompany?._id}
         onIssue={handleIssueFromMenu}
+        onApproveDraft={handleApproveDraft}
         onPreview={(inv) => {
           // GİB'e iletilmiş e-belge: yerel şablon yerine entegratör PDF (İşNet)
           if (shouldUseIntegratorPdf("invoice", inv)) {
@@ -1926,9 +1938,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               const docEType = inv.eType || eType;
               const docScenario = inv.scenario || (docEType === "e_invoice" ? scenario : undefined);
               const docGib = inv.gibMeta || (docs.length === 1 ? payload.gibMeta : null);
-              if (!invId || !canRunInvoiceIssueFlow(inv) || isIncomingPurchaseInvoice(inv)) {
+              if (!invId || isIncomingPurchaseInvoice(inv)) {
                 skipped++;
                 if (invId) ctx?.setItem?.(invId, { status: "skipped", detail: "Gönderime uygun değil" });
+                continue;
+              }
+              if (inv.status === "draft" && !canIssueInvoice(inv)) {
+                skipped++;
+                ctx?.setItem?.(invId, { status: "skipped", detail: "Önce Faturalaştırın" });
+                continue;
+              }
+              if (!canRunInvoiceIssueFlow(inv)) {
+                skipped++;
+                ctx?.setItem?.(invId, { status: "skipped", detail: "Gönderime uygun değil" });
                 continue;
               }
               ctx?.setItem?.(invId, { status: "running", detail: "Hazırlanıyor…" });
@@ -2549,7 +2571,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </button>
                 </div>
               )}
-              {!isIncomingPurchaseInvoice(previewInvoice) && previewInvoice.invoice_type !== "dispatch" && (
+              {!isIncomingPurchaseInvoice(previewInvoice) && previewInvoice.invoice_type !== "dispatch" && previewInvoice.status !== "draft" && (
                 <InvoiceActionPanel
                   className="mt-4"
                   invoiceId={previewInvoice.id || previewInvoice._id}

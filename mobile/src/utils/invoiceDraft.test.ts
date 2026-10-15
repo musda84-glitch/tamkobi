@@ -2,6 +2,7 @@ import {
   applyTradeKind,
   canCancelInvoice,
   canDeleteInvoice,
+  invoiceDeleteConfirmMessage,
   invoiceRowDangerAction,
   canEditInvoice,
   canEditInvoiceItems,
@@ -179,9 +180,17 @@ describe("invoiceDraft", () => {
     expect(live.grandTotal).toBeCloseTo(198);
   });
 
-  it("deletes drafts and unpaid paper, not issued e-docs", () => {
+  it("draft delete confirm mentions the linked order", () => {
+    expect(invoiceDeleteConfirmMessage({
+      status: "draft",
+      invoice_number: "TA1",
+      order_number: "B2B-1",
+    })).toMatch(/Bağlı sipariş B2B-1 da silinecek/);
+  });
+
+  it("deletes drafts only, not faturalaşmış paper or e-docs", () => {
     expect(canDeleteInvoice({ status: "draft" })).toBe(true);
-    expect(canDeleteInvoice({ status: "approved", e_type: "paper", paid_amount: 0 })).toBe(true);
+    expect(canDeleteInvoice({ status: "approved", e_type: "paper", paid_amount: 0 })).toBe(false);
     expect(canDeleteInvoice({ status: "approved", e_type: "e_invoice" })).toBe(false);
     expect(canDeleteInvoice({ status: "approved", e_type: "paper", paid_amount: 10 })).toBe(false);
   });
@@ -194,7 +203,7 @@ describe("invoiceDraft", () => {
     expect(canCancelInvoice({ status: "cancelled", e_type: "e_invoice" })).toBe(false);
     expect(canCancelInvoice({ status: "approved", invoice_type: "dispatch" })).toBe(false);
     expect(invoiceRowDangerAction({ status: "draft" })).toBe("delete");
-    expect(invoiceRowDangerAction({ status: "approved", e_type: "paper", paid_amount: 0 })).toBe("delete");
+    expect(invoiceRowDangerAction({ status: "approved", e_type: "paper", paid_amount: 0 })).toBe(null);
     expect(invoiceRowDangerAction({ status: "approved", e_type: "e_invoice" })).toBe("cancel");
     expect(invoiceRowDangerAction({ status: "cancelled", e_type: "e_invoice" })).toBe(null);
   });

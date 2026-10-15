@@ -15,6 +15,7 @@ import { orderStatusLabel } from "../utils/orderCargo";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { canStaffEditOrder, cartFromOrderItems, orderUpdatePayload, removeOrderLine } from "../utils/orderEdit";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
+import { orderDraftInvoiceCaption } from "../utils/orderMoreMenu";
 import { pickLineNote } from "../utils/orderPick";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
@@ -118,6 +119,9 @@ export function OrderDetailScreen() {
         {order.cargo_tracking_number ? <Badge label={order.cargo_tracking_number} tone="green" /> : null}
         {showPrices ? (
           <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(order.grand_total || order.total_amount)}</Text>
+        ) : null}
+        {orderDraftInvoiceCaption(order) ? (
+          <Muted testID="order-draft-invoice-caption">{orderDraftInvoiceCaption(order)}</Muted>
         ) : null}
         {order.shipping_address ? <Muted>{order.shipping_address} {order.city || ""}</Muted> : null}
         {order.notes ? <Muted>{order.notes}</Muted> : null}

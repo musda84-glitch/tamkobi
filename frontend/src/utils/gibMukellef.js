@@ -122,23 +122,12 @@ export function contactMukellefPatch(gibMeta) {
   return patch;
 }
 
-/** Sipariş listesi: tür cari bayrağından değil GİB sonucundan. */
-export function faturalastirMenuLabel(gibLookup) {
-  if (!gibLookup || gibLookup.status === "loading" || gibLookup.status === "error") return "Faturalaştır";
-  const data = gibLookup.data && !gibLookup.data.status ? gibLookup.data : gibLookup.data || gibLookup;
-  if (!data || data.status === "loading" || data.status === "error") return "Faturalaştır";
-  if (
-    typeof data.is_e_invoice_user !== "boolean"
-    && data.suggested_e_type !== "e_invoice"
-    && data.suggested_e_type !== "e_archive"
-  ) {
-    return "Faturalaştır";
-  }
-  const decided = eTypeFromGib(data);
-  if (decided === "e_invoice") return "Faturalaştır (E-Fatura)";
-  if (decided === "e_archive") return "Faturalaştır (E-Arşiv)";
-  return "Faturalaştır";
+/** Taslak onay: GİB tür eki yok — e-belge ayrı adımdır. */
+export function faturalastirMenuLabel(_gibLookup) {
+  return "Taslağı Faturalaştır";
 }
+
+export const FATURALASTIR_CONFIRM_DETAIL = "Cari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.";
 
 export const GIB_MUKELLEF_TTL_MS = 120_000;
 

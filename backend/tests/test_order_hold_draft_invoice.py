@@ -15,8 +15,10 @@ def _run(coro):
 def test_update_order_status_pending_deletes_linked_draft():
     import server
 
+    admin = {"_id": "u1", "role": "admin", "is_super_admin": True, "company_id": "c1"}
     order = {
         "_id": "ord_1",
+        "company_id": "c1",
         "order_status": "approved",
         "invoice_id": "inv_draft_1",
         "invoice_number": "NX20260001",
@@ -24,6 +26,7 @@ def test_update_order_status_pending_deletes_linked_draft():
     }
     draft = {
         "_id": "inv_draft_1",
+        "company_id": "c1",
         "status": "draft",
         "invoice_number": "NX20260001",
         "contact_name": "Cari",
@@ -32,14 +35,16 @@ def test_update_order_status_pending_deletes_linked_draft():
     }
 
     mock_db = MagicMock()
-    mock_db.orders.find_one = AsyncMock(side_effect=[order, {**order, "order_status": "pending", "invoice_id": None}])
+    mock_db.orders.find_one = AsyncMock(return_value={**order, "order_status": "pending", "invoice_id": None})
     mock_db.orders.update_one = AsyncMock()
     mock_db.invoices.find_one = AsyncMock(return_value=draft)
 
-    with patch.object(server, "db", mock_db), patch.object(
+    with patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=order)), patch.object(
+        server, "db", mock_db
+    ), patch.object(
         server, "_soft_delete_invoice_doc", AsyncMock(return_value="trash_1")
     ) as soft_del, patch.object(server, "_push_order_to_shopphp", AsyncMock()):
-        result = _run(server.update_order_status("ord_1", {"status": "pending"}))
+        result = _run(server.update_order_status("ord_1", {"status": "pending"}, admin))
 
     soft_del.assert_awaited_once()
     assert soft_del.await_args.args[0]["_id"] == "inv_draft_1"
@@ -55,20 +60,24 @@ def test_update_order_status_pending_deletes_linked_draft():
 def test_update_order_status_pending_keeps_issued_invoice():
     import server
 
+    admin = {"_id": "u1", "role": "admin", "is_super_admin": True, "company_id": "c1"}
     order = {
         "_id": "ord_2",
+        "company_id": "c1",
         "order_status": "approved",
         "invoice_id": "inv_ok",
         "is_invoiced": True,
     }
     mock_db = MagicMock()
-    mock_db.orders.find_one = AsyncMock(side_effect=[order, {**order, "order_status": "pending"}])
+    mock_db.orders.find_one = AsyncMock(return_value={**order, "order_status": "pending"})
     mock_db.orders.update_one = AsyncMock()
 
-    with patch.object(server, "db", mock_db), patch.object(
+    with patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=order)), patch.object(
+        server, "db", mock_db
+    ), patch.object(
         server, "_soft_delete_invoice_doc", AsyncMock()
     ) as soft_del, patch.object(server, "_push_order_to_shopphp", AsyncMock()):
-        result = _run(server.update_order_status("ord_2", {"status": "pending"}))
+        result = _run(server.update_order_status("ord_2", {"status": "pending"}, admin))
 
     soft_del.assert_not_awaited()
     assert result.get("draft_invoice_cleared") is False
@@ -78,11 +87,11 @@ def test_invoice_delete_block_reason_allows_draft_and_paper():
     import server
 
     assert server._invoice_delete_block_reason({"status": "draft"}) is None
-    assert server._invoice_delete_block_reason({"status": "approved", "e_type": "paper"}) is None
+    assert server._invoice_delete_block_reason({"status": "approved", "e_type": "paper"}) == server.FATURALASMIS_DELETE_MSG
     assert server._invoice_delete_block_reason(
         {"status": "approved", "e_type": "paper", "paid_amount": 50, "payment_status": "partially_paid"}
-    )
-    assert server._invoice_delete_block_reason({"status": "approved", "e_type": "e_invoice"})
+    ) == server.FATURALASMIS_DELETE_MSG
+    assert server._invoice_delete_block_reason({"status": "approved", "e_type": "e_invoice"}) == server.FATURALASMIS_DELETE_MSG
     assert server._invoice_delete_block_reason({
         "status": "draft", "invoice_type": "dispatch", "e_type": "e_dispatch",
     }) is None
@@ -99,7 +108,7 @@ def test_invoice_delete_block_reason_allows_draft_and_paper():
     })
 
 
-def test_delete_invoice_allows_paper_and_reverses_effects():
+def test_delete_invoice_rejects_paper_after_faturalastir():
     import server
 
     inv = {
@@ -113,17 +122,12 @@ def test_delete_invoice_allows_paper_and_reverses_effects():
         "paid_amount": 0,
         "payment_status": "unpaid",
     }
-    mock_db = MagicMock()
-    mock_db.invoices.find_one = AsyncMock(return_value=inv)
 
-    with patch.object(server, "db", mock_db), patch.object(
-        server, "_soft_delete_invoice_doc", AsyncMock(return_value="t1")
-    ) as soft_del:
-        result = _run(server.delete_invoice("inv_paper"))
-
-    soft_del.assert_awaited_once()
-    assert result["status"] == "success"
-    assert "Kağıt" in result["message"] or "kağıt" in result["message"].lower() or "Kağıt" in result["message"]
+    with patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv)):
+        with pytest.raises(HTTPException) as ei:
+            _run(server.delete_invoice("inv_paper"))
+    assert ei.value.status_code == 409
+    assert ei.value.detail == server.FATURALASMIS_DELETE_MSG
 
 
 def test_delete_invoice_rejects_einvoice():
@@ -137,10 +141,9 @@ def test_delete_invoice_rejects_einvoice():
         "contact_name": "Cari",
         "grand_total": 200,
     }
-    mock_db = MagicMock()
-    mock_db.invoices.find_one = AsyncMock(return_value=inv)
 
-    with patch.object(server, "db", mock_db):
+    with patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv)):
         with pytest.raises(HTTPException) as ei:
             _run(server.delete_invoice("inv_e"))
-    assert ei.value.status_code == 400
+    assert ei.value.status_code == 409
+    assert ei.value.detail == server.FATURALASMIS_DELETE_MSG

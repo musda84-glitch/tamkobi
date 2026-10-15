@@ -291,7 +291,9 @@ class TestInvoiceDraft:
         got = next(x for x in c.get(f"{BASE}/invoices").json() if x["id"] == inv["id"])
         assert got["grand_total"] == pytest.approx(360)
         assert got["e_type"] == "paper"
-        # send to gib with e_type
+        # send to gib with e_type — önce Faturalaştır
+        a = c.post(f"{BASE}/invoices/{inv['id']}/approve")
+        assert a.status_code == 200, a.text
         g = c.post(f"{BASE}/invoices/{inv['id']}/send-to-gib", json={"e_type": "e_invoice"})
         assert g.status_code == 200, g.text
         assert g.json()["status"] == "success"

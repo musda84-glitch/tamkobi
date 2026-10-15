@@ -25,6 +25,7 @@ import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import {
   canCancelInvoice,
   canDeleteInvoice,
+  invoiceDeleteConfirmMessage,
   canEditInvoice,
   canEditInvoiceItems,
   E_TYPES,
@@ -284,8 +285,7 @@ export function InvoiceDetailScreen() {
 
   const remove = () => {
     if (!canDeleteInvoice(inv) || !canDelete) return;
-    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
-    confirmAction("Faturayı sil", `${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`, () => {
+    confirmAction("Faturayı sil", invoiceDeleteConfirmMessage(inv), () => {
       run(async () => {
         await del(client, `/invoices/${id}`);
         router.back();

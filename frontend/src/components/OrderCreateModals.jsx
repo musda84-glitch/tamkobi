@@ -8,6 +8,7 @@ import { DocumentLineEditor, LineTotalsFooter } from "./DocumentLineEditor";
 import { DocumentFormModal } from "./DocumentFormModal";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { orderLinesLocked } from "../utils/orderEdit";
+import { orderDraftInvoiceCaption } from "../utils/orderMoreMenu";
 import { useEscape } from "../utils/useEscape";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { formatTrAmount } from "../utils/money";
@@ -184,6 +185,9 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
           <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="edit-order-close"><X className="w-4 h-4" /></button>
         </div>
         <p className="text-slate-500">Onaylı sipariş düzenlenebilir. E-belge kesildiyse kayıt kapanır.</p>
+        {orderDraftInvoiceCaption(order) ? (
+          <p className="text-[11px] text-slate-400" data-testid="order-draft-invoice-caption">{orderDraftInvoiceCaption(order)}</p>
+        ) : null}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label className="block font-semibold mb-1">Müşteri sipariş no</label><input value={po} onChange={(e) => setPo(e.target.value)} className={inp} data-testid="edit-order-po" /></div>
           <div><label className="block font-semibold mb-1">Not</label><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inp} data-testid="edit-order-notes" /></div>

@@ -118,7 +118,7 @@ export function orderInvoiceNumberLines(ord) {
     });
   }
   const local = orderLocalInvoiceNumber(ord);
-  if (local) {
+  if (local && ord.is_invoiced) {
     lines.push({
       kind: "local",
       label: `Fatura: ${local}`,
@@ -127,6 +127,42 @@ export function orderInvoiceNumberLines(ord) {
     });
   }
   return lines;
+}
+
+/** Detayda küçük gri satır; listede gösterilmez. */
+export function orderDraftInvoiceCaption(ord) {
+  if (!ord || ord.is_invoiced) return "";
+  const no = orderLocalInvoiceNumber(ord) || String(ord.invoice_number || "").trim();
+  const orderNo = String(ord.order_number || "").trim();
+  if (!no || no === orderNo) return "";
+  return `Taslak fatura: ${no}`;
+}
+
+export const FATURALASTIR_CONFIRM_DETAIL = "Cari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.";
+
+export function faturalastirConfirmMessage(ord) {
+  const no = ord?.order_number || ord?.invoice_number || "Belge";
+  return `${no} taslak faturası onaylansın mı?\n${FATURALASTIR_CONFIRM_DETAIL}`;
+}
+
+export function orderDeleteConfirmMessage(ord) {
+  const no = ord?.order_number || "Sipariş";
+  let msg = `${no} silinsin mi?`;
+  const invNo = !ord?.is_invoiced ? String(ord?.invoice_number || "").trim() : "";
+  if (invNo && invNo !== no) msg += `\nBağlı taslak fatura ${invNo} da silinecek`;
+  return msg;
+}
+
+export function ordersBulkDeleteConfirmMessage(list) {
+  const rows = Array.isArray(list) ? list : [];
+  let msg = `${rows.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`;
+  const nos = [...new Set(rows
+    .filter((o) => o && !o.is_invoiced)
+    .map((o) => String(o.invoice_number || "").trim())
+    .filter((n) => n))];
+  if (nos.length === 1) msg += `\nBağlı taslak fatura ${nos[0]} da silinecek`;
+  else if (nos.length > 1) msg += `\nBağlı taslak faturalar da silinecek: ${nos.join(", ")}`;
+  return msg;
 }
 
 /** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → kağıt / hata / kuyruk / e-belge. */
@@ -246,7 +282,7 @@ const item = (id, label, icon, opts = {}) => ({
 export function integrationDraftMoreItems() {
   return [
     item("refresh_status", "Siparişin Güncel Durumunu Getir", RefreshCw, { color: "text-emerald-600" }),
-    item("faturalastir", "Faturalaştır", FileText, { color: "text-emerald-600" }),
+    item("faturalastir", "Taslağı Faturalaştır", FileText, { color: "text-emerald-600" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
@@ -303,7 +339,7 @@ export function integrationEInvoiceMoreItems() {
 /** B2B / panel / manuel taslak (henüz faturalanmamış) sipariş menüsü. */
 export function panelDraftMoreItems(ord) {
   return filterPanelCargoLabelItems(ord, [
-    item("faturalastir", "Faturalaştır", FileText, { color: "text-emerald-600" }),
+    item("faturalastir", "Taslağı Faturalaştır", FileText, { color: "text-emerald-600" }),
     item(
       "dispatch",
       ord?.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "İrsaliye olarak kaydet",
@@ -384,7 +420,7 @@ export function orderDownloadMoreItems() {
  * @returns {{ kind: string, items: array }}
  */
 export function canDeleteFromMoreMenu(ord) {
-  return !!ord && !ord.is_invoiced && !ord.invoice_id;
+  return !!ord && !ord.is_invoiced;
 }
 
 export function orderDeleteMoreItem() {

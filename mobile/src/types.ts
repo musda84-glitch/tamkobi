@@ -175,6 +175,8 @@ export type Invoice = {
   despatch_carrier_vkn?: string;
   despatch_carrier_name?: string;
   cargo_tracking_number?: string;
+  order_id?: string;
+  order_number?: string;
 };
 
 export type Order = {

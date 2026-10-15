@@ -28,16 +28,16 @@ const render = (node) => {
   return root;
 };
 
-test("shows Taslağı faturalaştır only for sales drafts", () => {
+test("shows Taslağı Faturalaştır only for sales drafts", () => {
   render(
     <DraftInvoiceFaturalastirButton
       inv={{ status: "draft", invoice_type: "sales", e_type: "e_invoice", invoice_number: "T-1" }}
-      onIssue={() => {}}
+      onApprove={() => {}}
     />,
   );
   const btn = host.querySelector("[data-testid='draft-faturalastir-btn-T-1']");
   expect(btn).toBeTruthy();
-  expect(btn.textContent).toMatch(/Taslağı faturalaştır/);
+  expect(btn.textContent).toMatch(/Taslağı Faturalaştır/);
 });
 
 test("hides the button on issued invoices", () => {
@@ -51,11 +51,11 @@ test("hides the button on issued invoices", () => {
         einvoice_state: "sent",
         gib_uuid: "u1",
       }}
-      onIssue={() => {}}
+      onApprove={() => {}}
     />,
   );
   expect(host.querySelector("[data-testid='draft-faturalastir-btn-T-2']")).toBeNull();
-  expect(host.textContent).not.toMatch(/Taslağı faturalaştır/);
+  expect(host.textContent).not.toMatch(/Taslağı Faturalaştır/);
 });
 
 test("hides the button on incoming purchase drafts", () => {
@@ -68,21 +68,20 @@ test("hides the button on incoming purchase drafts", () => {
         invoice_number: "T-3",
         direction: "incoming",
       }}
-      onIssue={() => {}}
+      onApprove={() => {}}
     />,
   );
   expect(host.querySelector("[data-testid='draft-faturalastir-btn-T-3']")).toBeNull();
 });
 
-test("type chooser reuses INVOICE_ISSUE_TYPE_OPTIONS and calls onIssue", () => {
-  const onIssue = jest.fn();
+test("approve button calls onApprove without a GİB type chooser", () => {
+  const onApprove = jest.fn();
   const inv = { status: "draft", invoice_type: "sales", e_type: "e_archive", invoice_number: "T-4" };
-  render(<DraftInvoiceFaturalastirButton inv={inv} onIssue={onIssue} />);
-  expect(host.querySelector("[data-testid='draft-faturalastir-type-auto']")).toBeTruthy();
-  expect(host.querySelector("[data-testid='draft-faturalastir-type-paper']")).toBeTruthy();
-  expect(host.querySelector("[data-testid='draft-faturalastir-type-e_export']")).toBeTruthy();
+  render(<DraftInvoiceFaturalastirButton inv={inv} onApprove={onApprove} />);
+  expect(host.querySelector("[data-testid='draft-faturalastir-type-auto']")).toBeNull();
+  expect(host.querySelector("[data-testid='draft-faturalastir-type-paper']")).toBeNull();
   act(() => {
-    host.querySelector("[data-testid='draft-faturalastir-type-paper']").click();
+    host.querySelector("[data-testid='draft-faturalastir-btn-T-4']").click();
   });
-  expect(onIssue).toHaveBeenCalledWith(inv, "paper");
+  expect(onApprove).toHaveBeenCalledWith(inv);
 });
