@@ -13,6 +13,7 @@ import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKu
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { sortBankTransactions } from "../utils/bankAccountTx";
 import { bankLinkWarnings } from "../utils/bankLinkWarnings";
+import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
 
 /** İlk ekranda DOM'u hafif tut — her satırda eşleştirme kontrolleri var. */
 const UNMATCHED_PAGE_INITIAL = 25;
@@ -47,8 +48,9 @@ function linkableAccounts(accounts, { currentId, provider } = {}) {
 }
 
 function accountOptionLabel(a) {
-  const typeLabel = a.type === "pos" ? "POS" : a.type === "okc_pos" ? "ÖKC" : "Banka";
-  return `${a.bank_name || "—"} — ${a.account_name || "—"} (${typeLabel})`;
+  const typeLabel = accountTypeLabel(a.type);
+  const label = accountDisplayLabel(a);
+  return typeLabel ? `${label} (${typeLabel})` : label;
 }
 
 const fmt = (n) => formatTrAmount((n || 0));

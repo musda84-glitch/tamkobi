@@ -1,13 +1,8 @@
-/** Aynı IBAN / hesap no bağlantısı ve aynı adlı entegre hesap uyarıları. */
+/** Aynı IBAN / hesap no birden fazla hesaba bağlıysa uyarı. İsim tek başına uyarı değildir. */
 
-export function normRef(value) {
-  return String(value || "").replace(/\s+/g, "").toUpperCase();
-}
+import { duplicateRefMessage, isIban, maskedRef, normRef } from "./accountLabel";
 
-export function isIban(value) {
-  const token = normRef(value);
-  return token.startsWith("TR") && token.length >= 15 && /^[A-Z0-9]+$/.test(token);
-}
+export { isIban, normRef };
 
 export function connectionRefs(conn, account) {
   const ibans = new Set();
@@ -26,6 +21,22 @@ export function connectionRefs(conn, account) {
   return { ibans, numbers };
 }
 
+function refWarning(tur, noun, key, ids, byId) {
+  const ordered = [...ids].sort((a, b) => {
+    const bankA = String(byId.get(a)?.bank_name || "");
+    const bankB = String(byId.get(b)?.bank_name || "");
+    return bankA.localeCompare(bankB, "tr") || a.localeCompare(b);
+  });
+  const accounts = ordered.map((id) => byId.get(id) || {});
+  const mask = maskedRef(key);
+  return {
+    tur,
+    anahtar: `${mask}:${[...ids].sort().join(",")}`,
+    adet: ids.size,
+    mesaj: duplicateRefMessage(noun, accounts, mask),
+  };
+}
+
 export function bankLinkWarnings(connections, accounts) {
   const byId = new Map();
   (accounts || []).forEach((account) => {
@@ -35,61 +46,24 @@ export function bankLinkWarnings(connections, accounts) {
   const ibanGroups = new Map();
   const numberGroups = new Map();
   (connections || []).forEach((conn) => {
-    const id = String(conn.id || conn._id || "");
-    const account = byId.get(String(conn.linked_account_id || ""));
-    const refs = connectionRefs(conn, account);
+    const accountId = String((conn && conn.linked_account_id) || "");
+    if (!accountId) return;
+    const refs = connectionRefs(conn, byId.get(accountId));
     refs.ibans.forEach((key) => {
       if (!ibanGroups.has(key)) ibanGroups.set(key, new Set());
-      ibanGroups.get(key).add(id);
+      ibanGroups.get(key).add(accountId);
     });
     refs.numbers.forEach((key) => {
       if (!numberGroups.has(key)) numberGroups.set(key, new Set());
-      numberGroups.get(key).add(id);
+      numberGroups.get(key).add(accountId);
     });
   });
   const warnings = [];
   ibanGroups.forEach((ids, key) => {
-    if (ids.size > 1) {
-      warnings.push({
-        tur: "cift_iban",
-        anahtar: key,
-        adet: ids.size,
-        mesaj: `Aynı IBAN (${key}) ${ids.size} banka bağlantısına bağlı.`,
-      });
-    }
+    if (ids.size > 1) warnings.push(refWarning("cift_iban", "IBAN", key, ids, byId));
   });
   numberGroups.forEach((ids, key) => {
-    if (ids.size > 1) {
-      warnings.push({
-        tur: "cift_hesap_no",
-        anahtar: key,
-        adet: ids.size,
-        mesaj: `Aynı hesap no (${key}) ${ids.size} banka bağlantısına bağlı.`,
-      });
-    }
-  });
-  const nameGroups = new Map();
-  const integrated = new Set(
-    (connections || []).map((conn) => String(conn.linked_account_id || "")).filter(Boolean),
-  );
-  integrated.forEach((id) => {
-    const account = byId.get(id);
-    if (!account) return;
-    const label = String(account.account_name || "").trim();
-    const key = label.toLocaleLowerCase("tr-TR");
-    if (!key) return;
-    if (!nameGroups.has(key)) nameGroups.set(key, { label, ids: [] });
-    nameGroups.get(key).ids.push(id);
-  });
-  nameGroups.forEach((group) => {
-    if (group.ids.length > 1) {
-      warnings.push({
-        tur: "cift_hesap_adi",
-        anahtar: group.label,
-        adet: group.ids.length,
-        mesaj: `Aynı adlı ${group.ids.length} entegre hesap var: ${group.label}.`,
-      });
-    }
+    if (ids.size > 1) warnings.push(refWarning("cift_hesap_no", "hesap no", key, ids, byId));
   });
   return warnings;
 }

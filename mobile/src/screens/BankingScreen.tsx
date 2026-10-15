@@ -14,6 +14,7 @@ import { colors } from "../theme";
 import {
   accountBalance,
   accountGroupTone,
+  accountDisplayLabel,
   accountTypeTr,
   bankMovementNotice,
   groupedAccounts,
@@ -368,13 +369,8 @@ export function BankingScreen() {
                     ) : (
                       <BankMark brand={brand} />
                     )}
-                    title={a.account_name || a.bank_name || "Hesap"}
-                    subtitle={[
-                      accountTypeTr(a.type),
-                      a.iban || a.account_number,
-                      a.bank_name,
-                      a.is_integrated ? (a.integration_provider || "Entegre") : "",
-                    ].filter(Boolean).join(" · ")}
+                    title={accountDisplayLabel(a)}
+                    subtitle={accountTypeTr(a.type)}
                     right={fmtMoney(accountBalance(a), a.currency)}
                     rightColor={branded ? brand.text : undefined}
                     onPress={() => go("BankingAccount", { id: idOf(a), name: a.account_name || "" })}

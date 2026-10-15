@@ -1,4 +1,6 @@
 import {
+  accountDisplayLabel,
+  accountTypeTr,
   accountPayload,
   accountUpdatePayload,
   draftFromAccount,
@@ -137,7 +139,7 @@ describe("finance drafts", () => {
     const partners = [{ id: "p1", name: "Ali", balance: 3000 }, { id: "p2", name: "Pasif", is_active: false }];
 
     const collect = paymentTargetGroups(accounts, partners, { collectableOnly: true });
-    expect(collect.map((g) => g.label)).toEqual(["Banka", "Kasa", "Ortaklar Hesabı"]);
+    expect(collect.map((g) => g.label)).toEqual(["Banka hesabı", "Kasa", "Ortaklar Hesabı"]);
     expect(collect.at(-1)?.options).toEqual([{ value: "partner:p1", label: expect.stringContaining("Ali") }]);
     expect(collect.at(-1)?.options[0].label).toContain("Ortak");
 
@@ -151,10 +153,27 @@ describe("finance drafts", () => {
     expect(payIn.map((g) => g.label)).not.toContain("Kredi Kartı");
 
     const spend = paymentTargetGroups(accounts, partners);
-    expect(spend.map((g) => g.label)).toContain("Kredi Kartı");
+    expect(spend.map((g) => g.label)).toContain("Kredi kartı");
 
     const noPartners = paymentTargetGroups(accounts, partners, { includePartners: false });
     expect(noPartners.map((g) => g.label)).not.toContain("Ortaklar Hesabı");
+  });
+
+  it("labels an integrated account with bank, name and last 4, never the full IBAN", () => {
+    const iban = "TR330006200519786457841234";
+    expect(accountTypeTr("bank")).toBe("Banka hesabı");
+    expect(accountTypeTr("cash_box")).toBe("Kasa");
+    expect(accountTypeTr("pos")).toBe("POS");
+    expect(accountTypeTr("okc_pos")).toBe("ÖKC");
+    expect(accountTypeTr("credit_card")).toBe("Kredi kartı");
+    const label = accountDisplayLabel({
+      bank_name: "Kuveyt Türk",
+      account_name: "Vadesiz TL Hesabı",
+      iban,
+      is_integrated: true,
+    });
+    expect(label).toBe("Kuveyt Türk · Vadesiz TL Hesabı · …1234 · entegre");
+    expect(label).not.toContain(iban);
   });
 
   it("splits expense categories into default and company groups", () => {

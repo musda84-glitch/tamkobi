@@ -11404,13 +11404,8 @@ async def list_bank_providers():
     return [{"code": k, **{kk: vv for kk, vv in v.items() if kk != "token_path"}} for k, v in bank_providers.PROVIDERS.items()]
 
 def _linked_account_label(acc: dict) -> str:
-    bank = (acc.get("bank_name") or "").strip()
-    name = (acc.get("account_name") or "").strip() or "—"
-    typ = acc.get("type") or "bank"
-    type_tr = {"bank": "Banka", "pos": "POS", "okc_pos": "ÖKC"}.get(typ, typ)
-    if bank and bank != name:
-        return f"{bank} — {name} ({type_tr})"
-    return f"{name} ({type_tr})"
+    import account_label
+    return account_label.account_display_label(acc, integrated=True)
 
 def _enrich_connection(doc: dict, acc: Optional[dict] = None) -> dict:
     out = _mask_connection(doc)
@@ -11452,7 +11447,10 @@ async def create_bank_connection(conn: BankConnection, user: dict = Depends(get_
     import balance_reconciliation as _recon
     clash = await _recon.conflicting_connection_iban(db, conn.company_id, doc, acc)
     if clash:
-        raise HTTPException(status_code=400, detail=f"Bu IBAN zaten bir banka bağlantısına bağlı ({clash}).")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bu IBAN zaten bir banka bağlantısına bağlı ({_recon.masked_ref(clash)}).",
+        )
     test = await bank_providers.test_connection(doc)
     doc["status"] = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     doc["last_error"] = None if test["ok"] else test["message"]

@@ -14,6 +14,7 @@ import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount, fmtDate } from "../utils/money";
+import { accountDisplayLabel } from "../utils/accountLabel";
 import { MoneyInput } from "../components/MoneyInput";
 import { expenseListDateLines, fmtDmyTime } from "../utils/dateFormat";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
@@ -81,11 +82,7 @@ const Stat = ({ label, value, sub, cls = "", testid, onClick }) => {
   );
 };
 
-const accountLabel = (a) => {
-  const name = a.account_name || a.bank_name || "Hesap";
-  const bank = a.bank_name && a.bank_name !== name ? a.bank_name : "";
-  return `${bank ? `${bank} — ` : ""}${name} · ${fmt(a.current_balance)} ₺`;
-};
+const accountLabel = (a) => `${accountDisplayLabel(a)} · ${fmt(a.current_balance)} ₺`;
 
 const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: accountsProp, contacts: contactsProp, employees: employeesProp, projects: projectsProp, onClose, onSaved }) => {
   useEscape(onClose);

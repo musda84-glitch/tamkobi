@@ -446,6 +446,8 @@ def test_duplicate_iban_connection_rejected_and_warnings(db):
                 ), _user())
             assert clash.value.status_code == 400
             assert "IBAN" in clash.value.detail
+            assert IBAN not in clash.value.detail
+            assert "…1326" in clash.value.detail
             other_conn = await server.create_bank_connection(BankConnection(
                 company_id="c2", provider="other", linked_account_id=other["id"],
             ), _user("c2"))
@@ -472,7 +474,13 @@ def test_duplicate_iban_connection_rejected_and_warnings(db):
         kinds = {w["tur"] for w in report["uyarilar"]}
         assert "cift_iban" in kinds
         assert "cift_hesap_no" in kinds
-        assert "cift_hesap_adi" in kinds
-        assert any("Vadesiz TL" in w["mesaj"] for w in report["uyarilar"])
+        assert "cift_hesap_adi" not in kinds
+        iban_warn = next(w for w in report["uyarilar"] if w["tur"] == "cift_iban")
+        assert "Enpara" in iban_warn["mesaj"]
+        assert "…1326" in iban_warn["mesaj"]
+        assert IBAN not in iban_warn["mesaj"]
+        for warning in report["uyarilar"]:
+            assert IBAN not in warning["mesaj"]
+            assert "Aynı adlı" not in warning["mesaj"]
 
     _run(scenario())

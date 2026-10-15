@@ -1,14 +1,12 @@
 """Salt-okuma bakiye mutabakatı. Hiçbir koleksiyona yazmaz."""
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Set
 
 import account_balance
+import account_label
 import contact_balance
 import partner_pay
-
-_IBAN_RE = re.compile(r"^TR[A-Z0-9]{13,}$")
 
 
 def _num(v: Any) -> float:
@@ -57,6 +55,8 @@ def _account_row(acc: dict, txs: List[dict], *, integrated: bool) -> Dict[str, A
         "id": aid,
         "ad": acc.get("account_name") or acc.get("bank_name") or aid,
         "tur": acc.get("type") or "",
+        "bank_name": str(acc.get("bank_name") or "").strip(),
+        "masked_ref": account_label.account_masked_ref(acc),
         "entegre_mi": bool(integrated),
         "gosterilen": shown,
         "hareket_toplami": moved,
@@ -70,11 +70,15 @@ def _account_row(acc: dict, txs: List[dict], *, integrated: bool) -> Dict[str, A
 
 
 def norm_ref(value: Any) -> str:
-    return re.sub(r"\s+", "", str(value or "")).upper()
+    return account_label.norm_ref(value)
 
 
 def is_iban(value: Any) -> bool:
-    return bool(_IBAN_RE.match(norm_ref(value)))
+    return account_label.is_iban(value)
+
+
+def masked_ref(value: Any) -> str:
+    return account_label.masked_ref(value)
 
 
 def connection_refs(conn: Optional[dict], acc: Optional[dict] = None) -> Dict[str, Set[str]]:
@@ -98,8 +102,20 @@ def connection_refs(conn: Optional[dict], acc: Optional[dict] = None) -> Dict[st
     return {"ibans": ibans, "numbers": numbers}
 
 
+def _ref_warning(tur: str, noun: str, key: str, ids: Set[str], by_id: Dict[str, dict]) -> Dict[str, Any]:
+    ordered = sorted(ids, key=lambda aid: (str((by_id.get(aid) or {}).get("bank_name") or ""), aid))
+    rows = [by_id.get(aid) or {} for aid in ordered]
+    mask = account_label.masked_ref(key)
+    return {
+        "tur": tur,
+        "anahtar": f"{mask}:{','.join(sorted(ids))}",
+        "adet": len(ids),
+        "mesaj": account_label.duplicate_ref_message(noun, rows, mask),
+    }
+
+
 def link_warnings(accounts: List[dict], connections: List[dict]) -> List[Dict[str, Any]]:
-    """Aynı IBAN/hesap no'ya birden fazla bağlantı veya aynı adlı birden fazla entegre hesap."""
+    """Aynı IBAN veya hesap no birden fazla hesaba bağlıysa uyar. İsim tek başına uyarı değildir."""
     by_id: Dict[str, dict] = {}
     for acc in accounts or []:
         aid = _rid(acc)
@@ -108,50 +124,21 @@ def link_warnings(accounts: List[dict], connections: List[dict]) -> List[Dict[st
     iban_groups: Dict[str, Set[str]] = {}
     number_groups: Dict[str, Set[str]] = {}
     for conn in connections or []:
-        cid = _rid(conn)
-        acc = by_id.get(str((conn or {}).get("linked_account_id") or ""))
-        refs = connection_refs(conn, acc)
+        aid = str((conn or {}).get("linked_account_id") or "")
+        if not aid:
+            continue
+        refs = connection_refs(conn, by_id.get(aid))
         for iban in refs["ibans"]:
-            iban_groups.setdefault(iban, set()).add(cid)
+            iban_groups.setdefault(iban, set()).add(aid)
         for number in refs["numbers"]:
-            number_groups.setdefault(number, set()).add(cid)
+            number_groups.setdefault(number, set()).add(aid)
     warnings: List[Dict[str, Any]] = []
     for iban, ids in iban_groups.items():
         if len(ids) > 1:
-            warnings.append({
-                "tur": "cift_iban",
-                "anahtar": iban,
-                "adet": len(ids),
-                "mesaj": f"Aynı IBAN ({iban}) {len(ids)} banka bağlantısına bağlı.",
-            })
+            warnings.append(_ref_warning("cift_iban", "IBAN", iban, ids, by_id))
     for number, ids in number_groups.items():
         if len(ids) > 1:
-            warnings.append({
-                "tur": "cift_hesap_no",
-                "anahtar": number,
-                "adet": len(ids),
-                "mesaj": f"Aynı hesap no ({number}) {len(ids)} banka bağlantısına bağlı.",
-            })
-    name_groups: Dict[str, List[dict]] = {}
-    integrated_ids = {str(c.get("linked_account_id")) for c in connections or [] if c.get("linked_account_id")}
-    for aid in integrated_ids:
-        acc = by_id.get(aid)
-        if not acc:
-            continue
-        label = str(acc.get("account_name") or "").strip()
-        key = label.casefold()
-        if not key:
-            continue
-        name_groups.setdefault(key, []).append(acc)
-    for rows in name_groups.values():
-        if len(rows) > 1:
-            label = rows[0].get("account_name") or ""
-            warnings.append({
-                "tur": "cift_hesap_adi",
-                "anahtar": label,
-                "adet": len(rows),
-                "mesaj": f"Aynı adlı {len(rows)} entegre hesap var: {label}.",
-            })
+            warnings.append(_ref_warning("cift_hesap_no", "hesap no", number, ids, by_id))
     return warnings
 
 
@@ -303,10 +290,22 @@ async def build_reconciliation(db, company_id: str) -> Dict[str, Any]:
     }
 
 
+def _account_csv_label(row: dict) -> str:
+    return account_label.account_display_label(
+        {
+            "bank_name": row.get("bank_name"),
+            "account_name": row.get("ad"),
+            "masked_ref": row.get("masked_ref"),
+            "entegre_mi": row.get("entegre_mi"),
+        },
+        integrated=bool(row.get("entegre_mi")),
+    )
+
+
 def report_lines(report: Dict[str, Any]) -> List[List[str]]:
-    """CSV/tablo satırları (başlık dahil)."""
+    """CSV/tablo satırları (başlık dahil). Hesap türü ve ad Türkçe etikettir."""
     rows: List[List[str]] = [[
-        "grup", "id", "ad", "tur", "entegre_mi",
+        "grup", "id", "ad", "tur", "bank_name", "masked_ref", "entegre_mi",
         "gosterilen", "hareket_toplami", "banka_bildirdigi",
         "kart_bakiyesi", "kayitli_bakiye", "liste_giris", "liste_cikis",
         "kayitli", "hesaplanan", "fark",
@@ -314,7 +313,9 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
     ]]
     for a in report.get("accounts") or []:
         rows.append([
-            "hesap", a.get("id") or "", a.get("ad") or "", a.get("tur") or "",
+            "hesap", a.get("id") or "", _account_csv_label(a),
+            account_label.account_type_label(a.get("tur")),
+            a.get("bank_name") or "", a.get("masked_ref") or "",
             "evet" if a.get("entegre_mi") else "hayir",
             _fmt(a.get("gosterilen")), _fmt(a.get("hareket_toplami")),
             "" if a.get("banka_bildirdigi") is None else _fmt(a.get("banka_bildirdigi")),
@@ -325,7 +326,7 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
         ])
     for p in report.get("partners") or []:
         rows.append([
-            "ortak", p.get("id") or "", p.get("ad") or "", "partner", "",
+            "ortak", p.get("id") or "", p.get("ad") or "", "partner", "", "", "",
             "", "", "",
             _fmt(p.get("kart_bakiyesi")), _fmt(p.get("kayitli_bakiye")),
             _fmt(p.get("liste_giris")), _fmt(p.get("liste_cikis")),
@@ -334,7 +335,7 @@ def report_lines(report: Dict[str, Any]) -> List[List[str]]:
         ])
     for c in report.get("contacts") or []:
         rows.append([
-            "cari", c.get("id") or "", c.get("ad") or "", "contact", "",
+            "cari", c.get("id") or "", c.get("ad") or "", "contact", "", "", "",
             "", "", "", "", "", "", "",
             _fmt(c.get("kayitli")), _fmt(c.get("hesaplanan")), _fmt(c.get("fark")),
             "", "", "",

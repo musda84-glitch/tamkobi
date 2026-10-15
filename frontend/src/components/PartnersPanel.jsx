@@ -15,6 +15,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { isPartnerCashType, isPartnerLedgerType, PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
 import { sortBankTransactions } from "../utils/bankAccountTx";
+import { accountDisplayLabel } from "../utils/accountLabel";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -29,11 +30,7 @@ export const filterPartnerTxs = (txs, partnerId) => {
 
 const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);
 const accId = (a) => a?.id || a?._id || "";
-const accLabel = (a) => {
-  const name = a?.account_name || a?.name || "Hesap";
-  const bank = a?.bank_name && a.bank_name !== name ? a.bank_name : "";
-  return `${bank ? `${bank} — ` : ""}${name} · ${fmt(bal(a))} ₺`;
-};
+const accLabel = (a) => `${accountDisplayLabel(a)} · ${fmt(bal(a))} ₺`;
 const isCard = (a) => String(a?.type || "") === "credit_card";
 const isIntegrated = (a) => !!(a?.is_integrated);
 

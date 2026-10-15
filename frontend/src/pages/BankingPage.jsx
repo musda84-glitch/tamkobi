@@ -23,6 +23,7 @@ import { MoneyInput } from "../components/MoneyInput";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, partnerSummaryCardMeta } from "../utils/partnerTx";
 import { shownAccountBalance, sumShownBalances, totalLiquidity as sumLiquidity } from "../utils/accountTotals";
+import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   Landmark,
@@ -69,11 +70,19 @@ const accountGroupType = (a) => (
     : (a?.type || "bank")
 );
 
-const txAccountLabel = (tx) => {
-  if (tx?.type === "transfer" && tx.target_account_name) {
-    return `${tx.account_name || "Hesap"} → ${tx.target_account_name}`;
+const txAccountLabel = (tx, accounts) => {
+  const byId = (id) => (accounts || []).find((a) => (a.id || a._id) === id);
+  const one = (id, fallback) => {
+    const acc = id ? byId(id) : null;
+    if (acc) return accountDisplayLabel(acc);
+    return fallback || "";
+  };
+  if (tx?.type === "transfer" && (tx.target_account_name || tx.target_account_id)) {
+    const src = one(tx.account_id, tx.account_name) || "Hesap";
+    const dst = one(tx.target_account_id, tx.target_account_name) || tx.target_account_name || "Hesap";
+    return `${src} → ${dst}`;
   }
-  return tx?.account_name || "—";
+  return one(tx?.account_id, tx?.account_name) || "—";
 };
 
 const emptyAccountForm = {
@@ -391,7 +400,7 @@ export default function BankingPage() {
 
   const handleDeleteAccount = async (acc, e) => {
     e?.stopPropagation();
-    const name = `${acc.bank_name || ""} — ${acc.account_name || ""}`.trim();
+    const name = accountDisplayLabel(acc);
     if (!window.confirm(`"${name}" silinsin mi? Hareketi olan hesaplar silinemez.`)) return;
     try {
       const r = await axios.delete(`${API_URL}/banking/accounts/${acc.id || acc._id}`);
@@ -648,8 +657,8 @@ export default function BankingPage() {
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <h3 className="font-bold text-slate-900 text-sm">{acc.bank_name}</h3>
-                        <div className="text-xs text-slate-500 truncate">{acc.account_name}</div>
+                        <h3 className="font-bold text-slate-900 text-sm break-words">{accountDisplayLabel(acc)}</h3>
+                        <div className="text-xs text-slate-500">{accountTypeLabel(acc.type)}</div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                         <button type="button" onClick={(e) => openEditAccount(acc, e)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100" title="Düzelt" data-testid={`edit-account-${accId}`}><Pencil className="w-3.5 h-3.5" /></button>
@@ -700,7 +709,6 @@ export default function BankingPage() {
                         </button>
                       </div>
                     )}
-                    {acc.iban && acc.iban !== "-" && <div className="text-[11px] font-mono text-slate-400 truncate">{acc.iban}</div>}
                   </div>
                   <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
                     <div>
@@ -726,7 +734,7 @@ export default function BankingPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <History className="w-4 h-4 text-slate-500" />
-            <h2 className="text-base font-bold text-slate-900" data-testid="transactions-title">{selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name} Hareketleri` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}</h2>
+            <h2 className="text-base font-bold text-slate-900" data-testid="transactions-title">{selectedAccount ? `${accountDisplayLabel(selectedAccount)} Hareketleri` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}</h2>
             {(selectedAccount || openGroup) && (
               <button onClick={() => { setSelectedAccountId(null); if (selectedAccount) return; setSelectedGroup(null); }} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> {selectedAccount ? "Grup Hareketleri" : "Tüm Hesaplar"}</button>
             )}
@@ -797,7 +805,7 @@ export default function BankingPage() {
                   testId={`tx-card-${id}`}
                   className={(tx.id || tx._id) === focusTx ? "ring-2 ring-amber-400 bg-amber-50" : ""}
                   date={fmtDate(tx.date)}
-                  party={txAccountLabel(tx)}
+                  party={txAccountLabel(tx, accounts)}
                   badge={<TxTypeBadge label={bankKind(tx)} kind={tx.type} />}
                   amount={bankAmount(tx)}
                   amountClassName={bankAmountCls(tx)}
@@ -830,7 +838,7 @@ export default function BankingPage() {
                 pagedTx.map((tx) => (
                   <tr key={tx.id || tx._id} className={`hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px] ${(tx.id || tx._id) === focusTx ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`} data-testid={`tx-row-${tx.id || tx._id}`}>
                     <td className="px-4 py-2.5 text-slate-500 font-mono" data-testid={`tx-date-${tx.id || tx._id}`}>{fmtDate(tx.date)}</td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx)}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx, accounts)}</td>
                     <td className="px-4 py-2.5">
                       <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                         tx.type === 'inflow' ? 'bg-emerald-50 text-emerald-700' : tx.type === 'outflow' ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'
@@ -883,7 +891,7 @@ export default function BankingPage() {
         <AccountStatementPrint
           company={activeCompany}
           account={selectedAccount || null}
-          title={selectedAccount ? `${selectedAccount.bank_name} — ${selectedAccount.account_name}` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}
+          title={selectedAccount ? accountDisplayLabel(selectedAccount) : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}
           transactions={visibleTx}
           onClose={() => setPrintTx(false)}
         />
