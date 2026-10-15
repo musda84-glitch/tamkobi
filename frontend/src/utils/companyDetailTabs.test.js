@@ -8,6 +8,7 @@ test("URL tab entegrator maps to einvoice", () => {
   expect(companyDetailTabFromUrl("entegrator")).toBe("einvoice");
   expect(companyDetailTabFromUrl("einvoice")).toBe("einvoice");
   expect(companyDetailTabFromUrl("storage")).toBe("storage");
+  expect(companyDetailTabFromUrl("notify")).toBe("notify");
   expect(companyDetailTabFromUrl("")).toBe("license");
   expect(companyDetailTabFromUrl("unknown")).toBe("license");
 });

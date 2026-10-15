@@ -52,6 +52,8 @@ DEFAULT_SETTINGS = {
     "require_superadmin_2fa": False,
     # Firma order_new gruplaması boşsa kullanılan varsayılan (dakika)
     "notify_order_batch_minutes_default": 10,
+    # Firma günlük olay e-posta limiti boşsa kullanılan varsayılan (None = limitsiz)
+    "notify_daily_email_cap_default": None,
 }
 
 
@@ -264,6 +266,10 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
         if bm not in _evn.ORDER_BATCH_MINUTES:
             raise HTTPException(status_code=400, detail=_evn.ORDER_BATCH_DETAIL)
         upd["notify_order_batch_minutes_default"] = bm
+    if "notify_daily_email_cap_default" in req:
+        import event_notify as _evn_cap
+        cap = _evn_cap._parse_daily_email_cap(req.get("notify_daily_email_cap_default"), strict=True)
+        upd["notify_daily_email_cap_default"] = cap
     if "reminder_days" in req:
         upd["reminder_days"] = sorted({int(x) for x in req["reminder_days"] if str(x).strip().isdigit() and 0 < int(x) <= 60}, reverse=True) or [7, 1]
     if "trial_days" in req:
