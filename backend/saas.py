@@ -371,7 +371,7 @@ async def seed():
     st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
     site = {"brand_name": "TamKobi", "public_url": "https://tamkobi.com"}
     if not st:
-        await _db.platform_settings.insert_one({"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "currency": "try", **site, "created_at": _now()})
+        await _db.platform_settings.insert_one({"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "currency": "try", "notify_order_batch_minutes_default": 10, **site, "created_at": _now()})
     else:
         patch = {}
         import public_url as pu
@@ -384,6 +384,10 @@ async def seed():
             patch["public_url"] = site["public_url"]
         if (st.get("brand_name") or "") in ("", "NexusHesap", "Nexus", "Nexus ERP", "Takibi", "Takip"):
             patch["brand_name"] = "TamKobi"
+        raw_bm = st.get("notify_order_batch_minutes_default", None)
+        bm_ok = isinstance(raw_bm, int) and not isinstance(raw_bm, bool) and raw_bm in (0, 5, 10, 15, 30, 60)
+        if not bm_ok:
+            patch["notify_order_batch_minutes_default"] = 10
         if patch:
             await _db.platform_settings.update_one({"_id": "platform"}, {"$set": patch})
     # Visible brand copy: Nexus* → TamKobi* on company / product display names

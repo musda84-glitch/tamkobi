@@ -202,10 +202,25 @@ def test_make_thumbnail_w64_much_smaller_than_full():
     assert max(tiny.width or 0, tiny.height or 0) <= 64
 
 
+def test_make_thumbnail_jpeg_and_png_for_email():
+    raw = _photo_jpeg(w=800, h=600, quality=90)
+    jpg = image_opt.make_thumbnail(raw, "image/jpeg", "a.webp", max_edge=128, out_fmt="jpg")
+    assert jpg is not None
+    assert jpg.content_type == "image/jpeg"
+    assert jpg.ext == "jpg"
+    assert jpg.data[:2] == b"\xff\xd8"
+    assert max(jpg.width or 0, jpg.height or 0) <= 128
+    png = image_opt.make_thumbnail(raw, "image/jpeg", "a.webp", max_edge=128, out_fmt="png")
+    assert png is not None
+    assert png.content_type == "image/png"
+    assert png.data.startswith(b"\x89PNG")
+
+
 def test_resize_cache_path_derives_sidecar():
     assert image_opt.resize_cache_path("tamkobi/products/a.webp", 64) == "tamkobi/products/a.w64.webp"
     assert image_opt.resize_cache_path("tamkobi/products/a.w64.webp", 64) == "tamkobi/products/a.w64.webp"
     assert image_opt.resize_cache_path("/x/y.jpg", 48) == "x/y.w48.webp"
+    assert image_opt.resize_cache_path("c1/a.webp", 128, "jpg") == "c1/a.w128.jpg"
 
 
 def test_product_profile_prefers_webp_and_smaller_edge():

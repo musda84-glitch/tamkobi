@@ -265,6 +265,7 @@ async def perform_install(req: InstallRequest) -> dict:
                 "brand_name": site_name,
                 "currency": "try",
                 "public_url": public_url,
+                "notify_order_batch_minutes_default": 10,
                 "created_at": _now(),
             }
         )

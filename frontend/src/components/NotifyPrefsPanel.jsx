@@ -5,6 +5,12 @@ import { Bell, Loader2, Save } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
 const EVENT_ORDER = ["einvoice_incoming", "order_new", "gib_credits_low", "receivable_overdue"];
+const ORDER_BATCH_MINUTES = [0, 5, 10, 15, 30, 60];
+
+function orderBatchMinutes(events) {
+  const raw = Number((events?.order_new || {}).batch_minutes);
+  return ORDER_BATCH_MINUTES.includes(raw) ? raw : 10;
+}
 
 const FALLBACK_LABELS = {
   einvoice_incoming: "Gelen e-Fatura",
@@ -53,9 +59,16 @@ export function NotifyPrefsPanel({ companyId }) {
     e.preventDefault();
     setBusy(true);
     try {
+      const events = {
+        ...(prefs.events || {}),
+        order_new: {
+          ...((prefs.events || {}).order_new || {}),
+          batch_minutes: orderBatchMinutes(prefs.events),
+        },
+      };
       const r = await axios.put(`${API_URL}/notify/prefs`, {
         company_id: companyId,
-        events: prefs.events,
+        events,
         extra_emails: String(prefs.extra_emails_text ?? (prefs.extra_emails || []).join(", "))
           .split(/[,;\s]+/)
           .map((x) => x.trim())
@@ -120,6 +133,7 @@ export function NotifyPrefsPanel({ companyId }) {
                       data-testid={`notify-${key}-digest`}
                     >
                       <option value="instant">Anında</option>
+                      {key === "order_new" && <option value="batch">Grupla</option>}
                       <option value="hourly">Saatlik özet</option>
                       <option value="daily">Günlük özet</option>
                     </select>
@@ -129,6 +143,26 @@ export function NotifyPrefsPanel({ companyId }) {
             })}
           </tbody>
         </table>
+      </div>
+
+      <div>
+        <label className="block font-semibold text-slate-700 mb-1">Gruplama süresi</label>
+        <select
+          value={String(orderBatchMinutes(events))}
+          onChange={(e) => setEvent("order_new", "batch_minutes", Number(e.target.value))}
+          className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
+          data-testid="notify-order-batch-minutes"
+        >
+          <option value="0">Hemen</option>
+          <option value="5">5 dk</option>
+          <option value="10">10 dk</option>
+          <option value="15">15 dk</option>
+          <option value="30">30 dk</option>
+          <option value="60">60 dk</option>
+        </select>
+        <p className="text-[10px] text-slate-500 mt-1" data-testid="notify-order-batch-note">
+          Uygulama içi bildirim ve push her zaman anında gelir
+        </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
