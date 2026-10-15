@@ -38,6 +38,7 @@ import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduc
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { useEinvoiceIntegrator } from "../hooks/useEinvoiceIntegrator";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
 import { einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
@@ -128,6 +129,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const canDeleteInv = can("/invoices", "delete");
   const canIssueInv = can("/invoices", "edit");
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const {
+    settings: einvoiceSettings,
+    loading: einvoiceLoading,
+  } = useEinvoiceIntegrator(activeCompany?.id || activeCompany?._id || "");
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -136,7 +141,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [filterType, setFilterType] = useState(initialType);
   const [showCancelled, setShowCancelled] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [einvoiceSettings, setEinvoiceSettings] = useState(null);
   const [gibBusy, setGibBusy] = useState("");
 
   // Modals
@@ -327,19 +331,6 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); }
   };
   const openPayment = (inv) => { setPaymentModalInvoice(inv); setPaymentAmount(inv.grand_total - (inv.paid_amount || 0)); };
-
-  const loadEinvoiceSettings = useCallback(async () => {
-    const cid = activeCompany?.id || activeCompany?._id;
-    if (!cid) return;
-    try {
-      const r = await axios.get(`${API_URL}/einvoice/settings`, { params: { company_id: cid } });
-      setEinvoiceSettings(r.data || null);
-    } catch {
-      setEinvoiceSettings(null);
-    }
-  }, [activeCompany]);
-
-  useEffect(() => { loadEinvoiceSettings(); }, [loadEinvoiceSettings]);
 
   const pullGibIncoming = async () => {
     const cid = activeCompany?.id || activeCompany?._id;
@@ -1207,6 +1198,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       {!lockType && (
         <InvoiceGibBar
           settings={einvoiceSettings}
+          loading={einvoiceLoading}
           busy={gibBusy}
           onPullIncoming={pullGibIncoming}
           onRefreshOutgoing={refreshOutgoingGib}

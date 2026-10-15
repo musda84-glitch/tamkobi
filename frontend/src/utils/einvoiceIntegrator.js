@@ -20,6 +20,15 @@ export function isEinvoiceConfigured(settings) {
   return String(settings.status || "").toLowerCase() === "configured";
 }
 
+/**
+ * "GİB entegratörü bağlı değil" uyarısı.
+ * İstek bitmeden (loading) hiçbir şey gösterme; bitince yalnızca gerçekten bağlı değilse.
+ */
+export function shouldShowEinvoiceUnconfiguredWarning({ loading = false, settings } = {}) {
+  if (loading) return false;
+  return !isEinvoiceConfigured(settings);
+}
+
 export function supportsGibInbox(settings) {
   if (!isEinvoiceConfigured(settings)) return false;
   const p = String(settings.provider || "").toLowerCase();
