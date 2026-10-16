@@ -7,6 +7,8 @@ apply_saved_secrets()
 import os
 import uuid
 import re
+import json
+import hashlib
 import inspect
 import secrets
 import logging
@@ -1287,7 +1289,7 @@ B2B_DEFAULTS = {
     "show_installments": True, "min_order_amount": 0.0, "welcome_note": "",
     "card_payment_enabled": False, "card_max_installment": 1, "card_commission_payer": "seller",
     "card_commission_rate": 0.0,
-    # Siparişte zorunlu ödeme PR-4b'ye kadar kullanılmaz.
+    # Siparişte zorunlu kart ödemesi şirket düzeyindedir; cari kartından ezilmez.
     "card_payment_required": False,
 }
 # Cari kartından özelleştirilebilir portal özellikleri (şirket varsayılanını ezer). null = şirket varsayılanı.
@@ -1447,6 +1449,42 @@ def b2b_card_quote_amounts(base_text: str, payer: str, rate: float) -> Dict[str,
     }
 
 
+def _b2b_card_order_required(bs: Optional[dict], cfg: Optional[dict]) -> bool:
+    """Sipariş için kart zorunlu: şirket ayarı ve etkin sanal POS. Cari ezemez."""
+    bs = bs or {}
+    cfg = cfg or {}
+    active = bool(cfg.get("enabled")) and bool(str(cfg.get("account_id") or "").strip())
+    return bool(bs.get("card_payment_enabled")) and bool(bs.get("card_payment_required")) and active
+
+
+def _b2b_draft_stable(value: Any) -> Any:
+    """Sayıları sabit metne çevirir. MySQL JSON 120.0 ile 120'yi aynı hash'e indirger."""
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            dec = Decimal(str(value)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        except Exception:
+            return str(value)
+        return format(dec, "f")
+    if isinstance(value, dict):
+        return {str(key): _b2b_draft_stable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_b2b_draft_stable(item) for item in value]
+    return str(value)
+
+
+def _b2b_order_draft_hash(draft: Optional[dict]) -> str:
+    raw = json.dumps(_b2b_draft_stable(draft or {}), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _duplicate_order_insert(exc: BaseException) -> bool:
+    if isinstance(exc, DuplicateKeyError):
+        return True
+    return "duplicate" in str(exc).lower()
+
+
 def resolve_b2b_settings(company: Optional[dict] = None, contact: Optional[dict] = None) -> Dict[str, Any]:
     """Şirket varsayılanı + cari özel ayarları birleştir."""
     company = company or {}
@@ -1498,6 +1536,8 @@ async def put_b2b_settings(company_id: str, req: Dict[str, Any], user: dict = De
     await tenant_access.require_company_admin(user, company_id)
     company = await db.companies.find_one({"_id": company_id}) or {}
     stored = company_b2b_settings_from_request(req, company.get("b2b_settings") or {})
+    if stored.get("card_payment_required") and not stored.get("card_payment_enabled"):
+        raise HTTPException(status_code=422, detail="Önce kartla ödemeyi açın.")
     await db.companies.update_one({"_id": company_id}, {"$set": {"b2b_settings": stored}})
     if req.get("apply_discount_to_all") and "default_discount" in req:
         await db.contacts.update_many({"company_id": company_id, "b2b_enabled": True}, {"$set": {"b2b_discount": float(stored["default_discount"])}})
@@ -5963,7 +6003,8 @@ async def b2b_portal(token: str):
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name"), "price_decimals": clamp_price_decimals(company.get("price_decimals", 2))},
             "products": products, "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
             "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart, "card_payment": b2b_card_payment_view(bs, vpos_cfg)},
-            "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS]}
+            "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS],
+            "card_order_required": _b2b_card_order_required(bs, vpos_cfg)}
 
 
 async def _b2b_portal_ready(token: str) -> tuple:
@@ -6090,7 +6131,7 @@ async def b2b_card_payment_status(token: str, intent_id: str):
     c, _company, _bs, _cfg = await _b2b_portal_ready(token)
     import vpos.api as vpos_api
     intent = await db.payment_intents.find_one({"_id": intent_id})
-    if not intent or str(intent.get("contact_id") or "") != str(c.get("_id") or "") or intent.get("purpose") != "b2b_collection":
+    if not intent or str(intent.get("contact_id") or "") != str(c.get("_id") or "") or intent.get("purpose") not in ("b2b_collection", "b2b_order"):
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
     fresh = await db.contacts.find_one({"_id": c["_id"]}) or c
     return {
@@ -6100,6 +6141,9 @@ async def b2b_card_payment_status(token: str, intent_id: str):
         "installment": intent.get("installment") or 1,
         "result": vpos_api.public_result(intent.get("result")),
         "balance": fresh.get("balance", 0),
+        "order_id": intent.get("b2b_order_id") or None,
+        "order_number": intent.get("order_number") or None,
+        "order_error": intent.get("order_error") or None,
     }
 
 @api_router.get("/public/b2b/{token}/invoices/{invoice_id}/lines")
@@ -6370,12 +6414,9 @@ async def b2b_delete_held_cart(token: str, order_id: str):
     return {"status": "success", "message": f"{o.get('held_label') or o.get('order_number')} silindi."}
 
 
-@api_router.post("/public/b2b/{token}/orders")
-async def b2b_create_order(token: str, req: Dict[str, Any]):
-    c = await _b2b_contact(token)
-    items = await _b2b_build_items(c, req.get("items", []))
-    if not items:
-        raise HTTPException(status_code=400, detail="Sepet boş.")
+async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = None, order_id: Optional[str] = None) -> dict:
+    """Portal siparişi. Fiyat kalemlerden gelir; istemci tutarı okunmaz."""
+    req = req or {}
     legal_docs.require_acceptance(req)
     # enrich_line sonrası unit_price/total her zaman KDV hariçtir; toplamlar tek kaynaktan.
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
@@ -6389,6 +6430,8 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     order = Order(company_id=c["company_id"], order_number=await _next_order_number(c["company_id"], "B2B"), customer_order_number=cust_no, channel="b2b", customer_name=c.get("name"), customer_email=c.get("email"), customer_phone=c.get("phone"), shipping_address=req.get("shipping_address") or c.get("address") or "-", city=req.get("city") or c.get("city") or "-", items=items, total_amount=total, subtotal=subtotal, vat_total=vat_total, discount_total=discount_total, grand_total=grand_total, order_status="pending")
     doc = order.to_mongo()
+    if order_id:
+        doc["_id"] = order_id
     doc["contact_id"] = c["_id"]
     doc["notes"] = req.get("note", "")
     doc["source"] = "b2b_portal"
@@ -6398,16 +6441,232 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     doc["grand_total"] = grand_total
     doc["total_amount"] = total
     doc["legal_accept"] = legal_docs.acceptance_record(req)
-    await db.orders.insert_one(doc)
+    if payment:
+        doc["payment_intent_id"] = str(payment.get("payment_intent_id") or payment.get("intent_id") or "")
+        doc["payment_status"] = "paid"
+        doc["paid_amount"] = float(payment.get("paid_amount") or 0)
+        doc["payment_method"] = "card"
+    try:
+        await db.orders.insert_one(doc)
+    except Exception as exc:
+        if not (order_id and _duplicate_order_insert(exc)):
+            raise
+        existing = await db.orders.find_one({"_id": order_id})
+        if not existing:
+            raise
+        number = existing.get("order_number")
+        return {"status": "success", "order": clean_doc(dict(existing)), "message": f"Siparişiniz alındı: {number}"}
     await _clear_b2b_active_cart(c["company_id"], c["_id"])
     await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) sipariş verdi.", doc["_id"])
     await _attach_draft_invoice_on_intake(doc, source="b2b")
     refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
     return {"status": "success", "order": clean_doc(refreshed), "message": f"Siparişiniz alındı: {doc['order_number']}"}
 
+
+@api_router.post("/public/b2b/{token}/orders")
+async def b2b_create_order(token: str, req: Dict[str, Any]):
+    c, _company, bs, cfg = await _b2b_portal_ready(token)
+    if _b2b_card_order_required(bs, cfg):
+        return JSONResponse(status_code=402, content={
+            "detail": "Bu portalda sipariş için kartla ödeme zorunlu.",
+            "card_required": True,
+            "pay_url": f"/portal/{token}",
+        })
+    req = req or {}
+    items = await _b2b_build_items(c, req.get("items", []))
+    if not items:
+        raise HTTPException(status_code=400, detail="Sepet boş.")
+    return await _create_b2b_order_core(c, items, req)
+
+
+def _b2b_card_payer_rate(bs: Optional[dict]) -> tuple:
+    bs = bs or {}
+    payer = str(bs.get("card_commission_payer") or "seller")
+    if payer not in _CARD_PAYERS:
+        payer = "seller"
+    try:
+        rate = float(bs.get("card_commission_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    return payer, rate
+
+
+@api_router.post("/public/b2b/{token}/order-payments")
+async def b2b_order_payment_start(token: str, req: Dict[str, Any], request: Request):
+    """Sipariş tutarını kartla tahsil et. Kart alanı okunmaz; sipariş bu adımda açılmaz."""
+    req = req or {}
+    c, _company, bs, cfg = await _b2b_portal_ready(token)
+    legal_docs.require_acceptance(req)
+    if not bs.get("card_payment_enabled"):
+        raise HTTPException(status_code=403, detail="Kartla ödeme kapalı.")
+    if not cfg or not cfg.get("enabled") or not str(cfg.get("account_id") or "").strip():
+        raise HTTPException(status_code=400, detail="Etkin bir sanal POS ayarı gerekli.")
+    items = await _b2b_build_items(c, req.get("items", []))
+    if not items:
+        raise HTTPException(status_code=400, detail="Sepet boş.")
+    subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
+    if not bs.get("allow_orders", True):
+        raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
+    if float(bs.get("min_order_amount", 0) or 0) > grand_total:
+        raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(bs['min_order_amount']):,.2f} ₺.")
+    import bank_guard
+    import vpos.api as vpos_api
+    payer, rate = _b2b_card_payer_rate(bs)
+    base = f"{Decimal(str(grand_total)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+    quoted = b2b_card_quote_amounts(base, payer, rate)
+    limit = effective_card_max_installment(bs, cfg)
+    installment = _b2b_quote_installment(req.get("installment"), limit)
+    if str(cfg.get("mode") or "") == "test" and Decimal(quoted["charge_amount"]) > vpos_api.TEST_AMOUNT_MAX:
+        raise HTTPException(status_code=400, detail="Test tutarı 1000,00 TL'yi aşamaz.")
+    vpos_api._open_family(cfg)
+    account_id = str(cfg.get("account_id") or "").strip()
+    account = await bank_guard.assert_collection_allowed(db, account_id)
+    if not account or str(account.get("company_id") or "") != str(c.get("company_id") or "") or str(account.get("type") or "") not in vpos_api.POS_ACCOUNT_TYPES:
+        raise HTTPException(status_code=400, detail="Bağlı POS hesabı seçin.")
+    if not vpos_api.allow_b2b_start(str(c.get("_id") or "")):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
+    order_draft = {
+        "items": [it.model_dump() for it in items],
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "grand_total": grand_total,
+        "note": req.get("note", ""),
+        "shipping_address": req.get("shipping_address") or c.get("address") or "-",
+        "city": req.get("city") or c.get("city") or "-",
+        "customer_order_number": str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80],
+        "legal_accept": legal_docs.acceptance_record(req),
+    }
+    draft_hash = _b2b_order_draft_hash(order_draft)
+    runtime = await vpos_api._runtime_config(cfg)
+    tax = re.sub(r"\D", "", str(c.get("tax_number_or_id") or ""))
+    identity = tax if len(tax) == 11 else ""
+    email = str(c.get("email") or "").strip() or "odeme@example.com"
+    name = str(c.get("name") or "").strip() or "Cari"
+    return await vpos_api._begin_payment(
+        request, {}, cfg, runtime,
+        company_id=str(c.get("company_id") or ""),
+        amount=quoted["charge_amount"],
+        purpose="b2b_order",
+        contact_id=str(c.get("_id") or ""),
+        installment=installment,
+        description="Kartlı sipariş ödemesi",
+        email=email,
+        name=name,
+        phone=str(c.get("phone") or ""),
+        address=str(c.get("address") or ""),
+        basket_label="Kartlı sipariş ödemesi",
+        identity_number=identity,
+        extra={
+            "ledger_amount": quoted["base_amount"],
+            "commission_amount": quoted["commission_amount"],
+            "commission_payer": payer,
+            "source": "b2b_portal",
+            "order_draft": order_draft,
+            "order_draft_hash": draft_hash,
+        },
+        portal_token=str(c.get("b2b_token") or token),
+    )
+
+
+async def _mark_b2b_order_review(intent_id: str, company_id: str, contact_name: str) -> None:
+    wrote = await db.payment_intents.update_one(
+        {"_id": intent_id, "order_error": {"$ne": "review"}},
+        {"$set": {"order_error": "review"}},
+    )
+    if int(getattr(wrote, "modified_count", 0) or 0) < 1:
+        return
+    try:
+        await _notify_company(
+            company_id,
+            "b2b_order_payment_review",
+            "Kartlı sipariş ödemesi",
+            f"{contact_name or 'Cari'} kartla ödedi; sipariş firma onayında.",
+            intent_id,
+        )
+    except Exception:
+        logger.exception("b2b order review notify failed intent=%s", intent_id)
+
+
+async def finalize_b2b_order_payment(intent_id: str) -> None:
+    """Ödenmiş b2b_order intent'inden tek sipariş. Banka order_id alanına dokunulmaz."""
+    intent = await db.payment_intents.find_one({"_id": intent_id})
+    if not intent:
+        return
+    if str(intent.get("purpose") or "") != "b2b_order" or str(intent.get("status") or "") != "paid":
+        return
+    if intent.get("b2b_order_id") or intent.get("order_error") == "review":
+        return
+    if not intent.get("collection_tx_id"):
+        return
+    claim = str(uuid.uuid4())
+    claimed = await db.payment_intents.update_one(
+        {"_id": intent_id, "b2b_order_id": {"$exists": False}, "order_claim": {"$exists": False}},
+        {"$set": {"order_claim": claim}},
+    )
+    sales_id = f"b2bord_{intent_id}"
+    if int(getattr(claimed, "modified_count", 0) or 0) < 1:
+        existing = await db.orders.find_one({"_id": sales_id})
+        if existing:
+            await db.payment_intents.update_one(
+                {"_id": intent_id, "b2b_order_id": {"$exists": False}},
+                {"$set": {"b2b_order_id": sales_id, "order_number": existing.get("order_number"), "order_error": None}},
+            )
+        return
+    company_id = str(intent.get("company_id") or "")
+    contact_name = "Cari"
+    try:
+        draft = intent.get("order_draft")
+        if not isinstance(draft, dict) or _b2b_order_draft_hash(draft) != str(intent.get("order_draft_hash") or ""):
+            raise HTTPException(status_code=409, detail="review")
+        if not _same_money(draft.get("grand_total"), intent.get("ledger_amount")):
+            raise HTTPException(status_code=409, detail="review")
+        contact = await db.contacts.find_one({"_id": intent.get("contact_id")})
+        if not contact or str(contact.get("company_id") or "") != company_id or not contact.get("b2b_enabled"):
+            raise HTTPException(status_code=409, detail="review")
+        contact_name = contact.get("name") or contact_name
+        rows = [row for row in (draft.get("items") or []) if isinstance(row, dict)]
+        if not rows:
+            raise HTTPException(status_code=409, detail="review")
+        for row in rows:
+            pid = str(row.get("product_id") or "")
+            product = await db.products.find_one({"_id": pid, "company_id": company_id}) if pid else None
+            if not product:
+                raise HTTPException(status_code=409, detail="review")
+        paid = float(Decimal(str(intent.get("ledger_amount") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        result = await _create_b2b_order_core(
+            contact, rows, draft,
+            payment={"payment_intent_id": intent_id, "paid_amount": paid},
+            order_id=sales_id,
+        )
+        order = result.get("order") or {}
+        await db.payment_intents.update_one(
+            {"_id": intent_id, "order_claim": claim},
+            {"$set": {
+                "b2b_order_id": order.get("id") or sales_id,
+                "order_number": order.get("order_number"),
+                "order_error": None,
+            }},
+        )
+    except HTTPException:
+        await _mark_b2b_order_review(intent_id, company_id, contact_name)
+    except Exception:
+        logger.exception("b2b order finalize failed intent=%s", intent_id)
+        existing = await db.orders.find_one({"_id": sales_id})
+        if existing:
+            await db.payment_intents.update_one(
+                {"_id": intent_id, "order_claim": claim},
+                {"$set": {"b2b_order_id": sales_id, "order_number": existing.get("order_number"), "order_error": None}},
+            )
+            return
+        await _mark_b2b_order_review(intent_id, company_id, contact_name)
+
+
 @api_router.put("/public/b2b/{token}/orders/{order_id}")
 async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     c, o = await _b2b_owned_order(token, order_id)
+    if o.get("payment_intent_id"):
+        raise HTTPException(status_code=409, detail="Kartla ödenmiş sipariş portaldan değiştirilemez; iptal talebi gönderin.")
     if o.get("order_status") not in ("pending", "new", "held_cart", "active_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler düzenlenebilir.")
     if o.get("is_invoiced"):
@@ -6444,6 +6703,8 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
 @api_router.delete("/public/b2b/{token}/orders/{order_id}")
 async def b2b_delete_order(token: str, order_id: str):
     c, o = await _b2b_owned_order(token, order_id)
+    if o.get("payment_intent_id"):
+        raise HTTPException(status_code=409, detail="Kartla ödenmiş sipariş portaldan değiştirilemez; iptal talebi gönderin.")
     if o.get("order_status") not in ("pending", "new", "held_cart", "active_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler silinebilir.")
     if o.get("is_invoiced"):
@@ -24724,7 +24985,7 @@ network_printers.init(get_current_user)
 import label_printer_settings
 label_printer_settings.init(db, get_current_user)
 import vpos
-vpos.init(db, get_current_user)
+vpos.init(db, get_current_user, finalize_b2b_order_payment)
 migration.init(db, get_current_user)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)}, get_current_user)
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products_payload, "mail_account": _mail_account, "wa_send": wa_send}, get_current_user)

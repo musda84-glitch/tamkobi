@@ -62,9 +62,12 @@ def _ledger_amount(intent: dict) -> float:
     return float(format_amount(raw))
 
 
+_B2B_CARD_PURPOSES = ("b2b_collection", "b2b_order")
+
+
 def _fee_amount(intent: dict) -> float:
     """Alıcı komisyon farkı. Satıcıda ve panel tahsilatında 0."""
-    if str(intent.get("purpose") or "") != "b2b_collection":
+    if str(intent.get("purpose") or "") not in _B2B_CARD_PURPOSES:
         return 0.0
     if str(intent.get("commission_payer") or "") != "buyer":
         return 0.0
@@ -72,7 +75,7 @@ def _fee_amount(intent: dict) -> float:
     return diff if diff > 0 else 0.0
 
 
-_COLLECTION_PURPOSES = ("contact_collection", "b2b_collection")
+_COLLECTION_PURPOSES = ("contact_collection", "b2b_collection", "b2b_order")
 
 
 async def _link(db, intent_id: str, tx_id: str) -> None:
@@ -207,7 +210,7 @@ async def _drop_if_unsettled(db, tx_id: str) -> None:
 
 
 def _fee_spec(intent: dict, intent_id: str, account_id: str, account_name: str, company_id: Any) -> Optional[dict]:
-    if str(intent.get("purpose") or "") != "b2b_collection":
+    if str(intent.get("purpose") or "") not in _B2B_CARD_PURPOSES:
         return None
     return {
         "amount": _fee_amount(intent),
@@ -220,7 +223,8 @@ def _fee_spec(intent: dict, intent_id: str, account_id: str, account_name: str, 
 
 async def _notify_b2b_collection(db, intent: dict) -> None:
     """Yöneticiye uygulama içi bildirim. E-posta yok; hata tahsilatı bozmaz."""
-    if str(intent.get("purpose") or "") != "b2b_collection":
+    purpose = str(intent.get("purpose") or "")
+    if purpose not in _B2B_CARD_PURPOSES:
         return
     if intent.get("collection_notified"):
         return
@@ -231,11 +235,19 @@ async def _notify_b2b_collection(db, intent: dict) -> None:
         contact = await db.contacts.find_one({"_id": contact_id}) if contact_id else None
         name = (contact or {}).get("name") or "Cari"
         ledger = _ledger_amount(intent)
+        if purpose == "b2b_order":
+            ntype = "b2b_order_card"
+            title = "Kartlı sipariş ödemesi"
+            message = f"{name} portaldan {ledger:,.2f} ₺ kartlı sipariş ödemesi yaptı."
+        else:
+            ntype = "b2b_card_collection"
+            title = "B2B kart tahsilatı"
+            message = f"{name} portaldan {ledger:,.2f} ₺ kartla ödedi."
         await notify.insert_notification(db, notify.notification_doc(
             str(intent.get("company_id") or ""),
-            "b2b_card_collection",
-            "B2B kart tahsilatı",
-            f"{name} portaldan {ledger:,.2f} ₺ kartla ödedi.",
+            ntype,
+            title,
+            message,
             link=f"/contacts?contact_id={contact_id}" if contact_id else "/banking",
             roles=["admin"],
             ref_type="payment_intent",
@@ -260,7 +272,7 @@ async def post_collection(db, intent: dict) -> None:
     if str(intent.get("status") or "") != "paid":
         return
     tx_id = f"vpos:{intent_id}"
-    b2b = str(intent.get("purpose") or "") == "b2b_collection"
+    b2b = str(intent.get("purpose") or "") in _B2B_CARD_PURPOSES
     try:
         existing = await db.bank_transactions.find_one({"_id": tx_id})
         if existing:

@@ -65,7 +65,7 @@ const show = async (node) => {
   await act(async () => { root.render(node); });
 };
 
-test("sanal POS yoksa kart alanları kilitli ve zorunlu ödeme yakında", async () => {
+test("sanal POS yoksa kart alanları ve zorunlu ödeme kilitli", async () => {
   await show(
     <B2BCardSettingsFields
       settings={SETTINGS}
@@ -81,22 +81,53 @@ test("sanal POS yoksa kart alanları kilitli ve zorunlu ödeme yakında", async 
   expect(host.querySelector('[data-testid="b2b-card-rate"]').disabled).toBe(true);
   const required = host.querySelector('[data-testid="b2b-card-required"]');
   expect(required.disabled).toBe(true);
-  expect(host.textContent).toContain("yakında");
+  expect(host.textContent).toContain("Önce kartla ödemeyi açın");
 });
 
-test("etkin sanal POS varken alanlar açılır, zorunlu ödeme kapalı kalır", async () => {
+test("kartla ödeme kapalıyken zorunlu kutu kilitli, açıkken seçilir", async () => {
+  const onChange = jest.fn();
   await show(
     <B2BCardSettingsFields
-      settings={{ ...SETTINGS, card_payment_enabled: true, card_commission_payer: "buyer", card_commission_rate: 2.5 }}
-      onChange={() => {}}
+      settings={{ ...SETTINGS, card_payment_enabled: false }}
+      onChange={onChange}
+      vposReady
+      showRequired
+    />,
+  );
+  expect(host.querySelector('[data-testid="b2b-card-enabled"]').disabled).toBe(false);
+  expect(host.querySelector('[data-testid="b2b-card-required"]').disabled).toBe(true);
+  await act(async () => { root.unmount(); });
+  root = null;
+  onChange.mockReset();
+  await show(
+    <B2BCardSettingsFields
+      settings={{ ...SETTINGS, card_payment_enabled: true, card_payment_required: false, card_commission_payer: "buyer", card_commission_rate: 2.5 }}
+      onChange={onChange}
       vposReady
       showRequired
     />,
   );
   expect(host.querySelector('[data-testid="b2b-card-vpos-hint"]')).toBeNull();
-  expect(host.querySelector('[data-testid="b2b-card-enabled"]').disabled).toBe(false);
   expect(host.querySelector('[data-testid="b2b-card-payer"]').value).toBe("buyer");
-  expect(host.querySelector('[data-testid="b2b-card-required"]').disabled).toBe(true);
+  const required = host.querySelector('[data-testid="b2b-card-required"]');
+  expect(required.disabled).toBe(false);
+  await act(async () => { required.click(); });
+  expect(onChange).toHaveBeenCalledWith("card_payment_required", true);
+});
+
+test("kartla ödeme kapanınca zorunlu ödeme de kapanır", async () => {
+  const onChange = jest.fn();
+  await show(
+    <B2BCardSettingsFields
+      settings={{ ...SETTINGS, card_payment_enabled: true, card_payment_required: true }}
+      onChange={onChange}
+      vposReady
+      showRequired
+    />,
+  );
+  await act(async () => { host.querySelector('[data-testid="b2b-card-enabled"]').click(); });
+  expect(onChange).toHaveBeenCalledWith("card_payment_enabled", false);
+  expect(onChange).toHaveBeenCalledWith("card_payment_required", false);
 });
 
 test("B2B ayar ekranı kart alanlarını sanal POS durumuna göre kilitler", async () => {
@@ -109,6 +140,7 @@ test("B2B ayar ekranı kart alanlarını sanal POS durumuna göre kilitler", asy
   expect(host.querySelector('[data-testid="b2b-card-vpos-hint"]').textContent).toContain("Önce Sanal POS ayarlayın");
   expect(host.querySelector('[data-testid="b2b-card-enabled"]').disabled).toBe(true);
   expect(host.querySelector('[data-testid="b2b-card-required"]').disabled).toBe(true);
+  expect(host.textContent).toContain("Önce kartla ödemeyi açın");
 });
 
 test("B2B tablosu token gizliyken link yerine Aktif yazar", async () => {

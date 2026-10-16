@@ -5,8 +5,8 @@ POST /contacts/{contact_id}/vpos-collect cari tahsilatı başlatır.
 Cari modülü middleware'de /contacts edit ister.
 POST /vpos/callback/{intent_id} bankanın tarayıcı dönüşüdür: oturum yok,
 intent kimliği + hash yeter. Kart verisi okunup atılır; loglanmaz ve
-saklanmaz. Kasa ve cari yalnız doğrulanmış contact_collection veya
-b2b_collection ödemesinde yazılır.
+saklanmaz. Kasa ve cari yalnız doğrulanmış contact_collection, b2b_collection
+veya b2b_order ödemesinde yazılır.
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ CALLBACK_RATE_WINDOW_S = 60.0
 TEST_AMOUNT_MAX = Decimal("1000.00")
 B2B_START_LIMIT = 5
 B2B_START_WINDOW_S = 600.0
-_COLLECTION_PURPOSES = frozenset({"contact_collection", "b2b_collection"})
+_COLLECTION_PURPOSES = frozenset({"contact_collection", "b2b_collection", "b2b_order"})
 _HITS: Dict[str, list] = {}
 _B2B_STARTS: Dict[str, list] = {}
 
@@ -64,11 +64,16 @@ _CLIENT_ID = re.compile(r"^[A-Za-z0-9]{1,32}$")
 _MASK_CHARS = set("•*· ")
 
 
-def init(db, get_current_user=None):
-    global _db, _current_user
+_finalize_b2b_order = None
+
+
+def init(db, get_current_user=None, finalize_b2b_order=None):
+    global _db, _current_user, _finalize_b2b_order
     _db = db
     if get_current_user is not None:
         _current_user = get_current_user
+    if finalize_b2b_order is not None:
+        _finalize_b2b_order = finalize_b2b_order
 
 
 _outbound_client = None
@@ -312,6 +317,22 @@ async def _claim_finish(intent_id: str, final_status: str, result: dict) -> bool
     })
 
 
+async def _finalize_paid_b2b_order(intent_id: str) -> None:
+    """Tahsilat yazıldıktan sonra sipariş kancası. Yalnız b2b_order; tekrar zararsız."""
+    fn = _finalize_b2b_order
+    if fn is None:
+        return
+    fresh = await _require_db().payment_intents.find_one({"_id": intent_id})
+    if not fresh or str(fresh.get("purpose") or "") != "b2b_order":
+        return
+    if str(fresh.get("status") or "") != "paid" or not fresh.get("collection_tx_id"):
+        return
+    try:
+        await fn(intent_id)
+    except Exception:
+        logger.exception("b2b order finalize failed id=%s", intent_id)
+
+
 async def _record_paid_collection(intent_id: str) -> None:
     """Kazanan paid claim. Test ve diğer amaçlar kasa/cari yazmaz."""
     db = _require_db()
@@ -321,6 +342,7 @@ async def _record_paid_collection(intent_id: str) -> None:
     if str(fresh.get("status") or "") != "paid":
         return
     await post_collection(db, fresh)
+    await _finalize_paid_b2b_order(intent_id)
 
 
 async def _retry_paid_collection(intent_id: str) -> None:
@@ -332,10 +354,12 @@ async def _retry_paid_collection(intent_id: str) -> None:
     if str(fresh.get("status") or "") != "paid":
         return
     if fresh.get("collection_tx_id"):
+        await _finalize_paid_b2b_order(intent_id)
         return
     if fresh.get("collection_error") != "post_failed":
         return
     await post_collection(db, fresh)
+    await _finalize_paid_b2b_order(intent_id)
 
 
 async def _require_contact_collector(user: dict, company_id: str) -> None:
@@ -726,7 +750,7 @@ async def _begin_payment(
     if purpose != "test":
         intent["installment"] = installment if installment is not None else 1
         intent["description"] = description
-    for key in ("ledger_amount", "commission_amount", "commission_payer", "source"):
+    for key in ("ledger_amount", "commission_amount", "commission_payer", "source", "order_draft", "order_draft_hash"):
         if extra and extra.get(key) not in (None, ""):
             intent[key] = extra[key]
     await db.payment_intents.insert_one(intent)
