@@ -41,6 +41,11 @@ const CONTACT_PAGE_SIZES = [20, 50, 100];
 const EMPTY_CONTACT_ROWS = [];
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { label: "Durum", value: (r) => r.is_active === false ? "Pasif" : "Aktif" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
+function contactTotalPages(total, pageSize) {
+  const size = Number(pageSize) > 0 ? Number(pageSize) : 1;
+  return Math.max(1, Math.ceil((Number(total) || 0) / size) || 1);
+}
+
 export default function ContactsPage() {
   const { activeCompany } = useAuth();
   const [contacts, setContacts] = useState([]);
@@ -60,7 +65,6 @@ export default function ContactsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [sort, setSort] = useState("name");
   const [serverTotal, setServerTotal] = useState(0);
-  const [serverHasMore, setServerHasMore] = useState(false);
   const [summary, setSummary] = useState(null);
   const [reloadTick, setReloadTick] = useState(0);
   const serverGen = useRef(0);
@@ -98,7 +102,9 @@ export default function ContactsPage() {
   useEffect(() => {
     if (!serverPaging) return undefined;
     const gen = ++serverGen.current;
+    const ctrl = new AbortController();
     let alive = true;
+    let snapped = false;
     setLoading(true);
     const params = {
       company_id: companyId,
@@ -110,14 +116,20 @@ export default function ContactsPage() {
       sort,
     };
     if (searchTerm) params.q = searchTerm;
-    axios.get(`${API_URL}/contacts`, { params })
+    axios.get(`${API_URL}/contacts`, { params, signal: ctrl.signal })
       .then(({ data }) => {
         if (!alive || gen !== serverGen.current) return;
+        const total = Number(data?.total) || 0;
+        const limit = contactTotalPages(total, pageSize);
+        setServerTotal(total);
+        setSummary(data?.summary || null);
+        if (page > limit) {
+          snapped = true;
+          setPage((p) => Math.min(limit, Math.max(1, p)));
+          return;
+        }
         const items = Array.isArray(data?.items) ? data.items : [];
         setContacts(items);
-        setServerTotal(Number(data?.total) || 0);
-        setServerHasMore(Boolean(data?.has_more));
-        setSummary(data?.summary || null);
         const nextFlags = {};
         for (const row of items) nextFlags[row.id] = row.flags || {};
         setFlags(nextFlags);
@@ -128,9 +140,12 @@ export default function ContactsPage() {
         if (!canceled) toast.error("Cari listesi yüklenemedi.");
       })
       .finally(() => {
-        if (alive && gen === serverGen.current) setLoading(false);
+        if (!snapped && alive && gen === serverGen.current) setLoading(false);
       });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
   }, [serverPaging, companyId, page, pageSize, filterType, statusFilter, finFilter, sort, searchTerm, reloadTick]);
   const refreshContactsSilent = useCallback(() => {
     if (serverPaging) {
@@ -199,7 +214,7 @@ export default function ContactsPage() {
     resetKey: `${filterType}|${finFilter}|${statusFilter}|${searchTerm}`,
   });
   const visibleContacts = serverPaging ? contacts : pagedContacts;
-  const pageCount = Math.max(1, Math.ceil((serverTotal || 0) / pageSize) || 1);
+  const totalPages = contactTotalPages(serverTotal, pageSize);
 
   return (
     <div className="space-y-6" data-testid="contacts-page">
@@ -220,7 +235,7 @@ export default function ContactsPage() {
       </div>
 
       {/* Filter Tabs & Search */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 pb-3">
         <div className="flex items-center gap-2 text-xs">
           {[
             { id: "all", label: "Tüm Cariler" },
@@ -283,14 +298,14 @@ export default function ContactsPage() {
           )}
         </div>
 
-        <div className="relative">
+        <div className="relative flex-1 min-w-[240px]">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input
             type="text"
             placeholder="Cari adı, unvan veya VKN ile ara..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 pr-4 py-1.5 bg-white border border-slate-200 rounded-xl text-xs w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="pl-9 pr-4 py-1.5 bg-white border border-slate-200 rounded-xl text-xs w-full min-w-[240px] focus:outline-none focus:ring-2 focus:ring-emerald-500"
             data-testid="contact-search-input"
           />
         </div>
@@ -314,9 +329,9 @@ export default function ContactsPage() {
                   {CONTACT_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </label>
-              <button type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="contacts-page-prev">Önceki</button>
-              <span data-testid="contacts-page-indicator" className="font-semibold text-slate-700">{page} / {pageCount}</span>
-              <button type="button" disabled={!serverHasMore} onClick={() => setPage((p) => p + 1)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="contacts-page-next">Sonraki</button>
+              <button type="button" disabled={loading || page <= 1} onClick={() => setPage((p) => Math.min(totalPages, Math.max(1, p - 1)))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="contacts-page-prev">Önceki</button>
+              <span data-testid="contacts-page-indicator" className="font-semibold text-slate-700">{page} / {totalPages}</span>
+              <button type="button" disabled={loading || page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, Math.max(1, p + 1)))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="contacts-page-next">Sonraki</button>
             </div>
           </div>
         )}
