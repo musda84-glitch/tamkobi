@@ -4684,11 +4684,12 @@ async def revoke_attendance_device(row_id: str, request: Request):
 
 
 @router.get("/personnel/overtime-preview")
-async def overtime_preview(company_id: Optional[str] = "comp_nexus_main_01", period: Optional[str] = None):
-    company = await _db.companies.find_one({"_id": company_id}) or {}
+async def overtime_preview(company_id: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    company = await _db.companies.find_one({"_id": cid}) or {}
     period = period or _today(merge_schedule(company))[:7]
     out = []
-    for emp in await _db.employees.find({"company_id": company_id, "status": "active"}).to_list(300):
+    for emp in await _db.employees.find({"company_id": cid, "status": "active"}).to_list(300):
         p = await overtime_pay_for_period(company, emp, period)
         out.append({"employee_id": emp["_id"], "employee_name": emp["full_name"], "payroll_salary": emp.get("payroll_salary"), "salary": emp.get("salary"), "second_salary": emp.get("second_salary") or 0, **p})
     return {"period": period, "rows": out, "total": round(sum(r["amount"] for r in out), 2)}
@@ -4705,16 +4706,17 @@ def _week_dates(week_start: str) -> list:
 
 
 @router.get("/personnel/shifts")
-async def get_shifts(company_id: Optional[str] = "comp_nexus_main_01", week_start: Optional[str] = None):
-    company = await _db.companies.find_one({"_id": company_id}) or {}
+async def get_shifts(company_id: Optional[str] = None, week_start: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    company = await _db.companies.find_one({"_id": cid}) or {}
     base = merge_schedule(company)
     week_start = week_start or _today(base)
     dates = _week_dates(week_start)
-    plans = {(p["employee_id"], p["date"]): p for p in await _db.shift_plans.find({"company_id": company_id, "date": {"$in": dates}}).to_list(2000)}
-    leaves = await _db.leave_requests.find({"company_id": company_id, "status": "approved", "start_date": {"$lte": dates[-1]}, "end_date": {"$gte": dates[0]}}).to_list(1000)
+    plans = {(p["employee_id"], p["date"]): p for p in await _db.shift_plans.find({"company_id": cid, "date": {"$in": dates}}).to_list(2000)}
+    leaves = await _db.leave_requests.find({"company_id": cid, "status": "approved", "start_date": {"$lte": dates[-1]}, "end_date": {"$gte": dates[0]}}).to_list(1000)
     rows = []
     conflicts = 0
-    for emp in await _db.employees.find({"company_id": company_id, "status": "active"}).sort("full_name", 1).to_list(300):
+    for emp in await _db.employees.find({"company_id": cid, "status": "active"}).sort("full_name", 1).to_list(300):
         sch = merge_schedule(company, emp)
         cells = []
         for d in dates:
@@ -5075,8 +5077,9 @@ def _clean_template_days(days: Any) -> dict:
 
 
 @router.get("/personnel/shift-templates")
-async def list_shift_templates(company_id: Optional[str] = "comp_nexus_main_01"):
-    return [_clean(t) for t in await _db.shift_templates.find({"company_id": company_id}).sort("name", 1).to_list(100)]
+async def list_shift_templates(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return [_clean(t) for t in await _db.shift_templates.find({"company_id": cid}).sort("name", 1).to_list(100)]
 
 
 @router.post("/personnel/shift-templates")
