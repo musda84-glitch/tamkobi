@@ -1,7 +1,8 @@
 """Şirket olay bildirimleri: gelen e-fatura, yeni sipariş, kontör, vadesi geçmiş alacak.
 
 Kanallar: uygulama içi (+ push), e-posta, isteğe bağlı SMS.
-Tercihler: company_notify_prefs. Özet: notify_outbox + leased job.
+Platform tercihleri: company_notify_prefs. Firma aç/kapa: company_notify_tenant.
+Etkin uygulama/e-posta = platform AND firma. Özet: notify_outbox + leased job.
 """
 from __future__ import annotations
 
@@ -51,6 +52,9 @@ DEFAULT_ORDER_BATCH_MINUTES = 10
 ORDER_BATCH_DETAIL = "Gruplama süresi 0, 5, 10, 15, 30 veya 60 dakika olabilir."
 DAILY_EMAIL_CAP_DETAIL = "Günlük e-posta limiti boş (limitsiz) veya 0 ve üzeri tam sayı olmalıdır."
 COMPANY_NOTIFY_FORBIDDEN = "Bildirim ayarları Platform Yönetimi'nden yapılır."
+PLATFORM_ONLY_DETAIL = "Bu ayar Platform Yönetimi'nden yapılır."
+TENANT_BOOL_DETAIL = "Bildirim anahtarı true veya false olmalıdır."
+TENANT_CHANNELS = ("inapp", "email")
 QUIET_HOURS_DETAIL = "Sessiz saatler HH:MM biçiminde olmalıdır (ör. 22:00)."
 DEFAULT_QUIET_HOURS = {"enabled": False, "start": "22:00", "end": "08:00"}
 NOTIFY_MAIL_LOG_LIMIT_MAX = 200
@@ -350,6 +354,150 @@ async def save_prefs(company_id: str, body: dict) -> dict:
         upsert=True,
     )
     return await present_prefs(await get_prefs(cid))
+
+
+def default_tenant(company_id: str) -> dict:
+    """Kayıt yokken firma kanalları açık — bugünkü gönderimle aynı."""
+    return {
+        "_id": f"cnt_{company_id}",
+        "company_id": company_id,
+        "events": {ev: {"inapp": True, "email": True} for ev in EVENTS},
+        "updated_at": None,
+        "updated_by": None,
+    }
+
+
+def _tenant_flag(cur: Any, key: str) -> bool:
+    if not isinstance(cur, dict) or key not in cur:
+        return True
+    val = cur.get(key)
+    if type(val) is bool:
+        return val
+    return True
+
+
+def _tenant_flags(tenant: Optional[dict], ev: str) -> Tuple[bool, bool]:
+    events = tenant.get("events") if isinstance(tenant, dict) else None
+    cur = events.get(ev) if isinstance(events, dict) else None
+    return _tenant_flag(cur, "inapp"), _tenant_flag(cur, "email")
+
+
+async def get_tenant_prefs(company_id: str) -> dict:
+    """Firma aç/kapa. Kayıt yoksa varsayılan (hepsi açık); company_notify_prefs okunmaz."""
+    cid = str(company_id or "").strip()
+    base = default_tenant(cid)
+    if not cid or _db is None:
+        return base
+    try:
+        row = await _db.company_notify_tenant.find_one({"_id": f"cnt_{cid}"})
+    except Exception:
+        logger.exception("tenant notify prefs read company=%s", cid)
+        return base
+    if not isinstance(row, dict):
+        return base
+    events = {ev: {"inapp": True, "email": True} for ev in EVENTS}
+    stored = row.get("events") if isinstance(row.get("events"), dict) else {}
+    for ev in EVENTS:
+        cur = stored.get(ev) if isinstance(stored.get(ev), dict) else {}
+        events[ev] = {"inapp": _tenant_flag(cur, "inapp"), "email": _tenant_flag(cur, "email")}
+    base["events"] = events
+    base["updated_at"] = row.get("updated_at")
+    base["updated_by"] = row.get("updated_by")
+    base["_id"] = row.get("_id") or base["_id"]
+    return base
+
+
+def effective_channel(prefs: Optional[dict], tenant: Optional[dict], ev: str) -> dict:
+    """Platform kanalının kopyası. inapp/email = platform AND firma. sms/digest/quiet_hours aynı kalır."""
+    events = prefs.get("events") if isinstance(prefs, dict) else None
+    raw = events.get(ev) if isinstance(events, dict) else None
+    if isinstance(raw, dict) and raw:
+        ch = dict(raw)
+    else:
+        ch = dict(DEFAULT_CHANNEL)
+    t_inapp, t_email = _tenant_flags(tenant, ev)
+    ch["inapp"] = bool(ch.get("inapp", True)) and t_inapp
+    ch["email"] = bool(ch.get("email", True)) and t_email
+    return ch
+
+
+def parse_tenant_update(body: Any) -> dict:
+    """Yalnız events.<4 olay>.<inapp|email> boolean. company_id yönlendirmedir."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=TENANT_BOOL_DETAIL)
+    for key in body:
+        if key not in ("events", "company_id"):
+            raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
+    if "events" not in body:
+        return {}
+    events = body.get("events")
+    if not isinstance(events, dict):
+        raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
+    out: Dict[str, dict] = {}
+    for ev, ch in events.items():
+        if ev not in EVENTS:
+            raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
+        if not isinstance(ch, dict):
+            raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
+        item: Dict[str, bool] = {}
+        for field, val in ch.items():
+            if field not in TENANT_CHANNELS:
+                raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
+            if type(val) is not bool:
+                raise HTTPException(status_code=422, detail=TENANT_BOOL_DETAIL)
+            item[field] = val
+        out[ev] = item
+    return out
+
+
+async def save_tenant_prefs(company_id: str, patch: dict, user: Optional[dict] = None) -> dict:
+    """Firma aç/kapa yazar. company_notify_prefs belgesine dokunmaz."""
+    cid = str(company_id or "").strip()
+    cur = await get_tenant_prefs(cid)
+    events = {
+        ev: dict((cur.get("events") or {}).get(ev) or {"inapp": True, "email": True})
+        for ev in EVENTS
+    }
+    for ev, ch in (patch or {}).items():
+        if ev not in events or not isinstance(ch, dict):
+            continue
+        for field in TENANT_CHANNELS:
+            if field in ch and type(ch[field]) is bool:
+                events[ev][field] = ch[field]
+    uid = ""
+    if isinstance(user, dict):
+        uid = str(user.get("id") or user.get("_id") or "")
+    doc = {
+        "_id": f"cnt_{cid}",
+        "company_id": cid,
+        "events": events,
+        "updated_at": _now(),
+        "updated_by": uid,
+    }
+    await _db.company_notify_tenant.update_one(
+        {"_id": doc["_id"]},
+        {"$set": doc, "$setOnInsert": {"created_at": _now()}},
+        upsert=True,
+    )
+    return await get_tenant_prefs(cid)
+
+
+async def tenant_prefs_view(company_id: str) -> dict:
+    prefs = await get_prefs(company_id)
+    tenant = await get_tenant_prefs(company_id)
+    events: Dict[str, dict] = {}
+    for ev in EVENTS:
+        plat = ((prefs.get("events") or {}).get(ev) or {})
+        ten = ((tenant.get("events") or {}).get(ev) or {})
+        p_inapp = bool(plat["inapp"]) if isinstance(plat, dict) and "inapp" in plat else True
+        p_email = bool(plat["email"]) if isinstance(plat, dict) and "email" in plat else True
+        t_inapp = _tenant_flag(ten, "inapp")
+        t_email = _tenant_flag(ten, "email")
+        events[ev] = {
+            "inapp": {"platform": p_inapp, "tenant": t_inapp, "effective": p_inapp and t_inapp},
+            "email": {"platform": p_email, "tenant": t_email, "effective": p_email and t_email},
+        }
+    return {"events": events, "labels": dict(EVENT_LABELS)}
 
 
 async def _platform_batch_default() -> int:
@@ -852,10 +1000,12 @@ async def notify_event(
     ref_id: Optional[str] = None,
     dedupe_key: Optional[str] = None,
     queue_mail: bool = True,
+    tenant: Optional[dict] = None,
 ) -> dict:
     """Olay bildirimi: in-app/push + e-posta + isteğe bağlı SMS (tercihlere göre).
 
     order_new e-posta/SMS istek içinde SMTP ile gitmez; notify_outbox'a yazılır.
+    tenant verilirse firma kaydı yeniden okunmaz (toplu siparişte tek okuma).
     """
     cid = str(company_id or "").strip()
     ev = str(event or "").strip()
@@ -867,7 +1017,9 @@ async def notify_event(
         return {"status": "duplicate", "dedupe_key": dedupe_key}
 
     prefs = await get_prefs(cid)
-    ch = (prefs.get("events") or {}).get(ev) or dict(DEFAULT_CHANNEL)
+    if tenant is None:
+        tenant = await get_tenant_prefs(cid)
+    ch = effective_channel(prefs, tenant, ev)
     abs_link = _safe_link(await app_link(link) if link and not str(link).startswith("http") else str(link or ""))
     # Relative path for in-app notification (mobile/web router)
     inapp_link = link if link and not str(link).startswith("http") else (link or "")
@@ -943,6 +1095,7 @@ async def notify_einvoice_batch(company_id: str, docs: List[dict]) -> dict:
     items = [d for d in (docs or []) if d]
     if not items:
         return {"status": "skipped", "count": 0}
+    tenant = await get_tenant_prefs(company_id)
     if len(items) > BATCH_SUMMARY_THRESHOLD:
         total = sum(float(d.get("grand_total") or 0) for d in items)
         title = f"{len(items)} yeni gelen e-belge"
@@ -952,6 +1105,7 @@ async def notify_einvoice_batch(company_id: str, docs: List[dict]) -> dict:
             link="/edoc-inbox", ref_type="edoc_batch",
             ref_id=str(items[0].get("id") or items[0].get("_id") or ""),
             dedupe_key=f"einv-batch:{_today()}:{len(items)}:{items[0].get('uuid') or items[0].get('id')}",
+            tenant=tenant,
         )
     last = None
     for d in items:
@@ -981,13 +1135,18 @@ async def notify_einvoice_batch(company_id: str, docs: List[dict]) -> dict:
             ref_type="edoc",
             ref_id=doc_id,
             dedupe_key=f"einv:{ettn}" if ettn else f"einv:id:{d.get('id') or d.get('_id')}",
+            tenant=tenant,
         )
     return {"status": "ok", "count": len(items), "last": last}
 
 
-async def _enqueue_order_mail(company_id: str, order: dict, prefs: dict) -> bool:
-    """Tek siparişi e-posta kuyruğuna yazar. E-posta kapalıysa kayıt yok."""
-    ch = (prefs.get("events") or {}).get("order_new") or {}
+async def _enqueue_order_mail(
+    company_id: str, order: dict, prefs: dict, tenant: Optional[dict] = None,
+) -> bool:
+    """Tek siparişi e-posta kuyruğuna yazar. Etkin e-posta kapalıysa kayıt yok."""
+    if tenant is None:
+        tenant = await get_tenant_prefs(company_id)
+    ch = effective_channel(prefs, tenant, "order_new")
     if not ch.get("email", True):
         return False
     oid = str((order or {}).get("_id") or "").strip()
@@ -1014,6 +1173,7 @@ async def notify_orders_batch(company_id: str, orders: List[dict]) -> dict:
     if not items:
         return {"status": "skipped", "count": 0}
     prefs = await get_prefs(company_id)
+    tenant = await get_tenant_prefs(company_id)
     if len(items) > BATCH_SUMMARY_THRESHOLD:
         total = sum(float(o.get("grand_total") or o.get("total_amount") or 0) for o in items)
         chans = sorted({str(o.get("channel") or "?") for o in items})
@@ -1025,10 +1185,11 @@ async def notify_orders_batch(company_id: str, orders: List[dict]) -> dict:
             ref_id=str(items[0].get("_id") or ""),
             dedupe_key=f"order-batch:{_today()}:{len(items)}:{items[0].get('order_number')}",
             queue_mail=False,
+            tenant=tenant,
         )
         queued = 0
         for o in items:
-            if await _enqueue_order_mail(company_id, o, prefs):
+            if await _enqueue_order_mail(company_id, o, prefs, tenant):
                 queued += 1
         return {"status": "ok", "count": len(items), "last": inapp, "queued": queued}
     last = None
@@ -1047,6 +1208,7 @@ async def notify_orders_batch(company_id: str, orders: List[dict]) -> dict:
             ref_type="order",
             ref_id=oid,
             dedupe_key=f"order:{oid}" if oid else None,
+            tenant=tenant,
         )
     return {"status": "ok", "count": len(items), "last": last}
 
@@ -2217,7 +2379,8 @@ async def _send_order_emails(
 
 async def _deliver_order_batch(company_id: str, rows: List[dict], claim_id: str) -> int:
     prefs = await get_prefs(company_id)
-    ch = (prefs.get("events") or {}).get("order_new") or {}
+    tenant = await get_tenant_prefs(company_id)
+    ch = effective_channel(prefs, tenant, "order_new")
     email_on = bool(ch.get("email"))
     sms_on = bool(ch.get("sms"))
     if not email_on:
@@ -2440,6 +2603,63 @@ async def put_notify_prefs_route(req: Dict[str, Any], user: dict = Depends(_user
     saved = await save_prefs(cid, req or {})
     await _audit_prefs_put(cid, user, before, saved, "/api/notify/prefs")
     return saved
+
+
+def _requested_company_id(body: Any, request: Request) -> Optional[str]:
+    if isinstance(body, dict) and body.get("company_id"):
+        return body.get("company_id")
+    return request.query_params.get("company_id")
+
+
+@router.get("/notify/tenant-prefs")
+async def get_notify_tenant_prefs_route(
+    request: Request,
+    company_id: Optional[str] = None,
+    user: dict = Depends(_user_dep),
+):
+    cid = tenant_access.resolve_company_id(
+        user, company_id or request.query_params.get("company_id"),
+    )
+    cid = await _require_existing_company(cid)
+    return await tenant_prefs_view(cid)
+
+
+@router.put("/notify/tenant-prefs")
+async def put_notify_tenant_prefs_route(
+    req: Dict[str, Any],
+    request: Request,
+    user: dict = Depends(_user_dep),
+):
+    body = req or {}
+    cid = tenant_access.resolve_company_id(user, _requested_company_id(body, request))
+    await tenant_access.require_company_admin(user, cid)
+    cid = await _require_existing_company(cid)
+    patch = parse_tenant_update(body)
+    before = await get_tenant_prefs(cid)
+    saved = await save_tenant_prefs(cid, patch, user)
+    await _audit_tenant_put(cid, user, before, saved)
+    return await tenant_prefs_view(cid)
+
+
+async def _audit_tenant_put(company_id: str, user: dict, before: dict, after: dict) -> None:
+    try:
+        summary = company_audit.diff_summary(
+            {"events": (before or {}).get("events") or {}},
+            {"events": (after or {}).get("events") or {}},
+        ) or "Firma bildirim tercihleri güncellendi"
+        await company_audit.write(
+            _db,
+            company_id=company_id,
+            user=user,
+            module="/settings",
+            action="update",
+            record_id=f"cnt_{company_id}",
+            record_label="Firma bildirim tercihleri",
+            summary=summary,
+            path="/api/notify/tenant-prefs",
+        )
+    except Exception:
+        logger.exception("tenant notify prefs audit company=%s", company_id)
 
 
 async def _require_existing_company(company_id: str) -> str:

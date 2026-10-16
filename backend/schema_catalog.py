@@ -750,6 +750,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "events", "extra_emails", "email_from", "daily_email_cap"),
         "refs": ("companies._id",),
     },
+    "company_notify_tenant": {
+        "scope": SCOPE_TENANT,
+        "description": "Firma olay bildirimi aç/kapa (uygulama ve e-posta). Platform kaydından bağımsız.",
+        "keys": ("_id", "company_id", "events", "updated_at", "updated_by"),
+        "refs": ("companies._id",),
+    },
     "notify_outbox": {
         "scope": SCOPE_TENANT,
         "description": "Saatlik/günlük özet ve yeni sipariş e-posta kuyruğu.",
