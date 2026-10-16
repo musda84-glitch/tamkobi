@@ -385,6 +385,135 @@ def test_get_without_page_is_a_list_and_page_does_not_write():
     assert db.writes == []
 
 
+def _stock_match_pairs(body):
+    out = {}
+    for row in body.get("items") or []:
+        out[row.get("id")] = [
+            (str((it or {}).get("product_id") or ""), str((it or {}).get("matched_product_name") or ""))
+            for it in (row.get("items") or [])
+            if isinstance(it, dict)
+        ]
+    return out
+
+
+def _stock_match_db(orders, products):
+    db = MemDB(copy.deepcopy(orders))
+    db.products = MemColl(db, "products", copy.deepcopy(products))
+    return db
+
+
+def _product_finds(db):
+    return [query for kind, name, query in db.log if kind == "find" and name == "products"]
+
+
+def test_page_stock_match_matches_legacy_paged_without_writing():
+    """Barkodu eşleşen pazaryeri satırı sayfalı yanıtta paged=1 ile aynı adı alır. Yazma yok."""
+    import server
+    from unittest.mock import AsyncMock, patch
+
+    barcode = "8690001112223"
+    foreign_barcode = "8690009998887"
+    bare_item = {"barcode": barcode, "product_name": "Pazar Adı", "quantity": 1, "sku": ""}
+    orders = [
+        _order(_id="mp1", order_number="MP-1", channel="trendyol", customer_name="Pazar", order_date="2026-10-16T12:00:00Z", grand_total=10, total_amount=10, items=[{**bare_item, "product_id": ""}]),
+        _order(_id="mp2", order_number="MP-2", channel="hepsiburada", customer_name="Pazar İki", order_date="2026-10-16T11:00:00Z", grand_total=11, total_amount=11, items=[{**bare_item, "product_name": "İkinci"}]),
+        _order(_id="mpx", order_number="MP-X", channel="n11", customer_name="Yabancı Barkod", order_date="2026-10-16T10:30:00Z", grand_total=4, total_amount=4, items=[{"barcode": foreign_barcode, "product_name": "Başka Firma", "quantity": 1, "product_id": ""}]),
+        _order(_id="b2b1", order_number="B-1", channel="b2b", customer_name="Bayi", order_date="2026-10-16T10:00:00Z", grand_total=8, total_amount=8, items=[{**bare_item, "product_name": "Bayi Kalem", "product_id": ""}]),
+        _order(_id="man1", order_number="M-1", channel="manual", customer_name="Elle", order_date="2026-10-16T09:00:00Z", grand_total=6, total_amount=6, items=[{**bare_item, "product_name": "Elle Kalem"}]),
+        _order(_id="saha1", order_number="S-1", channel="saha", customer_name="Saha", order_date="2026-10-16T08:00:00Z", grand_total=5, total_amount=5, items=[{**bare_item, "product_name": "Saha Kalem"}]),
+        _order(_id="other1", company_id=OTHER, order_number="X-1", channel="trendyol", customer_name="Başka", order_date="2026-10-16T12:00:00Z", grand_total=999, total_amount=999, items=[{**bare_item, "product_id": ""}]),
+    ]
+    products = [
+        {"_id": "prod_ours", "company_id": CID, "name": "Bizim Ürün", "barcode": barcode, "sku": "SKU-1"},
+        {"_id": "prod_theirs", "company_id": OTHER, "name": "Onların Ürünü", "barcode": barcode, "sku": "SKU-X"},
+        {"_id": "prod_foreign_only", "company_id": OTHER, "name": "Yabancı Kart", "barcode": foreign_barcode, "sku": "SKU-Y"},
+    ]
+    user = {"id": "u1", "company_ids": [CID], "active_company_id": CID}
+    db = _stock_match_db(orders, products)
+    before = copy.deepcopy(db.orders.docs)
+
+    async def _page():
+        with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)):
+            db.log.clear()
+            db.writes.clear()
+            body = await server.list_orders(company_id=CID, page=1, page_size=50, request=object())
+            await asyncio.sleep(0)
+            return body, list(db.writes), _product_finds(db)
+
+    body, writes, finds = _run(_page())
+    pairs = _stock_match_pairs(body)
+    assert pairs["mp1"] == [("prod_ours", "Bizim Ürün")]
+    assert pairs["mp2"] == [("prod_ours", "Bizim Ürün")]
+    assert pairs["mpx"] == [("", "")]
+    assert pairs["b2b1"] == [("", "")]
+    assert pairs["man1"] == [("", "")]
+    assert pairs["saha1"] == [("", "")]
+    assert "other1" not in pairs
+    assert all(row.get("company_id") == CID for row in body["items"])
+    assert len(finds) == 1
+    assert finds[0].get("company_id") == CID
+    assert writes == []
+    assert db.orders.docs == before
+
+    legacy_db = _stock_match_db(orders, products)
+
+    async def _legacy():
+        with patch.object(server, "db", legacy_db):
+            return await server.list_orders(company_id=CID, paged=True, page=1, page_size=50)
+
+    legacy_pairs = _stock_match_pairs(_run(_legacy()))
+    for oid in ("mp1", "mp2", "mpx", "b2b1", "man1", "saha1"):
+        assert pairs[oid] == legacy_pairs[oid]
+    assert "other1" not in legacy_pairs
+
+
+def test_page_stock_match_skips_orders_outside_the_slice():
+    """Eşleme yalnız dönen dilimde. Dilimde pazaryeri yoksa ürün indeksi yüklenmez."""
+    import server
+    from unittest.mock import AsyncMock, patch
+
+    barcode = "8690001112223"
+    orders = [
+        _order(_id="b2b-new", order_number="B-NEW", channel="b2b", customer_name="Bayi", order_date="2026-10-16T18:00:00Z", grand_total=8, total_amount=8, items=[{"barcode": barcode, "product_name": "Bayi Kalem", "quantity": 1, "product_id": ""}]),
+        _order(_id="mp-old", order_number="MP-OLD", channel="trendyol", customer_name="Pazar", order_date="2026-10-16T08:00:00Z", grand_total=10, total_amount=10, items=[{"barcode": barcode, "product_name": "Pazar Adı", "quantity": 1, "product_id": ""}]),
+        _order(_id="mp-older", order_number="MP-OLDER", channel="n11", customer_name="Pazar Eski", order_date="2026-10-15T08:00:00Z", grand_total=9, total_amount=9, items=[{"barcode": barcode, "product_name": "Eski", "quantity": 1}]),
+    ]
+    products = [
+        {"_id": "prod_ours", "company_id": CID, "name": "Bizim Ürün", "barcode": barcode, "sku": "SKU-1"},
+    ]
+    user = {"id": "u1", "company_ids": [CID], "active_company_id": CID}
+
+    async def _one(page_n):
+        db = _stock_match_db(orders, products)
+        before = copy.deepcopy(db.orders.docs)
+        with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)):
+            db.log.clear()
+            db.writes.clear()
+            body = await server.list_orders(company_id=CID, page=page_n, page_size=1, request=object())
+            await asyncio.sleep(0)
+            return body, list(db.writes), _product_finds(db), db.orders.docs == before
+
+    async def _go():
+        first = await _one(1)
+        second = await _one(2)
+        return first, second
+
+    first, second = _run(_go())
+    page1, writes1, finds1, intact1 = first
+    page2, writes2, finds2, intact2 = second
+    assert _ids(page1["items"]) == ["b2b-new"]
+    assert _stock_match_pairs(page1)["b2b-new"] == [("", "")]
+    assert finds1 == []
+    assert writes1 == []
+    assert intact1
+    assert _ids(page2["items"]) == ["mp-old"]
+    assert _stock_match_pairs(page2)["mp-old"] == [("prod_ours", "Bizim Ürün")]
+    assert len(finds2) == 1
+    assert finds2[0].get("company_id") == CID
+    assert writes2 == []
+    assert intact2
+
+
 # --- MySQL: iki pushdown modu. Canlı DSN okunmaz. -------------------------
 
 

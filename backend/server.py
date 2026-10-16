@@ -18437,6 +18437,51 @@ async def _enrich_orders_stock_matches(
     return docs
 
 
+async def _enrich_orders_page_stock_matches(
+    docs: List[Dict[str, Any]],
+    company_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Sayfa dilimi: barkod/sku/alias stok eşlemesi yalnız yanıtta. Yazmaz.
+
+    İndeks bu dilim için bir kez yüklenir. b2b/manual/saha satırlarına dokunulmaz.
+    """
+    if not docs:
+        return docs
+    cid = str(
+        company_id
+        or next((o.get("company_id") for o in docs if isinstance(o, dict) and o.get("company_id")), "")
+        or ""
+    ).strip()
+    if not cid:
+        return docs
+    need = False
+    for o in docs:
+        ch = str((o or {}).get("channel") or "").strip().lower()
+        if ch in ("", "b2b", "manual", "saha"):
+            continue
+        for it in (o or {}).get("items") or []:
+            if isinstance(it, dict) and not (
+                str(it.get("matched_product_name") or "").strip()
+                and str(it.get("product_id") or "").strip()
+            ):
+                need = True
+                break
+        if need:
+            break
+    if not need:
+        return docs
+    match_idx = await _load_marketplace_stock_match_index(cid)
+    if not match_idx:
+        return docs
+    rows = list(docs)
+    for i, o in enumerate(rows):
+        ch = str((o or {}).get("channel") or "").strip().lower()
+        if ch in ("", "b2b", "manual", "saha"):
+            continue
+        rows[i] = _apply_stock_matches_to_order(o, match_idx)
+    return rows
+
+
 async def _list_orders_filtered(
     company_id: Optional[str],
     status: Optional[str],
@@ -18535,11 +18580,12 @@ async def _orders_page_prepare(docs: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 async def _orders_page_decorate(items, company_id, skip_ebelge=False):
-    """Sayfa dilimine rozet. Stok eşlemesi yazdığı için burada yok."""
+    """Sayfa dilimine rozet. Stok eşlemesi yalnız bu dilimde ve yazmasız."""
     rows = list(items or [])
     if not skip_ebelge:
         rows = await _enrich_orders_invoice_ebelge(rows)
     rows = await _enrich_orders_marketplace_item_media(rows, company_id=company_id)
+    rows = await _enrich_orders_page_stock_matches(rows, company_id=company_id)
     rows = await _enrich_orders_production_flags(rows, company_id=company_id)
     return rows
 
