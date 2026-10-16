@@ -175,6 +175,10 @@ async def account_credits(company_id: Optional[str] = None, user: dict = Depends
     w = await get_wallet(cid)
     led = [_clean(x) for x in await _db.gib_credit_ledger.find({"wallet_id": w["_id"]}).sort("created_at", -1).to_list(40)]
     selling = await sales_enabled()
+    settings = await _db.einvoice_settings.find_one({"company_id": cid}) or {}
+    # issue_invoice ile aynı karar: yapılandırılmış gerçek entegratör cüzdanı düşürmez.
+    from e_invoice import configured_real_integrator
+    raw_provider = settings.get("provider")
     return {
         "company_id": cid,
         "wallet_id": w["_id"],
@@ -182,6 +186,8 @@ async def account_credits(company_id: Optional[str] = None, user: dict = Depends
         "sales_enabled": selling,
         "packs": await packs() if selling else [],
         "ledger": led,
+        "integrator_provider": raw_provider if raw_provider else None,
+        "enforced": not configured_real_integrator(settings),
     }
 
 
