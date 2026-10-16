@@ -1,6 +1,6 @@
-"""Sanal POS çekirdeği (PR-1).
+"""Sanal POS çekirdeği.
 
-NestPay 3D Pay Hosting test ödemesi, ayar ve banka dönüşü.
+NestPay 3D Pay Hosting, PayTR iFrame ve iyzico Checkout Form test ödemesi.
 Kasa bakiyesi, cari ve fatura bu pakette yazılmaz.
 """
 from .api import init, router

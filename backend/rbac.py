@@ -564,6 +564,8 @@ PUBLIC_API_ALLOWLIST = (
     "/api/webhook/",
     "/api/payments/paytr/callback",
     "/api/vpos/callback/",
+    "/api/vpos/paytr/notify/",
+    "/api/vpos/iyzico/callback/",
     "/api/payments/status/",
     "/api/comm/whatsapp/webhook",
     "/api/mail/webhooks/ses",

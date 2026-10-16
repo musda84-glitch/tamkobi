@@ -45,6 +45,10 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("GET", "/payments/status/{session_id}"),
     # Sanal POS banka dönüşü — oturum yok; intent id + hash doğrulanır.
     ("POST", "/vpos/callback/{intent_id}"),
+    # PayTR bildirim URL — oturum yok; hash doğrulanmadan intent yazılmaz.
+    ("POST", "/vpos/paytr/notify/{config_id}"),
+    # iyzico Checkout Form dönüşü — oturum yok; karar sunucu retrieve yanıtıdır.
+    ("POST", "/vpos/iyzico/callback/{intent_id}"),
     # Platform silme onayı (süper-admin / support akışı)
     ("POST", "/companies/{company_id}/deletion-confirmations/{req_id}/reply"),
     # /api/companies/{company_id}/… — PermissionAndAuditMiddleware path'ten cid alır,
@@ -73,6 +77,8 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("GET", "/support/tickets/{ticket_id}"): "Müşteri kendi ticket'ı",
     ("GET", "/payments/status/{session_id}"): "Ödeme oturumu token'ı",
     ("POST", "/vpos/callback/{intent_id}"): "Banka 3D dönüşü; oturum yok, hash ile doğrulanır",
+    ("POST", "/vpos/paytr/notify/{config_id}"): "PayTR bildirim URL; oturum yok, hash ile doğrulanır",
+    ("POST", "/vpos/iyzico/callback/{intent_id}"): "iyzico CF dönüşü; oturum yok, retrieve ile doğrulanır",
     ("POST", "/companies/{company_id}/deletion-confirmations/{req_id}/reply"): "Platform silme onay akışı",
     ("GET", "/companies/{company_id}"): "RBAC middleware path company_id üyeliği",
     ("PUT", "/companies/{company_id}/b2b-settings"): "RBAC middleware path company_id üyeliği",

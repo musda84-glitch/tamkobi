@@ -7,6 +7,7 @@ saklanmaz. Kasa / cari / fatura yazılmaz.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 import secrets
@@ -18,7 +19,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 
 import comm_service
 import company_audit
@@ -26,7 +27,9 @@ import public_url
 import tenant_access
 from client_ip import request_ip
 
-from .base import get_adapter
+from . import iyzico as iyzico_family
+from . import paytr as paytr_family
+from .base import MISMATCH_ERRORS, VposStartError, get_adapter
 from .nestpay import PAYTEN_TEST_3D_URL, PAYTEN_TEST_HOST, format_amount, is_expired
 
 logger = logging.getLogger("vpos")
@@ -40,7 +43,6 @@ INTENTS = "payment_intents"
 INTENT_TTL = timedelta(minutes=30)
 POS_ACCOUNT_TYPES = ("pos", "okc_pos")
 TERMINAL_STATUSES = ("paid", "failed", "expired", "processing")
-MISMATCH_ERRORS = frozenset({"amount_mismatch", "currency_mismatch", "order_mismatch"})
 MAX_FORM_FIELDS = 80
 MAX_FORM_VALUE = 2048
 CALLBACK_RATE_LIMIT = 30
@@ -59,8 +61,17 @@ def init(db, get_current_user=None):
         _current_user = get_current_user
 
 
+_outbound_client = None
+
+
 def reset_callback_rate_limit() -> None:
     _HITS.clear()
+
+
+def set_outbound_client(client) -> None:
+    """Test kancası. None iken adaptör kendi istemcisini açar."""
+    global _outbound_client
+    _outbound_client = client
 
 
 def _now() -> datetime:
@@ -127,10 +138,15 @@ def _allow_callback(ip: str) -> bool:
 
 def public_config(doc: Optional[dict]) -> dict:
     doc = doc or {}
+    family = doc.get("family") or "nestpay"
+    try:
+        max_installment = int(doc.get("max_installment") or 0)
+    except (TypeError, ValueError):
+        max_installment = 0
     return {
         "id": doc.get("_id") or "",
         "company_id": doc.get("company_id") or "",
-        "family": doc.get("family") or "nestpay",
+        "family": family,
         "bank_label": doc.get("bank_label") or "",
         "mode": doc.get("mode") or "test",
         "client_id": doc.get("client_id") or "",
@@ -138,6 +154,13 @@ def public_config(doc: Optional[dict]) -> dict:
         "api_user": doc.get("api_user") or "",
         "has_api_password": bool(doc.get("api_password_enc")),
         "gateway_3d_url": doc.get("gateway_3d_url") or "",
+        "merchant_id": doc.get("merchant_id") or "",
+        "has_merchant_key": bool(doc.get("merchant_key_enc")),
+        "has_merchant_salt": bool(doc.get("merchant_salt_enc")),
+        "max_installment": max_installment,
+        "no_installment": bool(doc.get("no_installment")),
+        "has_api_key": bool(doc.get("api_key")),
+        "has_secret_key": bool(doc.get("secret_key_enc")),
         "account_id": doc.get("account_id") or "",
         "enabled": bool(doc.get("enabled")),
         "created_at": doc.get("created_at") or "",
@@ -325,45 +348,127 @@ def _result_redirect(app_base: str, intent_id: str) -> RedirectResponse:
     return RedirectResponse(target, status_code=303)
 
 
+_MERCHANT_ID = re.compile(r"^\d{1,32}$")
+_API_KEY = re.compile(r"^[A-Za-z0-9_.:-]{4,128}$")
+OPEN_FAMILIES = frozenset({"nestpay", "paytr", "iyzico"})
+
+
+def _mode_only(mode: str) -> str:
+    mode = (mode or "").strip().lower()
+    if mode not in ("test", "live"):
+        raise HTTPException(status_code=400, detail="Mod test veya live olmalı.")
+    return mode
+
+
+def _installment(value: Any) -> int:
+    try:
+        number = int(value if value not in (None, "") else 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Taksit sayısı 0 ile 12 arasında olmalı.") from exc
+    if number < 0 or number > 12:
+        raise HTTPException(status_code=400, detail="Taksit sayısı 0 ile 12 arasında olmalı.")
+    return number
+
+
+def _secret_enc(existing: dict, field: str, body: Dict[str, Any], body_key: str, active: bool, same_family: bool) -> str:
+    if not active:
+        return ""
+    current = str(existing.get(field) or "") if same_family else ""
+    if body_key in body and not _is_mask(body.get(body_key)):
+        return comm_service.encrypt(str(body.get(body_key)).strip())
+    return current
+
+
+def _plain_value(existing: dict, field: str, body: Dict[str, Any], body_key: str, active: bool, same_family: bool) -> str:
+    if not active:
+        return ""
+    current = str(existing.get(field) or "") if same_family else ""
+    if body_key in body and not _is_mask(body.get(body_key)):
+        return str(body.get(body_key)).strip()
+    return current
+
+
+async def _attach_notify(request: Request, body: dict) -> dict:
+    if body.get("family") == "paytr" and body.get("id"):
+        base = await _app_base(request)
+        body["notify_url"] = f"{base.rstrip('/')}/api/vpos/paytr/notify/{body['id']}"
+    return body
+
+
+def _start_failure_result(exc: VposStartError) -> dict:
+    result = {"error": str(exc.error or "start_failed")[:80]}
+    detail = str(exc.detail or "").strip()
+    if detail:
+        key = exc.detail_key if exc.detail_key in {"reason", "errorMessage"} else "reason"
+        result[key] = detail[:120]
+    return result
+
+
 @router.get("/vpos/configs")
 async def get_vpos_config(request: Request, company_id: Optional[str] = None):
     _user, cid = await _admin_company(request, company_id)
     doc = await _load_config(cid)
     if not doc:
         return public_config({"company_id": cid, "mode": "test", "gateway_3d_url": PAYTEN_TEST_3D_URL, "family": "nestpay"})
-    return public_config(doc)
+    return await _attach_notify(request, public_config(doc))
 
 
 @router.put("/vpos/configs")
 async def put_vpos_config(body: Dict[str, Any], request: Request):
     user, cid = await _admin_company(request, body.get("company_id"))
     family = str(body.get("family") or "nestpay").strip().lower()
-    if family != "nestpay":
+    if family not in OPEN_FAMILIES:
         raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.")
     try:
         get_adapter(family)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.") from exc
-    bank_label = str(body.get("bank_label") or "").strip()[:80]
+    raw_label = body.get("bank_label")
+    if raw_label in (None, ""):
+        raw_label = body.get("display_name")
+    bank_label = str(raw_label or "").strip()[:80]
     if not bank_label:
-        raise HTTPException(status_code=400, detail="Banka adı gerekli.")
-    client_id = str(body.get("client_id") or "").strip()
-    if not _CLIENT_ID.match(client_id):
-        raise HTTPException(status_code=400, detail="Client ID yalnızca harf ve rakam olabilir.")
+        detail = "Banka adı gerekli." if family == "nestpay" else "Görünen ad gerekli."
+        raise HTTPException(status_code=400, detail=detail)
     enabled = bool(body.get("enabled"))
-    mode, gateway = _normalize_mode_and_url(str(body.get("mode") or "test"), str(body.get("gateway_3d_url") or ""))
+    existing = await _load_config(cid) or {}
+    same_family = bool(existing.get("_id")) and str(existing.get("family") or "") == family
     account_id = await _validate_account(cid, str(body.get("account_id") or ""), enabled)
-    api_user = str(body.get("api_user") or "").strip()[:64]
-    existing = await _load_config(cid)
-    existing = existing or {}
-    store_enc = str(existing.get("store_key_enc") or "")
-    if not _is_mask(body.get("store_key")):
-        store_enc = comm_service.encrypt(str(body.get("store_key")).strip())
-    password_enc = str(existing.get("api_password_enc") or "")
-    if "api_password" in body and not _is_mask(body.get("api_password")):
-        password_enc = comm_service.encrypt(str(body.get("api_password")).strip())
-    if enabled and not store_enc:
+    client_id = ""
+    api_user = ""
+    gateway = ""
+    merchant_id = ""
+    max_installment = 0
+    no_installment = False
+    if family == "nestpay":
+        client_id = str(body.get("client_id") or "").strip()
+        if not _CLIENT_ID.match(client_id):
+            raise HTTPException(status_code=400, detail="Client ID yalnızca harf ve rakam olabilir.")
+        mode, gateway = _normalize_mode_and_url(str(body.get("mode") or "test"), str(body.get("gateway_3d_url") or ""))
+        api_user = str(body.get("api_user") or "").strip()[:64]
+    elif family == "paytr":
+        mode = _mode_only(str(body.get("mode") or "test"))
+        merchant_id = str(body.get("merchant_id") or "").strip()
+        if not _MERCHANT_ID.match(merchant_id):
+            raise HTTPException(status_code=400, detail="Mağaza numarası yalnız rakam olmalı.")
+        max_installment = _installment(body.get("max_installment"))
+        no_installment = bool(body.get("no_installment"))
+    else:
+        mode = _mode_only(str(body.get("mode") or "test"))
+    store_enc = _secret_enc(existing, "store_key_enc", body, "store_key", family == "nestpay", same_family)
+    password_enc = _secret_enc(existing, "api_password_enc", body, "api_password", family == "nestpay", same_family)
+    merchant_key_enc = _secret_enc(existing, "merchant_key_enc", body, "merchant_key", family == "paytr", same_family)
+    merchant_salt_enc = _secret_enc(existing, "merchant_salt_enc", body, "merchant_salt", family == "paytr", same_family)
+    secret_key_enc = _secret_enc(existing, "secret_key_enc", body, "secret_key", family == "iyzico", same_family)
+    api_key = _plain_value(existing, "api_key", body, "api_key", family == "iyzico", same_family)
+    if family == "iyzico" and api_key and not _API_KEY.match(api_key):
+        raise HTTPException(status_code=400, detail="API anahtarı geçersiz.")
+    if enabled and family == "nestpay" and not store_enc:
         raise HTTPException(status_code=400, detail="Store key gerekli.")
+    if enabled and family == "paytr" and not (merchant_key_enc and merchant_salt_enc):
+        raise HTTPException(status_code=400, detail="PayTR mağaza anahtarı ve salt gerekli.")
+    if enabled and family == "iyzico" and not (api_key and secret_key_enc):
+        raise HTTPException(status_code=400, detail="iyzico API anahtarı ve secret key gerekli.")
     now = _iso()
     doc = {
         "_id": existing.get("_id") or str(uuid.uuid4()),
@@ -376,6 +481,13 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
         "api_user": api_user,
         "api_password_enc": password_enc,
         "gateway_3d_url": gateway,
+        "merchant_id": merchant_id,
+        "merchant_key_enc": merchant_key_enc,
+        "merchant_salt_enc": merchant_salt_enc,
+        "max_installment": max_installment,
+        "no_installment": no_installment,
+        "api_key": api_key,
+        "secret_key_enc": secret_key_enc,
         "account_id": account_id,
         "enabled": enabled,
         "created_at": existing.get("created_at") or now,
@@ -390,7 +502,30 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
         request, user, cid, "update", doc["_id"], bank_label,
         f"Sanal POS ayarı kaydedildi ({family}, {mode}).",
     )
-    return public_config(doc)
+    return await _attach_notify(request, public_config(doc))
+
+
+async def _runtime_config(cfg: dict) -> dict:
+    family = str(cfg.get("family") or "nestpay")
+    runtime = dict(cfg)
+    if family == "nestpay":
+        store_key = await _decrypt_secret(str(cfg.get("store_key_enc") or ""), "store key")
+        if not store_key:
+            raise HTTPException(status_code=400, detail="Store key gerekli.")
+        runtime["store_key"] = store_key
+    elif family == "paytr":
+        runtime["merchant_key"] = await _decrypt_secret(str(cfg.get("merchant_key_enc") or ""), "merchant key")
+        runtime["merchant_salt"] = await _decrypt_secret(str(cfg.get("merchant_salt_enc") or ""), "merchant salt")
+        if not runtime["merchant_key"] or not runtime["merchant_salt"]:
+            raise HTTPException(status_code=400, detail="PayTR mağaza anahtarı gerekli.")
+    elif family == "iyzico":
+        runtime["secret_key"] = await _decrypt_secret(str(cfg.get("secret_key_enc") or ""), "secret key")
+        runtime["api_key"] = str(cfg.get("api_key") or "")
+        if not runtime["secret_key"] or not runtime["api_key"]:
+            raise HTTPException(status_code=400, detail="iyzico anahtarı gerekli.")
+    else:
+        raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.")
+    return runtime
 
 
 @router.post("/vpos/test-payment")
@@ -401,17 +536,18 @@ async def test_payment(body: Dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail="Test için etkin bir sanal POS ayarı gerekli.")
     if str(cfg.get("mode") or "") != "test":
         raise HTTPException(status_code=400, detail="Test ödemesi yalnız test modunda açılır.")
-    if str(cfg.get("family") or "") != "nestpay":
-        raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.")
+    family = str(cfg.get("family") or "nestpay")
+    try:
+        get_adapter(family)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.") from exc
     try:
         amount = format_amount((body or {}).get("amount"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Tutar 0'dan büyük ve en fazla 2 hane olmalı.") from exc
     if Decimal(amount) > TEST_AMOUNT_MAX:
         raise HTTPException(status_code=400, detail="Test tutarı 1000,00 TL'yi aşamaz.")
-    store_key = await _decrypt_secret(str(cfg.get("store_key_enc") or ""), "store key")
-    if not store_key:
-        raise HTTPException(status_code=400, detail="Store key gerekli.")
+    runtime = await _runtime_config(cfg)
     db = _require_db()
     order_id = ""
     for _ in range(5):
@@ -433,27 +569,54 @@ async def test_payment(body: Dict[str, Any], request: Request):
         "order_id": order_id,
         "status": "pending",
         "vpos_config_id": cfg.get("_id"),
+        "provider_ref": None,
         "created_by": _user_id(user),
         "created_at": _iso(now),
         "expires_at": _iso(now + INTENT_TTL),
         "result": None,
     }
     await db.payment_intents.insert_one(intent)
-    app_base = await _app_base(request)
-    callback = f"{app_base.rstrip('/')}/api/vpos/callback/{intent_id}"
+    app_base = (await _app_base(request)).rstrip("/")
+    callback = f"{app_base}/api/vpos/callback/{intent_id}"
+    result_page = f"{app_base}/vpos/result/{intent_id}"
+    ip = request_ip(request) or ""
+    if not ip or ip == "unknown":
+        ip = "127.0.0.1"
+    ctx = {
+        "callback_url": callback if family == "nestpay" else (
+            f"{app_base}/api/vpos/iyzico/callback/{intent_id}" if family == "iyzico" else result_page
+        ),
+        "ok_url": callback if family == "nestpay" else result_page,
+        "fail_url": callback if family == "nestpay" else result_page,
+        "user_ip": ip,
+        "email": str(user.get("email") or "test@example.com").strip() or "test@example.com",
+        "name": str(user.get("name") or "Test"),
+        "phone": str(user.get("phone") or ""),
+        "address": "",
+        "basket_label": "Test ödemesi",
+    }
     try:
-        built = get_adapter("nestpay").build_3d_form(
-            {**cfg, "store_key": store_key},
-            intent,
-            {"ok_url": callback, "fail_url": callback},
-        )
+        started = await get_adapter(family).start(runtime, intent, ctx, client=_outbound_client)
+    except VposStartError as exc:
+        await _claim_finish(intent_id, "failed", _start_failure_result(exc))
+        logger.warning("vpos start failed id=%s error=%s", intent_id, exc.error)
+        raise HTTPException(status_code=502, detail="Ödeme başlatılamadı.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Sanal POS formu hazırlanamadı.") from exc
+    ref = str(started.pop("provider_ref", "") or "")
+    if ref:
+        wrote = await _conditional_update(intent_id, {"status": "pending"}, {"provider_ref": ref, "updated_at": _iso()})
+        if not wrote:
+            raise HTTPException(status_code=502, detail="Ödeme başlatılamadı.")
     await _audit(
         request, user, cid, "create", intent_id, "Test ödemesi",
         f"Sanal POS test ödemesi başlatıldı ({amount} TRY).",
     )
-    return {"intent_id": intent_id, "action_url": built["action_url"], "fields": built["fields"]}
+    public = {"intent_id": intent_id}
+    for key in ("kind", "action_url", "fields", "iframe_url", "url"):
+        if started.get(key) not in (None, ""):
+            public[key] = started[key]
+    return public
 
 
 @router.post("/vpos/callback/{intent_id}")
@@ -490,9 +653,13 @@ async def vpos_callback(intent_id: str, request: Request):
         await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
         logger.info("vpos callback id=%s status=failed error=company_mismatch", intent_id)
         return _result_redirect(app_base, intent_id)
+    family = str(cfg.get("family") or "nestpay")
+    if family != "nestpay":
+        logger.info("vpos callback id=%s family=%s ignored=1", intent_id, family)
+        return _result_redirect(app_base, intent_id)
     try:
         store_key = await _decrypt_secret(str(cfg.get("store_key_enc") or ""), "store key")
-        adapter = get_adapter(str(cfg.get("family") or "nestpay"))
+        adapter = get_adapter(family)
     except (HTTPException, KeyError):
         await _claim_finish(intent_id, "failed", {"error": "config"})
         logger.info("vpos callback id=%s status=failed error=config", intent_id)
@@ -518,6 +685,126 @@ async def vpos_callback(intent_id: str, request: Request):
     else:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, final)
     return _result_redirect(app_base, intent_id)
+
+
+def _notify_ok() -> PlainTextResponse:
+    return PlainTextResponse("OK")
+
+
+@router.post("/vpos/paytr/notify/{config_id}")
+async def paytr_notify(config_id: str, request: Request):
+    """PayTR bildirim URL. Kimlik yok; hash doğrulanmadan intent yazılmaz."""
+    if not _allow_callback(request_ip(request) or "unknown"):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
+    form = _form_dict(await request.form())
+    db = _require_db()
+    cfg = await db.vpos_configs.find_one({"_id": config_id})
+    if not cfg or str(cfg.get("family") or "") != "paytr":
+        raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.")
+    try:
+        merchant_key = await _decrypt_secret(str(cfg.get("merchant_key_enc") or ""), "merchant key")
+        merchant_salt = await _decrypt_secret(str(cfg.get("merchant_salt_enc") or ""), "merchant salt")
+    except HTTPException as exc:
+        raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.") from exc
+    runtime = {**cfg, "merchant_key": merchant_key, "merchant_salt": merchant_salt}
+    if not paytr_family.notification_hash_ok(runtime, form):
+        logger.info("vpos paytr notify config=%s bad_hash=1", config_id)
+        raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.")
+    oid = str(form.get("merchant_oid") or "")
+    intent = await db.payment_intents.find_one({"order_id": oid}) if oid else None
+    if not intent:
+        logger.info("vpos paytr notify config=%s missing=1", config_id)
+        return _notify_ok()
+    intent_id = str(intent.get("_id") or "")
+    same = str(intent.get("vpos_config_id") or "") == str(config_id) and str(intent.get("company_id") or "") == str(cfg.get("company_id") or "")
+    if not same:
+        logger.info("vpos paytr notify id=%s skipped=1", intent_id)
+        return _notify_ok()
+    status = str(intent.get("status") or "")
+    if status in TERMINAL_STATUSES or status != "pending":
+        logger.info("vpos paytr notify id=%s status=%s repeat=1", intent_id, status)
+        return _notify_ok()
+    verdict = await paytr_family.ADAPTER.confirm(runtime, intent, form)
+    error = str(verdict.get("error") or "")
+    if not verdict.get("ok"):
+        final = "failed"
+        result = {"error": error or "bad_hash"}
+    elif verdict.get("approved"):
+        final = "paid"
+        result = {}
+    else:
+        final = "failed"
+        result = {"error": error or "declined"}
+    wrote = await _claim_finish(intent_id, final, result)
+    if wrote:
+        logger.info("vpos paytr notify id=%s status=%s", intent_id, final)
+    else:
+        logger.info("vpos paytr notify id=%s status=%s repeat=1", intent_id, final)
+    return _notify_ok()
+
+
+@router.post("/vpos/iyzico/callback/{intent_id}")
+async def iyzico_callback(intent_id: str, request: Request):
+    """Checkout Form dönüşü. Token kanıt değildir; karar retrieve yanıtındadır."""
+    if not _allow_callback(request_ip(request) or "unknown"):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
+    form = _form_dict(await request.form())
+    db = _require_db()
+    intent = await db.payment_intents.find_one({"_id": intent_id})
+    if not intent:
+        raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
+    app_base = await _app_base(request)
+    status = str(intent.get("status") or "")
+    if status in TERMINAL_STATUSES or status != "pending":
+        logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, status)
+        return _result_redirect(app_base, intent_id)
+    token = str(form.get("token") or "")
+    stored = str(intent.get("provider_ref") or "")
+    if not _token_equal(stored, token):
+        logger.info("vpos iyzico callback id=%s token_mismatch=1", intent_id)
+        return _result_redirect(app_base, intent_id)
+    cfg = None
+    cfg_id = intent.get("vpos_config_id")
+    if cfg_id:
+        cfg = await db.vpos_configs.find_one({"_id": cfg_id})
+    same_company = bool(cfg) and str(cfg.get("company_id") or "") == str(intent.get("company_id") or "")
+    if not same_company or str(cfg.get("family") or "") != "iyzico":
+        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
+        logger.info("vpos iyzico callback id=%s status=failed error=company_mismatch", intent_id)
+        return _result_redirect(app_base, intent_id)
+    try:
+        runtime = await _runtime_config(cfg)
+    except HTTPException:
+        logger.info("vpos iyzico callback id=%s status=pending error=config", intent_id)
+        return _result_redirect(app_base, intent_id)
+    verdict = await iyzico_family.ADAPTER.confirm(runtime, intent, {"token": stored}, client=_outbound_client)
+    if verdict.get("retryable"):
+        logger.info("vpos iyzico callback id=%s status=pending retry=1", intent_id)
+        return _result_redirect(app_base, intent_id)
+    error = str(verdict.get("error") or "")
+    if not verdict.get("ok"):
+        final = "failed"
+        result = {"error": error or "bad_signature"}
+    elif verdict.get("approved"):
+        final = "paid"
+        result = {}
+    else:
+        final = "failed"
+        result = {"error": error or "declined"}
+    wrote = await _claim_finish(intent_id, final, result)
+    if wrote:
+        logger.info("vpos iyzico callback id=%s status=%s", intent_id, final)
+    else:
+        logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, final)
+    return _result_redirect(app_base, intent_id)
+
+
+def _token_equal(left: str, right: str) -> bool:
+    a = left or ""
+    b = right or ""
+    if not a or not b or len(a) != len(b):
+        return False
+    return hmac.compare_digest(a, b)
 
 
 @router.get("/vpos/intents/{intent_id}")

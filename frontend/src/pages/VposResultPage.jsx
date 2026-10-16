@@ -20,6 +20,10 @@ const REASONS = {
   expired: "Süre doldu.",
   company_mismatch: "Ödeme kaydı doğrulanamadı.",
   config: "Sanal POS ayarı doğrulanamadı.",
+  token_failed: "Ödeme başlatılamadı.",
+  init_failed: "Ödeme başlatılamadı.",
+  bad_signature: "Ödeme yanıtı doğrulanamadı.",
+  conversation_mismatch: "Ödeme kaydı doğrulanamadı.",
 };
 
 function maskedPan(value) {
@@ -33,16 +37,30 @@ export default function VposResultPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer = null;
+    let tries = 0;
     setIntent(null);
     setMissing(false);
-    axios.get(`${API_URL}/vpos/intents/${id}`)
-      .then((res) => {
-        if (!cancelled) setIntent(res.data || null);
-      })
-      .catch(() => {
-        if (!cancelled) setMissing(true);
-      });
-    return () => { cancelled = true; };
+    const load = () => {
+      axios.get(`${API_URL}/vpos/intents/${id}`)
+        .then((res) => {
+          if (cancelled) return;
+          const data = res.data || null;
+          setIntent(data);
+          if (data && data.status === "pending" && tries < 4) {
+            tries += 1;
+            timer = setTimeout(load, 800);
+          }
+        })
+        .catch(() => {
+          if (!cancelled && tries === 0) setMissing(true);
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [id]);
 
   if (missing) {
