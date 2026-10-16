@@ -396,7 +396,7 @@ class TestProductListFlags:
     def _rows(self, monkeypatch, cache):
         import server
         monkeypatch.setattr(server, "db", FakeDB(cache, cfg=REST_ONLY_CFG))
-        out = run(server.marketplace_products(company_id="comp_1", channel="shopphp"))
+        out = run(server.marketplace_products_payload(cid="comp_1", channel="shopphp", refresh=False))
         assert out["push_supported"] is True
         return {r["barcode"]: r for r in out["rows"]}
 
