@@ -4,7 +4,6 @@ Bankaya çıkılmaz. Tutar intent'ten gelir; callback tutarı yalnız karşıla�
 """
 import asyncio
 import copy
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +30,41 @@ GOLDEN_PLAIN = (
 GOLDEN_HASH = "/aOoVh7mRe2wTHC+thdVbmgxmE+iBvYAjcfYoiHl6yUXCa5/0UUAvl7NefzEg/bbJZjFXssRnr7iolwRp3xSqw=="
 ESCAPE_HASH = "/kTvkXegx3+RYm6QfFANv/3xw/P1gRf27CSzTqNj75UXldk06LPYQSyHpGUeGKRInhL8PdDml73x2T1VjZDBWA=="
 LIVE_GATEWAY = "https://sanalpos.isbank.com.tr/fim/est3Dgate"
+
+
+# uuid.hex ve ISO mikrosaniye damgası kısa dizgeleri tesadüfen içerir.
+_VOLATILE_FIELDS = frozenset({
+    "_id",
+    "id",
+    "claim_id",
+    "record_id",
+    "created_at",
+    "updated_at",
+    "expires_at",
+    "at",
+})
+
+
+def _assert_fields_omit(value, *needles, field=None):
+    """Gizli metin alan bazında yok. Rastgele kimlik/zaman alt dizge aranmaz."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            name = str(key)
+            for needle in needles:
+                assert needle not in name
+            _assert_fields_omit(item, *needles, field=name)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _assert_fields_omit(item, *needles, field=field)
+        return
+    if not isinstance(value, str):
+        return
+    for needle in needles:
+        if field in _VOLATILE_FIELDS:
+            assert value != needle
+        else:
+            assert needle not in value
 
 
 def _match(doc, query):
@@ -275,19 +309,23 @@ def test_put_encrypts_secrets_and_get_hides_them(db):
     assert "store_key" not in saved
     assert "store_key_enc" not in saved
     assert "api_password" not in saved
-    assert STORE_KEY not in json.dumps(saved)
+    assert "api_password_enc" not in saved
+    _assert_fields_omit(saved, STORE_KEY, "api-secret")
     stored = next(iter(db.vpos_configs.docs.values()))
     assert stored["store_key_enc"] != STORE_KEY
     assert comm_service.decrypt(stored["store_key_enc"]) == STORE_KEY
-    assert "api-secret" not in json.dumps(saved)
+    assert stored["api_password_enc"] != "api-secret"
+    assert comm_service.decrypt(stored["api_password_enc"]) == "api-secret"
     _bind(db, _user())
     again = _run(vpos_api.get_vpos_config(Req(path="/api/vpos/configs"), company_id="c1"))
     assert again["has_store_key"] is True
     assert "store_key_enc" not in again
-    assert STORE_KEY not in json.dumps(again)
+    assert "api_password" not in again
+    assert "api_password_enc" not in again
+    _assert_fields_omit(again, STORE_KEY, "api-secret")
     audits = list(db.company_audit_log.docs.values())
-    assert audits and "TEST1234" not in json.dumps(audits)
-    assert "api-secret" not in json.dumps(audits)
+    assert audits
+    _assert_fields_omit(audits, "TEST1234", "api-secret")
 
 
 def test_non_admin_put_and_test_payment_403(db):
@@ -391,8 +429,7 @@ def test_callback_valid_hash_marks_paid_and_keeps_balance(db, caplog):
     assert stored["result"]["proc_return_code"] == "00"
     assert stored["result"]["md_status"] == "1"
     assert stored["result"]["masked_pan"] == "453144******1234"
-    blob = json.dumps(db.payment_intents.docs)
-    assert PAN not in blob and CVV not in blob and LEAKED_KEY not in blob and STORE_KEY not in blob
+    _assert_fields_omit(db.payment_intents.docs, PAN, CVV, LEAKED_KEY, STORE_KEY)
     assert PAN not in caplog.text and CVV not in caplog.text and LEAKED_KEY not in caplog.text and STORE_KEY not in caplog.text
     assert db.bank_transactions.docs == {}
     assert db.bank_accounts.docs["pos1"]["current_balance"] == 0
@@ -419,11 +456,14 @@ def test_callback_amount_currency_order_mismatch_fails_without_writing_callback_
         stored = db.payment_intents.docs[fresh["_id"]]
         assert stored["status"] == "failed"
         assert stored["amount"] == before_amount
+        assert stored["currency"] == "TRY"
         assert stored["order_id"] == fresh["order_id"]
-        assert stored["result"] == {"error": error}
-        assert "99.99" not in json.dumps(stored)
-        assert "840" not in json.dumps(stored)
-        assert "OTHER-ORDER" not in json.dumps(stored)
+        result = stored.get("result") or {}
+        assert result == {"error": error}
+        assert "amount" not in result or result.get("amount") != "99.99"
+        assert "currency" not in result or result.get("currency") != "840"
+        assert "order_id" not in result or result.get("order_id") != "OTHER-ORDER"
+        assert "oid" not in result or result.get("oid") != "OTHER-ORDER"
 
 
 def test_callback_bad_hash_fails(db):
