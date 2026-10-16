@@ -478,6 +478,8 @@ class BankConnection(BaseDocument):
     scope: Optional[str] = ""
     auto_sync: bool = True
     auto_match: bool = False
+    # YYYY-MM-DD (Europe/Istanbul). Alan yoksa etkin gün = created_at (İstanbul).
+    auto_match_from: Optional[str] = None
     status: str = "disconnected"  # disconnected, connected, simulated, error
     last_synced_at: Optional[str] = None
     last_error: Optional[str] = None

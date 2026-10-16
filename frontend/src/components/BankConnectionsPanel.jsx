@@ -14,6 +14,9 @@ import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { sortBankTransactions } from "../utils/bankAccountTx";
 import { bankLinkWarnings } from "../utils/bankLinkWarnings";
 import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
+import { BulkResultModal } from "./BulkResultModal";
+import { notifyDataChanged } from "../utils/dataRefresh";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 /** İlk ekranda DOM'u hafif tut — her satırda eşleştirme kontrolleri var. */
 const UNMATCHED_PAGE_INITIAL = 25;
@@ -54,6 +57,52 @@ function accountOptionLabel(a) {
 }
 
 const fmt = (n) => formatTrAmount((n || 0));
+
+function istanbulToday() {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Istanbul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function contactSummary(preview) {
+  const rows = preview?.by_contact || [];
+  if (!rows.length) return "cari yok";
+  return rows.map((row) => `${row.contact_name || "—"} ${row.count} · ${fmt(row.amount)} ₺`).join(", ");
+}
+
+function unmatchProcessedItems(data) {
+  const rows = Array.isArray(data?.processed) ? data.processed : [];
+  if (rows.length) {
+    return rows.map((row) => {
+      const outcome = row.outcome === "ok" || row.outcome === "skipped" || row.outcome === "error"
+        ? row.outcome
+        : (row.ok ? "ok" : "error");
+      return {
+        id: row.tx_id,
+        outcome,
+        label: [row.date, row.contact_name || row.description || row.tx_id].filter(Boolean).join(" · "),
+        reason: row.error || (outcome === "skipped" ? "Zaten eşleşmemiş" : ""),
+      };
+    });
+  }
+  const fails = (data?.fail || []).map((row) => ({
+    id: row.tx_id,
+    outcome: "error",
+    label: row.tx_id,
+    reason: row.error || "",
+  }));
+  const oks = [];
+  const n = Number(data?.ok || 0);
+  for (let i = 0; i < n; i += 1) oks.push({ id: `ok-${i}`, outcome: "ok", label: "Geri alındı" });
+  return [...oks, ...fails];
+}
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const FIELD_LABELS = {
   client_id: "Client ID (Müşteri Id)",
@@ -262,6 +311,29 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [genKeyBusy, setGenKeyBusy] = useState(false);
   const [ktPublicPem, setKtPublicPem] = useState("");
   const [ktCrtPem, setKtCrtPem] = useState("");
+  const [fromDrafts, setFromDrafts] = useState({});
+  const [fromDirty, setFromDirty] = useState({});
+  const [dateConfirm, setDateConfirm] = useState(null);
+  const [askDate, setAskDate] = useState(null);
+  const [unmatchPreview, setUnmatchPreview] = useState(null);
+  const [bulkResult, setBulkResult] = useState(null);
+
+  useEffect(() => {
+    setFromDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const c of connections) {
+        const id = c.id || c._id;
+        if (!id || fromDirty[id]) continue;
+        const effective = c.auto_match_from || c.auto_match_from_effective || "";
+        if (next[id] !== effective) {
+          next[id] = effective;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [connections, fromDirty]);
 
   const fillJsencryptKey = async (target) => {
     if (genKeyBusy) return;
@@ -452,9 +524,137 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
 
+  const requestAutoUnmatch = async (connId, body) => {
+    const r = await axios.post(`${API_URL}/banking/connections/${connId}/auto-unmatch`, { dry_run: true, ...body });
+    return r.data || {};
+  };
+
+  const commitAutoMatchFrom = async (c, date, { thenEnable = false, runUnmatch = false, beforeDate } = {}) => {
+    setBusy(`from-${c.id}`);
+    try {
+      await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match_from: date });
+      let run = null;
+      if (runUnmatch) {
+        run = await axios.post(`${API_URL}/banking/connections/${c.id}/auto-unmatch`, {
+          before_date: beforeDate || date,
+          dry_run: false,
+        });
+      }
+      if (thenEnable) {
+        const enabled = await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match: true });
+        const n = enabled.data?.auto_matched_now ?? enabled.data?.auto_matched ?? 0;
+        toast.success(enabled.data?.auto_match_message || (n
+          ? `Otomatik işleme AKTİF: ${n} bekleyen hareket işlendi.`
+          : "Otomatik işleme AKTİF: önceki eşleşme veya cari adı varsa hareket işlenir."));
+      } else {
+        toast.success("Otomatik eşleşme başlangıç tarihi kaydedildi.");
+      }
+      setFromDirty((d) => ({ ...d, [c.id]: false }));
+      setFromDrafts((d) => ({ ...d, [c.id]: date }));
+      await notifyDataChanged({ companyId, scopes: ["cash"] });
+      if (run) {
+        setBulkResult({ title: "Otomatik eşleşmeler geri alındı", items: unmatchProcessedItems(run.data) });
+      }
+      load();
+      if (runUnmatch || thenEnable) onSynced?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Tarih kaydedilemedi.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveAutoMatchFrom = async (c, explicitDate, opts = {}) => {
+    const date = explicitDate || fromDrafts[c.id] || "";
+    if (!date) {
+      toast.error("Otomatik eşleşme başlangıç tarihi seçin.");
+      setAskDate({ conn: c, date: c.auto_match_from_effective || istanbulToday() });
+      return;
+    }
+    const stored = c.auto_match_from || "";
+    const firstTime = !stored;
+    const movingForward = Boolean(stored) && date > stored;
+    if (firstTime || movingForward) {
+      try {
+        const preview = await requestAutoUnmatch(c.id, { before_date: date, dry_run: true });
+        if (Number(preview?.count || 0) > 0) {
+          setDateConfirm({ conn: c, date, preview, thenEnable: !!opts.thenEnable });
+          return;
+        }
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Önizleme alınamadı. Tarih kaydedilmedi.");
+        return;
+      }
+    }
+    setAskDate(null);
+    await commitAutoMatchFrom(c, date, { thenEnable: !!opts.thenEnable, runUnmatch: false });
+  };
+
+  const confirmDateSave = async () => {
+    if (!dateConfirm) return;
+    const pending = dateConfirm;
+    setDateConfirm(null);
+    setAskDate(null);
+    await commitAutoMatchFrom(pending.conn, pending.date, {
+      thenEnable: !!pending.thenEnable,
+      runUnmatch: true,
+      beforeDate: pending.preview?.before_date || pending.date,
+    });
+  };
+
+  const cancelDateSave = () => {
+    if (!dateConfirm) return;
+    const id = dateConfirm.conn.id;
+    const stored = dateConfirm.conn.auto_match_from || dateConfirm.conn.auto_match_from_effective || "";
+    setFromDirty((d) => ({ ...d, [id]: false }));
+    setFromDrafts((d) => ({ ...d, [id]: stored }));
+    setDateConfirm(null);
+  };
+
+  const openAutoUnmatch = async (c) => {
+    setBusy(`unmatch-${c.id}`);
+    try {
+      const preview = await requestAutoUnmatch(c.id, { dry_run: true });
+      setUnmatchPreview({ conn: c, preview });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Önizleme alınamadı.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const confirmAutoUnmatch = async () => {
+    if (!unmatchPreview) return;
+    const { conn, preview } = unmatchPreview;
+    setBusy(`unmatch-${conn.id}`);
+    try {
+      const r = await axios.post(`${API_URL}/banking/connections/${conn.id}/auto-unmatch`, {
+        before_date: preview?.before_date,
+        dry_run: false,
+      });
+      setUnmatchPreview(null);
+      setBulkResult({ title: "Otomatik eşleşmeler geri alındı", items: unmatchProcessedItems(r.data) });
+      await notifyDataChanged({ companyId, scopes: ["cash"] });
+      toast.success(r.data?.message || "Otomatik eşleşmeler geri alındı.");
+      load();
+      onSynced?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Geri alma başarısız.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const toggleAutoMatch = async (c) => {
     try {
       const turningOn = !c.auto_match;
+      if (turningOn && !c.auto_match_from) {
+        setAskDate({
+          conn: c,
+          date: fromDrafts[c.id] || c.auto_match_from_effective || istanbulToday(),
+        });
+        return;
+      }
       const r = await axios.put(`${API_URL}/banking/connections/${c.id}`, { auto_match: turningOn });
       if (turningOn) {
         const n = r.data?.auto_matched_now ?? r.data?.auto_matched ?? 0;
@@ -542,6 +742,25 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               </span>
               {credentialsOnFile(c) ? <span>Kimlik bilgisi <b>sunucuda kayıtlı</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
             </div>
+            <div className="flex flex-wrap items-end gap-2" data-testid={`auto-match-from-row-${c.id}`}>
+              <label className="flex flex-col gap-0.5 text-[10px] text-slate-500">
+                <span className="font-semibold text-slate-600">Otomatik eşleşme başlangıcı</span>
+                <input
+                  type="date"
+                  max={istanbulToday()}
+                  value={fromDrafts[c.id] ?? (c.auto_match_from || c.auto_match_from_effective || "")}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setFromDirty((d) => ({ ...d, [c.id]: true }));
+                    setFromDrafts((d) => ({ ...d, [c.id]: value }));
+                  }}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] text-slate-800"
+                  data-testid={`auto-match-from-${c.id}`}
+                />
+              </label>
+              <button type="button" onClick={() => saveAutoMatchFrom(c)} disabled={!!busy} className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-semibold disabled:opacity-50" data-testid={`auto-match-from-save-${c.id}`}>Kaydet</button>
+            </div>
+            <p className="text-[10px] text-slate-400 -mt-1">Bu tarihten önceki hareketler otomatik eşleşmez. Elle yapılan eşleşmeler korunur.</p>
             {c.status === "error" && c.last_error && (
               <p className="text-[10px] text-slate-500 leading-snug" data-testid={`conn-error-scope-hint-${c.id}`}>
                 HATA = <b>bu bağlantının</b> son test/senkronu (şimdi bankaya ulaşılamıyor). 
@@ -562,6 +781,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <button type="button" onClick={() => sync(c.id)} disabled={!!busy} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50" data-testid={`sync-conn-btn-${c.id}`}>{busy === c.id + "-sync" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Hareketleri Çek</button>
               <button type="button" onClick={() => testConn(c.id)} disabled={!!busy} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50" data-testid={`test-conn-btn-${c.id}`}>Bağlantıyı Test Et</button>
               <button type="button" onClick={() => openEdit(c)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-emerald-200 bg-emerald-50 text-emerald-800 rounded-lg text-[11px] font-semibold hover:bg-emerald-100" data-testid={`edit-conn-btn-${c.id}`} title="Sağlayıcı, token ve hesap bilgilerini düzenle"><Pencil className="w-3.5 h-3.5" /> Düzenle</button>
+              <button type="button" onClick={() => openAutoUnmatch(c)} disabled={!!busy} className="px-3 py-1.5 border border-rose-200 text-rose-700 rounded-lg text-[11px] font-semibold hover:bg-rose-50 disabled:opacity-50" data-testid={`auto-unmatch-btn-${c.id}`}>Otomatik eşleşmeleri geri al</button>
               <button type="button" onClick={() => remove(c.id)} className="ml-auto p-1.5 text-slate-300 hover:text-rose-600" data-testid={`delete-conn-btn-${c.id}`}><Trash2 className="w-4 h-4" /></button>
             </div>
           </div>
@@ -890,6 +1110,72 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </form>
           </div>
         </div>
+      )}
+      {askDate && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setAskDate(null))} data-testid="auto-match-from-required">
+          <div className="bg-white rounded-xl max-w-sm w-full shadow-2xl border border-slate-200 p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-slate-900">Otomatik eşleşme başlangıcı</h3>
+            <p className="text-xs text-slate-600">Otomatik İşle açılmadan önce başlangıç tarihi kaydedilmeli. Bu tarihten önceki hareketler otomatik eşleşmez.</p>
+            <input
+              type="date"
+              max={istanbulToday()}
+              value={askDate.date || ""}
+              onChange={(e) => setAskDate({ ...askDate, date: e.target.value })}
+              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm"
+              data-testid="auto-match-from-required-input"
+            />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setAskDate(null)} className="px-3 py-1.5 border rounded-lg text-sm" data-testid="auto-match-from-required-cancel">Vazgeç</button>
+              <button type="button" onClick={() => saveAutoMatchFrom(askDate.conn, askDate.date, { thenEnable: true })} className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm font-semibold" data-testid="auto-match-from-required-save">Kaydet ve aç</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dateConfirm && (
+        <div className="fixed inset-0 z-[85] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(cancelDateSave)} data-testid="auto-match-from-confirm">
+          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl border border-slate-200 p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-slate-900">Başlangıç tarihini kaydet</h3>
+            <p className="text-sm text-slate-700" data-testid="auto-match-from-confirm-text">
+              Bu tarihten önceki {dateConfirm.preview?.count || 0} otomatik eşleşme geri alınacak ({fmt(dateConfirm.preview?.total_amount)} ₺, {contactSummary(dateConfirm.preview)}); elle yapılan eşleşmeler korunur.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={cancelDateSave} className="px-3 py-1.5 border rounded-lg text-sm" data-testid="auto-match-from-confirm-cancel">Vazgeç</button>
+              <button type="button" onClick={confirmDateSave} className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-sm font-semibold" data-testid="auto-match-from-confirm-ok">Onayla ve geri al</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {unmatchPreview && (
+        <div className="fixed inset-0 z-[85] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setUnmatchPreview(null))} data-testid="auto-unmatch-preview">
+          <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl border border-slate-200 p-4 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-slate-900">Otomatik eşleşmeleri geri al</h3>
+            <p className="text-xs text-slate-600">Elle yapılan eşleşmeler korunur. Önizleme hiçbir kayıt yazmaz.</p>
+            <div className="text-sm text-slate-800 space-y-1" data-testid="auto-unmatch-preview-summary">
+              <div>Adet: <b data-testid="auto-unmatch-preview-count">{unmatchPreview.preview?.count || 0}</b></div>
+              <div>Tutar: <b data-testid="auto-unmatch-preview-amount" data-amount={unmatchPreview.preview?.total_amount ?? 0}>{fmt(unmatchPreview.preview?.total_amount)} ₺</b></div>
+              <div data-testid="auto-unmatch-preview-contacts">Cari: {contactSummary(unmatchPreview.preview)}</div>
+              {unmatchPreview.preview?.message ? <div className="text-amber-700" data-testid="auto-unmatch-preview-more">{unmatchPreview.preview.message}</div> : null}
+            </div>
+            <ul className="text-xs text-slate-600 space-y-1" data-testid="auto-unmatch-preview-sample">
+              {(unmatchPreview.preview?.sample || []).map((row) => (
+                <li key={row.tx_id} className="border border-slate-100 rounded-lg px-2 py-1" data-testid="auto-unmatch-sample-row">
+                  {row.date} · {row.contact_name || row.description || row.tx_id} · {fmt(row.amount)} ₺
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setUnmatchPreview(null)} className="px-3 py-1.5 border rounded-lg text-sm" data-testid="auto-unmatch-cancel">Vazgeç</button>
+              <button type="button" onClick={confirmAutoUnmatch} disabled={!unmatchPreview.preview?.count} className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50" data-testid="auto-unmatch-confirm">Onayla ve geri al</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {bulkResult && (
+        <BulkResultModal
+          title={bulkResult.title}
+          items={bulkResult.items}
+          onClose={() => setBulkResult(null)}
+        />
       )}
     </div>
   );
