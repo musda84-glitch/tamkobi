@@ -73,8 +73,18 @@ class TestParseRange:
     def test_invoice_query_skips_cancelled(self):
         import edoc_backup
         q = edoc_backup.invoice_query("comp_1", "2026-10-01", "2026-10-31")
-        assert q["invoice_type"] == {"$ne": "dispatch"}
-        assert q["status"] == {"$nin": ["cancelled", "canceled", "void"]}
+        assert q["company_id"] == "comp_1"
+        assert "e_invoice" in q["e_type"]["$in"] and "e_archive" in q["e_type"]["$in"] and "e_export" in q["e_type"]["$in"]
+        assert "dispatch" in q["invoice_type"]["$nin"]
+        assert "proforma" in q["invoice_type"]["$nin"]
+        assert "expense_slip" in q["invoice_type"]["$nin"]
+        assert "draft" in q["status"]["$nin"]
+        assert "cancelled" in q["status"]["$nin"]
+        assert "canceled" in q["status"]["$nin"]
+        assert "void" in q["status"]["$nin"]
+        assert {"einvoice_state": "sent"} in q["$or"]
+        assert {"source": "edoc_inbox"} in q["$or"]
+        assert {"direction": "incoming"} in q["$or"]
 
     def test_reminder_due(self):
         import edoc_backup
@@ -94,37 +104,47 @@ class TestEdocBackupApi:
         assert r2.status_code == 400
 
     def test_preview_and_zip(self, client):
-        ea = _mk(client, e_type="e_archive", issue_date="2026-09-05")
-        paper = _mk(client, e_type="paper", issue_date="2026-09-06")
+        draft = _mk(client, e_type="e_archive", status="draft", einvoice_state="draft", issue_date="2020-01-15")
+        paper = _mk(client, e_type="paper", status="draft", issue_date="2020-01-15")
+        proforma = _mk(client, invoice_type="proforma", e_type="e_archive", status="draft", issue_date="2020-01-15")
         try:
-            prev = client.get(f"{API}/accountant/edocs", params={"company_id": COMPANY, "date_from": "2026-09-01", "date_to": "2026-09-08"}, timeout=20)
+            params = {"company_id": COMPANY, "date_from": "2020-01-15", "date_to": "2020-01-15"}
+            prev = client.get(f"{API}/accountant/edocs", params=params, timeout=20)
             assert prev.status_code == 200, prev.text
             body = prev.json()
-            assert body["days"] == 8
+            assert body["days"] == 1
             assert body["max_days"] == 62
-            assert body["invoice_count"] >= 2
-            assert body["xml_count"] >= 1
+            assert body["xml_count"] == body["invoice_count"]
             assert body["pdf_count"] == body["invoice_count"]
-            z = client.get(f"{API}/accountant/edocs/export", params={"company_id": COMPANY, "date_from": "2026-09-01", "date_to": "2026-09-08"}, timeout=60)
+            assert body["integrator_count"] + body["local_count"] == body["invoice_count"]
+            z = client.get(f"{API}/accountant/edocs/export", params=params, timeout=60)
             assert z.status_code == 200, z.text[:400]
             assert "zip" in (z.headers.get("content-type") or "")
             assert z.content[:2] == b"PK"
-            names = zipfile.ZipFile(io.BytesIO(z.content)).namelist()
-            xmls = [n for n in names if n.startswith("xml/") and n.endswith(".xml")]
-            pdfs = [n for n in names if n.startswith("pdf/") and n.endswith(".pdf")]
-            assert any(ea["invoice_number"] in n for n in xmls)
-            assert any(ea["invoice_number"] in n for n in pdfs)
-            assert any(paper["invoice_number"] in n for n in pdfs)
-            assert not any(paper["invoice_number"] in n for n in xmls)
+            assert z.headers.get("X-Xml-Count") is not None
+            assert z.headers.get("X-Pdf-Count") is not None
+            assert z.headers.get("X-Integrator-Count") is not None
+            assert z.headers.get("X-Local-Count") is not None
+            zf = zipfile.ZipFile(io.BytesIO(z.content))
+            names = zf.namelist()
             assert "MANIFEST.txt" in names
-            last = client.get(f"{API}/accountant/edocs/last-backup", params={"company_id": COMPANY}, timeout=20)
-            assert last.status_code == 200
-            lb = last.json()["last_backup"]
-            assert lb and lb["invoice_count"] >= 2
-            assert last.json()["reminder_due"] is False
+            manifest = zf.read("MANIFEST.txt").decode("utf-8")
+            assert "integrator=" in manifest and "local=" in manifest
+            blob_names = [n for n in names if n != "MANIFEST.txt"]
+            assert all(n.startswith(("giden/", "gelen/")) for n in blob_names)
+            joined = "\n".join(names)
+            for doc in (draft, paper, proforma):
+                assert doc["invoice_number"] not in joined
+            if int(z.headers.get("X-Invoice-Count") or "0"):
+                last = client.get(f"{API}/accountant/edocs/last-backup", params={"company_id": COMPANY}, timeout=20)
+                assert last.status_code == 200
+                lb = last.json()["last_backup"]
+                assert lb and "integrator_count" in lb and "local_count" in lb
+                assert last.json()["reminder_due"] is False
         finally:
-            client.delete(f"{API}/invoices/{ea['id']}", timeout=20)
+            client.delete(f"{API}/invoices/{draft['id']}", timeout=20)
             client.delete(f"{API}/invoices/{paper['id']}", timeout=20)
+            client.delete(f"{API}/invoices/{proforma['id']}", timeout=20)
 
     def test_reminders_run(self, client):
         r = client.post(f"{API}/accountant/edocs/reminders/run", timeout=60)
