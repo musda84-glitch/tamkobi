@@ -1,9 +1,11 @@
 """Sanal POS HTTP uçları.
 
 GET/PUT /vpos/configs ve POST /vpos/test-payment şirket yöneticisi ister.
+POST /contacts/{contact_id}/vpos-collect cari tahsilatı başlatır.
+Cari modülü middleware'de /contacts edit ister.
 POST /vpos/callback/{intent_id} bankanın tarayıcı dönüşüdür: oturum yok,
 intent kimliği + hash yeter. Kart verisi okunup atılır; loglanmaz ve
-saklanmaz. Kasa / cari / fatura yazılmaz.
+saklanmaz. Kasa ve cari yalnız doğrulanmış contact_collection ödemesinde yazılır.
 """
 from __future__ import annotations
 
@@ -21,15 +23,18 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
+import bank_guard
 import comm_service
 import company_audit
 import public_url
+import rbac
 import tenant_access
 from client_ip import request_ip
 
 from . import iyzico as iyzico_family
 from . import paytr as paytr_family
 from .base import MISMATCH_ERRORS, VposStartError, get_adapter
+from .collect import post_collection
 from .nestpay import PAYTEN_TEST_3D_URL, PAYTEN_TEST_HOST, format_amount, is_expired
 
 logger = logging.getLogger("vpos")
@@ -185,7 +190,20 @@ def public_result(result: Any) -> Optional[dict]:
     return out or None
 
 
+def _public_installment(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 1:
+        return None
+    return number
+
+
 def public_intent(doc: dict) -> dict:
+    tx_id = str(doc.get("collection_tx_id") or "").strip()
     return {
         "id": doc.get("_id") or "",
         "company_id": doc.get("company_id") or "",
@@ -193,9 +211,11 @@ def public_intent(doc: dict) -> dict:
         "purpose": doc.get("purpose") or "",
         "amount": doc.get("amount") or "",
         "currency": doc.get("currency") or "TRY",
+        "installment": _public_installment(doc.get("installment")),
         "order_id": doc.get("order_id") or "",
         "status": doc.get("status") or "",
         "vpos_config_id": doc.get("vpos_config_id") or "",
+        "collection_tx_id": tx_id or None,
         "created_at": doc.get("created_at") or "",
         "expires_at": doc.get("expires_at") or "",
         "result": public_result(doc.get("result")),
@@ -267,6 +287,46 @@ async def _claim_finish(intent_id: str, final_status: str, result: dict) -> bool
         "result": result,
         "updated_at": _iso(),
     })
+
+
+async def _record_paid_collection(intent_id: str) -> None:
+    """Kazanan paid claim. Test ve diğer amaçlar kasa/cari yazmaz."""
+    db = _require_db()
+    fresh = await db.payment_intents.find_one({"_id": intent_id})
+    if not fresh or fresh.get("purpose") != "contact_collection":
+        return
+    if str(fresh.get("status") or "") != "paid":
+        return
+    await post_collection(db, fresh)
+
+
+async def _retry_paid_collection(intent_id: str) -> None:
+    """Aynı yardımcı. Yeni callback, daha önce post_failed kaldıysa bir kez daha dener."""
+    db = _require_db()
+    fresh = await db.payment_intents.find_one({"_id": intent_id})
+    if not fresh or fresh.get("purpose") != "contact_collection":
+        return
+    if str(fresh.get("status") or "") != "paid":
+        return
+    if fresh.get("collection_tx_id"):
+        return
+    if fresh.get("collection_error") != "post_failed":
+        return
+    await post_collection(db, fresh)
+
+
+async def _require_contact_collector(user: dict, company_id: str) -> None:
+    """Cari tahsilat ile aynı çubuk: /contacts edit. Yönetici kısayolu yalnız admin."""
+    if user.get("is_super_admin"):
+        return
+    if rbac.normalize_role_code(user.get("role")) == "admin":
+        return
+    perms = user.get("permissions")
+    if not isinstance(perms, dict):
+        role_doc = await rbac.role_for(user, company_id)
+        perms = role_doc.get("permissions") or {}
+    if not rbac.level_allows(perms.get("/contacts"), "edit"):
+        raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
 
 
 async def _audit(request: Request, user: dict, company_id: str, action: str, record_id: str, label: str, summary: str) -> None:
@@ -434,6 +494,8 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
     existing = await _load_config(cid) or {}
     same_family = bool(existing.get("_id")) and str(existing.get("family") or "") == family
     account_id = await _validate_account(cid, str(body.get("account_id") or ""), enabled)
+    if account_id:
+        await bank_guard.assert_collection_allowed(_require_db(), account_id)
     client_id = ""
     api_user = ""
     gateway = ""
@@ -528,55 +590,28 @@ async def _runtime_config(cfg: dict) -> dict:
     return runtime
 
 
-@router.post("/vpos/test-payment")
-async def test_payment(body: Dict[str, Any], request: Request):
-    user, cid = await _admin_company(request, (body or {}).get("company_id"))
-    cfg = await _load_config(cid)
-    if not cfg or not cfg.get("enabled"):
-        raise HTTPException(status_code=400, detail="Test için etkin bir sanal POS ayarı gerekli.")
-    if str(cfg.get("mode") or "") != "test":
-        raise HTTPException(status_code=400, detail="Test ödemesi yalnız test modunda açılır.")
-    family = str(cfg.get("family") or "nestpay")
-    try:
-        get_adapter(family)
-    except KeyError as exc:
-        raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.") from exc
-    try:
-        amount = format_amount((body or {}).get("amount"))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Tutar 0'dan büyük ve en fazla 2 hane olmalı.") from exc
-    if Decimal(amount) > TEST_AMOUNT_MAX:
-        raise HTTPException(status_code=400, detail="Test tutarı 1000,00 TL'yi aşamaz.")
-    runtime = await _runtime_config(cfg)
-    db = _require_db()
-    order_id = ""
-    for _ in range(5):
-        candidate = secrets.token_hex(16)
-        if not await db.payment_intents.find_one({"order_id": candidate}):
-            order_id = candidate
-            break
-    if not order_id:
-        raise HTTPException(status_code=500, detail="Sipariş numarası üretilemedi.")
-    now = _now()
-    intent_id = str(uuid.uuid4())
-    intent = {
-        "_id": intent_id,
-        "company_id": cid,
-        "contact_id": None,
-        "purpose": "test",
-        "amount": amount,
-        "currency": "TRY",
-        "order_id": order_id,
-        "status": "pending",
-        "vpos_config_id": cfg.get("_id"),
-        "provider_ref": None,
-        "created_by": _user_id(user),
-        "created_at": _iso(now),
-        "expires_at": _iso(now + INTENT_TTL),
-        "result": None,
-    }
-    await db.payment_intents.insert_one(intent)
-    app_base = (await _app_base(request)).rstrip("/")
+def _public_start(intent_id: str, started: dict) -> dict:
+    public = {"intent_id": intent_id}
+    for key in ("kind", "action_url", "fields", "iframe_url", "url"):
+        if started.get(key) not in (None, ""):
+            public[key] = started[key]
+    return public
+
+
+def _payment_ctx(
+    request: Request,
+    app_base: str,
+    intent_id: str,
+    family: str,
+    *,
+    email: str,
+    name: str,
+    phone: str,
+    address: str,
+    basket_label: str,
+    identity_number: str = "",
+) -> dict:
+    app_base = str(app_base).rstrip("/")
     callback = f"{app_base}/api/vpos/callback/{intent_id}"
     result_page = f"{app_base}/vpos/result/{intent_id}"
     ip = request_ip(request) or ""
@@ -589,12 +624,78 @@ async def test_payment(body: Dict[str, Any], request: Request):
         "ok_url": callback if family == "nestpay" else result_page,
         "fail_url": callback if family == "nestpay" else result_page,
         "user_ip": ip,
-        "email": str(user.get("email") or "test@example.com").strip() or "test@example.com",
-        "name": str(user.get("name") or "Test"),
-        "phone": str(user.get("phone") or ""),
-        "address": "",
-        "basket_label": "Test ödemesi",
+        "email": email,
+        "name": name,
+        "phone": phone,
+        "address": address,
+        "basket_label": basket_label,
     }
+    if identity_number:
+        ctx["identity_number"] = identity_number
+    return ctx
+
+
+async def _allocate_order_id(db) -> str:
+    for _ in range(5):
+        candidate = secrets.token_hex(16)
+        if not await db.payment_intents.find_one({"order_id": candidate}):
+            return candidate
+    raise HTTPException(status_code=500, detail="Sipariş numarası üretilemedi.")
+
+
+async def _begin_payment(
+    request: Request,
+    user: dict,
+    cfg: dict,
+    runtime: dict,
+    *,
+    company_id: str,
+    amount: str,
+    purpose: str,
+    contact_id: Optional[str],
+    installment: Optional[int],
+    description: str,
+    email: str,
+    name: str,
+    phone: str,
+    address: str,
+    basket_label: str,
+    identity_number: str = "",
+    audit_label: str = "",
+    audit_summary: str = "",
+) -> dict:
+    """Intent + sağlayıcı start. test_payment ve collect aynı yolu kullanır."""
+    family = str(cfg.get("family") or "nestpay")
+    db = _require_db()
+    order_id = await _allocate_order_id(db)
+    now = _now()
+    intent_id = str(uuid.uuid4())
+    intent = {
+        "_id": intent_id,
+        "company_id": company_id,
+        "contact_id": contact_id,
+        "purpose": purpose,
+        "amount": amount,
+        "currency": "TRY",
+        "order_id": order_id,
+        "status": "pending",
+        "vpos_config_id": cfg.get("_id"),
+        "provider_ref": None,
+        "created_by": _user_id(user),
+        "created_at": _iso(now),
+        "expires_at": _iso(now + INTENT_TTL),
+        "result": None,
+    }
+    if purpose != "test":
+        intent["installment"] = installment if installment is not None else 1
+        intent["description"] = description
+    await db.payment_intents.insert_one(intent)
+    app_base = (await _app_base(request)).rstrip("/")
+    ctx = _payment_ctx(
+        request, app_base, intent_id, family,
+        email=email, name=name, phone=phone, address=address,
+        basket_label=basket_label, identity_number=identity_number,
+    )
     try:
         started = await get_adapter(family).start(runtime, intent, ctx, client=_outbound_client)
     except VposStartError as exc:
@@ -608,15 +709,176 @@ async def test_payment(body: Dict[str, Any], request: Request):
         wrote = await _conditional_update(intent_id, {"status": "pending"}, {"provider_ref": ref, "updated_at": _iso()})
         if not wrote:
             raise HTTPException(status_code=502, detail="Ödeme başlatılamadı.")
-    await _audit(
-        request, user, cid, "create", intent_id, "Test ödemesi",
-        f"Sanal POS test ödemesi başlatıldı ({amount} TRY).",
+    if audit_label:
+        await _audit(request, user, company_id, "create", intent_id, audit_label, audit_summary)
+    return _public_start(intent_id, started)
+
+
+def _open_family(cfg: dict) -> str:
+    family = str((cfg or {}).get("family") or "nestpay")
+    try:
+        get_adapter(family)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.") from exc
+    return family
+
+
+def _parse_amount(value: Any) -> str:
+    try:
+        return format_amount(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Tutar 0'dan büyük ve en fazla 2 hane olmalı.") from exc
+
+
+def _collect_installment(cfg: dict, value: Any) -> int:
+    if value in (None, ""):
+        number = 1
+    else:
+        if isinstance(value, bool) or (isinstance(value, float) and not float(value).is_integer()):
+            raise HTTPException(status_code=400, detail="Taksit sayısı geçersiz.")
+        if isinstance(value, str) and not re.fullmatch(r"\d{1,2}", value.strip()):
+            raise HTTPException(status_code=400, detail="Taksit sayısı geçersiz.")
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Taksit sayısı geçersiz.") from exc
+    if number < 1:
+        raise HTTPException(status_code=400, detail="Taksit sayısı geçersiz.")
+    if number != 1 and bool(cfg.get("no_installment")):
+        raise HTTPException(status_code=400, detail="Bu sanal POS taksitli tahsilata kapalı.")
+    if number == 1:
+        return 1
+    try:
+        limit = int(cfg.get("max_installment") or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    if number > limit:
+        raise HTTPException(status_code=400, detail="Taksit sayısı izin verilen üst sınırı aşıyor.")
+    return number
+
+
+def _collect_options_body(doc: Optional[dict]) -> dict:
+    doc = doc or {}
+    enabled = bool(doc.get("enabled")) and bool(str(doc.get("account_id") or "").strip())
+    if not enabled:
+        return {
+            "enabled": False,
+            "family": "",
+            "bank_label": "",
+            "mode": "",
+            "max_installment": 0,
+            "no_installment": False,
+        }
+    try:
+        max_installment = int(doc.get("max_installment") or 0)
+    except (TypeError, ValueError):
+        max_installment = 0
+    return {
+        "enabled": True,
+        "family": doc.get("family") or "",
+        "bank_label": doc.get("bank_label") or "",
+        "mode": doc.get("mode") or "test",
+        "max_installment": max_installment,
+        "no_installment": bool(doc.get("no_installment")),
+    }
+
+
+def _clip_text(value: Any, limit: int) -> str:
+    return re.sub(r"[\r\n\t]+", " ", str(value or "")).strip()[:limit]
+
+
+@router.post("/vpos/test-payment")
+async def test_payment(body: Dict[str, Any], request: Request):
+    user, cid = await _admin_company(request, (body or {}).get("company_id"))
+    cfg = await _load_config(cid)
+    if not cfg or not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="Test için etkin bir sanal POS ayarı gerekli.")
+    if str(cfg.get("mode") or "") != "test":
+        raise HTTPException(status_code=400, detail="Test ödemesi yalnız test modunda açılır.")
+    _open_family(cfg)
+    amount = _parse_amount((body or {}).get("amount"))
+    if Decimal(amount) > TEST_AMOUNT_MAX:
+        raise HTTPException(status_code=400, detail="Test tutarı 1000,00 TL'yi aşamaz.")
+    runtime = await _runtime_config(cfg)
+    email = str(user.get("email") or "test@example.com").strip() or "test@example.com"
+    return await _begin_payment(
+        request, user, cfg, runtime,
+        company_id=cid,
+        amount=amount,
+        purpose="test",
+        contact_id=None,
+        installment=None,
+        description="",
+        email=email,
+        name=str(user.get("name") or "Test"),
+        phone=str(user.get("phone") or ""),
+        address="",
+        basket_label="Test ödemesi",
+        audit_label="Test ödemesi",
+        audit_summary=f"Sanal POS test ödemesi başlatıldı ({amount} TRY).",
     )
-    public = {"intent_id": intent_id}
-    for key in ("kind", "action_url", "fields", "iframe_url", "url"):
-        if started.get(key) not in (None, ""):
-            public[key] = started[key]
-    return public
+
+
+@router.get("/vpos/collect-options")
+async def collect_options(request: Request, company_id: Optional[str] = None):
+    """Sır içermeyen tahsilat seçenekleri. Şirket yöneticisi şart değil."""
+    user = await _user_dep(request)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return _collect_options_body(await _load_config(cid))
+
+
+@router.post("/contacts/{contact_id}/vpos-collect")
+async def collect_payment(contact_id: str, body: Dict[str, Any], request: Request):
+    """Cari kart tahsilatı. Kart verisi kabul edilmez; sağlayıcı sayfası açılır."""
+    user = await _user_dep(request)
+    body = body or {}
+    cid = tenant_access.resolve_company_id(user, body.get("company_id"))
+    await _require_contact_collector(user, cid)
+    contact_id = str(contact_id or "").strip()
+    if not contact_id:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    contact = await tenant_access.get_tenant_doc(
+        _require_db(), "contacts", contact_id, user, not_found="Cari hesap bulunamadı.",
+    )
+    if str(contact.get("company_id") or "") != cid:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    cfg = await _load_config(cid)
+    if not cfg or not cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="Etkin bir sanal POS ayarı gerekli.")
+    account_id = str(cfg.get("account_id") or "").strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Bağlı POS hesabı seçin.")
+    account = await bank_guard.assert_collection_allowed(_require_db(), account_id)
+    if not account or str(account.get("company_id") or "") != cid or str(account.get("type") or "") not in POS_ACCOUNT_TYPES:
+        raise HTTPException(status_code=400, detail="Bağlı POS hesabı seçin.")
+    _open_family(cfg)
+    amount = _parse_amount(body.get("amount"))
+    if str(cfg.get("mode") or "") == "test" and Decimal(amount) > TEST_AMOUNT_MAX:
+        raise HTTPException(status_code=400, detail="Test tutarı 1000,00 TL'yi aşamaz.")
+    installment = _collect_installment(cfg, body.get("installment"))
+    description = _clip_text(body.get("description"), 160)
+    runtime = await _runtime_config(cfg)
+    tax = re.sub(r"\D", "", str(contact.get("tax_number_or_id") or ""))
+    identity = tax if len(tax) == 11 else ""
+    email = str(contact.get("email") or user.get("email") or "odeme@example.com").strip() or "odeme@example.com"
+    name = str(contact.get("name") or user.get("name") or "Cari").strip() or "Cari"
+    return await _begin_payment(
+        request, user, cfg, runtime,
+        company_id=cid,
+        amount=amount,
+        purpose="contact_collection",
+        contact_id=contact_id,
+        installment=installment,
+        description=description,
+        email=email,
+        name=name,
+        phone=str(contact.get("phone") or ""),
+        address=str(contact.get("address") or ""),
+        basket_label=description or "Cari tahsilat",
+        identity_number=identity,
+        audit_label="Kartla tahsilat",
+        audit_summary=f"Kartla cari tahsilatı başlatıldı ({amount} TRY).",
+    )
 
 
 @router.post("/vpos/callback/{intent_id}")
@@ -633,6 +895,7 @@ async def vpos_callback(intent_id: str, request: Request):
     status = str(intent.get("status") or "")
     if status in TERMINAL_STATUSES:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, status)
+        await _retry_paid_collection(intent_id)
         return _result_redirect(app_base, intent_id)
     if status != "pending":
         return _result_redirect(app_base, intent_id)
@@ -680,10 +943,13 @@ async def vpos_callback(intent_id: str, request: Request):
         result = _safe_result(verdict)
         final = "failed"
     wrote = await _claim_finish(intent_id, final, result)
+    if wrote and final == "paid":
+        await _record_paid_collection(intent_id)
     if wrote:
         logger.info("vpos callback id=%s status=%s", intent_id, final)
     else:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, final)
+        await _retry_paid_collection(intent_id)
     return _result_redirect(app_base, intent_id)
 
 
@@ -723,6 +989,7 @@ async def paytr_notify(config_id: str, request: Request):
     status = str(intent.get("status") or "")
     if status in TERMINAL_STATUSES or status != "pending":
         logger.info("vpos paytr notify id=%s status=%s repeat=1", intent_id, status)
+        await _retry_paid_collection(intent_id)
         return _notify_ok()
     verdict = await paytr_family.ADAPTER.confirm(runtime, intent, form)
     error = str(verdict.get("error") or "")
@@ -736,10 +1003,13 @@ async def paytr_notify(config_id: str, request: Request):
         final = "failed"
         result = {"error": error or "declined"}
     wrote = await _claim_finish(intent_id, final, result)
+    if wrote and final == "paid":
+        await _record_paid_collection(intent_id)
     if wrote:
         logger.info("vpos paytr notify id=%s status=%s", intent_id, final)
     else:
         logger.info("vpos paytr notify id=%s status=%s repeat=1", intent_id, final)
+        await _retry_paid_collection(intent_id)
     return _notify_ok()
 
 
@@ -757,6 +1027,7 @@ async def iyzico_callback(intent_id: str, request: Request):
     status = str(intent.get("status") or "")
     if status in TERMINAL_STATUSES or status != "pending":
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, status)
+        await _retry_paid_collection(intent_id)
         return _result_redirect(app_base, intent_id)
     token = str(form.get("token") or "")
     stored = str(intent.get("provider_ref") or "")
@@ -792,10 +1063,13 @@ async def iyzico_callback(intent_id: str, request: Request):
         final = "failed"
         result = {"error": error or "declined"}
     wrote = await _claim_finish(intent_id, final, result)
+    if wrote and final == "paid":
+        await _record_paid_collection(intent_id)
     if wrote:
         logger.info("vpos iyzico callback id=%s status=%s", intent_id, final)
     else:
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, final)
+        await _retry_paid_collection(intent_id)
     return _result_redirect(app_base, intent_id)
 
 

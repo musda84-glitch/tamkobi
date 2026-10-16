@@ -109,6 +109,37 @@ test("bekleyen sonuç birkaç kez sorgulanır ve ödenince güncellenir", async 
   jest.useRealTimers();
 });
 
+test("cari tahsilatı ödenince cari linki, başarısızda nedeni gösterir", async () => {
+  await show({
+    id: "intent-1",
+    status: "paid",
+    amount: "10.00",
+    currency: "TRY",
+    purpose: "contact_collection",
+    contact_id: "ct1",
+    collection_tx_id: "vpos:intent-1",
+    installment: 2,
+    result: { auth_code: "123456", masked_pan: "453144******1234" },
+  });
+  expect(host.querySelector("[data-testid=vpos-result-collected]").textContent).toContain("Tahsilat cariye işlendi");
+  expect(host.querySelector("[data-testid=vpos-result-contact]").getAttribute("href")).toBe("/contacts?contact_id=ct1");
+  expect(host.querySelector("[data-testid=vpos-result-test-note]")).toBeNull();
+  await act(async () => { root.unmount(); });
+  root = null;
+
+  await show({
+    id: "intent-1",
+    status: "failed",
+    amount: "10.00",
+    currency: "TRY",
+    purpose: "contact_collection",
+    contact_id: "ct1",
+    result: { error: "declined" },
+  });
+  expect(host.querySelector("[data-testid=vpos-result-reason]").textContent).toBe("Banka işlemi onaylamadı.");
+  expect(host.querySelector("[data-testid=vpos-result-collected]")).toBeNull();
+});
+
 test("sonuç yolu uygulamada kayıtlıdır", () => {
   const app = fs.readFileSync(path.join(__dirname, "../App.js"), "utf8");
   const paths = fs.readFileSync(path.join(__dirname, "../utils/publicPath.js"), "utf8");

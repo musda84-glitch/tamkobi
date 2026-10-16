@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory, ChevronDown } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory, ChevronDown, CreditCard } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
 import { MoneyInput } from "./MoneyInput";
@@ -31,6 +31,7 @@ import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableCol
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { ContactPayMenu } from "./ContactPayMenu";
+import { classifyTestPayment, navigation, postBankForm } from "./VposSettingsPanel";
 import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
 import { StatementTxList } from "./StatementTxList";
@@ -107,6 +108,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [invoiceProducts, setInvoiceProducts] = useState([]);
   const [printDoc, setPrintDoc] = useState(null);
   const [editTpl, setEditTpl] = useState(null);
+  const [vposOptions, setVposOptions] = useState(null);
+  const [cardCollect, setCardCollect] = useState(null);
+  const [cardBusy, setCardBusy] = useState(false);
   const navigate = useNavigate();
   const { activeCompany, can } = useAuth();
   const canIssueInv = can("/invoices", "edit");
@@ -122,6 +126,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     }
   }, [contactId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const companyId = data?.contact?.company_id;
+    if (!companyId) return undefined;
+    let cancelled = false;
+    axios.get(`${API_URL}/vpos/collect-options`, { params: { company_id: companyId } })
+      .then((res) => {
+        if (cancelled) return;
+        const options = res.data;
+        setVposOptions(options && options.enabled ? options : null);
+      })
+      .catch(() => { if (!cancelled) setVposOptions(null); });
+    return () => { cancelled = true; };
+  }, [data?.contact?.company_id]);
   useDataRefresh(load, { companyId: data?.contact?.company_id, scopes: ["cash", "contacts", "invoices", "orders"] });
 
   const convertQuote = async (q) => { try { const r = await axios.post(`${API_URL}/quotes/${q.id}/convert-to-invoice`, {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); } };
@@ -675,6 +692,54 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const invoiced = Number(s.total_invoiced) || 0;
   const paid = Number(s.total_paid) || 0;
   const open = Number(s.open_amount) || 0;
+  const vposMaxInstallment = Number(vposOptions?.max_installment) || 0;
+  const vposInstallments = !vposOptions?.no_installment && vposMaxInstallment >= 2;
+  const openCardCollect = () => {
+    const fallback = open > 0 ? open : Math.max(0, bal);
+    setCardCollect({
+      amount: fallback.toFixed(2),
+      installment: "1",
+      description: "Cari tahsilat",
+      iframeUrl: "",
+    });
+  };
+  const startCardCollect = async (event) => {
+    event.preventDefault();
+    if (!cardCollect || cardBusy) return;
+    const amount = String(cardCollect.amount ?? "").trim().replace(",", ".");
+    if (!(Number(amount) > 0)) {
+      toast.error("Tutar sıfırdan büyük olmalı.");
+      return;
+    }
+    setCardBusy(true);
+    try {
+      const payload = {
+        company_id: c.company_id,
+        amount,
+        description: cardCollect.description || "",
+      };
+      if (vposInstallments) payload.installment = Number(cardCollect.installment || 1);
+      const res = await axios.post(`${API_URL}/contacts/${c.id}/vpos-collect`, payload);
+      const next = classifyTestPayment(res.data || {});
+      if (next.type === "form") {
+        postBankForm(next.actionUrl, next.fields);
+        return;
+      }
+      if (next.type === "iframe") {
+        setCardCollect((cur) => ({ ...cur, iframeUrl: next.url }));
+        setCardBusy(false);
+        return;
+      }
+      if (next.type === "redirect") {
+        navigation.assign(next.url);
+        return;
+      }
+      throw new Error("form");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Tahsilat başlatılamadı.");
+      setCardBusy(false);
+    }
+  };
   const summaryDiverge = Math.abs(Math.abs(bal) - Math.abs(open)) > 0.5;
   const openingBal = Number(s.opening_balance ?? c.opening_balance) || 0;
   const chequeBal = openChequeBalance(data.cheques);
@@ -720,6 +785,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             <button onClick={() => navigate(`/invoices?new=sales&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition" title="Bu cariye satış faturası kes" data-testid="detail-sell-btn"><ArrowUpRight className="w-3.5 h-3.5" /> Satış Yap</button>
             <button onClick={() => navigate(`/invoices?new=purchase&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Bu cariden alış faturası gir" data-testid="detail-buy-btn"><ArrowDownLeft className="w-3.5 h-3.5" /> Alış Yap</button>
             <ContactPayMenu onSelect={onCollectMenuSelect} />
+            {vposOptions?.enabled && (
+              <button type="button" onClick={openCardCollect} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition" data-testid="vpos-collect-btn"><CreditCard className="w-3.5 h-3.5" /> Kartla tahsil et</button>
+            )}
             <ContactStatementMenu onSelect={onStatementMenuSelect} busy={statementBusy} />
             <span className="w-px h-6 bg-slate-200 mx-1" aria-hidden="true" />
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5" data-testid="detail-icon-actions">
@@ -1293,6 +1361,39 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput value={editPay.amount} onChange={(n) => setEditPay({ ...editPay, amount: n ?? "" })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="pay-edit-amount" /></div>
               <div><label className="block font-semibold mb-1">{editPay.cheque ? "Not" : "Açıklama"}</label><input value={editPay.description || ""} onChange={(e) => setEditPay({ ...editPay, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-desc" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setEditPay(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="pay-edit-save">Kaydet</button></div>
+            </form>
+          </div>
+        )}
+        {cardCollect && (
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => { if (!cardBusy) setCardCollect(null); })}>
+            <form onSubmit={startCardCollect} className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="vpos-collect-modal">
+              <div className="flex justify-between border-b pb-2">
+                <div>
+                  <h3 className="text-sm font-bold">Kartla tahsil et</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5" data-testid="vpos-collect-provider">{vposOptions?.bank_label} · {vposOptions?.family === "paytr" ? "PayTR" : vposOptions?.family === "iyzico" ? "iyzico" : "NestPay"}</p>
+                </div>
+                <button type="button" onClick={() => setCardCollect(null)} className="text-slate-400" data-testid="vpos-collect-close"><X className="w-5 h-5" /></button>
+              </div>
+              <p className="text-[10px] text-slate-500" data-testid="vpos-collect-pci">Kart bilgisi bu ekranda istenmez. Ödeme sağlayıcının sayfasında tamamlanır.</p>
+              {cardCollect.iframeUrl ? (
+                <iframe title="Sanal POS" src={cardCollect.iframeUrl} className="w-full h-96 border rounded-lg" data-testid="vpos-collect-iframe" />
+              ) : (
+                <>
+                  <div><label className="block font-semibold mb-1">Tutar (₺)</label><input value={cardCollect.amount} onChange={(e) => setCardCollect({ ...cardCollect, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" inputMode="decimal" autoComplete="off" data-testid="vpos-collect-amount" /></div>
+                  {vposInstallments && (
+                    <div><label className="block font-semibold mb-1">Taksit</label>
+                      <select value={cardCollect.installment} onChange={(e) => setCardCollect({ ...cardCollect, installment: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="vpos-collect-installment">
+                        {Array.from({ length: vposMaxInstallment }, (_, i) => i + 1).map((n) => <option key={n} value={String(n)}>{n === 1 ? "Peşin" : `${n} taksit`}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div><label className="block font-semibold mb-1">Açıklama</label><input value={cardCollect.description} onChange={(e) => setCardCollect({ ...cardCollect, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="vpos-collect-description" /></div>
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" onClick={() => setCardCollect(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
+                    <button type="submit" disabled={cardBusy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="vpos-collect-submit">{cardBusy ? "Açılıyor…" : "Tahsilatı başlat"}</button>
+                  </div>
+                </>
+              )}
             </form>
           </div>
         )}
