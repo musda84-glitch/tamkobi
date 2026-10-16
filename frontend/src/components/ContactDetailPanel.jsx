@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory, ChevronDown } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
 import { MoneyInput } from "./MoneyInput";
@@ -63,6 +63,8 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { TimeInput } from "./TimeInput";
+import { useInvoiceLineExpand } from "../hooks/useInvoiceLineExpand";
+import { InvoiceLinesTable } from "./InvoiceLinesTable";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["b2b", "B2B Portal", KeyRound], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -250,6 +252,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   });
   const colState = useSortableColumns();
   const sortedInvoices = useSortedRows(data?.invoices || [], colState.sort);
+  const {
+    isOpen: invLinesOpen,
+    toggle: toggleInvLines,
+    itemsFor: itemsForInv,
+    loadingId: invLinesLoadingId,
+  } = useInvoiceLineExpand();
+  const detailInvColSpan = colState.cols.length + 2;
   const closeInvCtx = React.useCallback(() => setInvCtx(null), []);
   // Fatura işlemleri ⋮ düğmesinden açılır (sağ tık hızlı menüye ayrıldı).
   const openInvCtxFromButton = (e, inv) => {
@@ -788,10 +797,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>); })()}
           {tab === "invoices" && (
             <table className="w-full text-left">
-              <SortableHeader {...colState} />
+              <SortableHeader {...colState} leading={<th className="py-2 w-8" aria-hidden="true" />} />
               <tbody className="divide-y divide-slate-100">
-                {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const cells = {
+                {data.invoices.length === 0 && <tr><td colSpan={detailInvColSpan} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
+                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => openEditInvoice(inv)} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
@@ -799,7 +808,22 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
                     payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDisp ? "bg-slate-100 text-slate-600" : inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{isDisp ? "Bakiye yok" : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
                   }; return (
-                  <tr key={inv.id} className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
+                  <React.Fragment key={inv.id || inv.invoice_number}>
+                  <tr className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
+                    <td className="py-2 w-8">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleInvLines(inv); }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onContextMenu={(e) => e.stopPropagation()}
+                        className="p-0.5 rounded text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                        title={linesOpen ? "Kalemleri gizle" : "Kalemleri göster"}
+                        aria-expanded={linesOpen}
+                        data-testid={`detail-inv-lines-toggle-${inv.invoice_number}`}
+                      >
+                        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${linesOpen ? "rotate-180 text-emerald-700" : ""}`} />
+                      </button>
+                    </td>
                     {colState.cols.map((k) => cells[k])}
                     <td className="py-2">
                       <div className="flex items-center justify-end gap-0.5">
@@ -836,6 +860,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                       </div>
                     </td>
                   </tr>
+                  {linesOpen && (
+                    <tr className="bg-slate-50/80" data-testid={`detail-inv-lines-row-${inv.invoice_number}`}>
+                      <td colSpan={detailInvColSpan} className="px-4 py-3 border-t border-slate-100">
+                        <InvoiceLinesTable inv={inv} items={lineItems} loading={linesLoading} prefix="detail-inv" />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ); })}
               </tbody>
             </table>

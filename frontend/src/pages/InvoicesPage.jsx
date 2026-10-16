@@ -63,6 +63,8 @@ import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduc
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { useInvoiceLineExpand } from "../hooks/useInvoiceLineExpand";
+import { InvoiceLinesTable } from "../components/InvoiceLinesTable";
 import { useEinvoiceIntegrator } from "../hooks/useEinvoiceIntegrator";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
@@ -245,9 +247,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [bulkBusy, setBulkBusy] = useState(false);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [installmentInv, setInstallmentInv] = useState(null);
-  const [expandedInvId, setExpandedInvId] = useState(null);
-  const [expandedItemsById, setExpandedItemsById] = useState({});
-  const [expandLoadingId, setExpandLoadingId] = useState(null);
+  const {
+    isOpen: invLinesOpen,
+    toggle: toggleInvLines,
+    itemsFor: itemsForInv,
+    loadingId: expandLoadingId,
+    setItems: setExpandedItems,
+  } = useInvoiceLineExpand();
   const [lineMatchBusy, setLineMatchBusy] = useState("");
   const closeCtx = React.useCallback(() => setCtxMenu(null), []);
   const openCtxFromButton = (e, inv) => {
@@ -266,40 +272,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const allVisibleSelected = visibleSelIds.length > 0 && visibleSelIds.every((id) => selected.includes(id));
   const someVisibleSelected = visibleSelIds.some((id) => selected.includes(id));
   const toggleSelectAllVisible = () => setSelected(allVisibleSelected ? [] : visibleSelIds);
-  const itemsForInv = (inv) => {
-    const id = invRowId(inv);
-    if (Array.isArray(inv?.items) && inv.items.length) return inv.items;
-    if (Array.isArray(expandedItemsById[id])) return expandedItemsById[id];
-    return [];
-  };
-  const toggleInvLines = async (inv) => {
-    const id = invRowId(inv);
-    if (!id) return;
-    if (expandedInvId === id) {
-      setExpandedInvId(null);
-      return;
-    }
-    setExpandedInvId(id);
-    const have = (Array.isArray(inv.items) && inv.items.length) || Array.isArray(expandedItemsById[id]);
-    if (have) return;
-    setExpandLoadingId(id);
-    try {
-      const url = inv._is_quote ? `${API_URL}/quotes/${id}` : `${API_URL}/invoices/${id}`;
-      const r = await axios.get(url);
-      const items = Array.isArray(r.data?.items) ? r.data.items : [];
-      setExpandedItemsById((prev) => ({ ...prev, [id]: items }));
-    } catch {
-      toast.error("Kalemler yüklenemedi.");
-      setExpandedItemsById((prev) => ({ ...prev, [id]: [] }));
-    } finally {
-      setExpandLoadingId(null);
-    }
-  };
-
   const applyMatchedInvoice = (invId, invoice) => {
     if (!invoice) return;
     const items = Array.isArray(invoice.items) ? invoice.items : [];
-    setExpandedItemsById((prev) => ({ ...prev, [invId]: items }));
+    setExpandedItems(invId, items);
     setInvoices((prev) => prev.map((row) => {
       const rid = invRowId(row);
       if (rid !== invId) return row;
@@ -1502,7 +1478,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               ) : (
                 pagedInvoices.map((inv) => {
                   const rowId = invRowId(inv);
-                  const linesOpen = expandedInvId === rowId;
+                  const linesOpen = invLinesOpen(rowId);
                   const lineItems = linesOpen ? itemsForInv(inv) : [];
                   const linesLoading = expandLoadingId === rowId;
                   return (
@@ -1795,94 +1771,70 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   {linesOpen && (
                     <tr className="bg-slate-50/80" data-testid={`inv-lines-row-${inv.invoice_number}`}>
                       <td colSpan={8} className="px-4 py-3 border-t border-slate-100">
-                        {linesLoading ? (
-                          <div className="text-[11px] text-slate-400 pl-6">Kalemler yükleniyor…</div>
-                        ) : lineItems.length === 0 ? (
-                          <div className="text-[11px] text-slate-400 pl-6" data-testid={`inv-lines-empty-${inv.invoice_number}`}>Bu belgede kalem yok.</div>
-                        ) : (
-                          <div className="pl-6 space-y-2 overflow-x-auto">
-                            {canMatchIncomingProducts(inv) && unmatchedIncomingLineCount(lineItems) > 0 && (
-                              <div
-                                className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
-                                data-testid={`inv-stock-match-bar-${inv.invoice_number}`}
+                        <InvoiceLinesTable
+                          inv={inv}
+                          items={lineItems}
+                          loading={linesLoading}
+                          prefix="inv"
+                          topSlot={canMatchIncomingProducts(inv) && unmatchedIncomingLineCount(lineItems) > 0 ? (
+                            <div
+                              className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
+                              data-testid={`inv-stock-match-bar-${inv.invoice_number}`}
+                            >
+                              <PackagePlus className="w-4 h-4 text-amber-700 shrink-0" />
+                              <span className="text-[11px] text-amber-900 flex-1">
+                                {unmatchedIncomingLineCount(lineItems)} satır stok kartıyla eşleşmedi. Satırdan seçin veya kart oluşturun.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => createMissingIncomingProducts(inv)}
+                                disabled={!!lineMatchBusy}
+                                className="px-3 py-1.5 bg-amber-700 text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                                data-testid={`inv-create-missing-products-${inv.invoice_number}`}
                               >
-                                <PackagePlus className="w-4 h-4 text-amber-700 shrink-0" />
-                                <span className="text-[11px] text-amber-900 flex-1">
-                                  {unmatchedIncomingLineCount(lineItems)} satır stok kartıyla eşleşmedi. Satırdan seçin veya kart oluşturun.
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => createMissingIncomingProducts(inv)}
-                                  disabled={!!lineMatchBusy}
-                                  className="px-3 py-1.5 bg-amber-700 text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
-                                  data-testid={`inv-create-missing-products-${inv.invoice_number}`}
-                                >
-                                  {lineMatchBusy === `${rowId}:create-all` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackagePlus className="w-3.5 h-3.5" />}
-                                  Eşleşmeyenlere stok kartı oluştur
-                                </button>
+                                {lineMatchBusy === `${rowId}:create-all` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackagePlus className="w-3.5 h-3.5" />}
+                                Eşleşmeyenlere stok kartı oluştur
+                              </button>
+                            </div>
+                          ) : null}
+                          extraHeader={canMatchIncomingProducts(inv) ? (
+                            <th className="py-1 pl-2 text-left font-semibold w-64">Stok Kartı</th>
+                          ) : null}
+                          renderExtraCell={canMatchIncomingProducts(inv) ? (it, i) => (
+                            <td className="py-1.5 pl-2">
+                              <div className="flex items-center gap-1 min-w-[14rem]">
+                                <div className="flex-1 min-w-0">
+                                  <SearchSelect
+                                    value={it.product_id || ""}
+                                    options={products}
+                                    getLabel={(p) => p.name}
+                                    getSub={(p) => `${p.sku || ""} · stok ${p.stock_quantity ?? "-"}`}
+                                    valueLabel={it.matched_product_name || products.find((p) => (p.id || p._id) === it.product_id)?.name || ""}
+                                    placeholder="Stok kartı seç…"
+                                    clearable
+                                    clearLabel="Eşleştirmeyi kaldır"
+                                    onChange={(pid) => matchIncomingLine(inv, i, pid || null)}
+                                    testId={`inv-line-select-${inv.invoice_number}-${i}`}
+                                  />
+                                </div>
+                                {!it.product_id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => createProductForIncomingLine(inv, i)}
+                                    disabled={!!lineMatchBusy}
+                                    className="p-1.5 bg-emerald-600 text-white rounded-lg disabled:opacity-50"
+                                    title="Bu kalemden stok kartı aç"
+                                    data-testid={`inv-line-create-${inv.invoice_number}-${i}`}
+                                  >
+                                    {lineMatchBusy === `${rowId}:create:${i}`
+                                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      : <PackagePlus className="w-3.5 h-3.5" />}
+                                  </button>
+                                )}
                               </div>
-                            )}
-                            <table className="w-full text-[11px] text-slate-600" data-testid={`inv-lines-table-${inv.invoice_number}`}>
-                              <thead>
-                                <tr className="text-slate-400 uppercase text-[10px]">
-                                  <th className="py-1 pr-3 text-left font-semibold">Ürün / Hizmet</th>
-                                  <th className="py-1 px-2 text-center font-semibold w-20">Miktar</th>
-                                  <th className="py-1 px-2 text-right font-semibold w-28">Birim</th>
-                                  <th className="py-1 px-2 text-center font-semibold w-14">KDV</th>
-                                  <th className="py-1 px-2 text-right font-semibold w-28">Tutar</th>
-                                  {canMatchIncomingProducts(inv) && (
-                                    <th className="py-1 pl-2 text-left font-semibold w-64">Stok Kartı</th>
-                                  )}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100">
-                                {lineItems.map((it, i) => (
-                                  <tr key={i} data-testid={`inv-line-${inv.invoice_number}-${i}`}>
-                                    <td className="py-1.5 pr-3 font-medium text-slate-800">{it.name || it.description || "—"}{it.sku ? <span className="ml-1.5 font-mono text-[10px] text-slate-400">{it.sku}</span> : null}</td>
-                                    <td className="py-1.5 px-2 text-center whitespace-nowrap">{it.quantity} {it.unit || ""}</td>
-                                    <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoney(it.unit_price, inv.currency || "TRY")}</td>
-                                    <td className="py-1.5 px-2 text-center">%{it.vat_rate ?? 0}</td>
-                                    <td className="py-1.5 px-2 text-right font-semibold text-slate-900 whitespace-nowrap">{fmtMoney(it.total_incl ?? it.total, inv.currency || "TRY")}</td>
-                                    {canMatchIncomingProducts(inv) && (
-                                      <td className="py-1.5 pl-2">
-                                        <div className="flex items-center gap-1 min-w-[14rem]">
-                                          <div className="flex-1 min-w-0">
-                                            <SearchSelect
-                                              value={it.product_id || ""}
-                                              options={products}
-                                              getLabel={(p) => p.name}
-                                              getSub={(p) => `${p.sku || ""} · stok ${p.stock_quantity ?? "-"}`}
-                                              valueLabel={it.matched_product_name || products.find((p) => (p.id || p._id) === it.product_id)?.name || ""}
-                                              placeholder="Stok kartı seç…"
-                                              clearable
-                                              clearLabel="Eşleştirmeyi kaldır"
-                                              onChange={(pid) => matchIncomingLine(inv, i, pid || null)}
-                                              testId={`inv-line-select-${inv.invoice_number}-${i}`}
-                                            />
-                                          </div>
-                                          {!it.product_id && (
-                                            <button
-                                              type="button"
-                                              onClick={() => createProductForIncomingLine(inv, i)}
-                                              disabled={!!lineMatchBusy}
-                                              className="p-1.5 bg-emerald-600 text-white rounded-lg disabled:opacity-50"
-                                              title="Bu kalemden stok kartı aç"
-                                              data-testid={`inv-line-create-${inv.invoice_number}-${i}`}
-                                            >
-                                              {lineMatchBusy === `${rowId}:create:${i}`
-                                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                : <PackagePlus className="w-3.5 h-3.5" />}
-                                            </button>
-                                          )}
-                                        </div>
-                                      </td>
-                                    )}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
+                            </td>
+                          ) : undefined}
+                        />
                       </td>
                     </tr>
                   )}

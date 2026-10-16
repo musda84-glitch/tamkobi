@@ -27,13 +27,14 @@ export const sortRows = (rows, sort) => {
   return [...rows].sort((a, b) => { const x = val(a), y = val(b); const r = typeof x === "number" ? x - y : String(x).localeCompare(String(y), "tr"); return sort.dir === "asc" ? r : -r; });
 };
 
-export const SortableHeader = ({ cols, sort, move, reset, toggleSort, extra }) => {
+export const SortableHeader = ({ cols, sort, move, reset, toggleSort, extra, leading = null }) => {
   const [drag, setDrag] = useState(null);
   const [over, setOver] = useState(null);
   const isDefault = cols.join() === DEFAULT_COLS.join() && sort.key === "date" && sort.dir === "desc";
   return (
     <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b select-none">
       <tr>
+        {leading}
         {cols.map((k) => (
           <th key={k} draggable onDragStart={() => setDrag(k)} onDragOver={(e) => { e.preventDefault(); setOver(k); }} onDragLeave={() => setOver(null)} onDrop={() => { if (drag) move(drag, k); setDrag(null); setOver(null); }} onDragEnd={() => { setDrag(null); setOver(null); }}
             className={`py-2 pr-2 cursor-grab active:cursor-grabbing group ${k === "amount" ? "text-right" : ""} ${over === k && drag !== k ? "bg-emerald-50 border-l-2 border-emerald-500" : ""} ${drag === k ? "opacity-40" : ""}`} title="Sıralamak için tıkla, yerini değiştirmek için sürükle" data-testid={`detail-inv-col-${k}`}>
