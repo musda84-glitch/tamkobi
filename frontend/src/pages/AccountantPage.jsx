@@ -55,8 +55,20 @@ export default function AccountantPage() {
       a.download = `ebelge_yedek_${dateFrom}_${dateTo}.zip`;
       a.click();
       URL.revokeObjectURL(a.href);
-      const n = preview?.invoice_count ?? 0;
-      toast.success(n ? `${n} belgenin XML/PDF yedeği indirildi.` : "Aralıkta belge yok; boş arşiv indirildi.");
+      const headerCount = (name) => {
+        const h = r.headers;
+        if (!h) return undefined;
+        if (typeof h.get === "function") {
+          const v = h.get(name);
+          if (v != null && v !== "") return v;
+        }
+        return h[name] ?? h[name.toLowerCase()];
+      };
+      const n = Number(headerCount("x-invoice-count") ?? preview?.invoice_count ?? 0);
+      const integ = headerCount("x-integrator-count");
+      const local = headerCount("x-local-count");
+      const summary = integ != null || local != null ? ` Entegratör: ${integ ?? 0}, yerel: ${local ?? 0}.` : "";
+      toast.success(n ? `${n} belgenin XML/PDF yedeği indirildi.${summary}` : `Aralıkta belge yok; boş arşiv indirildi.${summary}`);
       const p = await axios.get(`${API_URL}/accountant/edocs`, { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo } });
       setPreview(p.data);
     } catch (e) {
@@ -78,7 +90,7 @@ export default function AccountantPage() {
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <div className="flex items-center gap-2 font-bold text-indigo-700 text-xs"><Archive className="w-4 h-4" /> e-Belge yedekleme (XML + PDF)</div>
-            <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">Giden e-Fatura / e-Arşiv XML ve tüm faturaların PDF kopyasını tarih aralığıyla ZIP olarak indirin. Aralık en fazla {MAX_BACKUP_DAYS} gündür. Yedek {MAX_BACKUP_DAYS} günden eskiyse sistem şirket yöneticilerine bildirim ve e-posta hatırlatması gönderir.</p>
+            <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">GİB'e iletilmiş e-Fatura, e-Arşiv ve e-İhracat belgelerinin XML ve PDF kopyasını (giden ve gelen) tarih aralığıyla ZIP olarak indirin. Önce entegratördeki resmi belge alınır; yoksa yerel kopya kullanılır. Aralık en fazla {MAX_BACKUP_DAYS} gündür. Yedek {MAX_BACKUP_DAYS} günden eskiyse sistem şirket yöneticilerine bildirim ve e-posta hatırlatması gönderir.</p>
           </div>
           <button onClick={downloadZip} disabled={busy || !rangeOk} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold disabled:opacity-50" data-testid="acc-edoc-download">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} XML + PDF indir
@@ -93,6 +105,8 @@ export default function AccountantPage() {
           <span>Belge: <b>{preview?.invoice_count ?? "—"}</b></span>
           <span>XML: <b>{preview?.xml_count ?? "—"}</b></span>
           <span>PDF: <b>{preview?.pdf_count ?? "—"}</b></span>
+          <span data-testid="acc-edoc-integrator">Entegratörden alınacak: <b>{preview?.integrator_count ?? "—"}</b></span>
+          <span data-testid="acc-edoc-local">Yerel: <b>{preview?.local_count ?? "—"}</b></span>
           <span>Son yedek: <b>{last?.created_at ? last.created_at.slice(0, 10) : "alınmadı"}</b>{last ? ` (${last.date_from}–${last.date_to}, ${last.invoice_count} belge)` : ""}</span>
           {preview?.reminder_due && <span className="text-amber-700 font-semibold">Hatırlatma bekleniyor</span>}
         </div>

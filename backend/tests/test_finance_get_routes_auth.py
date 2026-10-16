@@ -291,10 +291,11 @@ def _seed(db):
          "username": "NEXUS-ONLY", "password_enc": "NEXUS-KEY"},
     ])
     db.invoices.docs.extend([
-        {"_id": "invA", "company_id": COMP_A, "invoice_type": "sales", "status": "issued", "e_type": "paper",
-         "invoice_number": "A-1", "issue_date": "2026-10-05", "contact_id": "ctA", "contact_name": "Cari A",
+        {"_id": "invA", "company_id": COMP_A, "invoice_type": "sales", "status": "issued", "e_type": "e_archive",
+         "einvoice_state": "sent", "gib_uuid": "11111111-1111-1111-1111-111111111111",
+         "invoice_number": "A-1", "issue_date": "2026-10-02", "contact_id": "ctA", "contact_name": "Cari A",
          "subtotal": 100, "vat_total": 20, "grand_total": 120, "paid_amount": 20, "payment_status": "partial",
-         "gib_status": "", "items": [{"vat_rate": 20, "total": 100, "name": "Kalem", "quantity": 1, "unit_price": 100}]},
+         "gib_status": "İletildi", "items": [{"vat_rate": 20, "total": 100, "name": "Kalem", "quantity": 1, "unit_price": 100}]},
         {"_id": "invP", "company_id": COMP_A, "invoice_type": "purchase", "status": "issued", "e_type": "paper",
          "invoice_number": "P-1", "issue_date": "2026-10-01", "contact_id": "ctA", "contact_name": "Tedarik",
          "subtotal": 50, "vat_total": 10, "grand_total": 60, "paid_amount": 0, "payment_status": "unpaid",
@@ -311,9 +312,22 @@ def _seed(db):
         {"_id": "invB2", "company_id": COMP_B, "invoice_type": "sales", "status": "issued", "e_type": "paper",
          "invoice_number": "B-SECRET-2", "issue_date": "2026-10-01", "contact_name": "B-SECRET", "subtotal": 8,
          "vat_total": 0, "grand_total": 8, "paid_amount": 0, "payment_status": "unpaid", "items": []},
+        {"_id": "invBedoc", "company_id": COMP_B, "invoice_type": "sales", "status": "approved", "e_type": "e_archive",
+         "einvoice_state": "sent", "gib_uuid": "22222222-2222-2222-2222-222222222222",
+         "invoice_number": "B-EDOC", "issue_date": "2026-10-02", "contact_name": "B-SECRET", "subtotal": 0,
+         "vat_total": 0, "grand_total": 0, "paid_amount": 0, "payment_status": "paid", "gib_status": "İletildi", "items": []},
+        {"_id": "invB2edoc", "company_id": COMP_B, "invoice_type": "sales", "status": "issued", "e_type": "e_archive",
+         "einvoice_state": "sent", "gib_uuid": "33333333-3333-3333-3333-333333333333",
+         "gib_tracking_id": "GIB-SIM-B2",
+         "invoice_number": "B-EDOC-2", "issue_date": "2026-10-01", "contact_name": "B-SECRET", "subtotal": 0,
+         "vat_total": 0, "grand_total": 0, "paid_amount": 0, "payment_status": "paid", "gib_status": "İletildi", "items": []},
         {"_id": "invN", "company_id": NEXUS, "invoice_type": "sales", "status": "issued", "e_type": "paper",
          "invoice_number": "NEXUS-ONLY", "issue_date": "2026-10-02", "contact_name": "NEXUS-ONLY", "subtotal": 1,
          "vat_total": 0, "grand_total": 1, "paid_amount": 0, "payment_status": "unpaid", "items": []},
+        {"_id": "invNedoc", "company_id": NEXUS, "invoice_type": "sales", "status": "issued", "e_type": "e_archive",
+         "einvoice_state": "sent", "gib_uuid": "44444444-4444-4444-4444-444444444444",
+         "invoice_number": "NEXUS-EDOC", "issue_date": "2026-10-02", "contact_name": "NEXUS-ONLY", "subtotal": 0,
+         "vat_total": 0, "grand_total": 0, "paid_amount": 0, "payment_status": "paid", "gib_status": "İletildi", "items": []},
     ])
     db.incoming_edocs.docs.extend([
         {"_id": "edA", "company_id": COMP_A, "status": "pending", "received_at": "2026-10-02T00:00:00",
@@ -602,8 +616,11 @@ def api():
     client = TestClient(server.app)
     entered = False
     balance = AsyncMock(return_value={"remaining_credit": "42", "balance": "42", "message": "OK"})
+    no_remote = AsyncMock(return_value=None)
     try:
-        with patch.object(e_invoice.isnet, "get_company_balance", balance):
+        with patch.object(e_invoice.isnet, "get_company_balance", balance), \
+             patch.object(e_invoice, "fetch_integrator_xml", no_remote), \
+             patch.object(e_invoice, "fetch_integrator_pdf", no_remote):
             client.__enter__()
             entered = True
             yield client, db, balance
@@ -836,8 +853,10 @@ def test_happy_path_matches_legacy_shape(api):
     assert preview.json()["days"] == 2
     assert preview.json()["max_days"] == 62
     assert preview.json()["invoice_count"] == 1
-    assert preview.json()["xml_count"] == 0
+    assert preview.json()["xml_count"] == 1
     assert preview.json()["pdf_count"] == 1
+    assert preview.json()["integrator_count"] == 1
+    assert preview.json()["local_count"] == 0
     assert preview.json()["last_backup"] is None
     assert preview.json()["reminder_due"] is True
     assert preview.json() == _run(edoc_backup.edocs_preview(company_id=COMP_A, user=user_a, **RANGE))
@@ -919,16 +938,20 @@ def test_download_headers_body_and_cookie_session(api):
     assert zipped.headers["content-type"].startswith("application/zip")
     assert zipped.headers["content-disposition"] == 'attachment; filename="ebelge_yedek_2026-10-01_2026-10-02.zip"'
     assert zipped.headers["x-invoice-count"] == "1"
-    assert zipped.headers["x-xml-count"] == "0"
+    assert zipped.headers["x-xml-count"] == "1"
     assert zipped.headers["x-pdf-count"] == "1"
+    assert zipped.headers["x-integrator-count"] == "0"
+    assert zipped.headers["x-local-count"] == "2"
     assert b"B-SECRET" not in zipped.content
     assert b"NEXUS-ONLY" not in zipped.content
     archive = zipfile.ZipFile(io.BytesIO(zipped.content))
     manifest = archive.read("MANIFEST.txt").decode()
     assert "TamKobi e-belge yedek 2026-10-01 … 2026-10-02" in manifest
-    assert "P-1" in manifest
-    assert "A-1" not in manifest
-    assert any(name.startswith("pdf/") and name.endswith(".pdf") for name in archive.namelist())
+    assert "A-1_YEREL" in manifest
+    assert "kaynak=local" in manifest
+    assert "P-1" not in manifest
+    assert any(name.startswith("giden/pdf/") and name.endswith(".pdf") for name in archive.namelist())
+    assert any(name.startswith("giden/xml/") and name.endswith(".xml") for name in archive.namelist())
 
     zip_cookie = client.get("/api/accountant/edocs/export", params=zip_params, cookies={"access_token": _token("user-a")})
     assert zip_cookie.status_code == 200, zip_cookie.text

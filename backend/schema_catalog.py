@@ -874,7 +874,7 @@ COLLECTIONS = {
     "edoc_backups": {
         "scope": SCOPE_TENANT,
         "description": "Muhasebeci e-belge XML/PDF yedek kayıtları.",
-        "keys": ("_id", "company_id", "date_from", "date_to", "xml_count", "pdf_count"),
+        "keys": ("_id", "company_id", "date_from", "date_to", "xml_count", "pdf_count", "integrator_count", "local_count"),
         "refs": ("companies._id",),
     },
     "edoc_backup_reminders": {
