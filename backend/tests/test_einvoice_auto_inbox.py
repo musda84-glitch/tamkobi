@@ -159,7 +159,7 @@ class TestPullAndProcess:
             with patch.object(server.db.einvoice_settings, "find_one", AsyncMock(return_value=settings)), patch.object(
                 server, "pull_einvoice_incoming", AsyncMock(return_value={"status": "success", "pulled": 1, "message": "1 alındı."})
             ), patch.object(server.edocs, "process_pending_for_company", AsyncMock()) as proc:
-                result = await server.sync_einvoice_incoming(company_id="comp1", days=14)
+                result = await server.sync_einvoice_incoming(company_id="comp1", days=14, user={"company_ids": ["comp1"], "active_company_id": "comp1", "role": "admin"})
                 proc.assert_not_called()
                 return result
 
@@ -179,7 +179,7 @@ class TestPullAndProcess:
                 "process_pending_for_company",
                 AsyncMock(return_value={"processed": 2, "failed": [], "message": "2 belge içeri alındı."}),
             ):
-                return await server.sync_einvoice_incoming(company_id="comp1", days=14)
+                return await server.sync_einvoice_incoming(company_id="comp1", days=14, user={"company_ids": ["comp1"], "active_company_id": "comp1", "role": "admin"})
 
         result = asyncio.get_event_loop().run_until_complete(_run())
         assert result["processed"] == 2
@@ -194,7 +194,7 @@ class TestPullAndProcess:
             with patch.object(server.db.einvoice_settings, "find_one", AsyncMock(return_value=settings)), patch.object(
                 server, "pull_einvoice_incoming", AsyncMock(return_value={"status": "success", "pulled": 0, "message": "yok."})
             ), patch.object(server.edocs, "process_pending_for_company", AsyncMock()) as proc:
-                result = await server.sync_einvoice_incoming(company_id="comp1", days=14, auto_process=False)
+                result = await server.sync_einvoice_incoming(company_id="comp1", days=14, auto_process=False, user={"company_ids": ["comp1"], "active_company_id": "comp1", "role": "admin"})
                 proc.assert_not_called()
                 return result
 

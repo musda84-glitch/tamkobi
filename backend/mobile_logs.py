@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import tenant_access
 
@@ -52,10 +52,14 @@ def _user_companies(user: dict) -> set:
     return {str(x) for x in ids if x}
 
 
-async def _require_company_user(request: Request, company_id: str) -> dict:
+async def _user_dep(request: Request) -> dict:
     if not _current_user:
         raise HTTPException(status_code=500, detail="Auth yapılandırılmadı.")
-    user = await _current_user(request)
+    return await _current_user(request)
+
+
+async def _require_company_user(request: Request, company_id: str) -> dict:
+    user = await _user_dep(request)
     if not tenant_access.user_may_access_company(user, company_id):
         raise HTTPException(status_code=403, detail="Bu şirketin loglarına erişim yok.")
     return user
@@ -132,18 +136,17 @@ async def create_mobile_log(req: Dict[str, Any], request: Request):
 
 
 @router.delete("/logs/{log_id}")
-async def delete_mobile_log(log_id: str, request: Request, company_id: str = "comp_nexus_main_01"):
-    user = await _require_company_user(request, company_id)
+async def delete_mobile_log(log_id: str, company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     rec = await tenant_access.get_tenant_doc(_db, COLLECTION, log_id, user, not_found="Log bulunamadı.")
-    if rec.get("company_id") != company_id:
+    if rec.get("company_id") != cid:
         raise HTTPException(status_code=404, detail="Log bulunamadı.")
     await _db[COLLECTION].delete_one({"_id": log_id})
     return {"status": "success", "message": "Log silindi."}
 
 
 @router.post("/logs/empty")
-async def empty_mobile_logs(req: Dict[str, Any], request: Request):
-    company_id = str(req.get("company_id") or "").strip() or "comp_nexus_main_01"
-    await _require_company_user(request, company_id)
-    r = await _db[COLLECTION].delete_many({"company_id": company_id})
+async def empty_mobile_logs(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    r = await _db[COLLECTION].delete_many({"company_id": cid})
     return {"status": "success", "deleted": int(r.deleted_count or 0), "message": f"{int(r.deleted_count or 0)} mobil log silindi."}
