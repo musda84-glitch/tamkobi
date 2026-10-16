@@ -399,7 +399,7 @@ def test_route_is_separate_from_legacy_list_and_requires_user():
                 await server.list_invoices_page(company_id=CID, page=1, page_size=10, user=user_b)
             except HTTPException as exc:
                 denied = exc.status_code
-            legacy_rows = await server.list_invoices(company_id=CID)
+            legacy_rows = await server.list_invoices(company_id=CID, user=user_a)
             return body, ids_body, denied, legacy_rows, list(db.writes)
 
     body, ids_body, denied, legacy_rows, writes = _run(_go())

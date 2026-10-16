@@ -467,7 +467,12 @@ def test_planner_pushes_list_queries_and_rejects_partial_filters():
 
 def test_list_endpoint_source_still_uses_the_pushable_read():
     src = Path(__file__).resolve().parents[1].joinpath("server.py").read_text(encoding="utf-8")
-    assert 'db.invoices.find(query).sort("created_at", -1).to_list(1000)' in src
+    start = src.index("async def list_invoices(")
+    body = src[start:src.index("def _invoice_query_text", start)]
+    # Cap is 1000 unless the caller passes limit (clamped to 5000). The read stays
+    # find + created_at desc + to_list so the SQL pushdown planner still applies.
+    assert 'db.invoices.find(query).sort("created_at", -1).to_list(' in body
+    assert "resolve_company_id" in body
     assert 'db.bank_transactions.find(query).sort("date", -1).to_list(2000)' in src
 
 
