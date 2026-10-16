@@ -180,31 +180,41 @@ def render_text(s: Dict[str, Any], company_name: str) -> str:
     return "\n".join(lines)
 
 
-@router.get("/reports/morning-summary/settings")
-async def get_summary_settings(company_id: str = "comp_nexus_main_01"):
+async def summary_settings_payload(company_id: str):
     d = await _db.morning_summary_settings.find_one({"company_id": company_id}) or {}
     return {**DEFAULT_SUMMARY, **{k: d[k] for k in DEFAULT_SUMMARY if k in d}, "last_sent": d.get("last_sent"), "last_result": d.get("last_result")}
 
 
-@router.put("/reports/morning-summary/settings")
-async def put_summary_settings(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    upd = {k: req.get(k, DEFAULT_SUMMARY[k]) for k in DEFAULT_SUMMARY}
-    upd["emails"] = [e.strip().lower() for e in (upd["emails"] or []) if e and "@" in e]
-    upd["whatsapp_numbers"] = [n for n in (comm_service.normalize_phone(x) for x in (upd["whatsapp_numbers"] or [])) if n]
-    await _db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": upd, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
-    return await get_summary_settings(company_id)
-
-
-@router.get("/reports/morning-summary/preview")
-async def preview_summary(company_id: str = "comp_nexus_main_01"):
+async def summary_preview_payload(company_id: str):
     s = await build_summary(company_id)
     comp = await _db.companies.find_one({"_id": company_id}) or {}
     return {"summary": s, "text": render_text(s, comp.get("name") or "TamKobi")}
 
 
+@router.get("/reports/morning-summary/settings")
+async def get_summary_settings(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await summary_settings_payload(cid)
+
+
+@router.put("/reports/morning-summary/settings")
+async def put_summary_settings(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    upd = {k: req.get(k, DEFAULT_SUMMARY[k]) for k in DEFAULT_SUMMARY}
+    upd["emails"] = [e.strip().lower() for e in (upd["emails"] or []) if e and "@" in e]
+    upd["whatsapp_numbers"] = [n for n in (comm_service.normalize_phone(x) for x in (upd["whatsapp_numbers"] or [])) if n]
+    await _db.morning_summary_settings.update_one({"company_id": cid}, {"$set": upd, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": cid}}, upsert=True)
+    return await summary_settings_payload(cid)
+
+
+@router.get("/reports/morning-summary/preview")
+async def preview_summary(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await summary_preview_payload(cid)
+
+
 async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
-    st = await get_summary_settings(company_id)
+    st = await summary_settings_payload(company_id)
     s = await build_summary(company_id)
     comp = await _db.companies.find_one({"_id": company_id}) or {}
     text = render_text(s, comp.get("name") or "TamKobi")
@@ -240,8 +250,9 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
 
 
 @router.post("/reports/morning-summary/send")
-async def send_summary_now(req: Dict[str, Any]):
-    return await send_summary(req.get("company_id", "comp_nexus_main_01"), manual=True)
+async def send_summary_now(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    return await send_summary(cid, manual=True)
 
 
 async def scheduler_loop():

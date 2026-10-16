@@ -10839,11 +10839,12 @@ _INV_REPORT_PROJ = {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_
 
 
 @api_router.get("/reports/{kind}")
-async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, group: Optional[str] = "contact"):
+async def get_report(kind: str, company_id: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, group: Optional[str] = "contact", user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     R = lambda v: round(float(v or 0), 2)
     if kind in ("sales", "purchases", "vat", "profit"):
-        invs = await db.invoices.find(_issue_q(company_id, date_from, date_to), _INV_REPORT_PROJ).to_list(20000)
+        invs = await db.invoices.find(_issue_q(cid, date_from, date_to), _INV_REPORT_PROJ).to_list(20000)
     else:
         invs = []
     if kind in ("sales", "purchases"):
@@ -10868,9 +10869,9 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
         totals = {**tot, "open": R(tot["gross"] - tot["paid"])}
         return {"kind": kind, "group": group, "rows": rows, "totals": totals, "insights": _report_insights(kind, rows, totals)}
     if kind == "aging":
-        contacts = {c["_id"]: c for c in await db.contacts.find({"company_id": company_id}, {"phone": 1}).to_list(5000)}
+        contacts = {c["_id"]: c for c in await db.contacts.find({"company_id": cid}, {"phone": 1}).to_list(5000)}
         rows: Dict[str, Dict[str, Any]] = {}
-        for i in await db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, _INV_REPORT_PROJ).to_list(20000):
+        for i in await db.invoices.find({"company_id": cid, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, _INV_REPORT_PROJ).to_list(20000):
             rem = float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0))
             if rem <= 0.01:
                 continue
@@ -10884,13 +10885,13 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
         totals = {k: R(sum(r[k] for r in out if r["type"] == "receivable")) for k in keys}
         return {"kind": kind, "rows": out, "totals": totals, "totals_payable": {k: R(sum(r[k] for r in out if r["type"] == "payable")) for k in keys}, "insights": _report_insights(kind, out, totals)}
     if kind == "stock":
-        prods = await db.products.find({"company_id": company_id, "type": {"$ne": "service"}}, {"name": 1, "sku": 1, "category": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "purchase_price": 1, "sale_price": 1}).to_list(20000)
+        prods = await db.products.find({"company_id": cid, "type": {"$ne": "service"}}, {"name": 1, "sku": 1, "category": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "purchase_price": 1, "sale_price": 1}).to_list(20000)
         rows = [{"name": p.get("name"), "sku": p.get("sku"), "category": p.get("category"), "unit": p.get("unit"), "quantity": R(p.get("stock_quantity", 0)), "min": R(p.get("min_stock_alert", 0)), "cost": R(p.get("purchase_price", 0)), "price": R(p.get("sale_price", 0)), "cost_value": R(float(p.get("stock_quantity", 0)) * float(p.get("purchase_price", 0))), "sale_value": R(float(p.get("stock_quantity", 0)) * float(p.get("sale_price", 0))), "status": "critical" if float(p.get("stock_quantity", 0)) <= 0 else "low" if float(p.get("stock_quantity", 0)) <= float(p.get("min_stock_alert", 0) or 0) else "ok"} for p in prods]
         rows.sort(key=lambda r: -r["cost_value"])
         totals = {"count": len(rows), "cost_value": R(sum(r["cost_value"] for r in rows)), "sale_value": R(sum(r["sale_value"] for r in rows)), "critical": sum(1 for r in rows if r["status"] == "critical"), "low": sum(1 for r in rows if r["status"] == "low")}
         return {"kind": kind, "rows": rows, "totals": totals, "insights": _report_insights(kind, rows, totals)}
     if kind == "cashflow":
-        txq: Dict[str, Any] = {"company_id": company_id, "type": {"$ne": "transfer"}}
+        txq: Dict[str, Any] = {"company_id": cid, "type": {"$ne": "transfer"}}
         if date_from or date_to:
             rng = {}
             if date_from:
@@ -10909,8 +10910,8 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
             for x in (m, c):
                 x["inflow" if t.get("type") == "inflow" else "outflow"] += float(t.get("amount", 0)); x["net"] = x["inflow"] - x["outflow"]
         accounts, upcoming = await asyncio.gather(
-            db.bank_accounts.find({"company_id": company_id}, {"current_balance": 1}).to_list(2000),
-            db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"invoice_type": 1, "grand_total": 1, "paid_amount": 1}).to_list(20000),
+            db.bank_accounts.find({"company_id": cid}, {"current_balance": 1}).to_list(2000),
+            db.invoices.find({"company_id": cid, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"invoice_type": 1, "grand_total": 1, "paid_amount": 1}).to_list(20000),
         )
         rec = R(sum(float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0)) for i in upcoming if i.get("invoice_type") == "sales"))
         pay = R(sum(float(i.get("grand_total", 0)) - float(i.get("paid_amount", 0)) for i in upcoming if i.get("invoice_type") != "sales"))
@@ -10940,7 +10941,7 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
         totals = {k: R(sum(r[k] for r in rows)) for k in ("sales_net", "sales_vat", "purchase_net", "purchase_vat", "payable_vat")}
         return {"kind": kind, "rows": rows, "by_rate": [{k: (R(v) if isinstance(v, float) else v) for k, v in x.items()} for x in rates.values()], "totals": totals, "insights": _report_insights(kind, rows, totals)}
     if kind == "profit":
-        prods = {p["_id"]: p for p in await db.products.find({"company_id": company_id}, {"purchase_price": 1}).to_list(20000)}
+        prods = {p["_id"]: p for p in await db.products.find({"company_id": cid}, {"purchase_price": 1}).to_list(20000)}
         by: Dict[str, Dict[str, Any]] = {}
         for i in invs:
             if i.get("invoice_type") != "sales" or i.get("status") == "draft":
@@ -10953,7 +10954,7 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
                 x["profit"] = x["revenue"] - x["cost"]; x["margin"] = (x["profit"] / x["revenue"] * 100) if x["revenue"] else 0
         rows = sorted([{k: (R(v) if isinstance(v, float) else v) for k, v in x.items()} for x in by.values()], key=lambda r: -r["profit"])
         rev, cost = R(sum(r["revenue"] for r in rows)), R(sum(r["cost"] for r in rows))
-        eq: Dict[str, Any] = {"company_id": company_id}
+        eq: Dict[str, Any] = {"company_id": cid}
         if date_from or date_to:
             eq["date"] = {k: v for k, v in (("$gte", date_from), ("$lte", date_to)) if v}
         expenses_total = R(sum(e.get("amount", 0) for e in await db.expenses.find(eq, {"amount": 1}).to_list(10000)))
@@ -19764,10 +19765,13 @@ async def _fill_material_costs(materials: List[Dict[str, Any]]):
             if not m.get("cost_per_unit"):
                 m["cost_per_unit"] = float(p.get("purchase_price", 0) or 0)
 
-async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[str, Any]]:
+async def _requirements(recipe: Dict[str, Any], quantity: float, *, stock_company_id: Optional[str] = None) -> List[Dict[str, Any]]:
     mats = list(recipe.get("materials") or [])
     pids = [m.get("product_id") for m in mats if isinstance(m, dict) and m.get("product_id")]
-    products = await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) or 1) if pids else []
+    stock_q: Dict[str, Any] = {"_id": {"$in": pids}}
+    if stock_company_id:
+        stock_q["company_id"] = stock_company_id
+    products = await db.products.find(stock_q).to_list(len(pids) or 1) if pids else []
     by_id = {p["_id"]: p for p in products}
     scaled = pwo.recipe_materials_for_qty(recipe, quantity, products_by_id=by_id)
     rows = []
@@ -20119,11 +20123,12 @@ async def delete_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
     return {"status": "success", "message": "Reçete çöp kutusuna taşındı."}
 
 @api_router.get("/production/requirements")
-async def production_requirements(recipe_id: str, quantity: float = 1):
-    r = await db.recipes.find_one({"_id": recipe_id})
-    if not r:
+async def production_requirements(recipe_id: str, quantity: float = 1, company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    r = await tenant_access.get_tenant_doc(db, "recipes", recipe_id, user, not_found="Reçete bulunamadı.")
+    if str(r.get("company_id") or "") != str(cid):
         raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
-    rows = await _requirements(r, quantity)
+    rows = await _requirements(r, quantity, stock_company_id=r.get("company_id"))
     costs = _recipe_costs(r)
     return {"rows": rows, "total_material_cost": round(sum(x["cost"] for x in rows), 2), "estimated_total_cost": round(costs["unit_cost"] * quantity, 2), "has_shortage": any(x["shortage"] > 0 for x in rows), "unit_cost": costs["unit_cost"]}
 
