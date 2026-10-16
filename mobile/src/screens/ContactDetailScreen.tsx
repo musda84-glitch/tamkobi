@@ -140,6 +140,13 @@ export function ContactDetailScreen() {
   const [infoOpen, setInfoOpen] = useState(false);
   const [moreActions, setMoreActions] = useState(false);
   const [openInvRow, setOpenInvRow] = useState<string | null>(null);
+  const [openLineId, setOpenLineId] = useState<string | null>(null);
+  const [lineItemsById, setLineItemsById] = useState<Record<string, Array<Record<string, unknown>>>>({});
+  const [lineLoadingId, setLineLoadingId] = useState<string | null>(null);
+  const [lineErrorById, setLineErrorById] = useState<Record<string, true>>({});
+  const openLineRef = useRef<string | null>(null);
+  const lineItemsRef = useRef<Record<string, Array<Record<string, unknown>>>>({});
+  const lineInflightRef = useRef<Set<string>>(new Set());
   const [lightProjects, setLightProjects] = useState<ProjectDoc[] | null>(null);
   const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
 
@@ -210,6 +217,46 @@ export function ContactDetailScreen() {
   const infoRows = useMemo(() => contactInfoRows(c), [c]);
   const summaryRows = useMemo(() => contactSummaryRows(summary), [summary]);
   const invoices = data?.invoices || [];
+
+  const toggleInvoiceLines = async (inv: { id?: string; _id?: string; invoice_number?: string; items?: unknown; _is_quote?: boolean }) => {
+    const id = String(inv?.id || inv?._id || inv?.invoice_number || "");
+    if (!id) return;
+    if (openLineRef.current === id) {
+      openLineRef.current = null;
+      setOpenLineId(null);
+      return;
+    }
+    openLineRef.current = id;
+    setOpenLineId(id);
+    const embedded = Array.isArray(inv.items) && inv.items.length ? (inv.items as Array<Record<string, unknown>>) : null;
+    if (embedded || Array.isArray(lineItemsRef.current[id])) return;
+    if (lineInflightRef.current.has(id)) {
+      setLineLoadingId(id);
+      return;
+    }
+    lineInflightRef.current.add(id);
+    setLineLoadingId(id);
+    try {
+      const path = inv._is_quote ? `/quotes/${id}` : `/invoices/${id}`;
+      const doc = await get<{ items?: Array<Record<string, unknown>> }>(client, path);
+      const items = Array.isArray(doc?.items) ? doc.items : [];
+      lineItemsRef.current = { ...lineItemsRef.current, [id]: items };
+      setLineItemsById((prev) => ({ ...prev, [id]: items }));
+      setLineErrorById((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch {
+      lineItemsRef.current = { ...lineItemsRef.current, [id]: [] };
+      setLineItemsById((prev) => ({ ...prev, [id]: [] }));
+      setLineErrorById((prev) => ({ ...prev, [id]: true }));
+    } finally {
+      lineInflightRef.current.delete(id);
+      setLineLoadingId((cur) => (cur === id ? null : cur));
+    }
+  };
   const payments = data?.payments || [];
   const orders = data?.orders || [];
   const quotes = data?.quotes || [];
@@ -917,10 +964,34 @@ export function ContactDetailScreen() {
         <Muted>Düzenlemek, silmek veya e-faturayı iptal etmek için satırı sola kaydırın.</Muted>
         {invoices.map((inv: any, idx: number) => {
           const iid = idOf(inv) || String(idx);
+          const docId = String(inv.id || inv._id || inv.invoice_number || "");
+          const num = inv.invoice_number || iid;
           const danger = invoiceRowDangerAction(inv);
           const allowDelete = (danger === "delete" && canDeleteInvoicePerm) || (danger === "cancel" && canInvoice);
+          const linesOpen = Boolean(docId) && openLineId === docId;
+          const embedded = Array.isArray(inv.items) && inv.items.length ? inv.items : null;
+          const lineItems: any[] = embedded || (docId ? lineItemsById[docId] : null) || [];
           return (
             <View key={iid} style={{ gap: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Pressable
+              testID={`detail-inv-lines-toggle-${num}`}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: linesOpen }}
+              accessibilityLabel={linesOpen ? "Kalemleri gizle" : "Kalemleri göster"}
+              hitSlop={8}
+              disabled={!docId}
+              onPress={() => { toggleInvoiceLines(inv); }}
+              style={{ padding: 6 }}
+            >
+              <Ionicons
+                name="chevron-down"
+                size={18}
+                color={linesOpen ? colors.primary : colors.muted}
+                style={{ transform: [{ rotate: linesOpen ? "180deg" : "0deg" }] }}
+              />
+            </Pressable>
+            <View style={{ flex: 1 }}>
             <SwipeRevealRow
               rowKey={iid}
               openKey={openInvRow}
@@ -940,6 +1011,25 @@ export function ContactDetailScreen() {
                 showChevron
               />
             </SwipeRevealRow>
+            </View>
+            </View>
+            {linesOpen ? (
+              <View testID={`detail-inv-lines-row-${num}`} style={{ marginLeft: 28, padding: 8, backgroundColor: colors.slate50, borderRadius: 12, gap: 4 }}>
+                {lineLoadingId === docId ? (
+                  <Muted>Kalemler yükleniyor…</Muted>
+                ) : lineErrorById[docId] ? (
+                  <Text testID={`detail-inv-lines-error-${num}`} style={{ color: colors.danger, fontSize: 12, fontWeight: "700" }}>Kalemler yüklenemedi</Text>
+                ) : lineItems.length === 0 ? (
+                  <Muted testID={`detail-inv-lines-empty-${num}`}>Bu belgede kalem yok.</Muted>
+                ) : lineItems.map((it: any, i: number) => (
+                  <Text key={i} testID={`detail-inv-line-${num}-${i}`} style={{ color: colors.text, fontSize: 12 }}>
+                    {String(it.name || it.description || "—")}
+                    {it.sku ? ` ${String(it.sku)}` : ""}
+                    {` · ${it.quantity ?? ""} ${it.unit || ""} · ${fmtMoney(it.unit_price, inv.currency || "TRY")} · %${it.vat_rate ?? 0} · ${fmtMoney(it.total_incl ?? it.total, inv.currency || "TRY")}`}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
             {canInvoice && canFaturalastirDraftInvoice(inv) ? (
               <DraftInvoiceFaturalastir
                 invoice={inv}
