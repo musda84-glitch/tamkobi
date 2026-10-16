@@ -715,12 +715,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     try {
       const payload = {
         company_id: c.company_id,
-        contact_id: c.id,
         amount,
         description: cardCollect.description || "",
       };
       if (vposInstallments) payload.installment = Number(cardCollect.installment || 1);
-      const res = await axios.post(`${API_URL}/vpos/collect`, payload);
+      const res = await axios.post(`${API_URL}/contacts/${c.id}/vpos-collect`, payload);
       const next = classifyTestPayment(res.data || {});
       if (next.type === "form") {
         postBankForm(next.actionUrl, next.fields);

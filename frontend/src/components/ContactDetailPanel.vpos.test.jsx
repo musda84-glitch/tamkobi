@@ -142,9 +142,8 @@ test("kartla tahsil et modalı açık alacağı doldurur ve kart alanı istemez"
   const submit = jest.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
   await act(async () => { host.querySelector("[data-testid=vpos-collect-submit]").click(); });
   await flush(4);
-  expect(axios.post).toHaveBeenCalledWith("/api/vpos/collect", {
+  expect(axios.post).toHaveBeenCalledWith("/api/contacts/ct1/vpos-collect", {
     company_id: "c1",
-    contact_id: "ct1",
     amount: "15.50",
     description: "Cari tahsilat",
     installment: 3,

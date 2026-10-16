@@ -1,7 +1,8 @@
 """Sanal POS HTTP uçları.
 
 GET/PUT /vpos/configs ve POST /vpos/test-payment şirket yöneticisi ister.
-POST /vpos/collect cari tahsilatı başlatır (şirket yöneticisi şart değil).
+POST /contacts/{contact_id}/vpos-collect cari tahsilatı başlatır.
+Cari modülü middleware'de /contacts edit ister.
 POST /vpos/callback/{intent_id} bankanın tarayıcı dönüşüdür: oturum yok,
 intent kimliği + hash yeter. Kart verisi okunup atılır; loglanmaz ve
 saklanmaz. Kasa ve cari yalnız doğrulanmış contact_collection ödemesinde yazılır.
@@ -314,15 +315,11 @@ async def _retry_paid_collection(intent_id: str) -> None:
     await post_collection(db, fresh)
 
 
-_COLLECT_ROLES = frozenset({"admin", "owner", "yönetici", "yonetici"})
-
-
 async def _require_contact_collector(user: dict, company_id: str) -> None:
-    """Cari tahsilat ile aynı çubuk: /contacts edit. Şirket yöneticisi şart değil."""
+    """Cari tahsilat ile aynı çubuk: /contacts edit. Yönetici kısayolu yalnız admin."""
     if user.get("is_super_admin"):
         return
-    role = str(user.get("role") or "").strip().lower()
-    if role in _COLLECT_ROLES:
+    if rbac.normalize_role_code(user.get("role")) == "admin":
         return
     perms = user.get("permissions")
     if not isinstance(perms, dict):
@@ -830,14 +827,14 @@ async def collect_options(request: Request, company_id: Optional[str] = None):
     return _collect_options_body(await _load_config(cid))
 
 
-@router.post("/vpos/collect")
-async def collect_payment(body: Dict[str, Any], request: Request):
+@router.post("/contacts/{contact_id}/vpos-collect")
+async def collect_payment(contact_id: str, body: Dict[str, Any], request: Request):
     """Cari kart tahsilatı. Kart verisi kabul edilmez; sağlayıcı sayfası açılır."""
     user = await _user_dep(request)
     body = body or {}
     cid = tenant_access.resolve_company_id(user, body.get("company_id"))
     await _require_contact_collector(user, cid)
-    contact_id = str(body.get("contact_id") or "").strip()
+    contact_id = str(contact_id or "").strip()
     if not contact_id:
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
     contact = await tenant_access.get_tenant_doc(

@@ -105,7 +105,7 @@ class FakeDB:
 
 
 class Req:
-    def __init__(self, form=None, ip="203.0.113.8", path="/api/vpos/collect"):
+    def __init__(self, form=None, ip="203.0.113.8", path="/api/contacts/ct1/vpos-collect"):
         self._form = form or {}
         self.client = SimpleNamespace(host=ip)
         self.headers = {}
@@ -240,7 +240,8 @@ def _collect(db, user=None, **body):
     _bind(db, _user() if user is None else user)
     payload = {"company_id": "c1", "contact_id": "ct1", "amount": "10.00", "description": "Kapora"}
     payload.update(body)
-    return _run(vpos_api.collect_payment(payload, Req()))
+    contact_id = str(payload.pop("contact_id") or "")
+    return _run(vpos_api.collect_payment(contact_id, payload, Req(path=f"/api/contacts/{contact_id}/vpos-collect")))
 
 
 def _signed_nest(intent, **overrides):
@@ -281,14 +282,14 @@ def test_collect_requires_session_and_same_company(db):
     db.vpos_configs.docs["cfg-nest"] = _nest_cfg()
     _bind(db, None)
     with pytest.raises(HTTPException) as err:
-        _run(vpos_api.collect_payment({"company_id": "c1", "contact_id": "ct1", "amount": "1.00"}, Req()))
+        _run(vpos_api.collect_payment("ct1", {"company_id": "c1", "amount": "1.00"}, Req()))
     assert err.value.status_code == 401
     _bind(db, _user())
     with pytest.raises(HTTPException) as missing:
-        _run(vpos_api.collect_payment({"company_id": "c1", "contact_id": "ct2", "amount": "1.00"}, Req()))
+        _run(vpos_api.collect_payment("ct2", {"company_id": "c1", "amount": "1.00"}, Req()))
     assert missing.value.status_code == 404
     with pytest.raises(HTTPException) as other:
-        _run(vpos_api.collect_payment({"company_id": "c2", "contact_id": "ct1", "amount": "1.00"}, Req()))
+        _run(vpos_api.collect_payment("ct1", {"company_id": "c2", "amount": "1.00"}, Req()))
     assert other.value.status_code == 403
 
 
@@ -623,16 +624,68 @@ def test_get_intent_does_not_post_and_callback_retries_failure(db, monkeypatch):
     assert db.contacts.docs["ct1"]["balance"] == 40.0
 
 
-def test_collect_route_is_not_public_and_uses_contact_permission():
+def test_contact_inc_failure_rolls_back_account_and_retries_once(db, caplog):
+    caplog.set_level(logging.DEBUG)
+    db.vpos_configs.docs["cfg-nest"] = _nest_cfg()
+    started = _collect(db, amount="10.00")
+    intent = db.payment_intents.docs[started["intent_id"]]
+    real_update = db.contacts.update_one
+
+    async def _boom(query, update, upsert=False):
+        db.contacts.update_one = real_update
+        raise RuntimeError("contact down")
+
+    db.contacts.update_one = _boom
+    _nest_callback(db, intent, _signed_nest(intent))
+    stored = db.payment_intents.docs[intent["_id"]]
+    assert stored["status"] == "paid"
+    assert stored.get("collection_error") == "post_failed"
+    assert stored.get("collection_tx_id") in (None, "")
+    assert db.bank_transactions.docs == {}
+    assert db.bank_accounts.docs["pos1"]["current_balance"] == 100.0
+    assert db.contacts.docs["ct1"]["balance"] == 50.0
+    _nest_callback(db, intent, _signed_nest(intent))
+    tx_id = f"vpos:{intent['_id']}"
+    assert list(db.bank_transactions.docs) == [tx_id]
+    assert db.bank_transactions.docs[tx_id]["amount"] == 10.0
+    assert db.bank_transactions.docs[tx_id]["effects"] == {"account": True, "contact": True}
+    assert db.bank_accounts.docs["pos1"]["current_balance"] == 110.0
+    assert db.contacts.docs["ct1"]["balance"] == 40.0
+    _assert_no_card(json.dumps({"tx": db.bank_transactions.docs, "intents": db.payment_intents.docs}), caplog)
+
+
+def test_collect_route_is_not_public_and_uses_contact_permission(db):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
     sales = {"/contacts": "edit", "/settings": "none"}
-    assert rbac.mutation_allowed("/settings", "/api/vpos/collect", sales, "POST") is True
+    view = {"/contacts": "view", "/settings": "edit"}
+    path = "/api/contacts/ct1/vpos-collect"
+    assert rbac.module_for_path(path) == "/contacts"
+    assert rbac.mutation_allowed("/contacts", path, sales, "POST") is True
+    assert rbac.mutation_allowed("/contacts", path, view, "POST") is False
     assert rbac.mutation_allowed("/settings", "/api/vpos/test-payment", sales, "POST") is False
     assert rbac.mutation_allowed("/settings", "/api/vpos/configs", sales, "PUT") is False
-    view = {"/contacts": "view", "/settings": "none"}
-    assert rbac.mutation_allowed("/settings", "/api/vpos/collect", view, "POST") is False
+    assert rbac.is_public_api_path(path, "POST") is False
     assert rbac.is_public_api_path("/api/vpos/collect", "POST") is False
     assert rbac.is_public_api_path("/api/vpos/collect-options", "GET") is False
-    assert rbac.module_for_path("/api/vpos/collect") == "/settings"
+    assert rbac.module_for_path("/api/vpos/collect-options") == "/settings"
+    paths = [getattr(route, "path", "") for route in vpos_api.router.routes]
+    assert "/api/vpos/collect" not in paths
+    assert "/api/contacts/{contact_id}/vpos-collect" in paths
+    app = FastAPI()
+    app.include_router(vpos_api.router)
+    with TestClient(app) as client:
+        gone = client.post("/api/vpos/collect", json={"amount": "1.00", "contact_id": "ct1"})
+    assert gone.status_code in (404, 405)
+
+    db.vpos_configs.docs["cfg-nest"] = _nest_cfg()
+    with pytest.raises(HTTPException) as denied:
+        _collect(db, user=_user(role="sales", permissions=view), amount="1.00")
+    assert denied.value.status_code == 403
+    body = _collect(db, user=_user(role="sales", permissions=sales), amount="1.00")
+    assert body["kind"] == "form"
+    assert body["intent_id"]
 
 
 def test_put_config_checks_collection_allowed(db, monkeypatch):

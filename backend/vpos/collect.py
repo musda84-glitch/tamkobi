@@ -61,10 +61,61 @@ async def _link(db, intent_id: str, tx_id: str) -> None:
     )
 
 
-async def _apply_effects(db, account_id: str, contact_id: str, amount: float) -> None:
-    await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": amount}})
-    if contact_id:
-        await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount}})
+def _effects_of(tx: Any) -> dict:
+    raw = tx.get("effects") if isinstance(tx, dict) else None
+    if not isinstance(raw, dict):
+        return {"account": False, "contact": False}
+    return {"account": bool(raw.get("account")), "contact": bool(raw.get("contact"))}
+
+
+async def _save_effects(db, tx_id: str, effects: dict) -> None:
+    await db.bank_transactions.update_one(
+        {"_id": tx_id},
+        {"$set": {"effects": {"account": bool(effects.get("account")), "contact": bool(effects.get("contact"))}}},
+    )
+
+
+async def _apply_balances(db, tx_id: str, account_id: str, contact_id: str, amount: float) -> dict:
+    """Eksik bakiyeyi yazar. Bu çağrıda artan hesap, cari patlarsa geri alınır."""
+    fresh = await db.bank_transactions.find_one({"_id": tx_id}) or {}
+    effects = _effects_of(fresh)
+    applied_account_now = False
+    if not effects["account"]:
+        await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": amount}})
+        effects["account"] = True
+        applied_account_now = True
+        await _save_effects(db, tx_id, effects)
+    if contact_id and not effects["contact"]:
+        try:
+            await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount}})
+        except Exception:
+            if applied_account_now:
+                try:
+                    await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+                    effects["account"] = False
+                    await _save_effects(db, tx_id, effects)
+                except Exception:
+                    logger.exception("vpos collection account rollback failed tx=%s", tx_id)
+            raise
+        effects["contact"] = True
+        await _save_effects(db, tx_id, effects)
+    elif not contact_id and not effects["contact"]:
+        effects["contact"] = True
+        await _save_effects(db, tx_id, effects)
+    return effects
+
+
+async def _drop_if_unsettled(db, tx_id: str) -> None:
+    fresh = await db.bank_transactions.find_one({"_id": tx_id})
+    if not fresh:
+        return
+    effects = _effects_of(fresh)
+    if effects["account"] or effects["contact"]:
+        return
+    try:
+        await db.bank_transactions.delete_one({"_id": tx_id})
+    except Exception:
+        logger.exception("vpos collection rollback failed tx=%s", tx_id)
 
 
 async def post_collection(db, intent: dict) -> None:
@@ -79,6 +130,16 @@ async def post_collection(db, intent: dict) -> None:
     try:
         existing = await db.bank_transactions.find_one({"_id": tx_id})
         if existing:
+            try:
+                await _apply_balances(
+                    db, tx_id,
+                    str(existing.get("account_id") or ""),
+                    str(existing.get("contact_id") or ""),
+                    float(existing.get("amount") or 0),
+                )
+            except Exception:
+                await _drop_if_unsettled(db, tx_id)
+                raise
             await _link(db, intent_id, tx_id)
             return
         cfg_id = intent.get("vpos_config_id")
@@ -112,6 +173,7 @@ async def post_collection(db, intent: dict) -> None:
             "vpos_intent_id": intent_id,
             "auth_code": _auth_code(intent.get("result")),
             "installment": _installment(intent),
+            "effects": {"account": False, "contact": False},
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         masked = _masked_pan(intent.get("result"))
@@ -123,15 +185,22 @@ async def post_collection(db, intent: dict) -> None:
             raced = await db.bank_transactions.find_one({"_id": tx_id})
             if not raced:
                 raise
+            try:
+                await _apply_balances(
+                    db, tx_id,
+                    str(raced.get("account_id") or account_id),
+                    str(raced.get("contact_id") or contact_id),
+                    float(raced.get("amount") or amount),
+                )
+            except Exception:
+                await _drop_if_unsettled(db, tx_id)
+                raise
             await _link(db, intent_id, tx_id)
             return
         try:
-            await _apply_effects(db, account_id, contact_id, amount)
+            await _apply_balances(db, tx_id, account_id, contact_id, amount)
         except Exception:
-            try:
-                await db.bank_transactions.delete_one({"_id": tx_id})
-            except Exception:
-                logger.exception("vpos collection rollback failed intent=%s", intent_id)
+            await _drop_if_unsettled(db, tx_id)
             raise
         await _link(db, intent_id, tx_id)
     except Exception:

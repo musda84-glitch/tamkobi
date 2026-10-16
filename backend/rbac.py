@@ -820,10 +820,6 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
     # Mali müşavir paneli: evrak AI yükleme (fatura/fiş/çek/ekstre) /ai-advisor gerektirmez.
     if need == "edit" and is_accountant_evrak_ai_path(path, method_u) and level_allows(perms.get("/accountant", "none"), "edit"):
         return True
-    # Kartla cari tahsilatı /settings değil, cari tahsilat yetkisiyle açılır.
-    # Ayar ve test ödemesi /settings edit ister; callback allowlist'i değişmez.
-    if need == "edit" and path.rstrip("/") == "/api/vpos/collect" and level_allows(perms.get("/contacts", "none"), "edit"):
-        return True
     return False
 
 
