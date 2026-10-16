@@ -1,4 +1,5 @@
 """Dual approval for manual (non-integrated) cash/bank operations."""
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -7,6 +8,8 @@ from fastapi import HTTPException
 
 import bank_guard
 import rbac
+
+logger = logging.getLogger("TamKobiERP")
 
 KIND_LABELS = {
     "distribute_profit": "Kâr payı dağıtımı",
@@ -61,18 +64,30 @@ async def queue(db, *, company_id: str, kind: str, payload: dict, account_ids: L
     }
     await db.cash_approval_requests.insert_one(doc)
     import notify as _notify
+    title = "Kasa/banka işlemi onay bekliyor"
+    message = f"{actor_name}: {summary}. Diğer yöneticinin onayı gerekli."
+    link = "/banking?tab=partners" if kind != "virman" else "/banking"
     await _notify.insert_notification(db, {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
         "type": "cash_approval",
-        "title": "Kasa/banka işlemi onay bekliyor",
-        "message": f"{actor_name}: {summary}. Diğer yöneticinin onayı gerekli.",
+        "title": title,
+        "message": message,
         "ref_type": "cash_approval",
         "ref_id": req_id,
-        "link": "/banking?tab=partners" if kind != "virman" else "/banking",
+        "link": link,
         "is_read": False,
         "created_at": _now(),
     })
+    try:
+        import event_notify
+        await event_notify.queue_event_email(
+            company_id, "cash_approval", title, message,
+            link=link, ref_type="cash_approval", ref_id=req_id,
+            dedupe_key=f"cash_approval:{req_id}",
+        )
+    except Exception:
+        logger.exception("cash_approval email queue failed company=%s", company_id)
     return {
         "status": "pending_approval",
         "request_id": req_id,

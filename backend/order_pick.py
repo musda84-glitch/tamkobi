@@ -1,4 +1,5 @@
 """Depo sevkiyat / sipariş toplama: barkod eşleştirme, eksik bildirimi, kısmi teslimat, üretime alma."""
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -6,7 +7,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import attendance
+import notify
 import tenant_access
+
+logger = logging.getLogger("TamKobiERP")
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -611,12 +615,34 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
             {"_id": ses["_id"]},
             {"$set": {"production_orders": existing, "sent_to_production_at": _now(), "updated_at": _now()}},
         )
-        await attendance.notify_managers(
-            o["company_id"], "order_pick_production",
-            f"Üretime alındı: {o.get('order_number')}",
-            f"{len(created)} kalem üretime gönderildi: " + ", ".join(f"{c['product_name']} ({c['qty']:g})" for c in created),
-            link="/production?tab=orders",
+        cid = o["company_id"]
+        title = f"Üretime alındı: {o.get('order_number')}"
+        message = (
+            f"{len(created)} kalem üretime gönderildi: "
+            + ", ".join(f"{c['product_name']} ({c['qty']:g})" for c in created)
         )
+        try:
+            await notify.insert_notification(_db, notify.notification_doc(
+                cid, "order_pick_production", title, message,
+                link="/production?tab=orders",
+                roles=notify.roles_for_type("order_pick_production"),
+                ref_type="order_pick",
+                ref_id=order_id,
+                target={"type": "order", "id": "", "route": "/production?tab=orders"},
+            ))
+        except Exception:
+            logger.exception("order_pick_production in-app failed company=%s", cid)
+        try:
+            import event_notify
+            await event_notify.queue_event_email(
+                cid, "order_pick_production", title, message,
+                link="/production?tab=orders",
+                ref_type="order_pick",
+                ref_id=order_id,
+                dedupe_key=f"order_pick_production:{order_id}:{len(existing)}",
+            )
+        except Exception:
+            logger.exception("order_pick_production email queue failed company=%s", cid)
     if not created and not skipped:
         return {"status": "ok", "message": "Eksik kalem yok.", "created": [], "skipped": []}
     if not created and skipped:

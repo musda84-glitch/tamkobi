@@ -65,6 +65,8 @@ test("dört olay ve uygulama/e-posta sütunları görünür", async () => {
   axios.get.mockResolvedValue({ data: view() });
   const { host, cleanup } = await renderPanel({ canEdit: true });
   expect(host.querySelector('[data-testid="tenant-notify-table"]')).toBeTruthy();
+  expect(host.querySelectorAll("[data-testid^='tenant-notify-event-']")).toHaveLength(4);
+  expect(host.querySelector('[data-testid="tenant-notify-event-bank_sync"]')).toBeNull();
   expect(host.querySelector('[data-testid="tenant-notify-event-einvoice_incoming"]')?.textContent).toMatch(/Gelen e-Fatura/);
   expect(host.querySelector('[data-testid="tenant-notify-event-order_new"]')).toBeTruthy();
   expect(host.querySelector('[data-testid="tenant-notify-event-gib_credits_low"]')).toBeTruthy();

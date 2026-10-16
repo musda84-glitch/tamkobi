@@ -4,7 +4,24 @@ import { toast } from "sonner";
 import { Bell, Loader2, Save } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
-const EVENT_ORDER = ["einvoice_incoming", "order_new", "gib_credits_low", "receivable_overdue"];
+const EVENT_ORDER = [
+  "einvoice_incoming",
+  "order_new",
+  "gib_credits_low",
+  "receivable_overdue",
+  "bank_sync",
+  "cash_approval",
+  "pos_approval",
+  "pos_daily_summary",
+  "order_pick_production",
+];
+const PLATFORM_ONLY_EVENTS = new Set([
+  "bank_sync",
+  "cash_approval",
+  "pos_approval",
+  "pos_daily_summary",
+  "order_pick_production",
+]);
 const ORDER_BATCH_MINUTES = [0, 5, 10, 15, 30, 60];
 const cred = { withCredentials: true };
 
@@ -38,7 +55,20 @@ const FALLBACK_LABELS = {
   order_new: "Yeni sipariş",
   gib_credits_low: "GİB kontör düşük",
   receivable_overdue: "Vadesi geçmiş alacak",
+  bank_sync: "Banka hareketi (senkron)",
+  cash_approval: "Kasa/banka onayı",
+  pos_approval: "POS onayı",
+  pos_daily_summary: "Günlük POS özeti",
+  order_pick_production: "Üretime gönderildi (sipariş hazırlama)",
 };
+
+function eventChannel(events, key) {
+  if (events && events[key]) return events[key];
+  if (PLATFORM_ONLY_EVENTS.has(key)) {
+    return { inapp: true, email: false, sms: false, digest: "instant" };
+  }
+  return { inapp: true, email: true, sms: false, digest: "instant" };
+}
 
 function prefsUrl(mode, companyId) {
   if (mode === "platform") return `${API_URL}/saas/companies/${companyId}/notify-prefs`;
@@ -142,7 +172,7 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
         <div>
           <div className="text-sm font-bold text-slate-900">Olay bildirimleri</div>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Gelen e-fatura, yeni sipariş, kontör ve vadesi geçmiş alacaklar için uygulama içi, e-posta ve isteğe bağlı SMS.
+            Gelen e-fatura, sipariş, kontör, vadesi geçmiş alacak, banka, kasa, POS ve üretime gönderim için uygulama içi, e-posta ve isteğe bağlı SMS.
             {isPlatform ? " Bu ayarlar Platform Yönetimi’nden kaydedilir." : ""}
           </p>
         </div>
@@ -161,10 +191,10 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
           </thead>
           <tbody>
             {EVENT_ORDER.map((key) => {
-              const ch = events[key] || { inapp: true, email: true, sms: false, digest: "instant" };
+              const ch = eventChannel(events, key);
               return (
                 <tr key={key} className="border-t border-slate-100" data-testid={`notify-event-${key}`}>
-                  <td className="px-3 py-2.5 font-semibold text-slate-800">{labels[key] || key}</td>
+                  <td className="px-3 py-2.5 font-semibold text-slate-800">{labels[key] || FALLBACK_LABELS[key] || key}</td>
                   <td className="px-2 py-2.5 text-center">
                     <input type="checkbox" checked={!!ch.inapp} onChange={(e) => setEvent(key, "inapp", e.target.checked)} data-testid={`notify-${key}-inapp`} />
                   </td>

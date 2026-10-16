@@ -40,8 +40,18 @@ test("Bildirimler paneli olayları ve kaydetmeyi gösterir", async () => {
   });
   await act(async () => {});
   expect(host.querySelector('[data-testid="notify-prefs-panel"]')).toBeTruthy();
+  expect(host.querySelectorAll("[data-testid^='notify-event-']")).toHaveLength(9);
   expect(host.querySelector('[data-testid="notify-event-einvoice_incoming"]')?.textContent).toMatch(/Gelen e-Fatura/);
   expect(host.querySelector('[data-testid="notify-event-order_new"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="notify-event-bank_sync"]')?.textContent).toMatch(/Banka hareketi \(senkron\)/);
+  expect(host.querySelector('[data-testid="notify-event-cash_approval"]')?.textContent).toMatch(/Kasa\/banka onayı/);
+  expect(host.querySelector('[data-testid="notify-event-pos_approval"]')?.textContent).toMatch(/POS onayı/);
+  expect(host.querySelector('[data-testid="notify-event-pos_daily_summary"]')?.textContent).toMatch(/Günlük POS özeti/);
+  expect(host.querySelector('[data-testid="notify-event-order_pick_production"]')?.textContent).toMatch(/Üretime gönderildi/);
+  expect(host.querySelector('[data-testid="notify-bank_sync-email"]').checked).toBe(false);
+  expect(host.querySelector('[data-testid="notify-pos_daily_summary-digest"]')?.textContent).not.toMatch(/Grupla/);
+  expect(host.querySelectorAll('[data-testid="notify-order-batch-minutes"]')).toHaveLength(1);
+  expect(host.querySelectorAll('[data-testid="notify-quiet-hours"]')).toHaveLength(0);
   expect(host.querySelector('[data-testid="notify-email-from"]')).toBeTruthy();
   const emailOff = host.querySelector('[data-testid="notify-order_new-email"]');
   expect(emailOff).toBeTruthy();

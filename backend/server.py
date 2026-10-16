@@ -13238,6 +13238,22 @@ async def _sync_bank_connection_core(
             ref_id=movement["id"],
             target=movement,
         ))
+        try:
+            import event_notify as _event_notify
+            acc_id = str(acc.get("_id") or "")
+            sync_run_id = str(result.get("sync_run_id") or "") if isinstance(result, dict) else ""
+            dedupe_token = sync_run_id or (new_ids[-1] if new_ids else "")
+            await _event_notify.queue_event_email(
+                doc["company_id"], "bank_sync",
+                f"{inserted} yeni banka hareketi",
+                detail,
+                link=movement["route"],
+                ref_type=movement["type"],
+                ref_id=movement["id"],
+                dedupe_key=f"bank_sync:{acc_id}:{dedupe_token}",
+            )
+        except Exception:
+            logger.exception("bank_sync email queue failed company=%s", doc.get("company_id"))
     # Platform CRM e-postası şirket hareketine yazılmışsa temizle (Matek vb.)
     try:
         import bank_tx as _bank_tx
