@@ -51,6 +51,7 @@ const StockCountKioskPage = page(() => import("./pages/StockCountKioskPage"));
 const OrderPickKioskPage = page(() => import("./pages/OrderPickKioskPage"));
 const ReportsPage = page(() => import("./pages/ReportsPage"));
 const B2BPortalPage = page(() => import("./pages/B2BPortalPage"));
+const B2BCardResultPage = page(() => import("./pages/B2BCardResultPage"));
 const AccountantPage = page(() => import("./pages/AccountantPage"));
 const InviteAcceptPage = page(() => import("./pages/InviteAcceptPage"));
 const ExpensesPage = page(() => import("./pages/ExpensesPage"));
@@ -158,6 +159,7 @@ export default function App() {
                   <Route path="/sayim" element={<StockCountKioskPage />} />
                   <Route path="/sevk" element={<OrderPickKioskPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
+                  <Route path="/portal/:token/odeme/:intentId" element={<B2BCardResultPage />} />
                   <Route path="/portal/:token" element={<B2BPortalPage />} />
                   <Route path="/davet/:token" element={<InviteAcceptPage />} />
                   <Route path="/dispatches" element={<DispatchesPage />} />

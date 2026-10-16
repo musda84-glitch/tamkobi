@@ -11,7 +11,7 @@ const STATUS = {
   processing: { title: "Ödeme işleniyor", testid: "vpos-result-processing" },
 };
 
-const REASONS = {
+export const REASONS = {
   amount_mismatch: "Tutar doğrulanamadı.",
   currency_mismatch: "Para birimi doğrulanamadı.",
   order_mismatch: "Sipariş numarası doğrulanamadı.",

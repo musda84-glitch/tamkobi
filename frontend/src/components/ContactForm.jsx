@@ -9,6 +9,7 @@ import { compressImageFile } from "../utils/compressImage";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { GibContactLookup } from "./GibContactLookup";
 import { gibLookupToContactPatch, gibMukellefLabel, isCompleteTaxId, digitsTaxId } from "../utils/gibContactFill";
+import { B2BCardSettingsFields, CARD_COMPANY_DEFAULTS, CARD_SETTING_KEYS, cardInstallment, roundCardRate } from "./B2BCardSettingsFields";
 
 function formatGibQueryStamp(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
@@ -34,6 +35,21 @@ const b2bSettingsFromContact = (contact) => {
   };
 };
 
+const cardFromStored = (contact, defaults) => {
+  const raw = contact?.b2b_portal_settings || {};
+  const custom = CARD_SETTING_KEYS.some((k) => raw[k] != null);
+  const source = custom ? raw : (defaults || CARD_COMPANY_DEFAULTS);
+  return {
+    custom,
+    card: {
+      card_payment_enabled: !!source.card_payment_enabled,
+      card_max_installment: cardInstallment(source.card_max_installment),
+      card_commission_payer: source.card_commission_payer === "buyer" ? "buyer" : "seller",
+      card_commission_rate: roundCardRate(source.card_commission_rate),
+    },
+  };
+};
+
 export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [tab, setTab] = useState("general");
   const [f, setF] = useState({ ...EMPTY, ...(contact || {}), ...b2bSettingsFromContact(contact), b2b_password: "", tags: contact?.tags || [], is_active: contact?.is_active !== false });
@@ -41,6 +57,10 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [gibBusy, setGibBusy] = useState(false);
   const [gibMeta, setGibMeta] = useState(null);
   const [gibQueriedAt, setGibQueriedAt] = useState(null);
+  const [cardCustom, setCardCustom] = useState(() => cardFromStored(contact).custom);
+  const [card, setCard] = useState(() => cardFromStored(contact).card);
+  const [companyCard, setCompanyCard] = useState(CARD_COMPANY_DEFAULTS);
+  const [vposReady, setVposReady] = useState(false);
   const lastGibTax = useRef("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.type === "number" ? Number(e.target.value) : e.target.value });
 
@@ -70,6 +90,35 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
       setGibBusy(false);
     }
   }, [applyGib, companyId, gibMeta]);
+
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await axios.get(`${API_URL}/companies/${companyId}/b2b-settings`);
+        const settings = r?.data?.settings;
+        if (!cancelled && settings) {
+          const next = {
+            card_payment_enabled: !!settings.card_payment_enabled,
+            card_max_installment: cardInstallment(settings.card_max_installment),
+            card_commission_payer: settings.card_commission_payer === "buyer" ? "buyer" : "seller",
+            card_commission_rate: roundCardRate(settings.card_commission_rate),
+          };
+          setCompanyCard(next);
+          setCard((prev) => (cardCustom ? prev : next));
+        }
+      } catch { /* şirket varsayılanı yoksa yerel varsayılan kalır */ }
+      try {
+        const v = await axios.get(`${API_URL}/vpos/collect-options`, { params: { company_id: companyId } });
+        if (!cancelled) setVposReady(!!v?.data?.enabled);
+      } catch {
+        if (!cancelled) setVposReady(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [companyId, cardCustom]);
 
   const onTaxIdChange = (e) => {
     const tid = digitsTaxId(e.target.value);
@@ -179,6 +228,10 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
         allow_ai_cart: !!payload.b2b_allow_ai_cart,
         min_order_amount: Number(payload.b2b_min_order_amount) || 0,
         welcome_note: payload.b2b_welcome_note || "",
+        card_payment_enabled: cardCustom ? !!card.card_payment_enabled : null,
+        card_max_installment: cardCustom ? cardInstallment(card.card_max_installment) : null,
+        card_commission_payer: cardCustom ? (card.card_commission_payer === "buyer" ? "buyer" : "seller") : null,
+        card_commission_rate: cardCustom ? roundCardRate(card.card_commission_rate) : null,
       };
       ["b2b_allow_orders", "b2b_show_prices", "b2b_show_stock", "b2b_show_statement", "b2b_show_installments", "b2b_allow_ai_cart", "b2b_min_order_amount", "b2b_welcome_note"].forEach((k) => delete payload[k]);
       const r = contact?.id ? await axios.put(`${API_URL}/contacts/${contact.id}`, payload) : await axios.post(`${API_URL}/contacts`, { company_id: companyId, ...payload });
@@ -289,6 +342,20 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
             </div>
             {F("b2b_min_order_amount", "Minimum sipariş (₺)", "number")}
             {F("b2b_welcome_note", "Karşılama notu", "text", { span: true, ph: "Hoş geldiniz…" })}
+            <div className="sm:col-span-2 border-t pt-3">
+              <B2BCardSettingsFields
+                settings={card}
+                companyDefaults={companyCard}
+                useCompanyDefault={!cardCustom}
+                onUseCompanyDefault={(useDefault) => {
+                  setCardCustom(!useDefault);
+                  if (!useDefault) setCard({ ...companyCard });
+                }}
+                onChange={(key, value) => setCard((prev) => ({ ...prev, [key]: value }))}
+                vposReady={vposReady}
+                testIdPrefix="cf-b2b-card"
+              />
+            </div>
             <p className="sm:col-span-2 text-[11px] text-slate-500">Bu özellikler yalnızca bu cariye uygulanır. Müşteri <b>{window.location.origin}/b2b/giris</b> adresinden e-posta/VKN + şifre ile girer. Detaylı yönetim cari kartı → B2B Portal sekmesinden de yapılır.</p>
           </div>}
           {tab === "notes" && <div className="space-y-3">

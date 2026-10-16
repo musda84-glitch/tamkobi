@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ShoppingCart, Copy, ExternalLink, KeyRound, Loader2, Save } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { MoneyInput } from "./MoneyInput";
+import { B2BCardSettingsFields, CARD_SETTING_KEYS, cardInstallment, roundCardRate } from "./B2BCardSettingsFields";
 
 const FEATURES = [
   ["allow_orders", "Sipariş alımı", "Sepet ve sipariş gönderme"],
@@ -23,6 +24,9 @@ export function ContactB2BPortalPanel({ contactId, contactName, onChanged }) {
   const [settings, setSettings] = useState(null);
   const [enabled, setEnabled] = useState(false);
   const [discount, setDiscount] = useState(0);
+  const [cardCustom, setCardCustom] = useState(false);
+  const [companyCard, setCompanyCard] = useState(null);
+  const [vposReady, setVposReady] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -33,12 +37,28 @@ export function ContactB2BPortalPanel({ contactId, contactName, onChanged }) {
       setDiscount(Number(r.data.b2b_discount) || 0);
       setLoginEmail(r.data.b2b_login_email || "");
       setPassword("");
+      const overrides = r.data.overrides || {};
+      const defaults = r.data.company_defaults || {};
+      setCompanyCard({
+        card_payment_enabled: !!defaults.card_payment_enabled,
+        card_max_installment: cardInstallment(defaults.card_max_installment),
+        card_commission_payer: defaults.card_commission_payer === "buyer" ? "buyer" : "seller",
+        card_commission_rate: roundCardRate(defaults.card_commission_rate),
+      });
+      setCardCustom(CARD_SETTING_KEYS.some((k) => overrides[k] != null));
     } catch {
       toast.error("B2B portal ayarları yüklenemedi.");
     }
   }, [contactId]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/vpos/collect-options`)
+      .then((r) => { if (!cancelled) setVposReady(!!r.data?.enabled); })
+      .catch(() => { if (!cancelled) setVposReady(false); });
+    return () => { cancelled = true; };
+  }, [contactId]);
 
   if (!portal || !settings) {
     return (
@@ -55,11 +75,15 @@ export function ContactB2BPortalPanel({ contactId, contactName, onChanged }) {
   const save = async () => {
     setBusy(true);
     try {
+      const savedSettings = { ...settings };
+      if (!cardCustom) {
+        CARD_SETTING_KEYS.forEach((k) => { savedSettings[k] = null; });
+      }
       const body = {
         enabled,
         discount,
         login_email: loginEmail,
-        settings,
+        settings: savedSettings,
         base_url: window.location.origin,
       };
       if (password.trim()) body.password = password.trim();
@@ -204,6 +228,22 @@ export function ContactB2BPortalPanel({ contactId, contactName, onChanged }) {
               onChange={(n) => set("min_order_amount", n ?? 0)}
               className="w-full bg-slate-50 border rounded-lg p-2"
               data-testid="contact-b2b-set-min"
+            />
+          </div>
+          <div className="sm:col-span-2 border-t pt-3">
+            <B2BCardSettingsFields
+              settings={settings}
+              companyDefaults={companyCard || undefined}
+              useCompanyDefault={!cardCustom}
+              onUseCompanyDefault={(useDefault) => {
+                setCardCustom(!useDefault);
+                if (!useDefault && companyCard) {
+                  setSettings((s) => ({ ...s, ...companyCard }));
+                }
+              }}
+              onChange={set}
+              vposReady={vposReady}
+              testIdPrefix="contact-b2b-card"
             />
           </div>
           <div>
