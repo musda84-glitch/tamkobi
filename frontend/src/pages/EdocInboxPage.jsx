@@ -10,7 +10,11 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { fmtDate, formatTrAmount } from "../utils/money";
-import { INBOX_STATUS_FILTERS, inboxItemsOfKind, inboxKindFromQuery, inboxStatusKey, processStockChoice } from "../utils/edocInbox";
+import {
+  INBOX_STATUS_FILTERS, inboxItemsOfKind, inboxKindFromQuery, inboxStatusKey, processStockChoice,
+  GIB_ACCEPT_CONFIRM, GIB_RED_OPTION_LABEL, COMMERCIAL_BADGE_CLASS,
+  canSendCommercialResponse, commercialBadge, inboxProcessLabel, inboxProcessSuccess,
+} from "../utils/edocInbox";
 import { EINVOICE_INBOX_BACKFILL_DAYS, einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -47,6 +51,34 @@ function isProcessable(doc) {
   return !blank;
 }
 
+function GibAcceptButton({ busy, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="px-4 py-2 border border-emerald-300 text-emerald-800 rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+      data-testid="edoc-gib-accept"
+    >
+      <CheckCircle2 className="w-4 h-4" /> Onayla (GİB KABUL)
+    </button>
+  );
+}
+
+function InboxRejectButton({ busy, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="px-4 py-2 border border-rose-200 text-rose-600 rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+      data-testid="edoc-reject"
+    >
+      <XCircle className="w-4 h-4" /> Reddet
+    </button>
+  );
+}
+
 export default function EdocInboxPage() {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -67,6 +99,7 @@ export default function EdocInboxPage() {
   const [pullNote, setPullNote] = useState(null);
   const [xml, setXml] = useState(null);
   const [einvoice, setEinvoice] = useState(null);
+  const [rejectDlg, setRejectDlg] = useState(null);
 
   const integrator = providerLabel(einvoice?.provider, einvoice?.provider_name);
 
@@ -237,20 +270,64 @@ export default function EdocInboxPage() {
 
   const processPayload = () => ({ ...opts, ...processStockChoice(createStockCards) });
 
-  const processOne = (docId) => act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/process`, processPayload()).then((r) => {
-    setSel((prev) => (prev?.id === docId ? null : prev));
-    setStatus("pending");
-    return r;
-  }), "Gelen faturaya alındı. Faturalar listesinde görünür.");
+  const processOne = (docOrId) => {
+    const doc = typeof docOrId === "object" ? docOrId : null;
+    const docId = doc?.id || docOrId;
+    const ok = inboxProcessSuccess(doc);
+    return act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/process`, processPayload()).then((r) => {
+      setSel((prev) => (prev?.id === docId ? null : prev));
+      setStatus("pending");
+      if (doc?.kind === "dispatch") return { data: { message: ok } };
+      return r;
+    }), ok);
+  };
 
-  const rejectOne = (docId) => {
+  const rejectLocal = (docId, reason) => act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/reject`, { reason }).then((r) => {
+    setSel((prev) => (prev?.id === docId ? null : prev));
+    setStatus("rejected");
+    setRejectDlg(null);
+    return r;
+  }), "Belge reddedildi.");
+
+  const rejectOne = (doc) => {
+    if (canSendCommercialResponse(doc)) {
+      setRejectDlg({ id: doc.id, gib: true, reason: "" });
+      return;
+    }
     const reason = window.prompt("Ret nedeni (opsiyonel):", "");
     if (reason === null) return;
-    act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/reject`, { reason }).then((r) => {
-      setSel((prev) => (prev?.id === docId ? null : prev));
-      setStatus("rejected");
+    rejectLocal(doc.id, reason);
+  };
+
+  const submitRejectDlg = () => {
+    if (!rejectDlg?.id) return;
+    const reason = String(rejectDlg.reason || "").trim();
+    if (rejectDlg.gib) {
+      if (!reason) {
+        toast.error("RED için gerekçe zorunlu.");
+        return;
+      }
+      const docId = rejectDlg.id;
+      const wasPending = sel?.id === docId && sel.status === "pending";
+      act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/respond`, { approval: "RED", reason }).then((r) => {
+        if (wasPending) {
+          setSel((prev) => (prev?.id === docId ? null : prev));
+          setStatus("rejected");
+        }
+        setRejectDlg(null);
+        return r;
+      }), "GİB RED yanıtı iletildi.");
+      return;
+    }
+    rejectLocal(rejectDlg.id, reason);
+  };
+
+  const acceptGib = (docId) => {
+    if (!window.confirm(GIB_ACCEPT_CONFIRM)) return;
+    act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/respond`, { approval: "KABUL" }).then((r) => {
+      setSel((prev) => (prev && prev.id === docId ? { ...prev, commercial_response: "accepted" } : prev));
       return r;
-    }), "Belge reddedildi.");
+    }), "GİB KABUL yanıtı iletildi.");
   };
 
   const ignoreOne = (docId) => {
@@ -396,7 +473,12 @@ export default function EdocInboxPage() {
               <button type="button" onClick={() => { setSel(d); setXml(null); }} className="flex-1 text-left p-3" data-testid={`edoc-item-${d.id}`}>
                 <div className="flex items-center justify-between gap-2">
                   <b className="text-slate-900 truncate max-w-[180px]">{d.supplier?.name || "Tedarikçi ?"}</b>
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${STATUS[d.status]?.[1]}`}>{STATUS[d.status]?.[0]}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {commercialBadge(d) ? (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${COMMERCIAL_BADGE_CLASS[commercialBadge(d).tone]}`} data-testid={`edoc-commercial-${d.id}`}>{commercialBadge(d).label}</span>
+                    ) : null}
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS[d.status]?.[1]}`}>{STATUS[d.status]?.[0]}</span>
+                  </span>
                 </div>
                 <div className="text-[10px] text-slate-500">
                   {d.kind === "dispatch" ? "e-İrsaliye" : "e-Fatura"} · {d.number || "-"} · {fmtDate(d.issue_date)} · <b>{fmt(d.grand_total)} ₺</b>
@@ -404,7 +486,7 @@ export default function EdocInboxPage() {
                 </div>
               </button>
               {isProcessable(d) && (
-                <button type="button" title="İçeri Al" onClick={() => processOne(d.id)} disabled={busy === "act"} className="px-2 m-2 self-center rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50" data-testid={`edoc-quick-process-${d.id}`}>
+                <button type="button" title={inboxProcessLabel(d)} onClick={() => processOne(d)} disabled={busy === "act"} className="px-2 m-2 self-center rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50" data-testid={`edoc-quick-process-${d.id}`}>
                   <Download className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -421,6 +503,9 @@ export default function EdocInboxPage() {
                 <div>
                   <div className="text-sm font-bold text-slate-900">{sel.kind === "dispatch" ? "Gelen e-İrsaliye" : "Gelen e-Fatura"} {sel.number}</div>
                   <div className="text-slate-500">{fmtDate(sel.issue_date)} · {sourceLabel(sel.source, integrator)} · {sel.profile || ""} {sel.type_code || ""}</div>
+                  {commercialBadge(sel) ? (
+                    <div className={`inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${COMMERCIAL_BADGE_CLASS[commercialBadge(sel).tone]}`} data-testid="edoc-commercial-detail">{commercialBadge(sel).label}</div>
+                  ) : null}
                 </div>
                 <div className="text-right space-y-1">
                   <div className="text-lg font-bold text-slate-900">{fmt(sel.grand_total)} ₺</div>
@@ -603,41 +688,76 @@ export default function EdocInboxPage() {
                     >
                       Dikkate alma
                     </button>
+                    {canSendCommercialResponse(sel) && (
+                      <GibAcceptButton busy={busy === "act"} onClick={() => acceptGib(sel.id)} />
+                    )}
+                    <InboxRejectButton busy={busy === "act"} onClick={() => rejectOne(sel)} />
                     <button
                       type="button"
-                      onClick={() => rejectOne(sel.id)}
-                      disabled={busy === "act"}
-                      className="px-4 py-2 border border-rose-200 text-rose-600 rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
-                      data-testid="edoc-reject"
-                    >
-                      <XCircle className="w-4 h-4" /> Reddet
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => processOne(sel.id)}
+                      onClick={() => processOne(sel)}
                       disabled={busy === "act" || !isProcessable(sel)}
                       className="px-5 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
                       data-testid="edoc-process"
-                      title="Eşleştirmeyi kaydeder ve Faturalar → Gelen e-Fatura’ya alır"
+                      title={sel.kind === "dispatch" ? "Stok girişi seçeneğe bağlıdır; cari borç yazılmaz" : "Eşleştirmeyi kaydeder ve Faturalar → Gelen e-Fatura’ya alır"}
                     >
                       {busy === "act" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                      Gelen faturaya al
+                      {inboxProcessLabel(sel)}
                     </button>
                   </div>
                   </div>
                 </div>
               ) : (
-                <div className={`rounded-xl p-3 ${STATUS[sel.status]?.[1]}`} data-testid="edoc-status-note">
-                  {STATUS[sel.status]?.[0]}
-                  {sel.reject_reason ? ` — ${sel.reject_reason}` : ""}
-                  {sel.ignore_reason && sel.status === "ignored" ? ` — ${sel.ignore_reason}` : ""}
-                  {sel.invoice_id ? ` — fatura oluşturuldu, ${sel.stock_moves ?? 0} kalemde stok girişi` : ""}
+                <div className="space-y-2">
+                  <div className={`rounded-xl p-3 ${STATUS[sel.status]?.[1]}`} data-testid="edoc-status-note">
+                    {STATUS[sel.status]?.[0]}
+                    {sel.reject_reason ? ` — ${sel.reject_reason}` : ""}
+                    {sel.ignore_reason && sel.status === "ignored" ? ` — ${sel.ignore_reason}` : ""}
+                    {sel.invoice_id ? ` — fatura oluşturuldu, ${sel.stock_moves ?? 0} kalemde stok girişi` : ""}
+                  </div>
+                  {canSendCommercialResponse(sel) && (
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <GibAcceptButton busy={busy === "act"} onClick={() => acceptGib(sel.id)} />
+                      <InboxRejectButton busy={busy === "act"} onClick={() => rejectOne(sel)} />
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
         </div>
       </div>
+
+      {rejectDlg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" data-testid="edoc-reject-dialog">
+          <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl space-y-3">
+            <div className="text-sm font-bold text-slate-900">Belgeyi reddet</div>
+            <label className="block text-[11px] text-slate-600">
+              Ret nedeni
+              <textarea
+                className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-xs"
+                rows={3}
+                value={rejectDlg.reason}
+                onChange={(e) => setRejectDlg({ ...rejectDlg, reason: e.target.value })}
+                data-testid="edoc-reject-reason"
+              />
+            </label>
+            <label className="flex items-start gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={rejectDlg.gib}
+                onChange={(e) => setRejectDlg({ ...rejectDlg, gib: e.target.checked })}
+                data-testid="edoc-reject-gib"
+              />
+              <span>{GIB_RED_OPTION_LABEL}. İşaret kalkınca yalnız yerel reddedilir.</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="px-3 py-1.5 rounded-lg border text-xs font-semibold" onClick={() => setRejectDlg(null)} data-testid="edoc-reject-cancel">Vazgeç</button>
+              <button type="button" className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-semibold" onClick={submitRejectDlg} data-testid="edoc-reject-confirm">Reddet</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

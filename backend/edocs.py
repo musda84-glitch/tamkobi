@@ -1,11 +1,13 @@
 """Gelen e-Belgeler: UBL-TR XML (e-Fatura / e-İrsaliye) veya PDF (AI) yükle → tedarikçi eşle / yeni tedarikçi → satır-stok kartı eşleştir → onayla (alış faturası / gelen irsaliye + stok girişi) ya da reddet."""
 import hashlib
 import io
+import logging
 import re
 import uuid
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
@@ -18,6 +20,11 @@ router = APIRouter(prefix="/api")
 _db = None
 _current_user = None
 _deps: Dict[str, Any] = {}
+logger = logging.getLogger(__name__)
+_IST = ZoneInfo("Europe/Istanbul")
+COMMERCIAL_RESPONSE_DAYS = 8
+_COMMERCIAL_VALUE = {"KABUL": "accepted", "RED": "rejected"}
+_COMMERCIAL_APPROVAL = {"accepted": "KABUL", "rejected": "RED"}
 # Belgeyi UBL yapan kök etiketler. Entegratör bunların dışında bir şey döndürdüğünde
 # (SOAP zarfı, hata sayfası, imza dosyası) fatura diye kaydetmek yerine reddediyoruz.
 UBL_ROOTS = {"Invoice": "invoice", "DespatchAdvice": "dispatch"}
@@ -40,6 +47,63 @@ async def _user_dep(request: Request) -> dict:
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _istanbul_today() -> date:
+    return datetime.now(_IST).date()
+
+
+def commercial_elapsed_days(issue_date: Optional[str], today: Optional[date] = None) -> Optional[int]:
+    """Fatura tarihinden Europe/Istanbul takvimine göre geçen gün. Okunamazsa None."""
+    text = str(issue_date or "").strip()[:10]
+    try:
+        issued = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    if today is None:
+        today = _istanbul_today()
+    return (today - issued).days
+
+
+def _actor_id(user: Optional[dict]) -> str:
+    user = user or {}
+    return str(user.get("id") or user.get("_id") or user.get("email") or "")[:80]
+
+
+def _portal_password(settings: dict) -> str:
+    enc = (settings or {}).get("password_enc") or ""
+    if not enc:
+        return ""
+    try:
+        import comm_service
+        return comm_service.decrypt(enc) or ""
+    except Exception:
+        return ""
+
+
+def _commercial_conflict(doc: dict, approval: str) -> Optional[HTTPException]:
+    """Kayıtlı yanıt aynıysa None (çağıran 200 döner), farklıysa veya gönderim sürüyorsa 409."""
+    current = str(doc.get("commercial_response") or "").strip()
+    if current in ("accepted", "rejected"):
+        if _COMMERCIAL_APPROVAL.get(current) == approval:
+            return None
+        return HTTPException(status_code=409, detail="Bu faturaya daha önce farklı bir GİB yanıtı verilmiş.")
+    if current == "sending":
+        return HTTPException(status_code=409, detail="GİB yanıtı gönderiliyor.")
+    return None
+
+
+def _commercial_result(doc: dict, message: str) -> Dict[str, Any]:
+    resp = str(doc.get("commercial_response") or "").strip()
+    return {
+        "status": "success",
+        "approval": _COMMERCIAL_APPROVAL.get(resp),
+        "commercial_response": resp or None,
+        "responded_at": doc.get("responded_at"),
+        "responded_by": doc.get("responded_by"),
+        "invoice_id": doc.get("invoice_id"),
+        "message": message,
+    }
 
 
 def _t(el, path, default=""):
@@ -840,9 +904,14 @@ async def approve_inbox_document(doc_id: str, req: Optional[Dict[str, Any]] = No
     sub = float(d.get("subtotal") or sum(i["total"] for i in items)); vat = float(d.get("vat_total") or sum(i["vat_amount"] for i in items)); gt = float(d.get("grand_total") or (sub + vat))
     ubl_like = d.get("source") in ("ubl_xml", "n11faturam", "isnet", "isnet_portal")
     profile = (d.get("profile") or "").upper()
+    stored_resp = str(d.get("commercial_response") or "").strip()
     # TEMELFATURA ticari yanıt gerektirmez; TICARIFATURA için yanıt beklenir.
+    # Daha önce verilen GİB yanıtı içeri alma sırasında silinmez.
     auto_accept = ubl_like and d.get("kind") != "dispatch" and "TICARI" not in profile
-    if ubl_like and d.get("kind") != "dispatch":
+    if stored_resp in ("accepted", "rejected") and d.get("kind") != "dispatch":
+        gib_status = "Gelen E-Fatura Onaylandı" if stored_resp == "accepted" else "Gelen E-Fatura Reddedildi"
+        gib_response = stored_resp
+    elif ubl_like and d.get("kind") != "dispatch":
         gib_status = "Gelen E-Fatura Onaylandı" if auto_accept else "Gelen E-Fatura (Yanıt Bekleniyor)"
         gib_response = "accepted" if auto_accept else None
     elif ubl_like:
@@ -854,6 +923,8 @@ async def approve_inbox_document(doc_id: str, req: Optional[Dict[str, Any]] = No
            "grand_total": round(gt, 2), "currency": "TRY", "status": "approved", "effects_applied": True,
            "gib_status": gib_status, "gib_response": gib_response,
            "gib_uuid": d.get("uuid"), "payment_status": "unpaid" if d["kind"] == "invoice" else None, "paid_amount": 0.0, "notes": d.get("notes") or "", "source": "edoc_inbox", "edoc_id": doc_id, "created_at": _now()}
+    if stored_resp in ("accepted", "rejected") and d.get("kind") != "dispatch":
+        inv["commercial_response"] = stored_resp
     await _db.invoices.insert_one(inv)
     if d["kind"] == "invoice":
         await _db.contacts.update_one({"_id": d["contact_id"]}, {"$inc": {"balance": -round(gt, 2)}})
@@ -924,6 +995,165 @@ async def process_pending_edocs(request: Request, company_id: Optional[str] = No
     """Bekleyen (okunabilir) belgeleri BizimHesap gibi toplu içeri alır."""
     cid = await require_inbox_company(request, company_id)
     return await process_pending_for_company(cid, req)
+
+
+def _assert_commercial_window(doc: dict) -> None:
+    if (doc.get("kind") or "invoice") == "dispatch":
+        raise HTTPException(status_code=409, detail="e-İrsaliyeye ticari yanıt verilmez.")
+    profile = (doc.get("profile") or "").upper()
+    if "TICARI" not in profile:
+        raise HTTPException(status_code=409, detail="Temel faturaya yanıt verilmez")
+    elapsed = commercial_elapsed_days(doc.get("issue_date"))
+    if elapsed is None or elapsed > COMMERCIAL_RESPONSE_DAYS:
+        raise HTTPException(status_code=409, detail="8 günlük süre doldu")
+
+
+async def _release_commercial_claim(doc_id: str) -> None:
+    await _db.incoming_edocs.update_one(
+        {"_id": doc_id, "commercial_response": "sending"},
+        {"$unset": {"commercial_response": ""}},
+    )
+
+
+async def respond_inbox_document(doc_id: str, req: Optional[Dict[str, Any]], user: dict) -> Dict[str, Any]:
+    """Gelen TICARIFATURA için GİB KABUL/RED. Stok ve cari hareketi yazmaz."""
+    req = req or {}
+    approval = str(req.get("approval") or "").strip().upper()
+    reason = str(req.get("reason") or "").strip()
+    if approval not in ("KABUL", "RED"):
+        raise HTTPException(status_code=422, detail="approval KABUL veya RED olmalı.")
+    if approval == "RED" and not reason:
+        raise HTTPException(status_code=422, detail="RED için gerekçe zorunlu.")
+    reason = reason[:300]
+    d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
+    same = _commercial_conflict(d, approval)
+    current = str(d.get("commercial_response") or "").strip()
+    if current in ("accepted", "rejected"):
+        if same is None:
+            return _commercial_result(d, "Bu faturaya aynı GİB yanıtı daha önce verildi.")
+        raise same
+    if same is not None:
+        raise same
+    _assert_commercial_window(d)
+
+    settings = await _db.einvoice_settings.find_one({"company_id": d["company_id"]}) or {}
+    provider = (settings.get("provider") or "").strip()
+    if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
+        raise HTTPException(
+            status_code=400,
+            detail="İşNet yapılandırılmamış — GİB yanıtı için Ayarlar → e-Fatura (İşNet) gerekli.",
+        )
+    password = _portal_password(settings)
+    if not password:
+        raise HTTPException(status_code=400, detail="Kayıtlı İşNet portal şifresi yok.")
+
+    claim = await _db.incoming_edocs.update_one(
+        {
+            "_id": doc_id,
+            "company_id": d["company_id"],
+            "$or": [
+                {"commercial_response": {"$exists": False}},
+                {"commercial_response": None},
+                {"commercial_response": ""},
+            ],
+        },
+        {"$set": {"commercial_response": "sending"}},
+    )
+    if not getattr(claim, "matched_count", 0):
+        fresh = await _db.incoming_edocs.find_one({"_id": doc_id, "company_id": d["company_id"]}) or d
+        raced = _commercial_conflict(fresh, approval)
+        if str(fresh.get("commercial_response") or "") in ("accepted", "rejected") and raced is None:
+            return _commercial_result(fresh, "Bu faturaya aynı GİB yanıtı daha önce verildi.")
+        if raced is not None:
+            raise raced
+        raise HTTPException(status_code=409, detail="GİB yanıtı gönderiliyor.")
+
+    import isnet_portal
+
+    try:
+        remote = await isnet_portal.respond_incoming_invoice(
+            settings,
+            password,
+            ettn=str(d.get("uuid") or d.get("ettn") or ""),
+            invoice_number=str(d.get("number") or ""),
+            approval=approval,
+            reason=reason if approval == "RED" else "",
+        )
+    except Exception:
+        await _release_commercial_claim(doc_id)
+        logger.exception("incoming commercial response failed doc=%s", doc_id)
+        raise HTTPException(status_code=502, detail="GİB yanıtı iletilemedi.")
+    if not remote.get("ok"):
+        await _release_commercial_claim(doc_id)
+        raise HTTPException(status_code=400, detail=str(remote.get("error") or "GİB yanıtı iletilemedi."))
+
+    now = _now()
+    stored = _COMMERCIAL_VALUE[approval]
+    fresh = await _db.incoming_edocs.find_one({"_id": doc_id, "company_id": d["company_id"]}) or d
+    was_pending = fresh.get("status") == "pending"
+    had_invoice = bool(fresh.get("invoice_id") or d.get("invoice_id"))
+    invoice_id = fresh.get("invoice_id") or d.get("invoice_id")
+    patch: Dict[str, Any] = {
+        "commercial_response": stored,
+        "responded_at": now,
+        "responded_by": _actor_id(user),
+    }
+    if approval == "RED" and was_pending:
+        patch.update({"status": "rejected", "rejected_at": now, "reject_reason": reason})
+    saved = await _db.incoming_edocs.update_one(
+        {"_id": doc_id, "commercial_response": "sending"},
+        {"$set": patch},
+    )
+    if not getattr(saved, "matched_count", 0):
+        await _db.incoming_edocs.update_one({"_id": doc_id}, {"$set": patch})
+
+    gib_response = stored
+    gib_status = "Gelen E-Fatura Onaylandı" if stored == "accepted" else "Gelen E-Fatura Reddedildi"
+    if had_invoice:
+        await _db.invoices.update_one(
+            {"_id": invoice_id, "company_id": d["company_id"]},
+            {"$set": {
+                "gib_response": gib_response,
+                "gib_status": gib_status,
+                "commercial_response": stored,
+            }},
+        )
+
+    if approval == "KABUL":
+        message = "GİB KABUL yanıtı iletildi."
+    elif had_invoice:
+        message = "GİB RED yanıtı iletildi. Fatura içeri alınmış; iptal veya iade sizin işleminizdir."
+    elif was_pending:
+        message = "GİB RED yanıtı iletildi. Belge reddedildi."
+    else:
+        message = "GİB RED yanıtı iletildi."
+
+    try:
+        import company_audit
+        await company_audit.write(
+            _db,
+            company_id=str(d.get("company_id") or ""),
+            user=user,
+            module="/edoc-inbox",
+            action="approve" if approval == "KABUL" else "update",
+            record_id=doc_id,
+            record_no=str(d.get("number") or ""),
+            record_label=str((d.get("supplier") or {}).get("name") or ""),
+            summary=message,
+            path=f"/api/edocs/inbox/{doc_id}/respond",
+        )
+    except Exception:
+        logger.exception("commercial response audit failed doc=%s", doc_id)
+
+    out = _commercial_result({**fresh, **patch}, message)
+    out["gib_response"] = gib_response
+    out["gib_status"] = gib_status
+    return out
+
+
+@router.post("/edocs/inbox/{doc_id}/respond")
+async def respond_edoc(doc_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
+    return await respond_inbox_document(doc_id, req, user)
 
 
 @router.post("/edocs/inbox/{doc_id}/reject")
