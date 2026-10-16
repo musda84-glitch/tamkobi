@@ -1,4 +1,4 @@
-import { Platform } from "react-native";
+import { Alert, Platform } from "react-native";
 import { get } from "../api/client";
 import type { ApiClient } from "../api/client";
 import { tryPrintLabelEthernet } from "./ethernetPrinter";
@@ -7,13 +7,15 @@ import { htmlToPdfFile, printHtmlNative } from "./nativePrint";
 import { safePrintFilename } from "./orderPrint";
 import type { PickLine } from "./orderPick";
 import { labelCopyCount } from "./pickLabels";
+import { templateLabelDocumentHtml } from "./labelTemplateHtml";
 import {
   builtinLabelTemplates,
   pickLineToLabelProduct,
-  resolveLabelTemplate,
+  resolveLabelTemplateInfo,
   type LabelTemplateLike,
 } from "./resolveLabelTemplate";
-import { templateLabelDocumentHtml } from "./labelTemplateHtml";
+
+const TEMPLATE_FETCH_CONFIRM = "Etiket şablonları alınamadı (oturum/firma). Hazır şablonla basılsın mı?";
 
 function mmToPx(mm: number): number {
   return Math.max(40, Math.round(mm * 3.78));
@@ -51,14 +53,37 @@ function printHtmlWeb(html: string): boolean {
   return true;
 }
 
-async function loadTemplates(client: ApiClient, companyId?: string): Promise<LabelTemplateLike[]> {
+export async function loadTemplates(
+  client: ApiClient,
+  companyId?: string,
+): Promise<{ list: LabelTemplateLike[]; error: unknown }> {
   try {
     const cid = (companyId || "").trim();
     const list = await get<LabelTemplateLike[]>(client, "/label-templates", cid ? { company_id: cid } : {});
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
+    return { list: Array.isArray(list) ? list : [], error: null };
+  } catch (error) {
+    return { list: [], error };
   }
+}
+
+function confirmBuiltinFallback(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    Alert.alert(
+      TEMPLATE_FETCH_CONFIRM,
+      undefined,
+      [
+        { text: "Vazgeç", style: "cancel", onPress: () => finish(false) },
+        { text: "Bas", onPress: () => finish(true) },
+      ],
+      { cancelable: true, onDismiss: () => finish(false) },
+    );
+  });
 }
 
 export type PrintPickLabelCompany = {
@@ -82,17 +107,31 @@ export async function printPickProductLabels(
     ? { name: company }
     : company;
   const builtins = builtinLabelTemplates();
-  const saved = opts?.client
+  const loaded = opts?.client
     ? await loadTemplates(opts.client, opts.companyId || companyObj?.id || companyObj?._id || undefined)
-    : [];
+    : { list: [] as LabelTemplateLike[], error: null as unknown };
+  if (loaded.error) {
+    const ok = await confirmBuiltinFallback();
+    if (!ok) return { count: 0, ok: false };
+  }
+  const saved = loaded.list;
   const mediaBase = opts?.client?.baseUrl || "";
   const token = opts?.client?.token || null;
 
   const jobs: Array<{ tpl: LabelTemplateLike; product: NonNullable<ReturnType<typeof pickLineToLabelProduct>> }> = [];
+  const warned = new Set<string>();
   for (const line of lines) {
     const product = pickLineToLabelProduct(line as Record<string, unknown>);
     if (!product) continue;
-    const tpl = resolveLabelTemplate(saved, product, builtins);
+    const info = resolveLabelTemplateInfo(saved, product, builtins);
+    if (info.missingAssigned) {
+      const key = String(product.id || product.name);
+      if (!warned.has(key)) {
+        warned.add(key);
+        Alert.alert(`${product.name}: atanan etiket şablonu bulunamadı, varsayılan kullanıldı`);
+      }
+    }
+    const tpl = info.tpl;
     if (!tpl) continue;
     const copies = labelCopyCount(line);
     for (let i = 0; i < copies; i += 1) jobs.push({ tpl, product });

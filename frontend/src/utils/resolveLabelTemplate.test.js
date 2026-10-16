@@ -1,4 +1,4 @@
-import { resolveLabelTemplate, pickLineToLabelProduct } from "./resolveLabelTemplate";
+import { resolveLabelTemplate, resolveLabelTemplateInfo, pickLineToLabelProduct } from "./resolveLabelTemplate";
 
 describe("resolveLabelTemplate", () => {
   const builtins = [
@@ -19,6 +19,28 @@ describe("resolveLabelTemplate", () => {
     expect(resolveLabelTemplate(saved, {}, builtins)?.id).toBe("tpl_def");
     expect(resolveLabelTemplate([{ id: "only" }], {}, builtins)?.id).toBe("only");
     expect(resolveLabelTemplate([], {}, builtins)?.id).toBe("builtin-50x30");
+  });
+
+  test("resolveLabelTemplateInfo reports source and a missing assignment", () => {
+    expect(resolveLabelTemplateInfo(saved, { label_template_id: "tpl_stock" }, builtins)).toMatchObject({
+      source: "assigned",
+      missingAssigned: false,
+    });
+    expect(resolveLabelTemplateInfo(saved, { label_template_id: "gone" }, builtins)).toMatchObject({
+      tpl: { id: "tpl_def" },
+      source: "default",
+      missingAssigned: true,
+    });
+    expect(resolveLabelTemplateInfo([{ id: "only" }], { label_template_id: "gone" }, builtins)).toMatchObject({
+      source: "first",
+      missingAssigned: true,
+    });
+    expect(resolveLabelTemplateInfo([], { label_template_id: "gone" }, builtins)).toMatchObject({
+      tpl: { id: "builtin-50x30" },
+      source: "builtin",
+      missingAssigned: true,
+    });
+    expect(resolveLabelTemplateInfo(saved, {}, builtins).missingAssigned).toBe(false);
   });
 
   test("pickLineToLabelProduct maps pick fields", () => {

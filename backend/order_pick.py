@@ -225,12 +225,30 @@ async def _sync_product_label_fields(ses: dict) -> dict:
     items = list(ses.get("items") or [])
     if not items:
         return ses
+    ids: List[Any] = []
+    seen = set()
+    for line in items:
+        if not isinstance(line, dict):
+            continue
+        pid = line.get("product_id")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        ids.append(pid)
+    by_id: Dict[Any, dict] = {}
+    if ids:
+        rows = await _db.products.find(
+            {"_id": {"$in": ids}, "company_id": ses.get("company_id")},
+        ).to_list(len(ids))
+        for prod in rows or []:
+            if isinstance(prod, dict) and prod.get("_id") is not None:
+                by_id[prod.get("_id")] = prod
     changed = False
     for line in items:
         if not isinstance(line, dict):
             continue
         pid = line.get("product_id")
-        prod = await _db.products.find_one({"_id": pid}) if pid else None
+        prod = by_id.get(pid) if pid else None
         if not prod:
             continue
         tpl_id = str(prod.get("label_template_id") or "").strip() or None

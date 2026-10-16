@@ -1,4 +1,4 @@
-import { builtinLabelTemplates, pickLineToLabelProduct, resolveLabelTemplate } from "./resolveLabelTemplate";
+import { builtinLabelTemplates, pickLineToLabelProduct, resolveLabelTemplate, resolveLabelTemplateInfo } from "./resolveLabelTemplate";
 import { labelFieldValue, templateLabelCardHtml } from "./labelTemplateHtml";
 
 describe("resolveLabelTemplate (mobile)", () => {
@@ -12,6 +12,18 @@ describe("resolveLabelTemplate (mobile)", () => {
   it("prefers stock card template then default", () => {
     expect(resolveLabelTemplate(saved, { label_template_id: "tpl_stock" }, builtins)?.id).toBe("tpl_stock");
     expect(resolveLabelTemplate(saved, {}, builtins)?.id).toBe("tpl_def");
+  });
+
+  it("reports a missing assignment without changing the fallback order", () => {
+    const missing = resolveLabelTemplateInfo(saved, { label_template_id: "gone" }, builtins);
+    expect(missing.tpl?.id).toBe("tpl_def");
+    expect(missing.source).toBe("default");
+    expect(missing.missingAssigned).toBe(true);
+    expect(resolveLabelTemplateInfo(saved, { label_template_id: "tpl_stock" }, builtins)).toMatchObject({
+      source: "assigned",
+      missingAssigned: false,
+    });
+    expect(resolveLabelTemplate(saved, { label_template_id: "gone" }, builtins)?.id).toBe(missing.tpl?.id);
   });
 
   it("maps pick line to label product", () => {

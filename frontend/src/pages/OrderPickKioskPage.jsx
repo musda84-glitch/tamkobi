@@ -87,7 +87,7 @@ const ST = {
 
 export default function OrderPickKioskPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompany?.id || activeCompany?._id || "";
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const orderId = params.get("order");
@@ -99,12 +99,17 @@ export default function OrderPickKioskPage() {
   const [scanQty, setScanQty] = useState("1");
   const [overscanFlash, setOverscanFlash] = useState(null);
   const [labelPrintReq, setLabelPrintReq] = useState(null);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState(companyId ? "" : "Firma seçili değil");
   const inputRef = useRef(null);
   const overscanTimer = useRef(null);
   const qtyCancelRef = useRef(false);
 
   const loadList = useCallback(async () => {
+    if (!companyId) {
+      setRows([]);
+      setLoadError("Firma seçili değil");
+      return;
+    }
     try {
       const r = await axios.get(`${API_URL}/order-picks?company_id=${companyId}`);
       setRows(r.data);
@@ -116,6 +121,10 @@ export default function OrderPickKioskPage() {
   }, [companyId]);
 
   const openOrder = useCallback(async (id) => {
+    if (!companyId) {
+      setLoadError("Firma seçili değil");
+      return;
+    }
     try {
       const r = await axios.get(`${API_URL}/order-picks/${id}`);
       setSes(r.data);
@@ -123,10 +132,15 @@ export default function OrderPickKioskPage() {
       setParams({ order: id }, { replace: true });
       setTimeout(() => inputRef.current?.focus(), 80);
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş açılamadı."); }
-  }, [setParams]);
+  }, [companyId, setParams]);
 
   useEffect(() => { loadList(); }, [loadList]);
-  useEffect(() => { if (orderId) openOrder(orderId); else setSes(null); }, [orderId, openOrder]);
+  useEffect(() => {
+    if (!companyId) return undefined;
+    if (orderId) openOrder(orderId);
+    else setSes(null);
+    return undefined;
+  }, [orderId, openOrder, companyId]);
 
   // Unlock Web Audio on first gesture so overscan beeps work under autoplay policy.
   useEffect(() => {
