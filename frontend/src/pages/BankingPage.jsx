@@ -25,6 +25,7 @@ import { PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, partnerSummaryCardMeta } fr
 import { shownAccountBalance, sumShownBalances, totalLiquidity as sumLiquidity } from "../utils/accountTotals";
 import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { isBankTxServerPagingEnabled } from "../utils/featureFlags";
 import {
   Landmark,
   Wallet,
@@ -112,6 +113,20 @@ const accountTypeSelectValue = (a) => (
   a?.type === "credit_card" && a?.card_owner === "customer" ? "customer_credit_card" : (a?.type || "bank")
 );
 
+function mergeMatchedTx(prev, matchedTx) {
+  if (!matchedTx || !(matchedTx.id || matchedTx._id)) return prev;
+  const mid = matchedTx.id || matchedTx._id;
+  const rows = Array.isArray(prev) ? prev : [];
+  let found = false;
+  const next = rows.map((t) => {
+    const id = t.id || t._id;
+    if (id !== mid) return t;
+    found = true;
+    return { ...t, ...matchedTx, id: t.id || mid, match_status: matchedTx.match_status || "matched" };
+  });
+  return found ? next : [{ ...matchedTx, id: mid }, ...rows];
+}
+
 export default function BankingPage() {
   const { activeCompany, addonOn } = useAuth();
   const [searchParams] = useSearchParams();
@@ -140,6 +155,31 @@ export default function BankingPage() {
   const [editingAccount, setEditingAccount] = useState(null);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
   const [cashTick, setCashTick] = useState(0);
+  const [serverItems, setServerItems] = useState([]);
+  const [serverHasMore, setServerHasMore] = useState(false);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [serverInflow, setServerInflow] = useState(0);
+  const [serverOutflow, setServerOutflow] = useState(0);
+  const [serverLoading, setServerLoading] = useState(false);
+  const serverSentinelRef = useRef(null);
+  const serverAbortRef = useRef(null);
+  const serverGenRef = useRef(0);
+  const pagingCtx = useRef({
+    active: false,
+    accountId: "",
+    companyId: "",
+    focusTx: "",
+    focusPending: false,
+    pages: [1],
+    hasMore: false,
+    loading: false,
+  });
+  const serverPaging = isBankTxServerPagingEnabled() && Boolean(selectedAccountId);
+  pagingCtx.current.active = serverPaging;
+  pagingCtx.current.accountId = selectedAccountId || "";
+  pagingCtx.current.companyId = companyId;
+  pagingCtx.current.focusTx = focusTx;
+  pagingCtx.current.focusPending = focusPending;
 
   const emptyAccountForm = {
     type: "bank",
@@ -270,14 +310,114 @@ export default function BankingPage() {
     }
   }, [companyId, contactVirmanId]);
   useEffect(() => { loadBankingData(); }, [loadBankingData]);
+  const runServerLoad = useCallback(async (mode) => {
+    const ctx = pagingCtx.current;
+    if (!ctx.active || !ctx.accountId) return;
+    if (mode === "append" && (!ctx.hasMore || ctx.loading)) return;
+    const gen = ++serverGenRef.current;
+    if (serverAbortRef.current) serverAbortRef.current.abort();
+    const ctrl = new AbortController();
+    serverAbortRef.current = ctrl;
+    ctx.loading = true;
+    if (mode === "reset") setServerLoading(true);
+    const pageSize = 50;
+    const paramsFor = (page) => {
+      const params = { page, page_size: pageSize };
+      if (ctx.focusTx) params.focus_tx_id = ctx.focusTx;
+      if (ctx.focusPending) params.matched = "no";
+      return params;
+    };
+    const pull = async (page) => {
+      const { data } = await axios.get(
+        `${API_URL}/banking/accounts/${ctx.accountId}/transactions`,
+        { params: paramsFor(page), signal: ctrl.signal },
+      );
+      return data || {};
+    };
+    try {
+      let bodies = [];
+      let pages = [];
+      if (mode === "append") {
+        const lastPage = ctx.pages[ctx.pages.length - 1] || 1;
+        const next = lastPage + 1;
+        bodies = [await pull(next)];
+        pages = [...ctx.pages, next];
+      } else if (mode === "refresh" && ctx.pages.length > 1) {
+        pages = ctx.pages.slice();
+        for (const p of pages) {
+          bodies.push(await pull(p));
+        }
+      } else {
+        let body = await pull(1);
+        let page = 1;
+        const focusPage = Number(body.focus_page);
+        if (ctx.focusTx && focusPage > 1) {
+          page = focusPage;
+          body = await pull(page);
+        }
+        bodies = [body];
+        pages = [page];
+      }
+      if (gen !== serverGenRef.current) return;
+      const last = bodies[bodies.length - 1] || {};
+      if (mode === "append") {
+        const extra = Array.isArray(bodies[0].items) ? bodies[0].items : [];
+        setServerItems((prev) => [...(Array.isArray(prev) ? prev : []), ...extra]);
+      } else {
+        setServerItems(bodies.flatMap((b) => (Array.isArray(b.items) ? b.items : [])));
+      }
+      ctx.pages = pages;
+      ctx.hasMore = Boolean(last.has_more);
+      setServerHasMore(ctx.hasMore);
+      setServerTotal(Number(last.total) || 0);
+      setServerInflow(Number(last.period_inflow) || 0);
+      setServerOutflow(Number(last.period_outflow) || 0);
+      setServerLoading(false);
+    } catch (err) {
+      if (gen !== serverGenRef.current) return;
+      const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+      if (canceled) return;
+      setServerLoading(false);
+      toast.error("Hareketler yüklenemedi.");
+    } finally {
+      if (gen === serverGenRef.current) ctx.loading = false;
+    }
+  }, []);
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    pagingCtx.current.pages = [1];
+    pagingCtx.current.hasMore = false;
+    setServerItems([]);
+    setServerTotal(0);
+    setServerInflow(0);
+    setServerOutflow(0);
+    setServerHasMore(false);
+    runServerLoad("reset");
+    return () => {
+      if (serverAbortRef.current) serverAbortRef.current.abort();
+    };
+  }, [serverPaging, selectedAccountId, companyId, focusTx, focusPending, runServerLoad]);
+  useEffect(() => {
+    if (!serverPaging || !serverHasMore) return undefined;
+    const el = serverSentinelRef.current;
+    if (!el) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      runServerLoad("append");
+    }, { root: null, rootMargin: "240px 0px", threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [serverPaging, serverHasMore, serverItems.length, runServerLoad]);
   const refreshCashSilent = useCallback(() => {
     setCashTick((n) => n + 1);
     if (silentReloadRef.current) return silentReloadRef.current;
-    silentReloadRef.current = Promise.resolve(loadBankingData({ silent: true })).finally(() => {
-      silentReloadRef.current = null;
-    });
+    silentReloadRef.current = Promise.resolve(loadBankingData({ silent: true }))
+      .then(() => (pagingCtx.current.active ? runServerLoad("refresh") : null))
+      .finally(() => {
+        silentReloadRef.current = null;
+      });
     return silentReloadRef.current;
-  }, [loadBankingData]);
+  }, [loadBankingData, runServerLoad]);
   useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
   useEffect(() => {
     if (tab !== "reconciliation") return undefined;
@@ -296,18 +436,8 @@ export default function BankingPage() {
   const bumpCashData = useCallback(async (matchedTx) => {
     // Eşleşince satır listeden düşmesin: hemen matched durumunu yerelde yaz.
     if (matchedTx && (matchedTx.id || matchedTx._id)) {
-      const mid = matchedTx.id || matchedTx._id;
-      setTransactions((prev) => {
-        const rows = Array.isArray(prev) ? prev : [];
-        let found = false;
-        const next = rows.map((t) => {
-          const id = t.id || t._id;
-          if (id !== mid) return t;
-          found = true;
-          return { ...t, ...matchedTx, id: t.id || mid, match_status: matchedTx.match_status || "matched" };
-        });
-        return found ? next : [{ ...matchedTx, id: mid }, ...rows];
-      });
+      setTransactions((prev) => mergeMatchedTx(prev, matchedTx));
+      if (isBankTxServerPagingEnabled()) setServerItems((prev) => mergeMatchedTx(prev, matchedTx));
     }
     // Cache düşür + diğer ekranlara sinyal; ardından hesap grubu bakiyelerini (accounts + ortak özeti) bekleyerek yenile.
     await notifyDataChanged({ companyId, scopes: ["cash"] });
@@ -486,6 +616,12 @@ export default function BankingPage() {
   const { visible: pagedTx, hasMore: txHasMore, sentinelRef: txSentinelRef } = useInfiniteRows(visibleTx, {
     resetKey: `${selectedAccountId || ""}|${selectedGroup || ""}`,
   });
+  const listRows = serverPaging ? serverItems : pagedTx;
+  const listHasMore = serverPaging ? serverHasMore : txHasMore;
+  const listSentinelRef = serverPaging ? serverSentinelRef : txSentinelRef;
+  const listInflow = serverPaging ? serverInflow : txInflow;
+  const listOutflow = serverPaging ? serverOutflow : txOutflow;
+  const listCount = serverPaging ? serverTotal : visibleTx.length;
 
   const clearSimulated = async () => {
     if (!simulatedVisible.length) {
@@ -757,9 +893,9 @@ export default function BankingPage() {
           </div>
           {selectedAccount || openGroup ? (
             <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
-              <span className="text-slate-500">{visibleTx.length} hareket</span>
-              <span className="font-semibold text-emerald-600">Giren +{formatTrAmount(txInflow)} ₺</span>
-              <span className="font-semibold text-rose-600">Çıkan -{formatTrAmount(txOutflow)} ₺</span>
+              <span className="text-slate-500">{listCount} hareket</span>
+              <span className="font-semibold text-emerald-600">Giren +{formatTrAmount(listInflow)} ₺</span>
+              <span className="font-semibold text-rose-600">Çıkan -{formatTrAmount(listOutflow)} ₺</span>
             </div>
           ) : (
             <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
@@ -789,7 +925,9 @@ export default function BankingPage() {
         </div>
 
         {(() => {
-          const emptyTxLabel = selectedAccount ? "Bu hesaba ait hareket bulunmuyor." : "Henüz finansal hareket kaydı bulunmuyor.";
+          const emptyTxLabel = serverPaging && serverLoading && serverItems.length === 0
+            ? "Hareketler yükleniyor…"
+            : (selectedAccount ? "Bu hesaba ait hareket bulunmuyor." : "Henüz finansal hareket kaydı bulunmuyor.");
           const bankKind = (tx) => (tx.type === "inflow" ? "Giriş" : tx.type === "outflow" ? "Çıkış" : "Virman");
           const bankAmount = (tx) => (tx.type === "inflow" ? `+${tx.amount?.toLocaleString("tr-TR")} ₺` : tx.type === "outflow" ? `-${tx.amount?.toLocaleString("tr-TR")} ₺` : `${tx.amount?.toLocaleString("tr-TR")} ₺`);
           const bankAmountCls = (tx) => (tx.type === "inflow" ? "text-emerald-600" : tx.type === "outflow" ? "text-rose-600" : "text-indigo-600");
@@ -810,10 +948,10 @@ export default function BankingPage() {
               {tx.source === "bank_match" && <span className="text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
             </div>
           );
-          const cards = visibleTx.length === 0 ? (
+          const cards = listRows.length === 0 ? (
             <div className="text-center text-slate-400 py-6">{emptyTxLabel}</div>
           ) : (
-            pagedTx.map((tx) => {
+            listRows.map((tx) => {
               const id = tx.id || tx._id;
               return (
                 <TxMobileCard
@@ -846,12 +984,12 @@ export default function BankingPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {visibleTx.length === 0 ? (
+              {listRows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-6 text-center text-slate-400">{emptyTxLabel}</td>
                 </tr>
               ) : (
-                pagedTx.map((tx) => (
+                listRows.map((tx) => (
                   <tr key={tx.id || tx._id} className={`hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px] ${(tx.id || tx._id) === focusTx ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`} data-testid={`tx-row-${tx.id || tx._id}`}>
                     <td className="px-4 py-2.5 text-slate-500 font-mono" data-testid={`tx-date-${tx.id || tx._id}`}>{fmtDate(tx.date)}</td>
                     <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx, accounts)}</td>
@@ -897,8 +1035,8 @@ export default function BankingPage() {
             />
           );
         })()}
-        {txHasMore && (
-          <div ref={txSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
+        {listHasMore && (
+          <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
             Daha fazla hareket yükleniyor…
           </div>
         )}

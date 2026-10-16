@@ -125,6 +125,7 @@ import contact_payments
 import contact_balance
 import contact_activity
 import account_balance
+import bank_tx_page
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -10947,6 +10948,35 @@ async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01
     txs = await db.bank_transactions.find(query).sort("date", -1).to_list(2000)
     annotated = [account_balance.annotate_bank_tx(t, account_id) for t in txs]
     return clean_docs(annotated)
+
+
+@api_router.get("/banking/accounts/{account_id}/transactions")
+async def list_account_bank_transactions(
+    account_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    type: Optional[str] = None,
+    matched: str = "all",
+    focus_tx_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Seçili hesabın hareketleri, sayfa sayfa. GET yazmaz; bakiye alanlarına dokunmaz."""
+    return await bank_tx_page.list_account_transactions_for_user(
+        db,
+        user,
+        account_id,
+        page=page,
+        page_size=page_size,
+        date_from=date_from or "",
+        date_to=date_to or "",
+        q=q or "",
+        tx_type=type or "",
+        matched=matched or "all",
+        focus_tx_id=focus_tx_id or "",
+    )
 
 @api_router.post("/banking/transactions")
 async def create_bank_transaction(tx: BankTransaction):
