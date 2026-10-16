@@ -4,8 +4,9 @@ Kanallar: uygulama içi (+ push), e-posta, isteğe bağlı SMS.
 Platform tercihleri: company_notify_prefs. Firma aç/kapa: company_notify_tenant.
 Etkin uygulama/e-posta = platform AND firma. Özet: notify_outbox + leased job.
 
-Banka, kasa, POS ve üretime gönderme e-postası yalnız notify_outbox üzerinden gider.
-Bu olaylarda firma aç/kapa yoktur; kanalı platform tercihi belirler.
+Banka, kasa, POS, üretime gönderme ve personel (mesai, izin, avans, fazla mesai)
+e-postası yalnız notify_outbox üzerinden gider. Bu olaylarda firma aç/kapa yoktur;
+kanalı platform tercihi belirler.
 """
 from __future__ import annotations
 
@@ -48,6 +49,10 @@ NEW_EVENTS = (
     "pos_approval",
     "pos_daily_summary",
     "order_pick_production",
+    "attendance_alert",
+    "leave_request",
+    "advance_request",
+    "overtime_request",
 )
 EVENTS = TENANT_EVENTS + NEW_EVENTS
 EVENT_LABELS = {
@@ -60,6 +65,10 @@ EVENT_LABELS = {
     "pos_approval": "POS onayı",
     "pos_daily_summary": "Günlük POS özeti",
     "order_pick_production": "Üretime gönderildi (sipariş hazırlama)",
+    "attendance_alert": "Mesai uyarısı (geç/eksik giriş, konum)",
+    "leave_request": "İzin talebi",
+    "advance_request": "Avans talebi",
+    "overtime_request": "Fazla mesai / yevmiye onayı",
 }
 DIGEST_MODES = ("instant", "hourly", "daily", "batch")
 EMAIL_FROM_MODES = ("platform", "company")

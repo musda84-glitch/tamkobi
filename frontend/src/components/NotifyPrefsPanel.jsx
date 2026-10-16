@@ -14,6 +14,10 @@ const EVENT_ORDER = [
   "pos_approval",
   "pos_daily_summary",
   "order_pick_production",
+  "attendance_alert",
+  "leave_request",
+  "advance_request",
+  "overtime_request",
 ];
 const PLATFORM_ONLY_EVENTS = new Set([
   "bank_sync",
@@ -21,6 +25,10 @@ const PLATFORM_ONLY_EVENTS = new Set([
   "pos_approval",
   "pos_daily_summary",
   "order_pick_production",
+  "attendance_alert",
+  "leave_request",
+  "advance_request",
+  "overtime_request",
 ]);
 const ORDER_BATCH_MINUTES = [0, 5, 10, 15, 30, 60];
 const cred = { withCredentials: true };
@@ -60,6 +68,10 @@ const FALLBACK_LABELS = {
   pos_approval: "POS onayı",
   pos_daily_summary: "Günlük POS özeti",
   order_pick_production: "Üretime gönderildi (sipariş hazırlama)",
+  attendance_alert: "Mesai uyarısı (geç/eksik giriş, konum)",
+  leave_request: "İzin talebi",
+  advance_request: "Avans talebi",
+  overtime_request: "Fazla mesai / yevmiye onayı",
 };
 
 function eventChannel(events, key) {
@@ -172,7 +184,7 @@ export function NotifyPrefsPanel({ companyId, mode = "company" }) {
         <div>
           <div className="text-sm font-bold text-slate-900">Olay bildirimleri</div>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Gelen e-fatura, sipariş, kontör, vadesi geçmiş alacak, banka, kasa, POS ve üretime gönderim için uygulama içi, e-posta ve isteğe bağlı SMS.
+            Gelen e-fatura, sipariş, kontör, vadesi geçmiş alacak, banka, kasa, POS, üretime gönderim, mesai, izin, avans ve fazla mesai için uygulama içi, e-posta ve isteğe bağlı SMS.
             {isPlatform ? " Bu ayarlar Platform Yönetimi’nden kaydedilir." : ""}
           </p>
         </div>
