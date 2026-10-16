@@ -6545,6 +6545,15 @@ def _with_purchase_costs(product: dict, hist: list) -> dict:
     return d
 
 
+async def _products_page_decorate(items, company_id):
+    """Sayfa dilimine alış geçmişi. Şirket faturaları bir kez okunur. Yazmaz."""
+    rows = [row for row in (items or []) if isinstance(row, dict)]
+    if not rows:
+        return []
+    cost_map = await _purchase_costs_by_product(company_id)
+    return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in rows]
+
+
 @api_router.get("/products")
 async def list_products(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -6570,6 +6579,7 @@ async def list_products(
 
     page ve page_size yokken yanıt eskisi gibi bir dizidir (seçici, B2B, mobil, sync değil).
     Biri verilirse salt okunur sayfa: total + summary. Firma tenant_access ile çözülür.
+    lite değilse alış alanları yalnız o sayfadaki ürünlere eklenir.
     """
     if page is not None or page_size is not None:
         if request is None:
@@ -6597,6 +6607,7 @@ async def list_products(
             sort=sort or "name_asc",
             export=export,
             clean=clean_docs,
+            decorate_page=_products_page_decorate,
         )
     query = {"company_id": company_id}
     if b2b_only:

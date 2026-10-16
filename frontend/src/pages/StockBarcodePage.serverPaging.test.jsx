@@ -79,7 +79,16 @@ let totalOverride = null;
 
 function rowFor(pageNo) {
   if (pageNo === 1) {
-    return { id: "p1", name: "Sunucu Ürün", sku: "SUN-1", barcode: "999", category: "Elektronik", stock_quantity: 4, min_stock_alert: 1, track_stock: true, purchase_price: 3, sale_price: 8, show_in_b2b: true, is_active: true, unit: "Adet" };
+    return {
+      id: "p1", name: "Sunucu Ürün", sku: "SUN-1", barcode: "999", category: "Elektronik",
+      stock_quantity: 4, min_stock_alert: 1, track_stock: true, purchase_price: 3, sale_price: 8,
+      show_in_b2b: true, is_active: true, unit: "Adet", currency: "TRY",
+      last_purchase_price: 12.5, last_purchase_date: "2026-03-15", last_purchase_supplier: "Yeni Tedarik",
+      purchase_costs: [
+        { date: "2026-03-15", unit_price: 12.5, supplier: "Yeni Tedarik" },
+        { date: "2026-01-01", unit_price: 10, supplier: "Eski Tedarik" },
+      ],
+    };
   }
   return {
     id: `p${pageNo}`,
@@ -264,6 +273,16 @@ test("flag açıkken sayfa ister, arama sayfa 1'e döner, toplam sunucudadır", 
   });
   await waitFor(() => host.textContent.includes("Arama Sonucu"));
   expect(host.querySelector('[data-testid="stock-page-indicator"]').textContent.replace(/\s/g, "")).toBe("1/1");
+});
+
+test("flag açıkken son alış satırı görünür", async () => {
+  localStorage.setItem(PRODUCTS_PAGING_STORAGE_KEY, "1");
+  await renderPage();
+  await waitFor(() => host.querySelector('[data-testid="stock-last-buy-SUN-1"]'));
+  const line = host.querySelector('[data-testid="stock-last-buy-SUN-1"]');
+  expect(line.textContent.replace(/\s+/g, " ").trim()).toMatch(/^son /);
+  expect(line.textContent).toContain("15.03");
+  expect(host.querySelector('[data-testid="stock-last-buy-ADA-1"]')).toBeNull();
 });
 
 test("seri 5 sonraki tıklaması totalPages'i geçmez", async () => {

@@ -593,12 +593,150 @@ def test_route_without_page_is_the_old_list_and_page_does_not_write():
     assert _ids(body["items"]) == ["ada", "ada2"]
     assert body["items"][0]["stock_quantity"] == 2
     assert body["summary"]["warehouse_quantities"]["wh_main"] == 11
-    assert {name for _kind, name, _query, _proj in paged_log} == {"products"}
+    assert {name for _kind, name, _query, _proj in paged_log} == {"products", "invoices"}
+    assert sum(1 for kind, name, *_rest in paged_log if name == "invoices" and kind == "find") == 1
     assert paged_writes == []
     assert denied == 401
     assert other == 403
     assert db.writes == []
     assert products == before
+
+
+_COST_KEYS = (
+    "purchase_costs",
+    "last_purchase_price",
+    "last_purchase_date",
+    "last_purchase_supplier",
+    "avg_purchase_price",
+)
+
+
+def _purchase_invoices():
+    """Ada'nın iki alışı ve sayfa dışında kalacak Bora'nın bir alışı."""
+    return [
+        {
+            "_id": "inv-ada-new",
+            "company_id": CID,
+            "invoice_type": "purchase",
+            "status": "approved",
+            "issue_date": "2026-08-01",
+            "contact_name": "Yeni Tedarik",
+            "invoice_number": "AF-2",
+            "items": [{"product_id": "ada", "unit_price": 15, "quantity": 2}],
+        },
+        {
+            "_id": "inv-ada-old",
+            "company_id": CID,
+            "invoice_type": "purchase",
+            "status": "approved",
+            "issue_date": "2026-01-15",
+            "contact_name": "Eski Tedarik",
+            "invoice_number": "AF-1",
+            "items": [{"product_id": "ada", "unit_price": 9, "quantity": 1}],
+        },
+        {
+            "_id": "inv-ada-void",
+            "company_id": CID,
+            "invoice_type": "purchase",
+            "status": "cancelled",
+            "issue_date": "2026-09-01",
+            "contact_name": "İptal",
+            "invoice_number": "AF-X",
+            "items": [{"product_id": "ada", "unit_price": 99, "quantity": 1}],
+        },
+        {
+            "_id": "inv-bora",
+            "company_id": CID,
+            "invoice_type": "purchase",
+            "status": "approved",
+            "issue_date": "2026-07-01",
+            "contact_name": "Bora Tedarik",
+            "invoice_number": "AF-B",
+            "items": [{"product_id": "bora", "unit_price": 4, "quantity": 3}],
+        },
+        {
+            "_id": "inv-other",
+            "company_id": OTHER,
+            "invoice_type": "purchase",
+            "status": "approved",
+            "issue_date": "2026-08-02",
+            "contact_name": "Yabancı",
+            "invoice_number": "AF-F",
+            "items": [{"product_id": "ada", "unit_price": 500, "quantity": 1}],
+        },
+    ]
+
+
+def test_paged_purchase_costs_match_legacy_and_skip_off_page_and_lite():
+    import server
+    from unittest.mock import AsyncMock, patch
+
+    products = copy.deepcopy(_seed())
+    db = MemDB(products, invoices=copy.deepcopy(_purchase_invoices()))
+    before = copy.deepcopy(products)
+    invoices_before = copy.deepcopy(db.invoices.docs)
+    user = {"id": "u1", "company_ids": [CID], "active_company_id": CID}
+    applied = []
+    map_calls = []
+    real_with = server._with_purchase_costs
+    real_map = server._purchase_costs_by_product
+
+    def spy_with(product, hist):
+        applied.append(str((product or {}).get("_id") or (product or {}).get("id") or ""))
+        return real_with(product, hist)
+
+    async def spy_map(company_id, limit_each=8):
+        map_calls.append(str(company_id))
+        return await real_map(company_id, limit_each=limit_each)
+
+    async def _go():
+        with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)), patch.object(server, "_with_purchase_costs", spy_with), patch.object(server, "_purchase_costs_by_product", spy_map):
+            legacy = await server.list_products(company_id=CID)
+            applied.clear()
+            map_calls.clear()
+            db.log.clear()
+            db.writes.clear()
+            body = await server.list_products(
+                company_id=CID, page=1, page_size=1, sort="name_asc", request=object(),
+            )
+            paged_applied = list(applied)
+            paged_maps = list(map_calls)
+            paged_writes = list(db.writes)
+            applied.clear()
+            map_calls.clear()
+            db.log.clear()
+            db.writes.clear()
+            lite = await server.list_products(
+                company_id=CID, page=1, page_size=5, lite=True, sort="name_asc", request=object(),
+            )
+            return legacy, body, paged_applied, paged_maps, paged_writes, lite, list(applied), list(map_calls), list(db.writes)
+
+    legacy, body, paged_applied, paged_maps, paged_writes, lite, lite_applied, lite_maps, lite_writes = _run(_go())
+    by_id = {row["id"]: row for row in legacy}
+    assert _ids(body["items"]) == ["ada"]
+    assert "bora" not in _ids(body["items"])
+    page_ada = body["items"][0]
+    for key in _COST_KEYS:
+        assert page_ada[key] == by_id["ada"][key]
+    assert page_ada["last_purchase_price"] == 15
+    assert page_ada["last_purchase_supplier"] == "Yeni Tedarik"
+    assert page_ada["last_purchase_date"] == "2026-08-01"
+    assert page_ada["avg_purchase_price"] == 12
+    assert [row["unit_price"] for row in page_ada["purchase_costs"]] == [15, 9]
+    assert paged_applied == ["ada"]
+    assert "bora" not in paged_applied
+    assert paged_maps == [CID]
+    assert paged_writes == []
+    assert lite_applied == []
+    assert lite_maps == []
+    assert lite_writes == []
+    assert lite["items"]
+    for row in lite["items"]:
+        for key in _COST_KEYS:
+            assert key not in row
+    assert db.writes == []
+    assert products == before
+    assert db.invoices.docs == invoices_before
 
 
 def test_lite_projection_is_recorded_and_still_filters():

@@ -13,6 +13,9 @@ seviyeye sıkışmaz.
 Depo kovalarındaki adet, ürünün kayıtlı ``stock_quantity`` değeridir
 (``track_stock`` kapalı olsa da). Hareket, lot veya transferden yeniden
 hesaplanmaz.
+
+``decorate_page`` verilirse yalnız sayfa dilimine uygulanır (lite değilken).
+Alış maliyeti bu callback ile eklenir; sayfa dışındaki ürünlere uygulanmaz.
 """
 from __future__ import annotations
 
@@ -519,8 +522,12 @@ async def list_products_paged(
     sort: str = "name_asc",
     export: bool = False,
     clean: Optional[Callable] = None,
+    decorate_page: Optional[Callable] = None,
 ) -> dict:
-    """Sayfa döner. products yazılmaz."""
+    """Sayfa döner. products yazılmaz.
+
+    lite değilse ve dilim doluysa ``decorate_page`` yalnız o dilimi görür.
+    """
     exporting = bool(export)
     if exporting:
         size = fetch_limit(lite=lite, ids=ids, skus=skus)
@@ -543,6 +550,9 @@ async def list_products_paged(
         page_rows: List[dict] = []
     else:
         page_rows = ordered[start:start + size]
+    if decorate_page is not None and page_rows and not lite:
+        decorated = await decorate_page(page_rows, company_id=str(company_id or ""))
+        page_rows = [row for row in (decorated or []) if isinstance(row, dict)]
     summary = dict(view["summary"])
     return {
         "items": page_rows,
