@@ -583,8 +583,9 @@ async def bh_get_config(company_id: Optional[str] = None, user: dict = Depends(_
 
 
 @router.put("/migration/bizimhesap/config")
-async def bh_put_config(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def bh_put_config(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await tenant_access.require_company_admin(user, company_id)
     upd = {"firm_id": (req.get("firm_id") or "").strip(), "updated_at": _now()}
     if req.get("token"):
         tok = req["token"].strip()

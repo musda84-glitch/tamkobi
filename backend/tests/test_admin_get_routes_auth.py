@@ -492,8 +492,12 @@ def test_route_signatures_have_auth_and_no_nexus_default():
     assert migration_text.count("_bh_config_payload(") >= 2
     assert "await get_wa_settings(" not in server_text
     assert server_text.count("_wa_settings_payload(") >= 2
-    assert 'req.get("company_id", "comp_nexus_main_01")' in inspect.getsource(migration.bh_put_config)
-    assert 'req.get("company_id", "comp_nexus_main_01")' in inspect.getsource(server.save_wa_settings)
+    assert "resolve_company_id" in inspect.getsource(migration.bh_put_config)
+    assert "require_company_admin" in inspect.getsource(migration.bh_put_config)
+    assert "comp_nexus_main_01" not in inspect.getsource(migration.bh_put_config)
+    assert "resolve_company_id" in inspect.getsource(server.save_wa_settings)
+    assert "require_company_admin" in inspect.getsource(server.save_wa_settings)
+    assert "comp_nexus_main_01" not in inspect.getsource(server.save_wa_settings)
     assert "PermissionAndAuditMiddleware" in Path(rbac.__file__).read_text(encoding="utf-8")
 
 
@@ -835,7 +839,8 @@ def test_save_views_stay_masked_and_match_payload(api, caplog):
     caplog.set_level(logging.DEBUG)
     headers = _auth("user-a")
 
-    saved_bh = _run(migration.bh_put_config({"token": BH_SECRET, "firm_id": "FIRM-N"}))
+    nexus_user = _user("user-sa", [], "", superadmin=True, name="Süper")
+    saved_bh = _run(migration.bh_put_config({"token": BH_SECRET, "firm_id": "FIRM-N", "company_id": NEXUS}, user=nexus_user))
     assert saved_bh == _run(migration._bh_config_payload(NEXUS))
     assert saved_bh["configured"] is True
     assert saved_bh["firm_id"] == "FIRM-N"
@@ -851,10 +856,11 @@ def test_save_views_stay_masked_and_match_payload(api, caplog):
     assert "FIRM-N" not in still_a.text
 
     saved_wa = _run(server.save_wa_settings({
+        "company_id": NEXUS,
         "phone_number_id": "pnN",
         "verify_token": "vtN",
         "access_token": WA_SECRET,
-    }))
+    }, user=nexus_user))
     assert saved_wa == _run(server._wa_settings_payload(NEXUS))
     assert saved_wa["company_id"] == NEXUS
     assert saved_wa["phone_number_id"] == "pnN"
