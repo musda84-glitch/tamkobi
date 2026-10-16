@@ -351,9 +351,13 @@ def test_route_signatures_drop_nexus_default_and_require_user():
     assert "budgets_payload" in inspect.getsource(expenses.set_budgets)
     assert "add_category_for_company" in inspect.getsource(expenses.create_expense_for_company)
     assert "list_expenses_payload" in inspect.getsource(expenses.list_expenses)
+    dash_payload = inspect.getsource(server.dashboard_overview_payload)
+    assert "expenses.budgets_payload(company_id)" in dash_payload
+    assert "get_budgets" not in dash_payload
     dash = inspect.getsource(server.dashboard_overview)
-    assert "expenses.budgets_payload(company_id)" in dash
+    assert "comp_nexus_main_01" not in dash
     assert "get_budgets" not in dash
+    assert inspect.signature(server.dashboard_overview).parameters["user"].default.dependency is server.get_current_user
 
     notes = inspect.getsource(server.list_notifications)
     assert 'sort("created_at", -1)' in notes
@@ -647,7 +651,7 @@ def test_expense_posts_use_active_company_and_super_admin_explicit_company(api):
 
 def test_dashboard_budget_warnings_come_from_budgets_payload(api):
     _client, db = api
-    overview = _run(server.dashboard_overview(company_id=COMP_A))
+    overview = _run(server.dashboard_overview_payload(COMP_A))
     payload = _run(expenses.budgets_payload(COMP_A))
     assert overview["budget_warnings"] == payload["warnings"]
     assert overview["budget_warnings"]
