@@ -9,6 +9,7 @@ import {
 test("provider labels", () => {
   expect(einvoiceProviderLabel("isnet")).toBe("İşNet SOAP");
   expect(einvoiceProviderLabel("isnet_portal")).toBe("İşNet Portal");
+  expect(einvoiceProviderLabel("qnb_efinans")).toBe("QNB eFinans");
   expect(einvoiceProviderLabel("")).toMatch(/yok/i);
 });
 
@@ -34,4 +35,6 @@ test("inbox and e-dispatch support", () => {
   expect(supportsEDispatch({ provider: "isnet", status: "configured" })).toBe(true);
   expect(supportsEDispatch({ provider: "isnet", status: "configured", e_dispatch_enabled: false })).toBe(false);
   expect(supportsEDispatch({ provider: "n11faturam", status: "configured" })).toBe(false);
+  expect(supportsGibInbox({ provider: "qnb_efinans", status: "configured" })).toBe(false);
+  expect(supportsEDispatch({ provider: "qnb_efinans", status: "configured" })).toBe(false);
 });

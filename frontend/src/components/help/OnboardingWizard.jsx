@@ -16,7 +16,7 @@ export function OnboardingWizard() {
   const [busy, setBusy] = useState(false);
   const [company, setCompany] = useState({ name: "", tax_number: "", tax_office: "", address: "", city: "", phone: "", email: "" });
   const [einvoice, setEinvoice] = useState(null);
-  const [eiForm, setEiForm] = useState({ username: "", password: "", corporate_code: "", alias: "", company_tax_id: "", mode: "test" });
+  const [eiForm, setEiForm] = useState({ username: "", password: "", corporate_code: "", alias: "", company_tax_id: "", erp_code: "", efatura_url: "", earsiv_url: "", mode: "test" });
   const [contact, setContact] = useState({ name: "", tax_number_or_id: "", type: "customer", phone: "" });
   const [product, setProduct] = useState({ name: "", sku: "", sale_price: "100", vat_rate: "20" });
   const [invoice, setInvoice] = useState({ contact_id: "", product_id: "", quantity: "1", unit_price: "100", vat_rate: "20" });
@@ -51,6 +51,9 @@ export function OnboardingWizard() {
         corporate_code: r.data.corporate_code || "",
         alias: r.data.alias || "",
         company_tax_id: r.data.company_tax_id || "",
+        erp_code: r.data.erp_code || "",
+        efatura_url: r.data.efatura_url || "",
+        earsiv_url: r.data.earsiv_url || "",
         mode: r.data.mode || "test",
       }));
     }).catch(() => setEinvoice(null));
@@ -299,10 +302,19 @@ export function OnboardingWizard() {
                 <label className="text-xs font-semibold block">Kurum kodu<input className={inputCls} value={eiForm.corporate_code} onChange={(e) => setEiForm({ ...eiForm, corporate_code: e.target.value })} /></label>
               )}
               {(einvoice.fields || []).includes("alias") && (
-                <label className="text-xs font-semibold block">GİB alias<input className={inputCls} value={eiForm.alias} onChange={(e) => setEiForm({ ...eiForm, alias: e.target.value })} /></label>
+                <label className="text-xs font-semibold block">{einvoice.provider === "qnb_efinans" ? "PK etiketi" : "GİB alias"}<input className={inputCls} value={eiForm.alias} onChange={(e) => setEiForm({ ...eiForm, alias: e.target.value })} /></label>
               )}
               {(einvoice.fields || []).includes("company_tax_id") && (
                 <label className="text-xs font-semibold block">VKN<input className={inputCls} value={eiForm.company_tax_id} onChange={(e) => setEiForm({ ...eiForm, company_tax_id: e.target.value })} /></label>
+              )}
+              {(einvoice.fields || []).includes("erp_code") && (
+                <label className="text-xs font-semibold block">erpKodu<input className={inputCls} value={eiForm.erp_code} onChange={(e) => setEiForm({ ...eiForm, erp_code: e.target.value })} /></label>
+              )}
+              {einvoice.provider === "qnb_efinans" && (
+                <>
+                  <label className="text-xs font-semibold block">Canlı e-Fatura URL<input className={inputCls} value={eiForm.efatura_url} onChange={(e) => setEiForm({ ...eiForm, efatura_url: e.target.value })} placeholder="https://" /></label>
+                  <label className="text-xs font-semibold block">Canlı e-Arşiv URL<input className={inputCls} value={eiForm.earsiv_url} onChange={(e) => setEiForm({ ...eiForm, earsiv_url: e.target.value })} placeholder="https://" /></label>
+                </>
               )}
               <button type="submit" disabled={busy} className="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold disabled:opacity-60" data-testid="onb-einvoice-save">Kaydet ve devam</button>
             </>

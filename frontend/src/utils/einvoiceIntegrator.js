@@ -4,6 +4,7 @@ export const EINVOICE_PROVIDER_LABELS = {
   isnet: "İşNet SOAP",
   isnet_portal: "İşNet Portal",
   n11faturam: "n11 Faturam",
+  qnb_efinans: "QNB eFinans",
   foriba: "Foriba",
   simulated: "Simülasyon",
 };
