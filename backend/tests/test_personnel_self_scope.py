@@ -1,4 +1,7 @@
-"""Personel rolü GET listelerinde yalnız kendi satırını görür.
+"""Personel GET listelerinde satır kapsamı.
+
+İzin, prim, bordro, puantaj ve vardiya: yalnız kendi satırı.
+Çalışan listesi: firma dizini (finansal alan yok); kendi kartı tam kayıt.
 
 FastAPI TestClient ve bellek içi veritabanı. Canlı sunucu, 8021, MySQL yok.
 """
@@ -201,14 +204,41 @@ def _user(uid, role, *, employee_id=None, superadmin=False, companies=None, acti
     return doc
 
 
+_PIN_HASH = "hash-should-not-leak"
+_IBAN = "TR330006100519786457841326"
+_TCKN = "10000000146"
+_DIRECTORY_LEAKS = (
+    "salary", "payroll_salary", "second_salary", "daily_wage", "official_salary",
+    "iban", "tc_kimlik", "tckn", "phone", "address", "birth_date", "email",
+    "shopfloor_pin_hash", "cashier_pin_hash", "punch_pin_hash", "password_hash",
+    "balance", "leave_balance", "yevmiye_due", "yevmiye_days", "annual_leave_days",
+    "used_leave_days", "meal_allowance", "transport_allowance", "notes",
+    "overtime_hourly_rate", "emergency_contact",
+)
+
+
 def _emp(eid, name, company=CID, user_id=None):
     doc = {
         "_id": eid,
         "company_id": company,
         "full_name": name,
         "status": "active",
-        "salary": 1000,
+        "position": "Usta",
         "department": "Uretim",
+        "salary": 1000,
+        "payroll_salary": 900,
+        "second_salary": 100,
+        "daily_wage": 400,
+        "iban": _IBAN,
+        "tc_kimlik": _TCKN,
+        "phone": "5551112233",
+        "email": "gizli@example.com",
+        "address": "Gizli adres",
+        "birth_date": "1990-01-01",
+        "shopfloor_pin_hash": _PIN_HASH,
+        "cashier_pin_hash": "cashier-hash-secret",
+        "punch_pin_hash": "punch-hash-secret",
+        "password_hash": "password-hash-secret",
         "annual_leave_days": 14,
         "used_leave_days": 0,
     }
@@ -218,11 +248,18 @@ def _emp(eid, name, company=CID, user_id=None):
 
 
 def _seed(db):
-    db.companies.docs.append({"_id": CID, "name": "Scope A"})
+    db.companies.docs.append({
+        "_id": CID,
+        "name": "Scope A",
+        "location": {"label": "Merkez Atolye", "latitude": 41.01, "longitude": 29.01, "radius_m": 200},
+    })
     db.companies.docs.append({"_id": OTHER, "name": "Scope B"})
+    inactive = _emp("empOff", "Pasif P")
+    inactive["status"] = "inactive"
     db.employees.docs.extend([
         _emp("empA", "Ada A", user_id="user-a"),
         _emp("empB", "Bora B", user_id="user-b"),
+        inactive,
         _emp("empOther", "Dis Kart", company=OTHER, user_id="user-foreign-card"),
     ])
     db.leave_requests.docs.extend([
@@ -285,8 +322,10 @@ def api():
         _user("user-admin", "admin"),
         _user("user-manager", "manager"),
         _user("user-advisor", "advisor"),
+        _user("user-accountant", "accountant"),
         _user("user-sales", "sales"),
         _user("user-warehouse", "warehouse"),
+        _user("user-production", "production", employee_id="empB"),
         _user("user-sa", "personel", superadmin=True, companies=[], active=""),
     ])
     _seed(db)
@@ -294,11 +333,6 @@ def api():
     saas.invalidate()
     _run(rbac.ensure_roles(CID))
     _run(rbac.ensure_roles(CID))
-    for doc in db.roles.docs:
-        if doc.get("company_id") == CID and doc.get("code") == "manager":
-            perms = dict(doc.get("permissions") or {})
-            perms["/personnel"] = "view"
-            doc["permissions"] = perms
     router = server.app.router
     saved_up = list(router.on_startup)
     saved_down = list(router.on_shutdown)
@@ -326,6 +360,46 @@ def _auth(uid, *, superadmin=False, role="personel"):
 
 def _ids(rows):
     return [row.get("id") or row.get("employee_id") for row in rows]
+
+
+def _assert_directory_row(row):
+    assert set(row) <= set(personnel_scope.DIRECTORY_FIELDS)
+    assert row["full_name"]
+    assert row["status"] == "active"
+    assert row["position"] == "Usta"
+    assert row["department"] == "Uretim"
+    assert row["has_user"] is True
+    assert row["user_id"]
+    assert row["has_shopfloor_pin"] is True
+    assert row["has_cashier_pin"] is True
+    assert row["workplace"] == "Merkez Atolye"
+    assert isinstance(row["workplace"], str)
+    for key in _DIRECTORY_LEAKS:
+        assert key not in row, key
+    blob = str(row)
+    assert _PIN_HASH not in blob
+    assert _IBAN not in blob
+    assert _TCKN not in blob
+    assert "latitude" not in blob and "longitude" not in blob
+
+
+def _assert_full_employee(row, *, salary):
+    assert "balance" in row and "leave_balance" in row
+    assert "annual_leave_days" in row
+    assert row["salary"] == salary
+    assert row["payroll_salary"] == (900 if salary else 0)
+    assert row["second_salary"] == (100 if salary else 0)
+    assert row["iban"] == _IBAN
+    assert row["tc_kimlik"] == _TCKN
+    assert isinstance(row.get("workplace"), dict)
+    assert row["workplace"]["label"] == "Merkez Atolye"
+    assert row["has_shopfloor_pin"] is True
+    assert row["has_user"] is (row["id"] != "empOff")
+    assert "shopfloor_pin_hash" not in row
+    assert "cashier_pin_hash" not in row
+    assert "punch_pin_hash" not in row
+    assert "password_hash" not in row
+    assert _PIN_HASH not in str(row)
 
 
 def _enable_atolye(db):
@@ -380,11 +454,19 @@ def test_personel_sees_only_own_rows(api):
 
     employees = client.get("/api/personnel/employees", params=params, headers=headers)
     assert employees.status_code == 200, employees.text
-    assert [row["id"] for row in employees.json()] == ["empA"]
-    assert employees.json()[0]["full_name"] == "Ada A"
+    assert employees.headers.get("x-prices-masked") == "1"
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB"]
+    assert "empOff" not in [row["id"] for row in rows]
+    own, other = rows
+    assert own["full_name"] == "Ada A"
+    _assert_full_employee(own, salary=0)
+    _assert_directory_row(other)
+    assert other["full_name"] == "Bora B"
+    assert other["user_id"] == "user-b"
 
 
-def test_personel_employee_id_of_other_returns_empty(api):
+def test_personel_employee_id_of_other_returns_directory_row(api):
     client, _db = api
     headers = _auth("user-a")
     foreign = {"company_id": CID, "employee_id": "empB"}
@@ -418,8 +500,25 @@ def test_personel_employee_id_of_other_returns_empty(api):
 
     employees = client.get("/api/personnel/employees", params=foreign, headers=headers)
     assert employees.status_code == 200, employees.text
-    assert employees.json() == []
-    assert "Bora B" not in employees.text
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empB"]
+    _assert_directory_row(rows[0])
+    assert rows[0]["full_name"] == "Bora B"
+    missing = client.get("/api/personnel/employees", params={**foreign, "employee_id": "emp-yok"}, headers=headers)
+    assert missing.status_code == 200 and missing.json() == []
+    inactive = client.get("/api/personnel/employees", params={**foreign, "employee_id": "empOff"}, headers=headers)
+    assert inactive.status_code == 200 and inactive.json() == []
+
+
+def test_own_employee_id_returns_only_full_card(api):
+    client, _db = api
+    headers = _auth("user-a")
+    own = {"company_id": CID, "employee_id": "empA"}
+    employees = client.get("/api/personnel/employees", params=own, headers=headers)
+    assert employees.status_code == 200, employees.text
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA"]
+    _assert_full_employee(rows[0], salary=0)
 
 
 def test_own_employee_id_still_returns_own_rows(api):
@@ -438,7 +537,12 @@ def test_portal_atolye_keeps_full_employee_list(api):
     params = {"company_id": CID}
     employees = client.get("/api/personnel/employees", params=params, headers=headers)
     assert employees.status_code == 200, employees.text
-    assert [row["id"] for row in employees.json()] == ["empA", "empB"]
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB", "empOff"]
+    for row in rows:
+        _assert_full_employee(row, salary=0)
+    narrowed = client.get("/api/personnel/employees", params={**params, "employee_id": "empB"}, headers=headers)
+    assert [row["id"] for row in narrowed.json()] == ["empA", "empB", "empOff"]
 
     leaves = client.get("/api/personnel/leaves", params=params, headers=headers)
     assert _ids(leaves.json()) == ["lvA", "lvAok"]
@@ -465,7 +569,12 @@ def test_unlinked_personel_gets_empty_lists_not_500(api):
     shifts = client.get("/api/personnel/shifts", params={**params, "week_start": WEEK}, headers=headers)
     assert shifts.status_code == 200 and shifts.json()["rows"] == []
     employees = client.get("/api/personnel/employees", params=params, headers=headers)
-    assert employees.status_code == 200 and employees.json() == []
+    assert employees.status_code == 200, employees.text
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB"]
+    for row in rows:
+        _assert_directory_row(row)
+        assert "balance" not in row
     pending = client.get("/api/personnel/pending-requests", params=params, headers=headers)
     assert pending.status_code == 403, pending.text
 
@@ -478,10 +587,37 @@ def test_employee_card_in_other_company_is_empty(api):
     assert leaves.json() == []
     employees = client.get("/api/personnel/employees", params={"company_id": CID}, headers=headers)
     assert employees.status_code == 200, employees.text
-    assert employees.json() == []
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB"]
+    for row in rows:
+        _assert_directory_row(row)
 
 
-def _assert_full_list(client, headers):
+def test_directory_projection_is_allowlist():
+    raw = _emp("empX", "Gizli Kisi", user_id="user-x")
+    raw["role"] = "Usta"
+    raw["notes"] = "gizli not"
+    raw["token"] = "session-token"
+    row = personnel_scope.project_directory(
+        raw,
+        has_user=True,
+        workplace={"label": "Saha", "latitude": 41.0, "longitude": 29.0, "address": "gizli adres"},
+    )
+    assert set(row) <= set(personnel_scope.DIRECTORY_FIELDS)
+    assert row["workplace"] == "Saha"
+    assert row["has_user"] is True
+    assert row["user_id"] == "user-x"
+    assert row["has_shopfloor_pin"] is True
+    assert _PIN_HASH not in str(row)
+    assert "session-token" not in str(row)
+    assert "latitude" not in row
+    empty = personnel_scope.project_directory({"_id": "e", "full_name": "A", "status": "active"}, has_user=False)
+    assert empty["has_user"] is False
+    assert "user_id" not in empty
+    assert "salary" not in empty
+
+
+def _assert_full_list(client, headers, *, salary=1000):
     params = {"company_id": CID}
     leaves = client.get("/api/personnel/leaves", params=params, headers=headers)
     assert leaves.status_code == 200, leaves.text
@@ -494,7 +630,7 @@ def _assert_full_list(client, headers):
     assert attendance_rows.status_code == 200, attendance_rows.text
     att = attendance_rows.json()
     assert {row["id"] for row in att["records"]} == {"attA", "attB"}
-    assert [row["employee_id"] for row in att["summary"]] == ["empA", "empB"]
+    assert [row["employee_id"] for row in att["summary"]] == ["empA", "empB", "empOff"]
     preview = client.get("/api/personnel/overtime-preview", params={**params, "period": MONTH}, headers=headers)
     assert [row["employee_id"] for row in preview.json()["rows"]] == ["empA", "empB"]
     shifts = client.get("/api/personnel/shifts", params={**params, "week_start": WEEK}, headers=headers)
@@ -504,7 +640,14 @@ def _assert_full_list(client, headers):
     assert pending.json()["count"] == 2
     assert {row["employee_id"] for row in pending.json()["items"]} == {"empA", "empB"}
     employees = client.get("/api/personnel/employees", params=params, headers=headers)
-    assert [row["id"] for row in employees.json()] == ["empA", "empB"]
+    assert employees.status_code == 200, employees.text
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB", "empOff"]
+    for row in rows:
+        _assert_full_employee(row, salary=salary)
+        assert "shopfloor_pin_hash" not in row
+    narrowed = client.get("/api/personnel/employees", params={**params, "employee_id": "empB"}, headers=headers)
+    assert [row["id"] for row in narrowed.json()] == ["empA", "empB", "empOff"]
     filtered = client.get("/api/personnel/leaves", params={**params, "employee_id": "empB"}, headers=headers)
     assert _ids(filtered.json()) == ["lvB"]
 
@@ -512,21 +655,61 @@ def _assert_full_list(client, headers):
 def test_admin_manager_advisor_and_super_admin_see_full_list(api):
     client, db = api
     manager = next(r for r in db.roles.docs if r.get("code") == "manager" and r.get("company_id") == CID)
-    assert manager["permissions"]["/personnel"] == "view"
+    assert rbac.level_allows(manager["permissions"]["/personnel"], "edit")
+    accountant = next(r for r in db.roles.docs if r.get("code") == "accountant" and r.get("company_id") == CID)
+    advisor = next(r for r in db.roles.docs if r.get("code") == "advisor" and r.get("company_id") == CID)
+    assert accountant["permissions"]["/personnel"] == "view"
+    assert advisor["permissions"]["/personnel"] == "view"
     _assert_full_list(client, _auth("user-admin", role="admin"))
     _assert_full_list(client, _auth("user-manager", role="manager"))
     _assert_full_list(client, _auth("user-advisor", role="advisor"))
-    _assert_full_list(client, _auth("user-sa", role="personel", superadmin=True))
-
-
-def test_sales_and_warehouse_without_personnel_view_are_scoped(api):
-    client, _db = api
+    _assert_full_list(client, _auth("user-accountant", role="accountant"))
+    # Süper admin tam listeyi görür; token rolü personel olduğu için fiyat maskesi durur.
+    client_sa_headers = _auth("user-sa", role="personel", superadmin=True)
     params = {"company_id": CID}
+    employees = client.get("/api/personnel/employees", params=params, headers=client_sa_headers)
+    assert employees.status_code == 200, employees.text
+    assert employees.headers.get("x-prices-masked") == "1"
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB", "empOff"]
+    for row in rows:
+        _assert_full_employee(row, salary=0)
+    _assert_full_list(client, client_sa_headers, salary=0)
+
+
+def test_production_sales_and_warehouse_see_directory(api):
+    client, db = api
+    production = next(r for r in db.roles.docs if r.get("code") == "production" and r.get("company_id") == CID)
+    assert production["permissions"].get("/personnel", "none") == "none"
+    assert rbac.role_features(production).get("portal_atolye") is False
+    params = {"company_id": CID}
+    headers = _auth("user-production", role="production")
+    employees = client.get("/api/personnel/employees", params=params, headers=headers)
+    assert employees.status_code == 200, employees.text
+    assert employees.headers.get("x-prices-masked") == "1"
+    rows = employees.json()
+    assert [row["id"] for row in rows] == ["empA", "empB"]
+    _assert_directory_row(rows[0])
+    _assert_full_employee(rows[1], salary=0)
+    assert rows[1]["full_name"] == "Bora B"
+    other = client.get("/api/personnel/employees", params={**params, "employee_id": "empA"}, headers=headers)
+    assert other.status_code == 200, other.text
+    assert [row["id"] for row in other.json()] == ["empA"]
+    _assert_directory_row(other.json()[0])
+    leaves = client.get("/api/personnel/leaves", params=params, headers=headers)
+    assert leaves.status_code == 200, leaves.text
+    assert _ids(leaves.json()) == ["lvB"]
+    pending = client.get("/api/personnel/pending-requests", params=params, headers=headers)
+    assert pending.status_code == 403, pending.text
+
     for uid, role in (("user-sales", "sales"), ("user-warehouse", "warehouse")):
         headers = _auth(uid, role=role)
         employees = client.get("/api/personnel/employees", params=params, headers=headers)
         assert employees.status_code == 200, employees.text
-        assert employees.json() == []
+        rows = employees.json()
+        assert [row["id"] for row in rows] == ["empA", "empB"]
+        for row in rows:
+            _assert_directory_row(row)
         leaves = client.get("/api/personnel/leaves", params=params, headers=headers)
         assert leaves.status_code == 200 and leaves.json() == []
         pending = client.get("/api/personnel/pending-requests", params=params, headers=headers)

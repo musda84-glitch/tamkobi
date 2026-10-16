@@ -21961,86 +21961,127 @@ async def list_employees(company_id: Optional[str] = None, employee_id: Optional
     # Atölye operatör seçimi ve İK portalı: özellik açıkken liste aynen kalır.
     if scope is not None and rbac.role_features(await rbac.role_for(user, cid)).get("portal_atolye"):
         scope = None
+    requested = str(employee_id).strip() if employee_id else ""
     emp_q = {"company_id": cid}
-    personnel_scope.restrict(emp_q, scope, employee_id, field="_id")
-    employees = await db.employees.find(emp_q).to_list(100)
-    month = employee_pay.istanbul_period()
-    ids = [e["_id"] for e in employees]
-    if not ids:
-        return []
-    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}, "company_id": cid}).to_list(4000)
-    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}, "company_id": cid}).to_list(4000)
-    expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
-    leave_rows = await db.leave_requests.find({"employee_id": {"$in": ids}}).to_list(8000)
-    pmap, bmap, emap, lmap = {}, {}, {}, {}
-    for p in payrolls:
-        pmap.setdefault(p.get("employee_id"), []).append(p)
-    for b in bonuses:
-        bmap.setdefault(b.get("employee_id"), []).append(b)
-    for x in expenses:
-        emap.setdefault(x.get("employee_id"), []).append(x)
-    for lv in leave_rows:
-        lmap.setdefault(lv.get("employee_id"), []).append(lv)
-    company = await db.companies.find_one({"_id": cid}) or {}
-    today_s = attendance._today(attendance.merge_schedule(company))
-    workplaces = await attendance.workplaces_by_employee(cid, ids, today_s, company.get("location"))
-    user_ids = [e.get("user_id") for e in employees if e.get("user_id") and e.get("user_id") != "-"]
-    user_q = [{"employee_id": {"$in": ids}}]
-    if user_ids:
-        user_q.append({"_id": {"$in": user_ids}})
-    linked_users = await db.users.find({"$or": user_q}, {"_id": 1, "employee_id": 1, "is_active": 1}).to_list(2000)
-    linked_emp_ids, linked_usr_ids = sfo.linked_system_user_keys(linked_users)
+    # scope None (yönetici veya portal_atolye): employee_id sorguyu daraltmaz.
+    # Kapsamlı kullanıcı belirli id isterse yalnız o kart gelir (kendi tam, başkası dizin).
+    if scope is not None and requested:
+        emp_q["_id"] = requested
+    raw = await db.employees.find(emp_q).to_list(100)
+    own_id = None if scope in (None, personnel_scope.EMPTY) else str(scope)
+    if scope is not None:
+        raw = [e for e in raw if personnel_scope.directory_visible(e, own_id)]
+    if scope is None:
+        employees = list(raw)
+        directory_src = []
+    else:
+        employees = [
+            e for e in raw
+            if own_id and str(e.get("_id")) == own_id and (not requested or requested == own_id)
+        ]
+        enrich_ids = {str(e.get("_id")) for e in employees}
+        directory_src = [e for e in raw if str(e.get("_id")) not in enrich_ids]
+    order = [str(e.get("_id")) for e in raw if e.get("_id")]
+    enriched_by_id = {}
+    if employees:
+        month = employee_pay.istanbul_period()
+        ids = [e["_id"] for e in employees]
+        payrolls = await db.payrolls.find({"employee_id": {"$in": ids}, "company_id": cid}).to_list(4000)
+        bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}, "company_id": cid}).to_list(4000)
+        expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
+        leave_rows = await db.leave_requests.find({"employee_id": {"$in": ids}}).to_list(8000)
+        pmap, bmap, emap, lmap = {}, {}, {}, {}
+        for p in payrolls:
+            pmap.setdefault(p.get("employee_id"), []).append(p)
+        for b in bonuses:
+            bmap.setdefault(b.get("employee_id"), []).append(b)
+        for x in expenses:
+            emap.setdefault(x.get("employee_id"), []).append(x)
+        for lv in leave_rows:
+            lmap.setdefault(lv.get("employee_id"), []).append(lv)
+        company = await db.companies.find_one({"_id": cid}) or {}
+        today_s = attendance._today(attendance.merge_schedule(company))
+        workplaces = await attendance.workplaces_by_employee(cid, ids, today_s, company.get("location"))
+        user_ids = [e.get("user_id") for e in employees if e.get("user_id") and e.get("user_id") != "-"]
+        user_q = [{"employee_id": {"$in": ids}}]
+        if user_ids:
+            user_q.append({"_id": {"$in": user_ids}})
+        linked_users = await db.users.find({"$or": user_q}, {"_id": 1, "employee_id": 1, "is_active": 1}).to_list(2000)
+        linked_emp_ids, linked_usr_ids = sfo.linked_system_user_keys(linked_users)
+        for e in employees:
+            eid = e["_id"]
+            ot = await attendance.overtime_pay_for_period(company, e, month)
+            emp_bonuses = bmap.get(eid) or []
+            bal = await _employee_receivable(
+                {**e, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
+                pmap.get(eid) or [],
+                emp_bonuses,
+                month,
+                expenses=emap.get(eid) or [],
+            )
+            doc = clean_doc(e)
+            doc["has_user"] = sfo.employee_has_system_user(e, linked_emp_ids, linked_usr_ids)
+            doc["balance"] = bal
+            doc["workplace"] = workplaces.get(eid)
+            yev_days, yev_amt = 0, 0.0
+            for b in emp_bonuses:
+                if str(b.get("type") or "").lower() != "yevmiye" or b.get("status") == "paid":
+                    continue
+                try:
+                    yev_amt += float(b.get("amount") or 0)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    d = int(float(b.get("worked_days") or 0))
+                except (TypeError, ValueError):
+                    d = 0
+                if d <= 0:
+                    m = re.search(r"(\d+)\s*gün", str(b.get("note") or ""))
+                    d = int(m.group(1)) if m else 0
+                yev_days += max(0, d)
+            for p in pmap.get(eid) or []:
+                if personnel_wage.pay_type_of(p) != "daily" or p.get("status") == "paid":
+                    continue
+                try:
+                    yev_amt += float(p.get("final_payable") or p.get("net_salary") or 0)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    yev_days += max(0, int(float(p.get("worked_days") or 0)))
+                except (TypeError, ValueError):
+                    pass
+            doc["yevmiye_days"] = yev_days
+            doc["yevmiye_due"] = round(yev_amt, 2)
+            leave_bal = attendance.compute_leave_balance(e, lmap.get(eid) or [])
+            doc["leave_balance"] = leave_bal
+            # Liste kartı ile kart detayı aynı hak/kullanılan değerlerini göstersin
+            doc["annual_leave_days"] = leave_bal["annual"]
+            doc["used_leave_days"] = leave_bal["used"]
+            enriched_by_id[doc["id"]] = doc
+    directory_by_id = {}
+    if directory_src:
+        dir_ids = [e["_id"] for e in directory_src]
+        company = await db.companies.find_one({"_id": cid}) or {}
+        today_s = attendance._today(attendance.merge_schedule(company))
+        workplaces = await attendance.workplaces_by_employee(cid, dir_ids, today_s, company.get("location"))
+        user_ids = [e.get("user_id") for e in directory_src if e.get("user_id") and e.get("user_id") != "-"]
+        user_q = [{"employee_id": {"$in": dir_ids}}]
+        if user_ids:
+            user_q.append({"_id": {"$in": user_ids}})
+        linked_users = await db.users.find({"$or": user_q}, {"_id": 1, "employee_id": 1, "is_active": 1}).to_list(2000)
+        linked_emp_ids, linked_usr_ids = sfo.linked_system_user_keys(linked_users)
+        for e in directory_src:
+            directory_by_id[str(e["_id"])] = personnel_scope.project_directory(
+                e,
+                has_user=sfo.employee_has_system_user(e, linked_emp_ids, linked_usr_ids),
+                workplace=workplaces.get(e["_id"]),
+            )
     out = []
-    for e in employees:
-        eid = e["_id"]
-        ot = await attendance.overtime_pay_for_period(company, e, month)
-        emp_bonuses = bmap.get(eid) or []
-        bal = await _employee_receivable(
-            {**e, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
-            pmap.get(eid) or [],
-            emp_bonuses,
-            month,
-            expenses=emap.get(eid) or [],
-        )
-        doc = clean_doc(e)
-        doc["has_user"] = sfo.employee_has_system_user(e, linked_emp_ids, linked_usr_ids)
-        doc["balance"] = bal
-        doc["workplace"] = workplaces.get(eid)
-        yev_days, yev_amt = 0, 0.0
-        for b in emp_bonuses:
-            if str(b.get("type") or "").lower() != "yevmiye" or b.get("status") == "paid":
-                continue
-            try:
-                yev_amt += float(b.get("amount") or 0)
-            except (TypeError, ValueError):
-                pass
-            try:
-                d = int(float(b.get("worked_days") or 0))
-            except (TypeError, ValueError):
-                d = 0
-            if d <= 0:
-                m = re.search(r"(\d+)\s*gün", str(b.get("note") or ""))
-                d = int(m.group(1)) if m else 0
-            yev_days += max(0, d)
-        for p in pmap.get(eid) or []:
-            if personnel_wage.pay_type_of(p) != "daily" or p.get("status") == "paid":
-                continue
-            try:
-                yev_amt += float(p.get("final_payable") or p.get("net_salary") or 0)
-            except (TypeError, ValueError):
-                pass
-            try:
-                yev_days += max(0, int(float(p.get("worked_days") or 0)))
-            except (TypeError, ValueError):
-                pass
-        doc["yevmiye_days"] = yev_days
-        doc["yevmiye_due"] = round(yev_amt, 2)
-        leave_bal = attendance.compute_leave_balance(e, lmap.get(eid) or [])
-        doc["leave_balance"] = leave_bal
-        # Liste kartı ile kart detayı aynı hak/kullanılan değerlerini göstersin
-        doc["annual_leave_days"] = leave_bal["annual"]
-        doc["used_leave_days"] = leave_bal["used"]
-        out.append(doc)
+    for eid in order:
+        if eid in enriched_by_id:
+            out.append(enriched_by_id[eid])
+        elif eid in directory_by_id:
+            out.append(directory_by_id[eid])
     return out
 
 @api_router.post("/personnel/employees")
