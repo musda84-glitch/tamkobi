@@ -126,6 +126,7 @@ import contact_balance
 import contact_activity
 import account_balance
 import bank_tx_page
+import partner_tx_page
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -11630,6 +11631,37 @@ async def perform_virman(req: Dict[str, Any], request: Request):
     return await _execute_virman(req)
 
 # ----------------- ORTAKLAR HESABI -----------------
+@api_router.get("/banking/partners/ledgers")
+async def list_partner_ledgers(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Tüm ortakların defteri. GET yazmaz; hareketler bir kez okunur."""
+    return await partner_tx_page.list_company_ledgers_for_user(db, user, company_id)
+
+
+@api_router.get("/banking/partners/{partner_id}/transactions")
+async def list_partner_transactions_page(
+    partner_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    type: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Seçili ortağın hareketleri, sayfa sayfa. GET yazmaz."""
+    return await partner_tx_page.list_partner_transactions_for_user(
+        db,
+        user,
+        partner_id,
+        page=page,
+        page_size=page_size,
+        date_from=date_from or "",
+        date_to=date_to or "",
+        q=q or "",
+        tx_type=type or "",
+    )
+
+
 @api_router.get("/banking/partners")
 async def list_partners(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, company_id)
@@ -12047,9 +12079,9 @@ async def distribute_profit(req: Dict[str, Any], request: Request):
 
 
 @api_router.post("/banking/partners/accrue-salary")
-async def accrue_partner_salary(req: Dict[str, Any]):
+async def accrue_partner_salary(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Tanımlı aylık maaşı ilgili dönemin ortak alacağına yazar. Aynı ay tekrar yazılmaz."""
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     return await partner_pay.accrue_monthly_salaries(
         db, company_id, period=req.get("period"), partner_id=req.get("partner_id")
     )
