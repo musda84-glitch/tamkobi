@@ -26,6 +26,7 @@ import {
   ResponsiveContainer
 } from "recharts";
 import { useAiStatus } from "../hooks/useAiStatus";
+import AiMessageText from "../components/AiMessageText";
 
 export default function AIAssistantPage() {
   const { activeCompany } = useAuth();
@@ -103,7 +104,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
         <div>
           <div className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider mb-1">
             <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-            <span>{aiBadge} Destekli</span>
+            <span data-testid="ai-assistant-model-badge">{aiBadge} Destekli</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">TamKobi AI Finansal Danışman</h1>
           <p className="text-xs sm:text-sm text-slate-500">Mali Müşavir Seviyesinde Nakit Akış Analizi, Vergi ve Büyüme Öngörüleri</p>
@@ -169,13 +170,14 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
                 </div>
               )}
               <div
+                data-testid={`ai-chat-msg-${idx}`}
                 className={`max-w-2xl rounded-2xl p-4 space-y-2 leading-relaxed ${
                   m.role === 'user'
-                    ? 'bg-emerald-600 text-white font-medium rounded-tr-none shadow-md shadow-emerald-600/20'
+                    ? 'bg-emerald-600 text-white font-medium rounded-tr-none shadow-md shadow-emerald-600/20 whitespace-pre-wrap'
                     : 'bg-white border border-slate-200/90 text-slate-800 shadow-sm rounded-tl-none whitespace-pre-wrap'
                 }`}
               >
-                {m.content}
+                {m.role === "assistant" ? <AiMessageText text={m.content} /> : m.content}
               </div>
             </div>
           ))}
