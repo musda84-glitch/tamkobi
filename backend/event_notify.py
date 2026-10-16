@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 import company_audit
 import mail_service
 import notify
+import notify_email_layout
 import public_url
 import saas
 import tenant_access
@@ -747,11 +748,6 @@ async def _dedupe_seen(company_id: str, dedupe_key: Optional[str]) -> bool:
     return False
 
 
-async def _company_name(company_id: str) -> str:
-    c = await _db.companies.find_one({"_id": company_id}, {"name": 1}) or {}
-    return str(c.get("name") or "Firma").strip() or "Firma"
-
-
 async def _recipient_users(company_id: str, event: str) -> List[dict]:
     roles = notify.roles_for_type(event)
     return await notify.users_with_roles(_db, company_id, roles)
@@ -827,20 +823,54 @@ def _esc(val) -> str:
     return html.escape("" if val is None else str(val), quote=True)
 
 
-def _email_html(company_name: str, title: str, message: str, link: str) -> str:
-    btn = ""
-    if link:
-        btn = (
-            f"<p style='margin-top:16px'><a href='{_esc(link)}' "
-            f"style='background:#059669;color:#fff;padding:10px 18px;border-radius:10px;"
-            f"font-weight:bold;text-decoration:none'>Uygulamada aç →</a></p>"
-        )
-    msg = _esc(message).replace("\n", "<br>")
-    return (
-        f"<div style='font-family:Arial,sans-serif;max-width:600px'>"
-        f"<p style='color:#64748b;font-size:12px;margin:0 0 8px'>{_esc(company_name)}</p>"
-        f"<h2 style='color:#0f172a;margin:0 0 12px'>{_esc(title)}</h2>"
-        f"<p style='color:#334155;line-height:1.5'>{msg}</p>{btn}</div>"
+def _email_html(
+    company_name: str,
+    title: str,
+    message: str,
+    link: str,
+    *,
+    summary: str = "",
+    logo_url_abs: str = "",
+    lines: Optional[List[str]] = None,
+) -> str:
+    if lines:
+        body_html = notify_email_layout.items_body_html(lines)
+    else:
+        body_html = notify_email_layout.message_body_html(message)
+    return notify_email_layout.render_layout(
+        company_name=company_name,
+        logo_url_abs=logo_url_abs,
+        title=title,
+        summary=summary,
+        body_html=body_html,
+        button_link=link,
+    )
+
+
+def _email_text(
+    company_name: str,
+    title: str,
+    message: str,
+    link: str,
+    *,
+    summary: str = "",
+    lines: Optional[List[str]] = None,
+) -> str:
+    if lines:
+        text_lines = []
+        for line in lines:
+            raw = str(line or "").strip("\n")
+            if not raw:
+                continue
+            text_lines.append("- " + raw.replace("\n", "\n  "))
+    else:
+        text_lines = [message] if message else []
+    return notify_email_layout.render_layout_text(
+        company_name=company_name,
+        title=title,
+        summary=summary,
+        lines=text_lines,
+        link=link,
     )
 
 
@@ -930,19 +960,48 @@ async def _enqueue_order_outbox(
     return True
 
 
-async def _send_email_now(company_id: str, prefs: dict, emails: List[str], title: str, message: str, link: str) -> dict:
+async def _company_logo_abs(logo_url: str) -> str:
+    raw = str(logo_url or "").strip()
+    if not raw:
+        return ""
+    base = _safe_link(await app_link(""))
+    return order_image_url(raw, base, thumb=False)
+
+
+async def _send_email_now(
+    company_id: str,
+    prefs: dict,
+    emails: List[str],
+    title: str,
+    message: str,
+    link: str,
+    event: Optional[str] = None,
+    *,
+    summary: Optional[str] = None,
+    lines: Optional[List[str]] = None,
+) -> dict:
     if not emails:
         return {"status": "skipped", "reason": "no_recipients"}
-    company_name = await _company_name(company_id)
+    company = await _db.companies.find_one({"_id": company_id}, {"name": 1, "logo_url": 1}) or {}
+    company_name = str(company.get("name") or "Firma").strip() or "Firma"
+    logo = await _company_logo_abs(str(company.get("logo_url") or ""))
+    if summary is None:
+        summary = EVENT_LABELS.get(event, "") if event else ""
     subject = f"[TamKobi] {company_name}: {title}"
-    html = _email_html(company_name, title, message, link)
-    body = f"{company_name}\n\n{title}\n\n{message}" + (f"\n\n{link}" if link else "")
+    html_body = _email_html(
+        company_name, title, message, link,
+        summary=summary, logo_url_abs=logo, lines=lines,
+    )
+    body = _email_text(
+        company_name, title, message, link,
+        summary=summary, lines=lines,
+    )
     reply_to = await _company_reply_to(company_id, prefs)
     result = await mail_service.send_mail(
         emails,
         subject,
         body,
-        html=html,
+        html=html_body,
         purpose="transactional",
         company_id=company_id,
         reply_to=reply_to,
@@ -1076,7 +1135,7 @@ async def notify_event(
             result["email"] = {"status": "deferred", "next_try_at": nxt}
             result["queued"] = True
         else:
-            result["email"] = await _send_email_now(cid, prefs, emails, title, message, abs_link)
+            result["email"] = await _send_email_now(cid, prefs, emails, title, message, abs_link, ev)
     if need_sms:
         phones = await _recipient_phones(cid, ev)
         result["sms"] = await _send_sms_now(cid, phones, title, message)
@@ -1961,20 +2020,6 @@ def _order_batch_html(
     subject = _batch_subject(orders)
     summary = _summary_line(orders, products)
     logo = order_image_url(logo_url, base, thumb=False) if logo_url else ""
-    if logo:
-        logo_html = (
-            '<td width="48" valign="middle" style="width:48px;padding:0 12px 0 0;">'
-            f'<img src="{_esc(logo)}" width="40" height="40" alt="{_esc(company_name)}" '
-            'style="display:block;width:40px;height:40px;border:0;">'
-            "</td>"
-        )
-    else:
-        logo_html = ""
-    settings_note = "Ayarlar Platform Yönetimi'nden yapılır"
-    settings_html = (
-        '<span style="color:#059669;font-weight:bold;">'
-        f"{_esc(settings_note)}</span>"
-    )
     cards = []
     for order in shown:
         oid = str(order.get("_id") or "")
@@ -1989,53 +2034,13 @@ def _order_batch_html(
             '<tr><td class="tk-text" style="padding:0 0 16px;font-family:Arial,Helvetica,sans-serif;'
             f'font-size:14px;line-height:20px;color:#334155;">{_esc(f"ve {extra_orders} sipariş daha")}</td></tr>'
         )
-    return (
-        '<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<meta name="color-scheme" content="light dark">'
-        '<meta name="supported-color-schemes" content="light dark">'
-        f"<title>{_esc(subject)}</title>"
-        "<style>"
-        ":root{color-scheme:light dark;supported-color-schemes:light dark;}"
-        "@media only screen and (max-width:600px){"
-        ".tk-wrap{width:100% !important;}"
-        ".tk-stack{display:block !important;width:100% !important;}"
-        "}"
-        "@media (prefers-color-scheme:dark){"
-        ".tk-page{background-color:#0f172a !important;}"
-        ".tk-card{background-color:#1e293b !important;}"
-        ".tk-text{color:#f8fafc !important;}"
-        ".tk-muted{color:#cbd5e1 !important;}"
-        ".tk-bar{background-color:#064e3b !important;}"
-        ".tk-line{border-color:#334155 !important;}"
-        "}"
-        "</style></head>"
-        '<body class="tk-page" bgcolor="#f1f5f9" style="margin:0;padding:0;background-color:#f1f5f9;">'
-        '<table role="presentation" class="tk-page" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        'bgcolor="#f1f5f9" style="width:100%;background-color:#f1f5f9;">'
-        '<tr><td align="center" style="padding:24px 12px;">'
-        "<!--[if mso]><table role=\"presentation\" align=\"center\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td><![endif]-->"
-        '<table role="presentation" class="tk-wrap" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        'style="width:100%;max-width:600px;">'
-        '<tr><td class="tk-card" bgcolor="#ffffff" style="background-color:#ffffff;padding:20px 20px 8px;">'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr>'
-        f"{logo_html}"
-        '<td class="tk-text" valign="middle" style="font-family:Arial,Helvetica,sans-serif;font-size:18px;'
-        f'line-height:24px;font-weight:bold;color:#0f172a;">{_esc(company_name)}</td>'
-        "</tr></table></td></tr>"
-        '<tr><td class="tk-bar tk-text" bgcolor="#ecfdf5" style="background-color:#ecfdf5;padding:12px 20px;'
-        'font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;color:#065f46;">'
-        f"{_esc(summary)}</td></tr>"
-        '<tr><td style="height:16px;font-size:0;line-height:0;">&nbsp;</td></tr>'
-        + "".join(cards)
-        + extra_html
-        + '<tr><td class="tk-muted" style="padding:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;'
-        'line-height:18px;color:#64748b;">'
-        f"{settings_html}"
-        " · Yeni siparişler tek e-postada toplanır."
-        "</td></tr></table>"
-        "<!--[if mso]></td></tr></table><![endif]-->"
-        "</td></tr></table></body></html>"
+    return notify_email_layout.render_layout(
+        company_name=company_name,
+        logo_url_abs=logo,
+        title=subject,
+        summary=summary,
+        body_html="".join(cards) + extra_html,
+        footer_extra=" · Yeni siparişler tek e-postada toplanır.",
     )
 
 
@@ -2461,10 +2466,25 @@ async def _deliver_order_batch(company_id: str, rows: List[dict], claim_id: str)
     return len(rows)
 
 
+def _digest_lines(rows: List[dict]) -> List[str]:
+    """Özet e-postasında her satırın başlığı ve mesajı (SMS metnine dokunmaz)."""
+    lines: List[str] = []
+    for row in rows:
+        title = str(row.get("title") or "").strip()
+        message = str(row.get("message") or "").strip()
+        if title and message and message != title:
+            lines.append(f"{title}\n{message}")
+        elif title or message:
+            lines.append(title or message)
+    return lines
+
+
 async def _deliver_generic(company_id: str, event: str, rows: List[dict], claim_id: str) -> int:
     prefs = await get_prefs(company_id)
     first = rows[0]
     titles = [str(i.get("title") or "") for i in rows]
+    email_summary: Optional[str] = None
+    email_lines: Optional[List[str]] = None
     if len(rows) == 1:
         title = titles[0]
         message = str(first.get("message") or "")
@@ -2473,6 +2493,8 @@ async def _deliver_generic(company_id: str, event: str, rows: List[dict], claim_
         title = f"{EVENT_LABELS.get(event, event)}: {len(rows)} bildirim"
         message = " · ".join(t for t in titles if t)[:500]
         link = str(first.get("link") or "")
+        email_summary = f"{len(rows)} bildirim"
+        email_lines = _digest_lines(rows)
     want_email = any((i.get("channels") or {}).get("email") for i in rows) and not all(i.get("email_sent") for i in rows)
     want_sms = any((i.get("channels") or {}).get("sms") for i in rows) and not all(i.get("sms_sent") for i in rows)
     try:
@@ -2493,7 +2515,10 @@ async def _deliver_generic(company_id: str, event: str, rows: List[dict], claim_
                     await _mark_rows(rows, claim_id, "skipped")
                     return len(rows)
             else:
-                res = await _send_email_now(company_id, prefs, emails, title, message, link)
+                res = await _send_email_now(
+                    company_id, prefs, emails, title, message, link, event,
+                    summary=email_summary, lines=email_lines,
+                )
                 if res.get("status") == "failed":
                     await _retry_rows(rows, claim_id)
                     return 0
