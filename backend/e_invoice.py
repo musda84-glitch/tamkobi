@@ -45,6 +45,20 @@ SCENARIO_MAP = {
     "TEMELFATURA": "TEMELFATURA",
 }
 
+# issue_invoice canlı gönderim yolu. Yapılandırılmışsa platform cüzdanı düşmez.
+REAL_INTEGRATOR_PROVIDERS = ("n11faturam", "isnet", "isnet_portal", "qnb_efinans")
+
+
+def configured_real_integrator(settings: Optional[dict]) -> bool:
+    """issue_invoice canlı dalındaki «status == configured» kararı.
+
+    Sağlayıcı gerçek entegratör ve status configured ise True: gönderim cüzdan düşürmez.
+    Aksi False. Simüle yol (canlı dala girilmez) platform cüzdanını kullanır.
+    """
+    settings = settings or {}
+    provider = settings.get("provider") or ""
+    return provider in REAL_INTEGRATOR_PROVIDERS and settings.get("status") == "configured"
+
 
 def init(db, deps: Optional[dict] = None, get_current_user=None):
     global _db, _current_user
@@ -939,13 +953,13 @@ async def issue_invoice(
             }},
         )
         raise HTTPException(status_code=400, detail=qnb_efinans.UNSUPPORTED_DETAIL)
-    live_providers = ("n11faturam", "isnet", "isnet_portal", "qnb_efinans")
+    live_providers = REAL_INTEGRATOR_PROVIDERS
     # e-İrsaliye yalnızca İşNet SOAP (portal da aynı WSDL). QNB yalnız e-Fatura.
     live_etypes = ("e_invoice", "e_archive") + (("e_dispatch",) if provider in ("isnet", "isnet_portal") else ())
     if provider == "qnb_efinans":
         live_etypes = ("e_invoice",)
     if provider in live_providers and et in live_etypes:
-        if settings.get("status") != "configured":
+        if not configured_real_integrator(settings):
             labels = {
                 "n11faturam": "n11 Faturam",
                 "isnet": "İşNet SOAP API",

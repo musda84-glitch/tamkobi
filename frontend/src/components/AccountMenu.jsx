@@ -15,6 +15,7 @@ export const AccountMenu = () => {
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: "", tax_number: "", city: "", admin_email: "", admin_password: "" });
   const [credits, setCredits] = useState(null);
+  const [creditNeutral, setCreditNeutral] = useState(false);
   const box = useRef(null);
   const cid = activeCompany?.id || activeCompany?._id;
   const canManageCo = personelCanManageCompany(user);
@@ -26,8 +27,29 @@ export const AccountMenu = () => {
     return () => document.removeEventListener("mousedown", close);
   }, []);
   useEffect(() => {
-    if (!cid || !open || staffOnly || !canManageCo) return;
-    axios.get(`${API_URL}/account/gib-credits`, { params: { company_id: cid } }).then((r) => setCredits(r.data.balance)).catch(() => {});
+    if (!cid || !open || staffOnly || !canManageCo) return undefined;
+    let cancelled = false;
+    setCredits(null);
+    setCreditNeutral(false);
+    axios.get(`${API_URL}/account/gib-credits`, { params: { company_id: cid } }).then(async (r) => {
+      if (cancelled) return;
+      if (r.data?.enforced === false) {
+        setCreditNeutral(true);
+        try {
+          const ic = await axios.get(`${API_URL}/e-invoice/integrator-credits`, { params: { company_id: cid } });
+          if (cancelled) return;
+          const bal = ic.data?.balance;
+          if (bal == null || bal === "" || Number.isNaN(Number(bal))) setCredits("Entegratör");
+          else setCredits(String(Number(bal)));
+        } catch {
+          if (!cancelled) setCredits("Entegratör");
+        }
+        return;
+      }
+      setCreditNeutral(false);
+      setCredits(r.data.balance);
+    }).catch(() => {});
+    return () => { cancelled = true; };
   }, [cid, open, staffOnly, canManageCo]);
   const mine = (companies || []).filter((c) => c && (c.id || c._id));
   const create = async (e) => {
@@ -136,7 +158,7 @@ export const AccountMenu = () => {
           {salesOn && (
             <Link to="/hesap?tab=kontor" onClick={() => setOpen(false)} className="flex items-center justify-between px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-gib">
               <span className="inline-flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-amber-400" /> GİB Kontör</span>
-              <span className="font-bold text-amber-300" data-testid="account-gib-balance">{credits == null ? "…" : `${credits}`}</span>
+              <span className={`font-bold ${creditNeutral ? "text-slate-300" : "text-amber-300"}`} data-testid="account-gib-balance">{credits == null ? "…" : `${credits}`}</span>
             </Link>
           )}
           {!staffOnly && (

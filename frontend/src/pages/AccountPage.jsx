@@ -326,18 +326,56 @@ const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refr
   );
 };
 
+const INTEGRATOR_NAMES = {
+  isnet: "İşNet",
+  isnet_portal: "İşNet Portal",
+  n11faturam: "n11 Faturam",
+  qnb_efinans: "QNB eFinans",
+};
+
+function integratorDisplayName(provider) {
+  if (!provider) return "entegratörünüz";
+  return INTEGRATOR_NAMES[provider] || provider;
+}
+
+function integratorCreditMessage(err) {
+  const detail = err?.response?.data?.detail ?? err?.response?.data?.message;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  return "Entegratör kontörü yüklenemedi.";
+}
+
 export const GibCreditsPanel = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState("");
   const [providers, setProviders] = useState({ stripe: true, paytr: false });
   const [paytr, setPaytr] = useState(null);
+  const [integ, setInteg] = useState(null);
   const load = useCallback(() => {
     if (!companyId) return;
     axios.get(`${API_URL}/account/gib-credits`, { params: { company_id: companyId } }).then((r) => setD(r.data)).catch(() => toast.error("Kontör bilgisi alınamadı."));
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { axios.get(`${API_URL}/payments/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, []);
+  const enforcedOff = d?.enforced === false && (!d.company_id || d.company_id === companyId);
+  useEffect(() => {
+    if (!companyId || !enforcedOff) return undefined;
+    let cancelled = false;
+    setInteg({ loading: true });
+    axios.get(`${API_URL}/e-invoice/integrator-credits`, { params: { company_id: companyId } })
+      .then((r) => {
+        if (cancelled) return;
+        const bal = r.data?.balance;
+        const numeric = bal == null || bal === "" || Number.isNaN(Number(bal)) ? null : Number(bal);
+        setInteg({ loading: false, balance: numeric, message: r.data?.message || "", error: false });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setInteg({ loading: false, balance: null, message: integratorCreditMessage(err), error: true });
+      });
+    return () => { cancelled = true; };
+  }, [companyId, enforcedOff]);
   if (!d) return <div className="text-xs text-slate-400 p-6">Yükleniyor…</div>;
+  const platformMuted = d.enforced === false;
   const buy = async (pack, via) => {
     setBusy(pack.id + via);
     try {
@@ -351,15 +389,31 @@ export const GibCreditsPanel = ({ companyId }) => {
       }
     } catch (e) { toast.error(e.response?.data?.detail || "Ödeme başlatılamadı."); } finally { setBusy(""); }
   };
+  const integratorName = integratorDisplayName(d.integrator_provider);
   return (
     <div className="space-y-4 text-xs" data-testid="gib-credits-panel">
       {paytr && <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4" {...backdropDismissProps(() => setPaytr(null))}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3"><div className="flex justify-between px-2 pb-2"><b>PayTR — GİB Kontör</b><button type="button" onClick={() => setPaytr(null)}>Kapat</button></div><iframe title="PayTR" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" /></div></div>}
-      <div className="bg-slate-900 text-white rounded-2xl p-5 flex flex-wrap items-center gap-4">
-        <div className="w-12 h-12 rounded-2xl bg-amber-400 text-slate-900 flex items-center justify-center"><Wallet className="w-6 h-6" /></div>
+      {platformMuted && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950" data-testid="gib-integrator-notice">
+          <p>e-Belgeleriniz {integratorName} üzerinden gönderiliyor; kontör entegratörünüzden düşer. Bu TamKobi kontörü yalnız simüle/platform gönderiminde kullanılır.</p>
+          <div className="mt-2 font-semibold" data-testid="gib-integrator-balance">
+            {(!integ || integ.loading) && "Entegratör bakiyesi yükleniyor…"}
+            {integ && !integ.loading && integ.error && <span data-testid="gib-integrator-balance-error">{integ.message}</span>}
+            {integ && !integ.loading && !integ.error && integ.balance != null && (
+              <>Entegratör bakiyesi: <b>{integ.balance.toLocaleString("tr-TR")}</b></>
+            )}
+            {integ && !integ.loading && !integ.error && integ.balance == null && (
+              <span data-testid="gib-integrator-balance-message">{integ.message || "Entegratör kontörü yüklenemedi."}</span>
+            )}
+          </div>
+        </div>
+      )}
+      <div className={`bg-slate-900 text-white rounded-2xl p-5 flex flex-wrap items-center gap-4 ${platformMuted ? "opacity-60" : ""}`} data-testid="gib-platform-wallet">
+        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${platformMuted ? "bg-slate-600 text-slate-200" : "bg-amber-400 text-slate-900"}`}><Wallet className="w-6 h-6" /></div>
         <div className="flex-1 min-w-[200px]">
-          <div className="text-[10px] uppercase tracking-widest text-amber-300 font-semibold">GİB e-Fatura / e-Arşiv kontörü</div>
-          <div className="text-3xl font-black mt-1" data-testid="gib-balance">{d.balance.toLocaleString("tr-TR")}</div>
-          <p className="text-slate-300 mt-1">Her e-fatura veya e-arşiv gönderimi 1 kontör düşer. Kağıt fatura kontör kullanmaz. Kontör lisansınızdaki tüm şirketlerde ortaktır.</p>
+          <div className={`text-[10px] uppercase tracking-widest font-semibold ${platformMuted ? "text-slate-400" : "text-amber-300"}`} data-testid="gib-platform-label">{platformMuted ? "TamKobi platform kontörü" : "GİB e-Fatura / e-Arşiv kontörü"}</div>
+          <div className={`text-3xl font-black mt-1 ${platformMuted ? "text-slate-300" : ""}`} data-testid="gib-balance">{d.balance.toLocaleString("tr-TR")}</div>
+          {!platformMuted && <p className="text-slate-300 mt-1">Her e-fatura veya e-arşiv gönderimi 1 kontör düşer. Kağıt fatura kontör kullanmaz. Kontör lisansınızdaki tüm şirketlerde ortaktır.</p>}
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
