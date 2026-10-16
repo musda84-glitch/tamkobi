@@ -1,4 +1,4 @@
-import { fmtDate, fmtMoney, formatMoneyInput, getPriceDecimals, idOf, moneySuffix, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
+import { fmtDate, fmtMoney, formatMoneyInput, formatTrAmount, getPriceDecimals, idOf, moneySuffix, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
 
 afterEach(() => {
   setPriceDecimals(2);
@@ -9,6 +9,21 @@ describe("fmtMoney", () => {
     expect(getPriceDecimals()).toBe(2);
     expect(fmtMoney(1234.5)).toMatch(/1.?234,50 ₺/);
     expect(fmtMoney(null)).toBe("0,00 ₺");
+  });
+
+  it("drops the minus only when the value rounds to zero at the shown decimals", () => {
+    setPriceDecimals(2);
+    expect(formatTrAmount(-0.004)).toBe("0,00");
+    expect(formatTrAmount(-0.005)).toBe("-0,01");
+    expect(formatTrAmount(-0.01)).toBe("-0,01");
+    expect(formatTrAmount(NaN)).toBe("0,00");
+    expect(formatTrAmount(undefined)).toBe("0,00");
+    setPriceDecimals(4);
+    expect(formatTrAmount(0.003)).toBe("0,0030");
+    expect(formatTrAmount(-0.00004)).toBe("0,0000");
+    setPriceDecimals(0);
+    expect(formatTrAmount(-0.3)).toBe("0");
+    expect(formatTrAmount(-0.6)).toBe("-1");
   });
 
   it("uses currency code for non-TRY", () => {

@@ -47,9 +47,12 @@ export function formatMoneyInput(v: unknown, decimals = getPriceDecimals()): str
 }
 
 export function formatTrAmount(n: unknown): string {
-  const num = Number(n);
-  const amount = Number.isFinite(num) ? num : 0;
   const d = priceDecimals;
+  const num = Number(n);
+  let amount = Number.isFinite(num) ? num : 0;
+  // Gösterilen hanede 0'a yuvarlanan artık (ör. -1e-9) eksi işaretini korumasın.
+  const eps = 0.5 * Math.pow(10, -d);
+  if (Math.abs(amount) < eps) amount = 0;
   return amount.toLocaleString("tr-TR", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 

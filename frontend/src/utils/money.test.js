@@ -25,6 +25,21 @@ describe("price decimals", () => {
     expect(priceInputStep()).toBe("1");
   });
 
+  it("drops the minus only when the value rounds to zero at the shown decimals", () => {
+    setPriceDecimals(2);
+    expect(formatTrAmount(-0.004)).toBe("0,00");
+    expect(formatTrAmount(-0.005)).toBe("-0,01");
+    expect(formatTrAmount(-0.01)).toBe("-0,01");
+    expect(formatTrAmount(NaN)).toBe("0,00");
+    expect(formatTrAmount(undefined)).toBe("0,00");
+    setPriceDecimals(4);
+    expect(formatTrAmount(0.003)).toBe("0,0030");
+    expect(formatTrAmount(-0.00004)).toBe("0,0000");
+    setPriceDecimals(0);
+    expect(formatTrAmount(-0.3)).toBe("0");
+    expect(formatTrAmount(-0.6)).toBe("-1");
+  });
+
   it("lets a back-calculated net price through when it is off the company step", () => {
     setPriceDecimals(2);
     expect(inputStepForPrice(260)).toBe("0.01");
