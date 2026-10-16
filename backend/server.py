@@ -4065,8 +4065,7 @@ _CHANNEL_COLORS = {"trendyol": "#f97316", "hepsiburada": "#ea580c", "b2b": "#3b8
                    "amazon": "#232f3e", "n11": "#7c3aed", "manual": "#64748b", "shopphp": "#0ea5e9"}
 
 
-@api_router.get("/dashboard/overview")
-async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
+async def dashboard_overview_payload(company_id: str):
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
@@ -4134,6 +4133,12 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
             "budget_warnings": budgets["warnings"]}
 
 
+@api_router.get("/dashboard/overview")
+async def dashboard_overview(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await dashboard_overview_payload(cid)
+
+
 def _stock_alert_min(p: dict) -> float:
     """Unset min matches dashboard stats (default 5). Explicit 0 stays 0."""
     raw = p.get("min_stock_alert")
@@ -4170,8 +4175,7 @@ def _dispatched_orders_query(company_id: str) -> dict:
     }
 
 
-@api_router.get("/dashboard/ops-alerts")
-async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
+async def dashboard_ops_alerts_payload(company_id: str):
     """Operasyon bildirimleri: kritik stok, açık üretim, yeni sipariş, sevk edilen sipariş."""
     products, new_count, new_orders, ship_count, shipped, prod_count, prod_orders = await asyncio.gather(
         db.products.find(
@@ -4276,8 +4280,14 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
     return {"count": total, "groups": groups}
 
 
-@api_router.get("/dashboard/tile-badges")
-async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_main_01"):
+@api_router.get("/dashboard/ops-alerts")
+async def dashboard_ops_alerts(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Operasyon bildirimleri: kritik stok, açık üretim, yeni sipariş, sevk edilen sipariş."""
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await dashboard_ops_alerts_payload(cid)
+
+
+async def dashboard_tile_badges_payload(company_id: str, user: dict):
     """Ana ekran kutucuk rozetleri: tam liste yok, sadece bekleyen iş sayıları."""
     pending_orders, incoming, pick_missing, pickable, leaves, early, intraday, geo_confirms, disputes, advances, unmatched, atolye, edoc, notes = await asyncio.gather(
         db.orders.count_documents({"company_id": company_id, "order_status": "pending"}),
@@ -4303,11 +4313,6 @@ async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_
         db.incoming_edocs.count_documents({"company_id": company_id, "status": "pending"}),
         db.notifications.find({"company_id": company_id, "is_read": False}).sort("created_at", -1).to_list(80),
     )
-    user = None
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        user = None
     import notify as _notify
     from tile_badges import tile_badge_payload
     unread = len(_notify.filter_notifications(notes or [], user))
@@ -4324,8 +4329,14 @@ async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_
     )
 
 
-@api_router.get("/dashboard/stats")
-async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
+@api_router.get("/dashboard/tile-badges")
+async def dashboard_tile_badges(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Ana ekran kutucuk rozetleri: tam liste yok, sadece bekleyen iş sayıları."""
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await dashboard_tile_badges_payload(cid, user)
+
+
+async def dashboard_stats_payload(company_id: str):
     now = datetime.now(timezone.utc)
     month = now.strftime("%Y-%m")
     prev = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
@@ -4406,6 +4417,12 @@ async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
         "low_stock_products": clean_docs(low_stock[:5]),
         "decision": decision[:4],
     }
+
+
+@api_router.get("/dashboard/stats")
+async def get_dashboard_stats(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await dashboard_stats_payload(cid)
 
 # ----------------- CARİLER (MÜŞTERİ & TEDARİKÇİ) -----------------
 @api_router.get("/contacts")
@@ -23866,6 +23883,12 @@ class AIChatRequest(BaseModel):
     message: str
     company_id: Optional[str] = "comp_nexus_main_01"
 
+
+class ProductionAIChatRequest(BaseModel):
+    """Üretim danışmanı gövdesi. company_id yoksa aktif şirket; finansal danışman modeli değişmez."""
+    message: str
+    company_id: Optional[str] = None
+
 async def _file_to_text(file: UploadFile, data: bytes) -> str:
     """PDF / Excel / CSV / metin → düz metin (AI ayrıştırma için)."""
     name = (file.filename or "").lower()
@@ -24514,9 +24537,11 @@ async def _production_ai_context(company_id: str) -> Dict[str, Any]:
 
 
 @api_router.get("/ai/production-summary")
-async def ai_production_summary(company_id: Optional[str] = "comp_nexus_main_01"):
+async def ai_production_summary(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Yönetici için üretim+reçete AI özeti (şirket bazlı ai.production eklentisi)."""
-    context = await _production_ai_context(company_id)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.production")
+    context = await _production_ai_context(cid)
     advice = await get_production_ai_advice(
         context,
         "Güncel üretim ve reçete durumunu yönetici için özetle; öncelikli aksiyonları madde madde yaz.",
@@ -24526,8 +24551,10 @@ async def ai_production_summary(company_id: Optional[str] = "comp_nexus_main_01"
 
 
 @api_router.post("/ai/production-advisor")
-async def ask_production_ai(req: AIChatRequest):
-    context = await _production_ai_context(req.company_id or "comp_nexus_main_01")
+async def ask_production_ai(req: ProductionAIChatRequest, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, req.company_id)
+    await addons.require(cid, "ai.production")
+    context = await _production_ai_context(cid)
     advice = await get_production_ai_advice(context, req.message or "Üretim durumunu yorumla.")
     metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
     return {"advice": advice, "metrics": metrics}
@@ -24539,7 +24566,10 @@ async def get_ai_status():
     return public_ai_status(cfg)
 
 @api_router.get("/ai/cashflow-forecast")
-async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_01"):
+async def get_ai_cashflow_forecast(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.advisor")
+    company_id = cid
     bank_accs = await db.bank_accounts.find({"company_id": company_id}).to_list(2000)
     current_cash = sum(a.get("current_balance", 0) for a in bank_accs) or 500000.0
 
