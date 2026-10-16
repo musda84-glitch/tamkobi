@@ -793,14 +793,19 @@ def test_super_admin_follows_resolve_company_id(api):
     _no_foreign(active.text)
 
 
-def test_scheduler_uses_send_summary_helper_not_the_route(api):
-    _client, db = api
-    called = {"routes": []}
+class _FrozenPricingDateTime:
+    """Stand-in for pricing.datetime. now(tz) is 2026-01-15 at a fixed Turkey clock."""
 
-    async def _boom(*_args, **_kwargs):
-        called["routes"].append(True)
-        raise AssertionError("route called")
+    def __init__(self, hour: int, minute: int):
+        self._when = datetime(2026, 1, 15, hour, minute, tzinfo=pricing.TR_TZ)
 
+    def now(self, tz=None):
+        if tz is None:
+            return self._when.replace(tzinfo=None)
+        return self._when.astimezone(tz)
+
+
+def _run_scheduler_once(clock, called):
     sleeps = {"n": 0}
 
     async def fake_sleep(_seconds):
@@ -808,15 +813,55 @@ def test_scheduler_uses_send_summary_helper_not_the_route(api):
         if sleeps["n"] >= 2:
             raise asyncio.CancelledError()
 
-    with patch.object(pricing, "get_summary_settings", _boom), \
+    async def _boom(*_args, **_kwargs):
+        called["routes"].append(True)
+        raise AssertionError("route called")
+
+    with patch.object(pricing, "datetime", clock), \
+         patch.object(pricing, "get_summary_settings", _boom), \
          patch.object(pricing, "preview_summary", _boom), \
          patch.object(pricing, "send_summary_now", _boom), \
          patch.object(pricing.asyncio, "sleep", fake_sleep):
         with pytest.raises(asyncio.CancelledError):
             _run(pricing.scheduler_loop())
+
+
+def test_scheduler_uses_send_summary_helper_not_the_route(api):
+    _client, db = api
+    called = {"routes": []}
+    # Seeded schedules are 07:30 and 09:45. 10:00 is after both, including at midnight.
+    _run_scheduler_once(_FrozenPricingDateTime(10, 0), called)
     assert called["routes"] == []
     assert set(db.side["mail"]) == {COMP_A, COMP_B}
     assert {row["to"][0] for row in db.side["smtp"]} == {"a@firma.test", "b-secret@firma.test"}
     logs = db.morning_summary_logs.docs
     assert {doc["company_id"] for doc in logs} == {COMP_A, COMP_B}
     assert all(doc["manual"] is False for doc in logs)
+    assert {doc.get("last_sent_day") for doc in db.morning_summary_settings.docs} == {"2026-01-15"}
+
+
+def test_scheduler_sends_at_0800_tr_not_at_0759(api):
+    _client, db = api
+    for doc in db.morning_summary_settings.docs:
+        if doc["company_id"] == COMP_A:
+            doc["time"] = "08:00"
+        else:
+            # Missing time uses the scheduler default, which is also 08:00.
+            doc.pop("time", None)
+    called = {"routes": []}
+    _run_scheduler_once(_FrozenPricingDateTime(7, 59), called)
+    assert called["routes"] == []
+    assert db.side["mail"] == []
+    assert db.side["smtp"] == []
+    assert db.side["wa"] == []
+    assert db.morning_summary_logs.docs == []
+    assert {doc.get("last_sent_day") for doc in db.morning_summary_settings.docs} == {"2000-01-01"}
+
+    _run_scheduler_once(_FrozenPricingDateTime(8, 0), called)
+    assert called["routes"] == []
+    assert set(db.side["mail"]) == {COMP_A, COMP_B}
+    assert {row["to"][0] for row in db.side["smtp"]} == {"a@firma.test", "b-secret@firma.test"}
+    logs = db.morning_summary_logs.docs
+    assert {doc["company_id"] for doc in logs} == {COMP_A, COMP_B}
+    assert all(doc["manual"] is False for doc in logs)
+    assert {doc.get("last_sent_day") for doc in db.morning_summary_settings.docs} == {"2026-01-15"}
