@@ -15015,18 +15015,19 @@ _LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid":
 
 
 @api_router.get("/personnel/pending-requests")
-async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_main_01"):
+async def personnel_pending_requests(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Yönetici bildirim kutusu: bekleyen izin, erken çıkış, gün içi izin, yevmiye ve puantaj itirazları."""
-    leaves = await db.leave_requests.find({"company_id": company_id, "status": "pending"}).sort("created_at", -1).to_list(200)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    leaves = await db.leave_requests.find({"company_id": cid, "status": "pending"}).sort("created_at", -1).to_list(200)
     early = await db.attendance.find(
-        {"company_id": company_id, "early_leave_request.status": "pending"}
+        {"company_id": cid, "early_leave_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     intraday = await db.attendance.find(
-        {"company_id": company_id, "intraday_leave_request.status": "pending"}
+        {"company_id": cid, "intraday_leave_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     disputes = await db.attendance.find(
         {
-            "company_id": company_id,
+            "company_id": cid,
             "dispute_note": {"$exists": True, "$nin": [None, ""]},
             "dispute_resolved": {"$ne": True},
         }
@@ -15090,7 +15091,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "meta": {"date": att.get("date"), "dispute_note": att.get("dispute_note")},
         })
     yev_adj = await db.attendance.find(
-        {"company_id": company_id, "yevmiye_adjustment_request.status": "pending"}
+        {"company_id": cid, "yevmiye_adjustment_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     for att in yev_adj:
         adj = att.get("yevmiye_adjustment_request") or {}
@@ -15122,7 +15123,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             },
         })
     advances = await db.bonus_payments.find({
-        "company_id": company_id, "type": "advance", "source": "self", "status": "pending",
+        "company_id": cid, "type": "advance", "source": "self", "status": "pending",
     }).sort("created_at", -1).to_list(200)
     for adv in advances:
         amt = adv.get("amount") or 0
@@ -15140,7 +15141,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "meta": {"amount": amt, "period": adv.get("period"), "note": adv.get("note")},
         })
     geo_conf = await db.attendance.find(
-        {"company_id": company_id, "geo_confirm_request.status": "pending"}
+        {"company_id": cid, "geo_confirm_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     for att in geo_conf:
         gcr = att.get("geo_confirm_request") or {}
@@ -15172,7 +15173,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             },
         })
     loc_exit = await db.attendance.find(
-        {"company_id": company_id, "location_exit_request.status": "pending"}
+        {"company_id": cid, "location_exit_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     for att in loc_exit:
         ler = att.get("location_exit_request") or {}
@@ -15199,7 +15200,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             },
         })
     ot_conf = await db.attendance.find(
-        {"company_id": company_id, "overtime_confirm_request.status": "pending"}
+        {"company_id": cid, "overtime_confirm_request.status": "pending"}
     ).sort("date", -1).to_list(200)
     for att in ot_conf:
         ocr = att.get("overtime_confirm_request") or {}
@@ -15229,7 +15230,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             },
         })
     trash_reqs = await db.work_order_trash_requests.find(
-        {"company_id": company_id, "status": "pending"}
+        {"company_id": cid, "status": "pending"}
     ).sort("requested_at", -1).to_list(200)
     for tr in trash_reqs:
         items.append(wo_trash_req.inbox_item(tr))
@@ -15238,8 +15239,9 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
 
 
 @api_router.get("/personnel/leaves")
-async def list_leaves(company_id: Optional[str] = "comp_nexus_main_01", employee_id: Optional[str] = None):
-    q = {"company_id": company_id}
+async def list_leaves(company_id: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q = {"company_id": cid}
     if employee_id:
         q["employee_id"] = employee_id
     return clean_docs(await db.leave_requests.find(q).sort("created_at", -1).to_list(500))
@@ -15513,8 +15515,9 @@ async def salary_calc(req: Dict[str, Any]):
     return {**result, "mode": mode, "params": {k: v for k, v in SALARY_PARAMS.items() if k != "tax_brackets"}, "note": "2026 yaklaşık oranlar; asgari ücret istisnası uygulanmıştır. Resmi bordro için mali müşavirinizle doğrulayın."}
 
 @api_router.get("/personnel/bonuses")
-async def list_bonuses(company_id: Optional[str] = "comp_nexus_main_01", period: Optional[str] = None):
-    q = {"company_id": company_id}
+async def list_bonuses(company_id: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q = {"company_id": cid}
     if period:
         q["period"] = period
     return clean_docs(await db.bonus_payments.find(q).sort("created_at", -1).to_list(500))
@@ -16387,14 +16390,15 @@ async def warehouse_ship_order(order_id: str, req: Optional[Dict[str, Any]] = Bo
 
 # ----------------- PERSONEL PUANTAJ -----------------
 @api_router.get("/personnel/attendance")
-async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
-    company = await db.companies.find_one({"_id": company_id}) or {}
+async def list_attendance(company_id: Optional[str] = None, month: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    company = await db.companies.find_one({"_id": cid}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
     month = month or today_s[:7]
     await attendance.rehome_early_checkouts_for_company(company, today_s)
-    rows = await db.attendance.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
-    emps = await db.employees.find({"company_id": company_id}).to_list(200)
-    workplaces = await attendance.workplaces_by_employee(company_id, [e["_id"] for e in emps], today_s, company.get("location"))
+    rows = await db.attendance.find({"company_id": cid, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
+    emps = await db.employees.find({"company_id": cid}).to_list(200)
+    workplaces = await attendance.workplaces_by_employee(cid, [e["_id"] for e in emps], today_s, company.get("location"))
     summary = []
     for e in emps:
         mine = [r for r in rows if r["employee_id"] == e["_id"]]
@@ -16445,8 +16449,9 @@ async def set_company_location(company_id: str, req: Dict[str, Any]):
     return {"status": "success", "location": {"latitude": lat, "longitude": lng, "radius_m": radius}}
 
 @api_router.get("/personnel/attendance/geo-status")
-async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depends(get_current_user)):
-    company = await db.companies.find_one({"_id": company_id}) or {}
+async def geo_status(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    company = await db.companies.find_one({"_id": cid}) or {}
     emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
     sched = attendance.merge_schedule(company, emp)
     today = attendance._today(sched)
@@ -21919,10 +21924,11 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None, u
 
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/role-options")
-async def personnel_role_options(company_id: Optional[str] = "comp_nexus_main_01"):
+async def personnel_role_options(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Personel kartı Pozisyon/Görev seçenekleri — şirket rollerinden (settings yetkisi gerekmez)."""
-    await rbac.ensure_roles(company_id)
-    roles = await db.roles.find({"company_id": company_id}, {"code": 1, "name": 1, "is_system": 1}).to_list(100)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await rbac.ensure_roles(cid)
+    roles = await db.roles.find({"company_id": cid}, {"code": 1, "name": 1, "is_system": 1}).to_list(100)
     rows = []
     for r in roles:
         name = (r.get("name") or "").strip()
@@ -21935,15 +21941,16 @@ async def personnel_role_options(company_id: Optional[str] = "comp_nexus_main_01
 
 
 @api_router.get("/personnel/employees")
-async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_employees(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     import shopfloor_operators as sfo
-    employees = await db.employees.find({"company_id": company_id}).to_list(100)
+    employees = await db.employees.find({"company_id": cid}).to_list(100)
     month = employee_pay.istanbul_period()
     ids = [e["_id"] for e in employees]
     if not ids:
         return []
-    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}, "company_id": company_id}).to_list(4000)
-    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}, "company_id": company_id}).to_list(4000)
+    payrolls = await db.payrolls.find({"employee_id": {"$in": ids}, "company_id": cid}).to_list(4000)
+    bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}, "company_id": cid}).to_list(4000)
     expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
     leave_rows = await db.leave_requests.find({"employee_id": {"$in": ids}}).to_list(8000)
     pmap, bmap, emap, lmap = {}, {}, {}, {}
@@ -21955,9 +21962,9 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
         emap.setdefault(x.get("employee_id"), []).append(x)
     for lv in leave_rows:
         lmap.setdefault(lv.get("employee_id"), []).append(lv)
-    company = await db.companies.find_one({"_id": company_id}) or {}
+    company = await db.companies.find_one({"_id": cid}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
-    workplaces = await attendance.workplaces_by_employee(company_id, ids, today_s, company.get("location"))
+    workplaces = await attendance.workplaces_by_employee(cid, ids, today_s, company.get("location"))
     user_ids = [e.get("user_id") for e in employees if e.get("user_id") and e.get("user_id") != "-"]
     user_q = [{"employee_id": {"$in": ids}}]
     if user_ids:
@@ -23152,8 +23159,9 @@ async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any], user: dict = Depen
     return {"status": "success", "has_shopfloor_pin": True, "message": "Atölye şifresi kaydedildi."}
 
 @api_router.get("/personnel/payrolls")
-async def list_payrolls(company_id: Optional[str] = "comp_nexus_main_01", period: Optional[str] = None):
-    query = {"company_id": company_id}
+async def list_payrolls(company_id: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query = {"company_id": cid}
     if period:
         query["period"] = period
     payrolls = await db.payrolls.find(query).sort("period", -1).to_list(100)
