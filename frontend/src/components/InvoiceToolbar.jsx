@@ -86,7 +86,7 @@ export const applyInvoiceFilters = (invoices, f) => {
 
 export const DEFAULT_FILTERS = { q: "", pay: "all", etype: "all", from: "", to: "", preset: "", min: "", max: "", sort: "date_desc" };
 
-export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = [], selectedCount = 0, bulkBusy = false, onBulkAction }) => {
+export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = [], selectedCount = 0, bulkBusy = false, onBulkAction, loadRows, draftCount, approvedCount }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const setPreset = (p) => { const [from, to] = presetRange(p); setF((s) => ({ ...s, preset: p, from, to })); };
   const active = Object.keys(DEFAULT_FILTERS).filter((k) => k !== "sort" && f[k] !== DEFAULT_FILTERS[k]).length;
@@ -115,8 +115,8 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
         {active > 0 && <button onClick={() => setF({ ...DEFAULT_FILTERS, sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
         <div className="ml-auto flex items-center gap-3 text-slate-500">
           {onBulkAction && <InvoicesBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
-          <ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} />
-          <div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
+          <ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} loadRows={loadRows} />
+          <div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b>{draftCount != null && approvedCount != null && <span data-testid="inv-status-counts"> · Taslak <b className="text-slate-900">{draftCount}</b> · Onaylı <b className="text-slate-900">{approvedCount}</b></span>}</div>
         </div>
       </div>
     </div>

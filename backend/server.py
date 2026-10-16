@@ -130,6 +130,7 @@ import partner_tx_page
 import contact_list_page
 import order_list_page
 import product_list_page
+import invoice_list_page
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -8321,6 +8322,122 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
         query["status"] = {"$nin": ["cancelled", "canceled", "void"]}
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
     return clean_docs(invoices)
+
+
+def _invoice_query_text(value) -> str:
+    """Doğrudan çağrıda FastAPI Query varsayılanı sızmasın; HTTP yolu str/None verir."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return str(value)
+    return ""
+
+
+def _invoice_page_kwargs(
+    *,
+    tab: str,
+    contact_id: Optional[str],
+    q: Optional[str],
+    pay: str,
+    etype: str,
+    date_from: Optional[str],
+    date_to: Optional[str],
+    amount_min: Optional[str],
+    amount_max: Optional[str],
+    sort: str,
+    show_cancelled: bool,
+) -> dict:
+    return {
+        "tab": _invoice_query_text(tab) or "all",
+        "contact_id": _invoice_query_text(contact_id),
+        "q": _invoice_query_text(q),
+        "pay": _invoice_query_text(pay) or "all",
+        "etype": _invoice_query_text(etype) or "all",
+        "date_from": _invoice_query_text(date_from),
+        "date_to": _invoice_query_text(date_to),
+        "min_amount": _invoice_query_text(amount_min),
+        "max_amount": _invoice_query_text(amount_max),
+        "sort": _invoice_query_text(sort) or "date_desc",
+        "show_cancelled": bool(show_cancelled) if isinstance(show_cancelled, bool) else False,
+    }
+
+
+@api_router.get("/invoices/page")
+async def list_invoices_page(
+    company_id: Optional[str] = None,
+    tab: str = "all",
+    contact_id: Optional[str] = None,
+    q: Optional[str] = None,
+    pay: str = "all",
+    etype: str = "all",
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    amount_min: Optional[str] = Query(None, alias="min"),
+    amount_max: Optional[str] = Query(None, alias="max"),
+    sort: str = "date_desc",
+    show_cancelled: bool = False,
+    page: int = 1,
+    page_size: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Sayfalı fatura listesi. GET yazmaz. Kalemler yanıta girmez."""
+    kwargs = _invoice_page_kwargs(
+        tab=tab,
+        contact_id=contact_id,
+        q=q,
+        pay=pay,
+        etype=etype,
+        date_from=date_from,
+        date_to=date_to,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        sort=sort,
+        show_cancelled=show_cancelled,
+    )
+    return await invoice_list_page.list_invoices_page_for_user(
+        db,
+        user,
+        company_id,
+        page=page,
+        page_size=page_size,
+        **kwargs,
+    )
+
+
+@api_router.get("/invoices/page/ids")
+async def list_invoices_page_ids(
+    company_id: Optional[str] = None,
+    tab: str = "all",
+    contact_id: Optional[str] = None,
+    q: Optional[str] = None,
+    pay: str = "all",
+    etype: str = "all",
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    amount_min: Optional[str] = Query(None, alias="min"),
+    amount_max: Optional[str] = Query(None, alias="max"),
+    sort: str = "date_desc",
+    show_cancelled: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    """Aynı süzgeçle id listesi (en fazla 5000). Tümünü seç. GET yazmaz."""
+    kwargs = _invoice_page_kwargs(
+        tab=tab,
+        contact_id=contact_id,
+        q=q,
+        pay=pay,
+        etype=etype,
+        date_from=date_from,
+        date_to=date_to,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        sort=sort,
+        show_cancelled=show_cancelled,
+    )
+    return await invoice_list_page.list_invoice_ids_for_user(db, user, company_id, **kwargs)
+
 
 @api_router.get("/invoices/{invoice_id}")
 async def get_invoice(invoice_id: str, user: dict = Depends(get_current_user)):

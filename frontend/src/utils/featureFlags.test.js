@@ -8,11 +8,14 @@ import {
   PARTNER_TX_PAGING_STORAGE_KEY,
   PRODUCTS_PAGING_STORAGE_KEY,
   PRODUCTS_SERVER_PAGING,
+  INVOICES_PAGING_STORAGE_KEY,
+  INVOICES_SERVER_PAGING,
   isBankTxServerPagingEnabled,
   isContactsServerPagingEnabled,
   isOrdersServerPagingEnabled,
   isPartnerTxServerPagingEnabled,
   isProductsServerPagingEnabled,
+  invoicesServerPagingEnabled,
 } from "./featureFlags";
 
 test("BANK_TX_SERVER_PAGING varsayılan kapalı", () => {
@@ -79,4 +82,18 @@ test("tk_ff_products_paging=1 bayrağı açar", () => {
   localStorage.setItem(PRODUCTS_PAGING_STORAGE_KEY, "0");
   expect(isProductsServerPagingEnabled()).toBe(false);
   localStorage.removeItem(PRODUCTS_PAGING_STORAGE_KEY);
+});
+
+test("INVOICES_SERVER_PAGING varsayılan kapalı", () => {
+  localStorage.removeItem(INVOICES_PAGING_STORAGE_KEY);
+  expect(INVOICES_SERVER_PAGING).toBe(false);
+  expect(invoicesServerPagingEnabled()).toBe(false);
+});
+
+test("tk_ff_invoices_paging=1 bayrağı açar", () => {
+  localStorage.setItem(INVOICES_PAGING_STORAGE_KEY, "1");
+  expect(invoicesServerPagingEnabled()).toBe(true);
+  localStorage.setItem(INVOICES_PAGING_STORAGE_KEY, "0");
+  expect(invoicesServerPagingEnabled()).toBe(false);
+  localStorage.removeItem(INVOICES_PAGING_STORAGE_KEY);
 });
