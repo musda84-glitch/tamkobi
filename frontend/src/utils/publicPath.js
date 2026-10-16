@@ -48,6 +48,7 @@ const SESSION_PREFIXES = [
   "/communication",
   "/hesap",
   "/settings",
+  "/vpos",
   "/quotes",
   "/projects",
   "/surveys",

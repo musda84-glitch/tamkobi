@@ -135,6 +135,7 @@ _SKIP_PREFIXES = (
     "/api/platform",
     "/api/webhook",
     "/api/payments",
+    "/api/vpos",
     "/api/company-audit",
     "/api/activity-logs",
     "/api/setup",

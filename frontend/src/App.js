@@ -39,6 +39,7 @@ const MyPersonnelPage = page(() => import("./pages/MyPersonnelPage"));
 const AIAssistantPage = page(() => import("./pages/AIAssistantPage"));
 const CommunicationPage = page(() => import("./pages/CommunicationPage"));
 const SettingsPage = page(() => import("./pages/SettingsPage"));
+const VposResultPage = page(() => import("./pages/VposResultPage"));
 const AccountPage = page(() => import("./pages/AccountPage"));
 const ProjectsPage = page(() => import("./pages/ProjectsPage"));
 const InstallmentsPage = page(() => import("./pages/InstallmentsPage"));
@@ -188,6 +189,7 @@ export default function App() {
                   <Route path="/fiyatlar" element={<Navigate to="/web" replace />} />
                   <Route path="/kayit" element={<SignupPage />} />
                   <Route path="/yasal/:slug" element={<LegalPage />} />
+                  <Route path="/vpos/result/:id" element={<VposResultPage />} />
                   <Route path="/odeme/basarili" element={<PaymentResultPage />} />
                   <Route path="/odeme/iptal" element={<PaymentResultPage />} />
                   <Route path="/yenile/:token" element={<RenewPage />} />

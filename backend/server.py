@@ -23974,6 +23974,8 @@ import network_printers
 network_printers.init(get_current_user)
 import label_printer_settings
 label_printer_settings.init(db, get_current_user)
+import vpos
+vpos.init(db, get_current_user)
 migration.init(db, get_current_user)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)}, get_current_user)
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
@@ -24171,6 +24173,7 @@ app.include_router(linked_moves.router)
 app.include_router(mobile_logs.router)
 app.include_router(network_printers.router)
 app.include_router(label_printer_settings.router)
+app.include_router(vpos.router)
 app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)

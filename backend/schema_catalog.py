@@ -421,6 +421,18 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "account_id", "type", "amount", "contact_id", "related_invoice_id", "date", "matched_by_id", "created_by_id", "created_by_name"),
         "refs": ("bank_accounts._id", "contacts._id", "invoices._id"),
     },
+    "vpos_configs": {
+        "scope": SCOPE_TENANT,
+        "description": "Sanal POS ayarı (NestPay/EST). store_key ve API şifresi şifreli; yanıtta yalnız has_* bayrakları.",
+        "keys": ("_id", "company_id", "family", "bank_label", "mode", "client_id", "store_key_enc", "api_user", "api_password_enc", "gateway_3d_url", "account_id", "enabled", "created_at", "updated_at"),
+        "refs": ("companies._id", "bank_accounts._id via account_id"),
+    },
+    "payment_intents": {
+        "scope": SCOPE_TENANT,
+        "description": "Sanal POS ödeme niyeti. Tutar sunucuda sabitlenir; kart verisi saklanmaz. PR-1 muhasebe yazmaz.",
+        "keys": ("_id", "company_id", "contact_id", "purpose", "amount", "currency", "order_id", "status", "vpos_config_id", "created_by", "created_at", "expires_at", "result"),
+        "refs": ("companies._id", "vpos_configs._id", "contacts._id"),
+    },
     "bank_connections": {
         "scope": SCOPE_TENANT,
         "description": "Banka API bağlantıları (sandbox/live).",
