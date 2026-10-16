@@ -8304,8 +8304,23 @@ async def _fill_order_line_images(company_id: str, items: list) -> None:
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
-async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None, project_id: Optional[str] = None, include_cancelled: Optional[bool] = False):
-    query = {"company_id": company_id}
+async def list_invoices(
+    company_id: Optional[str] = None,
+    type: Optional[str] = None,
+    project_id: Optional[str] = None,
+    include_cancelled: Optional[bool] = False,
+    limit: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+    response: Response = None,
+):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    if limit is None:
+        cap = 1000
+    elif limit < 1:
+        raise HTTPException(status_code=422, detail="limit en az 1 olmalı.")
+    else:
+        cap = 5000 if limit > 5000 else limit
+    query = {"company_id": cid}
     if type == "export":
         query["trade_kind"] = "export"
         query["invoice_type"] = {"$ne": "dispatch"}
@@ -8320,8 +8335,11 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
         query["project_id"] = project_id
     if not include_cancelled:
         query["status"] = {"$nin": ["cancelled", "canceled", "void"]}
-    invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
-    return clean_docs(invoices)
+    fetched = await db.invoices.find(query).sort("created_at", -1).to_list(cap + 1)
+    truncated = len(fetched) > cap
+    if truncated and response is not None:
+        response.headers["X-Total-Truncated"] = "1"
+    return clean_docs(fetched[:cap])
 
 
 def _invoice_query_text(value) -> str:
