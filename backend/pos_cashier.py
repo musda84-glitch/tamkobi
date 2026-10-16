@@ -1068,14 +1068,22 @@ async def send_daily_summary(company_id: str, *, force: bool = False) -> dict:
     r_amt = round(sum(float(e.get("amount") or 0) for e in refunds), 2)
     msg = f"Bugün {len(cancels)} iptal ({c_amt:,.2f} ₺), {len(refunds)} iade ({r_amt:,.2f} ₺)."
     title = "Günlük POS iptal / iade özeti"
-    await notify.insert_notification(_db, notify.notification_doc(
-        company_id, "pos_daily_summary",
-        title,
-        msg, link="/settings?tab=pos_rules",
-        roles=("admin", "manager"),
-        ref_type="pos_daily_summary",
-        extra={"day": today, "cancels": len(cancels), "refunds": len(refunds)},
-    ))
+    write_inapp = True
+    try:
+        import event_notify
+        write_inapp = await event_notify.inapp_enabled(company_id, "pos_daily_summary")
+    except Exception:
+        logger.exception("pos_daily_summary inapp gate failed company=%s", company_id)
+        write_inapp = True
+    if write_inapp:
+        await notify.insert_notification(_db, notify.notification_doc(
+            company_id, "pos_daily_summary",
+            title,
+            msg, link="/settings?tab=pos_rules",
+            roles=("admin", "manager"),
+            ref_type="pos_daily_summary",
+            extra={"day": today, "cancels": len(cancels), "refunds": len(refunds)},
+        ))
     try:
         import event_notify
         await event_notify.queue_event_email(

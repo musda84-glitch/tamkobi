@@ -622,17 +622,25 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
             f"{len(created)} kalem üretime gönderildi: "
             + ", ".join(f"{c['product_name']} ({c['qty']:g})" for c in created)
         )
+        write_inapp = True
         try:
-            await notify.insert_notification(_db, notify.notification_doc(
-                cid, "order_pick_production", title, message,
-                link="/production?tab=orders",
-                roles=notify.roles_for_type("order_pick_production"),
-                ref_type="order_pick",
-                ref_id=order_id,
-                target={"type": "order", "id": "", "route": "/production?tab=orders"},
-            ))
+            import event_notify
+            write_inapp = await event_notify.inapp_enabled(cid, "order_pick_production")
         except Exception:
-            logger.exception("order_pick_production in-app failed company=%s", cid)
+            logger.exception("order_pick_production inapp gate failed company=%s", cid)
+            write_inapp = True
+        if write_inapp:
+            try:
+                await notify.insert_notification(_db, notify.notification_doc(
+                    cid, "order_pick_production", title, message,
+                    link="/production?tab=orders",
+                    roles=notify.roles_for_type("order_pick_production"),
+                    ref_type="order_pick",
+                    ref_id=order_id,
+                    target={"type": "order", "id": "", "route": "/production?tab=orders"},
+                ))
+            except Exception:
+                logger.exception("order_pick_production in-app failed company=%s", cid)
         try:
             import event_notify
             await event_notify.queue_event_email(

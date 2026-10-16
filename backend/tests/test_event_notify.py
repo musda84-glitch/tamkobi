@@ -1738,7 +1738,11 @@ def test_platform_email_off_tenant_true_does_not_send(setup_en):
     assert res.get("email") is None
     assert send.await_count == 0
     email = view["events"]["einvoice_incoming"]["email"]
-    assert email == {"platform": False, "tenant": True, "effective": False}
+    assert {k: email[k] for k in ("platform", "tenant", "effective")} == {
+        "platform": False, "tenant": True, "effective": False,
+    }
+    assert email["locked"] is True
+    assert email["lock_reason"] == "platform"
 
 
 def test_queued_order_skipped_when_tenant_closes_email(setup_en):
@@ -1839,7 +1843,7 @@ def test_tenant_prefs_put_whitelist_and_access(setup_en):
         assert doc["company_id"] == "c1"
         assert doc["updated_by"] == "u_admin"
         assert doc["events"]["order_new"] == {"inapp": False, "email": False}
-        assert set(doc["events"]) == set(event_notify.TENANT_EVENTS)
+        assert set(doc["events"]) == set(event_notify.FIRM_EVENTS)
         assert db.company_notify_prefs.docs == {}
         audits = list(db.company_audit_log.docs.values())
         assert len(audits) == 1

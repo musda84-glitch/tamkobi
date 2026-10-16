@@ -4468,9 +4468,18 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
         await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
     import notify as _notify
     roles = _notify.roles_for_type(ntype)
-    await _notify.insert_notification(_db, _notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
-    mail = {"status": "skipped"}
     event = MANAGER_NOTIFY_EVENTS.get(ntype)
+    write_inapp = True
+    if event == "attendance_alert":
+        try:
+            import event_notify
+            write_inapp = await event_notify.inapp_enabled(company_id, "attendance_alert")
+        except Exception:
+            logger.exception("attendance inapp gate failed company=%s type=%s", company_id, ntype)
+            write_inapp = True
+    if write_inapp:
+        await _notify.insert_notification(_db, _notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
+    mail = {"status": "skipped"}
     if event:
         try:
             import event_notify

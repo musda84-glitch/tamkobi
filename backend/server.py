@@ -13240,17 +13240,28 @@ async def _sync_bank_connection_core(
             account_name=str(acc.get("account_name") or ""),
             pending=bool(still_open),
         )
-        await _notify.insert_notification(db, _notify.notification_doc(
-            doc["company_id"], "bank_sync",
-            f"{inserted} yeni banka hareketi",
-            detail,
-            link=movement["route"],
-            ref_type=movement["type"],
-            ref_id=movement["id"],
-            target=movement,
-        ))
+        write_inapp = True
+        _event_notify = None
         try:
             import event_notify as _event_notify
+            write_inapp = await _event_notify.inapp_enabled(doc["company_id"], "bank_sync")
+        except Exception:
+            logger.exception("bank_sync inapp gate failed company=%s", doc.get("company_id"))
+            write_inapp = True
+            _event_notify = None
+        if write_inapp:
+            await _notify.insert_notification(db, _notify.notification_doc(
+                doc["company_id"], "bank_sync",
+                f"{inserted} yeni banka hareketi",
+                detail,
+                link=movement["route"],
+                ref_type=movement["type"],
+                ref_id=movement["id"],
+                target=movement,
+            ))
+        try:
+            if _event_notify is None:
+                import event_notify as _event_notify
             acc_id = str(acc.get("_id") or "")
             sync_run_id = str(result.get("sync_run_id") or "") if isinstance(result, dict) else ""
             dedupe_token = sync_run_id or (new_ids[-1] if new_ids else "")
