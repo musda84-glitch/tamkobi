@@ -144,6 +144,7 @@ import work_order_trash_requests as wo_trash_req
 import shopfloor_pause as sfp
 import location_consent
 import personnel_wage
+import personnel_scope
 import trash
 import linked_moves
 import idempotency
@@ -15018,6 +15019,8 @@ _LEAVE_TYPE_TR = {"annual": "Yıllık izin", "sick": "Hastalık izni", "unpaid":
 async def personnel_pending_requests(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Yönetici bildirim kutusu: bekleyen izin, erken çıkış, gün içi izin, yevmiye ve puantaj itirazları."""
     cid = tenant_access.resolve_company_id(user, company_id)
+    if await personnel_scope.personnel_scope(user, cid) is not None:
+        raise HTTPException(status_code=403, detail=personnel_scope.PENDING_FORBIDDEN)
     leaves = await db.leave_requests.find({"company_id": cid, "status": "pending"}).sort("created_at", -1).to_list(200)
     early = await db.attendance.find(
         {"company_id": cid, "early_leave_request.status": "pending"}
@@ -15242,8 +15245,12 @@ async def personnel_pending_requests(company_id: Optional[str] = None, user: dic
 async def list_leaves(company_id: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     q = {"company_id": cid}
-    if employee_id:
-        q["employee_id"] = employee_id
+    scope = await personnel_scope.personnel_scope(user, cid)
+    if scope is None:
+        if employee_id:
+            q["employee_id"] = employee_id
+    else:
+        personnel_scope.restrict(q, scope, employee_id)
     return clean_docs(await db.leave_requests.find(q).sort("created_at", -1).to_list(500))
 
 @api_router.post("/personnel/leaves")
@@ -15515,11 +15522,12 @@ async def salary_calc(req: Dict[str, Any]):
     return {**result, "mode": mode, "params": {k: v for k, v in SALARY_PARAMS.items() if k != "tax_brackets"}, "note": "2026 yaklaşık oranlar; asgari ücret istisnası uygulanmıştır. Resmi bordro için mali müşavirinizle doğrulayın."}
 
 @api_router.get("/personnel/bonuses")
-async def list_bonuses(company_id: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_bonuses(company_id: Optional[str] = None, period: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     q = {"company_id": cid}
     if period:
         q["period"] = period
+    personnel_scope.restrict(q, await personnel_scope.personnel_scope(user, cid), employee_id)
     return clean_docs(await db.bonus_payments.find(q).sort("created_at", -1).to_list(500))
 
 @api_router.post("/personnel/bonuses")
@@ -16390,14 +16398,19 @@ async def warehouse_ship_order(order_id: str, req: Optional[Dict[str, Any]] = Bo
 
 # ----------------- PERSONEL PUANTAJ -----------------
 @api_router.get("/personnel/attendance")
-async def list_attendance(company_id: Optional[str] = None, month: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_attendance(company_id: Optional[str] = None, month: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     company = await db.companies.find_one({"_id": cid}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
     month = month or today_s[:7]
     await attendance.rehome_early_checkouts_for_company(company, today_s)
-    rows = await db.attendance.find({"company_id": cid, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
-    emps = await db.employees.find({"company_id": cid}).to_list(200)
+    scope = await personnel_scope.personnel_scope(user, cid)
+    row_q = {"company_id": cid, "date": {"$regex": f"^{month}"}}
+    emp_q = {"company_id": cid}
+    personnel_scope.restrict(row_q, scope, employee_id)
+    personnel_scope.restrict(emp_q, scope, employee_id, field="_id")
+    rows = await db.attendance.find(row_q).sort("date", -1).to_list(3000)
+    emps = await db.employees.find(emp_q).to_list(200)
     workplaces = await attendance.workplaces_by_employee(cid, [e["_id"] for e in emps], today_s, company.get("location"))
     summary = []
     for e in emps:
@@ -21941,10 +21954,16 @@ async def personnel_role_options(company_id: Optional[str] = None, user: dict = 
 
 
 @api_router.get("/personnel/employees")
-async def list_employees(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_employees(company_id: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     import shopfloor_operators as sfo
-    employees = await db.employees.find({"company_id": cid}).to_list(100)
+    scope = await personnel_scope.personnel_scope(user, cid)
+    # Atölye operatör seçimi ve İK portalı: özellik açıkken liste aynen kalır.
+    if scope is not None and rbac.role_features(await rbac.role_for(user, cid)).get("portal_atolye"):
+        scope = None
+    emp_q = {"company_id": cid}
+    personnel_scope.restrict(emp_q, scope, employee_id, field="_id")
+    employees = await db.employees.find(emp_q).to_list(100)
     month = employee_pay.istanbul_period()
     ids = [e["_id"] for e in employees]
     if not ids:
@@ -23159,11 +23178,12 @@ async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any], user: dict = Depen
     return {"status": "success", "has_shopfloor_pin": True, "message": "Atölye şifresi kaydedildi."}
 
 @api_router.get("/personnel/payrolls")
-async def list_payrolls(company_id: Optional[str] = None, period: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def list_payrolls(company_id: Optional[str] = None, period: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     query = {"company_id": cid}
     if period:
         query["period"] = period
+    personnel_scope.restrict(query, await personnel_scope.personnel_scope(user, cid), employee_id)
     payrolls = await db.payrolls.find(query).sort("period", -1).to_list(100)
     return clean_docs(payrolls)
 
