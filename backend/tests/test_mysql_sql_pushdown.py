@@ -1,7 +1,13 @@
 """SQL ORDER BY / LIMIT pushdown matches the historical Python read path.
 
-Flag MYSQL_STORE_SQL_PUSHDOWN defaults on. ``0`` is the previous path:
-partial sql_pushdown, then match_query, sort_docs, slice, project_doc.
+Flag MYSQL_STORE_SQL_PUSHDOWN defaults off. ``1`` / ``true`` / ``yes`` / ``on``
+selects the SQL page path. Any other value keeps the previous path: partial
+sql_pushdown, then match_query, sort_docs, slice, project_doc.
+
+Database tests read only TAMKOBI_TEST_MYSQL_URL. When that variable is unset
+they use 127.0.0.1:3306, user/password tamkobi/tamkobi, database
+tamkobi_pushdown. They never read MYSQL_URL, DATABASE_URL, MYSQL_HOST, or
+MYSQL_PASSWORD.
 """
 from __future__ import annotations
 
@@ -11,6 +17,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -92,18 +99,43 @@ def _unordered_doc_scans(statements):
     return [s for s in statements if s.startswith("SELECT doc FROM docs") and "ORDER BY" not in s]
 
 
-def _settings():
-    """Use the process database settings, or the local docker-compose defaults."""
-    from mysql_store import mysql_settings_from_env
+_LOCAL_TEST_SETTINGS = {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "tamkobi",
+    "password": "tamkobi",
+    "db": "tamkobi_pushdown",
+    "charset": "utf8mb4",
+    "autocommit": True,
+    "ssl_mode": "disabled",
+    "ssl_ca": "",
+}
 
-    if any(os.environ.get(key) for key in ("MYSQL_URL", "DATABASE_URL", "MYSQL_HOST", "MYSQL_PASSWORD")):
-        return mysql_settings_from_env()
+
+def _settings():
+    """Explicit TAMKOBI_TEST_MYSQL_URL, otherwise the local pushdown database.
+
+    Process database settings are ignored on purpose so a developer shell or
+    CI job that points MYSQL_URL at a live database cannot be used here.
+    """
+    url = (os.environ.get("TAMKOBI_TEST_MYSQL_URL") or "").strip()
+    if not url:
+        return dict(_LOCAL_TEST_SETTINGS)
+    if url.startswith("mysql+"):
+        url = "mysql://" + url.split("://", 1)[1]
+    if not url.startswith("mysql://"):
+        # Not a MySQL URL. Keep it out of the process DSN and fail the name lock.
+        blocked = dict(_LOCAL_TEST_SETTINGS)
+        blocked["db"] = url
+        return blocked
+    parsed = urlparse(url)
+    db_name = (parsed.path or "").lstrip("/").split("?")[0]
     return {
-        "host": "127.0.0.1",
-        "port": 3306,
-        "user": "tamkobi",
-        "password": "tamkobi",
-        "db": "tamkobi_pushdown",
+        "host": parsed.hostname or "127.0.0.1",
+        "port": parsed.port or 3306,
+        "user": unquote(parsed.username or "tamkobi"),
+        "password": unquote(parsed.password or ""),
+        "db": db_name,
         "charset": "utf8mb4",
         "autocommit": True,
         "ssl_mode": "disabled",
@@ -111,7 +143,75 @@ def _settings():
     }
 
 
+def _db_name_skip_reason(db_name) -> str | None:
+    """Refuse any database whose name is not obviously a disposable test db."""
+    lowered = str(db_name or "").lower()
+    if "test" in lowered or "pushdown" in lowered:
+        return None
+    return "hedef veritabanı adı test veya pushdown içermiyor"
+
+
+def _mysql_skip_reason(settings, connect) -> str | None:
+    """Name lock first (no socket), then one connection attempt.
+
+    ``connect`` is called only when the database name contains ``test`` or
+    ``pushdown``. OperationalError covers unknown database and access denied.
+    """
+    blocked = _db_name_skip_reason(settings.get("db"))
+    if blocked:
+        return blocked
+    import pymysql
+
+    try:
+        conn = connect(
+            host=settings["host"],
+            port=int(settings["port"]),
+            user=settings["user"],
+            password=settings["password"],
+            database=settings["db"],
+            charset="utf8mb4",
+            connect_timeout=3,
+        )
+    except (pymysql.err.OperationalError, ConnectionRefusedError, ConnectionError):
+        return "MySQL test sunucusu yok"
+    else:
+        conn.close()
+        return None
+
+
+def _probe_mysql(**kwargs):
+    import pymysql
+
+    return pymysql.connect(**kwargs)
+
+
+# Decided once at import. Planner tests do not consult this, so they still
+# run where no MySQL is installed. Database tests call _require_test_mysql().
+_settings_at_import = _settings()
+_MYSQL_SKIP = _mysql_skip_reason(_settings_at_import, _probe_mysql)
+
+
+def _require_test_mysql():
+    """Skip database tests. Never opens a connection when the name is unsafe."""
+    live = _settings()
+    blocked = _db_name_skip_reason(live.get("db"))
+    if blocked:
+        pytest.skip(blocked)
+    if _MYSQL_SKIP:
+        pytest.skip(_MYSQL_SKIP)
+    # The URL may have changed after import to a different safe database.
+    if (live.get("host"), int(live.get("port") or 0), live.get("db")) != (
+        _settings_at_import["host"],
+        int(_settings_at_import["port"]),
+        _settings_at_import["db"],
+    ):
+        reason = _mysql_skip_reason(live, _probe_mysql)
+        if reason:
+            pytest.skip(reason)
+
+
 async def _client():
+    _require_test_mysql()
     from mysql_store import MySQLDatabase
 
     db = MySQLDatabase(_settings())
@@ -224,15 +324,102 @@ async def _both(col, query, sort=None, projection=None, skip=0, limit=None, leng
     return on, off, on_sql, off_sql
 
 
-def test_flag_defaults_on_and_zero_disables(monkeypatch):
+def test_flag_defaults_off_one_enables_zero_disables(monkeypatch):
     from mysql_store import sql_page_pushdown_enabled
 
     monkeypatch.delenv("MYSQL_STORE_SQL_PUSHDOWN", raising=False)
-    assert sql_page_pushdown_enabled() is True
-    monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", "0")
     assert sql_page_pushdown_enabled() is False
     monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", "1")
     assert sql_page_pushdown_enabled() is True
+    monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", "0")
+    assert sql_page_pushdown_enabled() is False
+    for enabled in ("true", "yes", "on", " TRUE "):
+        monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", enabled)
+        assert sql_page_pushdown_enabled() is True
+    for disabled in ("", "false", "no", "off", "2"):
+        monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", disabled)
+        assert sql_page_pushdown_enabled() is False
+
+
+def test_settings_ignore_process_database_env(monkeypatch):
+    monkeypatch.setenv("MYSQL_URL", "mysql://root:s3cret@db.prod:3306/tamkobi")
+    monkeypatch.setenv("DATABASE_URL", "mysql://root:s3cret@db.prod:3306/tamkobi_p0")
+    monkeypatch.setenv("MYSQL_HOST", "db.prod")
+    monkeypatch.setenv("MYSQL_PASSWORD", "s3cret")
+    monkeypatch.setenv("MYSQL_USER", "root")
+    monkeypatch.setenv("MYSQL_DATABASE", "tamkobi")
+    monkeypatch.delenv("TAMKOBI_TEST_MYSQL_URL", raising=False)
+    assert _settings() == _LOCAL_TEST_SETTINGS
+    assert "s3cret" not in _settings().values()
+    assert _settings()["db"] == "tamkobi_pushdown"
+
+
+def test_settings_read_only_tamkobi_test_mysql_url(monkeypatch):
+    monkeypatch.setenv("MYSQL_URL", "mysql://root:s3cret@db.prod:3306/tamkobi")
+    monkeypatch.setenv("MYSQL_HOST", "db.prod")
+    monkeypatch.setenv("MYSQL_PASSWORD", "s3cret")
+    monkeypatch.setenv(
+        "TAMKOBI_TEST_MYSQL_URL",
+        "mysql+pymysql://tester:pw%40x@127.0.0.1:3307/suite_pushdown",
+    )
+    cfg = _settings()
+    assert cfg["host"] == "127.0.0.1"
+    assert cfg["port"] == 3307
+    assert cfg["user"] == "tester"
+    assert cfg["password"] == "pw@x"
+    assert cfg["db"] == "suite_pushdown"
+    assert "db.prod" not in cfg.values()
+
+
+def test_unsafe_database_name_skips_without_connecting():
+    def _connect(**_kwargs):
+        raise AssertionError("unsafe database must not be contacted")
+
+    for name in ("tamkobi", "tamkobi_p0", "", "production"):
+        reason = _mysql_skip_reason({**_LOCAL_TEST_SETTINGS, "db": name}, _connect)
+        assert reason == "hedef veritabanı adı test veya pushdown içermiyor"
+
+    closed = []
+
+    class _Conn:
+        def close(self):
+            closed.append(1)
+
+    def _ok(**kwargs):
+        assert kwargs["database"] == "tamkobi_pushdown"
+        return _Conn()
+
+    assert _mysql_skip_reason(dict(_LOCAL_TEST_SETTINGS), _ok) is None
+    assert closed == [1]
+    assert _db_name_skip_reason("app_test") is None
+    assert _db_name_skip_reason("TamKobi_Pushdown") is None
+
+
+def test_connection_failure_skips_with_mysql_missing_message():
+    import pymysql
+
+    def _denied(**_kwargs):
+        raise pymysql.err.OperationalError(1045, "Access denied")
+
+    def _refused(**_kwargs):
+        raise ConnectionRefusedError("refused")
+
+    def _down(**_kwargs):
+        raise ConnectionError("down")
+
+    for connect in (_denied, _refused, _down):
+        assert _mysql_skip_reason(dict(_LOCAL_TEST_SETTINGS), connect) == "MySQL test sunucusu yok"
+
+
+def test_require_skips_live_unsafe_url_without_writing(monkeypatch):
+    monkeypatch.setenv("MYSQL_URL", "mysql://root:s3cret@db.prod:3306/tamkobi")
+    monkeypatch.setenv("DATABASE_URL", "mysql://root:s3cret@db.prod:3306/tamkobi_p0")
+    monkeypatch.setenv("MYSQL_HOST", "db.prod")
+    monkeypatch.setenv("MYSQL_PASSWORD", "s3cret")
+    monkeypatch.setenv("TAMKOBI_TEST_MYSQL_URL", "mysql://root:s3cret@db.prod:3306/tamkobi")
+    with pytest.raises(pytest.skip.Exception) as exc:
+        _require_test_mysql()
+    assert "test veya pushdown" in str(exc.value)
 
 
 def test_planner_pushes_list_queries_and_rejects_partial_filters():
@@ -307,6 +494,8 @@ def test_parse_2000_rows_uses_a_worker_thread():
 
 
 def test_pushdown_matches_python_path_on_the_same_rows():
+    _require_test_mysql()
+
     async def _run():
         db = await _client()
         name = "push_inv_" + uuid.uuid4().hex[:10]
@@ -392,6 +581,8 @@ def test_pushdown_matches_python_path_on_the_same_rows():
 def test_list_invoices_and_bank_transactions_responses_match():
     from account_balance import annotate_bank_tx, movement_balance
 
+    _require_test_mysql()
+
     async def _run():
         db = await _client()
         inv_name = "push_list_inv_" + uuid.uuid4().hex[:8]
@@ -445,6 +636,7 @@ def test_list_invoices_and_bank_transactions_responses_match():
 
 
 def test_writes_and_balance_math_do_not_depend_on_the_flag():
+    _require_test_mysql()
     from account_balance import movement_balance
 
     async def _apply(col, flag):
@@ -489,6 +681,7 @@ def test_writes_and_balance_math_do_not_depend_on_the_flag():
 def test_sync_reader_matches_the_async_rules():
     from mysql_store import SyncMySQLDatabase
 
+    _require_test_mysql()
     db = SyncMySQLDatabase(_settings())
     name = "push_sync_" + uuid.uuid4().hex[:8]
     col = db[name]
@@ -513,6 +706,8 @@ def test_sync_reader_matches_the_async_rules():
 
 
 def test_non_string_sort_value_falls_back_but_still_matches():
+    _require_test_mysql()
+
     async def _run():
         db = await _client()
         name = "push_num_" + uuid.uuid4().hex[:8]

@@ -310,11 +310,17 @@ _MAX_SQL_LIMIT = 18446744073709551615
 
 
 def sql_page_pushdown_enabled() -> bool:
-    """MYSQL_STORE_SQL_PUSHDOWN defaults on. ``0`` keeps the pre-pushdown read path."""
+    """SQL page pushdown stays off unless MYSQL_STORE_SQL_PUSHDOWN is enabled.
+
+    Only ``1``, ``true``, ``yes``, and ``on`` turn it on. Unset, empty, ``0``,
+    and any other value keep the previous Python read path. On a server, set
+    ``MYSQL_STORE_SQL_PUSHDOWN=1`` and restart to enable; set ``0`` and restart
+    to roll back.
+    """
     raw = os.environ.get("MYSQL_STORE_SQL_PUSHDOWN")
-    if raw is None or str(raw).strip() == "":
-        return True
-    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _loads_rows(rows) -> List[dict]:
