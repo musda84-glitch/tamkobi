@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import server
 
+_ORDERS_USER = {"company_ids": ["comp_1"], "active_company_id": "comp_1"}
+
 
 def test_orders_list_active_cart_nor_shape():
     nor = server._orders_list_active_cart_nor()
@@ -40,7 +42,7 @@ def test_list_orders_excludes_active_cart_by_default():
              patch.object(server, "_enrich_orders_production_flags", AsyncMock(return_value=[])), \
              patch.object(server, "_enrich_orders_invoice_ebelge", AsyncMock(return_value=[])), \
              patch.object(server, "_sort_b2b_cart_orders", lambda x: x):
-            return await server.list_orders(company_id="comp_1")
+            return await server.list_orders(company_id="comp_1", user=_ORDERS_USER)
 
     asyncio.run(run())
     q = captured["q"]
@@ -77,7 +79,7 @@ def test_list_orders_include_active_cart_flag():
              patch.object(server, "_enrich_orders_production_flags", AsyncMock(return_value=[])), \
              patch.object(server, "_enrich_orders_invoice_ebelge", AsyncMock(return_value=[])), \
              patch.object(server, "_sort_b2b_cart_orders", lambda x: x):
-            return await server.list_orders(company_id="comp_1", include_active_cart=True)
+            return await server.list_orders(company_id="comp_1", include_active_cart=True, user=_ORDERS_USER)
 
     asyncio.run(run())
     assert "$nor" not in captured["q"]
@@ -109,7 +111,7 @@ def test_list_orders_status_active_cart_allowed():
              patch.object(server, "_enrich_orders_production_flags", AsyncMock(return_value=[])), \
              patch.object(server, "_enrich_orders_invoice_ebelge", AsyncMock(return_value=[])), \
              patch.object(server, "_sort_b2b_cart_orders", lambda x: x):
-            return await server.list_orders(company_id="comp_1", status="active_cart")
+            return await server.list_orders(company_id="comp_1", status="active_cart", user=_ORDERS_USER)
 
     asyncio.run(run())
     assert captured["q"]["order_status"] == "active_cart"
@@ -181,7 +183,7 @@ def _paged_list_harness(rows):
              patch.object(server, "_enrich_orders_marketplace_item_media", AsyncMock(side_effect=ident)), \
              patch.object(server, "_enrich_orders_stock_matches", AsyncMock(side_effect=ident)), \
              patch.object(server, "_enrich_orders_production_flags", AsyncMock(side_effect=ident)):
-            return await server.list_orders(company_id="comp_1", paged=True, page_size=50, **kwargs)
+            return await server.list_orders(company_id="comp_1", paged=True, page_size=50, user=_ORDERS_USER, **kwargs)
 
     return captured, run
 
@@ -264,6 +266,7 @@ def test_paged_einvoice_unsent_filters_after_full_scan_enrich():
              patch.object(server, "_enrich_orders_production_flags", AsyncMock(side_effect=ident)):
             return await server.list_orders(
                 company_id="comp_1", paged=True, invoiced="einvoice_unsent", page=1, page_size=1, sort="number_asc",
+                user=_ORDERS_USER,
             )
 
     out = asyncio.run(run())
