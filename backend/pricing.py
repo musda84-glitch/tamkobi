@@ -94,7 +94,7 @@ async def compute_prices(req: Dict[str, Any]):
     rule = {**DEFAULT_RULE, **(req.get("rule") or {})} if req.get("rule") else (await _rules_payload(company_id)).get(channel, DEFAULT_RULE)
     cfg = await _db.integration_configs.find_one({"company_id": company_id, "channel": channel}) or {}
     fees = _deps["channel_fees"](cfg, channel)
-    mp = await _deps["marketplace_products"](company_id=company_id, channel=channel, refresh=False)
+    mp = await _deps["marketplace_products"](cid=company_id, channel=channel, refresh=False)
     rows = []
     commission_rate = float(fees.get("commission_rate") or 0)
     commission_vat_rate = float(fees.get("commission_vat_rate") or 0)

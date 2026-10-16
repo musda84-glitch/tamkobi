@@ -646,7 +646,7 @@ def test_compute_prices_reads_the_same_rule_as_the_helper(api):
     seen = []
 
     async def marketplace_products(**kwargs):
-        seen.append(kwargs.get("company_id"))
+        seen.append(kwargs.get("company_id") or kwargs.get("cid"))
         return {"rows": [], "push_supported": False}
 
     fees = lambda cfg, ch: {"commission_rate": 0, "commission_vat_rate": 0, "service_fee": 0, "cargo_fee": 0}

@@ -1734,9 +1734,10 @@ async def isnet_egress_ips():
 
 
 @api_router.get("/integrations/isnet/support-pack")
-async def isnet_support_pack(company_id: Optional[str] = "comp_nexus_main_01"):
+async def isnet_support_pack(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """İşNet desteğe eklenecek HealthCheck request.xml + response.txt."""
-    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    existing = await db.einvoice_settings.find_one({"company_id": cid}) or {}
     pack = await isnet.build_isnet_support_pack({**existing, "mode": "live"})
     return pack
 
@@ -15740,8 +15741,9 @@ async def delete_bonus(bonus_id: str, user: dict = Depends(get_current_user)):
 
 # ----------------- E-TİCARET DETAYLARI: EŞLEŞTİRME, İADE, KARGO SEÇİMİ -----------------
 @api_router.get("/integrations/ecommerce/mappings")
-async def list_mappings(company_id: Optional[str] = "comp_nexus_main_01"):
-    return clean_docs(await db.marketplace_mappings.find({"company_id": company_id}).sort("created_at", -1).to_list(1000))
+async def list_mappings(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return clean_docs(await db.marketplace_mappings.find({"company_id": cid}).sort("created_at", -1).to_list(1000))
 
 @api_router.post("/integrations/ecommerce/mappings")
 async def create_mapping(req: Dict[str, Any]):
@@ -15766,11 +15768,12 @@ async def delete_mapping(mapping_id: str, user: dict = Depends(get_current_user)
     return {"status": "success"}
 
 @api_router.get("/integrations/ecommerce/unmapped")
-async def unmapped_items(company_id: Optional[str] = "comp_nexus_main_01"):
-    orders = await db.orders.find({"company_id": company_id, "channel": {"$nin": ["b2b", None]}}).to_list(1000)
-    maps = await db.marketplace_mappings.find({"company_id": company_id}).to_list(1000)
+async def unmapped_items(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    orders = await db.orders.find({"company_id": cid, "channel": {"$nin": ["b2b", None]}}).to_list(1000)
+    maps = await db.marketplace_mappings.find({"company_id": cid}).to_list(1000)
     mapped = {(m["channel"], m["marketplace_sku"]) for m in maps}
-    products = {p["_id"] for p in await db.products.find({"company_id": company_id}, {"_id": 1}).to_list(5000)}
+    products = {p["_id"] for p in await db.products.find({"company_id": cid}, {"_id": 1}).to_list(5000)}
     seen, out = set(), []
     for o in orders:
         for it in o.get("items", []):
@@ -16697,8 +16700,9 @@ async def wa_send(req: Dict[str, Any]):
 
 # ----------------- E-TİCARET ENTEGRASYONLARI -----------------
 @api_router.get("/integrations/ecommerce")
-async def list_ecommerce_integrations(company_id: Optional[str] = "comp_nexus_main_01"):
-    configs = await db.integration_configs.find({"company_id": company_id}).to_list(100)
+async def list_ecommerce_integrations(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    configs = await db.integration_configs.find({"company_id": cid}).to_list(100)
     for c in configs:
         c["rest_configured"] = bool(c.get("rest_email") and c.pop("rest_password_enc", None))
     return clean_docs(configs)
@@ -17507,8 +17511,9 @@ CHANNEL_CATALOG = {
 LIVE_API_CHANNELS = {"trendyol": "Canlı API (sipariş, iade, soru, fiyat/stok)", "shopphp": "Canlı XML servisi (sipariş çekme, ürün/varyasyon/stok/fiyat okuma)"}
 
 @api_router.get("/integrations/ecommerce/catalog")
-async def ecommerce_channel_catalog(company_id: Optional[str] = "comp_nexus_main_01"):
-    existing = {c["channel"] for c in await db.integration_configs.find({"company_id": company_id}, {"channel": 1}).to_list(500)}
+async def ecommerce_channel_catalog(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    existing = {c["channel"] for c in await db.integration_configs.find({"company_id": cid}, {"channel": 1}).to_list(500)}
     return {"groups": [{"group": g, "channels": [{"code": c, "name": n, "added": c in existing, "live_api": LIVE_API_CHANNELS.get(c)} for c, n in chs]} for g, chs in CHANNEL_CATALOG.items()]}
 
 @api_router.post("/integrations/ecommerce/add-channel")
@@ -17716,14 +17721,15 @@ def _order_profit(o: dict, fees: dict, cost_lookup: Dict[str, float]) -> dict:
             "commission_rate": rate, "effective_commission_rate": round(rate * (1 + float(fees.get("commission_vat_rate") or 0) / 100), 2)}
 
 @api_router.get("/marketplace/profitability")
-async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 30, channel: Optional[str] = None):
+async def marketplace_profitability(company_id: Optional[str] = None, days: int = 30, channel: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    q: Dict[str, Any] = {"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", "saha", None]}}
+    q: Dict[str, Any] = {"company_id": cid, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", "saha", None]}}
     if channel:
         q["channel"] = channel
     orders = await db.orders.find(q).sort("order_date", -1).to_list(2000)
-    cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": company_id}).to_list(50)}
-    products = await db.products.find({"company_id": company_id}).to_list(5000)
+    cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": cid}).to_list(50)}
+    products = await db.products.find({"company_id": cid}).to_list(5000)
     lookup: Dict[str, float] = {}
     for p in products:
         for key in (p.get("barcode"), p.get("sku"), p["_id"]):
@@ -17754,7 +17760,7 @@ async def marketplace_profitability(company_id: Optional[str] = "comp_nexus_main
         cfg = cfgs.get(ch["channel"]) or {}
         ch["settlement_account_id"] = cfg.get("settlement_account_id")
         ch["settlement_account_name"] = cfg.get("settlement_account_name")
-    settled = await db.orders.find({"company_id": company_id, "settlement.date": {"$gte": since[:10]}}, {"settlement": 1}).to_list(5000)
+    settled = await db.orders.find({"company_id": cid, "settlement.date": {"$gte": since[:10]}}, {"settlement": 1}).to_list(5000)
     settlement_total = {"count": len(settled), "gross": round(sum(float(o["settlement"].get("gross") or 0) for o in settled), 2), "deductions": round(sum(float(o["settlement"].get("deductions") or 0) for o in settled), 2), "net": round(sum(float(o["settlement"].get("net") or 0) for o in settled), 2)}
     total = {"orders": len(rows), "revenue": round(sum(r["revenue"] for r in rows), 2), "net_profit": round(sum(r["net_profit"] for r in rows), 2), "commission": round(sum(r["commission"] + r["commission_vat"] for r in rows), 2)}
     total["margin_pct"] = round(total["net_profit"] / total["revenue"] * 100, 1) if total["revenue"] else 0.0
@@ -17793,12 +17799,13 @@ async def delete_label_template(tpl_id: str, user: dict = Depends(get_current_us
     return {"status": "success"}
 
 @api_router.get("/marketplace/product-profitability")
-async def product_profitability(company_id: Optional[str] = "comp_nexus_main_01", days: int = 90):
+async def product_profitability(company_id: Optional[str] = None, days: int = 90, user: dict = Depends(get_current_user)):
     """Ürün bazında pazaryeri satış/komisyon/maliyet/kâr + eşleşmeyen pazaryeri kalemleri."""
+    cid = tenant_access.resolve_company_id(user, company_id)
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    orders = await db.orders.find({"company_id": company_id, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", "saha", None]}}).to_list(3000)
-    cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": company_id}).to_list(50)}
-    products = await db.products.find({"company_id": company_id}).to_list(5000)
+    orders = await db.orders.find({"company_id": cid, "order_date": {"$gte": since}, "order_status": {"$nin": ["cancelled", "returned"]}, "channel": {"$nin": ["b2b", "manual", "saha", None]}}).to_list(3000)
+    cfgs = {c["channel"]: c for c in await db.integration_configs.find({"company_id": cid}).to_list(50)}
+    products = await db.products.find({"company_id": cid}).to_list(5000)
     idx: Dict[str, dict] = {}
     for p in products:
         for key in [p.get("barcode"), p.get("sku"), p["_id"], *(p.get("marketplace_aliases") or [])] + [v.get("barcode") for v in (p.get("variants") or []) if v.get("barcode")]:
@@ -17857,18 +17864,17 @@ def _shopphp_variant_ids(items: List[Dict[str, Any]]) -> Dict[str, bool]:
     return {pid: (pid in flagged or n > 1) for pid, n in counts.items()}
 
 
-@api_router.get("/marketplace/products")
-async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01", channel: str = "trendyol", refresh: bool = False):
+async def marketplace_products_payload(cid, channel="trendyol", refresh=False):
     """Pazaryeri ürün listesi (canlı API varsa çekilir, önbelleğe yazılır) + stok kartı eşleşmesi ve fiyat karşılaştırması."""
-    cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
-    cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": channel})
+    cfg = await db.integration_configs.find_one({"company_id": cid, "channel": channel})
+    cache = await db.marketplace_product_cache.find_one({"company_id": cid, "channel": channel})
     live = bool(cfg and ((channel == "trendyol" and marketplace_providers.has_live_credentials(cfg)) or (channel == "shopphp" and marketplace_providers.has_shopphp_credentials(cfg) and cfg.get("api_secret"))))
     items = (cache or {}).get("items") or []
     fetched_at = (cache or {}).get("fetched_at")
     if live and channel == "shopphp" and (refresh or not cache):
         items = await marketplace_providers.shopphp_products_xml(cfg)
         fetched_at = datetime.now(timezone.utc).isoformat()
-        await db.marketplace_product_cache.update_one({"company_id": company_id, "channel": channel}, {"$set": {"items": items, "fetched_at": fetched_at}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel}}, upsert=True)
+        await db.marketplace_product_cache.update_one({"company_id": cid, "channel": channel}, {"$set": {"items": items, "fetched_at": fetched_at}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": cid, "channel": channel}}, upsert=True)
     elif live and (refresh or not cache):
         client = marketplace_providers.TrendyolClient(cfg)
         try:
@@ -17878,8 +17884,8 @@ async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01",
         items = [{"barcode": str(p.get("barcode") or ""), "title": p.get("title"), "stock_code": p.get("stockCode"), "product_main_id": p.get("productMainId"), "sale_price": float(p.get("salePrice") or 0), "list_price": float(p.get("listPrice") or 0),
                   "quantity": int(p.get("quantity") or 0), "approved": bool(p.get("approved")), "on_sale": bool(p.get("onSale", True)), "brand": p.get("brand"), "category": p.get("categoryName"), "image": ((p.get("images") or [{}])[0] or {}).get("url"), "vat_rate": p.get("vatRate")} for p in raw]
         fetched_at = datetime.now(timezone.utc).isoformat()
-        await db.marketplace_product_cache.update_one({"company_id": company_id, "channel": channel}, {"$set": {"items": items, "fetched_at": fetched_at}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel}}, upsert=True)
-    products = await db.products.find({"company_id": company_id}).to_list(5000)
+        await db.marketplace_product_cache.update_one({"company_id": cid, "channel": channel}, {"$set": {"items": items, "fetched_at": fetched_at}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": cid, "channel": channel}}, upsert=True)
+    products = await db.products.find({"company_id": cid}).to_list(5000)
     idx: Dict[str, dict] = {}
     for p in products:
         for key in [p.get("barcode"), p.get("sku"), *(p.get("marketplace_aliases") or [])] + [v.get("barcode") for v in (p.get("variants") or []) if v.get("barcode")]:
@@ -17901,6 +17907,14 @@ async def marketplace_products(company_id: Optional[str] = "comp_nexus_main_01",
     push_supported = channel == "trendyol" or (channel == "shopphp" and bool(cfg and cfg.get("rest_email") and cfg.get("rest_password_enc")))
     return {"channel": channel, "live": live, "push_supported": push_supported, "fetched_at": fetched_at, "count": len(rows), "matched": sum(1 for r in rows if r["product_id"]), "rows": rows,
             "products": [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "sale_price": p.get("sale_price"), "stock_quantity": p.get("stock_quantity")} for p in products]}
+
+
+@api_router.get("/marketplace/products")
+async def marketplace_products(company_id: Optional[str] = None, channel: str = "trendyol", refresh: bool = False, user: dict = Depends(get_current_user)):
+    """Pazaryeri ürün listesi (canlı API varsa çekilir, önbelleğe yazılır) + stok kartı eşleşmesi ve fiyat karşılaştırması."""
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await marketplace_products_payload(cid, channel, refresh)
+
 
 async def _shopphp_product_ids(company_id: str) -> Dict[str, Dict[str, Any]]:
     """
@@ -18135,11 +18149,12 @@ async def marketplace_push_price_stock(req: Dict[str, Any]):
     return {"status": "success", "sent": len(items), "batch_request_id": (res or {}).get("batchRequestId"), "message": f"{len(items)} ürünün fiyat/stok bilgisi Trendyol'a gönderildi (toplu işlem no: {(res or {}).get('batchRequestId') or '-'}). Yansıması birkaç dakika sürebilir."}
 
 @api_router.get("/marketplace/push-logs")
-async def marketplace_push_logs(company_id: Optional[str] = "comp_nexus_main_01", channel: str = "trendyol", check: bool = False):
+async def marketplace_push_logs(company_id: Optional[str] = None, channel: str = "trendyol", check: bool = False, user: dict = Depends(get_current_user)):
     """Fiyat/stok gönderim geçmişi; check=true ise Trendyol'dan toplu işlem durumunu sorgular."""
-    logs = await db.marketplace_push_logs.find({"company_id": company_id, "channel": channel}).sort("created_at", -1).to_list(30)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    logs = await db.marketplace_push_logs.find({"company_id": cid, "channel": channel}).sort("created_at", -1).to_list(30)
     if check and logs:
-        cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
+        cfg = await db.integration_configs.find_one({"company_id": cid, "channel": channel})
         if cfg and marketplace_providers.has_live_credentials(cfg):
             client = marketplace_providers.TrendyolClient(cfg)
             try:
@@ -18718,8 +18733,9 @@ CARGO_CATALOG = [
 ]
 
 @api_router.get("/integrations/cargo/catalog")
-async def cargo_catalog(company_id: Optional[str] = "comp_nexus_main_01"):
-    existing = {c["carrier_code"] for c in await db.cargo_configs.find({"company_id": company_id}, {"carrier_code": 1}).to_list(100)}
+async def cargo_catalog(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    existing = {c["carrier_code"] for c in await db.cargo_configs.find({"company_id": cid}, {"carrier_code": 1}).to_list(100)}
     return [{**c, "installed": c["carrier_code"] in existing} for c in CARGO_CATALOG]
 
 @api_router.post("/integrations/cargo")
@@ -18826,16 +18842,18 @@ async def work_order_performance(company_id: Optional[str] = None, date_from: Op
     return {"date_from": df, "date_to": dt, "operators": fin(per), "stations": fin(per_station), "total_done": len(rows)}
 
 @api_router.get("/integrations/cargo")
-async def list_cargo_integrations(company_id: Optional[str] = "comp_nexus_main_01"):
-    configs = await db.cargo_configs.find({"company_id": company_id}).to_list(100)
+async def list_cargo_integrations(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    configs = await db.cargo_configs.find({"company_id": cid}).to_list(100)
     return [cargo_providers.mask_config(c) for c in clean_docs(configs)]
 
 
 @api_router.get("/cargo/geliver-balance")
-async def cargo_geliver_balance(company_id: Optional[str] = "comp_nexus_main_01"):
+async def cargo_geliver_balance(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Sipariş Kargola modalı: bağlı Geliver bakiyesi (Geliver /prices/balance)."""
+    cid = tenant_access.resolve_company_id(user, company_id)
     cfg = await db.cargo_configs.find_one({
-        "company_id": company_id,
+        "company_id": cid,
         "carrier_code": "geliver",
         "status": "connected",
         "is_active": {"$ne": False},
@@ -18900,8 +18918,9 @@ async def cargo_auto_ship(req: Dict[str, Any]):
     return summary
 
 @api_router.get("/cargo/auto-ship/runs")
-async def cargo_auto_runs(company_id: Optional[str] = "comp_nexus_main_01"):
-    return clean_docs(await db.cargo_auto_runs.find({"company_id": company_id}).sort("created_at", -1).to_list(20))
+async def cargo_auto_runs(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return clean_docs(await db.cargo_auto_runs.find({"company_id": cid}).sort("created_at", -1).to_list(20))
 
 
 async def _enrich_order_items_from_products(order: dict) -> dict:
@@ -19037,8 +19056,9 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     return {**clean_doc(doc), "message": msg}
 
 @api_router.get("/cargo/shipments")
-async def list_cargo_shipments(company_id: Optional[str] = "comp_nexus_main_01"):
-    shipments = await db.cargo_shipments.find({"company_id": company_id}).sort("shipment_date", -1).to_list(100)
+async def list_cargo_shipments(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    shipments = await db.cargo_shipments.find({"company_id": cid}).sort("shipment_date", -1).to_list(100)
     return clean_docs(shipments)
 
 # ----------------- SİPARİŞLER & B2B PORTALI -----------------
@@ -24248,7 +24268,7 @@ import vpos
 vpos.init(db, get_current_user)
 migration.init(db, get_current_user)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)}, get_current_user)
-pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send}, get_current_user)
+pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products_payload, "mail_account": _mail_account, "wa_send": wa_send}, get_current_user)
 order_pick.init(db, {"create_production_order": create_production_order, "push_order_to_shopphp": _push_order_to_shopphp, "create_draft_invoice_for_order": _create_draft_invoice_for_order}, get_current_user)
 trade.init(db, _create_invoice_core, get_current_user)
 
