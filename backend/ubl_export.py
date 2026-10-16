@@ -24,11 +24,14 @@ def strip_issued_invoice_note(notes: Any) -> str:
         return text
     return _DRAFT_NOTE_MARK.sub("", text).strip()
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
+
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 
 INVOICE_NS = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
 DESPATCH_NS = "urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"
@@ -52,9 +55,17 @@ ET.register_namespace("cac", CAC)
 ET.register_namespace("ext", EXT)
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="UBL auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def is_outgoing_edoc(inv: Dict[str, Any]) -> bool:
@@ -1185,14 +1196,12 @@ def build_despatch_ubl(
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-@router.get("/invoices/{invoice_id}/xml")
-async def invoice_xml(invoice_id: str):
-    inv = await _db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+async def invoice_xml_payload(inv: dict) -> Response:
+    """e-Fatura / e-Arşiv XML gövdesi. Entegratör UBL, olmazsa yerel UBL."""
     if not is_outgoing_edoc(inv):
         raise HTTPException(status_code=400, detail="Yalnızca e-Fatura / e-Arşiv belgelerinin XML'i indirilebilir.")
     filename = invoice_filename(inv, "xml")
+    invoice_id = str(inv.get("_id") or inv.get("id") or "")
     # GİB'e iletilmiş: resmi entegratör UBL (İşNet DownloadXml); hata olursa yerel UBL.
     try:
         import e_invoice
@@ -1215,3 +1224,9 @@ async def invoice_xml(invoice_id: str):
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     xml = build_invoice_ubl(inv, seller, _buyer_from(inv, contact))
     return Response(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/invoices/{invoice_id}/xml")
+async def invoice_xml(invoice_id: str, user: dict = Depends(_user_dep)):
+    inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    return await invoice_xml_payload(inv)

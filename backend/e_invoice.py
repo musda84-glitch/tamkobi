@@ -1418,10 +1418,8 @@ async def api_create_einvoice(payload: InvoiceCreateRequest):
 
 
 @router.get("/e-invoice/{invoice_id}/status")
-async def api_einvoice_status(invoice_id: str):
-    inv = await _db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+async def api_einvoice_status(invoice_id: str, user: dict = Depends(_user_dep)):
+    inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("einvoice_state") in ("sent", "queued") and (inv.get("gib_uuid") or inv.get("gib_tracking_id")):
         try:
             await refresh_one_invoice_status(invoice_id)
@@ -1584,7 +1582,8 @@ async def _refresh_qnb_status(invoice_id: str, inv: dict, settings: dict) -> Dic
 
 
 @router.post("/e-invoice/{invoice_id}/refresh-status")
-async def api_refresh_einvoice_status(invoice_id: str):
+async def api_refresh_einvoice_status(invoice_id: str, user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     out = await refresh_one_invoice_status(invoice_id)
     inv = out.get("invoice") or {}
     return {
@@ -1684,7 +1683,7 @@ async def api_einvoice_xml(invoice_id: str, request: Request, t: Optional[str] =
         data = stored["xml"].encode("utf-8") if isinstance(stored["xml"], str) else stored["xml"]
         name = ubl_export.invoice_filename({"invoice_number": stored.get("invoice_id") or invoice_id}, "xml")
         return Response(data, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{name}"'})
-    return await ubl_export.invoice_xml(invoice_id)
+    return await ubl_export.invoice_xml_payload(inv)
 
 
 async def _qnb_download(inv: dict, settings: dict) -> Dict[str, Any]:
@@ -1830,14 +1829,16 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
 
 
 @router.get("/invoices/{invoice_id}/gib-document")
-async def api_gib_document_redirect(invoice_id: str):
+async def api_gib_document_redirect(invoice_id: str, user: dict = Depends(_user_dep)):
     """Tarayıcıda resmi entegratör belgesini aç (cookie ile)."""
+    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     info = await resolve_gib_document_url(invoice_id)
     return RedirectResponse(url=info["url"], status_code=302)
 
 
 @router.get("/invoices/{invoice_id}/gib-document.json")
-async def api_gib_document_json(invoice_id: str):
+async def api_gib_document_json(invoice_id: str, user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     return await resolve_gib_document_url(invoice_id)
 
 

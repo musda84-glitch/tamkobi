@@ -65,6 +65,10 @@ def _auto_skip(path: str) -> bool:
         return True
     if "webhook" in path:
         return True
+    # İmzalı paylaşım (?t=) PDF/XML ve share-link oturumsuz kalır.
+    # /invoices/{id}/xml paylaşılmaz; şirket kontrolü zorunlu.
+    if path == "/invoices/{invoice_id}/xml":
+        return False
     if path.endswith("/pdf") or path.endswith("/xml") or "share-link" in path:
         return True
     return False
