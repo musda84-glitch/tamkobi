@@ -4431,11 +4431,32 @@ async def decide_attendance_dispute(att_id: str, req: Dict[str, Any], user: dict
 
 
 # ---------- Yönetici bildirimleri ----------
+# init_notify (server.py) hâlâ bu bağları yazar. Attendance e-postası SMTP kullanmaz;
+# eşlenen olaylar event_notify.queue_event_email ile notify_outbox'a gider.
+# _smtp_send_fn / _mail_account_fn gönderimde okunmaz (geriye uyum için durur).
 _mail_account_fn = None
 _smtp_send_fn = None
 
+# Bildirim tipi → platform olayı. Eşlemede olmayan tip (ör. order_pick_missing) yalnız in-app/push.
+MANAGER_NOTIFY_EVENTS = {
+    "attendance_late": "attendance_alert",
+    "attendance_missing": "attendance_alert",
+    "attendance_habit": "attendance_alert",
+    "geo_confirm_request": "attendance_alert",
+    "location_exit": "attendance_alert",
+    "task_site_presence": "attendance_alert",
+    "location_unavailable": "attendance_alert",
+    "leave_request": "leave_request",
+    "early_leave_request": "leave_request",
+    "intraday_leave_request": "leave_request",
+    "advance_request": "advance_request",
+    "overtime_confirm": "overtime_request",
+    "yevmiye_adjustment": "overtime_request",
+}
+
 
 def init_notify(mail_account_fn, smtp_send_fn):
+    """Geriye uyum: server.py hâlâ çağırır. Bu modül SMTP ile mail atmaz."""
     global _mail_account_fn, _smtp_send_fn
     _mail_account_fn, _smtp_send_fn = mail_account_fn, smtp_send_fn
 
@@ -4443,25 +4464,25 @@ def init_notify(mail_account_fn, smtp_send_fn):
 async def notify_managers(company_id: str, ntype: str, title: str, message: str, link: str = "/personnel?tab=attendance", dedupe_key: Optional[str] = None) -> dict:
     if dedupe_key:
         if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}"}):
-            return {"status": "duplicate"}
+            return {"status": "duplicate", "mail": {"status": "skipped"}}
         await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
     import notify as _notify
     roles = _notify.roles_for_type(ntype)
     await _notify.insert_notification(_db, _notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
     mail = {"status": "skipped"}
-    if _mail_account_fn and _smtp_send_fn:
+    event = MANAGER_NOTIFY_EVENTS.get(ntype)
+    if event:
         try:
-            a = await _mail_account_fn(company_id)
-            holders = await _notify.users_with_roles(_db, company_id, roles or ("admin",))
-            to = sorted({u["email"] for u in holders if u.get("email")}) or [a["email"]]
-            await _smtp_send_fn(a, to, f"[TamKobi] {title}", message, html=f"<p><b>{title}</b></p><p>{message}</p>")
-            mail = {"status": "sent", "to": to}
-        except HTTPException as e:
-            if getattr(e, "status_code", None) == 409:
-                logger.warning("mail needs_reauth company=%s context=attendance_notify: %s", company_id, e.detail)
-            mail = {"status": "skipped", "detail": e.detail}
-        except Exception as e:
-            mail = {"status": "failed", "detail": str(e)[:120]}
+            import event_notify
+            queued = await event_notify.queue_event_email(
+                company_id, event, title, message,
+                link=link, ref_type="attendance",
+                dedupe_key=f"{ntype}:{dedupe_key}" if dedupe_key else None,
+            )
+            if isinstance(queued, dict):
+                mail = queued
+        except Exception:
+            logger.exception("attendance email queue failed company=%s type=%s", company_id, ntype)
     return {"status": "sent", "mail": mail}
 
 
