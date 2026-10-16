@@ -131,7 +131,8 @@ function mergeMatchedTx(prev, matchedTx) {
 }
 
 export default function BankingPage() {
-  const { activeCompany, addonOn } = useAuth();
+  const { activeCompany, addonOn, user } = useAuth();
+  const canRepairBalances = Boolean(user?.is_super_admin) || ["admin", "owner"].includes(String(user?.role || "").toLowerCase());
   const [searchParams] = useSearchParams();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const contactVirmanId = searchParams.get("contact_id") || "";
@@ -716,7 +717,7 @@ export default function BankingPage() {
       </div>
 
       {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={bumpCashData} />}
-      {tab === "reconciliation" && <ReconciliationPanel companyId={companyId} />}
+      {tab === "reconciliation" && <ReconciliationPanel companyId={companyId} canRepairBalances={canRepairBalances} />}
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={bumpCashData} />}
       {openingAccount && (
         <OpeningBalanceDialog
