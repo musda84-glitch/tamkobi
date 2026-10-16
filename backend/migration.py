@@ -437,8 +437,9 @@ def _batch_view(b: dict) -> dict:
 
 
 @router.get("/migration/batches")
-async def migration_batches(company_id: str = "comp_nexus_main_01"):
-    return [_batch_view(b) for b in await _db.migration_batches.find({"company_id": company_id}).sort("created_at", -1).to_list(200)]
+async def migration_batches(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return [_batch_view(b) for b in await _db.migration_batches.find({"company_id": cid}).sort("created_at", -1).to_list(200)]
 
 
 @router.get("/migration/batches/{batch_id}/errors.csv")
@@ -570,10 +571,15 @@ async def _bh_get(path: str, token: str, firm_id: str = "", timeout: float = 40.
         raise HTTPException(status_code=502, detail="BizimHesap yanıtı JSON değil.")
 
 
-@router.get("/migration/bizimhesap/config")
-async def bh_get_config(company_id: str = "comp_nexus_main_01"):
+async def _bh_config_payload(company_id: str) -> dict:
     c = await _db.migration_api_configs.find_one({"company_id": company_id, "provider": "bizimhesap"}) or {}
     return {"configured": bool(c.get("token_enc")), "firm_id": c.get("firm_id", ""), "last_test": c.get("last_test"), "last_import": c.get("last_import"), "last_customer_import": c.get("last_customer_import"), "token_mask": ("••••" + c["token_tail"]) if c.get("token_tail") else ""}
+
+
+@router.get("/migration/bizimhesap/config")
+async def bh_get_config(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _bh_config_payload(cid)
 
 
 @router.put("/migration/bizimhesap/config")
@@ -584,7 +590,7 @@ async def bh_put_config(req: Dict[str, Any]):
         tok = req["token"].strip()
         upd["token_enc"] = comm_service.encrypt(tok); upd["token_tail"] = tok[-4:]
     await _db.migration_api_configs.update_one({"company_id": company_id, "provider": "bizimhesap"}, {"$set": upd, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "provider": "bizimhesap"}}, upsert=True)
-    return await bh_get_config(company_id)
+    return await _bh_config_payload(company_id)
 
 
 async def _bh_creds(company_id: str, token: str = "", firm_id: str = "") -> tuple[str, str]:
@@ -628,9 +634,10 @@ async def _bh_products(company_id: str, token: str, firm_id: str = "", force: bo
 
 
 @router.get("/migration/bizimhesap/warehouses")
-async def bh_warehouses(company_id: str = "comp_nexus_main_01"):
+async def bh_warehouses(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Token kayıtlıysa depo listesini döner (ürün testi gerekmez)."""
-    token, firm_id = await _bh_creds(company_id)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    token, firm_id = await _bh_creds(cid)
     warehouses = _unwrap(await _bh_get("/warehouses", token, firm_id, timeout=30.0))
     wh = [{"id": str(_pick(w, "id", "warehouseId", "depoId", "code", default="")), "name": _pick(w, "name", "title", "warehouseName", "depoAdi", default="Depo")} for w in warehouses]
     wh = [w for w in wh if w["id"]]

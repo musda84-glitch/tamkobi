@@ -75,7 +75,7 @@ def test_list_users_enriches_employee_name_and_role_name():
 
     with patch.object(rbac, "_db", db), patch.object(rbac, "ensure_roles", new=AsyncMock()), \
          patch("user_numbers.ensure_user_number", new=AsyncMock()):
-        out = _run(rbac.list_users("comp_x"))
+        out = _run(rbac.list_users("comp_x", user={"company_ids": ["comp_x"], "active_company_id": "comp_x"}))
 
     by_email = {u["email"]: u for u in out["users"]}
     assert by_email["a@t.com"]["role_name"] == "Satış"

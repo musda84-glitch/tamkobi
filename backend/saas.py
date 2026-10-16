@@ -12,6 +12,7 @@ import rbac
 import user_numbers
 import applog
 import perfmon
+import tenant_access
 from auth_utils import get_user_from_token, hash_password, session_token, verify_password
 
 router = APIRouter(prefix="/api")
@@ -1575,6 +1576,12 @@ async def resolve_request(req_id: str, req: Dict[str, Any], _: dict = Depends(re
 
 
 # ---------------- Customer-facing ----------------
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="SaaS auth bağlanmadı.")
+    return await _current_user(request)
+
+
 async def _request_user(request: Request) -> dict:
     try:
         return await _current_user(request)
@@ -1588,24 +1595,24 @@ def _require_company_access(user: dict, company_id: str):
 
 
 @router.get("/license/me")
-async def my_license(request: Request, company_id: str = "comp_nexus_main_01"):
-    _require_company_access(await _request_user(request), company_id)
-    lic = await effective(company_id)
+async def my_license(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    lic = await effective(cid)
     plans = [{**_clean(p), "modules": p["modules"]} for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
-    pending = await _db.upgrade_requests.find_one({"company_id": company_id, "status": "pending"})
-    sib_docs = await companies_on_license(lic.get("license_id") or company_id)
+    pending = await _db.upgrade_requests.find_one({"company_id": cid, "status": "pending"})
+    sib_docs = await companies_on_license(lic.get("license_id") or cid)
     names = {c["_id"]: c.get("name") for c in sib_docs}
-    lid = lic.get("license_id") or company_id
+    lid = lic.get("license_id") or cid
     sibs = [_license_company_brief(c, lid, names) for c in sib_docs]
-    used = await quota_usage(company_id)
-    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(company_id)), "companies": sibs, "pending_request": _clean(pending) if pending else None, **used}
+    used = await quota_usage(cid)
+    return {**lic, "catalog": catalog(), "plans": plans, "users": await _db.users.count_documents(tenant_user_query(cid)), "companies": sibs, "pending_request": _clean(pending) if pending else None, **used}
 
 
 @router.get("/license/companies")
-async def license_companies(request: Request, company_id: str = "comp_nexus_main_01"):
-    _require_company_access(await _request_user(request), company_id)
-    lic = await effective(company_id)
-    lid = lic.get("license_id") or company_id
+async def license_companies(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    lic = await effective(cid)
+    lid = lic.get("license_id") or cid
     sib_docs = await companies_on_license(lid)
     names = {c["_id"]: c.get("name") for c in sib_docs}
     return {"license_id": lid, "company_limit": lic.get("company_limit") or 0, "company_count": lic.get("company_count") or 0, "companies": [_license_company_brief(c, lid, names) for c in sib_docs]}

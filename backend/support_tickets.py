@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import saas
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -186,12 +187,10 @@ async def support_meta():
 
 
 @router.get("/support/tickets")
-async def list_mine(request: Request, company_id: str = "comp_nexus_main_01", status: Optional[str] = None):
-    user = await _user(request)
-    if not _in_company(user, company_id):
-        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
-    await _require_addon(company_id)
-    q: Dict[str, Any] = {"company_id": company_id}
+async def list_mine(company_id: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await _require_addon(cid)
+    q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = status
     rows = await _db.support_tickets.find(q).sort("updated_at", -1).to_list(200)

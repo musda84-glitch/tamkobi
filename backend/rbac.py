@@ -968,13 +968,14 @@ async def _notify_role_assigned(company_id: Optional[str], emp: Dict[str, Any], 
 
 # ---------------- Roles ----------------
 @router.get("/roles")
-async def list_roles(company_id: str = "comp_nexus_main_01"):
-    await ensure_roles(company_id)
-    roles = [_clean(r) for r in await _db.roles.find({"company_id": company_id}).to_list(100)]
+async def list_roles(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await ensure_roles(cid)
+    roles = [_clean(r) for r in await _db.roles.find({"company_id": cid}).to_list(100)]
     counts = {}
-    async for u in _db.users.find({"company_ids": company_id, "is_super_admin": {"$ne": True}}, {"role": 1}):
+    async for u in _db.users.find({"company_ids": cid, "is_super_admin": {"$ne": True}}, {"role": 1}):
         counts[u.get("role", "admin")] = counts.get(u.get("role", "admin"), 0) + 1
-    company = await _db.companies.find_one({"_id": company_id}) or {}
+    company = await _db.companies.find_one({"_id": cid}) or {}
     policies = {"cash_dual_approval": bool(company.get("cash_dual_approval"))}
     return {
         "modules": [{"key": k, "label": l, "help": MODULE_HELP.get(k, "")} for k, l in MODULES],
@@ -1070,14 +1071,15 @@ async def delete_role(role_id: str, user: dict = Depends(_user_dep)):
 
 # ---------------- Users ----------------
 @router.get("/users")
-async def list_users(company_id: str = "comp_nexus_main_01"):
-    await ensure_roles(company_id)
-    names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
-    raw_users = await _db.users.find({"$and": [{"$or": [{"company_ids": company_id}, {"active_company_id": company_id}]}, {"is_super_admin": {"$ne": True}}]}).sort("name", 1).to_list(500)
+async def list_users(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await ensure_roles(cid)
+    names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": cid}).to_list(100)}
+    raw_users = await _db.users.find({"$and": [{"$or": [{"company_ids": cid}, {"active_company_id": cid}]}, {"is_super_admin": {"$ne": True}}]}).sort("name", 1).to_list(500)
     for u in raw_users:
         await user_numbers.ensure_user_number(_db, u)
     users = [_clean(u) for u in raw_users]
-    invites = [_clean(i) for i in await _db.user_invites.find({"company_id": company_id, "accepted_at": None}).sort("created_at", -1).to_list(100)]
+    invites = [_clean(i) for i in await _db.user_invites.find({"company_id": cid, "accepted_at": None}).sort("created_at", -1).to_list(100)]
     emp_ids = {u.get("employee_id") for u in users if u.get("employee_id")} | {i.get("employee_id") for i in invites if i.get("employee_id")}
     emp_names = {}
     if emp_ids:
@@ -1094,7 +1096,7 @@ async def list_users(company_id: str = "comp_nexus_main_01"):
         }
 
     import saas
-    lid = await saas.license_id_of(company_id)
+    lid = await saas.license_id_of(cid)
     sibling_docs = await saas.companies_on_license(lid)
     assignable = [uca.company_brief(c) for c in sibling_docs if c.get("_id")]
     return {
@@ -1517,8 +1519,9 @@ async def accept_invite(token: str, req: Dict[str, Any], request: Request, respo
 
 # ---------------- Activity log ----------------
 @router.get("/activity-logs")
-async def activity_logs(company_id: str = "comp_nexus_main_01", user_id: Optional[str] = None, module: Optional[str] = None, limit: int = 100):
-    q: Dict[str, Any] = {"company_id": company_id}
+async def activity_logs(company_id: Optional[str] = None, user_id: Optional[str] = None, module: Optional[str] = None, limit: int = 100, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q: Dict[str, Any] = {"company_id": cid}
     if user_id:
         q["user_id"] = user_id
     if module:

@@ -14834,8 +14834,9 @@ async def mail_open_pixel(log_id: str):
     )
 
 @api_router.get("/comm/whatsapp/logs")
-async def whatsapp_logs(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None):
-    q = {"company_id": company_id}
+async def whatsapp_logs(company_id: Optional[str] = None, contact_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q = {"company_id": cid}
     if contact_id:
         q["contact_id"] = contact_id
     return clean_docs(await db.whatsapp_logs.find(q).sort("created_at", -1).to_list(300))
@@ -14855,8 +14856,9 @@ async def whatsapp_log(req: Dict[str, Any]):
     return clean_doc(doc)
 
 @api_router.get("/comm/history")
-async def comm_history(company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, ref_id: Optional[str] = None):
-    q = {"company_id": company_id}
+async def comm_history(company_id: Optional[str] = None, contact_id: Optional[str] = None, ref_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q = {"company_id": cid}
     if contact_id:
         q["contact_id"] = contact_id
     if ref_id:
@@ -16568,11 +16570,15 @@ async def accountant_export(company_id: Optional[str] = None, month: Optional[st
     return Response(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}_{month}.csv"})
 
 # ----------------- WHATSAPP BUSINESS (CLOUD API) -----------------
-@api_router.get("/comm/whatsapp/settings")
-async def get_wa_settings(company_id: Optional[str] = "comp_nexus_main_01"):
+async def _wa_settings_payload(company_id: str) -> dict:
     s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
     return {"company_id": company_id, "phone_number_id": s.get("phone_number_id", ""), "verify_token": s.get("verify_token", ""), "has_token": bool(s.get("access_token_enc")),
             "status": "connected" if s.get("access_token_enc") and s.get("phone_number_id") else "simulated", "webhook_url": "/api/comm/whatsapp/webhook"}
+
+@api_router.get("/comm/whatsapp/settings")
+async def get_wa_settings(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _wa_settings_payload(cid)
 
 @api_router.put("/comm/whatsapp/settings")
 async def save_wa_settings(req: Dict[str, Any]):
@@ -16583,7 +16589,7 @@ async def save_wa_settings(req: Dict[str, Any]):
     if not update["phone_number_id"]:
         update["access_token_enc"] = ""
     await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
-    return await get_wa_settings(company_id)
+    return await _wa_settings_payload(company_id)
 
 @api_router.get("/comm/whatsapp/webhook")
 async def wa_webhook_verify(request: Request):
