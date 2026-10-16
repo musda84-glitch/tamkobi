@@ -410,7 +410,8 @@ def test_auto_match_by_rules_writes_matched_rule_id():
         "hits": 0,
     }
     db.bank_transactions.docs["tx1"] = _tx("tx1")
-    n, details = _run(server._auto_match_by_rules("co1", [copy.deepcopy(db.bank_transactions.docs["tx1"])]))
+    n, details, skipped_old = _run(server._auto_match_by_rules("co1", [copy.deepcopy(db.bank_transactions.docs["tx1"])]))
+    assert skipped_old == 0
     assert n == 1
     stored = db.bank_transactions.docs["tx1"]
     assert stored["match_status"] == "matched"

@@ -12181,6 +12181,8 @@ def _enrich_connection(doc: dict, acc: Optional[dict] = None) -> dict:
         out["linked_account_name"] = _linked_account_label(acc)
         out["linked_account_bank"] = acc.get("bank_name")
         out["linked_account_type"] = acc.get("type")
+    day = _connection_auto_match_day(doc)
+    out["auto_match_from_effective"] = day.isoformat() if day else None
     return out
 
 @api_router.get("/banking/connections")
@@ -12231,7 +12233,7 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any], request:
     allowed = {k: v for k, v in updated.items() if k in {
         "client_id", "client_secret", "access_token", "refresh_token", "token_url",
         "api_key", "private_key", "customer_number", "bank_account_number", "base_url", "mode",
-        "auto_sync", "auto_match", "linked_account_id", "provider", "scope",
+        "auto_sync", "auto_match", "auto_match_from", "linked_account_id", "provider", "scope",
     }}
     allowed = bank_providers.drop_masked_secrets(allowed)
     if "provider" in allowed and allowed["provider"] not in bank_providers.PROVIDERS:
@@ -12255,29 +12257,55 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any], request:
         for k in ("client_id", "client_secret", "api_key"):
             if k in allowed and cleaned.get(k) is not None:
                 allowed[k] = cleaned[k]
+    date_changed = False
+    if "auto_match_from" in allowed:
+        new_from = _validate_auto_match_from(allowed.get("auto_match_from"))
+        allowed["auto_match_from"] = new_from
+        date_changed = new_from != str(prev.get("auto_match_from") or "")
     await db.bank_connections.update_one({"_id": conn_id}, {"$set": allowed})
+    if date_changed:
+        try:
+            await company_audit.write(
+                db,
+                company_id=str(prev.get("company_id") or ""),
+                user=user,
+                module="/banking",
+                action="update",
+                record_id=conn_id,
+                record_label=str(prev.get("provider_name") or prev.get("linked_account_name") or ""),
+                summary=(
+                    f"Otomatik eşleşme başlangıç tarihi "
+                    f"{prev.get('auto_match_from') or '—'} → {allowed['auto_match_from']}"
+                ),
+                path=f"/api/banking/connections/{conn_id}",
+            )
+        except Exception:
+            logger.exception("auto_match_from audit failed")
     doc = await db.bank_connections.find_one({"_id": conn_id})
     if linked_acc is None and doc.get("linked_account_id"):
         linked_acc = await db.bank_accounts.find_one({"_id": doc["linked_account_id"]})
     # Otomatik İşle açılınca bekleyen hareketleri hemen işle (önceki eşleşme + cari)
     just_enabled = bool(allowed.get("auto_match")) and not bool(prev.get("auto_match"))
     auto_matched = 0
+    skipped_before_start = 0
     if just_enabled and doc.get("linked_account_id"):
-        auto_matched, _ = await _auto_match_pending_for_account(doc["company_id"], doc["linked_account_id"], actor=await _optional_actor(request))
+        auto_matched, _, skipped_before_start = await _auto_match_pending_for_account(doc["company_id"], doc["linked_account_id"], actor=await _optional_actor(request))
         if auto_matched:
             await db.bank_connections.update_one({"_id": conn_id}, {"$inc": {"auto_matched_count": auto_matched}})
             doc = await db.bank_connections.find_one({"_id": conn_id})
     out = _enrich_connection(doc, linked_acc)
     if just_enabled:
+        note = _before_start_note(skipped_before_start)
         out["auto_matched_now"] = auto_matched
         out["auto_matched"] = auto_matched
+        out["skipped_before_start"] = skipped_before_start
         out["auto_match_message"] = (
             f"Otomatik işleme açıldı; {auto_matched} bekleyen hareket önceki eşleşme/cari ile işlendi."
             if auto_matched else
             "Otomatik işleme açıldı; yeni hareketler senkron sırasında işlenecek."
-        )
+        ) + note
         if auto_matched:
-            out["message"] = f"{auto_matched} bekleyen hareket otomatik işlendi (önceki eşleşme veya cari adı)."
+            out["message"] = f"{auto_matched} bekleyen hareket otomatik işlendi (önceki eşleşme veya cari adı)." + note
     return out
 
 @api_router.delete("/banking/connections/{conn_id}")
@@ -12426,6 +12454,7 @@ async def _sync_bank_connection_core(
         await _consume_expected_settlement(fresh)
 
     auto_matched = 0
+    skipped_before_start = 0
     if doc.get("auto_match"):
         pending = await db.bank_transactions.find({
             "company_id": doc["company_id"],
@@ -12434,7 +12463,7 @@ async def _sync_bank_connection_core(
             "match_status": "unmatched",
         }).to_list(1000)
         actor = await _optional_actor(request) if request is not None else None
-        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True, actor=actor)
+        auto_matched, _, skipped_before_start = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True, actor=actor)
     now = datetime.now(timezone.utc).isoformat()
     conn_set: Dict[str, Any] = {
         "status": "simulated" if result["simulated"] else "connected",
@@ -12502,12 +12531,14 @@ async def _sync_bank_connection_core(
         "inserted": inserted,
         "skipped": skipped,
         "auto_matched": auto_matched,
+        "skipped_before_start": skipped_before_start,
         "balance_delta": balance_delta,
         "balance": bank_balance,
         "message": (
             f"{inserted} yeni hareket çekildi ({skipped} zaten kayıtlı).{bal_note}"
             + (result.get("notice") or "")
             + (f" {auto_matched} hareket önceki eşleşme/cari ile otomatik işlendi." if auto_matched else "")
+            + _before_start_note(skipped_before_start)
             + (" [SİMÜLE VERİ]" if result["simulated"] else "")
         ),
     }
@@ -13037,10 +13068,177 @@ async def _prior_match_from_history(company_id: str, description: str, skip_id: 
     return None
 
 
+_AUTO_UNMATCH_VIAS = {"auto", "prior", "cari", "suggestion", "rule", "history"}
+_AUTO_UNMATCH_LIMIT = 2000
+_IST = employee_pay.IST
+
+
+def _parse_ymd(raw: Any) -> Optional[date]:
+    text = str(raw or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _instant_istanbul_day(raw: Any) -> Optional[date]:
+    """ISO anını Europe/Istanbul takvim gününe çevirir. Ayrışmazsa None (bugüne düşmez)."""
+    if raw is None or raw == "" or isinstance(raw, bool):
+        return None
+    if isinstance(raw, datetime):
+        dt = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_IST).date()
+    if isinstance(raw, date):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return _parse_ymd(text)
+    normalized = text.replace("Z", "+00:00")
+    if "T" not in normalized and re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", normalized):
+        normalized = normalized.replace(" ", "T", 1)
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_IST).date()
+
+
+def _bank_tx_day(raw: Any) -> Optional[date]:
+    """Hareket günü. dd.mm.yyyy / ISO takvim günü kaymaz; saatli ISO İstanbul günüdür.
+
+    Ayrıştırma: bank_providers._normalize_date ve expense_extract.parse_tr_date.
+    Ayrışmazsa None — otomatik eşleşme bu hareketi atlar.
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, datetime):
+        return _instant_istanbul_day(raw)
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    if re.match(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", text):
+        return _instant_istanbul_day(text)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return _parse_ymd(text)
+    normalized = bank_providers._normalize_date(text)
+    parsed = _parse_ymd(normalized)
+    if parsed:
+        return parsed
+    try:
+        from expense_extract import parse_tr_date
+        parsed_s = parse_tr_date(text)
+    except Exception:
+        parsed_s = None
+    return _parse_ymd(parsed_s) if parsed_s else None
+
+
+def _connection_auto_match_day(conn: Optional[dict]) -> Optional[date]:
+    """Kayıtlı auto_match_from, yoksa bağlantının created_at İstanbul günü."""
+    if not conn:
+        return None
+    stored = _parse_ymd(conn.get("auto_match_from"))
+    if stored:
+        return stored
+    return _instant_istanbul_day(conn.get("created_at"))
+
+
+def _validate_auto_match_from(value: Any) -> str:
+    day = _parse_ymd(value)
+    if not day:
+        raise HTTPException(status_code=400, detail="Geçerli bir tarih girin (YYYY-MM-DD).")
+    today = datetime.now(_IST).date()
+    if day > today:
+        raise HTTPException(status_code=400, detail="Otomatik eşleşme başlangıç tarihi gelecekte olamaz.")
+    return day.isoformat()
+
+
+def _before_start_note(n: int) -> str:
+    count = int(n or 0)
+    if count <= 0:
+        return ""
+    return f" {count} hareket başlangıç tarihinden eski olduğu için atlandı."
+
+
+def _parse_instant(raw: Any) -> Optional[datetime]:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    text = str(raw).strip().replace("Z", "+00:00")
+    if "T" not in text and re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", text):
+        text = text.replace(" ", "T", 1)
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _parse_matched_from(value: Any) -> Optional[datetime]:
+    if value is None or str(value).strip() == "":
+        return None
+    dt = _parse_instant(value)
+    if dt is None:
+        raise HTTPException(status_code=400, detail="matched_from geçerli bir ISO tarih olmalı.")
+    return dt
+
+
+async def _account_auto_match_floors(company_id: str) -> Dict[str, date]:
+    """Hesap → en geç auto_match_from (birden çok bağlantıda en geç tarih)."""
+    conns = await db.bank_connections.find({"company_id": company_id}).to_list(500)
+    floors: Dict[str, date] = {}
+    for conn in conns or []:
+        aid = str(conn.get("linked_account_id") or "")
+        if not aid:
+            continue
+        day = _connection_auto_match_day(conn)
+        if day is None:
+            continue
+        prev = floors.get(aid)
+        if prev is None or day > prev:
+            floors[aid] = day
+    return floors
+
+
+async def _auto_match_eligible(company_id: str, txs: list) -> tuple:
+    """Otomatik eşleşmeye girecek hareketler ve başlangıç tarihinden eski sayısı.
+
+    Tarihi ayrışmayan hareket eşleşmez; bu sayı 'eski' cümlesine yazılmaz.
+    Bağlantısı olmayan hesapta alt sınır yoktur (mevcut davranış).
+    """
+    rows = list(txs or [])
+    if not rows:
+        return [], 0
+    floors = await _account_auto_match_floors(company_id)
+    eligible = []
+    skipped_old = 0
+    for tx in rows:
+        day = _bank_tx_day(tx.get("date") if isinstance(tx, dict) else None)
+        if day is None:
+            continue
+        floor = floors.get(str((tx or {}).get("account_id") or ""))
+        if floor is not None and day < floor:
+            skipped_old += 1
+            continue
+        eligible.append(tx)
+    return eligible, skipped_old
+
+
 async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule", actor: Optional[dict] = None):
     from bank_auto_match import pick_auto_match_source
+    eligible, skipped_old = await _auto_match_eligible(company_id, txs)
     matched, details = 0, []
-    for tx in txs:
+    for tx in eligible:
         if tx.get("match_status") == "matched":
             continue
         rule = await _find_rule(company_id, tx.get("description", ""))
@@ -13083,7 +13281,7 @@ async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule", ac
             "target_account_name": payload.get("target_account_name"),
             "via": applied_via,
         })
-    return matched, details
+    return matched, details, skipped_old
 
 
 async def _prior_match_lookup(company_id: str) -> Dict[str, dict]:
@@ -13122,13 +13320,17 @@ async def _prior_match_lookup(company_id: str) -> Dict[str, dict]:
 
 
 async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto", use_cari: bool = True, actor: Optional[dict] = None) -> tuple:
-    """Öğrenilen kurallar → önceki eşleşmeler → cari adı önerisi sırasıyla otomatik işle."""
-    if not txs:
-        return 0, []
-    matched, details = await _auto_match_by_rules(company_id, txs, via=via if via != "auto" else "auto", actor=actor)
+    """Öğrenilen kurallar → önceki eşleşmeler → cari adı önerisi sırasıyla otomatik işle.
+
+    Dönüş: (eşleşen, ayrıntı, başlangıç tarihinden eski olduğu için atlanan).
+    """
+    eligible, skipped_old = await _auto_match_eligible(company_id, txs)
+    if not eligible:
+        return 0, [], skipped_old
+    matched, details, _ = await _auto_match_by_rules(company_id, eligible, via=via if via != "auto" else "auto", actor=actor)
     done = {d["tx_id"] for d in details}
     prior = await _prior_match_lookup(company_id) if use_cari else {}
-    for tx in txs:
+    for tx in eligible:
         if tx["_id"] in done or tx.get("match_status") == "matched":
             continue
         pattern = _match_pattern(tx.get("description", ""))
@@ -13181,7 +13383,7 @@ async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto
             "contact_name": contact_name,
             "via": "suggestion",
         })
-    return matched, details
+    return matched, details, skipped_old
 
 
 async def _auto_match_pending_for_account(company_id: str, account_id: Optional[str] = None, actor: Optional[dict] = None) -> tuple:
@@ -13221,6 +13423,194 @@ async def unmatch_bank_transaction(tx_id: str, user: dict = Depends(get_current_
     return await _unmatch(tx, actor=user)
 
 
+def _tx_amount(tx: dict) -> float:
+    try:
+        return round(float(tx.get("amount") or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _unmatch_contact_label(tx: dict) -> str:
+    return str(tx.get("contact_name") or tx.get("target_account_name") or tx.get("category") or "—")
+
+
+def _unmatch_sample_row(tx: dict) -> dict:
+    return {
+        "tx_id": tx.get("_id"),
+        "date": tx.get("date"),
+        "amount": _tx_amount(tx),
+        "type": tx.get("type"),
+        "contact_name": tx.get("contact_name"),
+        "target_account_name": tx.get("target_account_name"),
+        "description": tx.get("description"),
+        "matched_via": tx.get("matched_via"),
+        "matched_at": tx.get("matched_at"),
+    }
+
+
+def _exc_text(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if not isinstance(detail, str):
+            detail = str(detail)
+        return (detail or "Hata")[:300]
+    return str(exc)[:300]
+
+
+async def _select_auto_unmatch(company_id: str, account_id: str, before: date, matched_from: Optional[datetime]) -> list:
+    """Yalnız otomatik eşleşmeler. matched_via manual (ve boş) hiç seçilmez."""
+    rows = await db.bank_transactions.find({
+        "company_id": company_id,
+        "account_id": account_id,
+        "source": "bank_sync",
+        "match_status": "matched",
+    }).to_list(20000)
+    selected = []
+    for tx in rows or []:
+        via = str(tx.get("matched_via") or "").strip().lower()
+        if via not in _AUTO_UNMATCH_VIAS:
+            continue
+        day = _bank_tx_day(tx.get("date"))
+        if day is None or not (day < before):
+            continue
+        if matched_from is not None:
+            at = _parse_instant(tx.get("matched_at"))
+            if at is None or at < matched_from:
+                continue
+        selected.append(tx)
+    selected.sort(key=lambda t: ((_bank_tx_day(t.get("date")) or date.min).isoformat(), str(t.get("_id") or "")))
+    return selected
+
+
+def _auto_unmatch_preview(batch: list, *, before: date, has_more: bool) -> dict:
+    by: Dict[str, dict] = {}
+    total = 0.0
+    for tx in batch:
+        amount = _tx_amount(tx)
+        total += amount
+        name = _unmatch_contact_label(tx)
+        bucket = by.setdefault(name, {"contact_name": name, "count": 0, "amount": 0.0})
+        bucket["count"] += 1
+        bucket["amount"] = round(bucket["amount"] + amount, 2)
+    contacts = sorted(by.values(), key=lambda r: (-r["amount"], r["contact_name"]))
+    message = "Kalan için tekrar çalıştır." if has_more else ""
+    return {
+        "dry_run": True,
+        "count": len(batch),
+        "total_amount": round(total, 2),
+        "by_contact": contacts,
+        "sample": [_unmatch_sample_row(tx) for tx in batch[:50]],
+        "before_date": before.isoformat(),
+        "has_more": has_more,
+        "limit": _AUTO_UNMATCH_LIMIT,
+        "message": message,
+    }
+
+
+@api_router.post("/banking/connections/{conn_id}/auto-unmatch")
+async def auto_unmatch_bank_connection(conn_id: str, body: Optional[Dict[str, Any]] = Body(default=None), user: dict = Depends(get_current_user)):
+    """Bağlantı hesabındaki otomatik eşleşmeleri toplu geri al. dry_run varsayılan True.
+
+    manual eşleşmeler seçilmez. Şirket admini zorunlu. Çağrı başına en fazla 2000 satır.
+    """
+    doc = await tenant_access.get_tenant_doc(db, "bank_connections", conn_id, user, not_found="Bağlantı bulunamadı.")
+    company_id = str(doc.get("company_id") or "")
+    await tenant_access.require_company_admin(user, company_id)
+    payload = body or {}
+    account_id = str(doc.get("linked_account_id") or "")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Bağlantının bağlı hesabı yok.")
+    raw_before = payload.get("before_date")
+    if raw_before is None or str(raw_before).strip() == "":
+        before = _connection_auto_match_day(doc)
+        if before is None:
+            raise HTTPException(status_code=400, detail="Otomatik eşleşme başlangıç tarihi belirlenemedi.")
+    else:
+        before = _parse_ymd(raw_before)
+        if before is None:
+            raise HTTPException(status_code=400, detail="Geçerli bir tarih girin (YYYY-MM-DD).")
+    matched_from = _parse_matched_from(payload.get("matched_from"))
+    dry_run = True if payload.get("dry_run") is None else bool(payload.get("dry_run"))
+    selected = await _select_auto_unmatch(company_id, account_id, before, matched_from)
+    limit = max(1, int(_AUTO_UNMATCH_LIMIT))
+    has_more = len(selected) > limit
+    batch = selected[:limit]
+    if dry_run:
+        return _auto_unmatch_preview(batch, before=before, has_more=has_more)
+    ok = 0
+    fail = []
+    processed = []
+    for tx in batch:
+        tx_id = tx.get("_id")
+        fresh = await db.bank_transactions.find_one({"_id": tx_id, "company_id": company_id})
+        label = _unmatch_contact_label(tx)
+        if not fresh or fresh.get("match_status") != "matched":
+            processed.append({
+                "tx_id": tx_id, "outcome": "skipped", "ok": False,
+                "contact_name": label, "amount": _tx_amount(tx), "date": tx.get("date"),
+                "description": tx.get("description"), "error": "",
+            })
+            continue
+        via = str(fresh.get("matched_via") or "").strip().lower()
+        if via not in _AUTO_UNMATCH_VIAS:
+            processed.append({
+                "tx_id": tx_id, "outcome": "skipped", "ok": False,
+                "contact_name": label, "amount": _tx_amount(fresh), "date": fresh.get("date"),
+                "description": fresh.get("description"), "error": "",
+            })
+            continue
+        try:
+            await _unmatch(fresh, actor=user)
+        except Exception as exc:
+            err = _exc_text(exc)
+            fail.append({"tx_id": tx_id, "error": err})
+            processed.append({
+                "tx_id": tx_id, "outcome": "error", "ok": False, "error": err,
+                "contact_name": label, "amount": _tx_amount(fresh), "date": fresh.get("date"),
+                "description": fresh.get("description"),
+            })
+            continue
+        ok += 1
+        processed.append({
+            "tx_id": tx_id, "outcome": "ok", "ok": True, "error": "",
+            "contact_name": label, "amount": _tx_amount(fresh), "date": fresh.get("date"),
+            "description": fresh.get("description"),
+        })
+    message = f"{ok} otomatik eşleşme geri alındı."
+    if fail:
+        message += f" {len(fail)} satır hata verdi."
+    if has_more:
+        message += " Kalan için tekrar çalıştır."
+    try:
+        await company_audit.write(
+            db,
+            company_id=company_id,
+            user=user,
+            module="/banking",
+            action="restore",
+            record_id=conn_id,
+            record_label=str(doc.get("provider_name") or doc.get("linked_account_name") or ""),
+            summary=(
+                f"Otomatik banka eşleşmeleri geri alındı ({before.isoformat()} öncesi): "
+                f"{ok} tamam, {len(fail)} hata. Elle yapılan eşleşmeler korundu."
+            ),
+            path=f"/api/banking/connections/{conn_id}/auto-unmatch",
+        )
+    except Exception:
+        logger.exception("auto-unmatch audit failed")
+    return {
+        "dry_run": False,
+        "ok": ok,
+        "fail": fail,
+        "processed": processed,
+        "count": len(batch),
+        "before_date": before.isoformat(),
+        "has_more": has_more,
+        "limit": limit,
+        "message": message,
+    }
+
+
 @api_router.post("/banking/transactions/migrate-match-descriptions")
 async def migrate_match_descriptions_endpoint(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Eşleşmiş hareket açıklamalarındaki eski kullanıcı eklerini Eşleşti: formatına çevir.
@@ -13247,10 +13637,11 @@ async def auto_match_transactions(request: Request, company_id: Optional[str] = 
         q["account_id"] = account_id
     txs = await db.bank_transactions.find(q).to_list(1000)
     actor = await _optional_actor(request)
-    matched, details = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions), actor=actor)
+    matched, details, skipped_before_start = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions), actor=actor)
     skipped = max(0, len(txs) - matched)
-    return {"status": "success", "matched": matched, "skipped": skipped, "details": details,
-            "message": f"{matched} hareket önceki eşleşme veya cari adına göre otomatik işlendi, {skipped} hareket manuel bekliyor."}
+    waiting = max(0, skipped - skipped_before_start)
+    return {"status": "success", "matched": matched, "skipped": skipped, "skipped_before_start": skipped_before_start, "details": details,
+            "message": f"{matched} hareket önceki eşleşme veya cari adına göre otomatik işlendi, {waiting} hareket manuel bekliyor." + _before_start_note(skipped_before_start)}
 @api_router.get("/banking/match-rules")
 async def list_match_rules(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, company_id)
@@ -13293,11 +13684,13 @@ async def accept_rule_suggestion(req: Dict[str, Any], user: dict = Depends(get_c
         user,
     )
     applied = 0
+    skipped_before_start = 0
     if req.get("apply_now", True):
         txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}).to_list(1000)
         pattern = created.get("pattern")
-        applied, _ = await _auto_match_by_rules(company_id, [t for t in txs if _match_pattern(t.get("description", "")) == pattern])
-    return {"status": "success", "rule": created, "applied": applied, "message": f"Kural oluşturuldu." + (f" Bekleyen {applied} hareket otomatik işlendi." if applied else "")}
+        applied, _, skipped_before_start = await _auto_match_by_rules(company_id, [t for t in txs if _match_pattern(t.get("description", "")) == pattern])
+    message = "Kural oluşturuldu." + (f" Bekleyen {applied} hareket otomatik işlendi." if applied else "") + _before_start_note(skipped_before_start)
+    return {"status": "success", "rule": created, "applied": applied, "skipped_before_start": skipped_before_start, "message": message}
 
 async def _create_match_rule_core(req: Dict[str, Any], user: dict):
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
