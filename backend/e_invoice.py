@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ import n11faturam
 import isnet
 import isnet_portal
 import qnb_efinans
+import tenant_access
 import ubl_export
 from buyer_tax import buyer_tax_choice, usable_tax
 from invoice_edit_lock import invoice_gib_locked
@@ -34,6 +35,7 @@ logger = logging.getLogger("tamkobi.e_invoice")
 router = APIRouter(prefix="/api")
 
 _db = None
+_current_user = None
 _deps: Dict[str, Any] = {}
 
 SCENARIO_MAP = {
@@ -44,11 +46,19 @@ SCENARIO_MAP = {
 }
 
 
-def init(db, deps: Optional[dict] = None):
-    global _db
+def init(db, deps: Optional[dict] = None, get_current_user=None):
+    global _db, _current_user
     _db = db
     if deps:
         _deps.update(deps)
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="E-invoice auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _blank_gib_id(value: Any) -> bool:
@@ -1280,13 +1290,14 @@ async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any
 
 
 @router.get("/e-invoice/integrator-credits")
-async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
+async def api_integrator_credits(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Entegratör (İşNet SOAP vb.) kontör / bakiye — yerel gib-credits cüzdanı değil."""
-    settings = (await _db.einvoice_settings.find_one({"company_id": company_id}) if _db else None) or {}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    settings = (await _db.einvoice_settings.find_one({"company_id": cid}) if _db else None) or {}
     provider = (settings.get("provider") or "").strip()
     if settings.get("status") != "configured" or provider not in ("isnet", "isnet_portal", "n11faturam"):
         return {
-            "company_id": company_id,
+            "company_id": cid,
             "provider": provider or None,
             "balance": None,
             "source": "none",
@@ -1301,7 +1312,7 @@ async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
                 isnet.require_explicit_mode(settings)
             except HTTPException as e:
                 return {
-                    "company_id": company_id,
+                    "company_id": cid,
                     "provider": provider,
                     "balance": None,
                     "source": provider,
@@ -1311,7 +1322,7 @@ async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
             src = provider
         else:
             return {
-                "company_id": company_id,
+                "company_id": cid,
                 "provider": provider,
                 "balance": None,
                 "source": provider,
@@ -1337,7 +1348,7 @@ async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
     except ValueError:
         balance = None
     return {
-        "company_id": company_id,
+        "company_id": cid,
         "provider": provider,
         "balance": balance,
         "raw": bal,

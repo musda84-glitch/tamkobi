@@ -432,7 +432,7 @@ class TestIntegratorCredits:
                 "get_company_balance",
                 AsyncMock(return_value={"remaining_credit": "42", "balance": "42", "message": "OK"}),
             ):
-                out = await e_invoice.api_integrator_credits("c1")
+                out = await e_invoice.api_integrator_credits("c1", user={"company_ids": ["c1"], "active_company_id": "c1"})
             assert out["balance"] == 42
             assert out["source"] == "isnet"
             assert out["provider"] == "isnet"
@@ -443,7 +443,7 @@ class TestIntegratorCredits:
         fake_db = MagicMock()
         fake_db.einvoice_settings.find_one = AsyncMock(return_value={"provider": "isnet", "status": "simulated"})
         e_invoice.init(fake_db)
-        out = asyncio.get_event_loop().run_until_complete(e_invoice.api_integrator_credits("c1"))
+        out = asyncio.get_event_loop().run_until_complete(e_invoice.api_integrator_credits("c1", user={"company_ids": ["c1"], "active_company_id": "c1"}))
         assert out["balance"] is None
         assert out["source"] == "none"
 
@@ -454,7 +454,7 @@ class TestIntegratorCredits:
         )
         e_invoice.init(fake_db)
         with patch.object(e_invoice.isnet, "get_company_balance", new_callable=AsyncMock) as bal:
-            out = asyncio.run(e_invoice.api_integrator_credits("c1"))
+            out = asyncio.run(e_invoice.api_integrator_credits("c1", user={"company_ids": ["c1"], "active_company_id": "c1"}))
         bal.assert_not_called()
         assert out["balance"] is None
         assert out["message"] == e_invoice.isnet.MODE_REQUIRED_DETAIL

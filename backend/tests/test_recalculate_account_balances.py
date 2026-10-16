@@ -191,7 +191,7 @@ def test_preview_lists_pos_drift_and_apply_sets_ledger_without_new_movements(db)
 
         listed_before = copy.deepcopy(db.bank_accounts.docs)
         tx_before = copy.deepcopy(db.bank_transactions.docs)
-        await server.list_bank_accounts("co", with_drift=1)
+        await server.list_bank_accounts("co", with_drift=1, user=admin)
         await balance_reconciliation.build_reconciliation(db, "co")
         assert db.bank_accounts.docs == listed_before
         assert db.bank_transactions.docs == tx_before

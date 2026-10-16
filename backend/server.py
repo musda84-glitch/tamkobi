@@ -1464,10 +1464,15 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
 async def einvoice_providers():
     return [{"code": k, **v} for k, v in EINVOICE_PROVIDERS.items()]
 
-@api_router.get("/einvoice/settings")
-async def get_einvoice_settings(company_id: Optional[str] = "comp_nexus_main_01"):
+async def _einvoice_settings_payload(company_id: str):
     s = await db.einvoice_settings.find_one({"company_id": company_id})
     return _einvoice_view(company_id, s)
+
+
+@api_router.get("/einvoice/settings")
+async def get_einvoice_settings(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _einvoice_settings_payload(cid)
 
 @api_router.put("/einvoice/settings")
 async def save_einvoice_settings(req: Dict[str, Any]):
@@ -1537,7 +1542,7 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         has_creds = bool((update.get("username") or "").strip() and has_pwd and len(tax) in (10, 11))
     update["status"] = "configured" if has_creds else "simulated"
     await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "provider": provider}}, upsert=True)
-    return await get_einvoice_settings(company_id)
+    return await _einvoice_settings_payload(company_id)
 
 
 @api_router.put("/system/companies/{company_id}/einvoice")
@@ -1567,7 +1572,7 @@ async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict =
     if unset:
         ops["$unset"] = unset
     await db.einvoice_settings.update_one({"company_id": company_id}, ops, upsert=True)
-    return await get_einvoice_settings(company_id)
+    return await _einvoice_settings_payload(company_id)
 
 
 def _einvoice_password(settings: dict) -> str:
@@ -1702,7 +1707,7 @@ async def isnet_save_settings(req: Dict[str, Any]):
         {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}},
         upsert=True,
     )
-    return await get_einvoice_settings(company_id)
+    return await _einvoice_settings_payload(company_id)
 
 
 @api_router.get("/integrations/isnet/egress")
@@ -1817,7 +1822,7 @@ async def isnet_portal_save_settings(req: Dict[str, Any]):
         {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}},
         upsert=True,
     )
-    return await get_einvoice_settings(company_id)
+    return await _einvoice_settings_payload(company_id)
 
 
 @api_router.post("/integrations/isnet-portal/test")
@@ -10949,22 +10954,23 @@ async def get_report(kind: str, company_id: Optional[str] = "comp_nexus_main_01"
 
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
 @api_router.get("/banking/accounts")
-async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01", with_drift: int = 0):
+async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int = 0, user: dict = Depends(get_current_user)):
     # Masraf, tahsilat ve virman ekranlarındaki kasa/banka seçicisini bu uç besliyor;
     # eksik dönen bir hesap kullanıcı için "kasam kayboldu" demek.
     # Salt okunur: kasa bakiyesi cevapta hareket toplamıdır, bank_accounts yazılmaz.
     # Kasa bakiyesi yalnız kasa hesaplarının hareketleri (iki IN sorgusu).
     # Drift (ledger_balance, balance_drift, bank_balance_drift) yalnız ?with_drift=1
     # ve o yol şirketin tüm bank_transactions kayıtlarını okumaya devam eder.
-    accounts = await db.bank_accounts.find({"company_id": company_id}).sort("account_name", 1).to_list(2000)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    accounts = await db.bank_accounts.find({"company_id": cid}).sort("account_name", 1).to_list(2000)
     want_drift = bool(int(with_drift or 0))
     has_cash = any(str(a.get("type") or "") == "cash_box" for a in (accounts or []))
     txs = None
     if want_drift:
-        txs = await account_balance.fetch_company_bank_txs(db, company_id or "")
+        txs = await account_balance.fetch_company_bank_txs(db, cid or "")
     if has_cash:
         accounts = await account_balance.sync_cash_box_balances(db, accounts, txs, persist=False)
-    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(2000)}
+    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": cid}).to_list(2000)}
     out = []
     for a in clean_docs(accounts):
         conn = conns.get(a["id"]) or conns.get(a.get("_id"))
@@ -10984,7 +10990,7 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01", w
             row["current_balance"] = 0.0
         out.append(row)
     if want_drift:
-        await account_balance.annotate_listed_accounts(db, company_id or "", out, txs if txs is not None else [])
+        await account_balance.annotate_listed_accounts(db, cid or "", out, txs if txs is not None else [])
     return out
 
 
@@ -11596,8 +11602,9 @@ async def recalculate_account_balances(
 
 
 @api_router.get("/banking/transactions")
-async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01", account_id: Optional[str] = None):
-    query = {"company_id": company_id}
+async def list_bank_transactions(company_id: Optional[str] = None, account_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query = {"company_id": cid}
     if account_id:
         query["$or"] = [{"account_id": account_id}, {"target_account_id": account_id}]
     txs = await db.bank_transactions.find(query).sort("date", -1).to_list(2000)
@@ -12776,13 +12783,13 @@ CASH_APPROVAL_EXECUTORS = {
 
 
 @api_router.get("/banking/cash-approvals")
-async def list_cash_approvals(request: Request, company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = "pending"):
-    user = await get_current_user(request)
-    query: Dict[str, Any] = {"company_id": company_id}
+async def list_cash_approvals(company_id: Optional[str] = None, status: Optional[str] = "pending", user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query: Dict[str, Any] = {"company_id": cid}
     if status:
         query["status"] = status
     rows = await db.cash_approval_requests.find(query).sort("created_at", -1).to_list(100)
-    allowed = await cash_approval.can_approve(db, user, company_id)
+    allowed = await cash_approval.can_approve(db, user, cid)
     actor = cash_approval.uid(user)
     out = []
     for r in rows:
@@ -13273,8 +13280,9 @@ async def sync_all_connections(company_id: Optional[str] = "comp_nexus_main_01")
     return {"results": results}
 
 @api_router.get("/banking/transactions/unmatched")
-async def list_unmatched_transactions(company_id: Optional[str] = "comp_nexus_main_01"):
-    txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}).sort("date", -1).to_list(500)
+async def list_unmatched_transactions(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    txs = await db.bank_transactions.find({"company_id": cid, "source": "bank_sync", "match_status": "unmatched"}).sort("date", -1).to_list(500)
     return clean_docs(txs)
 
 def _match_pattern(text: str) -> str:
@@ -14337,8 +14345,9 @@ async def migrate_match_descriptions_endpoint(req: Dict[str, Any], user: dict = 
 
 
 @api_router.get("/banking/transactions/matched")
-async def list_matched_transactions(company_id: Optional[str] = "comp_nexus_main_01", limit: int = 100):
-    txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "matched"}).sort("matched_at", -1).to_list(limit)
+async def list_matched_transactions(company_id: Optional[str] = None, limit: int = 100, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    txs = await db.bank_transactions.find({"company_id": cid, "source": "bank_sync", "match_status": "matched"}).sort("matched_at", -1).to_list(limit)
     return clean_docs(txs)
 
 @api_router.post("/banking/transactions/auto-match")
@@ -14361,9 +14370,10 @@ async def list_match_rules(company_id: Optional[str] = None, user: dict = Depend
     return clean_docs(rules)
 
 @api_router.get("/banking/match-rule-suggestions")
-async def match_rule_suggestions(company_id: Optional[str] = "comp_nexus_main_01", min_count: int = 2):
-    txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "matched"}).to_list(3000)
-    rules = {r["pattern"] for r in await db.bank_match_rules.find({"company_id": company_id}).to_list(1000)}
+async def match_rule_suggestions(company_id: Optional[str] = None, min_count: int = 2, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    txs = await db.bank_transactions.find({"company_id": cid, "source": "bank_sync", "match_status": "matched"}).to_list(3000)
+    rules = {r["pattern"] for r in await db.bank_match_rules.find({"company_id": cid}).to_list(1000)}
     groups: Dict[str, dict] = {}
     for t in txs:
         p = _match_pattern(t.get("description", ""))
@@ -16498,16 +16508,17 @@ async def upsert_attendance(req: Dict[str, Any]):
 
 # ----------------- MALİ MÜŞAVİR PANELİ -----------------
 @api_router.get("/accountant/summary")
-async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
+async def accountant_summary(company_id: Optional[str] = None, month: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     month = month or datetime.now(timezone.utc).strftime("%Y-%m")
     invs, txs, payrolls, tax_obs, tax_docs = await asyncio.gather(
-        db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}},
+        db.invoices.find({"company_id": cid, "issue_date": {"$regex": f"^{month}"}},
                          {"invoice_type": 1, "status": 1, "e_type": 1, "invoice_number": 1, "issue_date": 1, "contact_name": 1,
                           "subtotal": 1, "vat_total": 1, "grand_total": 1, "paid_amount": 1, "payment_status": 1, "gib_status": 1, "items": 1}).to_list(5000),
-        db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
-        db.payrolls.find({"company_id": company_id, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
-        db.tax_obligations.find({"company_id": company_id, "period": month}).to_list(2000),
-        db.tax_documents.find({"company_id": company_id, "period": month}).to_list(200),
+        db.bank_transactions.find({"company_id": cid, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
+        db.payrolls.find({"company_id": cid, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
+        db.tax_obligations.find({"company_id": cid, "period": month}).to_list(2000),
+        db.tax_documents.find({"company_id": cid, "period": month}).to_list(200),
     )
     invs = [i for i in invs if not is_cancelled_invoice(i)]
     sales = [i for i in invs if i.get("invoice_type") == "sales"]
@@ -16532,13 +16543,14 @@ async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", m
             "invoices": slim}
 
 @api_router.get("/accountant/export")
-async def accountant_export(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None, kind: str = "invoices"):
+async def accountant_export(company_id: Optional[str] = None, month: Optional[str] = None, kind: str = "invoices", user: dict = Depends(get_current_user)):
     import csv, io
+    cid = tenant_access.resolve_company_id(user, company_id)
     month = month or datetime.now(timezone.utc).strftime("%Y-%m")
     buf = io.StringIO(); w = csv.writer(buf, delimiter=";")
     if kind == "invoices":
         w.writerow(["Belge No", "Tarih", "Tür", "E-Belge", "Cari", "VKN", "Matrah", "KDV", "Toplam", "Ödeme", "GİB"])
-        invs = await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).sort("issue_date", 1).to_list(5000)
+        invs = await db.invoices.find({"company_id": cid, "issue_date": {"$regex": f"^{month}"}}).sort("issue_date", 1).to_list(5000)
         invs = [i for i in invs if not is_cancelled_invoice(i)]
         cids = list({i.get("contact_id") for i in invs if i.get("contact_id")})
         cmap = {}
@@ -16550,7 +16562,7 @@ async def accountant_export(company_id: Optional[str] = "comp_nexus_main_01", mo
             w.writerow([i.get("invoice_number"), i.get("issue_date"), i.get("invoice_type"), i.get("e_type"), i.get("contact_name"), (c or {}).get("tax_number_or_id", ""), f"{i.get('subtotal', 0):.2f}", f"{i.get('vat_total', 0):.2f}", f"{i.get('grand_total', 0):.2f}", i.get("payment_status"), i.get("gib_status") or ""])
     else:
         w.writerow(["Tarih", "Hesap", "Tür", "Kategori", "Açıklama", "Tutar"])
-        for t in await db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", 1).to_list(5000):
+        for t in await db.bank_transactions.find({"company_id": cid, "date": {"$regex": f"^{month}"}}).sort("date", 1).to_list(5000):
             w.writerow([t.get("date"), t.get("account_name"), "Giriş" if t.get("type") == "inflow" else "Çıkış", t.get("category"), t.get("description"), f"{t.get('amount', 0):.2f}"])
     return Response(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}_{month}.csv"})
 
@@ -24079,7 +24091,7 @@ addons.init(db)
 support_tickets.init(db, get_current_user)
 staff_messages.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
-gib_credits.init(db)
+gib_credits.init(db, get_current_user)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
 import support_access
 support_access.init(db, get_current_user)
@@ -24087,8 +24099,8 @@ saas_docs.init(db)
 data_export.init(db, get_current_user)
 legal_docs.init(db, get_current_user)
 ubl_export.init(db)
-e_invoice.init(db, {"password_fn": _einvoice_password, "consume_credits": gib_credits.consume, "convert_order": convert_order_to_invoice, "apply_effects": _apply_invoice_effects})
-edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
+e_invoice.init(db, {"password_fn": _einvoice_password, "consume_credits": gib_credits.consume, "convert_order": convert_order_to_invoice, "apply_effects": _apply_invoice_effects}, get_current_user)
+edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send}, get_current_user)
 data_sync.init(db)
 rbac.set_license_guard(saas.guard)
 demo.init(db, get_current_user)

@@ -7,10 +7,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import saas
+import tenant_access
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger("TamKobiERP")
 _db = None
+_current_user = None
 
 DEFAULT_PACKS = [
     {"id": "gib_100", "name": "100 Kontör", "credits": 100, "price": 250, "tagline": "Küçük işletme"},
@@ -37,9 +39,17 @@ async def require_sales():
         raise HTTPException(status_code=403, detail=SALES_CLOSED_DETAIL)
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="GIB credits auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now() -> str:
@@ -160,14 +170,13 @@ async def gift(company_id: str, credits: int, note: str = "Platform yüklemesi")
 
 
 @router.get("/account/gib-credits")
-async def account_credits(request: Request, company_id: str = "comp_nexus_main_01"):
-    user = await saas._request_user(request)
-    saas._require_company_access(user, company_id)
-    w = await get_wallet(company_id)
+async def account_credits(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    w = await get_wallet(cid)
     led = [_clean(x) for x in await _db.gib_credit_ledger.find({"wallet_id": w["_id"]}).sort("created_at", -1).to_list(40)]
     selling = await sales_enabled()
     return {
-        "company_id": company_id,
+        "company_id": cid,
         "wallet_id": w["_id"],
         "balance": int(w.get("balance") or 0),
         "sales_enabled": selling,

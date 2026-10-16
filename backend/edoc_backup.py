@@ -7,14 +7,16 @@ import zipfile
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
+import tenant_access
 import ubl_export
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger("TamKobiERP")
 _db = None
+_current_user = None
 _deps: Dict[str, Any] = {}
 
 MAX_DAYS = 62
@@ -23,11 +25,19 @@ REMIND_COOLDOWN_DAYS = 14
 MAX_DOCS = 2000
 
 
-def init(db, deps=None):
-    global _db
+def init(db, deps=None, get_current_user=None):
+    global _db, _current_user
     _db = db
     if deps:
         _deps.update(deps)
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Edoc backup auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now() -> str:
@@ -152,20 +162,22 @@ async def record_backup(company_id: str, date_from: str, date_to: str, counts: D
 
 
 @router.get("/accountant/edocs")
-async def edocs_preview(company_id: str = "comp_nexus_main_01", date_from: str = "", date_to: str = ""):
+async def edocs_preview(company_id: Optional[str] = None, date_from: str = "", date_to: str = "", user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     d0, d1, days = parse_range(date_from, date_to)
-    invs = await _list_invoices(company_id, d0, d1)
-    backup = await last_backup(company_id)
+    invs = await _list_invoices(cid, d0, d1)
+    backup = await last_backup(cid)
     return {"date_from": d0, "date_to": d1, "days": days, "max_days": MAX_DAYS, **_counts(invs),
             "last_backup": backup, "reminder_due": reminder_due(backup)}
 
 
 @router.get("/accountant/edocs/export")
-async def edocs_export(company_id: str = "comp_nexus_main_01", date_from: str = "", date_to: str = ""):
+async def edocs_export(company_id: Optional[str] = None, date_from: str = "", date_to: str = "", user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     d0, d1, _days = parse_range(date_from, date_to)
-    data, counts = await build_zip(company_id, d0, d1)
+    data, counts = await build_zip(cid, d0, d1)
     if counts["invoice_count"]:
-        await record_backup(company_id, d0, d1, counts)
+        await record_backup(cid, d0, d1, counts)
     filename = f"ebelge_yedek_{d0}_{d1}.zip"
     return Response(data, media_type="application/zip", headers={
         "Content-Disposition": f'attachment; filename="{filename}"',
@@ -176,8 +188,9 @@ async def edocs_export(company_id: str = "comp_nexus_main_01", date_from: str = 
 
 
 @router.get("/accountant/edocs/last-backup")
-async def edocs_last_backup(company_id: str = "comp_nexus_main_01"):
-    backup = await last_backup(company_id)
+async def edocs_last_backup(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    backup = await last_backup(cid)
     return {"last_backup": backup, "reminder_due": reminder_due(backup), "max_days": MAX_DAYS}
 
 

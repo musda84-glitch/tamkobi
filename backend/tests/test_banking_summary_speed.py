@@ -188,7 +188,7 @@ def test_list_and_summary_query_count_stays_flat_and_get_does_not_write():
         db2.col("bank_transactions", bank_txs)
         db2.col("bank_connections", [])
         server.db = db2
-        rows2 = _run(server.list_bank_accounts("co"))
+        rows2 = _run(server.list_bank_accounts("co", user=USER))
         finds2 = _finds(db2.log, "bank_transactions")
 
         db10 = CountingDB()
@@ -197,7 +197,7 @@ def test_list_and_summary_query_count_stays_flat_and_get_does_not_write():
         db10.col("bank_connections", [])
         server.db = db10
         t0 = time.perf_counter()
-        rows10 = _run(server.list_bank_accounts("co"))
+        rows10 = _run(server.list_bank_accounts("co", user=USER))
         list_ms = (time.perf_counter() - t0) * 1000
         finds10 = _finds(db10.log, "bank_transactions")
 
@@ -236,7 +236,7 @@ def test_list_and_summary_query_count_stays_flat_and_get_does_not_write():
         db_drift.col("bank_transactions", bank_txs)
         db_drift.col("bank_connections", [])
         server.db = db_drift
-        drifted = _run(server.list_bank_accounts("co", with_drift=1))
+        drifted = _run(server.list_bank_accounts("co", with_drift=1, user=USER))
         drift_finds = _finds(db_drift.log, "bank_transactions")
         assert len(drift_finds) == 1
         assert drift_finds[0][2] == {"company_id": "co"}
