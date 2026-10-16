@@ -4,6 +4,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
+import { COMMERCIAL_BADGE_CLASS, incomingCommercialStatusLabel } from "../utils/edocInbox";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "../components/IncomingInvoiceFaturalastirButton";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
@@ -1543,6 +1544,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
                               {invoiceETypeLabel(inv)}
                             </span>
+                            {(() => {
+                              const commercial = incomingCommercialStatusLabel(inv);
+                              if (!commercial) return null;
+                              return (
+                                <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${COMMERCIAL_BADGE_CLASS[commercial.tone] || ""}`} data-testid={`inv-commercial-${inv.invoice_number}`}>
+                                  {commercial.label}
+                                </span>
+                              );
+                            })()}
                             {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
                           </div>
                         </div>

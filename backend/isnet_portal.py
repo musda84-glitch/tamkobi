@@ -16,6 +16,7 @@ import re
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
@@ -1246,6 +1247,147 @@ async def advance_outgoing_invoice(
 
     ok = any(a.get("ok") for a in actions if a.get("action") in ("approve", "send"))
     return {"ok": ok, "via": "portal", "actions": actions, "invoice_number": invoice_number}
+
+
+def _coerce_api_id(value: Any) -> Any:
+    """İşNet CompanyId/InvoiceId sayısal ise JSON sayısı olarak gönder."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return value
+    if text.isdigit():
+        return int(text)
+    try:
+        num = float(text)
+    except ValueError:
+        return value
+    return int(num) if num.is_integer() else num
+
+
+def _scrub_secret(text: str, password: str = "") -> str:
+    msg = str(text or "").replace("\n", " ").strip()
+    if password:
+        msg = msg.replace(password, "***")
+    msg = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{8,}", r"\1***", msg)
+    msg = re.sub(r"(?i)(token[\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9._\-]{8,}", r"\1***", msg)
+    return msg[:300]
+
+
+def _portal_error_text(data: Any, password: str = "") -> str:
+    if not isinstance(data, dict):
+        return ""
+    raw = data.get("ErrorMessage") or data.get("errorMessage") or data.get("Message") or ""
+    if isinstance(raw, dict):
+        raw = raw.get("message") or raw.get("Message") or ""
+    return _scrub_secret(str(raw or ""), password)
+
+
+async def respond_incoming_invoice(
+    settings: dict,
+    password: str,
+    *,
+    ettn: str,
+    invoice_number: str = "",
+    approval: str,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Gelen ticari fatura uygulama yanıtı: GetApprovableIncomingInvoiceList + ApproveIncomingInvoice.
+
+    ApprovalType: KABUL=0, RED=1. Giden ApproveStagingInvoice bu fonksiyondan çağrılmaz.
+    Şifre ve token dönen sözlüğe veya loga yazılmaz.
+    """
+    approval = (approval or "").strip().upper()
+    if approval not in ("KABUL", "RED"):
+        return {"ok": False, "error": "approval KABUL veya RED olmalı"}
+    ettn = (ettn or "").strip()
+    invoice_number = (invoice_number or "").strip()
+    reason = (reason or "").strip()
+    if not password:
+        return {"ok": False, "error": "Kayıtlı İşNet portal şifresi yok."}
+    if not account_login_ready(settings):
+        return {"ok": False, "error": "İşNet ortam (mode) ayarı yok; Account/Login yapılmadı."}
+    if account_login_blocked(settings):
+        return {"ok": False, "error": "İşNet girişi reddedildi; şirket için yeniden deneme bekleniyor."}
+    try:
+        session = await _mobile_login(settings, password)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "İşNet oturumu açılamadı."
+        return {"ok": False, "error": _scrub_secret(detail, password)}
+
+    company_id = _pick_company_id(settings, session.get("companies") or [])
+    if not company_id:
+        return {"ok": False, "via": "portal", "error": "CompanyId bulunamadı"}
+
+    api = mobile_api_base(settings)
+    token = session["token"]
+    cid = _coerce_api_id(company_id)
+    today = datetime.now(ZoneInfo("Europe/Istanbul"))
+    date_from = (today - timedelta(days=15)).strftime("%d.%m.%Y")
+    date_to = today.strftime("%d.%m.%Y")
+    list_url = f"{api}/api/Invoice/GetApprovableIncomingInvoiceList"
+    approve_url = f"{api}/api/Invoice/ApproveIncomingInvoice"
+    portal_inv_id = None
+
+    async with httpx.AsyncClient(timeout=45.0, headers={"User-Agent": UA}) as client:
+        for page in range(3):
+            status, data = await _mobile_post_json(
+                client,
+                list_url,
+                token,
+                {
+                    "CompanyId": cid,
+                    "FirstInvoiceDate": date_from,
+                    "LastInvoiceDate": date_to,
+                    "PageIndex": page,
+                    "PageSize": 100,
+                },
+            )
+            rows = data.get("Invoices") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                if status >= 400 or not _portal_result_ok(data):
+                    err = _portal_error_text(data, password) or "İşNet yanıt listesi alınamadı."
+                    return {"ok": False, "via": "portal", "error": err}
+                rows = []
+            for row in rows:
+                if not _row_matches_invoice(row, ettn=ettn, invoice_number=invoice_number):
+                    continue
+                inv_id = row.get("InvoiceId")
+                if inv_id is None or str(inv_id).strip() == "":
+                    continue
+                portal_inv_id = inv_id
+                break
+            if portal_inv_id is not None or len(rows) < 100:
+                break
+        if portal_inv_id is None:
+            return {"ok": False, "via": "portal", "error": "İşNet'te yanıt bekleyen fatura bulunamadı"}
+
+        approve_body = {
+            "CompanyId": cid,
+            "InvoiceId": _coerce_api_id(portal_inv_id),
+            "ApprovalType": 0 if approval == "KABUL" else 1,
+            "Reason": reason if approval == "RED" else (reason or ""),
+        }
+        status2, data2 = await _mobile_post_json(client, approve_url, token, approve_body)
+        if status2 >= 400 or not _portal_result_ok(data2):
+            err = _portal_error_text(data2, password) or "İşNet gelen fatura yanıtı kabul edilmedi."
+            return {"ok": False, "via": "portal", "error": err, "invoice_id": approve_body["InvoiceId"]}
+
+    logger.info(
+        "isnet incoming commercial response approval=%s invoice_id=%s",
+        approval,
+        approve_body["InvoiceId"],
+    )
+    return {
+        "ok": True,
+        "via": "portal",
+        "approval": approval,
+        "invoice_id": approve_body["InvoiceId"],
+    }
 
 
 async def _mobile_post_json(

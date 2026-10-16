@@ -10,11 +10,16 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import {
   EDOC_FILTERS,
+  GIB_ACCEPT_CONFIRM,
+  GIB_RED_OPTION_LABEL,
+  canSendCommercialResponse,
   edocId,
   edocRowRight,
   edocRowSubtitle,
   edocRowTitle,
   edocStatusTr,
+  inboxProcessLabel,
+  inboxProcessSuccess,
   isEdocProcessable,
   pendingEdocCount,
   type EdocInboxItem,
@@ -37,6 +42,9 @@ export function EdocInboxScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const focusTried = useRef(false);
+  const [rejectFor, setRejectFor] = useState<EdocInboxItem | null>(null);
+  const [gibRed, setGibRed] = useState(true);
+  const [reason, setReason] = useState("");
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -110,15 +118,66 @@ export function EdocInboxScreen() {
 
   const processOne = (doc: EdocInboxItem) => run(
     edocId(doc),
-    () => post(client, `/edocs/inbox/${edocId(doc)}/process`, PROCESS_OPTS),
-    "Belge içeri alındı.",
+    async () => {
+      const r = await post<{ message?: string }>(client, `/edocs/inbox/${edocId(doc)}/process`, PROCESS_OPTS);
+      if (doc.kind === "dispatch") return { message: inboxProcessSuccess(doc) };
+      return r;
+    },
+    inboxProcessSuccess(doc),
   );
 
-  const rejectOne = (doc: EdocInboxItem) => confirmAction(
-    "Belgeyi reddet",
-    "Bu gelen e-fatura reddedilecek. Devam?",
-    () => run(edocId(doc), () => post(client, `/edocs/inbox/${edocId(doc)}/reject`, { reason: "" }), "Belge reddedildi."),
+  const rejectLocal = (doc: EdocInboxItem, why = "") => run(
+    edocId(doc),
+    () => post(client, `/edocs/inbox/${edocId(doc)}/reject`, { reason: why }),
+    "Belge reddedildi.",
   );
+
+  const rejectOne = (doc: EdocInboxItem) => {
+    if (canSendCommercialResponse(doc)) {
+      setRejectFor(doc);
+      setGibRed(true);
+      setReason("");
+      return;
+    }
+    confirmAction(
+      "Belgeyi reddet",
+      "Bu gelen e-fatura reddedilecek. Devam?",
+      () => rejectLocal(doc),
+    );
+  };
+
+  const acceptGib = (doc: EdocInboxItem) => confirmAction(
+    "Onayla (GİB KABUL)",
+    GIB_ACCEPT_CONFIRM,
+    () => run(
+      `gib-${edocId(doc)}`,
+      () => post(client, `/edocs/inbox/${edocId(doc)}/respond`, { approval: "KABUL" }),
+      "GİB KABUL yanıtı iletildi.",
+    ),
+    "Gönder",
+  );
+
+  const submitReject = () => {
+    if (!rejectFor) return;
+    const why = reason.trim();
+    if (gibRed) {
+      if (!why) {
+        setError("RED için gerekçe zorunlu.");
+        return;
+      }
+      const doc = rejectFor;
+      setRejectFor(null);
+      run(
+        edocId(doc),
+        () => post(client, `/edocs/inbox/${edocId(doc)}/respond`, { approval: "RED", reason: why }),
+        "GİB RED yanıtı iletildi.",
+      );
+      return;
+    }
+    const doc = rejectFor;
+    setRejectFor(null);
+    rejectLocal(doc, why);
+  };
 
   return (
     <Screen
@@ -168,11 +227,33 @@ export function EdocInboxScreen() {
               badge={<Badge label={edocStatusTr(doc.status)} tone={doc.status === "approved" ? "green" : doc.status === "rejected" ? "red" : "amber"} />}
               onPress={doc.invoice_id ? () => go("InvoiceDetail", { id: doc.invoice_id }) : processable ? () => processOne(doc) : undefined}
             />
-            {processable ? (
-              <Row style={{ justifyContent: "flex-end", marginTop: -6, marginBottom: 4 }}>
-                <Chip testID={`edoc-accept-${id}`} label="İçeri al" active color={colors.primary} onPress={() => processOne(doc)} />
-                <Chip testID={`edoc-reject-${id}`} label="Reddet" active={false} onPress={() => rejectOne(doc)} />
+            {processable || canSendCommercialResponse(doc) ? (
+              <Row style={{ justifyContent: "flex-end", flexWrap: "wrap", marginTop: -6, marginBottom: 4 }}>
+                {canSendCommercialResponse(doc) ? (
+                  <Chip testID={`edoc-gib-accept-${id}`} label="Onayla (GİB KABUL)" active color={colors.primary} onPress={() => acceptGib(doc)} />
+                ) : null}
+                {processable ? (
+                  <Chip testID={`edoc-accept-${id}`} label={inboxProcessLabel(doc)} active color={colors.primary} onPress={() => processOne(doc)} />
+                ) : null}
+                {processable || canSendCommercialResponse(doc) ? (
+                  <Chip testID={`edoc-reject-${id}`} label="Reddet" active={false} onPress={() => rejectOne(doc)} />
+                ) : null}
               </Row>
+            ) : null}
+            {rejectFor && edocId(rejectFor) === id ? (
+              <View style={{ marginBottom: 8 }} testID="edoc-reject-dialog">
+                <Field label="Ret nedeni" value={reason} onChangeText={setReason} testID="edoc-reject-reason" />
+                <Chip
+                  testID="edoc-reject-gib"
+                  label={gibRed ? `${GIB_RED_OPTION_LABEL} (açık)` : "Yalnız yerel reddet"}
+                  active={gibRed}
+                  onPress={() => setGibRed((v) => !v)}
+                />
+                <Row style={{ justifyContent: "flex-end" }}>
+                  <Chip testID="edoc-reject-cancel" label="Vazgeç" active={false} onPress={() => setRejectFor(null)} />
+                  <Chip testID="edoc-reject-confirm" label="Reddet" active color="#e11d48" onPress={submitReject} />
+                </Row>
+              </View>
             ) : null}
           </View>
         );
