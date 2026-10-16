@@ -58,6 +58,9 @@ test("iki kip ayrı parametre kullanır", () => {
 
 test("kaldırılmış veri tutarlılığı bölümü firma ayarlarına döner", () => {
   expect(resolveSettingsTab("integrity")).toBe(DEFAULT_SETTINGS_TAB);
-  expect(resolveSettingsTab("notifications")).toBe(DEFAULT_SETTINGS_TAB);
   expect(resolveSettingsTab("einvoice")).toBe("einvoice");
+});
+
+test("bildirimler bölümü açık kalır", () => {
+  expect(resolveSettingsTab("notifications")).toBe("notifications");
 });

@@ -15,7 +15,6 @@ export const DEFAULT_SETTINGS_TAB = "company";
 /** Kaldırılmış ayar bölümleri Firma ayarlarının varsayılan sekmesine döner. */
 const RETIRED_SETTINGS_TABS = {
   integrity: DEFAULT_SETTINGS_TAB,
-  notifications: DEFAULT_SETTINGS_TAB,
 };
 
 export function resolveSettingsTab(tab) {

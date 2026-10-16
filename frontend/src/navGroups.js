@@ -116,7 +116,7 @@ export function groupSystemSections(sections) {
 
 /** Firma Ayarları sekmeleri — aynı paket klasörleri. */
 export const SETTINGS_TAB_GROUPS = [
-  { id: "firma", label: "Firma", tabs: ["company"] },
+  { id: "firma", label: "Firma", tabs: ["company", "notifications"] },
   { id: "paketler", label: "Paketler", tabs: ["plan", "modules"] },
   { id: "belgeler", label: "Belgeler", tabs: ["print", "einvoice"] },
   { id: "web", label: "Web & Entegrasyon", tabs: ["sms", "mail", "bank", "fx", "channels", "whatsapp", "extension", "desktop"] },

@@ -99,7 +99,7 @@ const SETTINGS_TAB_HELP = {
   company: P("Firma kartı", "Unvan, VKN, adres ve logo. Faturalarda görünen resmi bilgiler buradadır."),
   einvoice: P("e-Fatura ayarı", "Platformun atadığı entegratöre kullanıcı/şifre veya İşNet VKN-alias girin."),
   users: P("Kullanıcılar ve roller", "Davet gönderin, modül yetkisi verin."),
-  notifications: P("Bildirimler", "Hangi olayda e-posta/SMS gideceğini seçin."),
+  notifications: P("Bildirimler", "Hangi olayda uygulama içi ve e-posta bildirimi açılacağını seçin."),
   print: P("Yazdırma", "Fatura ve etiket şablonları."),
   bank: P("Banka bağlantısı", "Canlı hesap hareketi için banka API bilgileri."),
   desktop: P("Masaüstü uygulaması", "Atölye, depo ve hızlı satış ekranlarını Windows kiosk uygulamasından açın."),

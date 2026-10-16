@@ -133,6 +133,7 @@ class FakeColl:
 def _db():
     db = MagicMock()
     db.company_notify_prefs = FakeColl([])
+    db.company_notify_tenant = FakeColl([])
     db.notify_event_dedupe = FakeColl([])
     db.notify_outbox = FakeColl([])
     db.notify_sms_daily = FakeColl([])
@@ -1591,6 +1592,324 @@ def test_notify_mail_log_super_admin_scoped(setup_en):
         assert "08:00" in out["deferred"][0]["next_try_at_tr"]
         too_many = await event_notify.get_saas_notify_mail_log("c1", 999, _sa())
         assert len(too_many["sent"]) <= 200
+
+    asyncio.run(_run())
+
+
+def _admin_user():
+    return {
+        "_id": "u_admin", "id": "u_admin", "name": "Admin",
+        "company_ids": ["c1"], "active_company_id": "c1", "role": "admin",
+    }
+
+
+def _sales_user():
+    return {
+        "_id": "u_sales", "id": "u_sales", "name": "Satış",
+        "company_ids": ["c1"], "active_company_id": "c1", "role": "sales",
+    }
+
+
+def _req(company_id=None):
+    req = MagicMock()
+    req.query_params = {}
+    if company_id:
+        req.query_params["company_id"] = company_id
+    return req
+
+
+def test_effective_channel_ands_only_inapp_and_email():
+    prefs = event_notify.default_prefs("c1")
+    order = prefs["events"]["order_new"]
+    order["sms"] = True
+    order["digest"] = "batch"
+    order["batch_minutes"] = 15
+    order["quiet_hours"] = {"enabled": True, "start": "22:00", "end": "08:00"}
+    tenant = event_notify.default_tenant("c1")
+    tenant["events"]["order_new"]["email"] = False
+    tenant["events"]["order_new"]["inapp"] = False
+    ch = event_notify.effective_channel(prefs, tenant, "order_new")
+    assert ch["email"] is False
+    assert ch["inapp"] is False
+    assert ch["sms"] is True
+    assert ch["digest"] == "batch"
+    assert ch["batch_minutes"] == 15
+    assert ch["quiet_hours"]["enabled"] is True
+    assert prefs["events"]["order_new"]["email"] is True
+    assert prefs["events"]["order_new"]["inapp"] is True
+    open_ch = event_notify.effective_channel(prefs, None, "order_new")
+    assert open_ch["email"] is True
+    assert open_ch["inapp"] is True
+    assert open_ch["sms"] is True
+
+
+def test_notify_event_without_tenant_record_matches_today(setup_en):
+    db, send, _ = setup_en
+
+    async def _run():
+        assert db.company_notify_tenant.docs == {}
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            return await event_notify.notify_event(
+                "c1", "einvoice_incoming", "Belge", "msg",
+                link="/edoc-inbox", dedupe_key="einv:notenant",
+            )
+
+    res = asyncio.run(_run())
+    assert res["status"] == "ok"
+    assert res["inapp"] is True
+    assert (res.get("email") or {}).get("status") == "sent"
+    assert send.await_count == 1
+    assert db.company_notify_tenant.docs == {}
+    assert any(n.get("type") == "einvoice_incoming" for n in db.notifications.docs.values())
+
+
+def test_tenant_email_off_skips_mail_and_queue_inapp_stays(setup_en):
+    db, send, _ = setup_en
+    db.orders.docs["o1"] = _order("o1")
+
+    async def _run():
+        await event_notify.save_tenant_prefs("c1", {
+            "einvoice_incoming": {"email": False},
+            "order_new": {"email": False},
+        }, _admin_user())
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            einv = await event_notify.notify_event(
+                "c1", "einvoice_incoming", "Belge", "msg", dedupe_key="einv:mailoff",
+            )
+            order = await event_notify.notify_event(
+                "c1", "order_new", "Sipariş", "msg", link="/orders",
+                ref_type="order", ref_id="o1", dedupe_key="order:o1",
+            )
+            return einv, order
+
+    einv, order = asyncio.run(_run())
+    assert einv["inapp"] is True
+    assert einv.get("email") is None
+    assert order["inapp"] is True
+    assert order.get("queued") is False
+    assert send.await_count == 0
+    assert db.notify_outbox.docs == {}
+    assert any(n.get("type") == "einvoice_incoming" for n in db.notifications.docs.values())
+    assert any(n.get("type") == "order_new" for n in db.notifications.docs.values())
+
+
+def test_tenant_inapp_off_writes_no_notification(setup_en):
+    db, send, _ = setup_en
+
+    async def _run():
+        await event_notify.save_tenant_prefs(
+            "c1", {"einvoice_incoming": {"inapp": False}}, _admin_user(),
+        )
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            return await event_notify.notify_event(
+                "c1", "einvoice_incoming", "Belge", "msg", dedupe_key="einv:inappoff",
+            )
+
+    res = asyncio.run(_run())
+    assert res["inapp"] is False
+    assert (res.get("email") or {}).get("status") == "sent"
+    assert send.await_count == 1
+    assert not any(n.get("type") == "einvoice_incoming" for n in db.notifications.docs.values())
+
+
+def test_platform_email_off_tenant_true_does_not_send(setup_en):
+    db, send, _ = setup_en
+
+    async def _run():
+        await event_notify.save_prefs("c1", {
+            "events": {"einvoice_incoming": {"inapp": True, "email": False, "sms": False}},
+        })
+        await event_notify.save_tenant_prefs(
+            "c1", {"einvoice_incoming": {"email": True}}, _admin_user(),
+        )
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            res = await event_notify.notify_event(
+                "c1", "einvoice_incoming", "Belge", "msg", dedupe_key="einv:plat-off",
+            )
+            view = await event_notify.tenant_prefs_view("c1")
+            return res, view
+
+    res, view = asyncio.run(_run())
+    assert res["inapp"] is True
+    assert res.get("email") is None
+    assert send.await_count == 0
+    email = view["events"]["einvoice_incoming"]["email"]
+    assert email == {"platform": False, "tenant": True, "effective": False}
+
+
+def test_queued_order_skipped_when_tenant_closes_email(setup_en):
+    db, send, _ = setup_en
+    db.orders.docs["o1"] = _order("o1")
+
+    async def _run():
+        await event_notify.save_prefs("c1", {
+            "events": {"order_new": {"inapp": True, "email": True, "sms": True, "digest": "batch", "batch_minutes": 0}},
+        })
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            res = await event_notify.notify_event(
+                "c1", "order_new", "Sipariş", "msg", link="/orders",
+                ref_type="order", ref_id="o1", dedupe_key="order:o1",
+            )
+            assert res.get("queued") is True
+            assert send.await_count == 0
+            await event_notify.save_tenant_prefs(
+                "c1", {"order_new": {"email": False}}, _admin_user(),
+            )
+            await event_notify.flush_notify_outbox()
+
+    asyncio.run(_run())
+    assert send.await_count == 0
+    row = next(iter(db.notify_outbox.docs.values()))
+    assert row["status"] == "skipped"
+
+
+def test_tenant_prefs_put_whitelist_and_access(setup_en):
+    db, _, _ = setup_en
+    admin = _admin_user()
+    sales = _sales_user()
+
+    async def _run():
+        req = _req()
+        for body in (
+            {"events": {"order_new": {"sms": True}}},
+            {"events": {"order_new": {"digest": "hourly"}}},
+            {"extra_emails": ["a@b.com"]},
+            {"events": {"order_new": {"email": False, "quiet_hours": {"enabled": True}}}},
+            {"daily_email_cap": 3, "events": {"order_new": {"email": False}}},
+        ):
+            with pytest.raises(HTTPException) as ei:
+                await event_notify.put_notify_tenant_prefs_route(body, req, admin)
+            assert ei.value.status_code == 422
+            assert ei.value.detail == event_notify.PLATFORM_ONLY_DETAIL
+        for body in (
+            {"events": {"order_new": {"email": "hayir"}}},
+            {"events": {"order_new": {"inapp": 1}}},
+            {"events": {"order_new": {"email": 0}}},
+        ):
+            with pytest.raises(HTTPException) as ei:
+                await event_notify.put_notify_tenant_prefs_route(body, req, admin)
+            assert ei.value.status_code == 422
+            assert ei.value.detail == event_notify.TENANT_BOOL_DETAIL
+        assert db.company_notify_tenant.docs == {}
+        with pytest.raises(HTTPException) as denied:
+            await event_notify.put_notify_tenant_prefs_route(
+                {"events": {"order_new": {"email": False}}}, req, sales,
+            )
+        assert denied.value.status_code == 403
+        with pytest.raises(HTTPException) as prefs_denied:
+            await event_notify.put_notify_prefs_route(
+                {"company_id": "c1", "extra_emails": ["x@y.com"]}, user=admin,
+            )
+        assert prefs_denied.value.status_code == 403
+        assert prefs_denied.value.detail == event_notify.COMPANY_NOTIFY_FORBIDDEN
+        with pytest.raises(HTTPException) as other:
+            await event_notify.put_notify_tenant_prefs_route(
+                {"company_id": "c2", "events": {"order_new": {"email": False}}}, req, admin,
+            )
+        assert other.value.status_code in (403, 404)
+        sa = {
+            "id": "sa1", "_id": "sa1", "name": "Süper", "is_super_admin": True,
+            "company_ids": ["c1"], "active_company_id": "c1", "role": "admin",
+        }
+        with pytest.raises(HTTPException) as missing:
+            await event_notify.put_notify_tenant_prefs_route(
+                {"company_id": "missing", "events": {"order_new": {"email": False}}}, req, sa,
+            )
+        assert missing.value.status_code == 404
+        with pytest.raises(HTTPException) as cross:
+            await event_notify.get_notify_tenant_prefs_route(_req("c2"), company_id="c2", user=sales)
+        assert cross.value.status_code in (403, 404)
+        got = await event_notify.get_notify_tenant_prefs_route(_req("c1"), company_id="c1", user=sales)
+        assert set(got) == {"events", "labels"}
+        assert got["labels"]["order_new"] == "Yeni sipariş"
+        assert got["events"]["gib_credits_low"]["inapp"]["effective"] is True
+        saved = await event_notify.put_notify_tenant_prefs_route(
+            {"events": {"order_new": {"email": False, "inapp": False}}}, req, admin,
+        )
+        assert saved["events"]["order_new"]["email"]["tenant"] is False
+        assert saved["events"]["order_new"]["email"]["effective"] is False
+        assert saved["events"]["order_new"]["inapp"]["tenant"] is False
+        assert saved["events"]["einvoice_incoming"]["email"]["tenant"] is True
+        doc = db.company_notify_tenant.docs["cnt_c1"]
+        assert doc["company_id"] == "c1"
+        assert doc["updated_by"] == "u_admin"
+        assert doc["events"]["order_new"] == {"inapp": False, "email": False}
+        assert set(doc["events"]) == set(event_notify.EVENTS)
+        assert db.company_notify_prefs.docs == {}
+        audits = list(db.company_audit_log.docs.values())
+        assert len(audits) == 1
+        assert audits[0]["company_id"] == "c1"
+        assert audits[0]["action"] == "update"
+        assert audits[0]["path"] == "/api/notify/tenant-prefs"
+        assert audits[0]["record_id"] == "cnt_c1"
+        assert audits[0]["user_id"] == "u_admin"
+
+    asyncio.run(_run())
+
+
+def test_platform_put_keeps_tenant_prefs(setup_en):
+    db, _, _ = setup_en
+
+    async def _run():
+        await event_notify.save_tenant_prefs(
+            "c1", {"order_new": {"email": False, "inapp": True}}, _admin_user(),
+        )
+        before = dict(db.company_notify_tenant.docs["cnt_c1"]["events"])
+        await event_notify.put_saas_notify_prefs(
+            "c1",
+            {
+                "extra_emails": ["ynt@demo.com"],
+                "events": {"order_new": {"inapp": True, "email": True, "sms": True, "digest": "batch", "batch_minutes": 5}},
+            },
+            _sa(),
+        )
+        await event_notify.save_prefs("c1", {"extra_emails": ["again@demo.com"]})
+        stored = db.company_notify_tenant.docs["cnt_c1"]["events"]
+        assert stored == before
+        assert stored["order_new"]["email"] is False
+        prefs = await event_notify.get_prefs("c1")
+        assert "again@demo.com" in prefs["extra_emails"]
+        assert prefs["events"]["order_new"]["sms"] is True
+        assert "cnt_c1" in db.company_notify_tenant.docs
+
+    asyncio.run(_run())
+
+
+def test_order_batch_reads_tenant_once(setup_en):
+    db, send, _ = setup_en
+    calls = {"n": 0}
+    orig = db.company_notify_tenant.find_one
+
+    async def _wrapped(*args, **kwargs):
+        calls["n"] += 1
+        return await orig(*args, **kwargs)
+
+    db.company_notify_tenant.find_one = _wrapped
+
+    async def _run():
+        three = [_order(f"o{i}") for i in range(1, 4)]
+        for row in three:
+            db.orders.docs[row["_id"]] = row
+        with _mail_patch(send), patch.object(notify, "dispatch_push", AsyncMock(return_value={"sent": 0})), \
+             patch.object(public_url, "public_base_url_for", AsyncMock(return_value="https://app.tamkobi.com")):
+            calls["n"] = 0
+            await event_notify.notify_orders_batch("c1", three)
+            assert calls["n"] == 1
+            six = [_order(f"b{i}", order_number=f"N{i}") for i in range(6)]
+            calls["n"] = 0
+            await event_notify.notify_orders_batch("c1", six)
+            assert calls["n"] == 1
+            calls["n"] = 0
+            await event_notify.notify_einvoice_batch("c1", [
+                {"id": "e1", "uuid": "u1", "supplier": {"name": "A"}, "grand_total": 1},
+                {"id": "e2", "uuid": "u2", "supplier": {"name": "B"}, "grand_total": 2},
+            ])
+            assert calls["n"] == 1
 
     asyncio.run(_run())
 
