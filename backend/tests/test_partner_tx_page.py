@@ -384,6 +384,192 @@ def test_other_company_is_404_and_page_size_caps():
     assert next(p for p in partners if p["_id"] == PID)["balance"] == 1.0
 
 
+def _route_gets(path):
+    import server
+    from starlette.routing import Match
+
+    scope = {
+        "type": "http",
+        "path": path,
+        "method": "GET",
+        "headers": [],
+        "query_string": b"",
+        "scheme": "http",
+        "root_path": "",
+        "server": ("test", 80),
+        "client": ("test", 5000),
+    }
+    hits = []
+
+    def walk(routes):
+        for route in routes or []:
+            nested = getattr(route, "routes", None)
+            if isinstance(route, APIRoute) and "GET" in (route.methods or set()):
+                match, _child = route.matches(scope)
+                if match == Match.FULL:
+                    hits.append(route.endpoint.__name__)
+            if nested and not isinstance(route, APIRoute):
+                walk(nested)
+
+    walk(server.app.routes)
+    return hits
+
+
+async def _collect_company(db, user, page_size=2, company_id=CID, **filters):
+    page = 1
+    ids = []
+    bodies = []
+    while page < 50:
+        body = await partner_tx_page.list_partner_transactions_for_user(
+            db, user, None, page=page, page_size=page_size, company_id=company_id, **filters,
+        )
+        bodies.append(body)
+        ids.extend(item["id"] for item in body["items"])
+        if not body["has_more"]:
+            return ids, bodies
+        page += 1
+    raise AssertionError("sayfa döngüsü kapanmadı")
+
+
+def test_all_partners_page_matches_legacy_list_and_does_not_write():
+    import server
+    from mysql_store import plan_exact_page
+
+    partners, txs = _seed_docs()
+    txs = copy.deepcopy(txs)
+    txs.append(_tx(
+        _id="orphan", partner_id="p-gone", date="2026-10-21",
+        created_at="2026-10-21T00:00:00Z", amount=99, description="silinmis ortak",
+    ))
+    txs.append(_tx(
+        _id="foreign-own", company_id=OTHER, partner_id="p-foreign", date="2026-10-21",
+        created_at="2026-10-21T00:00:00Z", amount=7, description="yabanci ortak",
+    ))
+    db = MemDB(copy.deepcopy(partners), copy.deepcopy(txs))
+    user_c1 = {"id": "u1", "company_ids": [CID], "active_company_id": CID}
+    user_c2 = {"id": "u2", "company_ids": [OTHER], "active_company_id": OTHER}
+    before_partners = copy.deepcopy(db.partners.docs)
+    before_txs = copy.deepcopy(db.partner_transactions.docs)
+    text = Path(__file__).resolve().parents[1].joinpath("server.py").read_text(encoding="utf-8")
+    old_at = text.index('@api_router.get("/banking/partners/transactions")\nasync def list_partner_transactions')
+    old_body = text[old_at:text.index("PARTNER_TX_LABELS", old_at)]
+    assert 'query["partner_id"] = {"$in": live_ids or ["__none__"]}' in old_body
+    assert ".to_list(20000)" in old_body
+    single_at = text.index('async def list_partner_transactions_page')
+    single_body = text[single_at:text.index("@api_router.get(\"/banking/partners\")", single_at)]
+    assert "partner_id," in single_body
+    assert "company_id=company_id" not in single_body
+    page_src = inspect.getsource(partner_tx_page.list_company_partner_transactions)
+    route_src = inspect.getsource(server.list_company_partner_transactions_page)
+    for src in (page_src, route_src):
+        assert "insert" not in src and "update" not in src and "accrue" not in src
+    plan = plan_exact_page(
+        "partner_transactions", {"company_id": CID}, partner_tx_page.TX_SORT, 0, None, partner_tx_page.FETCH_CAP, None,
+    )
+    assert plan is not None
+    where = plan["sql"].split("ORDER BY", 1)[0]
+    assert "company_id" in where and "partner_id" not in where and " OR " not in where
+    assert _route_gets("/api/banking/partners/transactions/page") == ["list_company_partner_transactions_page"]
+    assert _route_gets("/api/banking/partners/p1/transactions") == ["list_partner_transactions_page"]
+    assert _route_gets("/api/banking/partners/transactions") == ["list_partner_transactions"]
+
+    async def _go():
+        db.log.clear()
+        ids, bodies = await _collect_company(db, user_c1, page_size=2)
+        tx_finds = [entry for entry in db.log if entry[0] == "find" and entry[1] == "partner_transactions"]
+        partner_finds = [entry for entry in db.log if entry[0] == "find" and entry[1] == "partners"]
+        tail = await partner_tx_page.list_partner_transactions_for_user(
+            db, user_c1, None, page=99, page_size=2, company_id=CID,
+        )
+        wide = await partner_tx_page.list_partner_transactions_for_user(
+            db, user_c1, None, page=1, page_size=999, company_id=CID,
+        )
+        searched = await partner_tx_page.list_partner_transactions_for_user(
+            db, user_c1, None, page=1, page_size=50, company_id=CID, q="baska ortak",
+        )
+        one = await partner_tx_page.list_partner_transactions_for_user(
+            db, user_c1, PID, page=1, page_size=50,
+        )
+        foreign_page = await partner_tx_page.list_partner_transactions_for_user(
+            db, user_c2, None, page=1, page_size=50,
+        )
+        denied = None
+        try:
+            await partner_tx_page.list_partner_transactions_for_user(
+                db, user_c2, None, page=1, page_size=50, company_id=CID,
+            )
+        except HTTPException as exc:
+            denied = exc.status_code
+        active = await partner_tx_page.list_partner_transactions_for_user(
+            db, user_c1, None, page=1, page_size=50,
+        )
+        prev = server.db
+        server.db = db
+        try:
+            via_route = await server.list_company_partner_transactions_page(
+                page=1, page_size=2, date_from=None, date_to=None, q=None, type=None,
+                company_id=CID, user=user_c1,
+            )
+            legacy = await server.list_partner_transactions(company_id=CID, user=user_c1)
+        finally:
+            server.db = prev
+        return ids, bodies, tx_finds, partner_finds, tail, wide, searched, one, foreign_page, denied, active, via_route, legacy
+
+    (
+        ids, bodies, tx_finds, partner_finds, tail, wide, searched, one,
+        foreign_page, denied, active, via_route, legacy,
+    ) = _run(_go())
+    legacy_ids = [tx["id"] for tx in partner_tx_page.sort_partner_txs(legacy)]
+    assert {tx["id"] for tx in legacy} == set(legacy_ids)
+    assert ids == legacy_ids
+    assert ids[0] == "other-partner"
+    assert ids[1:] == EXPECTED_ORDER
+    assert "orphan" not in ids and "foreign" not in ids and "foreign-own" not in ids
+    flows = _legacy_flows(legacy)
+    assert flows == (EXPECTED_IN + 5.0, EXPECTED_OUT)
+    for body in bodies:
+        assert (body["period_in"], body["period_out"]) == flows
+        assert body["total"] == len(legacy_ids)
+        assert body["ledger"]["girisDisplay"] == flows[0]
+        assert body["ledger"]["cikisDisplay"] == flows[1]
+        assert body["ledger"]["ledger"] == round(flows[0] - flows[1], 2)
+        assert body["ledger"]["netMatchesCard"] is True
+        assert len(body["items"]) <= 2
+    assert tail["items"] == []
+    assert (tail["period_in"], tail["period_out"]) == flows
+    assert wide["page_size"] == 200
+    assert [item["id"] for item in wide["items"]] == legacy_ids
+    by_legacy = {tx["id"]: tx for tx in legacy}
+    for item in wide["items"]:
+        src = by_legacy[item["id"]]
+        assert item["balance_delta"] == src["balance_delta"]
+        assert item["side"] == src["side"]
+        assert item.get("partner_id") == src.get("partner_id")
+        assert item.get("source") == src.get("source")
+        assert item.get("source_id") == src.get("source_id")
+        assert item.get("expense_id") == src.get("expense_id")
+        assert item.get("source_type") == src.get("source_type")
+    src_line = next(item for item in wide["items"] if item["id"] == "src-line")
+    assert src_line["source"] == "expense" and src_line["balance_delta"] == -40.0 and src_line["side"] == "cikis"
+    assert [item["id"] for item in searched["items"]] == ["other-partner"]
+    assert searched["period_in"] == 5.0 and searched["period_out"] == 0.0
+    assert [item["id"] for item in one["items"]] == EXPECTED_ORDER
+    assert one["period_in"] == EXPECTED_IN and one["period_out"] == EXPECTED_OUT
+    assert "other-partner" not in {item["id"] for item in one["items"]}
+    assert [item["id"] for item in foreign_page["items"]] == ["foreign-own"]
+    assert denied == 403
+    assert [item["id"] for item in active["items"]] == legacy_ids
+    assert [item["id"] for item in via_route["items"]] == legacy_ids[:2]
+    assert via_route["period_in"] == flows[0] and via_route["total"] == len(legacy_ids)
+    assert tx_finds
+    assert all(entry[2] == {"company_id": CID} for entry in tx_finds)
+    assert all("partner_id" not in entry[2] and "$or" not in entry[2] and "$in" not in entry[2] for entry in tx_finds)
+    assert partner_finds and all(entry[2] == {"company_id": CID} for entry in partner_finds)
+    assert db.writes == []
+    assert db.partners.docs == before_partners
+    assert db.partner_transactions.docs == before_txs
+
+
 class _Req:
     def __init__(self, path, method="GET"):
         self.url = MagicMock(path=path)
@@ -681,6 +867,108 @@ def test_mysql_pushdown_on_and_off_match_legacy():
             for statement in pages:
                 where = statement.split("ORDER BY", 1)[0]
                 assert "partner_id" in where and "company_id" in where
+                assert " OR " not in where
+        else:
+            assert not [s for s in sqls if "ORDER BY" in s and "LIMIT" in s]
+    assert seen["0"] == seen["1"]
+    assert before_p["balance"] == after_p["balance"] == 1.0
+    assert before_tx["amount"] == after_tx["amount"]
+
+
+def test_mysql_all_partners_pushdown_on_and_off_match_legacy():
+    settings = _require_mysql()
+    import server
+    from mysql_store import MySQLDatabase
+
+    partners, txs = _seed_docs()
+    cid = "c-ppage-all-" + uuid.uuid4().hex[:10]
+    pid = "p-" + uuid.uuid4().hex[:8]
+    p2 = "p2-" + uuid.uuid4().hex[:8]
+    id_map = {PID: pid, P2: p2}
+
+    def _rewrite(doc):
+        row = copy.deepcopy(doc)
+        if row.get("company_id") == CID:
+            row["company_id"] = cid
+        for key in ("_id", "partner_id"):
+            if row.get(key) in id_map:
+                row[key] = id_map[row[key]]
+        return row
+
+    partners = [_rewrite(p) for p in partners if p["company_id"] == CID]
+    txs = [_rewrite(t) for t in txs if t["company_id"] == CID]
+    txs.append(_rewrite(_tx(
+        _id="orphan", partner_id="p-gone", date="2026-10-21",
+        created_at="2026-10-21T00:00:00Z", amount=99, description="silinmis ortak",
+    )))
+    user = {"id": "u-all", "company_ids": [cid], "active_company_id": cid}
+    live = {p["_id"] for p in partners}
+    own = [t for t in txs if t.get("partner_id") in live]
+    legacy_ids = [tx["_id"] for tx in partner_tx_page.sort_partner_txs(own)]
+    flows = _legacy_flows(own)
+
+    async def _go():
+        db = MySQLDatabase({**settings, "charset": "utf8mb4", "autocommit": True})
+        await db._ensure()
+        previous = os.environ.get("MYSQL_STORE_SQL_PUSHDOWN")
+        prev_db = server.db
+        try:
+            for doc in partners:
+                await db.partners.insert_one(doc)
+            for doc in txs:
+                await db.partner_transactions.insert_one(doc)
+            before_p = await db.partners.find_one({"_id": pid})
+            before_tx = await db.partner_transactions.find_one({"_id": txs[0]["_id"]})
+            server.db = db
+            os.environ["MYSQL_STORE_SQL_PUSHDOWN"] = "0"
+            legacy = await server.list_partner_transactions(company_id=cid, user=user)
+            results = []
+            for flag in ("0", "1"):
+                os.environ["MYSQL_STORE_SQL_PUSHDOWN"] = flag
+                sqls = []
+                orig = db.partner_transactions._fetch_rows
+
+                async def _wrap(sql, params, _orig=orig, _sqls=sqls):
+                    _sqls.append(" ".join(sql.split()))
+                    return await _orig(sql, params)
+
+                db.partner_transactions._fetch_rows = _wrap
+                try:
+                    ids, bodies = await _collect_company(db, user, page_size=2, company_id=cid)
+                finally:
+                    db.partner_transactions._fetch_rows = orig
+                results.append((flag, ids, bodies[0], sqls))
+            after_p = await db.partners.find_one({"_id": pid})
+            after_tx = await db.partner_transactions.find_one({"_id": txs[0]["_id"]})
+            return results, legacy, before_p, after_p, before_tx, after_tx
+        finally:
+            server.db = prev_db
+            if previous is None:
+                os.environ.pop("MYSQL_STORE_SQL_PUSHDOWN", None)
+            else:
+                os.environ["MYSQL_STORE_SQL_PUSHDOWN"] = previous
+            await db.partners.delete_many({"company_id": cid})
+            await db.partner_transactions.delete_many({"company_id": cid})
+            await db.close()
+
+    results, legacy, before_p, after_p, before_tx, after_tx = _run(_go())
+    assert [tx["id"] for tx in partner_tx_page.sort_partner_txs(legacy)] == legacy_ids
+    assert "orphan" not in {tx["id"] for tx in legacy}
+    seen = {}
+    for flag, ids, first, sqls in results:
+        assert ids == legacy_ids
+        assert ids == [tx["id"] for tx in partner_tx_page.sort_partner_txs(legacy)]
+        assert first["period_in"] == flows[0] == _legacy_flows(legacy)[0]
+        assert first["period_out"] == flows[1] == _legacy_flows(legacy)[1]
+        assert first["ledger"]["ledger"] == round(flows[0] - flows[1], 2)
+        seen[flag] = (ids, first["period_in"], first["period_out"])
+        if flag == "1":
+            pages = [s for s in sqls if "ORDER BY" in s and "LIMIT" in s]
+            assert pages, sqls
+            for statement in pages:
+                where = statement.split("ORDER BY", 1)[0]
+                assert "company_id" in where
+                assert "partner_id" not in where
                 assert " OR " not in where
         else:
             assert not [s for s in sqls if "ORDER BY" in s and "LIMIT" in s]

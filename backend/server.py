@@ -11673,6 +11673,32 @@ async def list_partner_ledgers(company_id: Optional[str] = None, user: dict = De
     return await partner_tx_page.list_company_ledgers_for_user(db, user, company_id)
 
 
+@api_router.get("/banking/partners/transactions/page")
+async def list_company_partner_transactions_page(
+    page: int = 1,
+    page_size: int = 50,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    type: Optional[str] = None,
+    company_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Şirketteki tüm ortakların hareketleri, sayfa sayfa. GET yazmaz."""
+    return await partner_tx_page.list_partner_transactions_for_user(
+        db,
+        user,
+        None,
+        company_id=company_id,
+        page=page,
+        page_size=page_size,
+        date_from=date_from or "",
+        date_to=date_to or "",
+        q=q or "",
+        tx_type=type or "",
+    )
+
+
 @api_router.get("/banking/partners/{partner_id}/transactions")
 async def list_partner_transactions_page(
     partner_id: str,

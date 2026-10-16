@@ -77,7 +77,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     loading: false,
   });
   const serverPaging = isPartnerTxServerPagingEnabled();
-  pagingCtx.current.active = serverPaging && Boolean(selectedPartnerId);
+  pagingCtx.current.active = serverPaging;
   pagingCtx.current.partnerId = selectedPartnerId || "";
   pagingCtx.current.companyId = companyId || "";
 
@@ -107,8 +107,10 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   const runServerLoad = useCallback(async (mode) => {
     const ctx = pagingCtx.current;
-    if (!ctx.active || !ctx.partnerId) return;
+    if (!ctx.active) return;
     if (mode === "append" && (!ctx.hasMore || ctx.loading)) return;
+    const partnerId = ctx.partnerId;
+    const companyForPage = ctx.companyId;
     const gen = ++serverGenRef.current;
     if (serverAbortRef.current) serverAbortRef.current.abort();
     const ctrl = new AbortController();
@@ -116,10 +118,12 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     ctx.loading = true;
     const pageSize = 50;
     const pull = async (page) => {
-      const { data } = await axios.get(
-        `${API_URL}/banking/partners/${ctx.partnerId}/transactions`,
-        { params: { page, page_size: pageSize }, signal: ctrl.signal },
-      );
+      const url = partnerId
+        ? `${API_URL}/banking/partners/${partnerId}/transactions`
+        : `${API_URL}/banking/partners/transactions/page`;
+      const params = { page, page_size: pageSize };
+      if (!partnerId && companyForPage) params.company_id = companyForPage;
+      const { data } = await axios.get(url, { params, signal: ctrl.signal });
       return data || {};
     };
     try {
@@ -202,7 +206,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     pagingCtx.current.hasMore = false;
     setServerItems([]);
     setServerHasMore(false);
-    if (selectedPartnerId) runServerLoad("reset");
+    runServerLoad("reset");
     return () => {
       if (serverAbortRef.current) serverAbortRef.current.abort();
     };
