@@ -13,6 +13,7 @@ import { ProductDetailModal } from "../components/ProductDetailModal";
 import { cachedList, productFilter, patchCached } from "../utils/dataSync";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { isProductsServerPagingEnabled } from "../utils/featureFlags";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
@@ -61,6 +62,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+
+const PRODUCT_PAGE_SIZES = [20, 50, 100];
+const EMPTY_PRODUCT_ROWS = [];
+
+function productTotalPages(total, pageSize) {
+  const size = Number(pageSize) > 0 ? Number(pageSize) : 1;
+  return Math.max(1, Math.ceil((Number(total) || 0) / size) || 1);
+}
 
 export default function StockBarcodePage() {
   const { activeCompany, addonOn, can } = useAuth();
@@ -162,6 +171,18 @@ export default function StockBarcodePage() {
 
   const productId = (p) => p?.id || p?._id;
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const serverPaging = isProductsServerPagingEnabled();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [summary, setSummary] = useState(null);
+  const [brand, setBrand] = useState("all");
+  const [warehouseId, setWarehouseId] = useState("all");
+  const [cardStatus, setCardStatus] = useState("all");
+  const [warehouses, setWarehouses] = useState([]);
+  const [labelCatalog, setLabelCatalog] = useState([]);
+  const [reloadTick, setReloadTick] = useState(0);
+  const serverGen = useRef(0);
 
   const saveInlinePrice = async (prod, field, nextPrice) => {
     const id = productId(prod);
@@ -299,6 +320,7 @@ export default function StockBarcodePage() {
       const r = await axios.delete(`${API_URL}/products/${prod.id || prod._id}`);
       toast.success(r.data.message || "Stok kartı silindi.");
       setProducts((prev) => prev.filter((p) => (p.id || p._id) !== (prod.id || prod._id)));
+      if (serverPaging) setReloadTick((n) => n + 1);
     } catch (err) {
       const detail = err.response?.data?.detail;
       toast.error(typeof detail === "string" ? detail : "Stok kartı silinemedi.");
@@ -316,8 +338,9 @@ export default function StockBarcodePage() {
       const created = r.data;
       toast.success(created.message || "Stok kartı kopyalandı.");
       if (created?.id || created?._id) {
-        setProducts((prev) => [created, ...prev.filter((p) => productId(p) !== productId(created))]);
         await patchCached("products", companyId, { [productId(created)]: created }).catch(() => {});
+        if (serverPaging) setReloadTick((n) => n + 1);
+        else setProducts((prev) => [created, ...prev.filter((p) => productId(p) !== productId(created))]);
         openDetail(created, "general");
       } else {
         loadProducts();
@@ -390,6 +413,10 @@ export default function StockBarcodePage() {
   });
 
   const loadProducts = useCallback(async (opts) => {
+    if (serverPaging) {
+      setReloadTick((n) => n + 1);
+      return;
+    }
     const silent = Boolean(opts && opts.silent);
     const gen = ++loadGenRef.current;
     try {
@@ -408,8 +435,81 @@ export default function StockBarcodePage() {
     } finally {
       if (!silent && gen === loadGenRef.current) setLoading(false);
     }
-  }, [activeCompany, filterCategory, loadCategories]);
-  useEffect(() => { loadProducts(); }, [loadProducts]);
+  }, [activeCompany, filterCategory, loadCategories, serverPaging]);
+  useEffect(() => { if (!serverPaging) loadProducts(); }, [loadProducts, serverPaging]);
+  const filterKey = `${companyId}|${searchTerm}|${filterCategory}|${stockF.status}|${stockF.b2b}|${stockF.sort}|${brand}|${warehouseId}|${cardStatus}|${pageSize}`;
+  const filterKeyRef = useRef(filterKey);
+  useEffect(() => {
+    if (!serverPaging) return;
+    if (filterKeyRef.current === filterKey) return;
+    filterKeyRef.current = filterKey;
+    setPage(1);
+  }, [serverPaging, filterKey]);
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    const gen = ++serverGen.current;
+    const ctrl = new AbortController();
+    let alive = true;
+    let snapped = false;
+    setLoading(true);
+    const params = {
+      company_id: companyId,
+      page,
+      page_size: pageSize,
+      category: filterCategory,
+      status: stockF.status,
+      b2b: stockF.b2b,
+      sort: stockF.sort,
+      active: cardStatus,
+    };
+    if (searchTerm) params.q = searchTerm;
+    if (brand && brand !== "all") params.brand = brand;
+    if (warehouseId && warehouseId !== "all") params.warehouse_id = warehouseId;
+    loadCategories();
+    axios.get(`${API_URL}/products/units?company_id=${companyId}`).then((r) => { if (alive && gen === serverGen.current) setUnits(r.data); }).catch(() => {});
+    axios.get(`${API_URL}/products`, { params, signal: ctrl.signal })
+      .then(({ data }) => {
+        if (!alive || gen !== serverGen.current) return;
+        const total = Number(data?.total) || 0;
+        const limit = productTotalPages(total, pageSize);
+        setServerTotal(total);
+        setSummary(data?.summary || null);
+        if (page > limit) {
+          snapped = true;
+          setPage((p) => Math.min(limit, Math.max(1, p)));
+          return;
+        }
+        setProducts(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch((err) => {
+        if (!alive || gen !== serverGen.current) return;
+        const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+        if (!canceled) toast.error("Ürünler yüklenemedi.");
+      })
+      .finally(() => {
+        if (!snapped && alive && gen === serverGen.current) setLoading(false);
+      });
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
+  }, [serverPaging, companyId, page, pageSize, filterCategory, stockF, searchTerm, brand, warehouseId, cardStatus, reloadTick, loadCategories]);
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    let alive = true;
+    axios.get(`${API_URL}/warehouses`, { params: { company_id: companyId } })
+      .then((r) => { if (alive) setWarehouses(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => { if (alive) setWarehouses([]); });
+    return () => { alive = false; };
+  }, [serverPaging, companyId]);
+  useEffect(() => {
+    if (!serverPaging || pageTab !== "labels") return undefined;
+    let alive = true;
+    cachedList("products", companyId, { onCached: (rows) => { if (alive) setLabelCatalog(rows || []); } })
+      .then((rows) => { if (alive) setLabelCatalog(rows || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [serverPaging, pageTab, companyId]);
   const refreshStockSilent = useCallback(() => loadProducts({ silent: true }), [loadProducts]);
   useDataRefresh(refreshStockSilent, { companyId: activeCompany?.id || activeCompany?._id, scopes: ["stock", "orders"] });
 
@@ -599,18 +699,44 @@ export default function StockBarcodePage() {
     }
   };
 
-  const filtered = useMemo(() => applyStockFilters(products.filter(p =>
+  const clientFiltered = useMemo(() => applyStockFilters(products.filter(p =>
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (p.barcode || "").includes(searchTerm)
   ), stockF), [products, searchTerm, stockF]);
+  const filtered = serverPaging ? products : clientFiltered;
   const allFilteredIds = useMemo(() => filtered.map(productId).filter(Boolean), [filtered]);
   const allFilteredSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selected.includes(id));
   const toggleSelectAllFiltered = () => setSelected(allFilteredSelected ? [] : allFilteredIds);
   const stockListResetKey = useMemo(() => `${filterCategory}|${searchTerm}|${JSON.stringify(stockF)}`, [filterCategory, searchTerm, stockF]);
-  const { visible: pagedProducts, hasMore: productsHasMore, sentinelRef: productsSentinelRef } = useInfiniteRows(filtered, { resetKey: stockListResetKey });
-  const stockValue = useMemo(() => filtered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [filtered]);
-  const criticalCount = useMemo(() => products.filter((p) => isCriticalStock(p)).length, [products]);
+  const { visible: pagedProducts, hasMore: productsHasMore, sentinelRef: productsSentinelRef } = useInfiniteRows(serverPaging ? EMPTY_PRODUCT_ROWS : clientFiltered, { resetKey: stockListResetKey });
+  const visibleProducts = serverPaging ? products : pagedProducts;
+  const clientStockValue = useMemo(() => clientFiltered.reduce((t, p) => t + (p.track_stock === false ? 0 : (p.stock_quantity || 0) * (p.purchase_price || 0)), 0), [clientFiltered]);
+  const clientCriticalCount = useMemo(() => products.filter((p) => isCriticalStock(p)).length, [products]);
+  const stockValue = serverPaging ? Number(summary?.stock_value || 0) : clientStockValue;
+  const criticalCount = serverPaging ? Number(summary?.critical_count || 0) : clientCriticalCount;
+  const resultCount = serverPaging ? serverTotal : clientFiltered.length;
+  const totalPages = productTotalPages(serverTotal, pageSize);
+  const loadExportRows = useCallback(async () => {
+    const params = {
+      company_id: companyId,
+      page: 1,
+      page_size: pageSize,
+      category: filterCategory,
+      status: stockF.status,
+      b2b: stockF.b2b,
+      sort: stockF.sort,
+      active: cardStatus,
+      export: 1,
+    };
+    if (searchTerm) params.q = searchTerm;
+    if (brand && brand !== "all") params.brand = brand;
+    if (warehouseId && warehouseId !== "all") params.warehouse_id = warehouseId;
+    const { data } = await axios.get(`${API_URL}/products`, { params });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (data?.truncated) toast.warning(`Excel ilk ${items.length} ürünü içeriyor.`);
+    return items;
+  }, [companyId, pageSize, filterCategory, stockF, searchTerm, brand, warehouseId, cardStatus]);
 
   return (
     <div className="space-y-6" data-testid="stock-page">
@@ -791,11 +917,11 @@ export default function StockBarcodePage() {
           onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }}
         />
       )}
-      {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
+      {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={serverPaging ? labelCatalog : products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
       <ProductProfitPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
-      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={filtered.length} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} onReorderCritical={() => openReorder()} />
+      <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={resultCount} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} onReorderCritical={() => openReorder()} paging={serverPaging} zeroCount={serverPaging ? Number(summary?.zero_count || 0) : undefined} negativeCount={serverPaging ? Number(summary?.negative_count || 0) : undefined} quantityTotal={serverPaging ? Number(summary?.quantity_total || 0) : undefined} loadRows={serverPaging ? loadExportRows : undefined} brand={brand} setBrand={setBrand} brands={summary?.brands || []} warehouseId={warehouseId} setWarehouseId={setWarehouseId} warehouses={warehouses} cardStatus={cardStatus} setCardStatus={setCardStatus} />
 
       {selected.length > 0 && (
         <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="stock-bulk-bar">
@@ -845,7 +971,10 @@ export default function StockBarcodePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {pagedProducts.map((prod) => {
+              {serverPaging && visibleProducts.length === 0 && !loading && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-400" data-testid="stock-empty">Filtreye uyan ürün yok.</td></tr>
+              )}
+              {visibleProducts.map((prod) => {
                 const isCritical = isCriticalStock(prod);
                 return (
                   <tr key={prod.id || prod._id} className={`hover:bg-slate-50/70 transition ${selected.includes(productId(prod)) ? "bg-indigo-50/40" : ""}`} data-testid={`prod-row-${prod.sku}`}>
@@ -1024,7 +1153,23 @@ export default function StockBarcodePage() {
             </tbody>
           </table>
         </div>
-        {productsHasMore && (
+        {serverPaging && (
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs px-4 py-3 border-t border-slate-100" data-testid="stock-pager">
+            <span className="text-slate-500">Sayfa {page} / {totalPages}</span>
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 text-slate-600">
+                <span className="font-semibold text-slate-500">Sayfa</span>
+                <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white" data-testid="stock-page-size">
+                  {PRODUCT_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <button type="button" disabled={loading || page <= 1} onClick={() => setPage((p) => Math.min(totalPages, Math.max(1, p - 1)))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="stock-page-prev">Önceki</button>
+              <span data-testid="stock-page-indicator" className="font-semibold text-slate-700">{page} / {totalPages}</span>
+              <button type="button" disabled={loading || page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, Math.max(1, p + 1)))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="stock-page-next">Sonraki</button>
+            </div>
+          </div>
+        )}
+        {!serverPaging && productsHasMore && (
           <div ref={productsSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="stock-load-more">
             Daha fazla stok kartı yükleniyor…
           </div>

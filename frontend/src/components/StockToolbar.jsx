@@ -60,16 +60,35 @@ export const applyStockFilters = (products, f) => {
   return cmp ? [...list].sort(cmp) : list;
 };
 
-export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f, setF, search, setSearch, count, stockValue, criticalCount, rows = [], onReorderCritical }) => {
+export const StockToolbar = ({
+  categories, filterCategory, setFilterCategory, f, setF, search, setSearch, count, stockValue, criticalCount, rows = [], onReorderCritical,
+  paging = false, zeroCount, negativeCount, quantityTotal, loadRows,
+  brand = "all", setBrand, brands = [],
+  warehouseId = "all", setWarehouseId, warehouses = [],
+  cardStatus = "all", setCardStatus,
+}) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
-  const active = (filterCategory !== "all" ? 1 : 0) + (f.status !== "all" ? 1 : 0) + (f.b2b !== "all" ? 1 : 0) + (search ? 1 : 0);
+  const statuses = paging ? [...STATUS, ["zero", "Stok Sıfır"], ["negative", "Eksi Stok"]] : STATUS;
+  const brandOptions = !brand || brand === "all" || brands.includes(brand) ? brands : [brand, ...brands];
+  const active = (filterCategory !== "all" ? 1 : 0) + (f.status !== "all" ? 1 : 0) + (f.b2b !== "all" ? 1 : 0) + (search ? 1 : 0)
+    + (paging && brand && brand !== "all" ? 1 : 0)
+    + (paging && warehouseId && warehouseId !== "all" ? 1 : 0)
+    + (paging && cardStatus && cardStatus !== "all" ? 1 : 0);
+  const clearFilters = () => {
+    setFilterCategory("all");
+    setSearch("");
+    setF(STOCK_FILTER_DEFAULTS);
+    setBrand?.("all");
+    setWarehouseId?.("all");
+    setCardStatus?.("all");
+  };
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3 space-y-2" data-testid="stock-toolbar">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[220px]">
+        <div className="relative flex-1 min-w-[240px]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input type="text" placeholder="Ürün adı, SKU veya barkod ile ara…" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500" data-testid="stock-search-input" />
+          <input type="text" placeholder="Ürün adı, SKU veya barkod ile ara…" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full min-w-[240px] pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500" data-testid="stock-search-input" />
           {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="stock-search-clear"><X className="w-3.5 h-3.5" /></button>}
         </div>
         <div className="flex items-center gap-1.5"><Tag className="w-3.5 h-3.5 text-slate-400" />
@@ -79,8 +98,8 @@ export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f,
           </select>
         </div>
         <div className="flex items-center gap-1.5"><PackageCheck className="w-3.5 h-3.5 text-slate-400" />
-          <select value={f.status} onChange={(e) => set("status", e.target.value)} className={`${sel} ${f.status === "critical" || f.status === "out" ? "border-rose-300 bg-rose-50 text-rose-700 font-semibold" : f.status !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-status-select">
-            {STATUS.map(([k, l]) => <option key={k} value={k}>{`${l}${k === "critical" && criticalCount ? ` (${criticalCount})` : ""}`}</option>)}
+          <select value={f.status} onChange={(e) => set("status", e.target.value)} className={`${sel} ${f.status === "critical" || f.status === "out" || f.status === "negative" || f.status === "zero" ? "border-rose-300 bg-rose-50 text-rose-700 font-semibold" : f.status !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-status-select">
+            {statuses.map(([k, l]) => <option key={k} value={k}>{`${l}${k === "critical" && criticalCount ? ` (${criticalCount})` : ""}${k === "zero" && zeroCount ? ` (${zeroCount})` : ""}${k === "negative" && negativeCount ? ` (${negativeCount})` : ""}`}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-1.5"><Globe className="w-3.5 h-3.5 text-slate-400" />
@@ -89,15 +108,37 @@ export const StockToolbar = ({ categories, filterCategory, setFilterCategory, f,
         <div className="flex items-center gap-1.5"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
           <select value={f.sort} onChange={(e) => set("sort", e.target.value)} className={sel} data-testid="stock-sort-select">{SORT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         </div>
+        {paging && (
+          <select value={brand || "all"} onChange={(e) => setBrand?.(e.target.value)} className={`${sel} ${brand && brand !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-brand-select">
+            <option value="all">Tüm Markalar</option>
+            {brandOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        )}
+        {paging && (
+          <select value={warehouseId || "all"} onChange={(e) => setWarehouseId?.(e.target.value)} className={`${sel} ${warehouseId && warehouseId !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-warehouse-select">
+            <option value="all">Tüm Depolar</option>
+            {warehouses.map((w) => {
+              const id = w.id || w._id;
+              return <option key={id} value={id}>{w.name || w.code || id}</option>;
+            })}
+          </select>
+        )}
+        {paging && (
+          <select value={cardStatus || "all"} onChange={(e) => setCardStatus?.(e.target.value)} className={`${sel} ${cardStatus && cardStatus !== "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : ""}`} data-testid="stock-active-select">
+            <option value="all">Kart: Tümü</option>
+            <option value="active">Aktif</option>
+            <option value="inactive">Pasif</option>
+          </select>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        {active > 0 && <button onClick={() => { setFilterCategory("all"); setSearch(""); setF(STOCK_FILTER_DEFAULTS); }} className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="stock-filters-clear">Filtreleri temizle ({active})</button>}
+        {active > 0 && <button onClick={clearFilters} className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="stock-filters-clear">Filtreleri temizle ({active})</button>}
         {criticalCount > 0 && onReorderCritical && (
           <button type="button" onClick={onReorderCritical} className="px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 font-semibold border border-amber-200 hover:bg-amber-100 flex items-center gap-1" data-testid="stock-reorder-btn">
             <ShoppingCart className="w-3.5 h-3.5" /> Kritik stok siparişi ({criticalCount})
           </button>
         )}
-        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" /><div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün · Stok değeri (alış) <b className="text-slate-900">{fmtMoney(stockValue, "TRY")}</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}</div></div>
+        <div className="ml-auto flex items-center gap-3 text-slate-500"><ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" loadRows={loadRows} /><div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün{quantityTotal != null && <> · <b className="text-slate-900">{quantityTotal}</b> adet</>} · Stok değeri (alış) <b className="text-slate-900">{fmtMoney(stockValue, "TRY")}</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}{zeroCount > 0 && <> · <button onClick={() => set("status", "zero")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-zero-link">{zeroCount} sıfır</button></>}{negativeCount > 0 && <> · <button onClick={() => set("status", "negative")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-negative-link">{negativeCount} eksi</button></>}</div></div>
       </div>
     </div>
   );

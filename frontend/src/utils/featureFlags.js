@@ -68,3 +68,21 @@ export function isOrdersServerPagingEnabled() {
 
 /** İstenen ad: varsayılan kapalı. Açık mı sorusu isOrdersServerPagingEnabled(). */
 export const ORDERS_SERVER_PAGING = false;
+
+export const PRODUCTS_PAGING_STORAGE_KEY = "tk_ff_products_paging";
+
+/**
+ * Stok / ürün listesini sunucuda sayfala.
+ * localStorage "tk_ff_products_paging" === "1" ise açık. Aksi halde kapalı.
+ */
+export function isProductsServerPagingEnabled() {
+  try {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(PRODUCTS_PAGING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** İstenen ad: varsayılan kapalı. Açık mı sorusu isProductsServerPagingEnabled(). */
+export const PRODUCTS_SERVER_PAGING = false;
