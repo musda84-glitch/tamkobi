@@ -16,6 +16,7 @@ import { fmtDate, fmtMoney, formatTrQty } from "../utils/money";
 import { TX_NO_OVERFLOW_CLASS, TX_WRAP_CLASS } from "./TxMobileCard";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { DocumentFormModal } from "./DocumentFormModal";
+import { B2BCardPay } from "./B2BCardPay";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -757,7 +758,7 @@ function InvoiceLinesBody({ state, invoiceNumber }) {
   );
 }
 
-export const StatementList = ({ invoices, company, balance, token }) => {
+export const StatementList = ({ invoices, company, balance, token, cardPayment }) => {
   const bal = balance || 0;
   const openRef = useRef({});
   const cacheRef = useRef({});
@@ -800,7 +801,7 @@ export const StatementList = ({ invoices, company, balance, token }) => {
 
   return (
     <div className="bg-white rounded-2xl border overflow-hidden" data-testid="b2b-statement">
-      <div className="p-3 border-b flex flex-col sm:flex-row sm:justify-between gap-1 text-sm"><b>Faturalarım</b><span className="text-xs sm:text-sm">Güncel bakiye: <b className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b></span></div>
+      <div className="p-3 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm"><b>Faturalarım</b><span className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">Güncel bakiye: <b className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b>{cardPayment?.enabled ? <B2BCardPay token={token} balance={bal} cardPayment={cardPayment} /> : null}</span></div>
       {invoices.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Fatura yok.</div>}
       <div className={`md:hidden divide-y ${TX_NO_OVERFLOW_CLASS}`}>
         {invoices.map((i) => {

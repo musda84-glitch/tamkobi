@@ -32,6 +32,7 @@ import { VposSettingsPanel } from "../components/VposSettingsPanel";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, stageToneLabel, slugStageKey } from "../utils/projectStages";
 import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } from "../utils/workParks";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { B2BCardSettingsFields } from "../components/B2BCardSettingsFields";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
@@ -686,9 +687,17 @@ export const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
   const [pwd, setPwd] = useState(null);
+  const [vposReady, setVposReady] = useState(false);
   const savePwd = async (e) => { e.preventDefault(); if ((pwd.password || "").length < 6) return toast.error("Şifre en az 6 karakter olmalı."); try { await axios.post(`${API_URL}/contacts/${pwd.c.id}/b2b-access`, { enabled: true, discount: pwd.c.b2b_discount, password: pwd.password, login_email: pwd.login_email, base_url: window.location.origin }); toast.success(`${pwd.c.name} için B2B giriş bilgileri kaydedildi.`); setPwd(null); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const load = useCallback(() => axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => setD(r.data)).catch(() => toast.error("B2B ayarları yüklenemedi.")), [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/vpos/collect-options`, { params: { company_id: companyId } })
+      .then((r) => { if (!cancelled) setVposReady(!!r.data?.enabled); })
+      .catch(() => { if (!cancelled) setVposReady(false); });
+    return () => { cancelled = true; };
+  }, [companyId]);
   if (!d) return null;
   const st = d.settings;
   const set = (k, v) => setD({ ...d, settings: { ...st, [k]: v } });
@@ -717,6 +726,9 @@ export const B2BSettings = ({ companyId }) => {
           <div><label className="block font-semibold mb-1">Varsayılan B2B indirimi %</label><MoneyInput value={st.default_discount} onChange={(n) => set("default_discount", n ?? 0)} className="w-full bg-slate-50 border rounded-lg p-2 font-bold" data-testid="b2b-set-discount" /></div>
           <div><label className="block font-semibold mb-1">Minimum sipariş (₺)</label><MoneyInput value={st.min_order_amount} onChange={(n) => set("min_order_amount", n ?? 0)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="b2b-set-min" /></div>
           <div><label className="block font-semibold mb-1">Karşılama notu</label><input value={st.welcome_note || ""} onChange={(e) => set("welcome_note", e.target.value)} placeholder="Hoş geldiniz…" className="w-full bg-slate-50 border rounded-lg p-2" /></div>
+        </div>
+        <div className="border-t pt-3">
+          <B2BCardSettingsFields settings={st} onChange={set} vposReady={vposReady} showRequired testIdPrefix="b2b-card" />
         </div>
         <div className="flex justify-end gap-2 border-t pt-3"><button onClick={() => save(true)} className="px-3 py-2 border rounded-lg font-semibold" data-testid="b2b-save-apply">Kaydet + İndirimi Tüm Müşterilere Uygula</button><button onClick={() => save(false)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="b2b-save">Kaydet</button></div>
       </div>

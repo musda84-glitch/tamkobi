@@ -11,6 +11,7 @@ import inspect
 import secrets
 import logging
 from datetime import datetime, timezone, timedelta, date
+from decimal import Decimal, ROUND_HALF_UP
 from calendar import monthrange
 from typing import List, Optional, Dict, Any
 
@@ -1280,12 +1281,167 @@ async def put_company_privacy(company_id: str, req: Dict[str, Any], request: Req
     c = await db.companies.find_one({"_id": company_id})
     return {"status": "success", "message": "Yönetim paneli erişimine izin verildi." if allow else "Yönetim panelinden hesaba giriş kapatıldı.", **saas_extras.privacy_view(c)}
 
-B2B_DEFAULTS = {"enabled": True, "login_method": "both", "allow_ai_cart": True, "default_discount": 0.0, "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True, "show_installments": True, "min_order_amount": 0.0, "welcome_note": ""}
-# Cari kartından özelleştirilebilir portal özellikleri (şirket varsayılanını ezer).
+B2B_DEFAULTS = {
+    "enabled": True, "login_method": "both", "allow_ai_cart": True, "default_discount": 0.0,
+    "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True,
+    "show_installments": True, "min_order_amount": 0.0, "welcome_note": "",
+    "card_payment_enabled": False, "card_max_installment": 1, "card_commission_payer": "seller",
+    "card_commission_rate": 0.0,
+    # Siparişte zorunlu ödeme PR-4b'ye kadar kullanılmaz.
+    "card_payment_required": False,
+}
+# Cari kartından özelleştirilebilir portal özellikleri (şirket varsayılanını ezer). null = şirket varsayılanı.
 CONTACT_B2B_SETTING_KEYS = (
     "allow_orders", "show_prices", "show_stock", "show_statement",
     "show_installments", "allow_ai_cart", "min_order_amount", "welcome_note",
+    "card_payment_enabled", "card_max_installment", "card_commission_payer", "card_commission_rate",
 )
+_CARD_PAYERS = ("seller", "buyer")
+
+
+def _b2b_bool(value: Any, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise HTTPException(status_code=400, detail=f"{label} doğru veya yanlış olmalı.")
+
+
+def _b2b_card_installment(value: Any) -> int:
+    if isinstance(value, bool):
+        raise HTTPException(status_code=400, detail="Taksit sayısı 1 ile 12 arasında olmalı.")
+    if isinstance(value, float) and not float(value).is_integer():
+        raise HTTPException(status_code=400, detail="Taksit sayısı 1 ile 12 arasında olmalı.")
+    if isinstance(value, str):
+        text = value.strip()
+        if not re.fullmatch(r"\d{1,2}", text):
+            raise HTTPException(status_code=400, detail="Taksit sayısı 1 ile 12 arasında olmalı.")
+        value = int(text)
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Taksit sayısı 1 ile 12 arasında olmalı.") from exc
+    if number < 1 or number > 12:
+        raise HTTPException(status_code=400, detail="Taksit sayısı 1 ile 12 arasında olmalı.")
+    return number
+
+
+def _b2b_card_payer(value: Any) -> str:
+    payer = str(value or "").strip().lower()
+    if payer not in _CARD_PAYERS:
+        raise HTTPException(status_code=400, detail="Komisyon ödeyeni seller veya buyer olmalı.")
+    return payer
+
+
+def _b2b_card_rate(value: Any) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        raise HTTPException(status_code=400, detail="Komisyon oranı 0 ile 20 arasında olmalı.")
+    text = str(value).strip().replace(",", ".")
+    try:
+        dec = Decimal(text)
+        quantized = dec.quantize(Decimal("0.01"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Komisyon oranı 0 ile 20 arasında olmalı.") from exc
+    if dec != quantized:
+        raise HTTPException(status_code=400, detail="Komisyon oranı en fazla 2 hane olmalı.")
+    if quantized < 0 or quantized > 20:
+        raise HTTPException(status_code=400, detail="Komisyon oranı 0 ile 20 arasında olmalı.")
+    return float(quantized)
+
+
+def _coerce_b2b_setting(key: str, value: Any) -> Any:
+    if key in ("card_payment_enabled", "card_payment_required"):
+        return _b2b_bool(value, "Kartla ödeme")
+    if key == "card_max_installment":
+        return _b2b_card_installment(value)
+    if key == "card_commission_payer":
+        return _b2b_card_payer(value)
+    if key == "card_commission_rate":
+        return _b2b_card_rate(value)
+    return value
+
+
+def merge_contact_b2b_settings(current: Optional[dict], incoming: Optional[dict]) -> dict:
+    """Cari portal ayarı. null şirket varsayılanına döner."""
+    cur = dict(current or {})
+    incoming = incoming or {}
+    for key in CONTACT_B2B_SETTING_KEYS:
+        if key not in incoming:
+            continue
+        value = incoming[key]
+        cur[key] = None if value is None else _coerce_b2b_setting(key, value)
+    return cur
+
+
+def company_b2b_settings_from_request(req: Optional[dict]) -> dict:
+    req = req or {}
+    allowed = {}
+    for key in B2B_DEFAULTS:
+        if key not in req:
+            continue
+        allowed[key] = _coerce_b2b_setting(key, req[key])
+    return {**B2B_DEFAULTS, **allowed}
+
+
+def effective_card_max_installment(settings: Optional[dict], cfg: Optional[dict]) -> int:
+    """Etkin taksit = min(ayar, vpos max). Taksit kapalıysa 1."""
+    settings = settings or {}
+    try:
+        setting = int(settings.get("card_max_installment") or 1)
+    except (TypeError, ValueError):
+        setting = 1
+    if setting < 1:
+        setting = 1
+    if setting > 12:
+        setting = 12
+    cfg = cfg or {}
+    if not cfg or bool(cfg.get("no_installment")):
+        return 1
+    try:
+        limit = int(cfg.get("max_installment") or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit < 1:
+        return 1
+    return min(setting, limit)
+
+
+def b2b_card_payment_view(settings: Optional[dict], cfg: Optional[dict]) -> Dict[str, Any]:
+    """Portal ayarı. Sır, hesap kimliği ve iç maliyet yok."""
+    settings = settings or {}
+    cfg = cfg or {}
+    active = bool(cfg.get("enabled")) and bool(str(cfg.get("account_id") or "").strip())
+    payer = str(settings.get("card_commission_payer") or "seller")
+    if payer not in _CARD_PAYERS:
+        payer = "seller"
+    try:
+        rate = float(settings.get("card_commission_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    rate = float(Decimal(str(rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    return {
+        "enabled": bool(settings.get("card_payment_enabled")) and active,
+        "max_installment": effective_card_max_installment(settings, cfg),
+        "commission_payer": payer,
+        "commission_rate": rate,
+        "family": (cfg.get("family") or "") if cfg else "",
+        "bank_label": (cfg.get("bank_label") or "") if cfg else "",
+    }
+
+
+def b2b_card_quote_amounts(base_text: str, payer: str, rate: float) -> Dict[str, str]:
+    """Sunucu komisyonu. Alıcıda charge = round(base * (1 + oran/100), 2)."""
+    base = Decimal(base_text)
+    rate_dec = Decimal(str(rate or 0)).quantize(Decimal("0.01"))
+    if payer == "buyer" and rate_dec > 0:
+        charge = (base * (Decimal(1) + (rate_dec / Decimal(100)))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        commission = (charge - base).quantize(Decimal("0.01"))
+    else:
+        charge = base
+        commission = Decimal("0.00")
+    return {
+        "base_amount": f"{base:.2f}",
+        "commission_amount": f"{commission:.2f}",
+        "charge_amount": f"{charge:.2f}",
+    }
 
 
 def resolve_b2b_settings(company: Optional[dict] = None, contact: Optional[dict] = None) -> Dict[str, Any]:
@@ -1322,19 +1478,22 @@ def contact_b2b_portal_view(contact: dict, company: Optional[dict] = None) -> Di
 
 
 @api_router.get("/companies/{company_id}/b2b-settings")
-async def get_b2b_settings(company_id: str):
+async def get_b2b_settings(company_id: str, user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     c = await db.companies.find_one({"_id": company_id}) or {}
     settings = {**B2B_DEFAULTS, **(c.get("b2b_settings") or {})}
     customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone"), "tax_number_or_id": x.get("tax_number_or_id"), "b2b_login_email": x.get("b2b_login_email"), "has_password": bool(x.get("b2b_password_hash")), "b2b_last_login": x.get("b2b_last_login"), "b2b_portal_settings": x.get("b2b_portal_settings") or {}} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
     return {"settings": settings, "customers": customers, "active_count": sum(1 for x in customers if x["b2b_enabled"])}
 
 @api_router.put("/companies/{company_id}/b2b-settings")
-async def put_b2b_settings(company_id: str, req: Dict[str, Any]):
-    allowed = {k: req[k] for k in B2B_DEFAULTS if k in req}
-    await db.companies.update_one({"_id": company_id}, {"$set": {"b2b_settings": {**B2B_DEFAULTS, **allowed}}})
-    if req.get("apply_discount_to_all") and "default_discount" in allowed:
-        await db.contacts.update_many({"company_id": company_id, "b2b_enabled": True}, {"$set": {"b2b_discount": float(allowed["default_discount"])}})
-    return {"status": "success", "settings": {**B2B_DEFAULTS, **allowed}}
+async def put_b2b_settings(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
+    await tenant_access.require_company_admin(user, company_id)
+    stored = company_b2b_settings_from_request(req)
+    await db.companies.update_one({"_id": company_id}, {"$set": {"b2b_settings": stored}})
+    if req.get("apply_discount_to_all") and "default_discount" in req:
+        await db.contacts.update_many({"company_id": company_id, "b2b_enabled": True}, {"$set": {"b2b_discount": float(stored["default_discount"])}})
+    return {"status": "success", "settings": stored}
 
 EINVOICE_PROVIDERS = {
     "n11faturam": {
@@ -4738,11 +4897,7 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any], user: dict = 
     if req.get("login_email"):
         upd["b2b_login_email"] = str(req["login_email"]).strip().lower()
     if isinstance(req.get("settings"), dict):
-        cur = dict(c.get("b2b_portal_settings") or {})
-        for k in CONTACT_B2B_SETTING_KEYS:
-            if k in req["settings"]:
-                cur[k] = req["settings"][k]
-        upd["b2b_portal_settings"] = cur
+        upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
     await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
     base = (req.get("base_url") or "").rstrip("/")
     refreshed = await db.contacts.find_one({"_id": contact_id}) or {**c, **upd}
@@ -4783,11 +4938,7 @@ async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dic
     if req.get("regenerate"):
         upd["b2b_token"] = token = uuid.uuid4().hex
     if isinstance(req.get("settings"), dict):
-        cur = dict(c.get("b2b_portal_settings") or {})
-        for k in CONTACT_B2B_SETTING_KEYS:
-            if k in req["settings"]:
-                cur[k] = req["settings"][k]
-        upd["b2b_portal_settings"] = cur
+        upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
     await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
     refreshed = await db.contacts.find_one({"_id": contact_id}) or {**c, **upd}
     company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
@@ -5780,11 +5931,149 @@ async def b2b_portal(token: str):
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
     ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
+    vpos_cfg = await db.vpos_configs.find_one({"company_id": c["company_id"]})
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city"), "has_password": bool(c.get("b2b_password_hash"))},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name"), "price_decimals": clamp_price_decimals(company.get("price_decimals", 2))},
             "products": products, "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
-            "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart},
+            "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart, "card_payment": b2b_card_payment_view(bs, vpos_cfg)},
             "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS]}
+
+
+async def _b2b_portal_ready(token: str) -> tuple:
+    """Token ile açık portal carisi. Kapalı portal veya pasif cari 404."""
+    c = await _b2b_contact(token)
+    company = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    bs = resolve_b2b_settings(company, c)
+    if not bs.get("enabled", True):
+        raise HTTPException(status_code=404, detail="B2B portalı şu an kapalı.")
+    cfg = await db.vpos_configs.find_one({"company_id": c["company_id"]})
+    return c, company, bs, cfg
+
+
+def _b2b_open_balance(contact: dict) -> Decimal:
+    raw = contact.get("balance")
+    if raw in (None, ""):
+        return Decimal("0.00")
+    try:
+        return Decimal(str(raw)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return Decimal("0.00")
+
+
+def _b2b_quote_installment(value: Any, limit: int) -> int:
+    if value in (None, ""):
+        number = 1
+    else:
+        number = _b2b_card_installment(value)
+    if number > int(limit or 1):
+        raise HTTPException(status_code=400, detail="Taksit sayısı izin verilen üst sınırı aşıyor.")
+    return number
+
+
+@api_router.get("/public/b2b/{token}/card-quote")
+async def b2b_card_quote(token: str, amount: str = "", installment: Optional[int] = None):
+    """Komisyon sunucuda hesaplanır. Kart verisi yok."""
+    c, _company, bs, cfg = await _b2b_portal_ready(token)
+    import vpos.api as vpos_api
+    base = vpos_api._parse_amount(amount)
+    limit = effective_card_max_installment(bs, cfg)
+    chosen = _b2b_quote_installment(installment, limit)
+    payer = str(bs.get("card_commission_payer") or "seller")
+    if payer not in _CARD_PAYERS:
+        payer = "seller"
+    try:
+        rate = float(bs.get("card_commission_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    quoted = b2b_card_quote_amounts(base, payer, rate)
+    quoted["installment"] = chosen
+    return quoted
+
+
+@api_router.post("/public/b2b/{token}/card-payments")
+async def b2b_card_payment_start(token: str, req: Dict[str, Any], request: Request):
+    """Cari açık bakiyesine kartlı tahsilat. Kart verisi kabul edilmez."""
+    req = req or {}
+    c, _company, bs, cfg = await _b2b_portal_ready(token)
+    legal_docs.require_acceptance(req)
+    if not bs.get("card_payment_enabled"):
+        raise HTTPException(status_code=403, detail="Kartla ödeme kapalı.")
+    if not cfg or not cfg.get("enabled") or not str(cfg.get("account_id") or "").strip():
+        raise HTTPException(status_code=400, detail="Etkin bir sanal POS ayarı gerekli.")
+    balance = _b2b_open_balance(c)
+    if balance <= 0:
+        raise HTTPException(status_code=400, detail="Açık bakiye yok")
+    import bank_guard
+    import vpos.api as vpos_api
+    base = vpos_api._parse_amount(req.get("amount"))
+    if Decimal(base) > balance:
+        raise HTTPException(status_code=400, detail="Tutar açık bakiyeyi aşamaz.")
+    limit = effective_card_max_installment(bs, cfg)
+    installment = _b2b_quote_installment(req.get("installment"), limit)
+    payer = str(bs.get("card_commission_payer") or "seller")
+    if payer not in _CARD_PAYERS:
+        payer = "seller"
+    try:
+        rate = float(bs.get("card_commission_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    quoted = b2b_card_quote_amounts(base, payer, rate)
+    if str(cfg.get("mode") or "") == "test" and Decimal(quoted["charge_amount"]) > vpos_api.TEST_AMOUNT_MAX:
+        raise HTTPException(status_code=400, detail="Test tutarı 1000,00 TL'yi aşamaz.")
+    vpos_api._open_family(cfg)
+    account_id = str(cfg.get("account_id") or "").strip()
+    account = await bank_guard.assert_collection_allowed(db, account_id)
+    if not account or str(account.get("company_id") or "") != str(c.get("company_id") or "") or str(account.get("type") or "") not in vpos_api.POS_ACCOUNT_TYPES:
+        raise HTTPException(status_code=400, detail="Bağlı POS hesabı seçin.")
+    if not vpos_api.allow_b2b_start(str(c.get("_id") or "")):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
+    runtime = await vpos_api._runtime_config(cfg)
+    tax = re.sub(r"\D", "", str(c.get("tax_number_or_id") or ""))
+    identity = tax if len(tax) == 11 else ""
+    email = str(c.get("email") or "").strip() or "odeme@example.com"
+    name = str(c.get("name") or "").strip() or "Cari"
+    description = vpos_api._clip_text(req.get("description"), 160)
+    return await vpos_api._begin_payment(
+        request, {}, cfg, runtime,
+        company_id=str(c.get("company_id") or ""),
+        amount=quoted["charge_amount"],
+        purpose="b2b_collection",
+        contact_id=str(c.get("_id") or ""),
+        installment=installment,
+        description=description,
+        email=email,
+        name=name,
+        phone=str(c.get("phone") or ""),
+        address=str(c.get("address") or ""),
+        basket_label=description or "Cari bakiye ödemesi",
+        identity_number=identity,
+        extra={
+            "ledger_amount": quoted["base_amount"],
+            "commission_amount": quoted["commission_amount"],
+            "commission_payer": payer,
+            "source": "b2b_portal",
+        },
+        portal_token=str(c.get("b2b_token") or token),
+    )
+
+
+@api_router.get("/public/b2b/{token}/card-payments/{intent_id}")
+async def b2b_card_payment_status(token: str, intent_id: str):
+    """Yalnız bu carinin B2B kart ödemesi. Başka cari 404."""
+    c, _company, _bs, _cfg = await _b2b_portal_ready(token)
+    import vpos.api as vpos_api
+    intent = await db.payment_intents.find_one({"_id": intent_id})
+    if not intent or str(intent.get("contact_id") or "") != str(c.get("_id") or "") or intent.get("purpose") != "b2b_collection":
+        raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
+    fresh = await db.contacts.find_one({"_id": c["_id"]}) or c
+    return {
+        "status": intent.get("status") or "",
+        "charge_amount": intent.get("amount") or "",
+        "base_amount": intent.get("ledger_amount") or intent.get("amount") or "",
+        "installment": intent.get("installment") or 1,
+        "result": vpos_api.public_result(intent.get("result")),
+        "balance": fresh.get("balance", 0),
+    }
 
 @api_router.get("/public/b2b/{token}/invoices/{invoice_id}/lines")
 async def b2b_invoice_lines(token: str, invoice_id: str):

@@ -5,7 +5,8 @@ POST /contacts/{contact_id}/vpos-collect cari tahsilatı başlatır.
 Cari modülü middleware'de /contacts edit ister.
 POST /vpos/callback/{intent_id} bankanın tarayıcı dönüşüdür: oturum yok,
 intent kimliği + hash yeter. Kart verisi okunup atılır; loglanmaz ve
-saklanmaz. Kasa ve cari yalnız doğrulanmış contact_collection ödemesinde yazılır.
+saklanmaz. Kasa ve cari yalnız doğrulanmış contact_collection veya
+b2b_collection ödemesinde yazılır.
 """
 from __future__ import annotations
 
@@ -53,7 +54,11 @@ MAX_FORM_VALUE = 2048
 CALLBACK_RATE_LIMIT = 30
 CALLBACK_RATE_WINDOW_S = 60.0
 TEST_AMOUNT_MAX = Decimal("1000.00")
+B2B_START_LIMIT = 5
+B2B_START_WINDOW_S = 600.0
+_COLLECTION_PURPOSES = frozenset({"contact_collection", "b2b_collection"})
 _HITS: Dict[str, list] = {}
+_B2B_STARTS: Dict[str, list] = {}
 
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9]{1,32}$")
 _MASK_CHARS = set("•*· ")
@@ -71,6 +76,7 @@ _outbound_client = None
 
 def reset_callback_rate_limit() -> None:
     _HITS.clear()
+    _B2B_STARTS.clear()
 
 
 def set_outbound_client(client) -> None:
@@ -138,6 +144,23 @@ def _allow_callback(ip: str) -> bool:
         stale = [key for key, stamps in _HITS.items() if not stamps or now - stamps[-1] >= CALLBACK_RATE_WINDOW_S]
         for key in stale:
             _HITS.pop(key, None)
+    return True
+
+
+def allow_b2b_start(contact_id: str) -> bool:
+    """Aynı cari 10 dakikada en fazla 5 kart ödemesi başlatabilir."""
+    now = time.monotonic()
+    key = str(contact_id or "")
+    bucket = [stamp for stamp in _B2B_STARTS.get(key, []) if now - stamp < B2B_START_WINDOW_S]
+    if len(bucket) >= B2B_START_LIMIT:
+        _B2B_STARTS[key] = bucket
+        return False
+    bucket.append(now)
+    _B2B_STARTS[key] = bucket
+    if len(_B2B_STARTS) > 4000:
+        stale = [item for item, stamps in _B2B_STARTS.items() if not stamps or now - stamps[-1] >= B2B_START_WINDOW_S]
+        for item in stale:
+            _B2B_STARTS.pop(item, None)
     return True
 
 
@@ -293,7 +316,7 @@ async def _record_paid_collection(intent_id: str) -> None:
     """Kazanan paid claim. Test ve diğer amaçlar kasa/cari yazmaz."""
     db = _require_db()
     fresh = await db.payment_intents.find_one({"_id": intent_id})
-    if not fresh or fresh.get("purpose") != "contact_collection":
+    if not fresh or fresh.get("purpose") not in _COLLECTION_PURPOSES:
         return
     if str(fresh.get("status") or "") != "paid":
         return
@@ -304,7 +327,7 @@ async def _retry_paid_collection(intent_id: str) -> None:
     """Aynı yardımcı. Yeni callback, daha önce post_failed kaldıysa bir kez daha dener."""
     db = _require_db()
     fresh = await db.payment_intents.find_one({"_id": intent_id})
-    if not fresh or fresh.get("purpose") != "contact_collection":
+    if not fresh or fresh.get("purpose") not in _COLLECTION_PURPOSES:
         return
     if str(fresh.get("status") or "") != "paid":
         return
@@ -403,7 +426,18 @@ async def _app_base(request: Request) -> str:
     return await public_url.public_base_url_for(_require_db(), "app", request=request)
 
 
-def _result_redirect(app_base: str, intent_id: str) -> RedirectResponse:
+async def _result_redirect(app_base: str, intent_id: str) -> RedirectResponse:
+    """Panel sonucu /vpos/result. B2B portal ödemesi portal sonuç sayfasına gider."""
+    db = _require_db()
+    intent = await db.payment_intents.find_one({"_id": intent_id}) or {}
+    if str(intent.get("source") or "") == "b2b_portal":
+        contact_id = str(intent.get("contact_id") or "")
+        contact = await db.contacts.find_one({"_id": contact_id}) if contact_id else None
+        token = str((contact or {}).get("b2b_token") or "")
+        if token:
+            b2b_base = await public_url.public_base_url_for(db, "b2b")
+            target = f"{str(b2b_base).rstrip('/')}/portal/{token}/odeme/{intent_id}"
+            return RedirectResponse(target, status_code=303)
     target = f"{str(app_base).rstrip('/')}/vpos/result/{intent_id}"
     return RedirectResponse(target, status_code=303)
 
@@ -610,19 +644,20 @@ def _payment_ctx(
     address: str,
     basket_label: str,
     identity_number: str = "",
+    result_page: str = "",
 ) -> dict:
     app_base = str(app_base).rstrip("/")
     callback = f"{app_base}/api/vpos/callback/{intent_id}"
-    result_page = f"{app_base}/vpos/result/{intent_id}"
+    shown = result_page or f"{app_base}/vpos/result/{intent_id}"
     ip = request_ip(request) or ""
     if not ip or ip == "unknown":
         ip = "127.0.0.1"
     ctx = {
         "callback_url": callback if family == "nestpay" else (
-            f"{app_base}/api/vpos/iyzico/callback/{intent_id}" if family == "iyzico" else result_page
+            f"{app_base}/api/vpos/iyzico/callback/{intent_id}" if family == "iyzico" else shown
         ),
-        "ok_url": callback if family == "nestpay" else result_page,
-        "fail_url": callback if family == "nestpay" else result_page,
+        "ok_url": callback if family == "nestpay" else shown,
+        "fail_url": callback if family == "nestpay" else shown,
         "user_ip": ip,
         "email": email,
         "name": name,
@@ -663,8 +698,10 @@ async def _begin_payment(
     identity_number: str = "",
     audit_label: str = "",
     audit_summary: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+    portal_token: str = "",
 ) -> dict:
-    """Intent + sağlayıcı start. test_payment ve collect aynı yolu kullanır."""
+    """Intent + sağlayıcı start. test_payment, panel tahsilatı ve B2B aynı yolu kullanır."""
     family = str(cfg.get("family") or "nestpay")
     db = _require_db()
     order_id = await _allocate_order_id(db)
@@ -689,12 +726,20 @@ async def _begin_payment(
     if purpose != "test":
         intent["installment"] = installment if installment is not None else 1
         intent["description"] = description
+    for key in ("ledger_amount", "commission_amount", "commission_payer", "source"):
+        if extra and extra.get(key) not in (None, ""):
+            intent[key] = extra[key]
     await db.payment_intents.insert_one(intent)
     app_base = (await _app_base(request)).rstrip("/")
+    portal_result = ""
+    if str(intent.get("source") or "") == "b2b_portal" and portal_token:
+        b2b_base = await public_url.public_base_url_for(db, "b2b", request=request)
+        portal_result = f"{str(b2b_base).rstrip('/')}/portal/{portal_token}/odeme/{intent_id}"
     ctx = _payment_ctx(
         request, app_base, intent_id, family,
         email=email, name=name, phone=phone, address=address,
         basket_label=basket_label, identity_number=identity_number,
+        result_page=portal_result,
     )
     try:
         started = await get_adapter(family).start(runtime, intent, ctx, client=_outbound_client)
@@ -896,9 +941,9 @@ async def vpos_callback(intent_id: str, request: Request):
     if status in TERMINAL_STATUSES:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, status)
         await _retry_paid_collection(intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     if status != "pending":
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     if is_expired(intent):
         await _conditional_update(intent_id, {"status": "pending"}, {
             "status": "expired",
@@ -906,7 +951,7 @@ async def vpos_callback(intent_id: str, request: Request):
             "updated_at": _iso(),
         })
         logger.info("vpos callback id=%s status=expired", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     cfg = None
     cfg_id = intent.get("vpos_config_id")
     if cfg_id:
@@ -915,18 +960,18 @@ async def vpos_callback(intent_id: str, request: Request):
     if not same_company:
         await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
         logger.info("vpos callback id=%s status=failed error=company_mismatch", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     family = str(cfg.get("family") or "nestpay")
     if family != "nestpay":
         logger.info("vpos callback id=%s family=%s ignored=1", intent_id, family)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     try:
         store_key = await _decrypt_secret(str(cfg.get("store_key_enc") or ""), "store key")
         adapter = get_adapter(family)
     except (HTTPException, KeyError):
         await _claim_finish(intent_id, "failed", {"error": "config"})
         logger.info("vpos callback id=%s status=failed error=config", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     verdict = adapter.verify_callback({**cfg, "store_key": store_key}, intent, form)
     error = str(verdict.get("error") or "")
     if not verdict.get("ok"):
@@ -950,7 +995,7 @@ async def vpos_callback(intent_id: str, request: Request):
     else:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, final)
         await _retry_paid_collection(intent_id)
-    return _result_redirect(app_base, intent_id)
+    return await _result_redirect(app_base, intent_id)
 
 
 def _notify_ok() -> PlainTextResponse:
@@ -1028,12 +1073,12 @@ async def iyzico_callback(intent_id: str, request: Request):
     if status in TERMINAL_STATUSES or status != "pending":
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, status)
         await _retry_paid_collection(intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     token = str(form.get("token") or "")
     stored = str(intent.get("provider_ref") or "")
     if not _token_equal(stored, token):
         logger.info("vpos iyzico callback id=%s token_mismatch=1", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     cfg = None
     cfg_id = intent.get("vpos_config_id")
     if cfg_id:
@@ -1042,16 +1087,16 @@ async def iyzico_callback(intent_id: str, request: Request):
     if not same_company or str(cfg.get("family") or "") != "iyzico":
         await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
         logger.info("vpos iyzico callback id=%s status=failed error=company_mismatch", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     try:
         runtime = await _runtime_config(cfg)
     except HTTPException:
         logger.info("vpos iyzico callback id=%s status=pending error=config", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     verdict = await iyzico_family.ADAPTER.confirm(runtime, intent, {"token": stored}, client=_outbound_client)
     if verdict.get("retryable"):
         logger.info("vpos iyzico callback id=%s status=pending retry=1", intent_id)
-        return _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id)
     error = str(verdict.get("error") or "")
     if not verdict.get("ok"):
         final = "failed"
@@ -1070,7 +1115,7 @@ async def iyzico_callback(intent_id: str, request: Request):
     else:
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, final)
         await _retry_paid_collection(intent_id)
-    return _result_redirect(app_base, intent_id)
+    return await _result_redirect(app_base, intent_id)
 
 
 def _token_equal(left: str, right: str) -> bool:

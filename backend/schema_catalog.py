@@ -429,8 +429,8 @@ COLLECTIONS = {
     },
     "payment_intents": {
         "scope": SCOPE_TENANT,
-        "description": "Sanal POS ödeme niyeti. Tutar sunucuda sabitlenir; kart verisi saklanmaz. purpose=contact_collection doğrulanmış ödemeden sonra kasa ve cariye yazılır.",
-        "keys": ("_id", "company_id", "contact_id", "purpose", "amount", "currency", "installment", "description", "order_id", "status", "vpos_config_id", "provider_ref", "created_by", "created_at", "expires_at", "result", "collection_tx_id", "collection_error"),
+        "description": "Sanal POS ödeme niyeti. Tutar sunucuda sabitlenir; kart verisi saklanmaz. purpose contact_collection veya b2b_collection doğrulanmış ödemeden sonra kasa ve cariye yazılır. B2B'de amount bankaya giden tutar, ledger_amount cari tahsilatıdır.",
+        "keys": ("_id", "company_id", "contact_id", "purpose", "amount", "ledger_amount", "commission_amount", "commission_payer", "source", "currency", "installment", "description", "order_id", "status", "vpos_config_id", "provider_ref", "created_by", "created_at", "expires_at", "result", "collection_tx_id", "collection_error"),
         "refs": ("companies._id", "vpos_configs._id", "contacts._id"),
     },
     "bank_connections": {
