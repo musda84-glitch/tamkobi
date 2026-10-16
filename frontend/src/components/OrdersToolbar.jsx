@@ -121,6 +121,7 @@ export const OrdersToolbar = ({
   channelOptions,
   statusCounts,
   loadExportRows,
+  pageSizeOptions = ORDER_PAGE_SIZES,
 }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const channels = [...(channelOptions?.length ? channelOptions : new Set((orders || []).map((o) => o.channel || "b2b")))];
@@ -178,7 +179,7 @@ export const OrdersToolbar = ({
             className={sel}
             data-testid="ord-page-size"
           >
-            {ORDER_PAGE_SIZES.map((n) => (
+            {(pageSizeOptions || ORDER_PAGE_SIZES).map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>

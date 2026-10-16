@@ -45,6 +45,7 @@ import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, ORDER_PAGE_SIZES } from "../components/OrdersToolbar";
+import { isOrdersServerPagingEnabled } from "../utils/featureFlags";
 import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
 import { formatOrderDateTime, orderTerminRemaining } from "../utils/orderTermin";
@@ -77,7 +78,9 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { cachedList, contactTypeFilter, dropCached } from "../utils/dataSync";
 import {
   ORDER_CHANNELS,
+  ORDERS_SERVER_PAGE_SIZES,
   buildOrderListParams,
+  buildOrderServerPageParams,
   columnSortFromOrderSort,
   decorateB2bHeldOrder,
   orderFiltersFromSearch,
@@ -224,6 +227,7 @@ function mobilePrimaryAction(ord, gibLookup) {
 }
 
 export default function OrdersB2BPage() {
+  const serverPaging = isOrdersServerPagingEnabled();
   const { activeCompany, can, feature } = useAuth();
   const canDeleteOrder = can("/orders", "delete");
   const showCargoLabel = feature("order_cargo_label");
@@ -764,19 +768,21 @@ export default function OrdersB2BPage() {
       <ColResize k={k} />
     </th>
   );
+  const pageSizeChoices = serverPaging ? ORDERS_SERVER_PAGE_SIZES : ORDER_PAGE_SIZES;
   const [pageSize, setPageSize] = useState(() => {
     try {
       const n = Number(localStorage.getItem("orders-page-size") || 50);
-      return ORDER_PAGE_SIZES.includes(n) ? n : 50;
+      const sizes = isOrdersServerPagingEnabled() ? ORDERS_SERVER_PAGE_SIZES : ORDER_PAGE_SIZES;
+      return sizes.includes(n) ? n : 50;
     } catch {
       return 50;
     }
   });
   const setPageSizePersist = useCallback((n) => {
-    const v = ORDER_PAGE_SIZES.includes(n) ? n : 50;
+    const v = pageSizeChoices.includes(n) ? n : 50;
     setPageSize(v);
     try { localStorage.setItem("orders-page-size", String(v)); } catch { /* ignore */ }
-  }, []);
+  }, [pageSizeChoices]);
   const [listMeta, setListMeta] = useState({
     total: 0, total_amount: 0, open_count: 0, closed_count: 0, missing_contact: 0, counts: {}, channels: [], truncated: false,
   });
@@ -784,6 +790,7 @@ export default function OrdersB2BPage() {
   const [reloadToken, setReloadToken] = useState(0);
   const pageRef = useRef(1);
   const listReq = useRef(0);
+  const serverAbortRef = useRef(null);
   const silentRef = useRef(false);
   const loadingMore = useRef(false);
   const ordersSentinelRef = useRef(null);
@@ -886,13 +893,24 @@ export default function OrdersB2BPage() {
     const req = ++listReq.current;
     loadingMore.current = true;
     if (pageToFetch === 1 && !silent) setLoading(true);
+    let ctrl = null;
+    if (serverPaging) {
+      if (serverAbortRef.current) serverAbortRef.current.abort();
+      ctrl = new AbortController();
+      serverAbortRef.current = ctrl;
+    }
     try {
-      const params = buildOrderListParams(ordF, {
-        companyId, page: pageToFetch, pageSize, customer: customerFilter,
-      });
-      const r = await axios.get(`${API_URL}/orders`, { params });
+      const params = serverPaging
+        ? buildOrderServerPageParams(ordF, {
+          companyId, page: pageToFetch, pageSize, customer: customerFilter,
+        })
+        : buildOrderListParams(ordF, {
+          companyId, page: pageToFetch, pageSize, customer: customerFilter,
+        });
+      const r = await axios.get(`${API_URL}/orders`, serverPaging ? { params, signal: ctrl.signal } : { params });
       if (req !== listReq.current) return;
       const data = r.data || {};
+      const summary = data.summary || {};
       const items = (data.items || []).map(decorateB2bHeldOrder);
       setOrders((prev) => {
         if (pageToFetch === 1) return items;
@@ -902,36 +920,50 @@ export default function OrdersB2BPage() {
       setHasMore(!!data.has_more);
       setListMeta({
         total: Number(data.total) || 0,
-        total_amount: Number(data.total_amount) || 0,
-        open_count: Number(data.open_count) || 0,
-        closed_count: Number(data.closed_count) || 0,
-        missing_contact: Number(data.missing_contact) || 0,
-        counts: data.counts || {},
-        channels: Array.isArray(data.channels) ? data.channels : [],
+        total_amount: Number(serverPaging ? summary.total_amount : data.total_amount) || 0,
+        open_count: Number(serverPaging ? (summary.pool_open_count ?? summary.open_count) : data.open_count) || 0,
+        closed_count: Number(serverPaging ? (summary.pool_closed_count ?? summary.closed_count) : data.closed_count) || 0,
+        missing_contact: Number(serverPaging ? (summary.pool_missing_contact ?? summary.missing_contact) : data.missing_contact) || 0,
+        counts: serverPaging ? (summary.pool_counts || summary.counts || {}) : (data.counts || {}),
+        channels: serverPaging
+          ? (Array.isArray(summary.pool_channels) ? summary.pool_channels : (Array.isArray(summary.channels) ? summary.channels : []))
+          : (Array.isArray(data.channels) ? data.channels : []),
         truncated: !!data.truncated,
       });
-    } catch {
-      if (req === listReq.current) {
-        if (pageToFetch > 1) pageRef.current = pageToFetch - 1;
-        toast.error("Sipariş verileri yüklenemedi.");
-      }
+    } catch (err) {
+      if (req !== listReq.current) return;
+      const canceled = serverPaging && (err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err));
+      if (canceled) return;
+      if (pageToFetch > 1) pageRef.current = pageToFetch - 1;
+      toast.error("Sipariş verileri yüklenemedi.");
     } finally {
       if (req === listReq.current) {
         loadingMore.current = false;
         setLoading(false);
       }
     }
-  }, [ordF, companyId, pageSize, customerFilter]);
+  }, [ordF, companyId, pageSize, customerFilter, serverPaging]);
 
   useEffect(() => {
     const silent = silentRef.current;
     silentRef.current = false;
     void runFetch(pageRef.current, silent);
-  }, [filterKey, reloadToken, runFetch]);
+    return () => {
+      if (serverPaging && serverAbortRef.current) serverAbortRef.current.abort();
+    };
+  }, [filterKey, reloadToken, runFetch, serverPaging]);
 
   useEffect(() => { void loadCatalog(companyId); }, [loadCatalog, companyId]);
 
+  const loadMoreOrders = useCallback(() => {
+    if (!serverPaging || !hasMore || loadingMore.current) return;
+    loadingMore.current = true;
+    pageRef.current += 1;
+    setReloadToken((n) => n + 1);
+  }, [serverPaging, hasMore]);
+
   useEffect(() => {
+    if (serverPaging) return undefined;
     const el = ordersSentinelRef.current;
     if (!el || !hasMore || loading) return undefined;
     const io = new IntersectionObserver((entries) => {
@@ -943,16 +975,18 @@ export default function OrdersB2BPage() {
     }, { root: null, rootMargin: "240px 0px", threshold: 0 });
     io.observe(el);
     return () => io.disconnect();
-  }, [hasMore, loading, orders.length]);
+  }, [serverPaging, hasMore, loading, orders.length]);
 
   const loadExportRows = useCallback(async () => {
-    const params = buildOrderListParams(ordF, { companyId, exportAll: true, customer: customerFilter });
+    const params = serverPaging
+      ? buildOrderServerPageParams(ordF, { companyId, exportAll: true, customer: customerFilter })
+      : buildOrderListParams(ordF, { companyId, exportAll: true, customer: customerFilter });
     const r = await axios.get(`${API_URL}/orders`, { params });
     const items = r.data?.items || [];
     const total = Number(r.data?.total) || items.length;
     if (total > items.length) toast.warning(`Excel ilk ${items.length} siparişi içeriyor (toplam ${total}).`);
     return items.map(decorateB2bHeldOrder);
-  }, [ordF, companyId, customerFilter]);
+  }, [ordF, companyId, customerFilter, serverPaging]);
 
   const channelOptions = useMemo(
     () => [...new Set([...ORDER_CHANNELS, ...(listMeta.channels || [])])],
@@ -1925,6 +1959,7 @@ export default function OrdersB2BPage() {
           onBulkAction={bulk}
           pageSize={pageSize}
           onPageSizeChange={setPageSizePersist}
+          pageSizeOptions={pageSizeChoices}
           onRefresh={refreshOrders}
           refreshBusy={mpSyncing}
           channelOptions={channelOptions}
@@ -2454,9 +2489,21 @@ export default function OrdersB2BPage() {
             </table>
           </div>
         </div>
-        {ordersHasMore && (
+        {!serverPaging && ordersHasMore && (
           <div ref={ordersSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="orders-load-more">
             Daha fazla sipariş yükleniyor…
+          </div>
+        )}
+        {serverPaging && ordersHasMore && (
+          <div className="py-3 text-center">
+            <button
+              type="button"
+              onClick={loadMoreOrders}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              data-testid="orders-load-more"
+            >
+              Daha fazla
+            </button>
           </div>
         )}
       </>) : null}

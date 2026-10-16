@@ -50,3 +50,21 @@ export function isContactsServerPagingEnabled() {
 
 /** İstenen ad: varsayılan kapalı. Açık mı sorusu isContactsServerPagingEnabled(). */
 export const CONTACTS_SERVER_PAGING = false;
+
+export const ORDERS_PAGING_STORAGE_KEY = "tk_ff_orders_paging";
+
+/**
+ * Sipariş listesini sunucuda sayfala.
+ * localStorage "tk_ff_orders_paging" === "1" ise açık. Aksi halde kapalı.
+ */
+export function isOrdersServerPagingEnabled() {
+  try {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(ORDERS_PAGING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** İstenen ad: varsayılan kapalı. Açık mı sorusu isOrdersServerPagingEnabled(). */
+export const ORDERS_SERVER_PAGING = false;

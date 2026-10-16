@@ -68,6 +68,7 @@ const ALLOWED_DUPLICATE_TESTIDS = {
     "{`print-order-mobile-${ord.order_number}`}", "{`order-status-badge-${ord.order_number}`}",
     "{`print-order-btn-${ord.order_number}`}", "{`invoiced-badge-${ord.order_number}`}",
     "{`convert-inv-btn-${ord.order_number}`}", "{`inv-save-dispatch-${ord.order_number}`}",
+    '"orders-load-more"', // bayrak kapalı: kaydırma gözcüsü; açık: Daha fazla. İkisi birden çizilmez.
   ],
   "pages/PaymentResultPage.jsx": ['"payment-success-title"'],
   "pages/ProjectsPage.jsx": [
