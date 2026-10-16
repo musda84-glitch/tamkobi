@@ -61,6 +61,7 @@ import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
+import { invoicesServerPagingEnabled } from "../utils/featureFlags";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { useInvoiceLineExpand } from "../hooks/useInvoiceLineExpand";
@@ -136,6 +137,32 @@ const quoteAsInvoiceRow = (q) => ({
   project_id: q.project_id,
 });
 
+const SERVER_INVOICE_TABS = new Set(["all", "sales", "purchase", "incoming", "outgoing_gib", "export", "import"]);
+const EMPTY_INVOICE_ROWS = [];
+const INVOICE_SERVER_PAGE_SIZE = 50;
+const INVOICE_EXPORT_PAGE_SIZE = 200;
+
+function invoiceServerParams({ companyId, filterType, contactFilter, filters, showCancelled, page, pageSize }) {
+  const params = {
+    company_id: companyId,
+    tab: filterType,
+    pay: filters?.pay || "all",
+    etype: filters?.etype || "all",
+    sort: filters?.sort || "date_desc",
+    show_cancelled: showCancelled ? 1 : 0,
+    page,
+    page_size: pageSize,
+  };
+  if (contactFilter) params.contact_id = contactFilter;
+  const q = String(filters?.q || "").trim();
+  if (q) params.q = q;
+  if (filters?.from) params.from = filters.from;
+  if (filters?.to) params.to = filters.to;
+  if (filters?.min) params.min = filters.min;
+  if (filters?.max) params.max = filters.max;
+  return params;
+}
+
 const moneyTry = (n) => formatTrAmount((Number(n) || 0));
 const buyPrice = (p, invoiceType) => (invoiceType === "sales" ? p.sale_price : (p.last_purchase_price || p.purchase_price));
 const purchaseCostText = (p) => {
@@ -177,6 +204,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [showNewModal, setShowNewModal] = useState(false);
   const [showAiImport, setShowAiImport] = useState(false);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [serverSummary, setServerSummary] = useState(null);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [serverHasMore, setServerHasMore] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [selectedAllFiltered, setSelectedAllFiltered] = useState(false);
+  const pageRef = useRef(1);
+  const listReq = useRef(0);
+  const selectReq = useRef(0);
+  const listResetKeyRef = useRef("");
+  const loadingMore = useRef(false);
+  const serverAbortRef = useRef(null);
+  const serverSentinelRef = useRef(null);
   const [previewInvoice, setPreviewInvoice] = useState(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -188,12 +227,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     next.set("dir", dir === "in" ? "in" : "out");
     setSearchParams(next, { replace: true });
   };
+  const serverPaging = invoicesServerPagingEnabled() && SERVER_INVOICE_TABS.has(filterType);
   const filteredInvoices = useMemo(
-    () => applyInvoiceFilters(
-      invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter),
-      { ...filters, showCancelled },
-    ),
-    [invoices, contactFilter, filters, showCancelled],
+    () => (serverPaging
+      ? invoices
+      : applyInvoiceFilters(
+        invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter),
+        { ...filters, showCancelled },
+      )),
+    [serverPaging, invoices, contactFilter, filters, showCancelled],
   );
   const incomingDispatches = useMemo(
     () => (dispatchView ? filteredInvoices.filter((inv) => isIncomingDispatch(inv)) : []),
@@ -206,9 +248,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const visibleInvoices = dispatchView
     ? (dispatchDir === "in" ? incomingDispatches : outgoingDispatches)
     : filteredInvoices;
-  const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
+  const clientTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
+  const visibleTotal = serverPaging ? Number(serverSummary?.total_amount || 0) : clientTotal;
+  const resultCount = serverPaging ? Number(serverSummary?.count ?? serverTotal ?? 0) : visibleInvoices.length;
   const listResetKey = useMemo(() => `${filterType}|${dispatchDir}|${contactFilter || ""}|${showCancelled ? 1 : 0}|${JSON.stringify(filters)}`, [filterType, dispatchDir, contactFilter, showCancelled, filters]);
-  const { visible: pagedInvoices, hasMore: invoicesHasMore, sentinelRef: invoicesSentinelRef } = useInfiniteRows(visibleInvoices, { resetKey: listResetKey });
+  listResetKeyRef.current = listResetKey;
+  const { visible: pagedInvoices, hasMore: invoicesHasMore, sentinelRef: invoicesSentinelRef } = useInfiniteRows(serverPaging ? EMPTY_INVOICE_ROWS : visibleInvoices, { resetKey: listResetKey });
+  const tableInvoices = serverPaging ? invoices : pagedInvoices;
 
   const activeSortCol = invoiceSortCol(filters.sort);
   const activeSortDir = invoiceSortDir(filters.sort);
@@ -263,15 +309,88 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     setCtxMenu({ x: Math.max(8, r.right - 256), y: r.bottom + 4, inv });
   };
   const invRowId = (inv) => inv?.id || inv?._id || inv?.invoice_number;
-  const toggleSel = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const toggleSel = (id) => {
+    setSelectedAllFiltered(false);
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  };
   const selectedInvoices = () => visibleInvoices.filter((inv) => selected.includes(invRowId(inv)));
+  const invoiceNeedsDetail = (inv) => serverPaging && inv && !inv._is_quote && !Array.isArray(inv.items);
+  const presentInvoice = (inv, setter) => {
+    if (!invoiceNeedsDetail(inv)) {
+      setter(inv);
+      return;
+    }
+    const id = inv.id || inv._id;
+    if (!id) {
+      setter(inv);
+      return;
+    }
+    axios.get(`${API_URL}/invoices/${id}`).then((r) => setter(r.data || inv)).catch(() => setter(inv));
+  };
+  const resolveSelectedInvoiceDocs = async () => {
+    if (!serverPaging) return selectedInvoices();
+    const byId = new Map();
+    for (const inv of invoices) {
+      const id = invRowId(inv);
+      if (id) byId.set(id, inv);
+    }
+    const missing = selected.filter((id) => id && !byId.has(id));
+    if (missing.length) {
+      const rows = await Promise.all(missing.map(async (id) => {
+        try {
+          const r = await axios.get(`${API_URL}/invoices/${id}`);
+          return r.data;
+        } catch {
+          return null;
+        }
+      }));
+      for (const row of rows) {
+        if (!row) continue;
+        const id = row.id || row._id;
+        if (id) byId.set(id, row);
+      }
+    }
+    return selected.map((id) => byId.get(id)).filter(Boolean);
+  };
   const visibleSelIds = useMemo(
     () => visibleInvoices.map((inv) => invRowId(inv)).filter(Boolean),
     [visibleInvoices],
   );
   const allVisibleSelected = visibleSelIds.length > 0 && visibleSelIds.every((id) => selected.includes(id));
   const someVisibleSelected = visibleSelIds.some((id) => selected.includes(id));
-  const toggleSelectAllVisible = () => setSelected(allVisibleSelected ? [] : visibleSelIds);
+  const allFilteredSelected = serverPaging && Number(serverSummary?.count) > 0 && selected.length === Number(serverSummary.count);
+  const headerAllSelected = serverPaging ? (selectedAllFiltered || allFilteredSelected) : allVisibleSelected;
+  const headerSomeSelected = serverPaging ? (selected.length > 0 && !headerAllSelected) : (someVisibleSelected && !allVisibleSelected);
+  const toggleSelectAllVisible = () => {
+    if (!serverPaging) {
+      setSelected(allVisibleSelected ? [] : visibleSelIds);
+      return;
+    }
+    if (headerAllSelected) {
+      setSelectedAllFiltered(false);
+      setSelected([]);
+      return;
+    }
+    const gen = ++selectReq.current;
+    const stamp = listResetKeyRef.current;
+    const params = invoiceServerParams({
+      companyId, filterType, contactFilter, filters, showCancelled, page: 1, pageSize: INVOICE_SERVER_PAGE_SIZE,
+    });
+    delete params.page;
+    delete params.page_size;
+    axios.get(`${API_URL}/invoices/page/ids`, { params })
+      .then(({ data }) => {
+        if (gen !== selectReq.current || stamp !== listResetKeyRef.current) return;
+        const ids = Array.isArray(data?.ids) ? data.ids : [];
+        setSelected(ids);
+        setSelectedAllFiltered(true);
+      })
+      .catch((err) => {
+        if (gen !== selectReq.current) return;
+        const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+        if (!canceled) toast.error("Faturalar seçilemedi.");
+      });
+  };
   const applyMatchedInvoice = (invId, invoice) => {
     if (!invoice) return;
     const items = Array.isArray(invoice.items) ? invoice.items : [];
@@ -495,7 +614,21 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     setSearchParams({}, { replace: true });
   }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
 
+  const loadCatalog = useCallback(async () => {
+    try {
+      const [cntRows, prodRows] = await Promise.all([
+        cachedList("contacts", companyId, { onCached: setContacts }),
+        cachedList("products", companyId, { onCached: setProducts }),
+      ]);
+      setContacts(cntRows || []);
+      setProducts(prodRows || []);
+    } catch { /* form kataloğu */ }
+  }, [companyId]);
   const loadData = useCallback(async ({ silent = false } = {}) => {
+    if (invoicesServerPagingEnabled() && SERVER_INVOICE_TABS.has(filterType)) {
+      setReloadTick((n) => n + 1);
+      return;
+    }
     try {
       if (!silent) setLoading(true);
       const cid = companyId;
@@ -521,8 +654,113 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       if (!silent) setLoading(false);
     }
   }, [companyId, filterType]);
-  useEffect(() => { loadData(); }, [loadData]);
-  useEffect(() => { setSelected([]); }, [listResetKey]);
+  useEffect(() => {
+    if (serverPaging) return;
+    loadData();
+  }, [loadData, serverPaging]);
+  useEffect(() => {
+    if (!serverPaging) return;
+    loadCatalog();
+  }, [serverPaging, loadCatalog]);
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    const gen = ++listReq.current;
+    pageRef.current = 1;
+    loadingMore.current = false;
+    if (serverAbortRef.current) serverAbortRef.current.abort();
+    const ctrl = new AbortController();
+    serverAbortRef.current = ctrl;
+    let alive = true;
+    setLoading(true);
+    const params = invoiceServerParams({
+      companyId, filterType, contactFilter, filters, showCancelled,
+      page: 1, pageSize: INVOICE_SERVER_PAGE_SIZE,
+    });
+    axios.get(`${API_URL}/invoices/page`, { params, signal: ctrl.signal })
+      .then(({ data }) => {
+        if (!alive || gen !== listReq.current) return;
+        setInvoices(Array.isArray(data?.items) ? data.items : []);
+        setServerSummary(data?.summary || null);
+        setServerTotal(Number(data?.total) || 0);
+        setServerHasMore(!!data?.has_more);
+      })
+      .catch((err) => {
+        if (!alive || gen !== listReq.current) return;
+        const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+        if (!canceled) toast.error("Faturalar yüklenemedi.");
+      })
+      .finally(() => {
+        if (alive && gen === listReq.current) setLoading(false);
+      });
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
+  }, [serverPaging, companyId, filterType, contactFilter, filters, showCancelled, reloadTick]);
+  const loadMoreServerInvoices = useCallback(() => {
+    if (!serverPaging || !serverHasMore || loadingMore.current) return;
+    const next = pageRef.current + 1;
+    pageRef.current = next;
+    const gen = ++listReq.current;
+    loadingMore.current = true;
+    if (serverAbortRef.current) serverAbortRef.current.abort();
+    const ctrl = new AbortController();
+    serverAbortRef.current = ctrl;
+    const params = invoiceServerParams({
+      companyId, filterType, contactFilter, filters, showCancelled,
+      page: next, pageSize: INVOICE_SERVER_PAGE_SIZE,
+    });
+    axios.get(`${API_URL}/invoices/page`, { params, signal: ctrl.signal })
+      .then(({ data }) => {
+        if (gen !== listReq.current) return;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setInvoices((prev) => {
+          const seen = new Set(prev.map((inv) => inv.id || inv._id || inv.invoice_number));
+          return prev.concat(items.filter((inv) => !seen.has(inv.id || inv._id || inv.invoice_number)));
+        });
+        setServerSummary(data?.summary || null);
+        setServerTotal(Number(data?.total) || 0);
+        setServerHasMore(!!data?.has_more);
+      })
+      .catch((err) => {
+        if (gen !== listReq.current) return;
+        pageRef.current = Math.max(1, next - 1);
+        const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+        if (!canceled) toast.error("Faturalar yüklenemedi.");
+      })
+      .finally(() => {
+        if (gen === listReq.current) loadingMore.current = false;
+      });
+  }, [serverPaging, serverHasMore, companyId, filterType, contactFilter, filters, showCancelled]);
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    const el = serverSentinelRef.current;
+    if (!el || !serverHasMore || loading) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      loadMoreServerInvoices();
+    }, { root: null, rootMargin: "240px 0px", threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [serverPaging, serverHasMore, loading, invoices.length, loadMoreServerInvoices]);
+  const loadExportRows = useCallback(async () => {
+    const all = [];
+    let pageNo = 1;
+    let more = true;
+    while (more && pageNo <= 500) {
+      const params = invoiceServerParams({
+        companyId, filterType, contactFilter, filters, showCancelled,
+        page: pageNo, pageSize: INVOICE_EXPORT_PAGE_SIZE,
+      });
+      const { data } = await axios.get(`${API_URL}/invoices/page`, { params });
+      const items = Array.isArray(data?.items) ? data.items : [];
+      all.push(...items);
+      more = !!data?.has_more && items.length > 0;
+      pageNo += 1;
+    }
+    return all;
+  }, [companyId, filterType, contactFilter, filters, showCancelled]);
+  useEffect(() => { setSelected([]); setSelectedAllFiltered(false); }, [listResetKey]);
   useEffect(() => {
     let cancelled = false;
     axios.get(`${API_URL}/projects?company_id=${companyId}`)
@@ -604,48 +842,60 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
   const [editingInvoice, setEditingInvoice] = useState(null);
   const openEditInvoice = useCallback((inv) => {
-    setEditingInvoice(inv);
-    setGdMode(inv.general_discount_rate ? "percent" : "amount");
-    setFormData((fd) => ({
-      ...fd,
-      invoice_type: inv.invoice_type || "sales",
-      e_type: inv.e_type || "paper",
-      status: "draft",
-      contact_id: inv.contact_id || "",
-      contact_name: inv.contact_name || "",
-      contact_tax_id: inv.contact_tax_id || "",
-      contact_tax_office: inv.contact_tax_office || "",
-      shipping_address: inv.shipping_address || inv.address || "",
-      city: inv.city || "",
-      customer_phone: inv.customer_phone || "",
-      issue_date: (inv.issue_date || "").slice(0, 10),
-      issue_time: (inv.issue_time || "").slice(0, 8) || nowIssueDateTime().issue_time,
-      due_date: (inv.due_date || "").slice(0, 10),
-      notes: inv.notes || "",
-      withholding_rate: inv.withholding_rate || 0,
-      withholding_code: inv.withholding_code || "",
-      price_mode: inv.price_mode || "excl",
-      general_discount_rate: inv.general_discount_rate || 0,
-      general_discount_amount: inv.general_discount_amount || 0,
-      currency: inv.currency || "TRY",
-      fx_rate: inv.fx_rate || 1,
-      fx_source: inv.fx_source || "try",
-      trade_kind: inv.trade_kind || "",
-      incoterm: inv.incoterm || "",
-      country: inv.country || "",
-      customs_office: inv.customs_office || "",
-      project_id: inv.project_id || "",
-      regime_code: inv.regime_code || "",
-      declaration_no: inv.declaration_no || "",
-      declaration_date: inv.declaration_date || "",
-      dab_no: inv.dab_no || "",
-      bl_awb: inv.bl_awb || "",
-      certificate: inv.certificate || "",
-      trade_file_number: inv.trade_file_number || "",
-      items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
-    }));
-    setShowNewModal(true);
-  }, []);
+    const apply = (source) => {
+      if (!source) return;
+      setEditingInvoice(source);
+      setGdMode(source.general_discount_rate ? "percent" : "amount");
+      setFormData((fd) => ({
+        ...fd,
+        invoice_type: source.invoice_type || "sales",
+        e_type: source.e_type || "paper",
+        status: "draft",
+        contact_id: source.contact_id || "",
+        contact_name: source.contact_name || "",
+        contact_tax_id: source.contact_tax_id || "",
+        contact_tax_office: source.contact_tax_office || "",
+        shipping_address: source.shipping_address || source.address || "",
+        city: source.city || "",
+        customer_phone: source.customer_phone || "",
+        issue_date: (source.issue_date || "").slice(0, 10),
+        issue_time: (source.issue_time || "").slice(0, 8) || nowIssueDateTime().issue_time,
+        due_date: (source.due_date || "").slice(0, 10),
+        notes: source.notes || "",
+        withholding_rate: source.withholding_rate || 0,
+        withholding_code: source.withholding_code || "",
+        price_mode: source.price_mode || "excl",
+        general_discount_rate: source.general_discount_rate || 0,
+        general_discount_amount: source.general_discount_amount || 0,
+        currency: source.currency || "TRY",
+        fx_rate: source.fx_rate || 1,
+        fx_source: source.fx_source || "try",
+        trade_kind: source.trade_kind || "",
+        incoterm: source.incoterm || "",
+        country: source.country || "",
+        customs_office: source.customs_office || "",
+        project_id: source.project_id || "",
+        regime_code: source.regime_code || "",
+        declaration_no: source.declaration_no || "",
+        declaration_date: source.declaration_date || "",
+        dab_no: source.dab_no || "",
+        bl_awb: source.bl_awb || "",
+        certificate: source.certificate || "",
+        trade_file_number: source.trade_file_number || "",
+        items: (source.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
+      }));
+      setShowNewModal(true);
+    };
+    const needsDetail = serverPaging && inv && !inv._is_quote && !Array.isArray(inv.items);
+    if (needsDetail) {
+      const id = inv.id || inv._id;
+      if (id) {
+        axios.get(`${API_URL}/invoices/${id}`).then((r) => apply(r.data || inv)).catch(() => apply(inv));
+        return;
+      }
+    }
+    apply(inv);
+  }, [serverPaging]);
 
   const onInvoiceCopied = useCallback((result) => {
     loadData();
@@ -1053,10 +1303,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       toast.error("Fatura seçin.");
       return;
     }
-    const list = selectedInvoices();
+    const list = serverPaging ? await resolveSelectedInvoiceDocs() : selectedInvoices();
 
     if (action === "refresh") {
-      const gate = invoiceBulkRefreshGate({ selected: list, visible: visibleInvoices });
+      const gate = invoiceBulkRefreshGate({ selected: list, visible: serverPaging ? invoices : visibleInvoices });
       if (gate.empty) {
         toast.info("Güncellenecek GİB belgesi yok.");
         return;
@@ -1408,10 +1658,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       <InvoiceToolbar
         f={filters}
         setF={setFilters}
-        count={visibleInvoices.length}
+        count={resultCount}
         total={visibleTotal}
         hidePay={filterType === "dispatch"}
-        rows={visibleInvoices}
+        rows={serverPaging ? invoices : visibleInvoices}
+        loadRows={serverPaging ? loadExportRows : undefined}
+        draftCount={serverPaging ? serverSummary?.draft_count : undefined}
+        approvedCount={serverPaging ? serverSummary?.approved_count : undefined}
         selectedCount={selected.length}
         bulkBusy={bulkBusy}
         onBulkAction={bulk}
@@ -1421,7 +1674,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         {contactFilter && (
           <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border-b border-emerald-100 text-xs" data-testid="contact-filter-chip">
-            <span className="text-emerald-800">Cari filtresi: <b>{contacts.find((c) => c.id === contactFilter)?.name || invoices.find((i) => i.contact_id === contactFilter)?.contact_name || contactFilter}</b> ({invoices.filter((i) => i.contact_id === contactFilter).length} fatura)</span>
+            <span className="text-emerald-800">Cari filtresi: <b>{contacts.find((c) => c.id === contactFilter)?.name || invoices.find((i) => i.contact_id === contactFilter)?.contact_name || contactFilter}</b> ({serverPaging ? resultCount : invoices.filter((i) => i.contact_id === contactFilter).length} fatura)</span>
             <button onClick={() => navigate("/invoices")} className="ml-auto px-2 py-0.5 rounded-full bg-white border border-emerald-200 text-emerald-700 font-semibold hover:bg-emerald-100" data-testid="clear-contact-filter-btn">Filtreyi Kaldır</button>
           </div>
         )}
@@ -1445,8 +1698,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <th className="px-3 py-3 w-8">
                   <input
                     type="checkbox"
-                    checked={allVisibleSelected}
-                    ref={(el) => { if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected; }}
+                    checked={headerAllSelected}
+                    ref={(el) => { if (el) el.indeterminate = headerSomeSelected; }}
                     onChange={toggleSelectAllVisible}
                     className="rounded border-slate-300"
                     title="Hepsini seç"
@@ -1476,7 +1729,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </td>
                 </tr>
               ) : (
-                pagedInvoices.map((inv) => {
+                tableInvoices.map((inv) => {
                   const rowId = invRowId(inv);
                   const linesOpen = invLinesOpen(rowId);
                   const lineItems = linesOpen ? itemsForInv(inv) : [];
@@ -1695,8 +1948,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (shouldUseIntegratorPdf("invoice", inv)) setPrintInv(inv);
-                                  else setPreviewInvoice(inv);
+                                  if (shouldUseIntegratorPdf("invoice", inv)) presentInvoice(inv, setPrintInv);
+                                  else presentInvoice(inv, setPreviewInvoice);
                                 }}
                                 className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
                                 title="Görüntüle / Yazdır"
@@ -1719,7 +1972,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         ) : null}
                         <div className="grid grid-cols-[repeat(6,1.75rem)] gap-1 justify-center justify-items-center items-center">
                         <button
-                          onClick={() => setPreviewInvoice(inv)}
+                          onClick={() => presentInvoice(inv, setPreviewInvoice)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
                           title="Faturayı Görüntüle / Yazdır"
                           data-testid={`preview-inv-btn-${inv.invoice_number}`}
@@ -1845,7 +2098,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             </tbody>
           </table>
         </div>
-        {invoicesHasMore && (
+        {serverPaging && selectedAllFiltered && selected.length > 0 && (
+          <div className="px-4 py-2 text-xs text-emerald-800 bg-emerald-50 border-t border-emerald-100" data-testid="inv-all-selected">
+            {selected.length} belgenin tümü seçildi
+          </div>
+        )}
+        {serverPaging && serverHasMore && (
+          <div ref={serverSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="invoices-load-more-server">
+            Daha fazla fatura yükleniyor…
+          </div>
+        )}
+        {!serverPaging && invoicesHasMore && (
           <div ref={invoicesSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="invoices-load-more">
             Daha fazla fatura yükleniyor…
           </div>
@@ -1861,12 +2124,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         onPreview={(inv) => {
           // GİB'e iletilmiş e-belge: yerel şablon yerine entegratör PDF (İşNet)
           if (shouldUseIntegratorPdf("invoice", inv)) {
-            setPrintInv(inv);
+            presentInvoice(inv, setPrintInv);
             return;
           }
-          setPreviewInvoice(inv);
+          presentInvoice(inv, setPreviewInvoice);
         }}
-        onPrint={setPrintInv}
+        onPrint={(inv) => presentInvoice(inv, setPrintInv)}
         onNotify={async (inv) => {
           setNotifyInvoice(inv);
           setNotifyFiles([]);

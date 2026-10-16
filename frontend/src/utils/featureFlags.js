@@ -86,3 +86,21 @@ export function isProductsServerPagingEnabled() {
 
 /** İstenen ad: varsayılan kapalı. Açık mı sorusu isProductsServerPagingEnabled(). */
 export const PRODUCTS_SERVER_PAGING = false;
+
+export const INVOICES_PAGING_STORAGE_KEY = "tk_ff_invoices_paging";
+
+/**
+ * Fatura listesini sunucuda sayfala.
+ * localStorage "tk_ff_invoices_paging" === "1" ise açık. Aksi halde kapalı.
+ */
+export function invoicesServerPagingEnabled() {
+  try {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(INVOICES_PAGING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** İstenen ad: varsayılan kapalı. Açık mı sorusu invoicesServerPagingEnabled(). */
+export const INVOICES_SERVER_PAGING = false;
