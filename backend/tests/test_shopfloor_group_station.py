@@ -12,7 +12,10 @@ def test_shopfloor_settings_get():
 
     async def run():
         with patch.object(server, "db", fake_db):
-            return await server.get_shopfloor_settings("c1")
+            return await server.get_shopfloor_settings(
+                "c1",
+                user={"company_ids": ["c1"], "active_company_id": "c1"},
+            )
 
     assert asyncio.run(run()) == {"group_same_station": True}
 

@@ -366,10 +366,11 @@ def _public(ses: dict, order: Optional[dict] = None) -> dict:
 
 
 @router.get("/order-picks")
-async def list_pickable(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_pickable(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Toplanacak siparişler + sevk edilmiş B2B/panel (Teslim edildi bekleyen)."""
+    cid = tenant_access.resolve_company_id(user, company_id)
     orders = await _db.orders.find({
-        "company_id": company_id,
+        "company_id": cid,
         "$or": [
             {"order_status": {"$in": list(PICKABLE)}},
             {"order_status": "shipped", "channel": {"$in": ["b2b", "manual", "saha"]}},
@@ -381,7 +382,7 @@ async def list_pickable(company_id: Optional[str] = "comp_nexus_main_01"):
     for o in orders:
         by_id[o["_id"]] = o
     orders = list(by_id.values())[:200]
-    sessions = {s["order_id"]: s for s in await _db.order_pick_sessions.find({"company_id": company_id, "order_id": {"$in": [o["_id"] for o in orders]}}).to_list(200)}
+    sessions = {s["order_id"]: s for s in await _db.order_pick_sessions.find({"company_id": cid, "order_id": {"$in": [o["_id"] for o in orders]}}).to_list(200)}
     rows = []
     for o in orders:
         if is_pick_session_closed(o) and not can_mark_delivered(o):

@@ -35,6 +35,7 @@ def test_cancel_production_order_trashes_work_orders():
     fake_db.production_orders.find_one = AsyncMock(return_value=order)
     fake_db.production_orders.update_one = AsyncMock()
     fake_db.work_orders.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=wos)))
+    fake_db.__getitem__.side_effect = lambda name: getattr(fake_db, name)
     soft = AsyncMock()
 
     async def run():
@@ -57,6 +58,7 @@ def test_cancel_production_order_trashes_work_orders():
 def test_cancel_completed_rejected():
     fake_db = MagicMock()
     fake_db.production_orders.find_one = AsyncMock(return_value={"_id": "po_x", "status": "completed"})
+    fake_db.__getitem__.side_effect = lambda name: getattr(fake_db, name)
     soft = AsyncMock()
 
     async def run():
@@ -123,7 +125,11 @@ def test_list_work_orders_applies_active_filter():
         with patch.object(server, "db", fake_db), \
              patch.object(server, "clean_docs", side_effect=lambda xs: [{**x, "id": x.get("_id") or x.get("id")} for x in xs]), \
              patch.object(server, "_enrich_work_orders_job_fields", AsyncMock(side_effect=lambda rows: rows)):
-            return await server.list_work_orders(response=MagicMock(), company_id="c1")
+            return await server.list_work_orders(
+                response=MagicMock(),
+                company_id="c1",
+                user={"company_ids": ["c1"], "active_company_id": "c1"},
+            )
 
     out = asyncio.run(run())
     assert len(out) == 1
