@@ -1581,8 +1581,9 @@ def _einvoice_password(settings: dict) -> str:
 
 
 @api_router.post("/einvoice/test")
-async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_01"):
-    s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+async def test_einvoice_connection(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    s = await db.einvoice_settings.find_one({"company_id": cid}) or {}
     provider = s.get("provider") or ""
     pwd = _einvoice_password(s)
     if provider == "n11faturam":
@@ -1600,7 +1601,7 @@ async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_
         info = await qnb_efinans.test_connection(s, pwd)
     else:
         raise HTTPException(status_code=400, detail="Bağlantı denemesi n11 Faturam veya İşNet (SOAP/Portal) için açıktır. Platform Yönetimi ilgili entegratörü atadıktan sonra deneyin.")
-    await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": {"status": "configured", "updated_at": datetime.now(timezone.utc).isoformat()}})
+    await db.einvoice_settings.update_one({"company_id": cid}, {"$set": {"status": "configured", "updated_at": datetime.now(timezone.utc).isoformat()}})
     return info
 
 
@@ -1938,16 +1939,17 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
 
 
 @api_router.post("/einvoice/incoming/sync")
-async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01", days: int = 14, auto_process: Optional[bool] = None):
+async def sync_einvoice_incoming(company_id: Optional[str] = None, days: int = 14, auto_process: Optional[bool] = None, user: dict = Depends(get_current_user)):
     """Manuel gelen kutu çekimi. auto_process=true ise çekilen/bekleyen belgeleri de içeri alır.
 
     Varsayılan: içeri alma kapalı — belgeler Bekleyen'de kalır; onay/stok eşleme gerekir.
     """
-    s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
-    result = await pull_einvoice_incoming(company_id, days=days, settings=s)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    s = await db.einvoice_settings.find_one({"company_id": cid}) or {}
+    result = await pull_einvoice_incoming(cid, days=days, settings=s)
     do_process = bool(auto_process) if auto_process is not None else bool(s.get("auto_process", False))
     if do_process:
-        processed = await edocs.process_pending_for_company(company_id)
+        processed = await edocs.process_pending_for_company(cid)
         result["processed"] = processed.get("processed", 0)
         result["process_failed"] = processed.get("failed") or []
         result["process_message"] = processed.get("message")
@@ -2446,14 +2448,11 @@ async def read_notification(notif_id: str):
     return {"status": "success"}
 
 @api_router.post("/notifications/read-all")
-async def read_all_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
+async def read_all_notifications(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Kullanıcının gördüğü okunmamış bildirimleri okundu işaretler."""
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        user = None
+    cid = tenant_access.resolve_company_id(user, company_id)
     import notify as _notify
-    rows = await db.notifications.find({"company_id": company_id, "is_read": {"$ne": True}}).to_list(500)
+    rows = await db.notifications.find({"company_id": cid, "is_read": {"$ne": True}}).to_list(500)
     visible = _notify.filter_notifications(rows, user)
     ids = [n["_id"] for n in visible if n.get("_id")]
     if ids:
@@ -2476,14 +2475,11 @@ async def notification_target_status(notif_id: str, request: Request):
     return await _notify.resolve_notification_open(db, rec)
 
 @api_router.post("/notifications/clear")
-async def clear_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
+async def clear_notifications(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Kullanıcının görebileceği tüm bildirimleri (okunmuş + okunmamış) siler."""
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Oturum gerekli.")
+    cid = tenant_access.resolve_company_id(user, company_id)
     import notify as _notify
-    rows = await db.notifications.find({"company_id": company_id}).to_list(500)
+    rows = await db.notifications.find({"company_id": cid}).to_list(500)
     visible = _notify.filter_notifications(rows, user)
     ids = [n["_id"] for n in visible if n.get("_id")]
     if not ids:
@@ -6480,19 +6476,21 @@ async def add_unit(req: Dict[str, Any]):
     return {"status": "success", "name": name}
 
 @api_router.put("/products/units/{name}")
-async def rename_unit(name: str, req: Dict[str, Any], company_id: Optional[str] = "comp_nexus_main_01"):
+async def rename_unit(name: str, req: Dict[str, Any], company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     new = (req.get("name") or "").strip()
     if not new:
         raise HTTPException(status_code=400, detail="Yeni birim adı boş olamaz.")
-    await db.units.update_one({"company_id": company_id, "name": name}, {"$set": {"name": new}})
-    r = await db.products.update_many({"company_id": company_id, "unit": name}, {"$set": {"unit": new}})
+    await db.units.update_one({"company_id": cid, "name": name}, {"$set": {"name": new}})
+    r = await db.products.update_many({"company_id": cid, "unit": name}, {"$set": {"unit": new}})
     return {"status": "success", "updated_products": r.modified_count}
 
 @api_router.delete("/products/units/{name}")
-async def delete_unit(name: str, company_id: Optional[str] = "comp_nexus_main_01"):
-    if await db.products.count_documents({"company_id": company_id, "unit": name}):
+async def delete_unit(name: str, company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    if await db.products.count_documents({"company_id": cid, "unit": name}):
         raise HTTPException(status_code=400, detail="Bu birimi kullanan ürünler var; önce birimi değiştirin veya yeniden adlandırın.")
-    await db.units.delete_one({"company_id": company_id, "name": name})
+    await db.units.delete_one({"company_id": cid, "name": name})
     return {"status": "success"}
 
 @api_router.get("/products/categories")
@@ -6512,10 +6510,11 @@ async def add_product_category(req: Dict[str, Any]):
     return {"status": "success", "name": name}
 
 @api_router.delete("/products/categories/{name}")
-async def delete_product_category(name: str, company_id: Optional[str] = "comp_nexus_main_01"):
-    if await db.products.count_documents({"company_id": company_id, "category": name}):
+async def delete_product_category(name: str, company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    if await db.products.count_documents({"company_id": cid, "category": name}):
         raise HTTPException(status_code=400, detail="Bu kategoride ürün var; önce ürünlerin kategorisini değiştirin.")
-    await db.product_categories.delete_one({"company_id": company_id, "name": name})
+    await db.product_categories.delete_one({"company_id": cid, "name": name})
     return {"status": "success"}
 
 async def _remember_category(company_id: str, name: Optional[str]):
@@ -11713,9 +11712,10 @@ def _assert_editable_tx(tx: Dict[str, Any], *, allow_simulated_bank_sync: bool =
 
 
 @api_router.delete("/banking/transactions/simulated")
-async def delete_simulated_bank_transactions(company_id: Optional[str] = Query("comp_nexus_main_01"), account_id: Optional[str] = None):
+async def delete_simulated_bank_transactions(company_id: Optional[str] = Query(None), account_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Demo/simüle banka senkron hareketlerini toplu sil (bakiyeleri geri al)."""
-    q: Dict[str, Any] = {"company_id": company_id, "source": "bank_sync", "is_simulated": True}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q: Dict[str, Any] = {"company_id": cid, "source": "bank_sync", "is_simulated": True}
     if account_id:
         q["account_id"] = account_id
     txs = await db.bank_transactions.find(q).to_list(5000)
@@ -13261,8 +13261,9 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7, us
     return await _sync_bank_connection_core(conn_id, days=days, user=user, request=request)
 
 @api_router.post("/banking/sync-all")
-async def sync_all_connections(company_id: Optional[str] = "comp_nexus_main_01"):
-    conns = await db.bank_connections.find({"company_id": company_id, "auto_sync": True}).to_list(100)
+async def sync_all_connections(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    conns = await db.bank_connections.find({"company_id": cid, "auto_sync": True}).to_list(100)
     results = []
     for c in conns:
         try:
@@ -14342,14 +14343,14 @@ async def list_matched_transactions(company_id: Optional[str] = "comp_nexus_main
     return clean_docs(txs)
 
 @api_router.post("/banking/transactions/auto-match")
-async def auto_match_transactions(request: Request, company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = True, account_id: Optional[str] = None):
+async def auto_match_transactions(request: Request, company_id: Optional[str] = None, use_suggestions: bool = True, account_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Bekleyen banka hareketlerini otomatik işle: kurallar, önceki eşleşmeler ve cari adı önerisi."""
-    q = {"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q = {"company_id": cid, "source": "bank_sync", "match_status": "unmatched"}
     if account_id:
         q["account_id"] = account_id
     txs = await db.bank_transactions.find(q).to_list(1000)
-    actor = await _optional_actor(request)
-    matched, details, skipped_before_start = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions), actor=actor)
+    matched, details, skipped_before_start = await _auto_process_bank_txs(cid, txs, via="auto", use_cari=bool(use_suggestions), actor=user)
     skipped = max(0, len(txs) - matched)
     waiting = max(0, skipped - skipped_before_start)
     return {"status": "success", "matched": matched, "skipped": skipped, "skipped_before_start": skipped_before_start, "details": details,

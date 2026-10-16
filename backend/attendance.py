@@ -4600,18 +4600,18 @@ async def watcher_loop(interval_s: int = 60):
 
 
 @router.post("/personnel/attendance/run-alerts")
-async def run_alerts_now(request: Request, company_id: Optional[str] = "comp_nexus_main_01", force: bool = False):
-    user = await _current_user(request)
+async def run_alerts_now(company_id: Optional[str] = None, force: bool = False, user: dict = Depends(_user_dep)):
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
-    if not await _db.companies.find_one({"_id": company_id}):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    if not await _db.companies.find_one({"_id": cid}):
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
-    missing = await run_missing_checkin_check(company_id, force=force)
-    reminders = await run_checkin_reminders(company_id)
-    auto_ot = await run_auto_checkout_ot_check(company_id)
+    missing = await run_missing_checkin_check(cid, force=force)
+    reminders = await run_checkin_reminders(cid)
+    auto_ot = await run_auto_checkout_ot_check(cid)
     try:
         import shopfloor_pause as sfp
-        auto_pause = await sfp.run_auto_pause_work_orders(company_id)
+        auto_pause = await sfp.run_auto_pause_work_orders(cid)
     except Exception:
         auto_pause = []
     return {"status": "success", "results": missing, "reminders": reminders, "auto_checkout": auto_ot, "auto_pause": auto_pause}

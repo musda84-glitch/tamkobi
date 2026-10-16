@@ -307,7 +307,7 @@ def test_four_paths_skip_before_start_and_match_after():
     async def _endpoint():
         db = _pending_db()
         _bind(db)
-        out = await server.auto_match_transactions(_Req(), company_id="co1")
+        out = await server.auto_match_transactions(_Req(), company_id="co1", user=ADMIN)
         assert NOTE in out["message"]
         assert out["skipped_before_start"] == 2
         assert out["matched"] == 1
