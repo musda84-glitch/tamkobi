@@ -3,6 +3,9 @@
 Kanallar: uygulama içi (+ push), e-posta, isteğe bağlı SMS.
 Platform tercihleri: company_notify_prefs. Firma aç/kapa: company_notify_tenant.
 Etkin uygulama/e-posta = platform AND firma. Özet: notify_outbox + leased job.
+
+Banka, kasa, POS ve üretime gönderme e-postası yalnız notify_outbox üzerinden gider.
+Bu olaylarda firma aç/kapa yoktur; kanalı platform tercihi belirler.
 """
 from __future__ import annotations
 
@@ -33,21 +36,39 @@ _db = None
 _deps: Dict[str, Any] = {}
 _current_user: Optional[Callable[..., Awaitable[dict]]] = None
 
-EVENTS = (
+TENANT_EVENTS = (
     "einvoice_incoming",
     "order_new",
     "gib_credits_low",
     "receivable_overdue",
 )
+NEW_EVENTS = (
+    "bank_sync",
+    "cash_approval",
+    "pos_approval",
+    "pos_daily_summary",
+    "order_pick_production",
+)
+EVENTS = TENANT_EVENTS + NEW_EVENTS
 EVENT_LABELS = {
     "einvoice_incoming": "Gelen e-Fatura",
     "order_new": "Yeni sipariş",
     "gib_credits_low": "GİB kontör düşük",
     "receivable_overdue": "Vadesi geçmiş alacak",
+    "bank_sync": "Banka hareketi (senkron)",
+    "cash_approval": "Kasa/banka onayı",
+    "pos_approval": "POS onayı",
+    "pos_daily_summary": "Günlük POS özeti",
+    "order_pick_production": "Üretime gönderildi (sipariş hazırlama)",
 }
 DIGEST_MODES = ("instant", "hourly", "daily", "batch")
 EMAIL_FROM_MODES = ("platform", "company")
 DEFAULT_CHANNEL = {"inapp": True, "email": True, "sms": False, "digest": "instant"}
+_NEW_EVENT_CHANNEL = {"inapp": True, "email": False, "sms": False, "digest": "instant"}
+EVENT_DEFAULT_CHANNEL = {
+    **{ev: dict(DEFAULT_CHANNEL) for ev in TENANT_EVENTS},
+    **{ev: dict(_NEW_EVENT_CHANNEL) for ev in NEW_EVENTS},
+}
 ORDER_BATCH_MINUTES = (0, 5, 10, 15, 30, 60)
 DEFAULT_ORDER_BATCH_MINUTES = 10
 ORDER_BATCH_DETAIL = "Gruplama süresi 0, 5, 10, 15, 30 veya 60 dakika olabilir."
@@ -104,10 +125,16 @@ def _today() -> str:
     return date.today().isoformat()
 
 
+def _event_channel_default(ev: str) -> dict:
+    """Olayın kod varsayılanı. Eski dört olay DEFAULT_CHANNEL ile aynıdır."""
+    base = EVENT_DEFAULT_CHANNEL.get(ev)
+    return dict(base) if base else dict(DEFAULT_CHANNEL)
+
+
 def default_prefs(company_id: str) -> dict:
     events = {}
     for ev in EVENTS:
-        ch = dict(DEFAULT_CHANNEL)
+        ch = _event_channel_default(ev)
         if ev == "order_new":
             ch["digest"] = "batch"
         events[ev] = ch
@@ -247,14 +274,15 @@ def _norm_event_prefs(raw: Optional[dict]) -> dict:
     src = raw if isinstance(raw, dict) else {}
     for ev in EVENTS:
         cur = src.get(ev) if isinstance(src.get(ev), dict) else {}
-        default_digest = "batch" if ev == "order_new" else "instant"
+        defaults = _event_channel_default(ev)
+        default_digest = "batch" if ev == "order_new" else str(defaults.get("digest") or "instant")
         digest = str(cur.get("digest") or default_digest).strip().lower()
         if digest not in DIGEST_MODES:
             digest = default_digest
         item = {
-            "inapp": bool(cur["inapp"]) if "inapp" in cur else True,
-            "email": bool(cur["email"]) if "email" in cur else True,
-            "sms": bool(cur["sms"]) if "sms" in cur else False,
+            "inapp": bool(cur["inapp"]) if "inapp" in cur else bool(defaults.get("inapp", True)),
+            "email": bool(cur["email"]) if "email" in cur else bool(defaults.get("email", True)),
+            "sms": bool(cur["sms"]) if "sms" in cur else bool(defaults.get("sms", False)),
             "digest": digest,
         }
         if ev == "order_new" and "batch_minutes" in cur and cur.get("batch_minutes") not in (None, ""):
@@ -358,11 +386,11 @@ async def save_prefs(company_id: str, body: dict) -> dict:
 
 
 def default_tenant(company_id: str) -> dict:
-    """Kayıt yokken firma kanalları açık — bugünkü gönderimle aynı."""
+    """Kayıt yokken firma kanalları açık — bugünkü gönderimle aynı. Yalnız firma olayları."""
     return {
         "_id": f"cnt_{company_id}",
         "company_id": company_id,
-        "events": {ev: {"inapp": True, "email": True} for ev in EVENTS},
+        "events": {ev: {"inapp": True, "email": True} for ev in TENANT_EVENTS},
         "updated_at": None,
         "updated_by": None,
     }
@@ -396,9 +424,9 @@ async def get_tenant_prefs(company_id: str) -> dict:
         return base
     if not isinstance(row, dict):
         return base
-    events = {ev: {"inapp": True, "email": True} for ev in EVENTS}
+    events = {ev: {"inapp": True, "email": True} for ev in TENANT_EVENTS}
     stored = row.get("events") if isinstance(row.get("events"), dict) else {}
-    for ev in EVENTS:
+    for ev in TENANT_EVENTS:
         cur = stored.get(ev) if isinstance(stored.get(ev), dict) else {}
         events[ev] = {"inapp": _tenant_flag(cur, "inapp"), "email": _tenant_flag(cur, "email")}
     base["events"] = events
@@ -409,21 +437,33 @@ async def get_tenant_prefs(company_id: str) -> dict:
 
 
 def effective_channel(prefs: Optional[dict], tenant: Optional[dict], ev: str) -> dict:
-    """Platform kanalının kopyası. inapp/email = platform AND firma. sms/digest/quiet_hours aynı kalır."""
+    """Platform kanalının kopyası. inapp/email = platform AND firma. sms/digest/quiet_hours aynı kalır.
+
+    Yeni olaylarda firma bayrağı yoktur; yalnız platform tercihi geçerlidir.
+    Kayıtlı olay anahtarı yoksa EVENT_DEFAULT_CHANNEL (eski dört olayda DEFAULT_CHANNEL).
+    """
     events = prefs.get("events") if isinstance(prefs, dict) else None
     raw = events.get(ev) if isinstance(events, dict) else None
+    defaults = _event_channel_default(ev)
     if isinstance(raw, dict) and raw:
         ch = dict(raw)
+        if "inapp" not in ch:
+            ch["inapp"] = defaults.get("inapp", True)
+        if "email" not in ch:
+            ch["email"] = defaults.get("email", True)
     else:
-        ch = dict(DEFAULT_CHANNEL)
-    t_inapp, t_email = _tenant_flags(tenant, ev)
+        ch = defaults
+    if ev in NEW_EVENTS:
+        t_inapp, t_email = True, True
+    else:
+        t_inapp, t_email = _tenant_flags(tenant, ev)
     ch["inapp"] = bool(ch.get("inapp", True)) and t_inapp
     ch["email"] = bool(ch.get("email", True)) and t_email
     return ch
 
 
 def parse_tenant_update(body: Any) -> dict:
-    """Yalnız events.<4 olay>.<inapp|email> boolean. company_id yönlendirmedir."""
+    """Yalnız events.<firma olayı>.<inapp|email> boolean. company_id yönlendirmedir."""
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail=TENANT_BOOL_DETAIL)
     for key in body:
@@ -436,7 +476,7 @@ def parse_tenant_update(body: Any) -> dict:
         raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
     out: Dict[str, dict] = {}
     for ev, ch in events.items():
-        if ev not in EVENTS:
+        if ev not in TENANT_EVENTS:
             raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
         if not isinstance(ch, dict):
             raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
@@ -457,7 +497,7 @@ async def save_tenant_prefs(company_id: str, patch: dict, user: Optional[dict] =
     cur = await get_tenant_prefs(cid)
     events = {
         ev: dict((cur.get("events") or {}).get(ev) or {"inapp": True, "email": True})
-        for ev in EVENTS
+        for ev in TENANT_EVENTS
     }
     for ev, ch in (patch or {}).items():
         if ev not in events or not isinstance(ch, dict):
@@ -487,7 +527,7 @@ async def tenant_prefs_view(company_id: str) -> dict:
     prefs = await get_prefs(company_id)
     tenant = await get_tenant_prefs(company_id)
     events: Dict[str, dict] = {}
-    for ev in EVENTS:
+    for ev in TENANT_EVENTS:
         plat = ((prefs.get("events") or {}).get(ev) or {})
         ten = ((tenant.get("events") or {}).get(ev) or {})
         p_inapp = bool(plat["inapp"]) if isinstance(plat, dict) and "inapp" in plat else True
@@ -498,7 +538,8 @@ async def tenant_prefs_view(company_id: str) -> dict:
             "inapp": {"platform": p_inapp, "tenant": t_inapp, "effective": p_inapp and t_inapp},
             "email": {"platform": p_email, "tenant": t_email, "effective": p_email and t_email},
         }
-    return {"events": events, "labels": dict(EVENT_LABELS)}
+    labels = {ev: EVENT_LABELS[ev] for ev in TENANT_EVENTS}
+    return {"events": events, "labels": labels}
 
 
 async def _platform_batch_default() -> int:
@@ -1047,6 +1088,56 @@ async def _send_sms_now(company_id: str, phones: List[str], title: str, message:
     if sent:
         await _inc_sms_daily(company_id, sent)
     return {"status": "sent" if sent else "failed", "sent": sent, "failed": failed}
+
+
+async def queue_event_email(
+    company_id: str,
+    event: str,
+    title: str,
+    message: str,
+    link: str = "",
+    ref_type: Optional[str] = None,
+    ref_id: Optional[str] = None,
+    dedupe_key: Optional[str] = None,
+) -> dict:
+    """Yeni olay e-postası/SMS: in-app yazmaz, SMTP çağırmaz, her zaman notify_outbox.
+
+    Anında özet due_at=şimdi; saatlik/günlük mevcut _due_for_digest. Hata yutulur.
+    """
+    cid = str(company_id or "").strip()
+    ev = str(event or "").strip()
+    try:
+        if not cid or ev not in NEW_EVENTS:
+            return {"status": "skipped", "reason": "bad_args"}
+        if await _dedupe_seen(cid, dedupe_key):
+            return {"status": "duplicate", "dedupe_key": dedupe_key}
+        prefs = await get_prefs(cid)
+        tenant = await get_tenant_prefs(cid)
+        ch = effective_channel(prefs, tenant, ev)
+        need_email = bool(ch.get("email"))
+        need_sms = bool(ch.get("sms"))
+        if not need_email and not need_sms:
+            return {"status": "skipped"}
+        digest = str(ch.get("digest") or "instant").strip().lower()
+        if digest not in DIGEST_MODES:
+            digest = "instant"
+        abs_link = _safe_link(
+            await app_link(link) if link and not str(link).startswith("http") else str(link or "")
+        )
+        inapp_link = link if link and not str(link).startswith("http") else (link or "")
+        if abs_link and public_url.is_invalid_public_base(abs_link):
+            abs_link = ""
+        await _queue_outbox(
+            cid, ev, title=title, message=message, link=abs_link or inapp_link,
+            ref_type=ref_type, ref_id=None if ref_id is None else str(ref_id),
+            channels={"email": need_email, "sms": need_sms},
+            digest=digest,
+            next_try_at=_now() if digest == "instant" else None,
+        )
+        return {"status": "queued", "event": ev}
+    except Exception:
+        logger.exception("queue_event_email failed event=%s company=%s", ev, cid)
+        return {"status": "error"}
 
 
 async def notify_event(

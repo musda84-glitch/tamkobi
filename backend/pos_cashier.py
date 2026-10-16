@@ -1,6 +1,7 @@
 """Hızlı Satış kasiyer oturumu, rol kuralları, yönetici onayı ve vardiya."""
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -15,6 +16,7 @@ from auth_utils import hash_password, verify_password
 from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger("TamKobiERP")
 _db = None
 _current_user = None
 _checkout_hooks: Dict[str, Any] = {}
@@ -573,17 +575,29 @@ async def _find_user_by_pin(company_id: str, pin: str, *, user_id: str) -> dict:
 async def _notify_approval(company_id: str, req_doc: dict):
     actor = req_doc.get("requested_by_name") or "Kasiyer"
     kind_label = KIND_LABELS.get(req_doc.get("kind"), req_doc.get("kind"))
+    title = "POS onay bekliyor"
+    message = f"{actor}: {kind_label}. {req_doc.get('summary') or ''}".strip()
+    link = "/hizli-satis?onay=" + str(req_doc.get("_id"))
     await notify.insert_notification(_db, notify.notification_doc(
         company_id,
         "pos_approval",
-        "POS onay bekliyor",
-        f"{actor}: {kind_label}. {req_doc.get('summary') or ''}".strip(),
-        link="/hizli-satis?onay=" + str(req_doc.get("_id")),
+        title,
+        message,
+        link=link,
         roles=("admin", "manager"),
         ref_type="pos_approval",
         ref_id=req_doc.get("_id"),
         extra={"kind": req_doc.get("kind")},
     ))
+    try:
+        import event_notify
+        await event_notify.queue_event_email(
+            company_id, "pos_approval", title, message,
+            link=link, ref_type="pos_approval", ref_id=req_doc.get("_id"),
+            dedupe_key=f"pos_approval:{req_doc.get('_id')}",
+        )
+    except Exception:
+        logger.exception("pos_approval email queue failed company=%s", company_id)
 
 
 async def _notify_decision(company_id: str, req_doc: dict, approved: bool, decided_by: dict):
@@ -1053,14 +1067,24 @@ async def send_daily_summary(company_id: str, *, force: bool = False) -> dict:
     c_amt = round(sum(float(e.get("amount") or 0) for e in cancels), 2)
     r_amt = round(sum(float(e.get("amount") or 0) for e in refunds), 2)
     msg = f"Bugün {len(cancels)} iptal ({c_amt:,.2f} ₺), {len(refunds)} iade ({r_amt:,.2f} ₺)."
+    title = "Günlük POS iptal / iade özeti"
     await notify.insert_notification(_db, notify.notification_doc(
         company_id, "pos_daily_summary",
-        "Günlük POS iptal / iade özeti",
+        title,
         msg, link="/settings?tab=pos_rules",
         roles=("admin", "manager"),
         ref_type="pos_daily_summary",
         extra={"day": today, "cancels": len(cancels), "refunds": len(refunds)},
     ))
+    try:
+        import event_notify
+        await event_notify.queue_event_email(
+            company_id, "pos_daily_summary", title, msg,
+            link="/settings?tab=pos_rules", ref_type="pos_daily_summary",
+            dedupe_key=f"pos_daily_summary:{today}",
+        )
+    except Exception:
+        logger.exception("pos_daily_summary email queue failed company=%s", company_id)
     await _write_event(company_id, kind="daily_summary", summary=msg, extra={"day": today, "cancels": len(cancels), "refunds": len(refunds)})
     return {"status": "sent", "day": today, "cancels": len(cancels), "refunds": len(refunds), "message": msg}
 

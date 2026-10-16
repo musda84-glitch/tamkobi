@@ -1839,7 +1839,7 @@ def test_tenant_prefs_put_whitelist_and_access(setup_en):
         assert doc["company_id"] == "c1"
         assert doc["updated_by"] == "u_admin"
         assert doc["events"]["order_new"] == {"inapp": False, "email": False}
-        assert set(doc["events"]) == set(event_notify.EVENTS)
+        assert set(doc["events"]) == set(event_notify.TENANT_EVENTS)
         assert db.company_notify_prefs.docs == {}
         audits = list(db.company_audit_log.docs.values())
         assert len(audits) == 1
