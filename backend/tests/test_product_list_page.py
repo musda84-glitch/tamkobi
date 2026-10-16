@@ -559,21 +559,21 @@ def test_route_without_page_is_the_old_list_and_page_does_not_write():
 
     async def _go():
         with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)):
-            legacy = await server.list_products(company_id=CID, q="ada", brand="Tam", status="critical")
+            legacy = await server.list_products(company_id=CID, q="ada", brand="Tam", status="critical", user=user)
             db.log.clear()
             db.writes.clear()
-            body = await server.list_products(company_id=CID, page=1, page_size=2, q="ada", request=object())
+            body = await server.list_products(company_id=CID, page=1, page_size=2, q="ada", user=user)
             paged_log = list(db.log)
             paged_writes = list(db.writes)
             denied = None
             try:
-                await server.list_products(company_id=CID, page=1, page_size=10)
+                await server.list_products(company_id=CID, page=1, page_size=10, user=None)
             except HTTPException as exc:
                 denied = exc.status_code
             other = None
             try:
                 await server.list_products(
-                    company_id=OTHER, page=1, page_size=10, request=object(),
+                    company_id=OTHER, page=1, page_size=10, user=user,
                 )
             except HTTPException as exc:
                 other = exc.status_code
@@ -691,13 +691,13 @@ def test_paged_purchase_costs_match_legacy_and_skip_off_page_and_lite():
 
     async def _go():
         with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)), patch.object(server, "_with_purchase_costs", spy_with), patch.object(server, "_purchase_costs_by_product", spy_map):
-            legacy = await server.list_products(company_id=CID)
+            legacy = await server.list_products(company_id=CID, user=user)
             applied.clear()
             map_calls.clear()
             db.log.clear()
             db.writes.clear()
             body = await server.list_products(
-                company_id=CID, page=1, page_size=1, sort="name_asc", request=object(),
+                company_id=CID, page=1, page_size=1, sort="name_asc", user=user,
             )
             paged_applied = list(applied)
             paged_maps = list(map_calls)
@@ -707,7 +707,7 @@ def test_paged_purchase_costs_match_legacy_and_skip_off_page_and_lite():
             db.log.clear()
             db.writes.clear()
             lite = await server.list_products(
-                company_id=CID, page=1, page_size=5, lite=True, sort="name_asc", request=object(),
+                company_id=CID, page=1, page_size=5, lite=True, sort="name_asc", user=user,
             )
             return legacy, body, paged_applied, paged_maps, paged_writes, lite, list(applied), list(map_calls), list(db.writes)
 

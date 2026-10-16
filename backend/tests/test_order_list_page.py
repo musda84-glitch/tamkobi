@@ -365,12 +365,12 @@ def test_get_without_page_is_a_list_and_page_does_not_write():
         with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)):
             missing = None
             try:
-                await server.list_orders(company_id=CID, page=1, page_size=2, request=None)
+                await server.list_orders(company_id=CID, page=1, page_size=2, user=None)
             except HTTPException as exc:
                 missing = exc.status_code
-            array = await server.list_orders(company_id=CID)
-            paged = await server.list_orders(company_id=CID, page=1, page_size=2, request=object())
-            legacy = await server.list_orders(company_id=CID, paged=True, page=1, page_size=2)
+            array = await server.list_orders(company_id=CID, user=user)
+            paged = await server.list_orders(company_id=CID, page=1, page_size=2, user=user)
+            legacy = await server.list_orders(company_id=CID, paged=True, page=1, page_size=2, user=user)
             return missing, array, paged, legacy
 
     missing, array, paged, legacy = _run(_go())
@@ -436,7 +436,7 @@ def test_page_stock_match_matches_legacy_paged_without_writing():
         with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)):
             db.log.clear()
             db.writes.clear()
-            body = await server.list_orders(company_id=CID, page=1, page_size=50, request=object())
+            body = await server.list_orders(company_id=CID, page=1, page_size=50, user=user)
             await asyncio.sleep(0)
             return body, list(db.writes), _product_finds(db)
 
@@ -459,7 +459,7 @@ def test_page_stock_match_matches_legacy_paged_without_writing():
 
     async def _legacy():
         with patch.object(server, "db", legacy_db):
-            return await server.list_orders(company_id=CID, paged=True, page=1, page_size=50)
+            return await server.list_orders(company_id=CID, paged=True, page=1, page_size=50, user=user)
 
     legacy_pairs = _stock_match_pairs(_run(_legacy()))
     for oid in ("mp1", "mp2", "mpx", "b2b1", "man1", "saha1"):
@@ -489,7 +489,7 @@ def test_page_stock_match_skips_orders_outside_the_slice():
         with patch.object(server, "db", db), patch.object(server, "get_current_user", AsyncMock(return_value=user)):
             db.log.clear()
             db.writes.clear()
-            body = await server.list_orders(company_id=CID, page=page_n, page_size=1, request=object())
+            body = await server.list_orders(company_id=CID, page=page_n, page_size=1, user=user)
             await asyncio.sleep(0)
             return body, list(db.writes), _product_finds(db), db.orders.docs == before
 

@@ -6,12 +6,14 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import comm_service
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 _deps: Dict[str, Any] = {}
 logger = logging.getLogger("TamKobiERP")
 TR_TZ = timezone(timedelta(hours=3))
@@ -19,10 +21,18 @@ TR_TZ = timezone(timedelta(hours=3))
 DEFAULT_RULE = {"margin_pct": 30.0, "margin_base": "cost", "include_cargo": True, "include_service_fee": True, "rounding": "0.90", "min_price": 0.0, "max_price": 0.0, "list_price_markup_pct": 0.0}
 
 
-def init(db, deps: Dict[str, Any]):
-    global _db
+def init(db, deps: Dict[str, Any], current_user_dep=None):
+    global _db, _current_user
     _db = db
     _deps.update(deps)
+    if current_user_dep is not None:
+        _current_user = current_user_dep
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Fiyat kuralları kimliği bağlanmadı.")
+    return await _current_user(request)
 
 
 def _round_price(p: float, mode: str) -> float:
@@ -56,10 +66,15 @@ def suggest_price(cost: float, fees: dict, rule: dict) -> Dict[str, float]:
     return {"raw": round(raw, 2), "price": round(price, 2), "net_profit": round(net, 2), "margin_pct": round(net / cost * 100, 1) if cost else 0.0, "list_price": round(price * (1 + float(rule.get("list_price_markup_pct") or 0) / 100), 2)}
 
 
-@router.get("/pricing/rules")
-async def get_rules(company_id: str = "comp_nexus_main_01"):
+async def _rules_payload(company_id: str):
     docs = await _db.pricing_rules.find({"company_id": company_id}).to_list(50)
     return {d["channel"]: {**DEFAULT_RULE, **{k: v for k, v in d.items() if k in DEFAULT_RULE}} for d in docs}
+
+
+@router.get("/pricing/rules")
+async def get_rules(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _rules_payload(cid)
 
 
 @router.put("/pricing/rules/{channel}")
@@ -76,7 +91,7 @@ async def put_rule(channel: str, req: Dict[str, Any]):
 async def compute_prices(req: Dict[str, Any]):
     """Kanal önbelleğindeki eşleşmiş pazaryeri ürünleri için önerilen fiyatları hesapla."""
     company_id = req.get("company_id", "comp_nexus_main_01"); channel = req.get("channel", "trendyol")
-    rule = {**DEFAULT_RULE, **(req.get("rule") or {})} if req.get("rule") else (await get_rules(company_id)).get(channel, DEFAULT_RULE)
+    rule = {**DEFAULT_RULE, **(req.get("rule") or {})} if req.get("rule") else (await _rules_payload(company_id)).get(channel, DEFAULT_RULE)
     cfg = await _db.integration_configs.find_one({"company_id": company_id, "channel": channel}) or {}
     fees = _deps["channel_fees"](cfg, channel)
     mp = await _deps["marketplace_products"](company_id=company_id, channel=channel, refresh=False)

@@ -400,7 +400,7 @@ def test_list_and_detail_warning_uses_one_invoice_query():
          patch.object(server, "_enrich_orders_marketplace_item_media", identity), \
          patch.object(server, "_enrich_orders_stock_matches", identity), \
          patch.object(server, "_enrich_orders_production_flags", identity):
-        listed = _run(server.list_orders(company_id="co"))
+        listed = _run(server.list_orders(company_id="co", user={"company_ids": ["co"], "active_company_id": "co"}))
     invoice_finds = [q for q in db.invoices.find_queries if "$in" in str(q.get("_id"))]
     assert len(invoice_finds) == 1
     assert set(invoice_finds[0]["_id"]["$in"]) == {"inv1", "inv2"}

@@ -2256,16 +2256,11 @@ def _calc_items(items: List[Dict[str, Any]]):
     vat_total = sum(float(it.get("vat_amount") or 0) for it in items)
     return round(subtotal, 2), round(vat_total, 2), round(subtotal + vat_total, 2)
 
-async def _company_id_for_list(request: Request, company_id: Optional[str]) -> str:
-    """Liste sorgusunda company_id yalnızca tokendaki kullanıcının erişebildiği şirketlerden."""
-    user = await get_current_user(request)
-    return tenant_access.resolve_company_id(user, company_id)
-
 @api_router.get("/quotes")
-async def list_quotes(request: Request, company_id: Optional[str] = "comp_nexus_main_01", contact_id: Optional[str] = None, project_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False):
+async def list_quotes(company_id: Optional[str] = None, contact_id: Optional[str] = None, project_id: Optional[str] = None, status: Optional[str] = None, summary: bool = False, user: dict = Depends(get_current_user)):
     """summary=1: liste için hafif payload (kalemler hariç) — Teklif/Proje/Keşif sayfası."""
-    company_id = await _company_id_for_list(request, company_id)
-    q = {"company_id": company_id}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q = {"company_id": cid}
     if contact_id:
         q["contact_id"] = contact_id
     if project_id:
@@ -2657,10 +2652,10 @@ def _group_by_project(rows):
 
 
 @api_router.get("/projects")
-async def list_projects(request: Request, company_id: Optional[str] = "comp_nexus_main_01", light: bool = False):
+async def list_projects(company_id: Optional[str] = None, light: bool = False, user: dict = Depends(get_current_user)):
     """light=1: kart listesi — teklif özetleri + masraf toplamı; alış faturası taranmaz."""
-    company_id = await _company_id_for_list(request, company_id)
-    projects = await db.projects.find({"company_id": company_id}).sort("created_at", -1).to_list(500)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    projects = await db.projects.find({"company_id": cid}).sort("created_at", -1).to_list(500)
     pids = [p["_id"] for p in projects]
     quote_proj = {"grand_total": 1, "invoice_id": 1, "project_id": 1} if light else None
     quotes = await db.quotes.find({"project_id": {"$in": pids}}, quote_proj).to_list(2000) if pids else []
@@ -3157,9 +3152,9 @@ async def delete_project(project_id: str, user: dict = Depends(get_current_user)
     return {"status": "success", "message": "Proje çöp kutusuna taşındı."}
 
 @api_router.get("/surveys")
-async def list_surveys(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
-    company_id = await _company_id_for_list(request, company_id)
-    return clean_docs(await db.surveys.find({"company_id": company_id}).sort("created_at", -1).to_list(500))
+async def list_surveys(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return clean_docs(await db.surveys.find({"company_id": cid}).sort("created_at", -1).to_list(500))
 
 @api_router.post("/surveys")
 async def create_survey(req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -4493,6 +4488,28 @@ async def global_search(q: str, company_id: Optional[str] = None, user: dict = D
     orders = await db.orders.find({"company_id": company_id, "$or": [{"order_number": rx}, {"customer_name": rx}, {"cargo_tracking_number": rx}]}, {"order_number": 1, "customer_name": 1, "total_amount": 1, "order_status": 1}).sort("order_date", -1).limit(6).to_list(6)
     invoices = await db.invoices.find({"company_id": company_id, "$or": [{"invoice_number": rx}, {"contact_name": rx}]}, {"invoice_number": 1, "contact_name": 1, "grand_total": 1, "invoice_type": 1}).sort("issue_date", -1).limit(6).to_list(6)
     return {"contacts": clean_docs(contacts), "products": clean_docs(products), "orders": clean_docs(orders), "invoices": clean_docs(invoices)}
+
+@api_router.get("/contacts/flags")
+async def contact_flags(company_id: Optional[str] = None, days: int = 7, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    horizon = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
+    flags: Dict[str, Dict[str, Any]] = {}
+    def f(contact_id):
+        return flags.setdefault(contact_id, {"overdue_amount": 0.0, "overdue_count": 0, "installment_due_amount": 0.0, "installment_due_count": 0, "installment_overdue_count": 0})
+    async for i in db.invoices.find({"company_id": cid, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"contact_id": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1}):
+        due = i.get("due_date") or i.get("issue_date")
+        if i.get("contact_id") and due and due < today:
+            x = f(i["contact_id"]); x["overdue_amount"] = round(x["overdue_amount"] + i.get("grand_total", 0) - i.get("paid_amount", 0), 2); x["overdue_count"] += 1
+    async for it in db.installments.find({"company_id": cid, "status": {"$ne": "paid"}}, {"contact_id": 1, "amount": 1, "paid_amount": 1, "due_date": 1}):
+        if not it.get("contact_id"):
+            continue
+        x = f(it["contact_id"])
+        if it.get("due_date", "") <= horizon:
+            x["installment_due_amount"] = round(x["installment_due_amount"] + it.get("amount", 0) - it.get("paid_amount", 0), 2); x["installment_due_count"] += 1
+        if it.get("due_date", "") < today:
+            x["installment_overdue_count"] += 1
+    return flags
 
 @api_router.get("/contacts/{contact_id}")
 async def get_contact(contact_id: str, user: dict = Depends(get_current_user)):
@@ -6153,27 +6170,6 @@ async def b2b_cancel_request(token: str, order_id: str, req: Dict[str, Any] = No
     await _notify_company(c["company_id"], "b2b_cancel_request", f"İptal talebi {updated.get('order_number')}", f"{c.get('name')} onaylı sipariş için iptal talebi gönderdi.{why}", order_id)
     return {"status": "success", "order": clean_doc(updated), "message": "İptal talebiniz iletildi."}
 
-@api_router.get("/contacts/flags")
-async def contact_flags(company_id: Optional[str] = "comp_nexus_main_01", days: int = 7):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    horizon = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
-    flags: Dict[str, Dict[str, Any]] = {}
-    def f(cid):
-        return flags.setdefault(cid, {"overdue_amount": 0.0, "overdue_count": 0, "installment_due_amount": 0.0, "installment_due_count": 0, "installment_overdue_count": 0})
-    async for i in db.invoices.find({"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"contact_id": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1}):
-        due = i.get("due_date") or i.get("issue_date")
-        if i.get("contact_id") and due and due < today:
-            x = f(i["contact_id"]); x["overdue_amount"] = round(x["overdue_amount"] + i.get("grand_total", 0) - i.get("paid_amount", 0), 2); x["overdue_count"] += 1
-    async for it in db.installments.find({"company_id": company_id, "status": {"$ne": "paid"}}, {"contact_id": 1, "amount": 1, "paid_amount": 1, "due_date": 1}):
-        if not it.get("contact_id"):
-            continue
-        x = f(it["contact_id"])
-        if it.get("due_date", "") <= horizon:
-            x["installment_due_amount"] = round(x["installment_due_amount"] + it.get("amount", 0) - it.get("paid_amount", 0), 2); x["installment_due_count"] += 1
-        if it.get("due_date", "") < today:
-            x["installment_overdue_count"] += 1
-    return flags
-
 @api_router.get("/contacts/{contact_id}/aging")
 async def contact_aging(contact_id: str, user: dict = Depends(get_current_user)):
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
@@ -6463,12 +6459,13 @@ async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any], user:
 DEFAULT_UNITS = ["Adet", "Kg", "Gr", "Lt", "Ml", "Mt", "Cm", "M2", "M3", "Paket", "Koli", "Kutu", "Çift", "Takım", "Saat", "Gün", "Ton"]
 
 @api_router.get("/products/units")
-async def list_units(company_id: Optional[str] = "comp_nexus_main_01"):
-    saved = [u["name"] for u in await db.units.find({"company_id": company_id}).sort("name", 1).to_list(200)]
+async def list_units(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    saved = [u["name"] for u in await db.units.find({"company_id": cid}).sort("name", 1).to_list(200)]
     if not saved:
-        await db.units.insert_many([{"_id": str(uuid.uuid4()), "company_id": company_id, "name": u} for u in DEFAULT_UNITS])
+        await db.units.insert_many([{"_id": str(uuid.uuid4()), "company_id": cid, "name": u} for u in DEFAULT_UNITS])
         saved = DEFAULT_UNITS
-    used = {u: await db.products.count_documents({"company_id": company_id, "unit": u}) for u in saved}
+    used = {u: await db.products.count_documents({"company_id": cid, "unit": u}) for u in saved}
     return [{"name": u, "count": used.get(u, 0)} for u in saved]
 
 @api_router.post("/products/units")
@@ -6499,10 +6496,11 @@ async def delete_unit(name: str, company_id: Optional[str] = None, user: dict = 
     return {"status": "success"}
 
 @api_router.get("/products/categories")
-async def list_product_categories(company_id: Optional[str] = "comp_nexus_main_01"):
-    used = [c for c in await db.products.distinct("category", {"company_id": company_id}) if c]
-    saved = [c["name"] for c in await db.product_categories.find({"company_id": company_id}).to_list(500)]
-    counts = {c: await db.products.count_documents({"company_id": company_id, "category": c}) for c in set(used + saved)}
+async def list_product_categories(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    used = [c for c in await db.products.distinct("category", {"company_id": cid}) if c]
+    saved = [c["name"] for c in await db.product_categories.find({"company_id": cid}).to_list(500)]
+    counts = {c: await db.products.count_documents({"company_id": cid, "category": c}) for c in set(used + saved)}
     return sorted([{"name": c, "count": counts.get(c, 0)} for c in counts], key=lambda x: (-x["count"], x["name"]))
 
 @api_router.post("/products/categories")
@@ -6599,7 +6597,7 @@ async def _products_page_decorate(items, company_id):
 
 @api_router.get("/products")
 async def list_products(
-    company_id: Optional[str] = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     category: Optional[str] = None,
     type: Optional[str] = None,
     b2b_only: bool = False,
@@ -6616,7 +6614,7 @@ async def list_products(
     b2b: Optional[str] = None,
     sort: Optional[str] = None,
     export: bool = False,
-    request: Request = None,
+    user: dict = Depends(get_current_user),
 ):
     """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi.
 
@@ -6624,14 +6622,12 @@ async def list_products(
     Biri verilirse salt okunur sayfa: total + summary. Firma tenant_access ile çözülür.
     lite değilse alış alanları yalnız o sayfadaki ürünlere eklenir.
     """
+    cid = tenant_access.resolve_company_id(user, company_id)
     if page is not None or page_size is not None:
-        if request is None:
-            raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
-        user = await get_current_user(request)
         return await product_list_page.list_products_for_user(
             db,
             user,
-            company_id,
+            cid,
             paged=True,
             page=page,
             page_size=page_size,
@@ -6652,11 +6648,11 @@ async def list_products(
             clean=clean_docs,
             decorate_page=_products_page_decorate,
         )
-    query = {"company_id": company_id}
+    query = {"company_id": cid}
     if b2b_only:
         query.update(
             b2b_catalog_mongo_filter(
-                company_id or "comp_nexus_main_01",
+                cid,
                 require_active=True,
                 require_sale_price=True,
             )
@@ -6691,7 +6687,7 @@ async def list_products(
     if lite:
         # Maliyet / son alış taranmaz — web liste ve mobil ilk boya hızı için.
         return [clean_doc(p) for p in products]
-    cost_map = await _purchase_costs_by_product(company_id) if products else {}
+    cost_map = await _purchase_costs_by_product(cid) if products else {}
     return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
 
 
@@ -7175,11 +7171,12 @@ async def delete_product(product_id: str, user: dict = Depends(get_current_user)
     return {"status": "success", "message": "Ürün çöp kutusuna taşındı."}
 
 @api_router.get("/products/barcode/{barcode}")
-async def get_product_by_barcode(barcode: str, company_id: Optional[str] = "comp_nexus_main_01"):
-    product = await db.products.find_one({"barcode": barcode, "company_id": company_id})
+async def get_product_by_barcode(barcode: str, company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    product = await db.products.find_one({"barcode": barcode, "company_id": cid})
     matched_variant = None
     if not product:
-        product = await db.products.find_one({"variants.barcode": barcode, "company_id": company_id})
+        product = await db.products.find_one({"variants.barcode": barcode, "company_id": cid})
         if product:
             matched_variant = next((v for v in product.get("variants", []) if v.get("barcode") == barcode), None)
     if not product:
@@ -7548,9 +7545,10 @@ async def _pos_find_receipt(company_id: str, invoice_number: str):
 
 
 @api_router.get("/pos/receipt/{invoice_number}")
-async def pos_lookup_receipt(invoice_number: str, company_id: Optional[str] = "comp_nexus_main_01"):
+async def pos_lookup_receipt(invoice_number: str, company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Fiş numarası / barkod ile POS satış fişi ara."""
-    inv = await _pos_find_receipt(company_id, invoice_number)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    inv = await _pos_find_receipt(cid, invoice_number)
     if not inv:
         raise HTTPException(status_code=404, detail="Fiş bulunamadı.")
     if inv.get("invoice_type") not in (None, "sales") or inv.get("status") == "cancelled":
@@ -16268,8 +16266,9 @@ async def return_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
     return out
 
 @api_router.get("/returns")
-async def list_returns(company_id: Optional[str] = "comp_nexus_main_01"):
-    return clean_docs(await db.returns.find({"company_id": company_id}).sort("created_at", -1).to_list(500))
+async def list_returns(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return clean_docs(await db.returns.find({"company_id": cid}).sort("created_at", -1).to_list(500))
 
 @api_router.post("/orders/{order_id}/create-dispatch")
 async def create_dispatch(order_id: str, user: dict = Depends(get_current_user)):
@@ -18358,8 +18357,9 @@ async def _enrich_marketplace_claims(docs: List[Dict[str, Any]]) -> List[Dict[st
 
 
 @api_router.get("/marketplace/claims")
-async def list_marketplace_claims(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
-    q: Dict[str, Any] = {"company_id": company_id}
+async def list_marketplace_claims(company_id: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = status
     docs = clean_docs(await db.marketplace_claims.find(q).sort("claim_date", -1).to_list(500))
@@ -18495,8 +18495,9 @@ async def expense_slip_for_marketplace_claim(claim_id: str, user: dict = Depends
     return result
 
 @api_router.get("/marketplace/questions")
-async def list_marketplace_questions(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
-    q: Dict[str, Any] = {"company_id": company_id}
+async def list_marketplace_questions(company_id: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = status
     return clean_docs(await db.marketplace_questions.find(q).sort("asked_at", -1).to_list(500))
@@ -19228,7 +19229,7 @@ async def _orders_page_decorate(items, company_id, skip_ebelge=False):
 
 @api_router.get("/orders")
 async def list_orders(
-    company_id: Optional[str] = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     status: Optional[str] = None,
     include_active_cart: bool = False,
     paged: bool = False,
@@ -19246,7 +19247,7 @@ async def list_orders(
     export: bool = False,
     scope: Optional[str] = None,
     cancel_request: Optional[str] = None,
-    request: Request = None,
+    user: dict = Depends(get_current_user),
 ):
     """Sipariş listesi.
 
@@ -19256,9 +19257,10 @@ async def list_orders(
     page ve page_size yokken yanıt eskisi gibi bir dizidir (eski istemciler).
     page veya page_size verilip paged yoksa salt okunur sayfa: total + summary.
     """
+    cid = tenant_access.resolve_company_id(user, company_id)
     if paged or (export and page is None and page_size is None):
         return await _list_orders_filtered(
-            company_id, status, include_active_cart, q, channel, invoiced, cargo,
+            cid, status, include_active_cart, q, channel, invoiced, cargo,
             doc_status, date_from, date_to, customer, sort,
             1 if page is None else page,
             50 if page_size is None else page_size,
@@ -19266,13 +19268,10 @@ async def list_orders(
             cancel_request,
         )
     if page is not None or page_size is not None:
-        if request is None:
-            raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
-        user = await get_current_user(request)
         return await order_list_page.list_orders_for_user(
             db,
             user,
-            company_id,
+            cid,
             paged=True,
             page=page,
             page_size=page_size,
@@ -19294,7 +19293,7 @@ async def list_orders(
             prepare=_orders_page_prepare,
             decorate_page=_orders_page_decorate,
         )
-    query: Dict[str, Any] = {"company_id": company_id}
+    query: Dict[str, Any] = {"company_id": cid}
     if (cancel_request or "").strip().lower() == "pending":
         query["cancel_request.status"] = "pending"
     if status and status != "all":
@@ -19317,13 +19316,13 @@ async def list_orders(
                 asyncio.create_task(db.orders.delete_many({"_id": {"$in": drop_ids}}))
             except RuntimeError:
                 await db.orders.delete_many({"_id": {"$in": drop_ids}})
-            logger.warning("list_orders removed %s duplicate order row(s) for company %s", len(drop_ids), company_id)
+            logger.warning("list_orders removed %s duplicate order row(s) for company %s", len(drop_ids), cid)
     docs = deduped
     for o in docs:
         _decorate_b2b_held_order(o)
-    docs = await _enrich_orders_marketplace_item_media(docs, company_id=company_id)
-    docs = await _enrich_orders_stock_matches(docs, company_id=company_id)
-    docs = await _enrich_orders_production_flags(docs, company_id=company_id)
+    docs = await _enrich_orders_marketplace_item_media(docs, company_id=cid)
+    docs = await _enrich_orders_stock_matches(docs, company_id=cid)
+    docs = await _enrich_orders_production_flags(docs, company_id=cid)
     docs = await _enrich_orders_invoice_ebelge(docs)
     return _sort_b2b_cart_orders(docs)
 
@@ -24132,7 +24131,7 @@ import vpos
 vpos.init(db, get_current_user)
 migration.init(db, get_current_user)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)}, get_current_user)
-pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send})
+pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products, "mail_account": _mail_account, "wa_send": wa_send}, get_current_user)
 order_pick.init(db, {"create_production_order": create_production_order, "push_order_to_shopphp": _push_order_to_shopphp, "create_draft_invoice_for_order": _create_draft_invoice_for_order}, get_current_user)
 trade.init(db, _create_invoice_core, get_current_user)
 
