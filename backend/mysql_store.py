@@ -6,6 +6,7 @@ keeps using db.<collection>.find / update_one / etc.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import os
@@ -291,6 +292,550 @@ def sql_count_exact(collection: str, query: Optional[dict]) -> Optional[Tuple[st
     select_sql, params = sql_pushdown(collection, q)
     count_sql = select_sql.replace("SELECT doc FROM", "SELECT COUNT(*) FROM", 1)
     return count_sql, params
+
+
+# --- Exact read pushdown (ORDER BY / LIMIT / projection) -----------------
+#
+# find().sort().limit()/to_list() used to: sql_pushdown (a partial WHERE) →
+# fetch every matching doc as JSON → match_query → sort_docs → slice →
+# project_doc. This planner runs only when the WHOLE read is equivalent to
+# that pipeline. Otherwise the caller keeps the old path unchanged.
+# There is no mixed mode (SQL LIMIT on a filter Python still has to recheck).
+
+_SQL_SORT_FIELDS = frozenset({"created_at", "date", "issue_date", "account_name"})
+_PY_OP_ORDER = ("$regex", "$in", "$nin", "$ne", "$exists", "$gt", "$gte", "$lt", "$lte", "$eq", "$not", "$elemMatch")
+_DATE_SQL = (("$gt", ">"), ("$gte", ">="), ("$lt", "<"), ("$lte", "<="))
+_PARSE_IN_THREAD_AT = 2000
+_MAX_SQL_LIMIT = 18446744073709551615
+
+
+def sql_page_pushdown_enabled() -> bool:
+    """MYSQL_STORE_SQL_PUSHDOWN defaults on. ``0`` keeps the pre-pushdown read path."""
+    raw = os.environ.get("MYSQL_STORE_SQL_PUSHDOWN")
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _loads_rows(rows) -> List[dict]:
+    return [loads(r[0]) for r in rows or []]
+
+
+async def _loads_rows_async(rows) -> List[dict]:
+    if rows is not None and len(rows) >= _PARSE_IN_THREAD_AT:
+        return await asyncio.to_thread(_loads_rows, rows)
+    return _loads_rows(rows)
+
+
+def _json_extract(field: str) -> str:
+    return f"JSON_EXTRACT(doc,'$.{field}')"
+
+
+def _json_type(field: str) -> str:
+    return f"JSON_TYPE({_json_extract(field)})"
+
+
+def _value_expr(field: str) -> str:
+    """Column or JSON text. ``field`` is already a safe identifier."""
+    if field == "_id":
+        return "id"
+    if field == "company_id" or field in _INDEXED_DOC_FIELDS:
+        return field
+    return _json_unquote(field)
+
+
+def _python_operator(cond: dict) -> Optional[str]:
+    for op in _PY_OP_ORDER:
+        if op in cond:
+            return op
+    return None
+
+
+def _dateish_bound(val) -> bool:
+    if isinstance(val, bool) or isinstance(val, (int, float)):
+        return False
+    return bool(_DATEISH.match(str(val)))
+
+
+def _sort_key_expr(field: str, missing_token: str) -> str:
+    """Match sort_docs / newest_first for strings and JSON null / missing keys.
+
+    Explicit sorts hit TypeError on None and fall back to str(), and str(None)
+    is ``None``. newest_first uses ``created_at or ""`` instead.
+    """
+    return (
+        f"(CASE WHEN {_json_extract(field)} IS NULL OR {_json_type(field)} = 'NULL' "
+        f"THEN '{missing_token}' ELSE {_json_unquote(field)} END)"
+    )
+
+
+def _plan_sort(sort):
+    """``('newest',)`` or ``('fields', pairs)``. None → this sort cannot be pushed."""
+    if not sort:
+        return ("newest",)
+    if isinstance(sort, str):
+        pairs = [(sort, 1)]
+    elif (
+        isinstance(sort, tuple)
+        and len(sort) == 2
+        and isinstance(sort[0], str)
+        and not isinstance(sort[1], (list, tuple))
+    ):
+        pairs = [sort]
+    else:
+        try:
+            pairs = list(sort)
+        except TypeError:
+            return None
+    norm = []
+    for item in pairs:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            return None
+        field, direction = item[0], item[1]
+        if not isinstance(field, str) or field not in _SQL_SORT_FIELDS:
+            return None
+        if direction not in (1, -1):
+            return None
+        norm.append((field, 1 if direction == 1 else -1))
+    if not norm:
+        return ("newest",)
+    return ("fields", norm)
+
+
+def _order_sql(sort_plan) -> str:
+    if sort_plan[0] == "newest":
+        # newest_first: (str(created_at or ""), str(_id)) reversed — _id is part of
+        # the key, so ties go high _id first, not stable input order.
+        key = _sort_key_expr("created_at", "")
+        return f"ORDER BY {key} COLLATE utf8mb4_bin DESC, id COLLATE utf8mb4_bin DESC"
+    pairs = sort_plan[1]
+    # sort_docs applies one reverse flag, taken from the LAST field only, to the
+    # whole key tuple. Earlier directions are ignored. Ties keep input order;
+    # InnoDB returns this table in PRIMARY KEY (collection, id) order, so the
+    # stable tie-break is id ASC and is NOT reversed with the key.
+    direction = "DESC" if pairs[-1][1] == -1 else "ASC"
+    cols = ", ".join(
+        f"{_sort_key_expr(field, 'None')} COLLATE utf8mb4_bin {direction}"
+        for field, _dir in pairs
+    )
+    return f"ORDER BY {cols}, id ASC"
+
+
+def _probe_fields(sort_plan) -> List[str]:
+    if sort_plan[0] == "newest":
+        return ["created_at"]
+    return [field for field, _dir in sort_plan[1]]
+
+
+def _sort_probe_sql(where_sql: str, fields: Sequence[str]) -> str:
+    checks = []
+    for field in fields:
+        checks.append(
+            f"({_json_type(field)} IS NOT NULL AND {_json_type(field)} NOT IN ('STRING','NULL'))"
+        )
+    return f"SELECT 1 FROM docs WHERE {where_sql} AND ({' OR '.join(checks)}) LIMIT 1"
+
+
+def _page_bounds(skip, limit, length) -> Optional[Tuple[int, Optional[int]]]:
+    try:
+        skip_n = int(skip or 0)
+    except (TypeError, ValueError):
+        return None
+    if skip_n < 0:
+        return None
+    caps = []
+    for raw in (limit, length):
+        if raw is None:
+            continue
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if n < 0:
+            return None
+        caps.append(n)
+    cap = min(caps) if caps else None
+    return skip_n, cap
+
+
+def _projection_mode(projection) -> Optional[str]:
+    """'doc', a JSON_OBJECT select expression, or None (caller must use project_doc on the old path)."""
+    if not projection:
+        return "doc"
+    if not isinstance(projection, dict):
+        return None
+    include_keys: List[str] = []
+    exclude_id = False
+    saw_include = False
+    for key, val in projection.items():
+        if val in (1, True):
+            saw_include = True
+            if key == "_id":
+                continue
+            if not isinstance(key, str) or not _SAFE_FIELD.match(str(key)):
+                return None
+            include_keys.append(key)
+            continue
+        if val in (0, False):
+            if key == "_id":
+                exclude_id = True
+                continue
+            return None
+        return None
+    if not saw_include:
+        return None
+    fields: List[str] = []
+    if not exclude_id:
+        fields.append("_id")
+    fields.extend(include_keys)
+    obj_args = []
+    remove_args = []
+    for field in fields:
+        path = "$._id" if field == "_id" else f"$.{field}"
+        obj_args.append(f"'{field}', JSON_EXTRACT(doc,'{path}')")
+        remove_args.append(
+            f"IF(JSON_CONTAINS_PATH(doc,'one','{path}'), '$.__absent__', '$.{field}')"
+        )
+    return "JSON_REMOVE(JSON_OBJECT(" + ", ".join(obj_args) + "), " + ", ".join(remove_args) + ")"
+
+
+def reorder_projected(doc: dict, projection: Optional[dict]) -> dict:
+    """Key order follows project_doc (set iteration). Values already came from SQL."""
+    if not doc or not projection or _projection_mode(projection) in (None, "doc"):
+        return doc
+    include = {k for k, v in projection.items() if v}
+    out = {}
+    if "_id" not in projection or projection.get("_id"):
+        if "_id" in doc:
+            out["_id"] = doc["_id"]
+    for key in include:
+        if key == "_id":
+            continue
+        if key in doc:
+            out[key] = copy.deepcopy(doc[key])
+    return out
+
+
+def _pure_ne_sql(field: str) -> str:
+    return (
+        f"({_json_extract(field)} IS NULL"
+        f" OR {_json_type(field)} = 'NULL'"
+        f" OR ({_json_type(field)} = 'STRING' AND {_json_unquote(field)} COLLATE utf8mb4_bin <> %s)"
+        f" OR ({_json_type(field)} = 'ARRAY' AND NOT JSON_CONTAINS({_json_extract(field)}, JSON_QUOTE(%s)))"
+        f" OR ({_json_type(field)} IS NOT NULL AND {_json_type(field)} NOT IN ('NULL','STRING','ARRAY'))"
+        f")"
+    )
+
+
+def _array_contains_sql(field: str, n: int) -> str:
+    parts = " OR ".join(
+        f"JSON_CONTAINS({_json_extract(field)}, JSON_QUOTE(%s))" for _i in range(n)
+    )
+    return parts or "0"
+
+
+def _pure_in_sql(field: str, n: int) -> str:
+    ph = ",".join(["%s"] * n)
+    return (
+        f"(({_json_type(field)} = 'STRING' AND {_json_unquote(field)} COLLATE utf8mb4_bin IN ({ph}))"
+        f" OR ({_json_type(field)} = 'ARRAY' AND ({_array_contains_sql(field, n)})))"
+    )
+
+
+def _pure_nin_sql(field: str, n: int) -> str:
+    ph = ",".join(["%s"] * n)
+    return (
+        f"({_json_extract(field)} IS NULL OR {_json_type(field)} = 'NULL'"
+        f" OR NOT ("
+        f"({_json_type(field)} = 'STRING' AND {_json_unquote(field)} COLLATE utf8mb4_bin IN ({ph}))"
+        f" OR ({_json_type(field)} = 'ARRAY' AND ({_array_contains_sql(field, n)}))"
+        f"))"
+    )
+
+
+def _ne_clause(field: str, value: str, *, inside_or: bool) -> Tuple[str, list]:
+    if inside_or:
+        return _pure_ne_sql(field), [value, value]
+    expr = _value_expr(field)
+    sql = f"(({expr} <> %s OR {expr} IS NULL) AND {_pure_ne_sql(field)})"
+    return sql, [value, value, value]
+
+
+def _in_clause(field: str, values: Sequence[str], *, inside_or: bool) -> Tuple[str, list]:
+    vals = list(values)
+    n = len(vals)
+    if inside_or:
+        return _pure_in_sql(field, n), vals + vals
+    expr = _value_expr(field)
+    ph = ",".join(["%s"] * n)
+    sql = (
+        f"({expr} IN ({ph}) AND {_json_type(field)} = 'STRING'"
+        f" AND {expr} COLLATE utf8mb4_bin IN ({ph}))"
+    )
+    return sql, vals + vals
+
+
+def _nin_clause(field: str, values: Sequence[str], *, inside_or: bool) -> Tuple[str, list]:
+    vals = list(values)
+    n = len(vals)
+    if inside_or:
+        return _pure_nin_sql(field, n), vals + vals
+    expr = _value_expr(field)
+    ph = ",".join(["%s"] * n)
+    sql = (
+        f"(({expr} NOT IN ({ph}) OR {expr} IS NULL) AND NOT {_pure_in_sql(field, n)})"
+    )
+    return sql, vals + vals + vals
+
+
+def _date_clause(field: str, sqlop: str, value, *, inside_or: bool) -> Tuple[str, list]:
+    expr = _value_expr(field)
+    sval = str(value)
+    types = f"{_json_type(field)} IN ('STRING','INTEGER','DOUBLE','DECIMAL')"
+    if inside_or:
+        null_ok = f"{_json_type(field)} = 'NULL'" if sqlop in ("<", "<=") else "0"
+        sql = f"({null_ok} OR ({types} AND {expr} COLLATE utf8mb4_bin {sqlop} %s))"
+        return sql, [sval]
+    sql = f"({types} AND {expr} {sqlop} %s AND {expr} COLLATE utf8mb4_bin {sqlop} %s)"
+    return sql, [sval, sval]
+
+
+def _regex_clause(field: str, like: str, *, inside_or: bool) -> Tuple[str, list]:
+    expr = _value_expr(field)
+    types = f"{_json_type(field)} IN ('STRING','INTEGER','DOUBLE','DECIMAL')"
+    if inside_or:
+        return f"({types} AND {expr} COLLATE utf8mb4_bin LIKE %s)", [like]
+    return f"({types} AND {expr} LIKE %s AND {expr} COLLATE utf8mb4_bin LIKE %s)", [like, like]
+
+
+def _exists_clause(field: str, exists: bool) -> Tuple[str, list]:
+    path = f"$.{field}"
+    if exists:
+        return f"JSON_CONTAINS_PATH(doc,'one','{path}')", []
+    return f"(NOT JSON_CONTAINS_PATH(doc,'one','{path}'))", []
+
+
+def _string_list(val) -> Optional[List[str]]:
+    if not isinstance(val, (list, tuple)) or not val:
+        return None
+    if not all(isinstance(x, str) for x in val):
+        return None
+    return list(val)
+
+
+def _field_ops(field: str, cond: dict, *, inside_or: bool) -> Optional[Tuple[str, list]]:
+    if not isinstance(cond, dict):
+        return None
+    known = {"$in", "$nin", "$ne", "$regex", "$options", "$gte", "$lte", "$gt", "$lt", "$exists"}
+    if any(k not in known for k in cond):
+        return None
+    py = _python_operator(cond)
+    if py is None or py in ("$eq", "$not", "$elemMatch"):
+        return None
+    parts: List[str] = []
+    params: List[Any] = []
+    emitted = set()
+
+    if "$regex" in cond:
+        rx = str(cond.get("$regex") or "")
+        options = str(cond.get("$options") or "")
+        if options:
+            if py == "$regex":
+                return None
+        elif _PREFIX_RE.match(rx):
+            sql, ps = _regex_clause(field, rx[1:] + "%", inside_or=inside_or)
+            parts.append(sql)
+            params.extend(ps)
+            emitted.add("$regex")
+        elif py == "$regex":
+            return None
+
+    for op, sqlop in _DATE_SQL:
+        if op not in cond:
+            continue
+        if not _dateish_bound(cond[op]):
+            if py == op:
+                return None
+            continue
+        sql, ps = _date_clause(field, sqlop, cond[op], inside_or=inside_or)
+        parts.append(sql)
+        params.extend(ps)
+        emitted.add(op)
+
+    if "$ne" in cond:
+        if not isinstance(cond["$ne"], str):
+            if py == "$ne":
+                return None
+        else:
+            sql, ps = _ne_clause(field, cond["$ne"], inside_or=inside_or)
+            parts.append(sql)
+            params.extend(ps)
+            emitted.add("$ne")
+
+    if "$in" in cond:
+        vals = _string_list(cond.get("$in"))
+        if vals is None:
+            if py == "$in":
+                return None
+        else:
+            sql, ps = _in_clause(field, vals, inside_or=inside_or)
+            parts.append(sql)
+            params.extend(ps)
+            emitted.add("$in")
+
+    if "$nin" in cond:
+        vals = _string_list(cond.get("$nin"))
+        if vals is None:
+            if py == "$nin":
+                return None
+        else:
+            sql, ps = _nin_clause(field, vals, inside_or=inside_or)
+            parts.append(sql)
+            params.extend(ps)
+            emitted.add("$nin")
+
+    if py == "$exists":
+        flag = cond.get("$exists")
+        if not isinstance(flag, bool) and flag not in (0, 1):
+            return None
+        sql, ps = _exists_clause(field, bool(flag))
+        parts.append(sql)
+        params.extend(ps)
+        emitted.add("$exists")
+
+    if py not in emitted or not parts:
+        return None
+    return "(" + " AND ".join(parts) + ")", params
+
+
+def _exact_id(val, *, inside_or: bool) -> Optional[Tuple[str, list]]:
+    if isinstance(val, str):
+        if inside_or:
+            return "id COLLATE utf8mb4_bin = %s", [val]
+        return "(id = %s AND id COLLATE utf8mb4_bin = %s)", [val, val]
+    if isinstance(val, dict) and list(val.keys()) == ["$in"]:
+        vals = _string_list(val.get("$in"))
+        if not vals:
+            return None
+        ph = ",".join(["%s"] * len(vals))
+        if inside_or:
+            return f"id COLLATE utf8mb4_bin IN ({ph})", vals
+        return f"(id IN ({ph}) AND id COLLATE utf8mb4_bin IN ({ph}))", vals + vals
+    return None
+
+
+def _exact_scalar(field: str, val: str, *, inside_or: bool) -> Tuple[str, list]:
+    if inside_or:
+        return (
+            f"(({_json_type(field)} = 'STRING' AND {_json_unquote(field)} COLLATE utf8mb4_bin = %s)"
+            f" OR ({_json_type(field)} = 'ARRAY' AND JSON_CONTAINS({_json_extract(field)}, JSON_QUOTE(%s))))",
+            [val, val],
+        )
+    expr = _value_expr(field)
+    return (
+        f"({expr} = %s AND {_json_type(field)} = 'STRING' AND {expr} COLLATE utf8mb4_bin = %s)",
+        [val, val],
+    )
+
+
+def _exact_field(field: str, val, *, inside_or: bool) -> Optional[Tuple[str, list]]:
+    if field == "_id":
+        return _exact_id(val, inside_or=inside_or)
+    if isinstance(val, str):
+        return _exact_scalar(field, val, inside_or=inside_or)
+    if isinstance(val, dict) and any(str(k).startswith("$") for k in val):
+        return _field_ops(field, val, inside_or=inside_or)
+    return None
+
+
+def _exact_filter(query: Optional[dict], *, inside_or: bool) -> Optional[Tuple[List[str], list]]:
+    if query is None:
+        query = {}
+    if not isinstance(query, dict):
+        return None
+    clauses: List[str] = []
+    params: list = []
+    for key, val in query.items():
+        if key in ("$or", "$and"):
+            branches = val
+            if not isinstance(branches, list) or not branches:
+                return None
+            parts = []
+            joiner = " OR " if key == "$or" else " AND "
+            for branch in branches:
+                if not isinstance(branch, dict):
+                    return None
+                built = _exact_filter(branch, inside_or=True)
+                if built is None:
+                    return None
+                sub_clauses, sub_params = built
+                if not sub_clauses:
+                    if key == "$or":
+                        return None
+                    continue
+                parts.append("(" + " AND ".join(sub_clauses) + ")")
+                params.extend(sub_params)
+            if not parts:
+                return None
+            clauses.append("(" + joiner.join(parts) + ")")
+            continue
+        if str(key).startswith("$") or not _SAFE_FIELD.match(str(key)):
+            return None
+        built = _exact_field(str(key), val, inside_or=inside_or)
+        if built is None:
+            return None
+        clause, ps = built
+        clauses.append(clause)
+        params.extend(ps)
+    return clauses, params
+
+
+def plan_exact_page(
+    collection: str,
+    query: Optional[dict],
+    sort,
+    skip=0,
+    limit=None,
+    length=None,
+    projection: Optional[dict] = None,
+) -> Optional[dict]:
+    """SQL for one read, or None when the old Python path must be used as-is."""
+    built = _exact_filter(query, inside_or=False)
+    if built is None:
+        return None
+    clauses, params = built
+    sort_plan = _plan_sort(sort)
+    if sort_plan is None:
+        return None
+    bounds = _page_bounds(skip, limit, length)
+    if bounds is None:
+        return None
+    select_expr = _projection_mode(projection)
+    if select_expr is None:
+        return None
+    skip_n, cap = bounds
+    where = "collection=%s"
+    where_params: list = [collection, *params]
+    if clauses:
+        where += " AND " + " AND ".join(clauses)
+    sql = f"SELECT {select_expr} FROM docs WHERE {where} {_order_sql(sort_plan)}"
+    page_params = list(where_params)
+    if cap is not None:
+        sql += " LIMIT %s"
+        page_params.append(int(cap))
+        if skip_n:
+            sql += " OFFSET %s"
+            page_params.append(int(skip_n))
+    elif skip_n:
+        sql += " LIMIT %s OFFSET %s"
+        page_params.extend([_MAX_SQL_LIMIT, int(skip_n)])
+    return {
+        "sql": sql,
+        "params": page_params,
+        "probe_sql": _sort_probe_sql(where, _probe_fields(sort_plan)),
+        "probe_params": list(where_params),
+        "reorder": select_expr != "doc",
+    }
 
 
 def _generated_column_sql(name: str, expr: str, sql_type: str) -> str:
@@ -817,6 +1362,12 @@ class MySQLCursor:
         return self
 
     async def to_list(self, length=None):
+        if sql_page_pushdown_enabled():
+            pushed = await self._coll._read_page(
+                self._query, self._sort, self._skip, self._limit, length, self._projection,
+            )
+            if pushed is not None:
+                return pushed
         docs = await self._coll._load_filtered(self._query)
         docs = sort_docs(docs, self._sort)
         if self._skip:
@@ -860,17 +1411,7 @@ class MySQLCollection:
         self._db = db
         self.name = name
 
-    async def _load_all(self) -> List[dict]:
-        await self._db._ensure()
-        t0 = time.perf_counter()
-        async with self._db._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT doc FROM docs WHERE collection=%s", (self.name,))
-                rows = await cur.fetchall()
-        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
-        return [loads(r[0]) for r in rows]
-
-    async def _load_sql(self, sql: str, params: list) -> List[dict]:
+    async def _fetch_rows(self, sql: str, params: list):
         await self._db._ensure()
         t0 = time.perf_counter()
         async with self._db._pool.acquire() as conn:
@@ -878,7 +1419,31 @@ class MySQLCollection:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
         _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
-        return [loads(r[0]) for r in rows]
+        return rows
+
+    async def _load_all(self) -> List[dict]:
+        rows = await self._fetch_rows("SELECT doc FROM docs WHERE collection=%s", [self.name])
+        return await _loads_rows_async(rows)
+
+    async def _load_sql(self, sql: str, params: list) -> List[dict]:
+        rows = await self._fetch_rows(sql, params)
+        return await _loads_rows_async(rows)
+
+    async def _read_page(self, query, sort, skip, limit, length, projection) -> Optional[List[dict]]:
+        """Exact SQL page, or None so the caller runs the historical Python read."""
+        plan = plan_exact_page(self.name, query, sort, skip, limit, length, projection)
+        if not plan:
+            return None
+        try:
+            blocked = await self._fetch_rows(plan["probe_sql"], plan["probe_params"])
+            if blocked:
+                return None
+            docs = await self._load_sql(plan["sql"], plan["params"])
+        except Exception:
+            return None
+        if plan["reorder"]:
+            return [reorder_projected(d, projection) for d in docs]
+        return docs
 
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
         sql, params = sql_pushdown(self.name, query)
@@ -945,6 +1510,10 @@ class MySQLCollection:
                     raise DuplicateKeyError(f"duplicate key {spec}={key} on {self.name}")
 
     async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None, sort=None, skip=0):
+        if sql_page_pushdown_enabled():
+            pushed = await self._read_page(query, normalize_sort(sort), skip, 1, 1, projection)
+            if pushed is not None:
+                return pushed[0] if pushed else None
         docs = await self._load_filtered(query)
         docs = sort_docs(docs, normalize_sort(sort))
         if skip:
@@ -1365,6 +1934,12 @@ class SyncMySQLCursor:
         return self
 
     def to_list(self, length=None):
+        if sql_page_pushdown_enabled():
+            pushed = self._coll._read_page(
+                self._query, self._sort, self._skip, self._limit, length, self._projection,
+            )
+            if pushed is not None:
+                return pushed
         docs = self._coll._load_filtered(self._query)
         docs = sort_docs(docs, self._sort)
         if self._skip:
@@ -1430,7 +2005,34 @@ class SyncMySQLCollection:
         self._replace_rows([(self.name, str(doc["_id"]), dumps(doc))])
         return doc
 
+    def _fetch_rows(self, sql: str, params: list):
+        self._db._ensure()
+        t0 = time.perf_counter()
+        with self._db._conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+        return rows
+
+    def _read_page(self, query, sort, skip, limit, length, projection):
+        plan = plan_exact_page(self.name, query, sort, skip, limit, length, projection)
+        if not plan:
+            return None
+        try:
+            if self._fetch_rows(plan["probe_sql"], plan["probe_params"]):
+                return None
+            docs = _loads_rows(self._fetch_rows(plan["sql"], plan["params"]))
+        except Exception:
+            return None
+        if plan["reorder"]:
+            return [reorder_projected(d, projection) for d in docs]
+        return docs
+
     def find_one(self, query=None, projection=None, sort=None, skip=0):
+        if sql_page_pushdown_enabled():
+            pushed = self._read_page(query, normalize_sort(sort), skip, 1, 1, projection)
+            if pushed is not None:
+                return pushed[0] if pushed else None
         docs = self._load_filtered(query)
         docs = sort_docs(docs, normalize_sort(sort))
         if skip:
