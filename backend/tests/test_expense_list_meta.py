@@ -62,7 +62,7 @@ def test_list_expenses_skips_full_collection_scan_when_filtered():
     db.expenses.find = find
     db.expenses.count_documents = AsyncMock(return_value=2)
     expenses.init(db)
-    out = _run(expenses.list_expenses(company_id="c1", date_from="2026-10-01", date_to="2026-10-31"))
+    out = _run(expenses.list_expenses_payload("c1", date_from="2026-10-01", date_to="2026-10-31"))
     assert out["summary"]["this_month_count"] == 1
     assert out["summary"]["recurring_count"] == 2
     assert out["expenses"][0]["created_by_name"] == "Ayşe"

@@ -2591,15 +2591,12 @@ async def public_quote_respond(token: str, req: Dict[str, Any], request: Request
     return {"status": "success", "message": "Teşekkürler, teklifi onayladınız. Firmamız en kısa sürede sizinle iletişime geçecek." if decision == "accepted" else "Geri bildiriminiz için teşekkürler. Teklif reddedildi olarak kaydedildi.", "quote": _public_quote_view({**q, "approval": ap, "status": decision}, company)}
 
 @api_router.get("/notifications")
-async def list_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01", unread_only: bool = False):
-    query: Dict[str, Any] = {"company_id": company_id}
+async def list_notifications(company_id: Optional[str] = None, unread_only: bool = False, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query: Dict[str, Any] = {"company_id": cid}
     if unread_only:
         query["is_read"] = False
     rows = await db.notifications.find(query).sort("created_at", -1).to_list(80)
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        user = None
     import notify as _notify
     return clean_docs([_notify.present_notification(n) for n in _notify.filter_notifications(rows, user)])
 
@@ -2621,17 +2618,14 @@ async def read_all_notifications(company_id: Optional[str] = None, user: dict = 
     return {"status": "success", "updated": len(ids)}
 
 @api_router.get("/notifications/{notif_id}/target")
-async def notification_target_status(notif_id: str, request: Request):
+async def notification_target_status(notif_id: str, user: dict = Depends(get_current_user)):
     """Hedefi okuma anında çözer. Eski kaydı güncellemez; silinmişse Kayıt bulunamadı."""
     rec = await db.notifications.find_one({"_id": notif_id})
     if not rec:
         raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        user = None
+    tenant_access.assert_doc_company(user, rec, not_found="Bildirim bulunamadı.")
     import notify as _notify
-    if user is not None and not _notify.notification_visible(rec, user):
+    if not _notify.notification_visible(rec, user):
         raise HTTPException(status_code=403, detail="Bu bildirimi açamazsınız.")
     return await _notify.resolve_notification_open(db, rec)
 
@@ -4091,7 +4085,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
             {"intraday_leave_request.status": "pending"},
             {"geo_confirm_request.status": "pending"},
         ]}),
-        expenses.get_budgets(company_id),
+        expenses.budgets_payload(company_id),
     )
     def bucket(t):
         tot = over = notdue = 0.0
@@ -22870,7 +22864,7 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
 
     due_of = {r["key"]: r["amount"] for r in lines}
     if "meal" in kinds and due_of.get("meal"):
-        await expenses.create_expense({
+        await expenses.create_expense_for_company(emp.get("company_id"), {
             "company_id": emp.get("company_id"), "employee_id": emp_id,
             "category": employee_pay.MEAL_CAT, "description": "Yemek ücreti",
             "amount": due_of["meal"], "vat_rate": 0, "date": pay_date,
@@ -22879,7 +22873,7 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
         })
         paid.append("meal")
     if "transport" in kinds and due_of.get("transport"):
-        await expenses.create_expense({
+        await expenses.create_expense_for_company(emp.get("company_id"), {
             "company_id": emp.get("company_id"), "employee_id": emp_id,
             "category": employee_pay.TRANSPORT_CAT, "description": "Yol / ulaşım ödemesi",
             "amount": due_of["transport"], "vat_rate": 0, "date": pay_date,
@@ -22916,7 +22910,7 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], request: Request = N
     except (TypeError, ValueError):
         exp_amt = 0.0
     if exp_amt > 0:
-        await expenses.create_expense({
+        await expenses.create_expense_for_company(emp.get("company_id"), {
             "company_id": emp.get("company_id"), "employee_id": emp_id,
             "category": new_exp.get("category") or "Personel Masrafı",
             "description": (new_exp.get("description") or f"{emp.get('full_name')} masrafı").strip(),
@@ -24544,7 +24538,7 @@ legal_docs.init(db, get_current_user)
 ubl_export.init(db, get_current_user)
 e_invoice.init(db, {"password_fn": _einvoice_password, "consume_credits": gib_credits.consume, "convert_order": convert_order_to_invoice, "apply_effects": _apply_invoice_effects}, get_current_user)
 edoc_backup.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send}, get_current_user)
-data_sync.init(db)
+data_sync.init(db, get_current_user)
 rbac.set_license_guard(saas.guard)
 demo.init(db, get_current_user)
 expenses.init(db, get_current_user)
