@@ -127,6 +127,7 @@ import contact_activity
 import account_balance
 import bank_tx_page
 import partner_tx_page
+import contact_list_page
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -4222,10 +4223,45 @@ async def list_contacts(
     type: Optional[str] = None,
     lite: bool = False,
     include_inactive: Optional[bool] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    fin: Optional[str] = None,
+    sort: Optional[str] = None,
+    export: bool = False,
     user: dict = Depends(get_current_user),
 ):
-    """lite=1: form/select için — yalnızca kimlik ve iletişim alanları. Seçicilerde pasif cariler gizlenir."""
+    """lite=1: form/select için — yalnızca kimlik ve iletişim alanları. Seçicilerde pasif cariler gizlenir.
+
+    page ve page_size yokken yanıt eskisi gibi bir dizidir (dropdown, export, diğer ekranlar).
+    Biri verilirse sunucu arar, filtreler, sıralar ve sayfalar.
+    """
     company_id = tenant_access.resolve_company_id(user, company_id)
+    if page is not None or page_size is not None:
+        opens = None
+        if not lite:
+            try:
+                opens = await _contact_open_amounts(company_id)
+            except Exception:
+                logging.exception("contact open amounts")
+                opens = {}
+        return await contact_list_page.list_contacts_paged(
+            db,
+            company_id,
+            type=type,
+            lite=lite,
+            include_inactive=include_inactive,
+            page=page,
+            page_size=page_size,
+            q=q or "",
+            status=status or "all",
+            fin=fin or "all",
+            sort=sort or "name",
+            export=export,
+            open_amounts=opens,
+            clean=clean_docs,
+        )
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type

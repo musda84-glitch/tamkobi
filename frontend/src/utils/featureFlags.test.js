@@ -1,4 +1,13 @@
-import { BANK_TX_PAGING_STORAGE_KEY, BANK_TX_SERVER_PAGING, PARTNER_TX_PAGING_STORAGE_KEY, isBankTxServerPagingEnabled, isPartnerTxServerPagingEnabled } from "./featureFlags";
+import {
+  BANK_TX_PAGING_STORAGE_KEY,
+  BANK_TX_SERVER_PAGING,
+  CONTACTS_PAGING_STORAGE_KEY,
+  CONTACTS_SERVER_PAGING,
+  PARTNER_TX_PAGING_STORAGE_KEY,
+  isBankTxServerPagingEnabled,
+  isContactsServerPagingEnabled,
+  isPartnerTxServerPagingEnabled,
+} from "./featureFlags";
 
 test("BANK_TX_SERVER_PAGING varsayılan kapalı", () => {
   localStorage.removeItem(BANK_TX_PAGING_STORAGE_KEY);
@@ -22,4 +31,18 @@ test("tk_ff_partner_tx_paging varsayılan kapalı, 1 ile açılır", () => {
   localStorage.setItem(PARTNER_TX_PAGING_STORAGE_KEY, "0");
   expect(isPartnerTxServerPagingEnabled()).toBe(false);
   localStorage.removeItem(PARTNER_TX_PAGING_STORAGE_KEY);
+});
+
+test("CONTACTS_SERVER_PAGING varsayılan kapalı", () => {
+  localStorage.removeItem(CONTACTS_PAGING_STORAGE_KEY);
+  expect(CONTACTS_SERVER_PAGING).toBe(false);
+  expect(isContactsServerPagingEnabled()).toBe(false);
+});
+
+test("tk_ff_contacts_paging=1 bayrağı açar", () => {
+  localStorage.setItem(CONTACTS_PAGING_STORAGE_KEY, "1");
+  expect(isContactsServerPagingEnabled()).toBe(true);
+  localStorage.setItem(CONTACTS_PAGING_STORAGE_KEY, "0");
+  expect(isContactsServerPagingEnabled()).toBe(false);
+  localStorage.removeItem(CONTACTS_PAGING_STORAGE_KEY);
 });

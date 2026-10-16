@@ -32,3 +32,21 @@ export function isPartnerTxServerPagingEnabled() {
     return false;
   }
 }
+
+export const CONTACTS_PAGING_STORAGE_KEY = "tk_ff_contacts_paging";
+
+/**
+ * Cari listesini sunucuda sayfala.
+ * localStorage "tk_ff_contacts_paging" === "1" ise açık. Aksi halde kapalı.
+ */
+export function isContactsServerPagingEnabled() {
+  try {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(CONTACTS_PAGING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** İstenen ad: varsayılan kapalı. Açık mı sorusu isContactsServerPagingEnabled(). */
+export const CONTACTS_SERVER_PAGING = false;
