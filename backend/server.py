@@ -11943,11 +11943,20 @@ async def list_account_bank_transactions(
     )
 
 @api_router.post("/banking/transactions")
-async def create_bank_transaction(tx: BankTransaction):
+async def create_bank_transaction(tx: BankTransaction, user: dict = Depends(get_current_user)):
+    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", tx.account_id, user, not_found="Hesap bulunamadı.")
+    cid = acc["company_id"]
+    requested = str(tx.company_id or "").strip()
+    if requested and tenant_access.resolve_company_id(user, requested) != cid:
+        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+    if tx.contact_id:
+        contact = await tenant_access.get_tenant_doc(db, "contacts", tx.contact_id, user, not_found="Cari bulunamadı.")
+        tenant_access.assert_same_company(user, acc, contact, not_found="Cari bulunamadı.")
     await bank_guard.assert_manual_allowed(db, tx.account_id)
     if tx.type == "inflow":
         await bank_guard.assert_collection_allowed(db, tx.account_id)
     doc = tx.to_mongo()
+    doc["company_id"] = cid
     acc = await db.bank_accounts.find_one({"_id": tx.account_id})
     owner_meta = await bank_guard.apply_customer_card_owner_effect(
         db, acc, tx.type, tx.amount, tx.contact_id, sign=1,
@@ -16924,6 +16933,7 @@ async def accountant_export(company_id: Optional[str] = None, month: Optional[st
 async def _wa_settings_payload(company_id: str) -> dict:
     s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
     return {"company_id": company_id, "phone_number_id": s.get("phone_number_id", ""), "verify_token": s.get("verify_token", ""), "has_token": bool(s.get("access_token_enc")),
+            "has_app_secret": bool(s.get("app_secret_enc")),
             "status": "connected" if s.get("access_token_enc") and s.get("phone_number_id") else "simulated", "webhook_url": "/api/comm/whatsapp/webhook"}
 
 @api_router.get("/comm/whatsapp/settings")
@@ -16932,13 +16942,23 @@ async def get_wa_settings(company_id: Optional[str] = None, user: dict = Depends
     return await _wa_settings_payload(cid)
 
 @api_router.put("/comm/whatsapp/settings")
-async def save_wa_settings(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await tenant_access.require_company_admin(user, company_id)
     update = {"phone_number_id": (req.get("phone_number_id") or "").strip(), "verify_token": (req.get("verify_token") or "").strip(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    verify_token = update["verify_token"]
+    if verify_token:
+        clash = await db.whatsapp_settings.find_one({"verify_token": verify_token, "company_id": {"$ne": company_id}})
+        if clash:
+            raise HTTPException(status_code=409, detail="Bu doğrulama anahtarı başka bir şirkette kullanılıyor.")
     if req.get("access_token"):
         update["access_token_enc"] = comm_service.encrypt(req["access_token"])
     if not update["phone_number_id"]:
         update["access_token_enc"] = ""
+    if req.get("clear_app_secret") is True:
+        update["app_secret_enc"] = ""
+    elif str(req.get("app_secret") or "").strip():
+        update["app_secret_enc"] = comm_service.encrypt(str(req.get("app_secret")).strip())
     await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
     return await _wa_settings_payload(company_id)
 
@@ -16950,17 +16970,53 @@ async def wa_webhook_verify(request: Request):
         return Response(content=q.get("hub.challenge", ""), media_type="text/plain")
     raise HTTPException(status_code=403, detail="Doğrulama başarısız.")
 
-@api_router.post("/comm/whatsapp/webhook")
-async def wa_webhook(payload: Dict[str, Any]):
+def _wa_hub_signature_ok(secret: str, raw_body: bytes, header: Optional[str]) -> bool:
+    import hashlib
+    import hmac
+    if not secret or not header:
+        return False
+    key = secret.encode("utf-8") if isinstance(secret, str) else secret
+    body = raw_body if isinstance(raw_body, (bytes, bytearray)) else bytes(raw_body or b"")
+    expected = "sha256=" + hmac.new(key, body, hashlib.sha256).hexdigest()
+    given = header if isinstance(header, str) else str(header)
+    try:
+        return hmac.compare_digest(expected, given)
+    except (TypeError, ValueError):
+        return False
+
+
+async def _process_wa_webhook(payload: Dict[str, Any], *, raw_body: bytes = b"", signature: Optional[str] = None) -> dict:
     saved = 0
-    for entry in payload.get("entry", []):
-        for ch in entry.get("changes", []):
-            v = ch.get("value", {})
+    ignored = 0
+    known = 0
+    rejected = 0
+    for entry in (payload or {}).get("entry", []) or []:
+        for ch in entry.get("changes", []) or []:
+            v = ch.get("value", {}) or {}
             pn_id = (v.get("metadata") or {}).get("phone_number_id")
             s = await db.whatsapp_settings.find_one({"phone_number_id": pn_id}) if pn_id else None
-            company_id = (s or {}).get("company_id", "comp_nexus_main_01")
+            company_id = str((s or {}).get("company_id") or "").strip()
+            if not s or not company_id:
+                ignored += 1
+                continue
+            known += 1
+            signature_verified = False
+            if s.get("app_secret_enc"):
+                try:
+                    secret = comm_service.decrypt(s.get("app_secret_enc") or "")
+                except Exception:
+                    secret = ""
+                if not _wa_hub_signature_ok(secret, raw_body, signature):
+                    rejected += 1
+                    continue
+                signature_verified = True
+            else:
+                logger.warning(
+                    'WhatsApp webhook imzası doğrulanmadan kaydedildi {"signature_verified": False, "company_id": "%s"}',
+                    company_id,
+                )
             names = {c.get("wa_id"): (c.get("profile") or {}).get("name") for c in v.get("contacts", [])}
-            for m in v.get("messages", []):
+            for m in v.get("messages", []) or []:
                 phone = comm_service.normalize_phone(m.get("from", ""))
                 text = (m.get("text") or {}).get("body") or f"[{m.get('type')} mesajı]"
                 contact = None
@@ -16969,11 +17025,30 @@ async def wa_webhook(payload: Dict[str, Any]):
                     contact = await db.contacts.find_one({"company_id": company_id, "phone": {"$regex": pattern + r"\D*$"}})
                 await db.whatsapp_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "contact_id": contact["_id"] if contact else None, "contact_name": (contact or {}).get("name") or names.get(m.get("from")),
                                                    "to": phone or m.get("from"), "phone": phone or m.get("from"), "message": text, "direction": "inbound", "status": "received", "context": "whatsapp_api",
-                                                   "wa_message_id": m.get("id"), "created_at": datetime.now(timezone.utc).isoformat()})
+                                                   "wa_message_id": m.get("id"), "signature_verified": signature_verified, "created_at": datetime.now(timezone.utc).isoformat()})
                 saved += 1
-    return {"status": "ok", "saved": saved}
+            if signature_verified:
+                logger.info(
+                    'WhatsApp webhook {"signature_verified": True, "company_id": "%s"}',
+                    company_id,
+                )
+    if known and rejected == known:
+        raise HTTPException(status_code=401, detail="Webhook imzası doğrulanamadı.")
+    return {"status": "ok", "saved": saved, "ignored": ignored}
 
-@api_router.post("/comm/whatsapp/send")
+
+@api_router.post("/comm/whatsapp/webhook")
+async def wa_webhook(request: Request):
+    import json
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body) if raw_body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return await _process_wa_webhook(payload, raw_body=raw_body, signature=request.headers.get("X-Hub-Signature-256"))
+
 async def wa_send(req: Dict[str, Any]):
     import public_url as pu
     company_id = req.get("company_id", "comp_nexus_main_01")
@@ -16997,6 +17072,11 @@ async def wa_send(req: Dict[str, Any]):
            "direction": "outbound", "status": status_val, "error": err, "context": "whatsapp_api", "wa_link": f"https://wa.me/90{phone}?text={quote(req['message'])}", "created_at": datetime.now(timezone.utc).isoformat()}
     await db.whatsapp_logs.insert_one(doc)
     return {**clean_doc(doc), "message_info": "Gönderildi." if status_val == "sent" else ("SİMÜLE — Cloud API anahtarı girilmedi; wa.me linki kullanılabilir." if status_val == "simulated" else f"Hata: {err}")}
+
+@api_router.post("/comm/whatsapp/send")
+async def wa_send_route(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    return await wa_send({**req, "company_id": cid})
 
 # ----------------- E-TİCARET ENTEGRASYONLARI -----------------
 @api_router.get("/integrations/ecommerce")
