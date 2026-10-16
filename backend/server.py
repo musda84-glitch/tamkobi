@@ -10956,13 +10956,214 @@ async def update_bank_account(account_id: str, req: Dict[str, Any], user: dict =
     return clean_doc(updated)
 
 
+def _opening_body(body: Any) -> Dict[str, Any]:
+    return body if isinstance(body, dict) else {}
+
+
+def _opening_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "evet"}
+    return False
+
+
+def _opening_has_amount(payload: Dict[str, Any]) -> bool:
+    return "amount" in payload and payload.get("amount") is not None
+
+
+def _parse_opening_amount(raw: Any) -> float:
+    """İşaretli tutar. Sıfır ve ayrışmayan değer 400."""
+    if isinstance(raw, bool) or raw is None:
+        raise HTTPException(status_code=400, detail="Geçerli bir tutar girin.")
+    if isinstance(raw, (int, float)):
+        num = float(raw)
+    else:
+        text = str(raw).strip().replace(" ", "").replace("₺", "")
+        if not text:
+            raise HTTPException(status_code=400, detail="Geçerli bir tutar girin.")
+        if "," in text and "." in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            num = float(text)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Geçerli bir tutar girin.")
+    if num != num or num in (float("inf"), float("-inf")):
+        raise HTTPException(status_code=400, detail="Geçerli bir tutar girin.")
+    num = round(num, 2)
+    if abs(num) < 0.009:
+        raise HTTPException(status_code=400, detail="Açılış tutarı sıfır olamaz.")
+    return num
+
+
+_OPENING_YMD = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_OPENING_DMY = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
+
+
+def _parse_opening_day(raw: Any) -> str:
+    """YYYY-MM-DD veya gg.aa.yyyy. Takvim günü; saat dilimi kaydırmaz."""
+    text = str(raw or "").strip()
+    ymd = _OPENING_YMD.fullmatch(text)
+    if ymd:
+        year, month, day = int(ymd.group(1)), int(ymd.group(2)), int(ymd.group(3))
+    else:
+        dmy = _OPENING_DMY.fullmatch(text)
+        if not dmy:
+            raise HTTPException(status_code=400, detail="Geçerli bir tarih girin (YYYY-MM-DD veya gg.aa.yyyy).")
+        day, month, year = int(dmy.group(1)), int(dmy.group(2)), int(dmy.group(3))
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Geçerli bir tarih girin (YYYY-MM-DD veya gg.aa.yyyy).")
+
+
+def _default_opening_day(txs) -> str:
+    first = account_balance.earliest_tx_day(txs)
+    if first:
+        return account_balance.day_before(first)
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def _save_signed_opening_balance(
+    account_id: str,
+    acc: dict,
+    company_id: str,
+    user: dict,
+    payload: Dict[str, Any],
+    *,
+    replace: bool,
+) -> Dict[str, Any]:
+    """Tutarlı açılış/devir. Gösterilen bakiye deltası kadar değişir; cari yazılmaz."""
+    await tenant_access.require_company_admin(user, company_id)
+    amount = _parse_opening_amount(payload.get("amount"))
+
+    async def _opening_rows() -> list:
+        return await db.bank_transactions.find({
+            "company_id": company_id,
+            "account_id": account_id,
+            "source": "opening",
+        }).to_list(50)
+
+    if await _opening_rows() and not replace:
+        raise HTTPException(status_code=409, detail="Bu hesabın açılış hareketi zaten kayıtlı.")
+
+    txs = await db.bank_transactions.find({
+        "company_id": company_id,
+        "$or": [{"account_id": account_id}, {"target_account_id": account_id}],
+    }).to_list(20000)
+    explicit = payload.get("date")
+    if explicit is not None and str(explicit).strip():
+        on_date = _parse_opening_day(explicit)
+    else:
+        pool = txs
+        if replace:
+            pool = [t for t in txs if str((t or {}).get("source") or "") != "opening"]
+        on_date = _default_opening_day(pool)
+    if await _opening_rows() and not replace:
+        raise HTTPException(status_code=409, detail="Bu hesabın açılış hareketi zaten kayıtlı.")
+
+    note = str(payload.get("note") or "").strip()[:240]
+    description = note or "Açılış/Devir bakiyesi"
+    old_balance = round(float(acc.get("current_balance") or 0), 2)
+    old_signed = 0.0
+    if replace:
+        existing = await _opening_rows()
+        old_signed = account_balance.movement_balance(existing, account_id, acc)
+        doc = await account_balance.rewrite_opening_tx(
+            db, acc, amount, on_date=on_date, description=description,
+        )
+    else:
+        doc = account_balance.opening_tx_doc(acc, amount, on_date=on_date, description=description)
+        if not doc:
+            raise HTTPException(status_code=400, detail="Açılış tutarı sıfır olamaz.")
+        doc.pop("contact_id", None)
+        await db.bank_transactions.insert_one(doc)
+    if not doc:
+        raise HTTPException(status_code=400, detail="Açılış tutarı sıfır olamaz.")
+
+    # İlk kayıt apply_balance_delta(amount). replace, silinen açılışın işaretini düşer.
+    delta = round(amount - old_signed, 2)
+    await account_balance.apply_balance_delta(db, account_id, delta)
+    fresh = await db.bank_accounts.find_one({"_id": account_id})
+    if isinstance(fresh, dict) and fresh.get("current_balance") is not None:
+        new_balance = round(float(fresh.get("current_balance") or 0), 2)
+    else:
+        new_balance = round(old_balance + delta, 2)
+    label = str(acc.get("account_name") or acc.get("bank_name") or "")
+    summary = (
+        f"Açılış/devir bakiyesi ({label}): tutar {amount:.2f}, tarih {on_date}, "
+        f"bakiye {old_balance:.2f} → {new_balance:.2f}."
+    )
+    try:
+        await company_audit.write(
+            db,
+            company_id=company_id,
+            user=user,
+            module="/banking",
+            action="update" if replace else "create",
+            record_id=account_id,
+            record_label=label,
+            summary=summary,
+            href="/banking",
+            path=f"/api/banking/accounts/{account_id}/opening-balance",
+        )
+    except Exception:
+        logger.exception("opening balance audit failed")
+    try:
+        await db.activity_logs.insert_one({
+            "_id": str(uuid.uuid4()),
+            "company_id": company_id,
+            "user_id": (user or {}).get("id") or (user or {}).get("_id"),
+            "user_name": (user or {}).get("name"),
+            "method": "POST",
+            "path": f"/banking/accounts/{account_id}/opening-balance",
+            "module": "/banking",
+            "status": 200,
+            "detail": summary,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        logger.exception("opening balance activity log failed")
+    return {
+        "status": "ok",
+        "account_id": account_id,
+        "amount": round(amount, 2),
+        "date": doc.get("date") or on_date,
+        "current_balance": new_balance,
+        "transaction_id": doc.get("_id"),
+    }
+
+
 @api_router.post("/banking/accounts/{account_id}/opening-balance")
-async def save_opening_from_difference(account_id: str, user: dict = Depends(get_current_user)):
-    """Gösterilen − hareket farkını açılış hareketi olarak yazar. Bakiye $inc yok. İkinci çağrı 409."""
+async def save_opening_from_difference(
+    account_id: str,
+    user: dict = Depends(get_current_user),
+    body: Optional[Dict[str, Any]] = Body(default=None),
+    replace: bool = Query(default=False),
+):
+    """Gösterilen − hareket farkını açılış hareketi olarak yazar. Bakiye $inc yok. İkinci çağrı 409.
+
+    amount verilirse fark aranmaz; tek source=opening kuralı durur (replace=true eskiyi yazar).
+    Bu yolda gösterilen bakiye apply_balance_delta(amount) ile değişir. Cari/ortak/fatura yazılmaz.
+    """
     acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
     if not account_balance.opening_eligible(acc):
         raise HTTPException(status_code=400, detail="Bu hesap türünde açılış bakiyesi kaydedilemez.")
     company_id = str(acc.get("company_id") or "")
+    payload = _opening_body(body)
+    if _opening_has_amount(payload):
+        return await _save_signed_opening_balance(
+            account_id,
+            acc,
+            company_id,
+            user,
+            payload,
+            replace=_opening_flag(replace) or _opening_flag(payload.get("replace")),
+        )
 
     async def _opening_exists() -> bool:
         found = await db.bank_transactions.find_one({
