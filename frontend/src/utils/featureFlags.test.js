@@ -6,10 +6,13 @@ import {
   ORDERS_PAGING_STORAGE_KEY,
   ORDERS_SERVER_PAGING,
   PARTNER_TX_PAGING_STORAGE_KEY,
+  PRODUCTS_PAGING_STORAGE_KEY,
+  PRODUCTS_SERVER_PAGING,
   isBankTxServerPagingEnabled,
   isContactsServerPagingEnabled,
   isOrdersServerPagingEnabled,
   isPartnerTxServerPagingEnabled,
+  isProductsServerPagingEnabled,
 } from "./featureFlags";
 
 test("BANK_TX_SERVER_PAGING varsayılan kapalı", () => {
@@ -62,4 +65,18 @@ test("tk_ff_orders_paging=1 bayrağı açar", () => {
   localStorage.setItem(ORDERS_PAGING_STORAGE_KEY, "0");
   expect(isOrdersServerPagingEnabled()).toBe(false);
   localStorage.removeItem(ORDERS_PAGING_STORAGE_KEY);
+});
+
+test("PRODUCTS_SERVER_PAGING varsayılan kapalı", () => {
+  localStorage.removeItem(PRODUCTS_PAGING_STORAGE_KEY);
+  expect(PRODUCTS_SERVER_PAGING).toBe(false);
+  expect(isProductsServerPagingEnabled()).toBe(false);
+});
+
+test("tk_ff_products_paging=1 bayrağı açar", () => {
+  localStorage.setItem(PRODUCTS_PAGING_STORAGE_KEY, "1");
+  expect(isProductsServerPagingEnabled()).toBe(true);
+  localStorage.setItem(PRODUCTS_PAGING_STORAGE_KEY, "0");
+  expect(isProductsServerPagingEnabled()).toBe(false);
+  localStorage.removeItem(PRODUCTS_PAGING_STORAGE_KEY);
 });

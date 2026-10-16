@@ -129,6 +129,7 @@ import bank_tx_page
 import partner_tx_page
 import contact_list_page
 import order_list_page
+import product_list_page
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -6544,6 +6545,15 @@ def _with_purchase_costs(product: dict, hist: list) -> dict:
     return d
 
 
+async def _products_page_decorate(items, company_id):
+    """Sayfa dilimine alış geçmişi. Şirket faturaları bir kez okunur. Yazmaz."""
+    rows = [row for row in (items or []) if isinstance(row, dict)]
+    if not rows:
+        return []
+    cost_map = await _purchase_costs_by_product(company_id)
+    return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in rows]
+
+
 @api_router.get("/products")
 async def list_products(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -6553,8 +6563,52 @@ async def list_products(
     lite: bool = False,
     ids: Optional[str] = None,
     skus: Optional[str] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    q: Optional[str] = None,
+    brand: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+    status: Optional[str] = None,
+    active: Optional[str] = None,
+    b2b: Optional[str] = None,
+    sort: Optional[str] = None,
+    export: bool = False,
+    request: Request = None,
 ):
-    """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi."""
+    """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi.
+
+    page ve page_size yokken yanıt eskisi gibi bir dizidir (seçici, B2B, mobil, sync değil).
+    Biri verilirse salt okunur sayfa: total + summary. Firma tenant_access ile çözülür.
+    lite değilse alış alanları yalnız o sayfadaki ürünlere eklenir.
+    """
+    if page is not None or page_size is not None:
+        if request is None:
+            raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+        user = await get_current_user(request)
+        return await product_list_page.list_products_for_user(
+            db,
+            user,
+            company_id,
+            paged=True,
+            page=page,
+            page_size=page_size,
+            category=category,
+            type=type,
+            b2b_only=b2b_only,
+            lite=lite,
+            ids=ids,
+            skus=skus,
+            q=q or "",
+            brand=brand or "",
+            warehouse_id=warehouse_id or "",
+            status=status or "all",
+            active=active or "all",
+            b2b=b2b or "all",
+            sort=sort or "name_asc",
+            export=export,
+            clean=clean_docs,
+            decorate_page=_products_page_decorate,
+        )
     query = {"company_id": company_id}
     if b2b_only:
         query.update(
