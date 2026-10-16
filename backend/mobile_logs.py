@@ -67,16 +67,16 @@ async def _require_company_user(request: Request, company_id: str) -> dict:
 
 @router.get("/logs")
 async def list_mobile_logs(
-    request: Request,
-    company_id: str = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     q: Optional[str] = None,
     source: Optional[str] = None,
     level: Optional[str] = None,
     limit: int = 200,
+    user: dict = Depends(_user_dep),
 ):
-    await _require_company_user(request, company_id)
-    await purge_expired(company_id)
-    query: Dict[str, Any] = {"company_id": company_id}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await purge_expired(cid)
+    query: Dict[str, Any] = {"company_id": cid}
     if source:
         query["source"] = str(source).strip().lower()
     if level:

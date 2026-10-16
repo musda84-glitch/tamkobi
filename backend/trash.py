@@ -84,9 +84,10 @@ def _summary(rec: dict) -> dict:
 
 
 @router.get("/trash")
-async def list_trash(company_id: str = "comp_nexus_main_01", entity_type: Optional[str] = None, q: Optional[str] = None):
-    await purge_expired(company_id)
-    query: Dict[str, Any] = {"company_id": company_id}
+async def list_trash(company_id: Optional[str] = None, entity_type: Optional[str] = None, q: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await purge_expired(cid)
+    query: Dict[str, Any] = {"company_id": cid}
     if entity_type:
         query["entity_type"] = entity_type
     items = [_summary(r) for r in await _db.trash.find(query).sort("deleted_at", -1).to_list(2000)]
@@ -94,7 +95,7 @@ async def list_trash(company_id: str = "comp_nexus_main_01", entity_type: Option
         ql = q.strip().lower()
         items = [i for i in items if ql in (i["label"] or "").lower() or ql in i["type_label"].lower() or any(ql in str(v).lower() for v in i["preview"].values())]
     counts: Dict[str, int] = {}
-    async for r in _db.trash.find({"company_id": company_id}, {"entity_type": 1}):
+    async for r in _db.trash.find({"company_id": cid}, {"entity_type": 1}):
         counts[r["entity_type"]] = counts.get(r["entity_type"], 0) + 1
     return {"items": items, "total": sum(counts.values()), "retention_days": RETENTION_DAYS,
             "types": [{"key": k, "label": TYPE_LABELS.get(k, k), "count": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])]}
