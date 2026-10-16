@@ -6751,10 +6751,11 @@ async def _reorder_lines(company_id: str, product_ids: Optional[List[str]] = Non
 
 
 @api_router.get("/products/reorder-preview")
-async def reorder_preview(company_id: Optional[str] = "comp_nexus_main_01", product_ids: Optional[str] = None):
+async def reorder_preview(company_id: Optional[str] = None, product_ids: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     ids = [x for x in (product_ids or "").split(",") if x.strip()]
-    lines = await _reorder_lines(company_id, ids or None)
-    return {"company_id": company_id, "lines": lines, "count": len(lines)}
+    lines = await _reorder_lines(cid, ids or None)
+    return {"company_id": cid, "lines": lines, "count": len(lines)}
 
 
 async def _next_purchase_order_number(company_id: str) -> str:
@@ -6856,8 +6857,9 @@ async def reorder_purchases(req: Dict[str, Any]):
 
 
 @api_router.get("/purchase-orders")
-async def list_purchase_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
-    query: Dict[str, Any] = {"company_id": company_id}
+async def list_purchase_orders(company_id: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query: Dict[str, Any] = {"company_id": cid}
     if status:
         query["order_status"] = status
     rows = await db.purchase_orders.find(query).sort("order_date", -1).to_list(1000)
@@ -7186,9 +7188,8 @@ async def get_product_by_barcode(barcode: str, company_id: Optional[str] = None,
     return result
 
 # ----------------- STOK LOT / SERİ / SKT -----------------
-@api_router.get("/stock-lots")
-async def list_stock_lots(
-    company_id: Optional[str] = "comp_nexus_main_01",
+async def _stock_lots_payload(
+    company_id: str,
     product_id: Optional[str] = None,
     include_empty: bool = False,
     expiring_days: Optional[int] = None,
@@ -7215,6 +7216,18 @@ async def list_stock_lots(
                 filtered.append(lot)
         lots = filtered
     return clean_docs(lots)
+
+
+@api_router.get("/stock-lots")
+async def list_stock_lots(
+    company_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    include_empty: bool = False,
+    expiring_days: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _stock_lots_payload(cid, product_id=product_id, include_empty=include_empty, expiring_days=expiring_days)
 
 
 @api_router.post("/stock-lots")
@@ -7293,7 +7306,7 @@ async def delete_stock_lot(lot_id: str, user: dict = Depends(get_current_user)):
 @api_router.get("/products/{product_id}/lots")
 async def product_lots(product_id: str, include_empty: bool = False, user: dict = Depends(get_current_user)):
     product = await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
-    return await list_stock_lots(company_id=product["company_id"], product_id=product_id, include_empty=include_empty)
+    return await _stock_lots_payload(product["company_id"], product_id=product_id, include_empty=include_empty)
 
 
 # ----------------- HIZLI SATIŞ (POS) -----------------
@@ -14868,8 +14881,9 @@ async def comm_history(company_id: Optional[str] = None, contact_id: Optional[st
 
 # ----------------- BARKODLU STOK SAYIMI -----------------
 @api_router.get("/warehouses/stock-counts")
-async def list_stock_counts(company_id: Optional[str] = "comp_nexus_main_01"):
-    counts = await db.stock_counts.find({"company_id": company_id}).sort("created_at", -1).to_list(100)
+async def list_stock_counts(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    counts = await db.stock_counts.find({"company_id": cid}).sort("created_at", -1).to_list(100)
     return clean_docs(counts)
 
 @api_router.post("/warehouses/stock-counts")
@@ -18750,10 +18764,11 @@ async def delete_cargo_integration(carrier_id: str, user: dict = Depends(get_cur
 
 # ---- Atölye performans
 @api_router.get("/production/work-orders/performance")
-async def work_order_performance(company_id: Optional[str] = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None):
+async def work_order_performance(company_id: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     df, dt = date_from or today, date_to or today
-    rows = await db.work_orders.find({"company_id": company_id, "status": "done", "finished_at": {"$gte": df, "$lte": dt + "T23:59:59"}}).to_list(5000)
+    rows = await db.work_orders.find({"company_id": cid, "status": "done", "finished_at": {"$gte": df, "$lte": dt + "T23:59:59"}}).to_list(5000)
     per: Dict[str, Dict[str, Any]] = {}
     per_station: Dict[str, Dict[str, Any]] = {}
     for w in rows:
@@ -19640,8 +19655,9 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
 
 # ----------------- DEPO & TRANSFERLER -----------------
 @api_router.get("/warehouses")
-async def list_warehouses(company_id: Optional[str] = "comp_nexus_main_01"):
-    warehouses = await db.warehouses.find({"company_id": company_id}).to_list(100)
+async def list_warehouses(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    warehouses = await db.warehouses.find({"company_id": cid}).to_list(100)
     return clean_docs(warehouses)
 
 @api_router.post("/warehouses")
@@ -19651,8 +19667,9 @@ async def create_warehouse(wh: Warehouse):
     return clean_doc(doc)
 
 @api_router.get("/warehouses/transfers")
-async def list_warehouse_transfers(company_id: Optional[str] = "comp_nexus_main_01"):
-    transfers = await db.warehouse_transfers.find({"company_id": company_id}).sort("transfer_date", -1).to_list(100)
+async def list_warehouse_transfers(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    transfers = await db.warehouse_transfers.find({"company_id": cid}).sort("transfer_date", -1).to_list(100)
     return clean_docs(transfers)
 
 @api_router.post("/warehouses/transfer")
@@ -19798,8 +19815,9 @@ def _normalize_recipe_steps_payload(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @api_router.get("/production/recipes")
-async def list_recipes(company_id: Optional[str] = "comp_nexus_main_01", product_id: Optional[str] = None):
-    q: Dict[str, Any] = {"company_id": company_id}
+async def list_recipes(company_id: Optional[str] = None, product_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q: Dict[str, Any] = {"company_id": cid}
     if product_id:
         q["finished_product_id"] = product_id
     out = []
@@ -20099,11 +20117,12 @@ def _missing_plan_link(order_id: Optional[str] = None) -> str:
 
 
 @api_router.get("/production/missing-plan")
-async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_01"):
+async def production_missing_plan(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Depo eksik bildirimleri + kritik reçeteli stok → üretim planlama kuyruğu."""
+    cid = tenant_access.resolve_company_id(user, company_id)
     notes = await db.notifications.find(
         {
-            "company_id": company_id,
+            "company_id": cid,
             "type": "order_pick_missing",
             "is_read": False,
         }
@@ -20296,11 +20315,11 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
 
     # Kritik stok + reçeteli mamuller (depo bildirimi olmasa da planlanabilir)
     products = await db.products.find(
-        {"company_id": company_id, "has_recipe": True, "track_stock": {"$ne": False}},
+        {"company_id": cid, "has_recipe": True, "track_stock": {"$ne": False}},
         {"name": 1, "sku": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "has_recipe": 1},
     ).to_list(5000)
     recipes = await db.recipes.find(
-        {"company_id": company_id, "is_active": {"$ne": False}},
+        {"company_id": cid, "is_active": {"$ne": False}},
         {"finished_product_id": 1, "name": 1},
     ).to_list(2000)
     recipe_by_pid = {}
@@ -20310,7 +20329,7 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
             recipe_by_pid[pid] = r
 
     open_pos = await db.production_orders.find(
-        {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+        {"company_id": cid, "status": {"$in": ["planned", "in_production"]}},
         {"finished_product_id": 1, "planned_quantity": 1, "completed_quantity": 1},
     ).to_list(500)
     open_by_pid: Dict[str, float] = {}
@@ -20364,7 +20383,7 @@ async def production_missing_plan(company_id: Optional[str] = "comp_nexus_main_0
         names = list({(r.get("product_name") or "").strip() for r in unresolved})
         name_map = {}
         for p in await db.products.find(
-            {"company_id": company_id, "name": {"$in": names}},
+            {"company_id": cid, "name": {"$in": names}},
             {"name": 1, "sku": 1, "unit": 1, "stock_quantity": 1, "min_stock_alert": 1, "has_recipe": 1},
         ).to_list(len(names) + 50):
             nm = (p.get("name") or "").strip()
@@ -20549,15 +20568,16 @@ def _production_kpi_from_orders(rows: List[Dict[str, Any]], month: str) -> Dict[
 
 
 @api_router.get("/production/kpis")
-async def production_order_kpis(company_id: Optional[str] = "comp_nexus_main_01"):
+async def production_order_kpis(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Hafif sayaçlar — MySQL'de COUNT(*) (JSON yüklemeden); eksik bildirim Python filtresi."""
+    cid = tenant_access.resolve_company_id(user, company_id)
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
-        db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
-        db.production_orders.count_documents({"company_id": company_id, "status": "in_production"}),
-        db.production_orders.count_documents({"company_id": company_id, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
-        db.recipes.count_documents({"company_id": company_id}),
-        db.notifications.count_documents({"company_id": company_id, "type": "order_pick_missing", "is_read": False}),
+        db.production_orders.count_documents({"company_id": cid, "status": {"$in": ["planned", "in_production"]}}),
+        db.production_orders.count_documents({"company_id": cid, "status": "in_production"}),
+        db.production_orders.count_documents({"company_id": cid, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
+        db.recipes.count_documents({"company_id": cid}),
+        db.notifications.count_documents({"company_id": cid, "type": "order_pick_missing", "is_read": False}),
     )
     return {
         "open": open_n,
@@ -20620,13 +20640,15 @@ _PO_LIST_PROJ = {
 
 @api_router.get("/production/orders")
 async def list_production_orders(
-    company_id: Optional[str] = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     status: Optional[str] = None,
     product_id: Optional[str] = None,
     include_steps: bool = False,
+    user: dict = Depends(get_current_user),
 ):
     """status=open → planned + in_production. include_steps=1 → adım özeti (ayrı work-orders çağrısı gerekmez)."""
-    q: Dict[str, Any] = {"company_id": company_id}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    q: Dict[str, Any] = {"company_id": cid}
     if status == "open":
         q["status"] = {"$in": ["planned", "in_production"]}
     elif status:
@@ -20638,7 +20660,7 @@ async def list_production_orders(
         oids = [r["_id"] for r in rows]
         # company_id ile daralt — MySQL idx_docs_coll_company + order_id $in
         wos = await db.work_orders.find(
-            {"company_id": company_id, "order_id": {"$in": oids}},
+            {"company_id": cid, "order_id": {"$in": oids}},
             {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
         ).to_list(2000)
         by: Dict[str, list] = {}
@@ -20901,15 +20923,17 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
 @api_router.get("/production/work-orders")
 async def list_work_orders(
     response: Response,
-    company_id: Optional[str] = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     status: Optional[str] = None,
     station: Optional[str] = None,
     assigned_to: Optional[str] = None,
     order_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
 ):
+    cid = tenant_access.resolve_company_id(user, company_id)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
-    q: Dict[str, Any] = {"company_id": company_id}
+    q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = {"$in": status.split(",")}
     if station:
@@ -20923,7 +20947,7 @@ async def list_work_orders(
     rows = await _filter_active_production_work_orders(rows)
     await _enrich_work_orders_job_fields(rows)
     if not station:
-        company = await db.companies.find_one({"_id": company_id}, {"shopfloor_group_same_station": 1}) or {}
+        company = await db.companies.find_one({"_id": cid}, {"shopfloor_group_same_station": 1}) or {}
         if company.get("shopfloor_group_same_station"):
             rows = pwo.group_work_orders_for_display(rows)
     now = datetime.now(timezone.utc)
@@ -20956,10 +20980,11 @@ async def list_work_orders(
     return rows
 
 @api_router.get("/production/work-orders/stations")
-async def list_stations(company_id: Optional[str] = "comp_nexus_main_01"):
+async def list_stations(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     import work_parks as wp
-    company = await db.companies.find_one({"_id": company_id}) or {}
-    wo = [s for s in await db.work_orders.distinct("station", {"company_id": company_id}) if s]
+    cid = tenant_access.resolve_company_id(user, company_id)
+    company = await db.companies.find_one({"_id": cid}) or {}
+    wo = [s for s in await db.work_orders.distinct("station", {"company_id": cid}) if s]
     return wp.station_names_from_parks(company.get("work_parks"), wo)
 
 async def _shopfloor_require_mesaim_check_in(emp: Dict[str, Any]) -> None:
@@ -21004,8 +21029,9 @@ async def shopfloor_unlock(req: Dict[str, Any]):
 
 
 @api_router.get("/production/work-orders/shopfloor-settings")
-async def get_shopfloor_settings(company_id: Optional[str] = "comp_nexus_main_01"):
-    c = await db.companies.find_one({"_id": company_id}, {"shopfloor_group_same_station": 1}) or {}
+async def get_shopfloor_settings(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    c = await db.companies.find_one({"_id": cid}, {"shopfloor_group_same_station": 1}) or {}
     return {"group_same_station": bool(c.get("shopfloor_group_same_station"))}
 
 
@@ -21158,9 +21184,10 @@ async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] 
 
 
 @api_router.get("/production/work-orders/pause-policy")
-async def get_pause_policy(company_id: Optional[str] = "comp_nexus_main_01", operator_name: Optional[str] = None):
+async def get_pause_policy(company_id: Optional[str] = None, operator_name: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Atölye Duraklat: mesai / mola / fazla mesai penceresi."""
-    return await _shopfloor_pause_policy(company_id, operator_name)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _shopfloor_pause_policy(cid, operator_name)
 
 
 @api_router.post("/production/work-orders/{wo_id}/pause")
