@@ -1371,14 +1371,17 @@ def merge_contact_b2b_settings(current: Optional[dict], incoming: Optional[dict]
     return cur
 
 
-def company_b2b_settings_from_request(req: Optional[dict]) -> dict:
+def company_b2b_settings_from_request(req: Optional[dict], current: Optional[dict] = None) -> dict:
+    """İzinli alanları doğrula. current verilirse gövdede olmayan anahtarlar korunur."""
     req = req or {}
     allowed = {}
     for key in B2B_DEFAULTS:
         if key not in req:
             continue
         allowed[key] = _coerce_b2b_setting(key, req[key])
-    return {**B2B_DEFAULTS, **allowed}
+    if current is None:
+        return {**B2B_DEFAULTS, **allowed}
+    return {**B2B_DEFAULTS, **(current or {}), **allowed}
 
 
 def effective_card_max_installment(settings: Optional[dict], cfg: Optional[dict]) -> int:
@@ -1483,13 +1486,18 @@ async def get_b2b_settings(company_id: str, user: dict = Depends(get_current_use
     c = await db.companies.find_one({"_id": company_id}) or {}
     settings = {**B2B_DEFAULTS, **(c.get("b2b_settings") or {})}
     customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone"), "tax_number_or_id": x.get("tax_number_or_id"), "b2b_login_email": x.get("b2b_login_email"), "has_password": bool(x.get("b2b_password_hash")), "b2b_last_login": x.get("b2b_last_login"), "b2b_portal_settings": x.get("b2b_portal_settings") or {}} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
+    if not tenant_access.is_company_admin(user, company_id):
+        for row in customers:
+            row["b2b_token"] = None
+            row["b2b_token_hidden"] = True
     return {"settings": settings, "customers": customers, "active_count": sum(1 for x in customers if x["b2b_enabled"])}
 
 @api_router.put("/companies/{company_id}/b2b-settings")
 async def put_b2b_settings(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, company_id)
     await tenant_access.require_company_admin(user, company_id)
-    stored = company_b2b_settings_from_request(req)
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    stored = company_b2b_settings_from_request(req, company.get("b2b_settings") or {})
     await db.companies.update_one({"_id": company_id}, {"$set": {"b2b_settings": stored}})
     if req.get("apply_discount_to_all") and "default_discount" in req:
         await db.contacts.update_many({"company_id": company_id, "b2b_enabled": True}, {"$set": {"b2b_discount": float(stored["default_discount"])}})
@@ -5607,17 +5615,24 @@ async def b2b_ai_cart_learn(token: str, req: Dict[str, Any]):
 
 
 @api_router.post("/ai/cart-extract")
-async def ai_cart_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+async def ai_cart_extract(
+    file: UploadFile = File(...),
+    company_id: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
     """Panel Yeni Sipariş: Excel/PDF liste → stok eşleşmeli kalemler (B2B AI sepet ile aynı motor)."""
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.b2b_cart")
     data = await file.read()
-    return await _ai_cart_parse_upload(company_id, file, data)
+    return await _ai_cart_parse_upload(cid, file, data)
 
 
 @api_router.post("/ai/cart-learn")
-async def ai_cart_learn(req: Dict[str, Any]):
+async def ai_cart_learn(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Panel: kullanıcı eşlemelerini sonraki yüklemeler için hatırla."""
-    company_id = req.get("company_id") or "comp_nexus_main_01"
-    return await _ai_cart_learn_mappings(company_id, req.get("mappings") or [])
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await addons.require(cid, "ai.b2b_cart")
+    return await _ai_cart_learn_mappings(cid, req.get("mappings") or [])
 
 def _b2b_gross(amount, vat_rate, includes_vat) -> float:
     n = round(float(amount or 0), 2)
@@ -23889,6 +23904,12 @@ class ProductionAIChatRequest(BaseModel):
     message: str
     company_id: Optional[str] = None
 
+
+class FinancialAIChatRequest(BaseModel):
+    """Finans danışmanı gövdesi. company_id yoksa aktif şirket."""
+    message: str
+    company_id: Optional[str] = None
+
 async def _file_to_text(file: UploadFile, data: bytes) -> str:
     """PDF / Excel / CSV / metin → düz metin (AI ayrıştırma için)."""
     name = (file.filename or "").lower()
@@ -23909,7 +23930,14 @@ async def _file_to_text(file: UploadFile, data: bytes) -> str:
     return data.decode("utf-8", "ignore")
 
 @api_router.post("/ai/order-extract")
-async def ai_order_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+async def ai_order_extract(
+    file: UploadFile = File(...),
+    company_id: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.orders")
+    company_id = cid
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
@@ -23936,8 +23964,10 @@ async def ai_order_extract(file: UploadFile = File(...), company_id: str = Query
     return {"filename": file.filename, "orders": parsed["orders"], "count": len(parsed["orders"])}
 
 @api_router.post("/ai/order-extract/confirm")
-async def ai_order_confirm(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def ai_order_confirm(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await addons.require(cid, "ai.orders")
+    company_id = cid
     created = []
     for o in req.get("orders") or []:
         rows = []
@@ -24022,7 +24052,14 @@ async def _annotate_extracted_products(company_id: str, items: List[Dict[str, An
 
 
 @api_router.post("/ai/product-extract")
-async def ai_product_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+async def ai_product_extract(
+    file: UploadFile = File(...),
+    company_id: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.stock")
+    company_id = cid
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
@@ -24050,8 +24087,10 @@ async def ai_product_extract(file: UploadFile = File(...), company_id: str = Que
 
 
 @api_router.post("/ai/product-extract/confirm")
-async def ai_product_confirm(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def ai_product_confirm(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    await addons.require(cid, "ai.stock")
+    company_id = cid
     update_existing = req.get("update_existing") is not False
     update_stock = req.get("update_stock") is not False
     inserted, updated, skipped = 0, 0, 0
@@ -24061,7 +24100,13 @@ async def ai_product_confirm(req: Dict[str, Any]):
             skipped += 1
             continue
         match_id = raw.get("match_id")
-        existing = await db.products.find_one({"_id": match_id}) if match_id else None
+        if match_id:
+            existing = await db.products.find_one({"_id": match_id, "company_id": cid})
+            if not existing:
+                skipped += 1
+                continue
+        else:
+            existing = None
         if existing:
             if not update_existing:
                 skipped += 1
@@ -24073,7 +24118,7 @@ async def ai_product_confirm(req: Dict[str, Any]):
                 upd["sku"] = rec["sku"]
             if update_stock:
                 upd["stock_quantity"] = rec["stock_quantity"]
-            await db.products.update_one({"_id": existing["_id"]}, {"$set": upd})
+            await db.products.update_one({"_id": existing["_id"], "company_id": cid}, {"$set": upd})
             await _remember_category(company_id, rec.get("category"))
             updated += 1
             continue
@@ -24101,9 +24146,13 @@ async def ai_product_confirm(req: Dict[str, Any]):
 @api_router.post("/ai/invoice-extract")
 async def ai_invoice_extract(
     file: UploadFile = File(...),
-    company_id: str = Query("comp_nexus_main_01"),
+    company_id: Optional[str] = Query(None),
     invoice_type: str = Query("purchase"),
+    user: dict = Depends(get_current_user),
 ):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.invoice")
+    company_id = cid
     inv_type = "sales" if invoice_type == "sales" else "purchase"
     name = (file.filename or "").lower()
     ctype = (file.content_type or "").lower()
@@ -24222,8 +24271,12 @@ async def ai_invoice_extract(
 @api_router.post("/ai/receipt-extract")
 async def ai_receipt_extract(
     file: UploadFile = File(...),
-    company_id: str = Query("comp_nexus_main_01"),
+    company_id: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
 ):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await addons.require(cid, "ai.finance_docs")
+    company_id = cid
     name = file.filename or "receipt.jpg"
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
@@ -24437,22 +24490,24 @@ async def ai_invoice_confirm(req: Dict[str, Any], user: dict = Depends(get_curre
     return {"status": "success", "invoice": created, "contact_id": contact_id, "message": f"Taslak {label} faturası oluşturuldu: {created['invoice_number']}"}
 
 @api_router.post("/ai/financial-advisor")
-async def ask_financial_ai(req: AIChatRequest):
-    company = await db.companies.find_one({"_id": req.company_id})
-    bank_accs = await db.bank_accounts.find({"company_id": req.company_id}).to_list(2000)
+async def ask_financial_ai(req: FinancialAIChatRequest, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, req.company_id)
+    await addons.require(cid, "ai.advisor")
+    company = await db.companies.find_one({"_id": cid})
+    bank_accs = await db.bank_accounts.find({"company_id": cid}).to_list(2000)
     total_bank = sum(a.get("current_balance", 0) for a in bank_accs)
-    contacts = await db.contacts.find({"company_id": req.company_id}).to_list(500)
+    contacts = await db.contacts.find({"company_id": cid}).to_list(500)
     total_rec = sum(c.get("balance", 0) for c in contacts if c.get("balance", 0) > 0)
     total_pay = abs(sum(c.get("balance", 0) for c in contacts if c.get("balance", 0) < 0))
-    invoices = await db.invoices.find({"company_id": req.company_id}).to_list(500)
+    invoices = await db.invoices.find({"company_id": cid}).to_list(500)
     sales = sum(i.get("grand_total", 0) for i in invoices if i.get("invoice_type") == "sales")
     expenses = sum(i.get("grand_total", 0) for i in invoices if i.get("invoice_type") == "purchase")
-    orders = await db.orders.find({"company_id": req.company_id, "order_status": "pending"}).to_list(100)
-    products = await db.products.find({"company_id": req.company_id}).to_list(500)
+    orders = await db.orders.find({"company_id": cid, "order_status": "pending"}).to_list(100)
+    products = await db.products.find({"company_id": cid}).to_list(500)
     low_stock = [p for p in products if p.get("stock_quantity", 0) <= p.get("min_stock_alert", 5)]
 
     context = {
-        "company_id": req.company_id,
+        "company_id": cid,
         "company_name": company.get("name", "TamKobi") if company else "TamKobi",
         "total_bank_balance": total_bank,
         "total_receivables": total_rec,

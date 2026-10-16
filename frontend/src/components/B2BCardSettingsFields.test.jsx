@@ -110,3 +110,32 @@ test("B2B ayar ekranı kart alanlarını sanal POS durumuna göre kilitler", asy
   expect(host.querySelector('[data-testid="b2b-card-enabled"]').disabled).toBe(true);
   expect(host.querySelector('[data-testid="b2b-card-required"]').disabled).toBe(true);
 });
+
+test("B2B tablosu token gizliyken link yerine Aktif yazar", async () => {
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("collect-options")) return Promise.resolve({ data: { enabled: false } });
+    return Promise.resolve({
+      data: {
+        settings: SETTINGS,
+        customers: [{
+          id: "c-hidden",
+          name: "Gizli Cari",
+          email: "gizli@example.com",
+          b2b_enabled: true,
+          b2b_token: null,
+          b2b_token_hidden: true,
+          b2b_discount: 0,
+          has_password: false,
+        }],
+        active_count: 1,
+      },
+    });
+  });
+  await show(<B2BSettings companyId="co-1" />);
+  await act(async () => { await Promise.resolve(); });
+  const row = host.querySelector('[data-testid="b2b-cust-c-hidden"]');
+  expect(row).not.toBeNull();
+  expect(row.querySelector("a")).toBeNull();
+  expect(row.textContent).toContain("Aktif");
+  expect(row.textContent).not.toContain("linki aç");
+});

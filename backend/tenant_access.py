@@ -132,14 +132,22 @@ def filter_tenant_ids(docs: list, user: dict) -> list:
     return [d for d in docs if d and user_may_access_company(user, d.get("company_id"))]
 
 
+def is_company_admin(user: Optional[dict], company_id: str) -> bool:
+    """require_company_admin ile aynı kural; okuma amaçlı, istisna fırlatmaz."""
+    if not user or not user_may_access_company(user, company_id):
+        return False
+    if user.get("is_super_admin"):
+        return True
+    role = (user.get("role") or "").strip().lower()
+    return role in ("admin", "owner")
+
+
 async def require_company_admin(user: dict, company_id: str) -> None:
     """Demo yükleme/silme gibi işlemler için şirket yöneticisi zorunlu."""
     if not user:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     if not user_may_access_company(user, company_id):
         raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
-    if user.get("is_super_admin"):
+    if is_company_admin(user, company_id):
         return
-    role = (user.get("role") or "").strip().lower()
-    if role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Bu işlem için şirket yöneticisi yetkisi gerekli.")
+    raise HTTPException(status_code=403, detail="Bu işlem için şirket yöneticisi yetkisi gerekli.")
