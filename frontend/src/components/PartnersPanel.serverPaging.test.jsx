@@ -55,6 +55,53 @@ const LEDGER = {
   cardPocket: 1475.5,
 };
 
+function allPageBody(page) {
+  if (page === 1) {
+    return {
+      items: [{
+        id: "all1",
+        partner_id: "p1",
+        partner_name: "Ali",
+        date: "2026-10-12",
+        created_at: "2026-10-12T12:00:00Z",
+        type: "capital_in",
+        amount: 20,
+        description: "Tum ortaklar satir",
+        balance_delta: 20,
+        side: "giris",
+      }],
+      total: 2,
+      page: 1,
+      page_size: 50,
+      has_more: true,
+      period_in: 20,
+      period_out: 0,
+      ledger: LEDGER,
+    };
+  }
+  return {
+    items: [{
+      id: "all2",
+      partner_id: "p1",
+      partner_name: "Ali",
+      date: "2026-10-11",
+      created_at: "2026-10-11T12:00:00Z",
+      type: "withdrawal",
+      amount: 4,
+      description: "Tum ortaklar ikinci",
+      balance_delta: -4,
+      side: "cikis",
+    }],
+    total: 2,
+    page: 2,
+    page_size: 50,
+    has_more: false,
+    period_in: 20,
+    period_out: 4,
+    ledger: LEDGER,
+  };
+}
+
 function pageBody(page) {
   if (page === 1) {
     return {
@@ -123,6 +170,10 @@ function pageCalls() {
   return axios.get.mock.calls.filter((c) => /\/banking\/partners\/[^/?]+\/transactions/.test(String(c[0])));
 }
 
+function allPageCalls() {
+  return axios.get.mock.calls.filter((c) => String(c[0]).includes("/banking/partners/transactions/page"));
+}
+
 function bulkCalls() {
   return axios.get.mock.calls.filter((c) => /\/banking\/partners\/transactions(\?|$)/.test(String(c[0])));
 }
@@ -143,6 +194,10 @@ beforeEach(() => {
   quiet = jest.spyOn(console, "error").mockImplementation(() => {});
   axios.get.mockImplementation((url, config) => {
     const u = String(url);
+    if (u.includes("/banking/partners/transactions/page")) {
+      const page = Number(config?.params?.page || 1);
+      return Promise.resolve({ data: allPageBody(page) });
+    }
     if (/\/banking\/partners\/[^/?]+\/transactions/.test(u)) {
       const page = Number(config?.params?.page || 1);
       return Promise.resolve({ data: pageBody(page) });
@@ -210,6 +265,7 @@ async function renderPanel() {
 test("flag kapalıyken yeni uçlar çağrılmaz ve accrue yalnız mount'ta bir kez", async () => {
   await renderPanel();
   expect(pageCalls()).toHaveLength(0);
+  expect(allPageCalls()).toHaveLength(0);
   expect(ledgerCalls()).toHaveLength(0);
   expect(bulkCalls()).toHaveLength(1);
   expect(accrueCalls()).toHaveLength(1);
@@ -231,6 +287,7 @@ test("flag kapalıyken yeni uçlar çağrılmaz ve accrue yalnız mount'ta bir k
   await flush(8);
   expect(bulkCalls().length).toBe(beforeBulk + 1);
   expect(pageCalls()).toHaveLength(0);
+  expect(allPageCalls()).toHaveLength(0);
   expect(ledgerCalls()).toHaveLength(0);
   expect(accrueCalls()).toHaveLength(1);
 });
@@ -294,4 +351,71 @@ test("flag açıkken 5 cash olayı tek yenileme yapar ve accrue tekrarlamaz", as
   expect(pageCalls().at(-1)[1].params.page).toBe(1);
   expect(bulkCalls()).toHaveLength(0);
   expect(accrueCalls()).toHaveLength(1);
+});
+
+test("flag açık ve seçim yokken tüm ortaklar ucu satır getirir, seçim uç değiştirir", async () => {
+  localStorage.setItem(PARTNER_TX_PAGING_STORAGE_KEY, "1");
+  await renderPanel();
+  await waitFor(() => host.textContent?.includes("Tum ortaklar satir") && latestIo);
+  await flush(4);
+  expect(host.textContent).not.toContain("Hareket yok.");
+  expect(host.textContent).toContain("Tum ortaklar satir");
+  expect(bulkCalls()).toHaveLength(0);
+  expect(pageCalls()).toHaveLength(0);
+  const firstAll = allPageCalls();
+  expect(firstAll.length).toBeGreaterThan(0);
+  expect(String(firstAll[0][0])).toContain("/banking/partners/transactions/page");
+  expect(firstAll[0][1].params.page).toBe(1);
+  expect(firstAll[0][1].params.page_size).toBe(50);
+  expect(firstAll[0][1].params.company_id).toBe("c1");
+  expect(host.textContent).not.toContain("Tum ortaklar ikinci");
+
+  await act(async () => { latestIo.cb([{ isIntersecting: true }]); });
+  await flush(8);
+  await waitFor(() => host.textContent?.includes("Tum ortaklar ikinci"));
+  const allPages = allPageCalls().map((c) => c[1].params.page);
+  expect(allPages).toContain(2);
+  expect(pageCalls()).toHaveLength(0);
+
+  const beforeSingle = pageCalls().length;
+  const beforeAll = allPageCalls().length;
+  const card = host.querySelector('[data-testid="partner-card-Ali"]');
+  await act(async () => { card.click(); });
+  await flush(8);
+  await waitFor(() => host.textContent?.includes("Sunucu satir"));
+  expect(pageCalls().length).toBe(beforeSingle + 1);
+  expect(String(pageCalls().at(-1)[0])).toContain("/banking/partners/p1/transactions");
+  expect(pageCalls().at(-1)[1].params.page).toBe(1);
+  expect(allPageCalls().length).toBe(beforeAll);
+  expect(host.textContent).not.toContain("Tum ortaklar satir");
+  expect(host.textContent).not.toContain("Hareket yok.");
+
+  const beforeBack = allPageCalls().length;
+  const clear = host.querySelector('[data-testid="partner-tx-clear-filter"]');
+  await act(async () => { clear.click(); });
+  await flush(8);
+  await waitFor(() => host.textContent?.includes("Tum ortaklar satir"));
+  expect(allPageCalls().length).toBe(beforeBack + 1);
+  expect(String(allPageCalls().at(-1)[0])).toContain("/banking/partners/transactions/page");
+  expect(allPageCalls().at(-1)[1].params.company_id).toBe("c1");
+  expect(pageCalls().length).toBe(beforeSingle + 1);
+  expect(host.textContent).not.toContain("Sunucu satir");
+  expect(host.textContent).not.toContain("Hareket yok.");
+  expect(bulkCalls()).toHaveLength(0);
+  expect(accrueCalls()).toHaveLength(1);
+
+  const beforeRefresh = allPageCalls().length;
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT, {
+      detail: { companyId: "c1", scopes: ["cash"], at: Date.now() },
+    }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 800)); });
+  await flush(8);
+  expect(allPageCalls().length).toBe(beforeRefresh + 1);
+  expect(String(allPageCalls().at(-1)[0])).toContain("/banking/partners/transactions/page");
+  expect(allPageCalls().at(-1)[1].params.page).toBe(1);
+  expect(pageCalls().length).toBe(beforeSingle + 1);
+  expect(accrueCalls()).toHaveLength(1);
+  expect(host.textContent).toContain("Tum ortaklar satir");
 });

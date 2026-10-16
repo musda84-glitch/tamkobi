@@ -1,8 +1,9 @@
 """Ortak hareketleri sayfası. Salt okunur; bakiye alanlarına yazmaz.
 
 Eski ``GET /banking/partners``, ``/summary`` ve ``/transactions`` aynı kalır.
-Bu modül tek ortağın listesini sayfalar. Sorgu ``company_id`` + ``partner_id``
-eşitliğidir. Sıra, paneldeki ``sortBankTransactions`` ile aynıdır (tarih
+Tek ortak sorgusu ``company_id`` + ``partner_id`` eşitliğidir. Ortak seçilmezse
+sorgu yalnız ``company_id`` eşitliğidir; silinmiş ortağın satırı eski tam liste
+gibi düşer. Sıra, paneldeki ``sortBankTransactions`` ile aynıdır (tarih
 azalan, created_at azalan, id azalan). Dönem giriş/çıkış ve defter,
 ``partner_pay.partner_ledger_breakdown`` ile filtrelenmiş tüm küme üzerinden
 hesaplanır.
@@ -93,12 +94,22 @@ def _public_row(tx: dict) -> dict:
     return row
 
 
-async def _load_partner_txs(db, company_id: str, partner_id: str) -> List[dict]:
-    query = {"company_id": str(company_id or ""), "partner_id": str(partner_id or "")}
+async def _load_partner_txs(db, company_id: str, partner_id: Optional[str] = None) -> List[dict]:
+    """``partner_id`` yoksa sorgu yalnız company_id eşitliğidir."""
+    cid = str(company_id or "")
+    if partner_id is None:
+        query: Dict[str, Any] = {"company_id": cid}
+        cursor = db.partner_transactions.find(query)
+        cursor = cursor.sort(list(TX_SORT))
+        rows = await cursor.to_list(FETCH_CAP)
+        return [
+            tx for tx in (rows or [])
+            if isinstance(tx, dict) and str(tx.get("company_id") or "") == cid
+        ]
+    query = {"company_id": cid, "partner_id": str(partner_id)}
     cursor = db.partner_transactions.find(query)
     cursor = cursor.sort(list(TX_SORT))
     rows = await cursor.to_list(FETCH_CAP)
-    cid = query["company_id"]
     pid = query["partner_id"]
     return [
         tx for tx in (rows or [])
@@ -106,6 +117,12 @@ async def _load_partner_txs(db, company_id: str, partner_id: str) -> List[dict]:
         and str(tx.get("company_id") or "") == cid
         and str(tx.get("partner_id") or "") == pid
     ]
+
+
+async def _live_partner_ids(db, company_id: str) -> set:
+    """Eski tam liste ile aynı tavan: silinmiş ortağın satırı listeye girmez."""
+    found = await db.partners.find({"company_id": company_id}, {"_id": 1}).to_list(100)
+    return {str(p.get("_id") or "") for p in found or [] if p.get("_id")}
 
 
 async def list_partner_transactions(
@@ -149,11 +166,58 @@ async def list_partner_transactions(
     }
 
 
-async def list_partner_transactions_for_user(db, user: dict, partner_id: str, **kwargs) -> dict:
-    partner = await tenant_access.get_tenant_doc(
-        db, "partners", partner_id, user, not_found="Ortak bulunamadı.",
-    )
-    return await list_partner_transactions(db, partner, **kwargs)
+async def list_company_partner_transactions(
+    db,
+    company_id: str,
+    *,
+    page: Any = 1,
+    page_size: Any = PAGE_SIZE_DEFAULT,
+    date_from: str = "",
+    date_to: str = "",
+    q: str = "",
+    tx_type: str = "",
+) -> dict:
+    """Şirketteki tüm canlı ortaklar. Tek ortak sayfasıyla aynı şekil. Yazmaz."""
+    kind = _normalize_type(tx_type)
+    cid = str(company_id or "")
+    if not cid:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
+    size = clamp_page_size(page_size)
+    page_n = clamp_page(page)
+    live = await _live_partner_ids(db, cid)
+    rows = await _load_partner_txs(db, cid, None)
+    rows = [tx for tx in rows if str(tx.get("partner_id") or "") in live]
+    filtered = [
+        tx for tx in rows
+        if tx_matches_filters(tx, date_from=date_from or "", date_to=date_to or "", q=q or "", tx_type=kind)
+    ]
+    ordered = sort_partner_txs(filtered)
+    breakdown = partner_pay.partner_ledger_breakdown(ordered, 0)
+    total = len(ordered)
+    start = (page_n - 1) * size
+    page_rows = ordered[start:start + size]
+    return {
+        "items": [_public_row(tx) for tx in page_rows],
+        "total": total,
+        "page": page_n,
+        "page_size": size,
+        "has_more": start + len(page_rows) < total,
+        "period_in": breakdown["girisDisplay"],
+        "period_out": breakdown["cikisDisplay"],
+        "ledger": breakdown,
+    }
+
+
+async def list_partner_transactions_for_user(db, user: dict, partner_id: Optional[str] = None, **kwargs) -> dict:
+    """``partner_id`` yoksa şirketteki tüm ortaklar. Tek ortak yolu aynı kalır."""
+    company_id = kwargs.pop("company_id", None)
+    if partner_id is not None:
+        partner = await tenant_access.get_tenant_doc(
+            db, "partners", partner_id, user, not_found="Ortak bulunamadı.",
+        )
+        return await list_partner_transactions(db, partner, **kwargs)
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await list_company_partner_transactions(db, cid, **kwargs)
 
 
 async def list_company_ledgers(db, company_id: str) -> Dict[str, Any]:
