@@ -684,13 +684,31 @@ const WorkshopZonesSettings = ({ companyId }) => {
   );
 };
 
+function b2bSettingsErrorDetail(err) {
+  const detail = err?.response?.data?.detail;
+  return typeof detail === "string" ? detail.trim() : "";
+}
+
 export const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
   const [pwd, setPwd] = useState(null);
   const [vposReady, setVposReady] = useState(false);
+  const [loadState, setLoadState] = useState("loading");
+  const [loadError, setLoadError] = useState("");
   const savePwd = async (e) => { e.preventDefault(); if ((pwd.password || "").length < 6) return toast.error("Şifre en az 6 karakter olmalı."); try { await axios.post(`${API_URL}/contacts/${pwd.c.id}/b2b-access`, { enabled: true, discount: pwd.c.b2b_discount, password: pwd.password, login_email: pwd.login_email, base_url: window.location.origin }); toast.success(`${pwd.c.name} için B2B giriş bilgileri kaydedildi.`); setPwd(null); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
-  const load = useCallback(() => axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => setD(r.data)).catch(() => toast.error("B2B ayarları yüklenemedi.")), [companyId]);
+  const load = useCallback(() => {
+    setLoadState("loading");
+    return axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => {
+      setD(r.data);
+      setLoadError("");
+      setLoadState("ready");
+    }).catch((err) => {
+      setLoadError(b2bSettingsErrorDetail(err));
+      setLoadState("error");
+      toast.error("B2B ayarları yüklenemedi.");
+    });
+  }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     let cancelled = false;
@@ -699,6 +717,22 @@ export const B2BSettings = ({ companyId }) => {
       .catch(() => { if (!cancelled) setVposReady(false); });
     return () => { cancelled = true; };
   }, [companyId]);
+  if (!d && loadState === "loading") {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs text-slate-500" data-testid="b2b-settings-loading">
+        B2B ayarları yükleniyor…
+      </div>
+    );
+  }
+  if (!d && loadState === "error") {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-2 text-xs" data-testid="b2b-settings-error">
+        <div className="font-semibold text-slate-900">B2B ayarları yüklenemedi.</div>
+        {loadError ? <div className="text-[11px] text-slate-500">{loadError}</div> : null}
+        <button type="button" onClick={() => load()} className="px-3 py-2 border rounded-lg font-semibold" data-testid="b2b-settings-retry">Tekrar dene</button>
+      </div>
+    );
+  }
   if (!d) return null;
   const st = d.settings;
   const set = (k, v) => setD({ ...d, settings: { ...st, [k]: v } });
