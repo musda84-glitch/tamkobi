@@ -147,13 +147,13 @@ def test_import_creates_expense_and_pay_as_masraf():
     assert db.bank_transactions.docs[0]["category"].startswith("Masraf:")
     assert db.expenses.docs[0]["payment_status"] == "paid"
 
-    listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-09"))
+    listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-09", user=admin))
     assert len(listed["documents"]) == 1
     assert listed["documents"][0]["obligation_count"] == 2
     assert listed["documents"][0]["unpaid_count"] == 1
 
     # Ekim görünümünde Eylül bordrosu da listelenir (ay filtresi belgeyi gizlemez).
-    listed_oct = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10"))
+    listed_oct = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10", user=admin))
     assert len(listed_oct["documents"]) == 1
     assert listed_oct["documents"][0]["filename"] == "matek bordro 2026-09.pdf"
     assert any(r["payment_status"] != "paid" for r in listed_oct["obligations"])
@@ -195,10 +195,10 @@ def test_extract_persists_draft_visible_any_month():
     assert saved["filename"] == "bordro.pdf"
     assert saved["status"] == "draft"
     assert draft["document_id"] == saved["id"]
-    listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10"))
+    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
+    listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10", user=admin))
     assert len(listed["documents"]) == 1
     assert listed["documents"][0]["status"] == "draft"
-    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
     imported = asyncio.run(tax_obligations._import_tax_doc_core({
         "company_id": "c1",
         "month": "2026-10",

@@ -291,19 +291,21 @@ async def import_tax_doc(req: Dict[str, Any], user: dict = Depends(_user_dep)):
 
 @router.get("/tax-obligations")
 async def list_tax_obligations(
-    company_id: str = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     month: Optional[str] = None,
     status: Optional[str] = None,
     source_kind: Optional[str] = None,
+    user: dict = Depends(_user_dep),
 ):
-    query: Dict[str, Any] = {"company_id": company_id}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query: Dict[str, Any] = {"company_id": cid}
     if status and status != "all":
         query["payment_status"] = status
     if source_kind and source_kind != "all":
         query["source_kind"] = source_kind
     all_rows = [_clean(x) for x in await _db.tax_obligations.find(query).sort("due_date", 1).to_list(2000)]
     rows = visible_obligations(all_rows, month)
-    docs_raw = [_clean(x) for x in await _db.tax_documents.find({"company_id": company_id}).sort("created_at", -1).to_list(200)]
+    docs_raw = [_clean(x) for x in await _db.tax_documents.find({"company_id": cid}).sort("created_at", -1).to_list(200)]
     docs = enrich_documents(docs_raw, all_rows)
     return {
         "obligations": rows,

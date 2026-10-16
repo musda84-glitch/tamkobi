@@ -176,8 +176,7 @@ def _open_only(doc: dict):
         raise HTTPException(status_code=400, detail=f"Bu kayıt {STATUS_TR.get(doc.get('status'), doc.get('status'))} durumunda; işlem yapılamaz.")
 
 
-@router.get("/cheques/summary")
-async def cheques_summary(company_id: str = "comp_nexus_main_01"):
+async def _cheques_summary(company_id: str):
     from datetime import date, timedelta
     today = _today()
     rows = await _db.cheques.find({"company_id": company_id}).to_list(5000)
@@ -204,16 +203,24 @@ async def cheques_summary(company_id: str = "comp_nexus_main_01"):
     }
 
 
+@router.get("/cheques/summary")
+async def cheques_summary(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await _cheques_summary(cid)
+
+
 @router.get("/cheques")
 async def list_cheques(
-    company_id: str = "comp_nexus_main_01",
+    company_id: Optional[str] = None,
     direction: Optional[str] = None,
     instrument: Optional[str] = None,
     status: Optional[str] = None,
     contact_id: Optional[str] = None,
     q: Optional[str] = None,
+    user: dict = Depends(_user_dep),
 ):
-    query: Dict[str, Any] = {"company_id": company_id}
+    cid = tenant_access.resolve_company_id(user, company_id)
+    query: Dict[str, Any] = {"company_id": cid}
     if direction in ("received", "issued"):
         query["direction"] = direction
     if instrument in ("cheque", "promissory"):
@@ -237,7 +244,7 @@ async def list_cheques(
     for d in rows:
         due = d.get("due_date") or ""
         d["due_soon"] = d.get("status") == "open" and today <= due <= week_end
-    summary = await cheques_summary(company_id)
+    summary = await _cheques_summary(cid)
     return {"cheques": rows, "summary": summary}
 
 

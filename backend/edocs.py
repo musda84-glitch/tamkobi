@@ -533,13 +533,14 @@ def _clean(d: dict) -> dict:
 
 
 @router.get("/edocs/inbox")
-async def list_inbox(company_id: str = "comp_nexus_main_01", status: Optional[str] = None):
-    await merge_duplicate_edocs(company_id)
-    q: Dict[str, Any] = {"company_id": company_id}
+async def list_inbox(company_id: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await merge_duplicate_edocs(cid)
+    q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = status
     docs = [_clean(d) for d in await _db.incoming_edocs.find(q).sort("received_at", -1).to_list(500)]
-    counts = {s: await _db.incoming_edocs.count_documents({"company_id": company_id, "status": s}) for s in ("pending", "approved", "rejected", "ignored")}
+    counts = {s: await _db.incoming_edocs.count_documents({"company_id": cid, "status": s}) for s in ("pending", "approved", "rejected", "ignored")}
     return {"items": docs, "counts": counts, "blank": sum(1 for d in docs if is_blank(d))}
 
 
