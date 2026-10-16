@@ -27,9 +27,8 @@ from urllib.parse import urlparse
 
 from safe_error import mask_sensitive_text
 
-from vpos_http import AsyncClient
-
 from .base import VposAdapter, VposStartError, register
+from .http import open_async_client
 
 logger = logging.getLogger("vpos.iyzico")
 
@@ -377,7 +376,7 @@ class IyzicoAdapter(VposAdapter):
 
         if client is not None:
             return await _call(client)
-        async with AsyncClient(timeout=TIMEOUT) as owned:
+        async with open_async_client(timeout=TIMEOUT) as owned:
             return await _call(owned)
 
 

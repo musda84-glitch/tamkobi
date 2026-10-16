@@ -414,3 +414,13 @@ def test_ok_url_does_not_write_intent(db):
 def test_paytr_notify_is_public():
     assert rbac.is_public_api_path("/api/vpos/paytr/notify/cfg1", "POST") is True
     assert rbac.is_public_api_path("/api/vpos/configs", "PUT") is False
+
+
+def test_real_async_client_is_rejected():
+    import httpx
+    import vpos.http as vpos_http
+
+    with pytest.raises(AssertionError, match="sahte client"):
+        httpx.AsyncClient(timeout=1)
+    with pytest.raises(AssertionError, match="sahte client"):
+        vpos_http.open_async_client()

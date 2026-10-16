@@ -25,9 +25,8 @@ from typing import Any, Dict, Mapping
 
 from safe_error import mask_sensitive_text
 
-from vpos_http import AsyncClient
-
 from .base import VposAdapter, VposStartError, register
+from .http import open_async_client
 
 logger = logging.getLogger("vpos.paytr")
 
@@ -242,7 +241,7 @@ class PaytrAdapter(VposAdapter):
 
         if client is not None:
             return await _call(client)
-        async with AsyncClient(timeout=TIMEOUT) as owned:
+        async with open_async_client(timeout=TIMEOUT) as owned:
             return await _call(owned)
 
     async def confirm(self, config: Mapping[str, Any], intent: Mapping[str, Any], payload: Mapping[str, Any], client: Any = None) -> Dict[str, Any]:
