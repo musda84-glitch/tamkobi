@@ -143,6 +143,7 @@ export function ContactDetailScreen() {
   const [openLineId, setOpenLineId] = useState<string | null>(null);
   const [lineItemsById, setLineItemsById] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [lineLoadingId, setLineLoadingId] = useState<string | null>(null);
+  const [lineErrorById, setLineErrorById] = useState<Record<string, true>>({});
   const openLineRef = useRef<string | null>(null);
   const lineItemsRef = useRef<Record<string, Array<Record<string, unknown>>>>({});
   const lineInflightRef = useRef<Set<string>>(new Set());
@@ -241,10 +242,16 @@ export function ContactDetailScreen() {
       const items = Array.isArray(doc?.items) ? doc.items : [];
       lineItemsRef.current = { ...lineItemsRef.current, [id]: items };
       setLineItemsById((prev) => ({ ...prev, [id]: items }));
+      setLineErrorById((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     } catch {
-      setError("Kalemler yüklenemedi.");
       lineItemsRef.current = { ...lineItemsRef.current, [id]: [] };
       setLineItemsById((prev) => ({ ...prev, [id]: [] }));
+      setLineErrorById((prev) => ({ ...prev, [id]: true }));
     } finally {
       lineInflightRef.current.delete(id);
       setLineLoadingId((cur) => (cur === id ? null : cur));
@@ -1010,6 +1017,8 @@ export function ContactDetailScreen() {
               <View testID={`detail-inv-lines-row-${num}`} style={{ marginLeft: 28, padding: 8, backgroundColor: colors.slate50, borderRadius: 12, gap: 4 }}>
                 {lineLoadingId === docId ? (
                   <Muted>Kalemler yükleniyor…</Muted>
+                ) : lineErrorById[docId] ? (
+                  <Text testID={`detail-inv-lines-error-${num}`} style={{ color: colors.danger, fontSize: 12, fontWeight: "700" }}>Kalemler yüklenemedi</Text>
                 ) : lineItems.length === 0 ? (
                   <Muted testID={`detail-inv-lines-empty-${num}`}>Bu belgede kalem yok.</Muted>
                 ) : lineItems.map((it: any, i: number) => (
