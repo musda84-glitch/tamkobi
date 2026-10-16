@@ -20,6 +20,35 @@ LEGAL_ACCEPT = {"accept_mss": True, "accept_obf": True, "accept_kvkk": True}
 
 
 @pytest.fixture(autouse=True)
+def _vpos_block_live_async_client(request):
+    """Sanal POS testlerinde gerçek httpx.AsyncClient açılamaz.
+
+    PayTR ve iyzico çağrıları enjekte edilen sahte client ile gider.
+    Sahte client dışında AsyncClient kurulursa test düşer. Diğer
+    test dosyalarına uygulanmaz.
+    """
+    node_path = getattr(request.node, "path", None) or getattr(request.node, "fspath", None)
+    filename = getattr(node_path, "name", "") or ""
+    if not filename.startswith("test_vpos_"):
+        yield
+        return
+    import httpx
+
+    real = httpx.AsyncClient
+
+    def _blocked(*_args, **_kwargs):
+        raise AssertionError(
+            "Sanal POS testi gerçek httpx.AsyncClient açtı. Yalnız enjekte edilen sahte client kullanılabilir."
+        )
+
+    httpx.AsyncClient = _blocked
+    try:
+        yield
+    finally:
+        httpx.AsyncClient = real
+
+
+@pytest.fixture(autouse=True)
 def _ensure_asyncio_event_loop():
     """asyncio.run() kapanan döngüyü sonraki get_event_loop() testlerine bırakmasın."""
     import warnings

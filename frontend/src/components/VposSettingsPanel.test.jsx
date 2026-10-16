@@ -4,7 +4,7 @@ import { act } from "react";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
-import { VposSettingsPanel } from "./VposSettingsPanel";
+import { VposSettingsPanel, classifyTestPayment, copyText, paytrIframeAllowed, iyzicoRedirectAllowed, navigation } from "./VposSettingsPanel";
 
 jest.mock("axios", () => {
   const impl = {
@@ -94,9 +94,14 @@ test("ayar formu gizli alanları maskeler ve kasa hesabını listelemez", async 
   expect(options).toContain("okc1");
   expect(options).not.toContain("cash1");
   const family = [...host.querySelectorAll('[data-testid="vpos-family"] option')];
+  expect(family.find((node) => node.value === "nestpay").textContent).toBe("Banka POS (NestPay)");
   expect(family.find((node) => node.value === "nestpay").disabled).toBe(false);
-  expect(family.find((node) => node.value === "paytr").disabled).toBe(true);
-  expect(family.find((node) => node.value === "iyzico").textContent).toMatch(/yakında/);
+  expect(family.find((node) => node.value === "paytr").disabled).toBe(false);
+  expect(family.find((node) => node.value === "paytr").textContent).toBe("PayTR");
+  expect(family.find((node) => node.value === "iyzico").textContent).toBe("iyzico");
+  expect(family.find((node) => node.value === "param").disabled).toBe(true);
+  expect(host.querySelector('[data-testid="vpos-fields-nestpay"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="vpos-fields-paytr"]')).toBeNull();
 });
 
 test("test ödemesi formu action_url adresine POST eder", async () => {
@@ -122,6 +127,151 @@ test("canlı modda test ödemesi kapalıdır", async () => {
   axios.get.mockResolvedValue({ data: { ...CONFIG, mode: "live", enabled: true } });
   await renderPanel();
   expect(host.querySelector('[data-testid="vpos-test-payment"]').disabled).toBe(true);
+});
+
+function setSelect(node, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+  setter.call(node, value);
+  node.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+test("PayTR alanları maskeli sır ve bildirim URL kopyası gösterir", async () => {
+  axios.get.mockResolvedValue({
+    data: {
+      family: "paytr",
+      bank_label: "Mağaza",
+      mode: "test",
+      merchant_id: "100001",
+      has_merchant_key: true,
+      has_merchant_salt: true,
+      merchant_key: SECRET,
+      merchant_salt: "SALT-SECRET",
+      merchant_key_enc: ENC,
+      max_installment: 3,
+      no_installment: false,
+      notify_url: "https://app.example.com/api/vpos/paytr/notify/cfg1",
+      enabled: true,
+      account_id: "pos1",
+    },
+  });
+  const writeText = jest.fn(() => Promise.resolve());
+  Object.assign(navigator, { clipboard: { writeText } });
+  await renderPanel();
+  expect(host.querySelector('[data-testid="vpos-fields-paytr"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="vpos-fields-nestpay"]')).toBeNull();
+  expect(host.querySelector('[data-testid="vpos-merchant-key"]').value).toBe("");
+  expect(host.querySelector('[data-testid="vpos-merchant-key"]').getAttribute("type")).toBe("password");
+  expect(host.querySelector('[data-testid="vpos-merchant-salt"]').value).toBe("");
+  expect(host.querySelector('[data-testid="vpos-merchant-key-mask"]').textContent).toMatch(/•/);
+  expect(host.textContent).not.toContain(SECRET);
+  expect(host.textContent).not.toContain("SALT-SECRET");
+  expect(host.textContent).not.toContain(ENC);
+  expect(host.querySelector('[data-testid="vpos-notify-url"]').value).toBe("https://app.example.com/api/vpos/paytr/notify/cfg1");
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-notify-copy"]').click();
+  });
+  expect(writeText).toHaveBeenCalledWith("https://app.example.com/api/vpos/paytr/notify/cfg1");
+  expect(host.querySelector('[data-testid="vpos-notify-copied"]')).toBeTruthy();
+});
+
+test("iyzico sırları maskelenir", async () => {
+  axios.get.mockResolvedValue({
+    data: {
+      family: "iyzico",
+      bank_label: "iyzico mağaza",
+      mode: "test",
+      has_api_key: true,
+      has_secret_key: true,
+      api_key: "sandbox-VISIBLE-KEY",
+      secret_key: SECRET,
+      secret_key_enc: ENC,
+      enabled: true,
+    },
+  });
+  await renderPanel();
+  expect(host.querySelector('[data-testid="vpos-fields-iyzico"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="vpos-api-key"]').value).toBe("");
+  expect(host.querySelector('[data-testid="vpos-api-key"]').getAttribute("type")).toBe("password");
+  expect(host.querySelector('[data-testid="vpos-secret-key"]').value).toBe("");
+  expect(host.querySelector('[data-testid="vpos-secret-key-mask"]').textContent).toMatch(/•/);
+  expect(host.textContent).not.toContain(SECRET);
+  expect(host.textContent).not.toContain("sandbox-VISIBLE-KEY");
+  expect(host.textContent).toMatch(/sandbox-api\.iyzipay\.com/);
+});
+
+test("aile seçici PayTR ve iyzico alanlarını açar", async () => {
+  await renderPanel();
+  await act(async () => {
+    setSelect(host.querySelector('[data-testid="vpos-family"]'), "iyzico");
+  });
+  expect(host.querySelector('[data-testid="vpos-fields-iyzico"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="vpos-fields-nestpay"]')).toBeNull();
+  expect(host.textContent).toMatch(/Görünen ad/);
+});
+
+test("PayTR iframe yalnız paytr origin modalında açılır", async () => {
+  await renderPanel();
+  axios.post.mockResolvedValueOnce({
+    data: { kind: "iframe", iframe_url: "https://evil.example/odeme/guvenli/tok" },
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  expect(host.querySelector('[data-testid="vpos-paytr-iframe"]')).toBeNull();
+  axios.post.mockResolvedValueOnce({
+    data: { kind: "iframe", iframe_url: "http://www.paytr.com/odeme/guvenli/tok" },
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  expect(host.querySelector('[data-testid="vpos-paytr-iframe"]')).toBeNull();
+  axios.post.mockResolvedValueOnce({
+    data: { kind: "iframe", iframe_url: "https://www.paytr.com/odeme/guvenli/tok123" },
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  const frame = host.querySelector('[data-testid="vpos-paytr-iframe"]');
+  expect(frame).toBeTruthy();
+  expect(frame.getAttribute("src")).toBe("https://www.paytr.com/odeme/guvenli/tok123");
+  expect(paytrIframeAllowed("https://www.paytr.com.evil.com/odeme/guvenli/x")).toBe(false);
+  expect(classifyTestPayment({ kind: "iframe", iframe_url: "https://www.paytr.com/odeme/guvenli/abc" }).type).toBe("iframe");
+});
+
+test("iyzico yönlendirmesi yalnız iyzipay alan adına gider", async () => {
+  axios.get.mockResolvedValue({ data: { ...CONFIG, family: "iyzico", enabled: true, mode: "test", has_api_key: true, has_secret_key: true } });
+  const assign = jest.spyOn(navigation, "assign").mockImplementation(() => {});
+  await renderPanel();
+  axios.post.mockResolvedValueOnce({ data: { kind: "redirect", url: "https://evil.example/pay" } });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  expect(assign).not.toHaveBeenCalled();
+  axios.post.mockResolvedValueOnce({ data: { kind: "redirect", url: "http://sandbox-cpp.iyzipay.com/pay" } });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  expect(assign).not.toHaveBeenCalled();
+  axios.post.mockResolvedValueOnce({ data: { kind: "redirect", url: "https://iyzipay.com.evil.com/pay" } });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  expect(assign).not.toHaveBeenCalled();
+  axios.post.mockResolvedValueOnce({ data: { kind: "redirect", url: "https://sandbox-cpp.iyzipay.com/?token=abc" } });
+  await act(async () => {
+    host.querySelector('[data-testid="vpos-test-payment"]').click();
+  });
+  expect(assign).toHaveBeenCalledWith("https://sandbox-cpp.iyzipay.com/?token=abc");
+  expect(iyzicoRedirectAllowed("https://cpp.iyzipay.com/x")).toBe(true);
+  expect(iyzicoRedirectAllowed("https://notiyzipay.com/x")).toBe(false);
+  assign.mockRestore();
+});
+
+test("kopyalama yardımcısı panodaki metni yazar", async () => {
+  const writeText = jest.fn(() => Promise.resolve());
+  Object.assign(navigator, { clipboard: { writeText } });
+  await expect(copyText("https://app.example.com/api/vpos/paytr/notify/cfg1")).resolves.toBe(true);
+  expect(writeText).toHaveBeenCalledWith("https://app.example.com/api/vpos/paytr/notify/cfg1");
 });
 
 test("ayarlar menüsünde Sanal POS sekmesi vardır", () => {

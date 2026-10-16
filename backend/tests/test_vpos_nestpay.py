@@ -356,9 +356,12 @@ def test_test_payment_returns_bank_form_without_calling_out(db):
     assert intent["order_id"] != body["intent_id"]
     assert db.bank_transactions.docs == {}
     assert db.bank_accounts.docs["pos1"]["current_balance"] == 0
-    root = Path(__file__).resolve().parents[1] / "vpos"
-    for path in root.glob("*.py"):
-        text = path.read_text(encoding="utf-8")
+    # NestPay kartı bankaya tarayıcı formuyla gönderir; bu iki dosya giden
+    # HTTP istemcisi kullanmaz. PayTR ve iyzico backend/vpos/http.py üzerinden
+    # httpx açar; onların testleri sahte client enjekte eder.
+    vpos_dir = Path(__file__).resolve().parents[1] / "vpos"
+    for name in ("nestpay.py", "base.py"):
+        text = (vpos_dir / name).read_text(encoding="utf-8")
         assert "httpx" not in text
         assert "requests." not in text
 

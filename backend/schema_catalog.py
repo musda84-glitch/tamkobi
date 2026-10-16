@@ -423,14 +423,14 @@ COLLECTIONS = {
     },
     "vpos_configs": {
         "scope": SCOPE_TENANT,
-        "description": "Sanal POS ayarı (NestPay/EST). store_key ve API şifresi şifreli; yanıtta yalnız has_* bayrakları.",
-        "keys": ("_id", "company_id", "family", "bank_label", "mode", "client_id", "store_key_enc", "api_user", "api_password_enc", "gateway_3d_url", "account_id", "enabled", "created_at", "updated_at"),
+        "description": "Sanal POS ayarı (NestPay, PayTR, iyzico). Sırlar şifreli; yanıtta yalnız has_* bayrakları.",
+        "keys": ("_id", "company_id", "family", "bank_label", "mode", "client_id", "store_key_enc", "api_user", "api_password_enc", "gateway_3d_url", "merchant_id", "merchant_key_enc", "merchant_salt_enc", "max_installment", "no_installment", "api_key", "secret_key_enc", "account_id", "enabled", "created_at", "updated_at"),
         "refs": ("companies._id", "bank_accounts._id via account_id"),
     },
     "payment_intents": {
         "scope": SCOPE_TENANT,
-        "description": "Sanal POS ödeme niyeti. Tutar sunucuda sabitlenir; kart verisi saklanmaz. PR-1 muhasebe yazmaz.",
-        "keys": ("_id", "company_id", "contact_id", "purpose", "amount", "currency", "order_id", "status", "vpos_config_id", "created_by", "created_at", "expires_at", "result"),
+        "description": "Sanal POS ödeme niyeti. Tutar sunucuda sabitlenir; kart verisi saklanmaz. Kasa/cari/fatura yazılmaz.",
+        "keys": ("_id", "company_id", "contact_id", "purpose", "amount", "currency", "order_id", "status", "vpos_config_id", "provider_ref", "created_by", "created_at", "expires_at", "result"),
         "refs": ("companies._id", "vpos_configs._id", "contacts._id"),
     },
     "bank_connections": {
