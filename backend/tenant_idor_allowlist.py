@@ -16,6 +16,8 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     # Bildirim — kullanıcıya özel
     ("POST", "/notifications/{notif_id}/read"),
     ("DELETE", "/notifications/{notif_id}"),
+    # Yardım makalesi şirkete bağlı değil; oturum (help_center) veya API anahtarı (platform v1) durur.
+    ("GET", "/help/articles/{slug}"),
     # İsim / kanal / belge türü anahtarı (UUID kayıt değil)
     ("PUT", "/products/units/{name}"),
     ("DELETE", "/products/units/{name}"),
@@ -67,6 +69,7 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("GET", "/auth/reset/{token}"): "Şifre sıfırlama token'ı",
     ("POST", "/notifications/{notif_id}/read"): "Bildirim user-scoped",
+    ("GET", "/help/articles/{slug}"): "Genel yardım makalesi; slug anahtarı, şirket verisi yok",
     ("PUT", "/products/units/{name}"): "Birim adı anahtarı",
     ("GET", "/support/tickets/{ticket_id}"): "Müşteri kendi ticket'ı",
     ("GET", "/payments/status/{session_id}"): "Ödeme oturumu token'ı",

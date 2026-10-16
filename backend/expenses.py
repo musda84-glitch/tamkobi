@@ -264,30 +264,34 @@ async def record_card_spend(
     }
     await _db.expenses.insert_one(doc)
     if cat not in DEFAULT_CATEGORIES:
-        await add_category({"company_id": company_id, "name": cat})
+        await add_category_for_company(company_id, cat)
     return _clean(doc)
 
 
+async def add_category_for_company(cid: str, name: str):
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Kategori adı boş olamaz.")
+    if name not in DEFAULT_CATEGORIES and not await _db.expense_categories.find_one({"company_id": cid, "name": name}):
+        await _db.expense_categories.insert_one({"_id": str(uuid.uuid4()), "company_id": cid, "name": name, "created_at": _now()})
+    return {"name": name}
+
+
 @router.get("/expenses/categories")
-async def list_categories(company_id: str = "comp_nexus_main_01"):
-    custom = [c["name"] for c in await _db.expense_categories.find({"company_id": company_id}).to_list(200)]
+async def list_categories(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    custom = [c["name"] for c in await _db.expense_categories.find({"company_id": cid}).to_list(200)]
     return [{"name": n, "is_default": True} for n in DEFAULT_CATEGORIES] + [{"name": n, "is_default": False} for n in custom if n not in DEFAULT_CATEGORIES]
 
 
 @router.post("/expenses/categories")
-async def add_category(req: Dict[str, Any]):
-    name = (req.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Kategori adı boş olamaz.")
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    if name not in DEFAULT_CATEGORIES and not await _db.expense_categories.find_one({"company_id": company_id, "name": name}):
-        await _db.expense_categories.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "name": name, "created_at": _now()})
-    return {"name": name}
+async def add_category(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    return await add_category_for_company(cid, req.get("name") or "")
 
 
-@router.get("/expenses")
-async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None, project_id: Optional[str] = None):
-    query: Dict[str, Any] = {"company_id": company_id}
+async def list_expenses_payload(cid: str, date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None, project_id: Optional[str] = None):
+    query: Dict[str, Any] = {"company_id": cid}
     if date_from or date_to:
         query["date"] = {k: v for k, v in (("$gte", date_from), ("$lte", date_to)) if v}
     if category and category != "all":
@@ -313,9 +317,9 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
     # Targeted month/recurring stats — avoid second full-collection scan when filters are on.
     month_proj = {"total": 1, "local_total": 1, "currency": 1, "fx_rate": 1, "date": 1}
     month_rows = await _db.expenses.find(
-        {"company_id": company_id, "date": {"$regex": f"^{month}"}}, month_proj
+        {"company_id": cid, "date": {"$regex": f"^{month}"}}, month_proj
     ).to_list(5000)
-    recurring_count = await _db.expenses.count_documents({"company_id": company_id, "is_recurring": True})
+    recurring_count = await _db.expenses.count_documents({"company_id": cid, "is_recurring": True})
     by_cat: Dict[str, float] = {}
 
     def _counts_unpaid(r: Dict[str, Any]) -> bool:
@@ -337,9 +341,13 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
     return {"expenses": rows, "summary": summary}
 
 
-@router.post("/expenses")
-async def create_expense(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+@router.get("/expenses")
+async def list_expenses(company_id: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, category: Optional[str] = None, status: Optional[str] = None, employee_id: Optional[str] = None, q: Optional[str] = None, project_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await list_expenses_payload(cid, date_from=date_from, date_to=date_to, category=category, status=status, employee_id=employee_id, q=q, project_id=project_id)
+
+
+async def create_expense_for_company(company_id: str, req: Dict[str, Any]):
     if not (req.get("description") or "").strip():
         raise HTTPException(status_code=400, detail="Açıklama zorunlu.")
     calc = _calc(req)
@@ -383,7 +391,7 @@ async def create_expense(req: Dict[str, Any]):
         doc.update({"payment_status": "paid", "account_id": None if pay_partner else pay_acc, "partner_id": pay_partner, "paid_date": doc["date"], "paid_by_name": payer})
         await _db.expenses.update_one({"_id": doc["_id"]}, {"$set": {"payment_status": "paid", "account_id": doc["account_id"], "partner_id": pay_partner, "account_name": doc["account_name"], "paid_date": doc["date"], "paid_by_name": payer}})
     if req.get("category") and req["category"] not in DEFAULT_CATEGORIES:
-        await add_category({"company_id": company_id, "name": req["category"]})
+        await add_category_for_company(company_id, req["category"])
     b = await _db.expense_budgets.find_one({"company_id": company_id, "category": doc["category"]})
     out = _clean(doc)
     if b and b.get("monthly_limit"):
@@ -392,6 +400,12 @@ async def create_expense(req: Dict[str, Any]):
         pct = round(sp / b["monthly_limit"] * 100, 1)
         out["budget"] = {"monthly_limit": b["monthly_limit"], "spent": round(sp, 2), "pct": pct, "status": "over" if pct >= 100 else "warning" if pct >= 80 else "ok"}
     return out
+
+
+@router.post("/expenses")
+async def create_expense(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    return await create_expense_for_company(company_id, req)
 
 
 @router.put("/expenses/{expense_id}")
@@ -561,19 +575,18 @@ async def run_recurring_for_company(company_id: str, today: Optional[str] = None
 
 
 @router.post("/expenses/run-recurring")
-async def run_recurring(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def run_recurring(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     return await run_recurring_for_company(company_id)
 
 
-@router.get("/expense-budgets")
-async def get_budgets(company_id: str = "comp_nexus_main_01", month: Optional[str] = None):
+async def budgets_payload(cid: str, month: Optional[str] = None):
     month = month or datetime.now(timezone.utc).strftime("%Y-%m")
-    budgets = {b["category"]: b for b in await _db.expense_budgets.find({"company_id": company_id}).to_list(200)}
+    budgets = {b["category"]: b for b in await _db.expense_budgets.find({"company_id": cid}).to_list(200)}
     spent: Dict[str, float] = {}
-    async for e in _db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"category": 1, "total": 1}):
+    async for e in _db.expenses.find({"company_id": cid, "date": {"$regex": f"^{month}"}}, {"category": 1, "total": 1}):
         spent[e.get("category", "Diğer")] = round(spent.get(e.get("category", "Diğer"), 0) + e.get("total", 0), 2)
-    cats = list(dict.fromkeys(DEFAULT_CATEGORIES + [c["name"] for c in await _db.expense_categories.find({"company_id": company_id}).to_list(200)] + list(spent.keys()) + list(budgets.keys())))
+    cats = list(dict.fromkeys(DEFAULT_CATEGORIES + [c["name"] for c in await _db.expense_categories.find({"company_id": cid}).to_list(200)] + list(spent.keys()) + list(budgets.keys())))
     rows = []
     for c in cats:
         limit = float(budgets.get(c, {}).get("monthly_limit") or 0)
@@ -585,9 +598,15 @@ async def get_budgets(company_id: str = "comp_nexus_main_01", month: Optional[st
     return {"month": month, "rows": rows, "warnings": [r for r in rows if r["status"] in ("warning", "over")], "totals": {"limit": total_limit, "spent": total_spent, "pct": round(total_spent / total_limit * 100, 1) if total_limit else None}}
 
 
+@router.get("/expense-budgets")
+async def get_budgets(company_id: Optional[str] = None, month: Optional[str] = None, user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await budgets_payload(cid, month)
+
+
 @router.put("/expense-budgets")
-async def set_budgets(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def set_budgets(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     items = req.get("budgets") or []
     for it in items:
         cat = (it.get("category") or "").strip()
@@ -598,4 +617,4 @@ async def set_budgets(req: Dict[str, Any]):
             await _db.expense_budgets.delete_one({"company_id": company_id, "category": cat})
         else:
             await _db.expense_budgets.update_one({"company_id": company_id, "category": cat}, {"$set": {"monthly_limit": limit, "updated_at": _now()}, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "category": cat}}, upsert=True)
-    return await get_budgets(company_id)
+    return await budgets_payload(company_id)

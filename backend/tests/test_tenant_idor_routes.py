@@ -23,6 +23,13 @@ GUARD_NAMES = {
     "_require_company_access",
     "_require_member",
     "require_company_admin",
+    # _company_scope → resolve_company_id. _get_for_company şirket kaydını 404'ler;
+    # path-id uçları ikisini birlikte çağırır. Diğerleri get_tenant_doc çağırır.
+    "_company_scope",
+    "_get_for_company",
+    "list_account_transactions_for_user",
+    "list_partner_transactions_for_user",
+    "respond_inbox_document",
 }
 
 CORE_OR_HELPER = {"_wo"}
