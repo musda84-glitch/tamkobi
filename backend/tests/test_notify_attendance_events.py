@@ -231,37 +231,47 @@ def test_dedupe_second_call_is_duplicate_and_outbox_stays_one():
     assert key in db.notify_event_dedupe.docs
 
 
-def test_tenant_events_unchanged_and_new_events_are_platform_only():
+def test_legacy_four_stay_and_staff_events_are_firm_flags():
     db = _prepare()
     assert event_notify.TENANT_EVENTS == LEGACY_TENANT
-    assert set(event_notify.default_tenant("c1")["events"]) == set(LEGACY_TENANT)
+    assert set(event_notify.default_tenant("c1")["events"]) == set(event_notify.FIRM_EVENTS)
     prefs = event_notify.default_prefs("c1")
     for ev in STAFF_EVENTS:
         assert ev in event_notify.NEW_EVENTS
+        assert ev in event_notify.FIRM_EVENTS
         assert ev not in event_notify.TENANT_EVENTS
         assert event_notify.EVENT_LABELS[ev]
         assert prefs["events"][ev] == {"inapp": True, "email": False, "sms": False, "digest": "instant"}
-        with pytest.raises(HTTPException) as ei:
-            event_notify.parse_tenant_update({"events": {ev: {"email": True}}})
-        assert ei.value.status_code == 422
-        assert ei.value.detail == event_notify.PLATFORM_ONLY_DETAIL
+        parsed = event_notify.parse_tenant_update({"events": {ev: {"email": True}}})
+        assert parsed[ev]["email"] is True
+    with pytest.raises(HTTPException) as ei:
+        event_notify.parse_tenant_update({"events": {"leave_request": {"inapp": False}}})
+    assert ei.value.status_code == 422
+    assert ei.value.detail == event_notify.APPROVAL_INAPP_DETAIL
     forced = event_notify.effective_channel(
         {"events": {"leave_request": {"inapp": True, "email": True, "sms": False, "digest": "instant"}}},
         {"events": {"leave_request": {"inapp": False, "email": False}}},
         "leave_request",
     )
-    assert forced["email"] is True
-    assert forced["inapp"] is True
+    assert forced["email"] is False
+    assert forced["inapp"] is False
+    assert forced["sms"] is False
+    assert forced["digest"] == "instant"
 
     async def _go():
         return await event_notify.tenant_prefs_view("c1")
 
     view = _run(_go())
-    assert set(view["events"]) == set(LEGACY_TENANT)
-    assert set(view["labels"]) == set(LEGACY_TENANT)
+    assert set(view["events"]) == set(event_notify.FIRM_EVENTS)
+    assert set(view["labels"]) == set(event_notify.FIRM_EVENTS)
     for ev in STAFF_EVENTS:
-        assert ev not in view["events"]
-        assert ev not in view["labels"]
+        assert ev in view["events"]
+        assert view["labels"][ev] == event_notify.EVENT_LABELS[ev]
+        assert view["events"][ev]["group"] == "personnel"
+    assert view["events"]["leave_request"]["inapp"]["locked"] is True
+    assert view["events"]["leave_request"]["inapp"]["lock_reason"] == "approval"
+    assert view["events"]["attendance_alert"]["email"]["platform"] is False
+    assert view["events"]["attendance_alert"]["email"]["locked"] is True
     assert db.company_notify_tenant.docs == {}
 
 

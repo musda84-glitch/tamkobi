@@ -96,7 +96,10 @@ def test_new_event_defaults_keep_legacy_four():
         ch = prefs["events"][ev]
         assert ch == {"inapp": True, "email": False, "sms": False, "digest": "instant"}
         assert event_notify.EVENT_LABELS[ev]
-    assert set(event_notify.default_tenant("c1")["events"]) == set(event_notify.TENANT_EVENTS)
+    tenant_events = event_notify.default_tenant("c1")["events"]
+    assert set(tenant_events) == set(event_notify.FIRM_EVENTS)
+    for ev in event_notify.FIRM_EVENTS:
+        assert tenant_events[ev] == {"inapp": True, "email": True}
     for ev in event_notify.TENANT_EVENTS:
         assert event_notify.EVENT_DEFAULT_CHANNEL[ev] == event_notify.DEFAULT_CHANNEL
 
@@ -137,32 +140,45 @@ def test_missing_new_event_key_email_stays_off():
         {"events": {"bank_sync": {"inapp": False, "email": False}}},
         "bank_sync",
     )
-    assert forced["email"] is True
-    assert forced["inapp"] is True
+    assert forced["email"] is False
+    assert forced["inapp"] is False
+    assert forced["sms"] is False
+    assert forced["digest"] == "instant"
 
 
-def test_tenant_get_four_put_new_event_422():
+def test_tenant_get_includes_firm_events_unknown_stays_422():
     db = _prepare()
     admin = _admin_user()
 
     async def _go():
         got = await event_notify.get_notify_tenant_prefs_route(_req(), company_id="c1", user=admin)
-        with pytest.raises(HTTPException) as ei:
+        with pytest.raises(HTTPException) as unknown:
+            await event_notify.put_notify_tenant_prefs_route(
+                {"events": {"not_an_event": {"email": True}}}, _req(), admin,
+            )
+        with pytest.raises(HTTPException) as closed:
             await event_notify.put_notify_tenant_prefs_route(
                 {"events": {"bank_sync": {"email": True}}}, _req(), admin,
             )
-        return got, ei.value
+        return got, unknown.value, closed.value
 
-    got, err = _run(_go())
-    assert err.status_code == 422
-    assert err.detail == event_notify.PLATFORM_ONLY_DETAIL
-    assert set(got["events"]) == set(event_notify.TENANT_EVENTS)
-    assert set(got["labels"]) == set(event_notify.TENANT_EVENTS)
-    assert "bank_sync" not in got["events"]
+    got, unknown, closed = _run(_go())
+    assert unknown.status_code == 422
+    assert unknown.detail == event_notify.PLATFORM_ONLY_DETAIL
+    assert closed.status_code == 422
+    assert closed.detail == event_notify.PLATFORM_CLOSED_DETAIL
+    assert set(got["events"]) == set(event_notify.FIRM_EVENTS)
+    assert set(got["labels"]) == set(event_notify.FIRM_EVENTS)
+    assert got["events"]["bank_sync"]["group"] == "bank_cash_pos"
+    assert got["events"]["bank_sync"]["email"]["platform"] is False
+    assert got["events"]["einvoice_incoming"]["email"]["platform"] is True
     assert db.company_notify_tenant.docs == {}
+    parsed = event_notify.parse_tenant_update({"events": {"order_pick_production": {"inapp": False}}})
+    assert parsed["order_pick_production"]["inapp"] is False
     with pytest.raises(HTTPException) as direct:
-        event_notify.parse_tenant_update({"events": {"order_pick_production": {"inapp": False}}})
+        event_notify.parse_tenant_update({"events": {"pos_approval_decision": {"inapp": False}}})
     assert direct.value.status_code == 422
+    assert direct.value.detail == event_notify.PLATFORM_ONLY_DETAIL
 
 
 def test_queue_skips_legacy_and_closed_email_without_smtp():

@@ -5,8 +5,9 @@ Platform tercihleri: company_notify_prefs. Firma aç/kapa: company_notify_tenant
 Etkin uygulama/e-posta = platform AND firma. Özet: notify_outbox + leased job.
 
 Banka, kasa, POS, üretime gönderme ve personel (mesai, izin, avans, fazla mesai)
-e-postası yalnız notify_outbox üzerinden gider. Bu olaylarda firma aç/kapa yoktur;
-kanalı platform tercihi belirler.
+e-postası yalnız notify_outbox üzerinden gider. Bu olaylar da firma aç/kapa
+kapsamındadır (FIRM_EVENTS). Platformun kapattığı kanal firma tarafından açılamaz.
+Onay olaylarının uygulama içi bildirimi kapatılamaz.
 """
 from __future__ import annotations
 
@@ -54,7 +55,30 @@ NEW_EVENTS = (
     "advance_request",
     "overtime_request",
 )
-EVENTS = TENANT_EVENTS + NEW_EVENTS
+FIRM_EVENTS = TENANT_EVENTS + NEW_EVENTS
+EVENTS = FIRM_EVENTS
+APPROVAL_EVENTS = (
+    "cash_approval",
+    "pos_approval",
+    "leave_request",
+    "advance_request",
+    "overtime_request",
+)
+EVENT_GROUPS = {
+    "einvoice_incoming": "sales_invoice",
+    "order_new": "sales_invoice",
+    "gib_credits_low": "sales_invoice",
+    "receivable_overdue": "sales_invoice",
+    "bank_sync": "bank_cash_pos",
+    "cash_approval": "bank_cash_pos",
+    "pos_approval": "bank_cash_pos",
+    "pos_daily_summary": "bank_cash_pos",
+    "order_pick_production": "production_warehouse",
+    "attendance_alert": "personnel",
+    "leave_request": "personnel",
+    "advance_request": "personnel",
+    "overtime_request": "personnel",
+}
 EVENT_LABELS = {
     "einvoice_incoming": "Gelen e-Fatura",
     "order_new": "Yeni sipariş",
@@ -84,6 +108,8 @@ ORDER_BATCH_DETAIL = "Gruplama süresi 0, 5, 10, 15, 30 veya 60 dakika olabilir.
 DAILY_EMAIL_CAP_DETAIL = "Günlük e-posta limiti boş (limitsiz) veya 0 ve üzeri tam sayı olmalıdır."
 COMPANY_NOTIFY_FORBIDDEN = "Bildirim ayarları Platform Yönetimi'nden yapılır."
 PLATFORM_ONLY_DETAIL = "Bu ayar Platform Yönetimi'nden yapılır."
+PLATFORM_CLOSED_DETAIL = "Bu kanal Platform Yönetimi'nden kapatıldı."
+APPROVAL_INAPP_DETAIL = "Onay bildirimleri uygulama içinde kapatılamaz."
 TENANT_BOOL_DETAIL = "Bildirim anahtarı true veya false olmalıdır."
 TENANT_CHANNELS = ("inapp", "email")
 QUIET_HOURS_DETAIL = "Sessiz saatler HH:MM biçiminde olmalıdır (ör. 22:00)."
@@ -395,11 +421,11 @@ async def save_prefs(company_id: str, body: dict) -> dict:
 
 
 def default_tenant(company_id: str) -> dict:
-    """Kayıt yokken firma kanalları açık — bugünkü gönderimle aynı. Yalnız firma olayları."""
+    """Kayıt yokken firma kanalları açık — platform ne diyorsa o. Tüm firma olayları."""
     return {
         "_id": f"cnt_{company_id}",
         "company_id": company_id,
-        "events": {ev: {"inapp": True, "email": True} for ev in TENANT_EVENTS},
+        "events": {ev: {"inapp": True, "email": True} for ev in FIRM_EVENTS},
         "updated_at": None,
         "updated_by": None,
     }
@@ -433,9 +459,9 @@ async def get_tenant_prefs(company_id: str) -> dict:
         return base
     if not isinstance(row, dict):
         return base
-    events = {ev: {"inapp": True, "email": True} for ev in TENANT_EVENTS}
+    events = {ev: {"inapp": True, "email": True} for ev in FIRM_EVENTS}
     stored = row.get("events") if isinstance(row.get("events"), dict) else {}
-    for ev in TENANT_EVENTS:
+    for ev in FIRM_EVENTS:
         cur = stored.get(ev) if isinstance(stored.get(ev), dict) else {}
         events[ev] = {"inapp": _tenant_flag(cur, "inapp"), "email": _tenant_flag(cur, "email")}
     base["events"] = events
@@ -448,7 +474,7 @@ async def get_tenant_prefs(company_id: str) -> dict:
 def effective_channel(prefs: Optional[dict], tenant: Optional[dict], ev: str) -> dict:
     """Platform kanalının kopyası. inapp/email = platform AND firma. sms/digest/quiet_hours aynı kalır.
 
-    Yeni olaylarda firma bayrağı yoktur; yalnız platform tercihi geçerlidir.
+    Firma kaydı veya olay anahtarı yoksa firma bayrağı True (platform ne diyorsa o).
     Kayıtlı olay anahtarı yoksa EVENT_DEFAULT_CHANNEL (eski dört olayda DEFAULT_CHANNEL).
     """
     events = prefs.get("events") if isinstance(prefs, dict) else None
@@ -462,13 +488,25 @@ def effective_channel(prefs: Optional[dict], tenant: Optional[dict], ev: str) ->
             ch["email"] = defaults.get("email", True)
     else:
         ch = defaults
-    if ev in NEW_EVENTS:
-        t_inapp, t_email = True, True
-    else:
-        t_inapp, t_email = _tenant_flags(tenant, ev)
+    t_inapp, t_email = _tenant_flags(tenant, ev)
     ch["inapp"] = bool(ch.get("inapp", True)) and t_inapp
     ch["email"] = bool(ch.get("email", True)) and t_email
     return ch
+
+
+async def inapp_enabled(company_id: str, event: str) -> bool:
+    """Uygulama içi kapı. Hata olursa True — bildirim kaybolmasın."""
+    try:
+        cid = str(company_id or "").strip()
+        ev = str(event or "").strip()
+        if not cid or not ev:
+            return True
+        prefs = await get_prefs(cid)
+        tenant = await get_tenant_prefs(cid)
+        return bool(effective_channel(prefs, tenant, ev).get("inapp"))
+    except Exception:
+        logger.exception("inapp_enabled failed company=%s event=%s", company_id, event)
+        return True
 
 
 def parse_tenant_update(body: Any) -> dict:
@@ -485,7 +523,7 @@ def parse_tenant_update(body: Any) -> dict:
         raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
     out: Dict[str, dict] = {}
     for ev, ch in events.items():
-        if ev not in TENANT_EVENTS:
+        if ev not in FIRM_EVENTS:
             raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
         if not isinstance(ch, dict):
             raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
@@ -495,6 +533,8 @@ def parse_tenant_update(body: Any) -> dict:
                 raise HTTPException(status_code=422, detail=PLATFORM_ONLY_DETAIL)
             if type(val) is not bool:
                 raise HTTPException(status_code=422, detail=TENANT_BOOL_DETAIL)
+            if field == "inapp" and ev in APPROVAL_EVENTS and val is False:
+                raise HTTPException(status_code=422, detail=APPROVAL_INAPP_DETAIL)
             item[field] = val
         out[ev] = item
     return out
@@ -506,7 +546,7 @@ async def save_tenant_prefs(company_id: str, patch: dict, user: Optional[dict] =
     cur = await get_tenant_prefs(cid)
     events = {
         ev: dict((cur.get("events") or {}).get(ev) or {"inapp": True, "email": True})
-        for ev in TENANT_EVENTS
+        for ev in FIRM_EVENTS
     }
     for ev, ch in (patch or {}).items():
         if ev not in events or not isinstance(ch, dict):
@@ -532,23 +572,65 @@ async def save_tenant_prefs(company_id: str, patch: dict, user: Optional[dict] =
     return await get_tenant_prefs(cid)
 
 
+def _channel_view(ev: str, field: str, platform_on: bool, tenant_on: bool) -> dict:
+    """Firma ekranı kanalı. Eski alanlar (platform/tenant/effective) aynı kalır."""
+    if not platform_on:
+        locked, reason = True, "platform"
+    elif field == "inapp" and ev in APPROVAL_EVENTS:
+        locked, reason = True, "approval"
+    else:
+        locked, reason = False, None
+    return {
+        "platform": bool(platform_on),
+        "tenant": bool(tenant_on),
+        "effective": bool(platform_on) and bool(tenant_on),
+        "locked": locked,
+        "lock_reason": reason,
+    }
+
+
+def _platform_flag(plat: Any, field: str, ev: str) -> bool:
+    defaults = _event_channel_default(ev)
+    if isinstance(plat, dict) and field in plat:
+        return bool(plat[field])
+    return bool(defaults.get(field, True))
+
+
 async def tenant_prefs_view(company_id: str) -> dict:
     prefs = await get_prefs(company_id)
     tenant = await get_tenant_prefs(company_id)
     events: Dict[str, dict] = {}
-    for ev in TENANT_EVENTS:
+    for ev in FIRM_EVENTS:
         plat = ((prefs.get("events") or {}).get(ev) or {})
         ten = ((tenant.get("events") or {}).get(ev) or {})
-        p_inapp = bool(plat["inapp"]) if isinstance(plat, dict) and "inapp" in plat else True
-        p_email = bool(plat["email"]) if isinstance(plat, dict) and "email" in plat else True
+        p_inapp = _platform_flag(plat, "inapp", ev)
+        p_email = _platform_flag(plat, "email", ev)
         t_inapp = _tenant_flag(ten, "inapp")
         t_email = _tenant_flag(ten, "email")
         events[ev] = {
-            "inapp": {"platform": p_inapp, "tenant": t_inapp, "effective": p_inapp and t_inapp},
-            "email": {"platform": p_email, "tenant": t_email, "effective": p_email and t_email},
+            "inapp": _channel_view(ev, "inapp", p_inapp, t_inapp),
+            "email": _channel_view(ev, "email", p_email, t_email),
+            "group": EVENT_GROUPS[ev],
         }
-    labels = {ev: EVENT_LABELS[ev] for ev in TENANT_EVENTS}
+    labels = {ev: EVENT_LABELS[ev] for ev in FIRM_EVENTS}
     return {"events": events, "labels": labels}
+
+
+async def _reject_closed_platform_channel(company_id: str, patch: dict) -> None:
+    """Platform kapalıyken firma true yazamaz. false (kapatmak) her zaman serbest."""
+    if not patch:
+        return
+    prefs = await get_prefs(company_id)
+    stored = prefs.get("events") if isinstance(prefs, dict) else None
+    for ev, ch in patch.items():
+        if not isinstance(ch, dict):
+            continue
+        plat = stored.get(ev) if isinstance(stored, dict) and isinstance(stored.get(ev), dict) else {}
+        for field, val in ch.items():
+            if val is not True:
+                continue
+            if not _platform_flag(plat, field, ev):
+                raise HTTPException(status_code=422, detail=PLATFORM_CLOSED_DETAIL)
 
 
 async def _platform_batch_default() -> int:
@@ -2760,15 +2842,39 @@ async def put_notify_tenant_prefs_route(
     await tenant_access.require_company_admin(user, cid)
     cid = await _require_existing_company(cid)
     patch = parse_tenant_update(body)
+    await _reject_closed_platform_channel(cid, patch)
     before = await get_tenant_prefs(cid)
     saved = await save_tenant_prefs(cid, patch, user)
     await _audit_tenant_put(cid, user, before, saved)
     return await tenant_prefs_view(cid)
 
 
+def _tenant_events_summary(before: dict, after: dict) -> str:
+    """Değişen firma olaylarını ada göre yazar (yeni olaylar dahil)."""
+    old = (before or {}).get("events") if isinstance(before, dict) else None
+    new = (after or {}).get("events") if isinstance(after, dict) else None
+    old = old if isinstance(old, dict) else {}
+    new = new if isinstance(new, dict) else {}
+    parts = []
+    for ev in FIRM_EVENTS:
+        a = old.get(ev) if isinstance(old.get(ev), dict) else {}
+        b = new.get(ev) if isinstance(new.get(ev), dict) else {}
+        bits = []
+        for field, label in (("inapp", "uygulama"), ("email", "e-posta")):
+            before_on = _tenant_flag(a, field)
+            after_on = _tenant_flag(b, field)
+            if before_on == after_on:
+                continue
+            bits.append(f"{label} {'açık' if after_on else 'kapalı'}")
+        if bits:
+            parts.append(f"{EVENT_LABELS.get(ev, ev)}: {', '.join(bits)}")
+    return "; ".join(parts)
+
+
 async def _audit_tenant_put(company_id: str, user: dict, before: dict, after: dict) -> None:
     try:
-        summary = company_audit.diff_summary(
+        named = _tenant_events_summary(before, after)
+        summary = named or company_audit.diff_summary(
             {"events": (before or {}).get("events") or {}},
             {"events": (after or {}).get("events") or {}},
         ) or "Firma bildirim tercihleri güncellendi"
