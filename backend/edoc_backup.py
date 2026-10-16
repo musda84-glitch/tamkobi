@@ -181,10 +181,20 @@ async def _list_invoices(company_id: str, date_from: str, date_to: str) -> List[
     return out
 
 
+def _has_integrator_ettn(inv: dict) -> bool:
+    """Geçerli UUID ETTN. Simüle GİB takip no (GIB-…) entegratör sayılmaz."""
+    import isnet
+
+    for key in ("gib_uuid", "gib_tracking_id"):
+        if isnet.is_ettn_uuid(inv.get(key)):
+            return True
+    return False
+
+
 def _counts(invs: List[dict]) -> Dict[str, int]:
-    """Önizleme: ETTN'i olan belgeler entegratörden alınacak, diğerleri yerel sayılır."""
+    """Önizleme: UUID ETTN entegratörden alınacak, diğerleri yerel sayılır."""
     n = len(invs)
-    integ = sum(1 for inv in invs if _ettn(inv))
+    integ = sum(1 for inv in invs if _has_integrator_ettn(inv))
     return {
         "invoice_count": n,
         "xml_count": n,

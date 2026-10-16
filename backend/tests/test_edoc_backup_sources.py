@@ -125,6 +125,34 @@ def _manifest(blob):
     return _zip(blob).read("MANIFEST.txt").decode("utf-8")
 
 
+def test_preview_integrator_count_requires_uuid_ettn():
+    """Simüle GİB-… takip numarası önizlemede entegratör sayılmaz; UUID sayılır."""
+    uuid_ettn = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+    rows = [
+        _inv(_id="ok", gib_uuid=ETTN, gib_tracking_id=""),
+        _inv(_id="track", gib_uuid="", gib_tracking_id=uuid_ettn, invoice_number="TR1", gib_invoice_id="GIBTR"),
+        _inv(_id="sim", gib_uuid="", gib_tracking_id="GIB-202600000095", invoice_number="SIM1", gib_invoice_id="GIBSIM"),
+        _inv(_id="bare", gib_uuid="", gib_tracking_id="", invoice_number="BARE1", gib_invoice_id=""),
+    ]
+    for row in rows:
+        assert edoc_backup.invoice_in_scope(row), row["_id"]
+    counts = edoc_backup._counts(rows)
+    assert counts["invoice_count"] == 4
+    assert counts["xml_count"] == counts["pdf_count"] == 4
+    assert counts["integrator_count"] == 2
+    assert counts["local_count"] == 2
+    db = _Db(rows)
+    edoc_backup.init(db)
+    user = {
+        "id": "u1", "company_ids": ["comp_a"], "active_company_id": "comp_a",
+        "role": "admin", "is_super_admin": False,
+    }
+    preview = _run(edoc_backup.edocs_preview(company_id="comp_a", date_from=D0, date_to=D1, user=user))
+    assert preview["integrator_count"] == 2
+    assert preview["local_count"] == 2
+    assert preview["invoice_count"] == 4
+
+
 def test_query_matches_in_scope_documents():
     rows = [
         _inv(),
