@@ -10978,6 +10978,195 @@ async def save_opening_from_difference(account_id: str, user: dict = Depends(get
         "transaction_id": doc.get("_id"),
     }
 
+
+def _recalc_close(left: Any, right: Any) -> bool:
+    return abs(round(float(left or 0), 2) - round(float(right or 0), 2)) < 0.01
+
+
+def _parse_recalc_account_ids(raw: Any) -> Optional[List[str]]:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="account_ids liste olmalıdır.")
+    ids: List[str] = []
+    seen = set()
+    for item in raw:
+        sid = str(item or "").strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        ids.append(sid)
+    return ids
+
+
+def _parse_expected_stored(raw: Any) -> Dict[str, float]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="expected_stored nesne olmalıdır.")
+    out: Dict[str, float] = {}
+    for key, value in raw.items():
+        try:
+            out[str(key)] = round(float(value or 0), 2)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="expected_stored tutarı sayı olmalıdır.")
+    return out
+
+
+async def _cas_set_account_balance(aid: str, company_id: str, raw_balance: Any, fields: Dict[str, Any]):
+    """current_balance hâlâ okunan değerse yazar. Eşzamanlı $inc eşleşmez."""
+    query = {"_id": aid, "company_id": company_id, "current_balance": raw_balance}
+    update = {"$set": fields}
+    col = db.bank_accounts
+    atomic = getattr(col, "update_one_atomic", None)
+    if callable(atomic):
+        return await atomic(query, update)
+    return await col.update_one(query, update)
+
+
+@api_router.post("/banking/accounts/recalculate-balances")
+async def recalculate_account_balances(
+    body: Optional[Dict[str, Any]] = Body(default=None),
+    user: dict = Depends(get_current_user),
+):
+    """Kayıtlı bakiyeyi hareket toplamına eşitler. dry_run varsayılan True; hareket yazılmaz.
+
+    Hedef: şirketteki bank / pos / okc_pos / cash_box. Kredi kartı ve müşteri kartı
+    havuzu hariç. ledger = movement_balance. Uygulama account_ids ister ve
+    current_balance önizlemedeki stored ise yazar.
+    """
+    payload = body or {}
+    company_id = tenant_access.resolve_company_id(user, payload.get("company_id"))
+    await tenant_access.require_company_admin(user, company_id)
+    dry_run = True if payload.get("dry_run") is None else bool(payload.get("dry_run"))
+    requested = _parse_recalc_account_ids(payload.get("account_ids"))
+    expected = _parse_expected_stored(payload.get("expected_stored"))
+    if not dry_run and not requested:
+        raise HTTPException(status_code=400, detail="Uygulamak için account_ids gerekli.")
+
+    accounts = await db.bank_accounts.find({"company_id": company_id}).to_list(2000)
+    by_id: Dict[str, dict] = {}
+    eligible: Dict[str, dict] = {}
+    for acc in accounts or []:
+        aid = str(acc.get("_id") or acc.get("id") or "")
+        if not aid:
+            continue
+        by_id[aid] = acc
+        if account_balance.recalc_balance_eligible(acc):
+            eligible[aid] = acc
+    if requested and not any(aid in by_id for aid in requested):
+        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+
+    target_ids = list(eligible.keys()) if requested is None else [aid for aid in requested if aid in eligible]
+    txs = await account_balance.fetch_balance_txs(db, company_id, target_ids) if target_ids else []
+    grouped = account_balance.group_txs_by_account(txs)
+    conns = await db.bank_connections.find({"company_id": company_id}).to_list(2000)
+    integrated = {str(c.get("linked_account_id")) for c in (conns or []) if c.get("linked_account_id")}
+
+    def _row(acc: dict) -> dict:
+        aid = str(acc.get("_id") or acc.get("id") or "")
+        return account_balance.recalc_balance_row(
+            acc, grouped.get(aid, []), integrated=aid in integrated,
+        )
+
+    if dry_run:
+        rows = []
+        for aid in target_ids:
+            row = _row(eligible[aid])
+            if abs(row["diff"]) < 0.01:
+                continue
+            rows.append(row)
+        rows.sort(key=lambda r: (str(r.get("name") or ""), str(r.get("id") or "")))
+        return {"dry_run": True, "affected_count": len(rows), "accounts": rows}
+
+    results: List[dict] = []
+    ok_count = 0
+    user_id = str((user or {}).get("id") or (user or {}).get("_id") or "")
+    for aid in requested or []:
+        acc = by_id.get(aid)
+        if acc is None:
+            results.append({
+                "id": aid, "label": aid, "outcome": "error", "reason": "Hesap bulunamadı.",
+            })
+            continue
+        label = str(acc.get("account_name") or acc.get("bank_name") or aid)
+        if aid not in eligible:
+            results.append({
+                "id": aid, "label": label, "outcome": "skipped",
+                "reason": "Bu hesap türü hareketlerden düzeltilmez.",
+            })
+            continue
+        fresh = await db.bank_accounts.find_one({"_id": aid, "company_id": company_id})
+        if not isinstance(fresh, dict) or not account_balance.recalc_balance_eligible(fresh):
+            results.append({
+                "id": aid, "label": label, "outcome": "error", "reason": "Hesap bulunamadı.",
+            })
+            continue
+        row = _row(fresh)
+        label = row["name"] or label
+        if abs(row["diff"]) < 0.01:
+            results.append({
+                "id": aid, "label": label, "outcome": "skipped",
+                "reason": "Zaten hareket toplamına eşit.",
+            })
+            continue
+        if aid not in expected or not _recalc_close(row["stored"], expected[aid]):
+            results.append({
+                "id": aid, "label": label, "outcome": "error",
+                "reason": "Bakiye değişti, tekrar önizleyin.",
+            })
+            continue
+        fields = {
+            "current_balance": row["ledger"],
+            "balance_recalculated_at": datetime.now(timezone.utc).isoformat(),
+            "balance_recalculated_by": user_id,
+        }
+        result = await _cas_set_account_balance(aid, company_id, fresh.get("current_balance"), fields)
+        if int(getattr(result, "matched_count", 0) or 0) < 1:
+            again = await db.bank_accounts.find_one({"_id": aid, "company_id": company_id})
+            again_bal = round(float((again or {}).get("current_balance") or 0), 2)
+            if _recalc_close(again_bal, row["ledger"]):
+                results.append({
+                    "id": aid, "label": label, "outcome": "skipped",
+                    "reason": "Zaten hareket toplamına eşit.",
+                })
+            else:
+                results.append({
+                    "id": aid, "label": label, "outcome": "error",
+                    "reason": "Bakiye değişti, tekrar önizleyin.",
+                })
+            continue
+        summary = (
+            f"Kayıtlı bakiye hareket toplamına eşitlendi: {row['stored']:.2f} → {row['ledger']:.2f}. "
+            "Hareketler değişmedi."
+        )
+        try:
+            await company_audit.write(
+                db,
+                company_id=company_id,
+                user=user,
+                module="/banking",
+                action="update",
+                record_id=aid,
+                record_label=label,
+                summary=summary,
+                href="/banking?tab=reconciliation",
+                path="/api/banking/accounts/recalculate-balances",
+            )
+        except Exception:
+            logger.exception("balance recalculate audit failed")
+        ok_count += 1
+        results.append({
+            "id": aid,
+            "label": label,
+            "outcome": "ok",
+            "reason": f"{row['stored']:.2f} → {row['ledger']:.2f}",
+            "stored": row["stored"],
+            "ledger": row["ledger"],
+        })
+    return {"dry_run": False, "affected_count": ok_count, "results": results}
+
+
 @api_router.get("/banking/transactions")
 async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01", account_id: Optional[str] = None):
     query = {"company_id": company_id}

@@ -157,6 +157,9 @@ test("shows unmatched and bank-diff columns, and opening action only when fark r
   expect(host.querySelector('[data-testid="recon-save-opening-bank75"]')).toBeTruthy();
   expect(host.querySelector('[data-testid="recon-save-opening-bank0"]')).toBeNull();
   expect(host.querySelector('[data-testid="recon-save-opening-hasopen"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-repair-all"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-repair-balance-bank75"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-drift-note"]').textContent).toMatch(/önerilmez/);
   expect(host.querySelector('[data-testid="recon-unmatched-hasopen"]').textContent).toContain(formatTrAmount(-20));
 
   await act(async () => {
@@ -178,4 +181,91 @@ test("shows unmatched and bank-diff columns, and opening action only when fark r
   expect(axios.post).toHaveBeenCalledWith("/api/banking/accounts/bank75/opening-balance");
   expect(host.querySelector('[data-testid="recon-save-opening-bank75"]')).toBeNull();
   expect(host.querySelector('[data-testid="recon-opening-modal"]')).toBeNull();
+});
+
+test("admin previews stored-balance repair and confirms; opening stays but is not the repair", async () => {
+  axios.get.mockResolvedValue({
+    data: {
+      ...ACCOUNT_REPORT,
+      accounts: [
+        ...ACCOUNT_REPORT.accounts,
+        {
+          id: "card1",
+          ad: "Şirket Kart",
+          tur: "credit_card",
+          gosterilen: -10,
+          hareket_toplami: 0,
+          banka_bildirdigi: null,
+          fark: -10,
+          eslesmemis_adet: 0,
+          eslesmemis_tutar: 0,
+          banka_farki: null,
+          acilis_var: false,
+        },
+      ],
+    },
+  });
+  root = createRoot(host);
+  await act(async () => {
+    root.render(<ReconciliationPanel companyId="co" canRepairBalances />);
+  });
+  expect(host.querySelector('[data-testid="recon-repair-all"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-repair-balance-bank75"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-repair-balance-hasopen"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-repair-balance-bank0"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-repair-balance-card1"]')).toBeNull();
+  expect(host.querySelector('[data-testid="recon-save-opening-bank75"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-save-opening-card1"]')).toBeTruthy();
+
+  axios.post.mockResolvedValueOnce({
+    data: {
+      dry_run: true,
+      affected_count: 2,
+      accounts: [
+        { id: "bank75", name: "Vadesiz TL Hesabı", type: "bank", stored: 75, ledger: 0, diff: -75, movement_count: 2, integrated: true, bank_reported_balance: 80 },
+        { id: "hasopen", name: "Ziraat", type: "bank", stored: 200, ledger: 100, diff: -100, movement_count: 4 },
+      ],
+    },
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="recon-repair-all"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(axios.post).toHaveBeenCalledWith("/api/banking/accounts/recalculate-balances", {
+    company_id: "co",
+    dry_run: true,
+    account_ids: ["bank75", "hasopen"],
+  });
+  const modal = host.querySelector('[data-testid="recon-repair-modal"]');
+  expect(modal).toBeTruthy();
+  expect(host.querySelector('[data-testid="recon-repair-warning"]').textContent).toBe(
+    "Kayıtlı bakiye hareket toplamına eşitlenir; hareketler değişmez.",
+  );
+  expect(host.querySelector('[data-testid="recon-repair-row-bank75"]').textContent).toContain("2");
+  expect(host.querySelector('[data-testid="recon-repair-table"]').textContent).toMatch(/Banka bildirdiği/);
+  expect(modal.textContent).toContain(formatTrAmount(80));
+
+  axios.post.mockResolvedValueOnce({
+    data: {
+      dry_run: false,
+      affected_count: 2,
+      results: [
+        { id: "bank75", label: "Vadesiz TL Hesabı", outcome: "ok", reason: "75.00 → 0.00" },
+        { id: "hasopen", label: "Ziraat", outcome: "error", reason: "Bakiye değişti, tekrar önizleyin." },
+      ],
+    },
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="recon-repair-confirm"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(axios.post).toHaveBeenLastCalledWith("/api/banking/accounts/recalculate-balances", {
+    company_id: "co",
+    dry_run: false,
+    account_ids: ["bank75", "hasopen"],
+    expected_stored: { bank75: 75, hasopen: 200 },
+  });
+  const result = host.querySelector('[data-testid="bulk-result-modal"]');
+  expect(result).toBeTruthy();
+  expect(result.textContent).toContain("Vadesiz TL Hesabı");
+  expect(result.textContent).toContain("Bakiye değişti, tekrar önizleyin.");
+  expect(host.querySelector('[data-testid="recon-repair-modal"]')).toBeNull();
 });

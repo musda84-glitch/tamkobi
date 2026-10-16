@@ -475,3 +475,46 @@ async def sync_cash_box_balances(
             if persist:
                 await db.bank_accounts.update_one({"_id": aid}, {"$set": {"current_balance": moved}})
     return accounts
+
+
+# Kayıtlı bakiye onarımı. Kredi kartı opening_eligible içinde kalır; bu küme onu içermez.
+RECALC_BALANCE_TYPES = frozenset({"bank", "pos", "okc_pos", "cash_box"})
+
+
+def recalc_balance_eligible(account: Optional[dict]) -> bool:
+    """bank / pos / okc_pos / cash_box. Müşteri kartı havuzu ve kredi kartı hariç."""
+    if not isinstance(account, dict):
+        return False
+    if _is_pool_account(account) or account.get("is_customer_card_pool"):
+        return False
+    return str(account.get("type") or "") in RECALC_BALANCE_TYPES
+
+
+async def fetch_balance_txs(db, company_id: str, account_ids: Iterable[str]) -> List[dict]:
+    """Seçilen hesaplara değen hareketler. Formül değildir; movement_balance işaretler.
+
+    Sorgu fetch_cash_box_txs ile aynıdır (company_id + account_id/target IN, tekilleştirme).
+    """
+    return await fetch_cash_box_txs(db, company_id, account_ids)
+
+
+def recalc_balance_row(account: dict, txs: Iterable[dict], *, integrated: bool = False) -> dict:
+    """stored = current_balance, ledger = movement_balance, diff = ledger − stored."""
+    aid = str((account or {}).get("_id") or (account or {}).get("id") or "")
+    stored = round(_num((account or {}).get("current_balance")), 2)
+    rows = [tx for tx in (txs or []) if isinstance(tx, dict)]
+    ledger = movement_balance(rows, aid, account)
+    row = {
+        "id": aid,
+        "name": (account or {}).get("account_name") or (account or {}).get("bank_name") or aid,
+        "type": str((account or {}).get("type") or ""),
+        "stored": stored,
+        "ledger": ledger,
+        "diff": round(ledger - stored, 2),
+        "movement_count": len(rows),
+        "integrated": bool(integrated),
+    }
+    reported = (account or {}).get("bank_reported_balance")
+    if integrated and reported is not None:
+        row["bank_reported_balance"] = round(_num(reported), 2)
+    return row
