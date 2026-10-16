@@ -363,13 +363,20 @@ def opening_eligible(acc: Optional[dict]) -> bool:
     return str(acc.get("type") or "") in OPENING_ACCOUNT_TYPES
 
 
-def opening_tx_doc(acc: dict, amount: float, *, on_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def opening_tx_doc(
+    acc: dict,
+    amount: float,
+    *,
+    on_date: Optional[str] = None,
+    description: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     amt = round(_num(amount), 2)
     if abs(amt) < 0.009:
         return None
     day = str(on_date or "")[:10]
     if len(day) != 10 or day[4] != "-" or day[7] != "-":
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    text = str(description or "").strip()
     return {
         "_id": str(uuid.uuid4()),
         "company_id": acc.get("company_id"),
@@ -379,7 +386,7 @@ def opening_tx_doc(acc: dict, amount: float, *, on_date: Optional[str] = None) -
         "category": "Açılış bakiyesi",
         "amount": abs(amt),
         "currency": acc.get("currency") or "TRY",
-        "description": "Hesap açılış bakiyesi",
+        "description": text[:240] if text else "Hesap açılış bakiyesi",
         "source": "opening",
         "date": day,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -413,7 +420,14 @@ async def ensure_opening_tx(db, acc: dict, *, on_date: Optional[str] = None) -> 
     return doc
 
 
-async def rewrite_opening_tx(db, acc: dict, amount: float, *, on_date: Optional[str] = None) -> Optional[dict]:
+async def rewrite_opening_tx(
+    db,
+    acc: dict,
+    amount: float,
+    *,
+    on_date: Optional[str] = None,
+    description: Optional[str] = None,
+) -> Optional[dict]:
     """Eski source=opening satırlarını siler; tutar ≠ 0 ise yenisini yazar. Bakiye $inc yok."""
     aid = str((acc or {}).get("_id") or (acc or {}).get("id") or "")
     if aid:
@@ -421,7 +435,7 @@ async def rewrite_opening_tx(db, acc: dict, amount: float, *, on_date: Optional[
     stamped = dict(acc or {})
     if aid:
         stamped["_id"] = aid
-    doc = opening_tx_doc(stamped, amount, on_date=on_date)
+    doc = opening_tx_doc(stamped, amount, on_date=on_date, description=description)
     if not doc:
         return None
     await db.bank_transactions.insert_one(doc)

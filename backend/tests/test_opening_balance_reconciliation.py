@@ -408,6 +408,207 @@ def test_sync_does_not_change_fark_and_unmatched_totals(db):
     _run(scenario())
 
 
+def test_signed_opening_amount_updates_balance_without_touching_contacts(db):
+    async def scenario():
+        db.bank_accounts.docs["pos1"] = {
+            "_id": "pos1",
+            "company_id": "co",
+            "type": "pos",
+            "account_name": "Mağaza POS",
+            "bank_name": "POS",
+            "currency": "TRY",
+            "current_balance": -11523.58,
+        }
+        await db.bank_transactions.insert_one({
+            "_id": "pos-out",
+            "company_id": "co",
+            "account_id": "pos1",
+            "type": "outflow",
+            "amount": 11523.58,
+            "source": "manual",
+            "date": "2026-11-02",
+        })
+        await db.contacts.insert_one({
+            "_id": "cari1", "company_id": "co", "name": "Ali", "balance": 250.5,
+        })
+        await db.partners.insert_one({
+            "_id": "ortak1", "company_id": "co", "name": "Ayşe Ortak", "balance": 80.25,
+        })
+        await db.invoices.insert_one({
+            "_id": "inv1", "company_id": "co", "contact_id": "cari1", "grand_total": 440, "balance": 440,
+        })
+        inc = []
+        orig_update = db.bank_accounts.update_one
+
+        async def spy_update(query, update, upsert=False):
+            if isinstance(update, dict) and "$inc" in update:
+                inc.append(dict(update["$inc"]))
+            return await orig_update(query, update, upsert=upsert)
+
+        db.bank_accounts.update_one = spy_update
+        staff = {**_user(), "role": "muhasebe", "id": "staff", "name": "Personel"}
+
+        with pytest.raises(HTTPException) as other:
+            await server.save_opening_from_difference(
+                "pos1", _user("c2"), {"amount": 11523.58, "date": "2026-10-14"},
+            )
+        assert other.value.status_code == 404
+        with pytest.raises(HTTPException) as denied:
+            await server.save_opening_from_difference(
+                "pos1", staff, {"amount": 11523.58, "date": "2026-10-14"},
+            )
+        assert denied.value.status_code == 403
+        with pytest.raises(HTTPException) as zero:
+            await server.save_opening_from_difference("pos1", _user(), {"amount": 0})
+        assert zero.value.status_code == 400
+        with pytest.raises(HTTPException) as bad_day:
+            await server.save_opening_from_difference(
+                "pos1", _user(), {"amount": 10, "date": "32.13.2026"},
+            )
+        assert bad_day.value.status_code == 400
+        assert inc == []
+        assert _openings(db, "pos1") == []
+        assert (await db.bank_accounts.find_one({"_id": "pos1"}))["current_balance"] == pytest.approx(-11523.58)
+
+        saved = await server.save_opening_from_difference(
+            "pos1",
+            _user(),
+            {"amount": 11523.58, "date": "14.10.2026", "note": "POS devir"},
+        )
+        assert saved["amount"] == pytest.approx(11523.58)
+        assert saved["date"] == "2026-10-14"
+        assert saved["current_balance"] == pytest.approx(0)
+        stored = await db.bank_accounts.find_one({"_id": "pos1"})
+        assert stored["current_balance"] == pytest.approx(0)
+        openings = _openings(db, "pos1")
+        assert len(openings) == 1
+        assert openings[0]["source"] == "opening"
+        assert openings[0]["type"] == "inflow"
+        assert openings[0]["amount"] == pytest.approx(11523.58)
+        assert openings[0]["date"] == "2026-10-14"
+        assert openings[0]["description"] == "POS devir"
+        assert "contact_id" not in openings[0]
+        txs = [
+            t for t in db.bank_transactions.docs.values()
+            if t.get("account_id") == "pos1" or t.get("target_account_id") == "pos1"
+        ]
+        assert account_balance.movement_balance(txs, "pos1", stored) == pytest.approx(stored["current_balance"])
+        assert len(inc) == 1
+        assert inc[0]["current_balance"] == pytest.approx(11523.58)
+        assert (await db.contacts.find_one({"_id": "cari1"}))["balance"] == pytest.approx(250.5)
+        assert (await db.partners.find_one({"_id": "ortak1"}))["balance"] == pytest.approx(80.25)
+        assert (await db.invoices.find_one({"_id": "inv1"}))["grand_total"] == pytest.approx(440)
+        audits = [d for d in db.company_audit_log.docs.values() if d.get("record_id") == "pos1"]
+        assert len(audits) == 1
+        assert audits[0]["action"] == "create"
+        assert audits[0]["record_label"] == "Mağaza POS"
+        assert "11523.58" in audits[0]["summary"]
+        assert "2026-10-14" in audits[0]["summary"]
+        assert "-11523.58" in audits[0]["summary"]
+        assert "0.00" in audits[0]["summary"]
+
+        with pytest.raises(HTTPException) as again:
+            await server.save_opening_from_difference(
+                "pos1", _user(), {"amount": 50, "date": "2026-10-14"},
+            )
+        assert again.value.status_code == 409
+        assert len(_openings(db, "pos1")) == 1
+        assert (await db.bank_accounts.find_one({"_id": "pos1"}))["current_balance"] == pytest.approx(0)
+        assert len(inc) == 1
+        assert len([d for d in db.company_audit_log.docs.values() if d.get("record_id") == "pos1"]) == 1
+
+        replaced = await server.save_opening_from_difference(
+            "pos1",
+            _user(),
+            {"amount": 1000, "date": "2026-10-01", "replace": True},
+        )
+        assert replaced["current_balance"] == pytest.approx(-10523.58)
+        assert replaced["date"] == "2026-10-01"
+        openings = _openings(db, "pos1")
+        assert len(openings) == 1
+        assert openings[0]["amount"] == pytest.approx(1000)
+        assert openings[0]["type"] == "inflow"
+        assert openings[0]["date"] == "2026-10-01"
+        assert "contact_id" not in openings[0]
+        stored = await db.bank_accounts.find_one({"_id": "pos1"})
+        txs = [
+            t for t in db.bank_transactions.docs.values()
+            if t.get("account_id") == "pos1" or t.get("target_account_id") == "pos1"
+        ]
+        assert account_balance.movement_balance(txs, "pos1", stored) == pytest.approx(stored["current_balance"])
+        assert inc[-1]["current_balance"] == pytest.approx(-10523.58)
+        assert (await db.contacts.find_one({"_id": "cari1"}))["balance"] == pytest.approx(250.5)
+        assert (await db.partners.find_one({"_id": "ortak1"}))["balance"] == pytest.approx(80.25)
+        assert (await db.invoices.find_one({"_id": "inv1"}))["balance"] == pytest.approx(440)
+        audits = sorted(
+            [d for d in db.company_audit_log.docs.values() if d.get("record_id") == "pos1"],
+            key=lambda d: d.get("at") or "",
+        )
+        assert len(audits) == 2
+        assert audits[1]["action"] == "update"
+        assert "1000.00" in audits[1]["summary"]
+        assert "2026-10-01" in audits[1]["summary"]
+        assert "-10523.58" in audits[1]["summary"]
+
+        db.bank_accounts.docs["flat"] = {
+            "_id": "flat",
+            "company_id": "co",
+            "type": "pos",
+            "account_name": "Düz POS",
+            "currency": "TRY",
+            "current_balance": 40,
+        }
+        await db.bank_transactions.insert_one({
+            "_id": "flat-in",
+            "company_id": "co",
+            "account_id": "flat",
+            "type": "inflow",
+            "amount": 40,
+            "source": "manual",
+            "date": "2026-10-02",
+        })
+        before_inc = len(inc)
+        with pytest.raises(HTTPException) as no_fark:
+            await server.save_opening_from_difference("flat", _user())
+        assert no_fark.value.status_code == 400
+        with pytest.raises(HTTPException) as staff_old:
+            await server.save_opening_from_difference("flat", staff)
+        assert staff_old.value.status_code == 400
+        assert len(inc) == before_inc
+        assert _openings(db, "flat") == []
+        assert (await db.bank_accounts.find_one({"_id": "flat"}))["current_balance"] == pytest.approx(40)
+
+        db.bank_accounts.docs["pos-day"] = {
+            "_id": "pos-day",
+            "company_id": "co",
+            "type": "pos",
+            "account_name": "Gün POS",
+            "currency": "TRY",
+            "current_balance": 10,
+        }
+        await db.bank_transactions.insert_one({
+            "_id": "day-in",
+            "company_id": "co",
+            "account_id": "pos-day",
+            "type": "inflow",
+            "amount": 10,
+            "source": "manual",
+            "date": "2026-11-01",
+        })
+        implied = await server.save_opening_from_difference("pos-day", _user(), {"amount": 5})
+        assert implied["date"] == "2026-10-31"
+        assert implied["current_balance"] == pytest.approx(15)
+        day_acc = await db.bank_accounts.find_one({"_id": "pos-day"})
+        day_txs = [
+            t for t in db.bank_transactions.docs.values()
+            if t.get("account_id") == "pos-day" or t.get("target_account_id") == "pos-day"
+        ]
+        assert account_balance.movement_balance(day_txs, "pos-day", day_acc) == pytest.approx(15)
+        assert (await db.contacts.find_one({"_id": "cari1"}))["balance"] == pytest.approx(250.5)
+
+    _run(scenario())
+
+
 def test_duplicate_iban_connection_rejected_and_warnings(db):
     async def scenario():
         first = await server.create_bank_account(BankAccount(

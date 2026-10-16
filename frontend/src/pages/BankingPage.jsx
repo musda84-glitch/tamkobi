@@ -14,6 +14,7 @@ import { matchActorTitle, matchStatusLabel, txUserColumnLabel, txDescriptionLabe
 import { filterAccountTransactions } from "../utils/bankAccountTx";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
+import { OpeningBalanceDialog } from "../components/OpeningBalanceDialog";
 import { TxRowMenu } from "../components/TxRowMenu";
 import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "../components/TxMobileCard";
 import { SearchSelect } from "../components/SearchSelect";
@@ -24,6 +25,7 @@ import { formatTrAmount, fmtDate } from "../utils/money";
 import { PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, partnerSummaryCardMeta } from "../utils/partnerTx";
 import { shownAccountBalance, sumShownBalances, totalLiquidity as sumLiquidity } from "../utils/accountTotals";
 import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
+import { openingEligible } from "../utils/openingBalance";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { isBankTxServerPagingEnabled } from "../utils/featureFlags";
 import {
@@ -44,7 +46,8 @@ import {
   Trash2,
   Sparkles,
   Printer,
-  Scale
+  Scale,
+  MoreVertical
 } from "lucide-react";
 
 const TABS = [
@@ -154,6 +157,8 @@ export default function BankingPage() {
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
+  const [cardMenuId, setCardMenuId] = useState(null);
+  const [openingAccount, setOpeningAccount] = useState(null);
   const [cashTick, setCashTick] = useState(0);
   const [serverItems, setServerItems] = useState([]);
   const [serverHasMore, setServerHasMore] = useState(false);
@@ -247,6 +252,17 @@ export default function BankingPage() {
     if (tx.account_id) setSelectedAccountId(tx.account_id);
     return undefined;
   }, [loading, txReady, transactions, focusTx]);
+
+  useEffect(() => {
+    if (!cardMenuId) return undefined;
+    const close = (event) => {
+      const wrap = document.querySelector(`[data-testid="account-card-menu-wrap-${cardMenuId}"]`);
+      if (wrap && wrap.contains(event.target)) return;
+      setCardMenuId(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [cardMenuId]);
 
   const silentReloadRef = useRef(null);
   const tabRef = useRef(tab);
@@ -702,6 +718,14 @@ export default function BankingPage() {
       {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={bumpCashData} />}
       {tab === "reconciliation" && <ReconciliationPanel companyId={companyId} />}
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={bumpCashData} />}
+      {openingAccount && (
+        <OpeningBalanceDialog
+          account={openingAccount}
+          transactions={transactions}
+          onClose={() => setOpeningAccount(null)}
+          onSaved={bumpCashData}
+        />
+      )}
 
       {tab === "accounts" && (<>
       <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={bumpCashData} />
@@ -803,7 +827,7 @@ export default function BankingPage() {
                   tabIndex={0}
                   onClick={() => setSelectedAccountId(isSelected ? null : accId)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAccountId(isSelected ? null : accId); } }}
-                  className={`bg-white p-4 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? "border-emerald-500 ring-2 ring-emerald-500/30 shadow-md" : "border-slate-200/90"}`}
+                  className={`bg-white p-4 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? "border-emerald-500 ring-2 ring-emerald-500/30 shadow-md" : "border-slate-200/90"} ${cardMenuId === accId ? "relative z-20" : ""}`}
                   data-testid={`bank-card-${accId}`}
                 >
                   <div className="space-y-2">
@@ -813,6 +837,32 @@ export default function BankingPage() {
                         <div className="text-xs text-slate-500">{accountTypeLabel(acc.type)}</div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {openingEligible(acc) && (
+                          <div className="relative" data-testid={`account-card-menu-wrap-${accId}`}>
+                            <button
+                              type="button"
+                              onClick={() => setCardMenuId((cur) => (cur === accId ? null : accId))}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100"
+                              title="Hesap menüsü"
+                              aria-label="Hesap menüsü"
+                              data-testid={`account-card-menu-${accId}`}
+                            >
+                              <MoreVertical className="w-3.5 h-3.5" />
+                            </button>
+                            {cardMenuId === accId && (
+                              <div className="absolute right-0 top-8 z-30 min-w-[220px] bg-white border border-slate-200 rounded-xl shadow-lg py-1" data-testid={`account-card-menu-panel-${accId}`}>
+                                <button
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                                  data-testid={`add-opening-balance-${accId}`}
+                                  onClick={() => { setCardMenuId(null); setOpeningAccount(acc); }}
+                                >
+                                  Açılış/Devir bakiyesi ekle
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <button type="button" onClick={(e) => openEditAccount(acc, e)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100" title="Düzelt" data-testid={`edit-account-${accId}`}><Pencil className="w-3.5 h-3.5" /></button>
                         <button type="button" onClick={(e) => handleDeleteAccount(acc, e)} disabled={acc.is_integrated} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30" title={acc.is_integrated ? "Entegre hesap silinemez" : "Sil"} data-testid={`delete-account-${accId}`}><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
