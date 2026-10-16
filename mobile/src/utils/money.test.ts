@@ -11,6 +11,18 @@ describe("fmtMoney", () => {
     expect(fmtMoney(null)).toBe("0,00 ₺");
   });
 
+  it("prints sub-kuruş dust as zero so a zero balance is never -0,00", () => {
+    expect(fmtMoney(-0.000000001)).toBe("0,00 ₺");
+    expect(fmtMoney(-0.004)).toBe("0,00 ₺");
+    expect(fmtMoney(-0.005)).toBe("-0,01 ₺");
+    expect(fmtMoney(-0.01)).toBe("-0,01 ₺");
+    expect(fmtMoney(0)).toBe("0,00 ₺");
+    expect(fmtMoney(0.004)).toBe("0,00 ₺");
+    expect(fmtMoney(0.005)).toBe("0,01 ₺");
+    expect(fmtMoney(1234.5)).toMatch(/1.?234,50 ₺/);
+    expect(fmtMoney(-1234.5)).toMatch(/-1.?234,50 ₺/);
+  });
+
   it("uses currency code for non-TRY", () => {
     expect(moneySuffix("TRY")).toBe("₺");
     expect(moneySuffix("USD")).toBe("USD");
