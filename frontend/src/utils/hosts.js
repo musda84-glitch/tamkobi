@@ -133,6 +133,7 @@ export const HOST_ROUTE_RULES = {
     /^\/communication(\/|$)/,
     /^\/hesap(\/|$)/,
     /^\/settings(\/|$)/,
+    /^\/vpos(\/|$)/,
     /^\/quotes(\/|$)/,
     /^\/projects(\/|$)/,
     /^\/surveys(\/|$)/,

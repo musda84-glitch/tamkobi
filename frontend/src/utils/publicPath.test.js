@@ -33,5 +33,6 @@ test("unknown paths skip login so SPA 404 can render", () => {
   expect(requiresSession("/panel")).toBe(true);
   expect(requiresSession("/invoices")).toBe(true);
   expect(requiresSession("/yardim")).toBe(true);
+  expect(requiresSession("/vpos/result/abc")).toBe(true);
   expect(requiresSession("/yasal/kvkk")).toBe(false);
 });

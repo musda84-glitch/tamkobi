@@ -533,7 +533,7 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/ai/order-extract", "/orders"), ("/api/ai/product-extract", "/stock"), ("/api/ai/production-advisor", "/production"), ("/api/ai/production-summary", "/production"),
                   ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/cheques", "/cheques"), ("/api/products", "/stock"),
                   ("/api/purchase-orders", "/purchase-orders"), ("/api/warehouses/stock-counts", "/sayim"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
-                  ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/vehicles", "/vehicles"), ("/api/pos", "/hizli-satis"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
+                  ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/vehicles", "/vehicles"), ("/api/pos", "/hizli-satis"), ("/api/vpos", "/settings"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm/sms/settings", "/settings"), ("/api/comm/sms/verify", "/settings"), ("/api/comm/sms/balance", "/settings"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
@@ -563,6 +563,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/platform/v1/",
     "/api/webhook/",
     "/api/payments/paytr/callback",
+    "/api/vpos/callback/",
     "/api/payments/status/",
     "/api/comm/whatsapp/webhook",
     "/api/mail/webhooks/ses",
