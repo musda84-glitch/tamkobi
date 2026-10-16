@@ -14,6 +14,8 @@ import {
   orderFiltersFromSearch,
   writeOrderFiltersToParams,
   buildOrderListParams,
+  buildOrderServerPageParams,
+  ORDERS_SERVER_PAGE_MAX,
   toggleColumnSort,
 } from "./orderFilters";
 
@@ -231,6 +233,25 @@ test("list query sends each filter and export asks for the full filtered set", (
     { companyId: "c1" },
   );
   expect(pending.cancel_request).toBe("pending");
+});
+
+test("server page params omit paged and cap page size at 200", () => {
+  const params = buildOrderServerPageParams(
+    { ...ORDER_FILTER_DEFAULTS, q: "ada", status: "shipped", sort: "amount_desc" },
+    { companyId: "c1", page: 3, pageSize: 100, customer: "Ada" },
+  );
+  expect(params.paged).toBeUndefined();
+  expect(params).toMatchObject({
+    company_id: "c1", page: 3, page_size: 100, q: "ada", status: "shipped", sort: "amount_desc", customer: "Ada",
+  });
+  const wide = buildOrderServerPageParams(ORDER_FILTER_DEFAULTS, { companyId: "c1", pageSize: 1000 });
+  expect(wide.page_size).toBe(50);
+  expect(wide.paged).toBeUndefined();
+  const exp = buildOrderServerPageParams(ORDER_FILTER_DEFAULTS, { companyId: "c1", exportAll: true, page: 4 });
+  expect(exp.export).toBe(1);
+  expect(exp.page).toBe(1);
+  expect(exp.paged).toBeUndefined();
+  expect(exp.page_size).toBeLessThanOrEqual(ORDERS_SERVER_PAGE_MAX);
 });
 
 test("prepareOrdersForPanel decorates held carts and sorts", () => {

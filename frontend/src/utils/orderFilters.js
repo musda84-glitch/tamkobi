@@ -268,6 +268,40 @@ export function buildOrderListParams(f, { companyId, page = 1, pageSize = 50, cu
   return params;
 }
 
+/** Bayrak açıkken sayfa boyu. Eski paged=1 listesi 1000'e kadar gider. */
+export const ORDERS_SERVER_PAGE_MAX = 200;
+export const ORDERS_SERVER_PAGE_SIZES = [50, 100, 200];
+
+export function clampOrdersServerPageSize(pageSize) {
+  const n = Number(pageSize);
+  return ORDERS_SERVER_PAGE_SIZES.includes(n) ? n : 50;
+}
+
+/**
+ * Salt okunur sayfa. `paged` gönderilmez; böylece eski panel gövdesi çalışmaya devam eder.
+ */
+export function buildOrderServerPageParams(f, { companyId, page = 1, pageSize = 50, customer = "", exportAll = false, scope = "" } = {}) {
+  const params = {
+    company_id: companyId,
+    page: exportAll ? 1 : page,
+    page_size: clampOrdersServerPageSize(pageSize),
+    sort: f?.sort || "date_desc",
+  };
+  if (f?.q) params.q = f.q;
+  if (f?.status && f.status !== "all") params.status = f.status;
+  if (f?.channel && f.channel !== "all") params.channel = f.channel;
+  if (f?.invoiced && f.invoiced !== "all") params.invoiced = f.invoiced;
+  if (f?.cargo && f.cargo !== "all") params.cargo = f.cargo;
+  if (f?.cancel_request && f.cancel_request !== "all") params.cancel_request = f.cancel_request;
+  if (docStatusFilterActive(f?.docStatus)) params.doc_status = f.docStatus.join(",");
+  if (f?.from) params.date_from = f.from;
+  if (f?.to) params.date_to = f.to;
+  if (customer) params.customer = customer;
+  if (exportAll) params.export = 1;
+  if (scope) params.scope = scope;
+  return params;
+}
+
 const GIB_ERR = /^\s*hata\s*:/i;
 /** e-Fatura / e-Arşiv. Kağıt, gider pusulası ve e-irsaliye e-belge değildir. */
 const EDOC_E_TYPES = new Set(["e_invoice", "e_archive", "efatura", "earsiv"]);

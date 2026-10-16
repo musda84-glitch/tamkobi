@@ -128,6 +128,7 @@ import account_balance
 import bank_tx_page
 import partner_tx_page
 import contact_list_page
+import order_list_page
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -18528,6 +18529,21 @@ async def _list_orders_filtered(
     return result
 
 
+async def _orders_page_prepare(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """E-belge filtresi için fatura alanları. Yalnız okur."""
+    return await _enrich_orders_invoice_ebelge(docs)
+
+
+async def _orders_page_decorate(items, company_id, skip_ebelge=False):
+    """Sayfa dilimine rozet. Stok eşlemesi yazdığı için burada yok."""
+    rows = list(items or [])
+    if not skip_ebelge:
+        rows = await _enrich_orders_invoice_ebelge(rows)
+    rows = await _enrich_orders_marketplace_item_media(rows, company_id=company_id)
+    rows = await _enrich_orders_production_flags(rows, company_id=company_id)
+    return rows
+
+
 @api_router.get("/orders")
 async def list_orders(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -18543,24 +18559,58 @@ async def list_orders(
     date_to: Optional[str] = None,
     customer: Optional[str] = None,
     sort: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 50,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
     export: bool = False,
     scope: Optional[str] = None,
     cancel_request: Optional[str] = None,
+    request: Request = None,
 ):
     """Sipariş listesi.
 
     Varsayılan: B2B *aktif sepet* satırları hariç (portal taslakları listeyi şişirir).
     `include_active_cart=1` ile eski davranış. Bekleyen sepet (held_cart) gelir.
     `paged=1` panel filtresidir: {items, total, page, page_size, has_more, total_amount}.
-    paged yokken yanıt eskisi gibi bir dizidir (eski istemciler).
+    page ve page_size yokken yanıt eskisi gibi bir dizidir (eski istemciler).
+    page veya page_size verilip paged yoksa salt okunur sayfa: total + summary.
     """
-    if paged or export:
+    if paged or (export and page is None and page_size is None):
         return await _list_orders_filtered(
             company_id, status, include_active_cart, q, channel, invoiced, cargo,
-            doc_status, date_from, date_to, customer, sort, page, page_size, export, scope,
+            doc_status, date_from, date_to, customer, sort,
+            1 if page is None else page,
+            50 if page_size is None else page_size,
+            export, scope,
             cancel_request,
+        )
+    if page is not None or page_size is not None:
+        if request is None:
+            raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+        user = await get_current_user(request)
+        return await order_list_page.list_orders_for_user(
+            db,
+            user,
+            company_id,
+            paged=True,
+            page=page,
+            page_size=page_size,
+            include_active_cart=include_active_cart,
+            q=q or "",
+            status=status or "all",
+            channel=channel or "all",
+            invoiced=invoiced or "all",
+            cargo=cargo or "all",
+            doc_status=doc_status,
+            date_from=date_from or "",
+            date_to=date_to or "",
+            customer=customer or "",
+            sort=sort or "date_desc",
+            scope=scope or "",
+            cancel_request=cancel_request or "all",
+            export=export,
+            clean=clean_docs,
+            prepare=_orders_page_prepare,
+            decorate_page=_orders_page_decorate,
         )
     query: Dict[str, Any] = {"company_id": company_id}
     if (cancel_request or "").strip().lower() == "pending":
