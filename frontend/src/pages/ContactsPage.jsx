@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { fmtMoney } from "../utils/money";
+import { isContactsServerPagingEnabled } from "../utils/featureFlags";
+const CONTACT_PAGE_SIZES = [20, 50, 100];
+const EMPTY_CONTACT_ROWS = [];
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { label: "Durum", value: (r) => r.is_active === false ? "Pasif" : "Aktif" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
@@ -52,6 +55,15 @@ export default function ContactsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const detailContactId = searchParams.get("contact_id");
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const serverPaging = isContactsServerPagingEnabled();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [sort, setSort] = useState("name");
+  const [serverTotal, setServerTotal] = useState(0);
+  const [serverHasMore, setServerHasMore] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [reloadTick, setReloadTick] = useState(0);
+  const serverGen = useRef(0);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -74,9 +86,75 @@ export default function ContactsPage() {
       if (!silent) setLoading(false);
     }
   }, [activeCompany, filterType]);
-  useEffect(() => { loadContacts(); }, [loadContacts]);
-  const refreshContactsSilent = useCallback(() => loadContacts({ silent: true }), [loadContacts]);
+  useEffect(() => { if (!serverPaging) loadContacts(); }, [loadContacts, serverPaging]);
+  const filterKey = `${companyId}|${searchTerm}|${filterType}|${statusFilter}|${finFilter}|${sort}|${pageSize}`;
+  const filterKeyRef = useRef(filterKey);
+  useEffect(() => {
+    if (!serverPaging) return;
+    if (filterKeyRef.current === filterKey) return;
+    filterKeyRef.current = filterKey;
+    setPage(1);
+  }, [serverPaging, filterKey]);
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    const gen = ++serverGen.current;
+    let alive = true;
+    setLoading(true);
+    const params = {
+      company_id: companyId,
+      page,
+      page_size: pageSize,
+      type: filterType,
+      status: statusFilter,
+      fin: finFilter,
+      sort,
+    };
+    if (searchTerm) params.q = searchTerm;
+    axios.get(`${API_URL}/contacts`, { params })
+      .then(({ data }) => {
+        if (!alive || gen !== serverGen.current) return;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setContacts(items);
+        setServerTotal(Number(data?.total) || 0);
+        setServerHasMore(Boolean(data?.has_more));
+        setSummary(data?.summary || null);
+        const nextFlags = {};
+        for (const row of items) nextFlags[row.id] = row.flags || {};
+        setFlags(nextFlags);
+      })
+      .catch((err) => {
+        if (!alive || gen !== serverGen.current) return;
+        const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+        if (!canceled) toast.error("Cari listesi yüklenemedi.");
+      })
+      .finally(() => {
+        if (alive && gen === serverGen.current) setLoading(false);
+      });
+    return () => { alive = false; };
+  }, [serverPaging, companyId, page, pageSize, filterType, statusFilter, finFilter, sort, searchTerm, reloadTick]);
+  const refreshContactsSilent = useCallback(() => {
+    if (serverPaging) {
+      setReloadTick((n) => n + 1);
+      return;
+    }
+    loadContacts({ silent: true });
+  }, [loadContacts, serverPaging]);
   useDataRefresh(refreshContactsSilent, { companyId, scopes: ["cash", "contacts", "invoices"] });
+  const loadExportRows = useCallback(async () => {
+    const params = {
+      company_id: companyId,
+      page: 1,
+      page_size: pageSize,
+      type: filterType,
+      status: statusFilter,
+      fin: finFilter,
+      sort,
+      export: 1,
+    };
+    if (searchTerm) params.q = searchTerm;
+    const { data } = await axios.get(`${API_URL}/contacts`, { params });
+    return Array.isArray(data?.items) ? data.items : [];
+  }, [companyId, pageSize, filterType, statusFilter, finFilter, sort, searchTerm]);
 
 
   const openStatement = async (contact) => {
@@ -90,20 +168,38 @@ export default function ContactsPage() {
   };
 
   const finMatch = (c) => { const f = flags[c.id] || {}; switch (finFilter) { case "debtors": return (c.balance || 0) > 0; case "creditors": return (c.balance || 0) < 0; case "overdue": return f.overdue_count > 0 || f.installment_overdue_count > 0; case "installments": return f.installment_due_count > 0; case "clear": return !(c.balance || 0); default: return true; } };
-  const FIN_FILTERS = [["all", "Tümü", contacts.length], ["debtors", "Bize Borçlu (Alacağımız var)", contacts.filter((c) => (c.balance || 0) > 0).length], ["creditors", "Bize Alacaklı (Borcumuz var)", contacts.filter((c) => (c.balance || 0) < 0).length], ["overdue", "Vadesi Geçenler", contacts.filter((c) => (flags[c.id]?.overdue_count || 0) > 0 || (flags[c.id]?.installment_overdue_count || 0) > 0).length], ["installments", "Taksit Ödemesi Gelenler (7 gün)", contacts.filter((c) => (flags[c.id]?.installment_due_count || 0) > 0).length], ["clear", "Bakiyesi Sıfır", contacts.filter((c) => !(c.balance || 0)).length]];
+  const clientCounts = {
+    all: contacts.length,
+    debtors: contacts.filter((c) => (c.balance || 0) > 0).length,
+    creditors: contacts.filter((c) => (c.balance || 0) < 0).length,
+    overdue: contacts.filter((c) => (flags[c.id]?.overdue_count || 0) > 0 || (flags[c.id]?.installment_overdue_count || 0) > 0).length,
+    installments: contacts.filter((c) => (flags[c.id]?.installment_due_count || 0) > 0).length,
+    clear: contacts.filter((c) => !(c.balance || 0)).length,
+  };
+  const counts = serverPaging && summary ? {
+    all: summary.facet_total ?? 0,
+    debtors: summary.debtors ?? 0,
+    creditors: summary.creditors ?? 0,
+    overdue: summary.overdue ?? 0,
+    installments: summary.installments ?? 0,
+    clear: summary.clear ?? 0,
+  } : clientCounts;
+  const FIN_FILTERS = [["all", "Tümü", counts.all], ["debtors", "Bize Borçlu (Alacağımız var)", counts.debtors], ["creditors", "Bize Alacaklı (Borcumuz var)", counts.creditors], ["overdue", "Vadesi Geçenler", counts.overdue], ["installments", "Taksit Ödemesi Gelenler (7 gün)", counts.installments], ["clear", "Bakiyesi Sıfır", counts.clear]];
   const statusMatch = (c) => {
     if (statusFilter === "active") return c.is_active !== false;
     if (statusFilter === "inactive") return c.is_active === false;
     return true;
   };
-  const filtered = contacts.filter((c) => finMatch(c)).filter(statusMatch).filter(c =>
+  const filtered = serverPaging ? contacts : contacts.filter((c) => finMatch(c)).filter(statusMatch).filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.company_title && c.company_title.toLowerCase().includes(searchTerm.toLowerCase())) ||
     c.tax_number_or_id.includes(searchTerm)
   );
-  const { visible: pagedContacts, hasMore: contactsHasMore, sentinelRef: contactsSentinelRef } = useInfiniteRows(filtered, {
+  const { visible: pagedContacts, hasMore: contactsHasMore, sentinelRef: contactsSentinelRef } = useInfiniteRows(serverPaging ? EMPTY_CONTACT_ROWS : filtered, {
     resetKey: `${filterType}|${finFilter}|${statusFilter}|${searchTerm}`,
   });
+  const visibleContacts = serverPaging ? contacts : pagedContacts;
+  const pageCount = Math.max(1, Math.ceil((serverTotal || 0) / pageSize) || 1);
 
   return (
     <div className="space-y-6" data-testid="contacts-page">
@@ -161,7 +257,7 @@ export default function ContactsPage() {
             </button>
           ))}
         </div>
-        <ExportButtons rows={filtered} columns={CONTACT_COLS} filename="cariler" title="Cari Listesi" />
+        <ExportButtons rows={filtered} columns={CONTACT_COLS} filename="cariler" title="Cari Listesi" loadRows={serverPaging ? loadExportRows : undefined} />
         <div className="flex items-center gap-2 text-xs" data-testid="contact-fin-filters">
           <Filter className="w-3.5 h-3.5 text-slate-400" />
           <select
@@ -172,6 +268,19 @@ export default function ContactsPage() {
           >
             {FIN_FILTERS.map(([k, l, n]) => <option key={k} value={k} data-testid={`contact-fin-filter-${k}`}>{l} ({n})</option>)}
           </select>
+          {serverPaging && (
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-slate-700"
+              data-testid="contacts-sort"
+            >
+              <option value="name">Ünvan (A-Z)</option>
+              <option value="name_desc">Ünvan (Z-A)</option>
+              <option value="balance_desc">Bakiye (yüksek)</option>
+              <option value="balance_asc">Bakiye (düşük)</option>
+            </select>
+          )}
         </div>
 
         <div className="relative">
@@ -189,11 +298,29 @@ export default function ContactsPage() {
 
       {/* Contacts List (horizontal rows) */}
       <div className="space-y-2" data-testid="contacts-list">
-        {filtered.length === 0 && <div className="bg-white rounded-xl border p-8 text-center text-sm text-slate-400" data-testid="contacts-empty">Filtreye uyan cari yok.</div>}
-        {pagedContacts.map((contact) => (
+        {filtered.length === 0 && !(serverPaging && loading) && <div className="bg-white rounded-xl border p-8 text-center text-sm text-slate-400" data-testid="contacts-empty">Filtreye uyan cari yok.</div>}
+        {visibleContacts.map((contact) => (
           <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => setSearchParams({ contact_id: contact.id })} onEdit={() => setEditContact(contact)} onMessage={() => setMessageContact(contact)} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
         ))}
-        {contactsHasMore && (
+        {serverPaging && (
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs pt-1" data-testid="contacts-pager">
+            <div data-testid="contacts-result-summary" className="text-slate-500">
+              <b className="text-slate-900">{serverTotal}</b> cari · Alacak <b className="text-emerald-700">{fmtMoney(summary?.receivable_total || 0)}</b> · Borç <b className="text-rose-700">{fmtMoney(summary?.payable_total || 0)}</b>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 text-slate-600">
+                <span className="font-semibold text-slate-500">Sayfa</span>
+                <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="border border-slate-200 rounded-lg px-2 py-1.5 bg-white" data-testid="contacts-page-size">
+                  {CONTACT_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <button type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="contacts-page-prev">Önceki</button>
+              <span data-testid="contacts-page-indicator" className="font-semibold text-slate-700">{page} / {pageCount}</span>
+              <button type="button" disabled={!serverHasMore} onClick={() => setPage((p) => p + 1)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40" data-testid="contacts-page-next">Sonraki</button>
+            </div>
+          </div>
+        )}
+        {!serverPaging && contactsHasMore && (
           <div ref={contactsSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="contacts-load-more">
             Daha fazla cari yükleniyor…
           </div>
@@ -222,7 +349,7 @@ export default function ContactsPage() {
         />
       )}
 
-      {(showAddModal || editContact) && <ContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={(saved) => { setShowAddModal(false); setEditContact(null); if (saved?.deleted && detailContactId) setSearchParams({}); loadContacts(); }} />}
+      {(showAddModal || editContact) && <ContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={(saved) => { setShowAddModal(false); setEditContact(null); if (saved?.deleted && detailContactId) setSearchParams({}); if (serverPaging) setReloadTick((n) => n + 1); else loadContacts(); }} />}
 
       {/* CARİ EKSTRESİ MODAL */}
       {selectedContactStatement && statementData && (
