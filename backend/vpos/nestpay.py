@@ -134,6 +134,20 @@ def is_expired(intent: Mapping[str, Any], now: Optional[datetime] = None) -> boo
     return exp <= current
 
 
+def _taksit_field(intent: Mapping[str, Any]) -> str:
+    """Peşin (1 veya boş) forma taksit eklemez. 2 ve üzeri hash'e girer."""
+    raw = intent.get("installment")
+    if raw in (None, ""):
+        return ""
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        return ""
+    if count <= 1:
+        return ""
+    return str(count)
+
+
 def _short_code(value: str, limit: int = 32) -> str:
     text = re.sub(r"[^A-Za-z0-9]", "", value or "")[:limit]
     digits = re.sub(r"\D", "", text)
@@ -213,6 +227,9 @@ class NestpayAdapter(VposAdapter):
             "Instalment": "",
             "encoding": "utf-8",
         }
+        taksit = _taksit_field(intent)
+        if taksit:
+            fields["taksit"] = taksit
         fields["hash"] = hash_ver3(fields, store_key)
         return {"action_url": action, "fields": fields}
 

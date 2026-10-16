@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 
@@ -78,6 +78,14 @@ export default function VposResultPage() {
       <h1 className="text-lg font-bold text-slate-900" data-testid={view.testid}>{view.title}</h1>
       <p className="text-sm text-slate-600" data-testid="vpos-result-amount">{intent.amount} {intent.currency || "TRY"}</p>
       {intent.purpose === "test" && <p className="text-xs text-slate-500" data-testid="vpos-result-test-note">Bu bir test ödemesidir. Kasa ve cari hesaba işlenmez.</p>}
+      {intent.purpose === "contact_collection" && intent.status === "paid" && (
+        <div data-testid="vpos-result-collected">
+          <p className="text-sm text-emerald-800">Tahsilat cariye işlendi</p>
+          {intent.contact_id ? (
+            <Link to={`/contacts?contact_id=${encodeURIComponent(intent.contact_id)}`} className="text-sm font-semibold text-emerald-700 underline" data-testid="vpos-result-contact">Cariyi aç</Link>
+          ) : null}
+        </div>
+      )}
       {reason && <p className="text-sm text-slate-700" data-testid="vpos-result-reason">{reason}</p>}
       {result.auth_code && <p className="text-sm" data-testid="vpos-result-auth">Onay kodu: {result.auth_code}</p>}
       {pan && <p className="text-sm" data-testid="vpos-result-pan">Kart: {pan}</p>}
