@@ -13,11 +13,6 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("POST", "/auth/reset/{token}"),
     ("GET", "/auth/invite/{token}"),
     ("POST", "/auth/invite/{token}"),
-    # İmzalı / GİB belge (oturum veya ?t=)
-    ("GET", "/e-invoice/{invoice_id}/status"),
-    ("POST", "/e-invoice/{invoice_id}/refresh-status"),
-    ("GET", "/invoices/{invoice_id}/gib-document"),
-    ("GET", "/invoices/{invoice_id}/gib-document.json"),
     # Bildirim — kullanıcıya özel
     ("POST", "/notifications/{notif_id}/read"),
     ("DELETE", "/notifications/{notif_id}"),
@@ -71,7 +66,6 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("GET", "/auth/reset/{token}"): "Şifre sıfırlama token'ı",
-    ("GET", "/e-invoice/{invoice_id}/status"): "E-fatura durum; imzalı/entegratör",
     ("POST", "/notifications/{notif_id}/read"): "Bildirim user-scoped",
     ("PUT", "/products/units/{name}"): "Birim adı anahtarı",
     ("GET", "/support/tickets/{ticket_id}"): "Müşteri kendi ticket'ı",
