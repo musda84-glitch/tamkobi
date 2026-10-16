@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 import n11faturam
 import isnet
 import isnet_portal
+import qnb_efinans
 import ubl_export
 from buyer_tax import buyer_tax_choice, usable_tax
 from invoice_edit_lock import invoice_gib_locked
@@ -499,6 +500,7 @@ def state_to_track_status(einvoice_state: Optional[str]) -> str:
         "draft": "DRAFT",
         "queued": "DRAFT",
         "sent": "SENT",
+        "pending": "SENT",
         "accepted": "ACCEPTED",
         "rejected": "REJECTED",
         "cancelled": "CANCELLED",
@@ -802,6 +804,10 @@ async def issue_invoice(
         inv = {**(refreshed or inv or {}), "e_type": e_type}
 
     et = e_type or (inv.get("e_type") if inv else None) or "e_archive"
+    if et in ("e_archive", "e_dispatch"):
+        early_settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+        if (early_settings.get("provider") or "") == "qnb_efinans":
+            raise HTTPException(status_code=400, detail=qnb_efinans.UNSUPPORTED_DETAIL)
     scen = "TEMELIRSALIYE" if et == "e_dispatch" else normalize_scenario(scenario or inv.get("gib_scenario"), et)
     # GİB Schematron: IADE / TEVKIFATIADE → TICARIFATURA yasak
     if ubl_export.is_return_invoice(inv) or ubl_export.gib_invoice_type_code(inv) in (
@@ -912,15 +918,29 @@ async def issue_invoice(
     consume = _deps.get("consume_credits")
 
     provider = settings.get("provider") or ""
-    live_providers = ("n11faturam", "isnet", "isnet_portal")
-    # e-İrsaliye yalnızca İşNet SOAP (portal da aynı WSDL)
+    if provider == "qnb_efinans" and et != "e_invoice":
+        await _db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": {
+                "einvoice_state": "error",
+                "gib_status": f"Hata: {qnb_efinans.UNSUPPORTED_DETAIL}",
+                "gib_error": "qnb_unsupported",
+                "error_at": _now(),
+            }},
+        )
+        raise HTTPException(status_code=400, detail=qnb_efinans.UNSUPPORTED_DETAIL)
+    live_providers = ("n11faturam", "isnet", "isnet_portal", "qnb_efinans")
+    # e-İrsaliye yalnızca İşNet SOAP (portal da aynı WSDL). QNB yalnız e-Fatura.
     live_etypes = ("e_invoice", "e_archive") + (("e_dispatch",) if provider in ("isnet", "isnet_portal") else ())
+    if provider == "qnb_efinans":
+        live_etypes = ("e_invoice",)
     if provider in live_providers and et in live_etypes:
         if settings.get("status") != "configured":
             labels = {
                 "n11faturam": "n11 Faturam",
                 "isnet": "İşNet SOAP API",
                 "isnet_portal": "İşNet Web Portal",
+                "qnb_efinans": "QNB eFinans",
             }
             label = labels.get(provider, provider)
             await _db.invoices.update_one(
@@ -959,6 +979,8 @@ async def issue_invoice(
         pwd = password_fn(settings) or ""
         if provider == "n11faturam":
             sender, label = n11faturam, "n11 Faturam"
+        elif provider == "qnb_efinans":
+            sender, label = qnb_efinans, "QNB eFinans"
         elif et == "e_dispatch":
             # Portal stub yerine SOAP SendDespatchAdviceXml
             sender, label = isnet, "İşNet SOAP API"
@@ -1031,24 +1053,31 @@ async def issue_invoice(
         gib_no = official or ""
         if not gib_no and number_source in ("portal", "xml", "soap", "isnet"):
             gib_no = (sent.get("invoice_id") or "").strip()
-        if not gib_no and provider not in ("isnet", "isnet_portal"):
+        if not gib_no and provider not in ("isnet", "isnet_portal", "qnb_efinans"):
             gib_no = (sent.get("invoice_id") or "").strip()
         gib_mode = (sent.get("mode") or settings.get("mode") or "test").strip()
-        gib_status = format_integrator_gib_status(
-            label=label,
-            mode=gib_mode,
-            portal_status=sent.get("gib_status_raw") or "",
-            verified=bool(sent.get("verified")),
-            status_code=str(sent.get("gib_status_code") or ""),
-            detail_status=str(sent.get("detail_status") or ""),
-            process_status=str(sent.get("process_status") or ""),
-        )
-        gib_code = sent.get("gib_status_code") or None
-        if not gib_code and "Başarıyla Tamamlandı" in gib_status:
-            gib_code = "1300"
+        if provider == "qnb_efinans":
+            # belgeOid kuyruk kaydıdır; GİB başarısı durum sorgusu ile gelir.
+            gib_status = (sent.get("gib_status") or qnb_efinans.PROCESSING_STATUS).strip()
+            einvoice_state = (sent.get("einvoice_state") or "pending").strip() or "pending"
+            gib_code = None
+        else:
+            gib_status = format_integrator_gib_status(
+                label=label,
+                mode=gib_mode,
+                portal_status=sent.get("gib_status_raw") or "",
+                verified=bool(sent.get("verified")),
+                status_code=str(sent.get("gib_status_code") or ""),
+                detail_status=str(sent.get("detail_status") or ""),
+                process_status=str(sent.get("process_status") or ""),
+            )
+            einvoice_state = "sent"
+            gib_code = sent.get("gib_status_code") or None
+            if not gib_code and "Başarıyla Tamamlandı" in gib_status:
+                gib_code = "1300"
         patch = {
             "status": "approved",
-            "einvoice_state": "sent",
+            "einvoice_state": einvoice_state,
             "gib_status": gib_status,
             "gib_status_code": gib_code,
             "gib_detail_status": sent.get("detail_status") or None,
@@ -1066,6 +1095,9 @@ async def issue_invoice(
         sent_vendor = str(sent.get("vendor_number") or "").strip()
         if sent_vendor:
             patch["gib_vendor_number"] = sent_vendor
+        belge_oid = str(sent.get("belge_oid") or sent.get("qnb_belge_oid") or "").strip()
+        if belge_oid:
+            patch["qnb_belge_oid"] = belge_oid
         # GİB / NetteFatura fatura numarası geldiyse liste numarası da onu göstersin
         if gib_no and et != "e_dispatch":
             if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
@@ -1102,8 +1134,8 @@ async def issue_invoice(
                     )
                 except Exception:
                     logger.exception("e-fatura arşiv XSLT yüklenemedi")
-                if provider in ("isnet", "isnet_portal"):
-                    # İşNet: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil
+                if provider in ("isnet", "isnet_portal", "qnb_efinans"):
+                    # İşNet / QNB: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil
                     xml_str, ettn, _iid = isnet.build_ubl(
                         archive_inv, company, contact, ettn=sent.get("ettn"), xslt=archive_xslt,
                     )
@@ -1121,6 +1153,11 @@ async def issue_invoice(
             msg = f"e-İrsaliye {label} üzerinden İşNet/GİB'e iletildi. ETTN: {tracking}"
             patch_extra = {"dispatch_status": "sent"}
             await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch_extra})
+        elif provider == "qnb_efinans":
+            msg = (
+                f"Fatura QNB eFinans kuyruğuna alındı (işleniyor). ETTN: {tracking}. "
+                "belgeOid kayıtlı; sonuç durum sorgusu ile doğrulanır."
+            )
         else:
             msg = f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}"
         if gib_no:
@@ -1131,7 +1168,7 @@ async def issue_invoice(
             msg = f"[Test] {msg}"
         return await _finish_issued_invoice(inv, {
             "status": "success",
-            "einvoice_state": "sent",
+            "einvoice_state": einvoice_state,
             "message": msg,
             "invoice_id": invoice_id,
             "invoice_number": gib_no or inv.get("invoice_number"),
@@ -1399,6 +1436,8 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         return {"updated": False, "invoice": inv}
     settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
     provider = (inv.get("integrator") or settings.get("provider") or "").strip()
+    if provider == "qnb_efinans":
+        return await _refresh_qnb_status(invoice_id, inv, settings)
     if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return {"updated": False, "invoice": inv}
     if not isnet.explicit_environment(settings):
@@ -1487,6 +1526,38 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     return {"updated": bool(patch), "invoice": refreshed, "verified": True}
 
 
+async def _refresh_qnb_status(invoice_id: str, inv: dict, settings: dict) -> Dict[str, Any]:
+    """QNB gidenBelgeDurumSorgulaExt. İşNet dalına girmez."""
+    if settings.get("status") != "configured":
+        return {"updated": False, "invoice": inv, "verified": False}
+    password_fn: Optional[Callable] = _deps.get("password_fn")
+    if not password_fn:
+        raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
+    pwd = password_fn(settings) or ""
+    info = await qnb_efinans.query_status(settings, pwd, inv)
+    patch: Dict[str, Any] = {}
+    new_state = str(info.get("einvoice_state") or "")
+    new_status = str(info.get("gib_status") or "")
+    if new_state and new_state != str(inv.get("einvoice_state") or ""):
+        patch["einvoice_state"] = new_state
+    if new_status and new_status != str(inv.get("gib_status") or ""):
+        patch["gib_status"] = new_status
+    ettn_out = str(info.get("ettn") or "").strip()
+    if ettn_out and ettn_out != str(inv.get("gib_uuid") or "").strip():
+        patch["gib_uuid"] = ettn_out
+    if info.get("ok"):
+        belge_no = str(info.get("belge_no") or "").strip()
+        if belge_no and belge_no != str(inv.get("gib_invoice_id") or "").strip():
+            patch["gib_invoice_id"] = belge_no
+    if new_state == "error":
+        patch["gib_error"] = str(info.get("message") or "")[:500]
+        patch["error_at"] = _now()
+    if patch:
+        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+    refreshed = await _db.invoices.find_one({"_id": invoice_id}) or {**inv, **patch}
+    return {"updated": bool(patch), "invoice": refreshed, "verified": bool(info.get("ok"))}
+
+
 @router.post("/e-invoice/{invoice_id}/refresh-status")
 async def api_refresh_einvoice_status(invoice_id: str):
     out = await refresh_one_invoice_status(invoice_id)
@@ -1503,7 +1574,11 @@ async def api_refresh_einvoice_status(invoice_id: str):
         "message": (
             "GİB durumu güncellendi."
             if out.get("updated")
-            else "Yeni GİB durumu yok (NetteFatura henüz indekslenmemiş olabilir)."
+            else (
+                "QNB eFinans henüz İşlendi demedi."
+                if (inv.get("integrator") or "") == "qnb_efinans"
+                else "Yeni GİB durumu yok (NetteFatura henüz indekslenmemiş olabilir)."
+            )
         ),
     }
 
@@ -1587,10 +1662,44 @@ async def api_einvoice_xml(invoice_id: str, request: Request, t: Optional[str] =
     return await ubl_export.invoice_xml(invoice_id)
 
 
+async def _qnb_download(inv: dict, settings: dict) -> Dict[str, Any]:
+    password_fn: Optional[Callable] = _deps.get("password_fn")
+    if not password_fn:
+        raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
+    pwd = password_fn(settings) or ""
+    return await qnb_efinans.download_document(settings, pwd, inv)
+
+
+async def _qnb_document_response(inv: dict, settings: dict, download: bool):
+    doc = await _qnb_download(inv, settings)
+    content = doc.get("content")
+    if not content:
+        raise HTTPException(
+            status_code=404,
+            detail=doc.get("message") or "QNB eFinans bu belge için PDF veya HTML döndürmedi.",
+        )
+    media = doc.get("media_type") or "application/pdf"
+    ext = "html" if "html" in media else "pdf"
+    name = ubl_export.invoice_filename(inv, ext)
+    disp = "attachment" if download else "inline"
+    return Response(
+        content,
+        media_type=media,
+        headers={
+            "Content-Disposition": f'{disp}; filename="{name}"',
+            "X-Document-Source": "integrator",
+            "Access-Control-Expose-Headers": "X-Document-Source",
+        },
+    )
+
+
 @router.get("/e-invoice/{invoice_id}/pdf")
 async def api_einvoice_pdf(invoice_id: str, request: Request, download: bool = True, t: Optional[str] = Query(None)):
     """Sipariş menüsü «E-Fatura PDF İndir» — önce entegratör (İşNet), yoksa yerel PDF."""
     inv, _user = await _require_einvoice_access(request, invoice_id, "e-invoice-pdf")
+    settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    if _invoice_provider(inv, settings) == "qnb_efinans":
+        return await _qnb_document_response(inv, settings, download)
     disp = "attachment" if download else "inline"
     name = ubl_export.invoice_filename(inv, "pdf")
     try:
@@ -1637,6 +1746,17 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
     stored = (inv.get("gib_document_url") or "").strip()
     ettn = (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
     e_type = inv.get("e_type") or "e_archive"
+
+    if provider == "qnb_efinans":
+        if _is_http_url(stored) and not _is_n11_document_url(stored):
+            return {"url": stored, "provider": "qnb_efinans", "source": "stored"}
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "QNB eFinans görüntüleme linki üretmez. "
+                f"PDF veya HTML için /api/e-invoice/{invoice_id}/pdf kullanın."
+            ),
+        )
 
     # n11: kayıtlı / üretilebilir ViewDocument URL
     if provider == "n11faturam" or (not provider and _is_n11_document_url(stored)):
@@ -1766,6 +1886,19 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
         return None
     settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
     provider = _invoice_provider(inv, settings)
+    if provider == "qnb_efinans":
+        doc = await _qnb_download(inv, settings)
+        if doc.get("content") and doc.get("media_type") == "application/pdf":
+            return doc["content"]
+        if doc.get("content"):
+            raise HTTPException(
+                status_code=404,
+                detail=f"QNB eFinans PDF döndürmedi. HTML için /api/e-invoice/{invoice_id}/pdf kullanın.",
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=doc.get("message") or "QNB eFinans bu belge için PDF veya HTML döndürmedi.",
+        )
     if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return None
     settings = _isnet_settings_for_invoice(settings, inv)
@@ -1852,7 +1985,7 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
 async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
     checked = updated = 0
     # Önce GİB tamamlanmamış (Ziplenmiş/1200) faturalar — 1300'ler limit'i doldurmasın
-    cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent"]}}).sort("issued_at", -1).limit(
+    cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent", "pending"]}}).sort("issued_at", -1).limit(
         max(limit * 3, 150)
     )
     pending_first: list = []
@@ -1866,7 +1999,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             detail_status=str(inv.get("gib_detail_status") or ""),
             process_status=str(inv.get("gib_process_status") or ""),
         )
-        if inv.get("einvoice_state") == "queued" or (pending and not done):
+        if inv.get("einvoice_state") in ("queued", "pending") or (pending and not done):
             pending_first.append(inv)
         elif not done:
             rest.append(inv)
@@ -1893,6 +2026,17 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             continue
         settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
         provider = (inv.get("integrator") or settings.get("provider") or "").strip()
+
+        if provider == "qnb_efinans":
+            if settings.get("status") != "configured":
+                continue
+            try:
+                out = await refresh_one_invoice_status(inv["_id"])
+                if out.get("updated"):
+                    updated += 1
+            except Exception:
+                logger.exception("qnb status refresh failed for %s", inv.get("_id"))
+            continue
 
         if provider == "n11faturam" or (not provider and not inv.get("gib_document_url")):
             company = await _db.companies.find_one({"_id": inv["company_id"]}) or {}

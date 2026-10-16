@@ -156,6 +156,7 @@ import edocs
 import n11faturam
 import isnet
 import isnet_portal
+import qnb_efinans
 import e_invoice
 import saas
 import user_numbers
@@ -1352,6 +1353,18 @@ EINVOICE_PROVIDERS = {
         "docs": "https://github.com/EfeSorogluu/NetteFatura-Portal",
         "hint": "Portal hesabı e-Fatura / e-İrsaliye gelen kutusu için kullanılır; giden e-İrsaliye için SOAP (İşNet SOAP API) tercih edilir.",
     },
+    "qnb_efinans": {
+        "name": "QNB eFinans (eSolutions)",
+        "fields": ["username", "password", "erp_code", "company_tax_id", "alias"],
+        "docs": "https://www.qnbesolutions.com.tr/api-docs-tr-final.html",
+        "hint": (
+            "Test e-Fatura: https://erpefaturatest1.qnbesolutions.com.tr/efatura/ws/connectorService"
+            " — userService: https://erpefaturatest1.qnbesolutions.com.tr/efatura/ws/userService."
+            " Canlı adres dokümanda net değil; Canlı modda e-Fatura ve e-Arşiv URL'leri https olarak zorunludur."
+            " erpKodu, QNB eSolutions proje ekibinin verdiği kaynak kodudur (inhouse entegrasyonda zorunlu değildir)."
+            " Kimlik her istekte WS-Security UsernameToken ile gider. Bu iskelet yalnız e-Fatura gönderir."
+        ),
+    },
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
     "uyumsoft": {"name": "Uyumsoft", "fields": ["username", "password"], "docs": "https://www.uyumsoft.com/"},
@@ -1426,6 +1439,9 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         "alias": s.get("alias") or "",
         "corporate_code": s.get("corporate_code") or "",
         "company_tax_id": s.get("company_tax_id") or "",
+        "erp_code": s.get("erp_code") or "",
+        "efatura_url": s.get("efatura_url") or "",
+        "earsiv_url": s.get("earsiv_url") or "",
         "company_vendor_number": s.get("company_vendor_number") or "",
         "series_vendor_map": isnet.series_vendor_map(s),
         "has_password": bool(s.get("password_enc")),
@@ -1503,6 +1519,21 @@ async def save_einvoice_settings(req: Dict[str, Any]):
     if provider == "isnet_portal":
         # Portal: VKN/TCKN (username) + şifre yeterli; müşteri kodu opsiyonel (firma id)
         has_creds = bool(update["username"] and has_pwd)
+    if provider == "qnb_efinans":
+        mode_l = str(update.get("mode") or "test").strip().lower()
+        if mode_l not in ("test", "live"):
+            mode_l = "test"
+            update["mode"] = mode_l
+        if "erp_code" in req:
+            update["erp_code"] = str(req.get("erp_code") or "").strip()
+        live = mode_l == "live"
+        ef_raw = req.get("efatura_url") if "efatura_url" in req else (existing.get("efatura_url") or "")
+        ea_raw = req.get("earsiv_url") if "earsiv_url" in req else (existing.get("earsiv_url") or "")
+        update["efatura_url"] = qnb_efinans.validate_endpoint_url(ef_raw, "e-Fatura", required=live)
+        update["earsiv_url"] = qnb_efinans.validate_endpoint_url(ea_raw, "e-Arşiv", required=live)
+        tax = update.get("company_tax_id") if "company_tax_id" in update else (existing.get("company_tax_id") or "")
+        tax = "".join(ch for ch in str(tax) if ch.isdigit())
+        has_creds = bool((update.get("username") or "").strip() and has_pwd and len(tax) in (10, 11))
     update["status"] = "configured" if has_creds else "simulated"
     await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "provider": provider}}, upsert=True)
     return await get_einvoice_settings(company_id)
@@ -1523,6 +1554,9 @@ async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict =
         update["username"] = ""
         update["api_url"] = ""
         update["corporate_code"] = ""
+        update["erp_code"] = ""
+        update["efatura_url"] = ""
+        update["earsiv_url"] = ""
         update["status"] = "simulated"
         unset["password_enc"] = ""
         unset["api_key_enc"] = ""
@@ -1559,6 +1593,10 @@ async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_
         if not pwd:
             raise HTTPException(status_code=400, detail="Kayıtlı İşNet portal şifresi yok; Ayarlar → e-Fatura ekranından şifreyi kaydedin.")
         info = await isnet_portal.test_connection(s, pwd)
+    elif provider == "qnb_efinans":
+        if not pwd:
+            raise HTTPException(status_code=400, detail="Kayıtlı QNB eFinans şifresi yok; Ayarlar → e-Fatura ekranından şifreyi kaydedin.")
+        info = await qnb_efinans.test_connection(s, pwd)
     else:
         raise HTTPException(status_code=400, detail="Bağlantı denemesi n11 Faturam veya İşNet (SOAP/Portal) için açıktır. Platform Yönetimi ilgili entegratörü atadıktan sonra deneyin.")
     await db.einvoice_settings.update_one({"company_id": company_id}, {"$set": {"status": "configured", "updated_at": datetime.now(timezone.utc).isoformat()}})

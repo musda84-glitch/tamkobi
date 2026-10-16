@@ -96,7 +96,7 @@ const CompanyForm = ({ companyId }) => {
   );
 };
 
-const EInvoiceSettings = ({ companyId }) => {
+export const EInvoiceSettings = ({ companyId }) => {
   const [s, setS] = useState(null);
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -107,6 +107,7 @@ const EInvoiceSettings = ({ companyId }) => {
   const isN11 = s.provider === "n11faturam";
   const isIsnet = s.provider === "isnet";
   const isIsnetPortal = s.provider === "isnet_portal";
+  const isQnb = s.provider === "qnb_efinans";
   if (isIsnet) {
     return (
       <div className="space-y-3" data-testid="einvoice-settings-isnet">
@@ -142,11 +143,20 @@ const EInvoiceSettings = ({ companyId }) => {
       </div>
     );
   }
-  const payload = () => ({
-    company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias,
-    corporate_code: s.corporate_code, password, api_key: apiKey,
-    auto_pull: s.auto_pull !== false, auto_process: s.auto_process === true,
-  });
+  const payload = () => {
+    const body = {
+      company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias,
+      corporate_code: s.corporate_code, password, api_key: apiKey,
+      auto_pull: s.auto_pull !== false, auto_process: s.auto_process === true,
+    };
+    if (fields.includes("company_tax_id")) body.company_tax_id = s.company_tax_id || "";
+    if (fields.includes("erp_code")) body.erp_code = s.erp_code || "";
+    if (isQnb) {
+      body.efatura_url = s.efatura_url || "";
+      body.earsiv_url = s.earsiv_url || "";
+    }
+    return body;
+  };
   const save = async (e) => {
     e.preventDefault();
     try {
@@ -179,19 +189,31 @@ const EInvoiceSettings = ({ companyId }) => {
             <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || s.provider}</div>
             {s.hint ? <p className="text-[11px] text-slate-500 mt-1">{s.hint}</p> : null}
             {s.docs ? <a href={s.docs} target="_blank" rel="noreferrer" className="text-[10px] text-emerald-700 font-semibold">Dokümantasyon</a> : null}
-            <p className="text-[11px] text-slate-600" data-testid="einvoice-isnet-logo-hint">
-              İşNet portalında kayıtlı logo varsa o kullanılır; değiştirmek için NetteFatura portalında güncelleyin
-            </p>
-            <EinvoicePull30dButton companyId={companyId} />
+            {!isQnb ? (
+              <p className="text-[11px] text-slate-600" data-testid="einvoice-isnet-logo-hint">
+                İşNet portalında kayıtlı logo varsa o kullanılır; değiştirmek için NetteFatura portalında güncelleyin
+              </p>
+            ) : null}
+            {!isQnb ? <EinvoicePull30dButton companyId={companyId} /> : null}
           </div>
           <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setS({ ...s, mode: "test" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "test" ? "bg-amber-500 text-white border-amber-500" : ""}`} data-testid="einvoice-mode-test">Test Ortamı</button><button type="button" onClick={() => setS({ ...s, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${s.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="einvoice-mode-live">Canlı</button></div>
           <p className="text-[10px] text-slate-500" data-testid="einvoice-sandbox-hint">Önce <b>Test Ortamı</b> (entegratör sandbox) ile başarılı kesim / iptal senaryolarını doğrulayın; ardından API bilgilerini canlıya alıp <b>Canlı</b> seçin. GİB mali mühür / e-İmza başvurusu tamamlanmış olmalıdır.</p>
           {fields.includes("corporate_code") && <div><label className="block font-semibold mb-1">Kurum Kodu (CorporateCode)</label><input value={s.corporate_code || ""} onChange={(e) => setS({ ...s, corporate_code: e.target.value })} className={inputCls} data-testid="einvoice-corporate-code-input" placeholder="n11 Faturam kurum kodu" /></div>}
           {fields.includes("api_url") && <div><label className="block font-semibold mb-1">API URL</label><input value={s.api_url || ""} onChange={(e) => setS({ ...s, api_url: e.target.value })} className={`${inputCls} font-mono`} data-testid="einvoice-api-url" /></div>}
           {fields.includes("username") && <div><label className="block font-semibold mb-1">{isN11 ? "Kullanıcı Adı (LoginName)" : "Kullanıcı Adı"}</label><input value={s.username || ""} onChange={(e) => setS({ ...s, username: e.target.value })} className={inputCls} data-testid="einvoice-username-input" /></div>}
-          {fields.includes("password") && <div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" /></div>}
+          {fields.includes("password") && <div><label className="block font-semibold mb-1">Şifre {s.has_password && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} data-testid="einvoice-password-input" autoComplete="new-password" /></div>}
+          {fields.includes("company_tax_id") && <div><label className="block font-semibold mb-1">VKN / TCKN</label><input value={s.company_tax_id || ""} onChange={(e) => setS({ ...s, company_tax_id: e.target.value })} className={`${inputCls} font-mono`} data-testid="einvoice-company-tax-id" placeholder="10 veya 11 hane" /></div>}
+          {fields.includes("erp_code") && <div><label className="block font-semibold mb-1">erpKodu</label><input value={s.erp_code || ""} onChange={(e) => setS({ ...s, erp_code: e.target.value })} className={inputCls} data-testid="einvoice-erp-code" placeholder="QNB eSolutions kaynak kodu" /></div>}
           {fields.includes("api_key") && <div><label className="block font-semibold mb-1">API anahtarı {s.has_api_key && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={inputCls} data-testid="einvoice-api-key" /></div>}
-          <div><label className="block font-semibold mb-1">GİB Etiket / Alias</label><input value={s.alias || ""} onChange={(e) => setS({ ...s, alias: e.target.value })} placeholder="urn:mail:defaultpk@firma.com.tr" className={`${inputCls} font-mono`} data-testid="einvoice-alias" /></div>
+          <div><label className="block font-semibold mb-1">{isQnb ? "PK etiketi" : "GİB Etiket / Alias"}</label><input value={s.alias || ""} onChange={(e) => setS({ ...s, alias: e.target.value })} placeholder="urn:mail:defaultpk@firma.com.tr" className={`${inputCls} font-mono`} data-testid="einvoice-alias" /></div>
+          {isQnb && (
+            <div className="space-y-2 border border-slate-100 rounded-xl p-3 bg-slate-50/80" data-testid="einvoice-qnb-live-urls">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Canlı uçlar</div>
+              <p className="text-[10px] text-slate-500">Canlı modda her iki adres de zorunludur ve https olmalıdır. Test modu sabit QNB test ucunu kullanır.</p>
+              <div><label className="block font-semibold mb-1">e-Fatura URL</label><input value={s.efatura_url || ""} onChange={(e) => setS({ ...s, efatura_url: e.target.value })} className={`${inputCls} font-mono`} data-testid="einvoice-efatura-url" placeholder="https://" /></div>
+              <div><label className="block font-semibold mb-1">e-Arşiv URL</label><input value={s.earsiv_url || ""} onChange={(e) => setS({ ...s, earsiv_url: e.target.value })} className={`${inputCls} font-mono`} data-testid="einvoice-earsiv-url" placeholder="https://" /></div>
+            </div>
+          )}
           {isN11 && (
             <div className="space-y-2 border border-slate-100 rounded-xl p-3 bg-slate-50/80" data-testid="einvoice-auto-inbox">
               <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Gelen kutu otomasyonu</div>
@@ -218,7 +240,7 @@ const EInvoiceSettings = ({ companyId }) => {
             </div>
           )}
           <div className="flex justify-end gap-2">
-            {isN11 && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
+            {(isN11 || isQnb) && <button type="button" onClick={testConn} disabled={testing} className="px-4 py-2 border rounded-xl font-semibold disabled:opacity-60" data-testid="einvoice-test-btn">{testing ? "Deneniyor…" : "Bağlantıyı dene"}</button>}
             <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-einvoice-btn">Kaydet</button>
           </div>
         </>
