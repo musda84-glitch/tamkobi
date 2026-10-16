@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, X, Trash2, Pencil, Banknote } from "lucide-react";
@@ -16,6 +16,7 @@ import { compressImageFile } from "../utils/compressImage";
 import { isPartnerCashType, isPartnerLedgerType, PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
 import { sortBankTransactions } from "../utils/bankAccountTx";
 import { accountDisplayLabel } from "../utils/accountLabel";
+import { isPartnerTxServerPagingEnabled } from "../utils/featureFlags";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -60,15 +61,39 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)", via_customer_card: false });
 
+  const [serverItems, setServerItems] = useState([]);
+  const [serverHasMore, setServerHasMore] = useState(false);
+  const [serverLedgers, setServerLedgers] = useState({});
+  const serverSentinelRef = useRef(null);
+  const serverAbortRef = useRef(null);
+  const serverGenRef = useRef(0);
+  const loadFlight = useRef(null);
+  const pagingCtx = useRef({
+    active: false,
+    partnerId: "",
+    companyId: "",
+    pages: [1],
+    hasMore: false,
+    loading: false,
+  });
+  const serverPaging = isPartnerTxServerPagingEnabled();
+  pagingCtx.current.active = serverPaging && Boolean(selectedPartnerId);
+  pagingCtx.current.partnerId = selectedPartnerId || "";
+  pagingCtx.current.companyId = companyId || "";
+
   const selectedPartner = useMemo(() => partners.find((p) => p.id === selectedPartnerId) || null, [partners, selectedPartnerId]);
-  const visibleTxs = useMemo(() => filterPartnerTxs(txs, selectedPartnerId), [txs, selectedPartnerId]);
+  const visibleTxs = useMemo(
+    () => (serverPaging ? serverItems : filterPartnerTxs(txs, selectedPartnerId)),
+    [serverPaging, serverItems, txs, selectedPartnerId],
+  );
   const partnerLedgers = useMemo(() => {
+    if (serverPaging) return serverLedgers || {};
     const map = {};
     for (const p of partners) {
       map[p.id] = partnerLedgerBreakdown(filterPartnerTxs(txs, p.id), p.balance);
     }
     return map;
-  }, [partners, txs]);
+  }, [serverPaging, serverLedgers, partners, txs]);
   const selectedLedger = useMemo(
     () => (selectedPartner ? partnerLedgers[selectedPartner.id] || null : null),
     [selectedPartner, partnerLedgers],
@@ -80,20 +105,119 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   const selectPartner = (id) => setSelectedPartnerId((cur) => (cur === id ? null : id));
 
-  const load = useCallback(async () => {
+  const runServerLoad = useCallback(async (mode) => {
+    const ctx = pagingCtx.current;
+    if (!ctx.active || !ctx.partnerId) return;
+    if (mode === "append" && (!ctx.hasMore || ctx.loading)) return;
+    const gen = ++serverGenRef.current;
+    if (serverAbortRef.current) serverAbortRef.current.abort();
+    const ctrl = new AbortController();
+    serverAbortRef.current = ctrl;
+    ctx.loading = true;
+    const pageSize = 50;
+    const pull = async (page) => {
+      const { data } = await axios.get(
+        `${API_URL}/banking/partners/${ctx.partnerId}/transactions`,
+        { params: { page, page_size: pageSize }, signal: ctrl.signal },
+      );
+      return data || {};
+    };
     try {
-      await axios.post(`${API_URL}/banking/partners/accrue-salary`, { company_id: companyId }).catch(() => null);
-      const [p, s, t] = await Promise.all([
-        axios.get(`${API_URL}/banking/partners?company_id=${companyId}`),
-        axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`),
-        axios.get(`${API_URL}/banking/partners/transactions?company_id=${companyId}`)
-      ]);
-      setPartners(p.data); setSummary(s.data); setTxs(t.data);
-    } catch { toast.error("Ortak verileri yüklenemedi."); }
-  }, [companyId]);
-  useEffect(() => { load(); }, [load]);
+      let bodies = [];
+      let pages = [];
+      if (mode === "append") {
+        const lastPage = ctx.pages[ctx.pages.length - 1] || 1;
+        const next = lastPage + 1;
+        bodies = [await pull(next)];
+        pages = [...ctx.pages, next];
+      } else if (mode === "refresh" && ctx.pages.length > 1) {
+        pages = ctx.pages.slice();
+        for (const p of pages) bodies.push(await pull(p));
+      } else {
+        bodies = [await pull(1)];
+        pages = [1];
+      }
+      if (gen !== serverGenRef.current) return;
+      const last = bodies[bodies.length - 1] || {};
+      if (mode === "append") {
+        const extra = Array.isArray(bodies[0].items) ? bodies[0].items : [];
+        setServerItems((prev) => [...(Array.isArray(prev) ? prev : []), ...extra]);
+      } else {
+        setServerItems(bodies.flatMap((b) => (Array.isArray(b.items) ? b.items : [])));
+      }
+      ctx.pages = pages;
+      ctx.hasMore = Boolean(last.has_more);
+      setServerHasMore(ctx.hasMore);
+    } catch (err) {
+      if (gen !== serverGenRef.current) return;
+      const canceled = err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || axios.isCancel?.(err);
+      if (canceled) return;
+      toast.error("Hareketler yüklenemedi.");
+    } finally {
+      if (gen === serverGenRef.current) ctx.loading = false;
+    }
+  }, []);
+
+  const load = useCallback(async (opts) => {
+    if (loadFlight.current) return loadFlight.current;
+    const accrue = Boolean(opts && opts.accrue);
+    const job = (async () => {
+      try {
+        if (accrue) {
+          await axios.post(`${API_URL}/banking/partners/accrue-salary`, { company_id: companyId }).catch(() => null);
+        }
+        if (isPartnerTxServerPagingEnabled()) {
+          const [p, s, ledgers] = await Promise.all([
+            axios.get(`${API_URL}/banking/partners?company_id=${companyId}`),
+            axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`),
+            axios.get(`${API_URL}/banking/partners/ledgers?company_id=${companyId}`),
+          ]);
+          setPartners(p.data);
+          setSummary(s.data);
+          setServerLedgers(ledgers.data && typeof ledgers.data === "object" ? ledgers.data : {});
+          if (pagingCtx.current.active) await runServerLoad("refresh");
+        } else {
+          const [p, s, t] = await Promise.all([
+            axios.get(`${API_URL}/banking/partners?company_id=${companyId}`),
+            axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`),
+            axios.get(`${API_URL}/banking/partners/transactions?company_id=${companyId}`)
+          ]);
+          setPartners(p.data); setSummary(s.data); setTxs(t.data);
+        }
+      } catch { toast.error("Ortak verileri yüklenemedi."); }
+    })();
+    const tracked = job.finally(() => {
+      if (loadFlight.current === tracked) loadFlight.current = null;
+    });
+    loadFlight.current = tracked;
+    return tracked;
+  }, [companyId, runServerLoad]);
+  useEffect(() => { load({ accrue: true }); }, [load]);
   useEffect(() => { setLiveAccounts(accounts || []); }, [accounts]);
-  useDataRefresh(load, { companyId, scopes: ["cash"] });
+  const refreshFromCash = useCallback(() => load({ accrue: false }), [load]);
+  useDataRefresh(refreshFromCash, { companyId, scopes: ["cash"] });
+  useEffect(() => {
+    if (!serverPaging) return undefined;
+    pagingCtx.current.pages = [1];
+    pagingCtx.current.hasMore = false;
+    setServerItems([]);
+    setServerHasMore(false);
+    if (selectedPartnerId) runServerLoad("reset");
+    return () => {
+      if (serverAbortRef.current) serverAbortRef.current.abort();
+    };
+  }, [serverPaging, selectedPartnerId, companyId, runServerLoad]);
+  useEffect(() => {
+    if (!serverPaging || !serverHasMore) return undefined;
+    const el = serverSentinelRef.current;
+    if (!el) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      runServerLoad("append");
+    }, { root: null, rootMargin: "240px 0px", threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [serverPaging, serverHasMore, serverItems.length, runServerLoad]);
 
   const bumpCash = useCallback(async () => {
     // Parent (BankingPage) hesap grubu bakiyelerini de yenilesin.
@@ -308,7 +432,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   return (
     <div className="space-y-5" data-testid="partners-panel">
-      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${txs[0]?.id || ""}-${modal || ""}`} onChanged={() => { load(); bumpCash(); }} />
+      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${(serverPaging ? serverItems[0]?.id : txs[0]?.id) || ""}-${modal || ""}`} onChanged={() => { load(); bumpCash(); }} />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
@@ -477,6 +601,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           </div>
         )}
         <PartnerTxTable txs={visibleTxs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
+        {serverPaging && serverHasMore && (
+          <div ref={serverSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="partner-tx-load-more">
+            Daha fazla hareket yükleniyor…
+          </div>
+        )}
       </div>
 
       {modal === "add" && (

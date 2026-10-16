@@ -361,6 +361,94 @@ def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _finite_amount(value: Any) -> float:
+    """JS Number + Number.isFinite. Boş/geçersiz tutar 0."""
+    if value is None or value == "":
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if number != number or number in (float("inf"), float("-inf")):
+        return 0.0
+    return number
+
+
+def partner_ledger_breakdown(txs: Optional[List[Dict[str, Any]]], stored_balance: Any = 0) -> Dict[str, Any]:
+    """frontend partnerLedgerBreakdown ile aynı defter.
+
+    Yön ve delta mevcut ``partner_tx_effect`` / ``tx_balance_delta``. Kart =
+    Toplam Giriş − Toplam Çıkış. Kovalar ham tutarı toplar; dönem giriş/çıkış
+    pozitif ve negatif deltaların mutlak toplamıdır.
+    """
+    rows = list(txs or [])
+    buckets = {
+        "capital_in": 0.0,
+        "withdrawal": 0.0,
+        "credit": 0.0,
+        "debit": 0.0,
+        "salary": 0.0,
+        "profit_accrual": 0.0,
+        "profit_paid": 0.0,
+        "other": 0.0,
+    }
+    ledger = 0.0
+    cash_in = 0.0
+    cash_out = 0.0
+    for tx in rows:
+        if not isinstance(tx, dict):
+            continue
+        amount = _finite_amount(tx.get("amount"))
+        delta = tx_balance_delta(tx)
+        ledger += delta
+        if delta > 0:
+            cash_in += delta
+        elif delta < 0:
+            cash_out += -delta
+        kind = tx.get("type")
+        if kind == "capital_in":
+            buckets["capital_in"] += amount
+        elif kind == "withdrawal":
+            buckets["withdrawal"] += amount
+        elif kind == "credit":
+            buckets["credit"] += amount
+        elif kind == "debit":
+            buckets["debit"] += amount
+        elif kind == "salary":
+            buckets["salary"] += amount
+        elif kind == "profit_share" and not tx.get("is_paid"):
+            buckets["profit_accrual"] += amount
+        elif kind == "profit_share" and tx.get("is_paid"):
+            buckets["profit_paid"] += amount
+        else:
+            buckets["other"] += amount
+    ledger = round(ledger, 2)
+    try:
+        stored = round(float(stored_balance or 0), 2)
+    except (TypeError, ValueError):
+        stored = 0.0
+    cash_in = round(cash_in, 2)
+    cash_out = round(cash_out, 2)
+    net = round(cash_in - cash_out, 2)
+    return {
+        "count": len(rows),
+        "ledger": ledger,
+        "stored": stored,
+        "drift": abs(ledger - stored) > 0.005,
+        "buckets": buckets,
+        "inflow": cash_in,
+        "outflow": cash_out,
+        "cashIn": cash_in,
+        "cashOut": cash_out,
+        "girisDisplay": cash_in,
+        "cikisDisplay": cash_out,
+        "netDisplay": net,
+        "cardDisplay": net,
+        "cardPocket": net,
+        "netMatchesCard": abs(net - ledger) < 0.02,
+    }
+
+
 def present_partner_balance(balance: Any) -> Dict[str, Any]:
     """Ortak bakiyesinin tek gösterimi. İmza ve tutar hesabı değişmez.
 
@@ -446,6 +534,8 @@ async def load_company_partner_view(db, company_id: str) -> Dict[str, Any]:
     cash = cash_card_totals(txs)
     view["cash"] = cash
     view["source_partners"] = partners
+    # Sayfalı defter aynı okumayı kullanır; ikinci sorgu açılmaz. HTTP yanıtına girmez.
+    view["txs"] = txs
     return view
 
 
