@@ -2777,6 +2777,11 @@ async def digest_loop(interval_s: int = 60):
             await flush_notify_outbox()
         except Exception as e:
             logger.warning("notify digest flush: %s", e)
+        try:
+            if _db is not None:
+                await notify.check_push_receipts(_db)
+        except Exception as e:
+            logger.warning("push receipt check: %s", e)
         await asyncio.sleep(interval_s)
 
 

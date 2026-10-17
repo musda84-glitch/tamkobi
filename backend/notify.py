@@ -1,7 +1,7 @@
 """In-app notification targeting: role codes assigned to personnel, or a specific user."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 import logging
 import os
@@ -12,6 +12,8 @@ logger = logging.getLogger("TamKobiERP")
 
 EXPO_PUSH_URL = os.environ.get("EXPO_PUSH_URL", "https://exp.host/--/api/v2/push/send")
 EXPO_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$")
+PUSH_RECEIPT_TTL = timedelta(hours=24)
+PUSH_RECEIPT_BATCH = 300
 PUSH_SOUND = "tamkobi.wav"
 PUSH_CHANNEL_ID = "tamkobi_chime"
 
@@ -967,18 +969,77 @@ async def remove_push_token(db, token: str, user_id: Optional[str] = None) -> in
     return int(getattr(r, "deleted_count", 0) or 0)
 
 
+def expo_push_headers() -> Dict[str, str]:
+    """Expo push isteği. EXPO_ACCESS_TOKEN doluysa Bearer eklenir; değer loglanmaz."""
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    token = str(os.environ.get("EXPO_ACCESS_TOKEN") or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def expo_receipts_url() -> str:
+    """getReceipts adresi. EXPO_PUSH_RECEIPTS_URL varsa o, yoksa EXPO_PUSH_URL'den türetilir."""
+    explicit = str(os.environ.get("EXPO_PUSH_RECEIPTS_URL") or "").strip()
+    if explicit:
+        return explicit
+    base = str(EXPO_PUSH_URL or "").strip() or "https://exp.host/--/api/v2/push/send"
+    if base.endswith("/send"):
+        return base[: -len("/send")] + "/getReceipts"
+    return base.rstrip("/") + "/getReceipts"
+
+
+def ticket_error_code(ticket: Any) -> str:
+    if not isinstance(ticket, dict):
+        return ""
+    details = ticket.get("details")
+    if isinstance(details, dict):
+        return str(details.get("error") or "").strip()
+    return str(details or "").strip()
+
+
+def push_token_tail(token: str) -> str:
+    raw = str(token or "")
+    if len(raw) < 6:
+        return ""
+    return raw[-6:]
+
+
+def log_push_ticket_errors(messages: List[Dict[str, Any]], tickets: Iterable[Any]) -> int:
+    """status=error ticket'larını sayar. Logda yalnız hata kodu ve token'ın son 6 karakteri."""
+    found: List[tuple[str, str]] = []
+    msg_list = list(messages or [])
+    for i, ticket in enumerate(tickets or []):
+        if not isinstance(ticket, dict) or ticket.get("status") != "error":
+            continue
+        token = ""
+        if i < len(msg_list) and isinstance(msg_list[i], dict):
+            token = str(msg_list[i].get("to") or "")
+        found.append((ticket_error_code(ticket), token))
+    count = len(found)
+    for code, token in found:
+        logger.warning(
+            "expo push ticket error=%s token_tail=%s error_count=%s",
+            code or "unknown",
+            push_token_tail(token),
+            count,
+        )
+    return count
+
+
 async def send_expo_push(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not messages:
-        return {"sent": 0, "tickets": []}
+        return {"sent": 0, "tickets": [], "errors": 0}
     import httpx
     tickets: List[Any] = []
+    headers = expo_push_headers()
     async with httpx.AsyncClient(timeout=12.0) as client:
         for i in range(0, len(messages), 100):
             chunk = messages[i:i + 100]
             res = await client.post(
                 EXPO_PUSH_URL,
                 json=chunk,
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                headers=headers,
             )
             res.raise_for_status()
             payload = res.json() if res.content else {}
@@ -987,7 +1048,8 @@ async def send_expo_push(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
                 tickets.extend(data)
             elif data is not None:
                 tickets.append(data)
-    return {"sent": len(messages), "tickets": tickets}
+    errors = log_push_ticket_errors(messages, tickets)
+    return {"sent": len(messages), "tickets": tickets, "errors": errors}
 
 
 async def drop_invalid_push_tokens(db, tokens: Iterable[str], tickets: Iterable[Any]) -> int:
@@ -1004,6 +1066,185 @@ async def drop_invalid_push_tokens(db, tokens: Iterable[str], tickets: Iterable[
         return 0
     r = await db.push_tokens.delete_many({"token": {"$in": doomed}})
     return int(getattr(r, "deleted_count", 0) or 0)
+
+
+async def remember_push_receipts(db, messages: List[Dict[str, Any]], tickets: Iterable[Any]) -> int:
+    """status=ok ticket id'lerini 24 saat TTL ile push_receipts_pending'e yazar."""
+    if db is None:
+        return 0
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    expires = (now + PUSH_RECEIPT_TTL).isoformat()
+    saved = 0
+    msg_list = list(messages or [])
+    for i, ticket in enumerate(tickets or []):
+        if not isinstance(ticket, dict) or ticket.get("status") != "ok":
+            continue
+        ticket_id = str(ticket.get("id") or "").strip()
+        if not ticket_id:
+            continue
+        token = ""
+        if i < len(msg_list) and isinstance(msg_list[i], dict):
+            token = str(msg_list[i].get("to") or "")
+        await db.push_receipts_pending.update_one(
+            {"_id": ticket_id},
+            {
+                "$set": {"ticket_id": ticket_id, "token": token},
+                "$setOnInsert": {"created_at": now_iso, "expires_at": expires},
+            },
+            upsert=True,
+        )
+        saved += 1
+    return saved
+
+
+async def _finish_push_delivery(db, messages: List[Dict[str, Any]], result: Dict[str, Any]) -> Dict[str, Any]:
+    tickets = result.get("tickets") or []
+    try:
+        await drop_invalid_push_tokens(db, [m["to"] for m in messages], tickets)
+    except Exception:
+        logger.exception("invalid push token cleanup failed")
+    try:
+        await remember_push_receipts(db, messages, tickets)
+    except Exception:
+        logger.exception("push receipt queue failed")
+    return result
+
+
+def _receipt_expired(row: Dict[str, Any], now_iso: str) -> bool:
+    exp = str(row.get("expires_at") or "").strip()
+    return bool(exp) and exp < now_iso
+
+
+def _receipt_token(row: Dict[str, Any], receipt: Dict[str, Any]) -> str:
+    stored = str(row.get("token") or "").strip()
+    if stored:
+        return stored
+    details = receipt.get("details")
+    if isinstance(details, dict):
+        return str(details.get("expoPushToken") or "").strip()
+    return ""
+
+
+async def _delete_ids(db, collection: str, ids: List[str]) -> int:
+    uniq = []
+    seen: set[str] = set()
+    for raw in ids:
+        item = str(raw or "").strip()
+        if item and item not in seen:
+            seen.add(item)
+            uniq.append(item)
+    if not uniq:
+        return 0
+    coll = getattr(db, collection)
+    r = await coll.delete_many({"_id": {"$in": uniq}})
+    return int(getattr(r, "deleted_count", 0) or 0)
+
+
+async def check_push_receipts(db, *, limit: int = PUSH_RECEIPT_BATCH) -> Dict[str, Any]:
+    """Bekleyen ticket id'leri için Expo receipt kontrolü. En fazla 300 id.
+
+    DeviceNotRegistered token'ı siler. Diğer hatalar warning loglanır.
+    Silme yalnız süresi dolan veya receipt'i işlenen kayıtlar içindir.
+    """
+    empty = {"checked": 0, "cleared": 0, "expired": 0, "dropped_tokens": 0}
+    if db is None:
+        return empty
+    cap = max(0, min(int(limit or 0), PUSH_RECEIPT_BATCH))
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        cursor = db.push_receipts_pending.find({})
+        sorter = getattr(cursor, "sort", None)
+        if callable(sorter):
+            cursor = sorter("created_at", 1)
+        rows = await cursor.to_list(1000)
+    except Exception:
+        logger.exception("push receipt pending scan failed")
+        return empty
+    expired_ids: List[str] = []
+    active: List[Dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if _receipt_expired(row, now_iso):
+            expired_ids.append(str(row.get("_id") or row.get("ticket_id") or ""))
+        else:
+            active.append(row)
+    expired_n = 0
+    try:
+        expired_n = await _delete_ids(db, "push_receipts_pending", expired_ids)
+    except Exception:
+        logger.exception("push receipt ttl cleanup failed")
+    batch = active[:cap]
+    by_id: Dict[str, Dict[str, Any]] = {}
+    ids: List[str] = []
+    for row in batch:
+        ticket_id = str(row.get("ticket_id") or row.get("_id") or "").strip()
+        if not ticket_id:
+            continue
+        by_id[ticket_id] = row
+        ids.append(ticket_id)
+    if not ids:
+        return {"checked": 0, "cleared": 0, "expired": expired_n, "dropped_tokens": 0}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            res = await client.post(
+                expo_receipts_url(),
+                json={"ids": ids},
+                headers=expo_push_headers(),
+            )
+            res.raise_for_status()
+            payload = res.json() if res.content else {}
+    except Exception:
+        logger.exception("push receipt check failed")
+        return {"checked": len(ids), "cleared": 0, "expired": expired_n, "dropped_tokens": 0}
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+    processed: List[str] = []
+    drop_tokens: List[str] = []
+    for ticket_id in ids:
+        receipt = data.get(ticket_id)
+        if not isinstance(receipt, dict):
+            continue
+        status = str(receipt.get("status") or "")
+        if status == "ok":
+            processed.append(ticket_id)
+            continue
+        if status != "error":
+            continue
+        code = ticket_error_code(receipt)
+        token = _receipt_token(by_id.get(ticket_id) or {}, receipt)
+        if "DeviceNotRegistered" in code:
+            if token:
+                drop_tokens.append(token)
+        else:
+            logger.warning(
+                "expo push receipt error=%s token_tail=%s",
+                code or "unknown",
+                push_token_tail(token),
+            )
+        processed.append(ticket_id)
+    dropped = 0
+    try:
+        uniq_tokens = []
+        seen_tokens: set[str] = set()
+        for token in drop_tokens:
+            if token not in seen_tokens:
+                seen_tokens.add(token)
+                uniq_tokens.append(token)
+        if uniq_tokens:
+            r = await db.push_tokens.delete_many({"token": {"$in": uniq_tokens}})
+            dropped = int(getattr(r, "deleted_count", 0) or 0)
+    except Exception:
+        logger.exception("push receipt token cleanup failed")
+    cleared = 0
+    try:
+        cleared = await _delete_ids(db, "push_receipts_pending", processed)
+    except Exception:
+        logger.exception("push receipt pending cleanup failed")
+    return {"checked": len(ids), "cleared": cleared, "expired": expired_n, "dropped_tokens": dropped}
 
 
 async def replay_unread_to_token(
@@ -1028,10 +1269,7 @@ async def replay_unread_to_token(
     if not messages:
         return {"sent": 0, "count": 0}
     result = await send_expo_push(messages)
-    try:
-        await drop_invalid_push_tokens(db, [m["to"] for m in messages], result.get("tickets") or [])
-    except Exception:
-        logger.exception("invalid push token cleanup failed")
+    await _finish_push_delivery(db, messages, result)
     return {"sent": int(result.get("sent") or 0), "count": len(notes)}
 
 
@@ -1050,11 +1288,7 @@ async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {"sent": 0}
     result = await send_expo_push(messages)
-    try:
-        await drop_invalid_push_tokens(db, [m["to"] for m in messages], result.get("tickets") or [])
-    except Exception:
-        logger.exception("invalid push token cleanup failed")
-    return result
+    return await _finish_push_delivery(db, messages, result)
 
 
 async def insert_notification(db, doc: Dict[str, Any]) -> Dict[str, Any]:

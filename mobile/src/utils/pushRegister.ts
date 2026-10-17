@@ -9,9 +9,54 @@ import type { Notification } from "../types";
 const TOKEN_KEY = "tamkobi.pushToken";
 const SEEN_KEY = "tamkobi.pushLocalSeen";
 const SEEDED_KEY = "tamkobi.pushLocalSeeded";
+export const PUSH_LAST_ERROR_KEY = "tamkobi_push_last_error";
+export const FCM_PUSH_UNAVAILABLE = "Uzak bildirim yapılandırılmamış (FCM). Uygulama açıkken bildirimler çalışır.";
 
 export type PushStatus = "idle" | "ok" | "denied" | "web" | "unavailable";
 export type PushResult = { status: PushStatus; token?: string; error?: string };
+
+export function classifyPushTokenError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "Push token alınamadı.";
+  const text = raw || "Push token alınamadı.";
+  if (text.includes("FirebaseApp") || text.includes("FCM") || text.includes("SERVICE_NOT_AVAILABLE")) {
+    return FCM_PUSH_UNAVAILABLE;
+  }
+  return text;
+}
+
+export function isFcmPushError(error?: string | null): boolean {
+  const text = String(error || "");
+  return text.includes("FirebaseApp") || text.includes("FCM") || text.includes("SERVICE_NOT_AVAILABLE");
+}
+
+export async function readPushLastError(): Promise<{ status: PushStatus; error: string } | null> {
+  const raw = await AsyncStorage.getItem(PUSH_LAST_ERROR_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { status?: PushStatus; error?: string };
+    const error = String(parsed?.error || "").trim();
+    const status = (parsed?.status || "unavailable") as PushStatus;
+    if (!error && status === "ok") return null;
+    return { status, error };
+  } catch {
+    return { status: "unavailable", error: raw };
+  }
+}
+
+async function persistPushResult(result: PushResult): Promise<void> {
+  try {
+    if (result.status === "ok") {
+      await AsyncStorage.removeItem(PUSH_LAST_ERROR_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(PUSH_LAST_ERROR_KEY, JSON.stringify({
+      status: result.status,
+      error: result.error || "",
+    }));
+  } catch {
+    /* depolama yoksa sonuç yine döner */
+  }
+}
 
 function projectId(): string {
   try {
@@ -104,13 +149,16 @@ export async function requestPushToken(): Promise<PushResult> {
     await AsyncStorage.setItem(TOKEN_KEY, token);
     return { status: "ok", token };
   } catch (err) {
-    return { status: "unavailable", error: err instanceof Error ? err.message : "Push token alınamadı." };
+    return { status: "unavailable", error: classifyPushTokenError(err) };
   }
 }
 
 export async function registerDevicePush(client: ApiClient): Promise<PushResult> {
   const got = await requestPushToken();
-  if (got.status !== "ok" || !got.token) return got;
+  if (got.status !== "ok" || !got.token) {
+    await persistPushResult(got);
+    return got;
+  }
   try {
     const deviceId = await getStableDeviceId();
     await post(client, "/notifications/push-token", {
@@ -118,13 +166,16 @@ export async function registerDevicePush(client: ApiClient): Promise<PushResult>
       platform: Platform.OS,
       device_id: deviceId,
     });
+    await persistPushResult(got);
     return got;
   } catch (err) {
-    return {
+    const failed: PushResult = {
       status: "unavailable",
       token: got.token,
       error: err instanceof Error ? err.message : "Token sunucuya yazılamadı.",
     };
+    await persistPushResult(failed);
+    return failed;
   }
 }
 
