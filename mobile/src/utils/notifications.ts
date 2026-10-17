@@ -217,6 +217,7 @@ const REF_ROUTES: Record<string, string> = {
   employee: "/personnel",
   staff_message: "/",
   staff_announcement: "/",
+  gib_credits: "/settings",
 };
 
 export const MISSING_RECORD = "Kayıt bulunamadı";
