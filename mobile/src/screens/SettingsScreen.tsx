@@ -23,7 +23,7 @@ import {
 } from "../utils/locationConsent";
 import { idOf } from "../utils/money";
 import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
-import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
+import { getStoredPushToken, isFcmPushError, presentLocalNotification, readPushLastError, registerDevicePush, type PushResult, type PushStatus } from "../utils/pushRegister";
 import { go } from "../nav";
 import { savePunchPin } from "../utils/punchAuth";
 
@@ -39,6 +39,41 @@ type MePayload = {
   location_consent?: LocationConsent | null;
 };
 
+export const REMOTE_PUSH_OPEN = "Uzak bildirim açık (uygulama kapalıyken de gelir)";
+export const FCM_ADMIN_HINT = "Uygulama açıkken bildirimler çalışır; kapalıyken için yönetici FCM ayarını tamamlamalı.";
+
+export function pushEnableOutcome(result: PushResult, localShown: boolean): { error: string | null; message: string | null } {
+  if (result.status === "denied") return { error: "Bildirim izni verilmedi.", message: null };
+  const err = String(result.error || "").trim();
+  if (err) return { error: err, message: null };
+  if (localShown) return { error: null, message: "Telefon bildirimi gönderildi. Bildirim çubuğunu kontrol edin." };
+  return { error: "Telefon bildirimi gösterilemedi.", message: null };
+}
+
+export function PhonePushNotice({ status, error }: { status: PushStatus; error?: string | null }) {
+  const fcm = isFcmPushError(error);
+  const body = fcm
+    ? ""
+    : status === "ok"
+      ? REMOTE_PUSH_OPEN
+      : status === "web"
+        ? "Tarayıcıda yeni bildirim TamKobi çanı çalar. Sistem tepsisi için Android / iOS uygulamasını kullanın."
+        : status === "denied"
+          ? "Bildirim izni kapalı. Telefondan izin verip yeniden deneyin."
+          : "İzin açıksa bekleyen ve yeni bildirimler TamKobi çanı ile telefona da yazılır. Uygulamayı bir kez açın.";
+  return (
+    <View>
+      {body ? <Text testID="settings-push-status">{body}</Text> : null}
+      {fcm ? (
+        <View testID="settings-push-fcm" style={{ backgroundColor: colors.amber50, borderRadius: 12, padding: 10 }}>
+          <Text testID="settings-push-fcm-error" style={{ color: "#B45309", fontWeight: "700" }}>{error}</Text>
+          <Text testID="settings-push-fcm-hint" style={{ color: "#B45309" }}>{FCM_ADMIN_HINT}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function SettingsScreen() {
   const { client, companies, activeCompany, switchCompany, companyId, user, logout, updateProfile } = useAuth();
   const [current, setCurrent] = useState("");
@@ -52,6 +87,7 @@ export function SettingsScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pushStatus, setPushStatus] = useState<PushStatus>("idle");
+  const [pushError, setPushError] = useState<string | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [me, setMe] = useState<MeEmployee | null>(null);
   const [consent, setConsent] = useState<LocationConsent | null>(null);
@@ -98,7 +134,17 @@ export function SettingsScreen() {
   }, [client, linkedEmployee]);
 
   useEffect(() => {
-    getStoredPushToken().then((t) => setPushStatus(t ? "ok" : Platform.OS === "web" ? "web" : "idle"));
+    let live = true;
+    (async () => {
+      const [token, last] = await Promise.all([getStoredPushToken(), readPushLastError()]);
+      if (!live) return;
+      const err = String(last?.error || "").trim();
+      setPushError(err || null);
+      if (token && !isFcmPushError(err)) setPushStatus("ok");
+      else if (last?.status && last.status !== "ok" && last.status !== "idle") setPushStatus(last.status);
+      else setPushStatus(token ? "ok" : Platform.OS === "web" ? "web" : "idle");
+    })();
+    return () => { live = false; };
   }, []);
 
   useEffect(() => {
@@ -345,15 +391,7 @@ export function SettingsScreen() {
 
       <Card testID="settings-push">
         <Text style={{ fontWeight: "800", color: colors.text }}>Telefon bildirimleri</Text>
-        <Muted>
-          {pushStatus === "ok"
-            ? "Bu cihazda açık. Yeni kayıtlar TamKobi çanı ile bildirim çubuğuna düşer."
-            : pushStatus === "web"
-              ? "Tarayıcıda yeni bildirim TamKobi çanı çalar. Sistem tepsisi için Android / iOS uygulamasını kullanın."
-              : pushStatus === "denied"
-                ? "Bildirim izni kapalı. Telefondan izin verip yeniden deneyin."
-                : "İzin açıksa bekleyen ve yeni bildirimler TamKobi çanı ile telefona da yazılır. Uygulamayı bir kez açın."}
-        </Muted>
+        <PhonePushNotice status={pushStatus} error={pushError} />
         {Platform.OS === "web" ? (
           <PrimaryButton
             title="TamKobi bildirim sesini dinle"
@@ -371,17 +409,21 @@ export function SettingsScreen() {
             testID="settings-push-enable"
             onPress={async () => {
               setPushBusy(true);
+              setError(null);
+              setMessage(null);
               try {
                 const r = await registerDevicePush(client);
+                const err = r.status === "ok" ? "" : String(r.error || "");
+                setPushError(err || null);
                 setPushStatus(r.status === "ok" ? "ok" : r.status);
                 const local = await presentLocalNotification({
                   title: "TamKobi",
                   body: "Telefon bildirimleri açık. Uygulama içi kayıtlar buraya da düşer.",
                   data: { link: "/notifications" },
                 });
-                if (r.status === "denied") setError("Bildirim izni verilmedi.");
-                else if (local) setMessage("Telefon bildirimi gönderildi. Bildirim çubuğunu kontrol edin.");
-                else setError(r.error || "Telefon bildirimi gösterilemedi.");
+                const outcome = pushEnableOutcome(r, local);
+                setError(outcome.error);
+                setMessage(outcome.message);
               } finally {
                 setPushBusy(false);
               }

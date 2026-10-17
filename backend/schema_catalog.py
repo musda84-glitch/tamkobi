@@ -792,6 +792,12 @@ COLLECTIONS = {
         "keys": ("_id", "user_id", "company_id", "token", "platform"),
         "refs": ("users._id", "companies._id"),
     },
+    "push_receipts_pending": {
+        "scope": SCOPE_TENANT,
+        "description": "Expo push ticket id'leri; receipt kontrolü ve 24 saat TTL.",
+        "keys": ("_id", "ticket_id", "token", "created_at", "expires_at"),
+        "refs": ("push_tokens.token",),
+    },
     "b2b_password_resets": {
         "scope": SCOPE_TENANT,
         "description": "B2B portal şifre sıfırlama tokenları.",
