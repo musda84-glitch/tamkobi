@@ -21,8 +21,15 @@ describe("bankMatchModes", () => {
     expect(expenseCategoryOptionLabel("Yakıt")).toBe("Yakıt");
   });
 
-  test("personnel pay kinds cover masraf/avans/mesai/maaş", () => {
-    expect(PERSONNEL_PAY_KINDS.map(([k]) => k)).toEqual(["expense", "advance", "overtime", "salary"]);
-    expect(PERSONNEL_PAY_KINDS.map(([, l]) => l)).toEqual(["Masraf", "Avans", "Mesai", "Maaş"]);
+  test("personnel pay kinds default to masraf iadesi", () => {
+    expect(PERSONNEL_PAY_KINDS.map(([k]) => k)).toEqual(["reimburse", "advance", "salary", "overtime", "expense"]);
+    expect(PERSONNEL_PAY_KINDS.map(([, l]) => l)).toEqual([
+      "Masraf iadesi",
+      "Avans",
+      "Maaş",
+      "Mesai",
+      "Şirket masrafı (personel adına)",
+    ]);
+    expect(PERSONNEL_PAY_KINDS[0][0]).toBe("reimburse");
   });
 });

@@ -133,7 +133,14 @@ test("expense category only for Masraf; Personel shows pay kind + employee", asy
 
   const kind = document.querySelector('[data-testid="tx-match-pay-kind-tx1"]');
   expect(kind).toBeTruthy();
-  expect([...kind.options].map((o) => o.textContent)).toEqual(["Masraf", "Avans", "Mesai", "Maaş"]);
+  expect([...kind.options].map((o) => o.textContent)).toEqual([
+    "Masraf iadesi",
+    "Avans",
+    "Maaş",
+    "Mesai",
+    "Şirket masrafı (personel adına)",
+  ]);
+  expect(kind.value).toBe("reimburse");
   const emp = document.querySelector('[data-testid="tx-match-employee-tx1"]');
   expect(emp).toBeTruthy();
   expect([...emp.options].some((o) => o.textContent.includes("Ayşe"))).toBe(true);

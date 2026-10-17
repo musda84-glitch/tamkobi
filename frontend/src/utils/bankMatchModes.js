@@ -9,13 +9,16 @@ export const BANK_MATCH_MODES = [
 /** Varsayılan personel masraf kategorisi (API değeri; UI etiketi "Personel"). */
 export const PERSONNEL_EXPENSE_CATEGORY = "Personel Masrafı";
 
-/** Personel seçilince ödeme türleri. */
+/** Personel seçilince ödeme türleri. Varsayılan: masraf iadesi. */
 export const PERSONNEL_PAY_KINDS = [
-  ["expense", "Masraf"],
+  ["reimburse", "Masraf iadesi"],
   ["advance", "Avans"],
-  ["overtime", "Mesai"],
   ["salary", "Maaş"],
+  ["overtime", "Mesai"],
+  ["expense", "Şirket masrafı (personel adına)"],
 ];
+
+export const DEFAULT_PERSONNEL_PAY_KIND = "reimburse";
 
 /** Masraf kategorisi personel ödemesi mi? (Personel / Personel Masrafı). */
 export function isPersonnelExpenseCategory(category) {
