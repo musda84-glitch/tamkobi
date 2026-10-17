@@ -96,8 +96,14 @@ function ctor(name: string) {
   return fn;
 }
 
+let installedNavigator = false;
+
 export function installMiniDom() {
   const g = globalThis as any;
+  if (typeof (globalThis as any).navigator === "undefined") {
+    Object.defineProperty(globalThis, "navigator", { value: { userAgent: "node", platform: "node", language: "tr-TR" }, configurable: true, writable: true });
+    installedNavigator = true;
+  }
   if (g.__miniDom) return;
   const document = makeNode("#document", 9) as MiniNode & {
     createElement: (tag: string) => MiniNode;
@@ -146,6 +152,13 @@ export function installMiniDom() {
   g.document = document;
   g.IS_REACT_ACT_ENVIRONMENT = true;
   g.__miniDom = true;
+}
+
+/** afterAll: Node 20'de eklediğimiz navigator'ı sil; Node 22'deki yerleşik nesneye dokunma. */
+export function removeTestNavigator() {
+  if (!installedNavigator) return;
+  delete (globalThis as any).navigator;
+  installedNavigator = false;
 }
 
 installMiniDom();

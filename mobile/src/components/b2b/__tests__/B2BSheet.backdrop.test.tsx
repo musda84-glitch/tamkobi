@@ -1,6 +1,6 @@
 import "../../../test/domSetup";
 import React, { act } from "react";
-import { findByTestId } from "../../../test/domSetup";
+import { findByTestId, removeTestNavigator } from "../../../test/domSetup";
 import { B2BSheet } from "../B2BSheet";
 
 const { createRoot } = require("react-dom/client") as {
@@ -49,6 +49,7 @@ afterAll(() => {
   delete g.window;
   delete g.IS_REACT_ACT_ENVIRONMENT;
   delete g.__miniDom;
+  removeTestNavigator();
 });
 
 describe("B2BSheet backdrop", () => {

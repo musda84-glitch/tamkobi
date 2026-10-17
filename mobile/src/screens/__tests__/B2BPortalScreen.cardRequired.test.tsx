@@ -2,7 +2,7 @@ import "../../test/domSetup";
 import React, { act } from "react";
 import { ApiHttpError } from "../../api/errors";
 import { get, post } from "../../api/client";
-import { clickable, findByTestId, reactProps, textOf } from "../../test/domSetup";
+import { clickable, findByTestId, reactProps, removeTestNavigator, textOf } from "../../test/domSetup";
 import { Linking } from "react-native";
 import { B2BPortalScreen, isB2BCardRequired } from "../B2BPortalScreen";
 
@@ -168,6 +168,7 @@ afterAll(() => {
   delete g.window;
   delete g.IS_REACT_ACT_ENVIRONMENT;
   delete g.__miniDom;
+  removeTestNavigator();
 });
 
 describe("B2B card required errors", () => {
