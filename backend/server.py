@@ -6414,7 +6414,7 @@ async def b2b_delete_held_cart(token: str, order_id: str):
     return {"status": "success", "message": f"{o.get('held_label') or o.get('order_number')} silindi."}
 
 
-async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = None, order_id: Optional[str] = None) -> dict:
+async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = None, order_id: Optional[str] = None, legal_accept: Optional[dict] = None) -> dict:
     """Portal siparişi. Fiyat kalemlerden gelir; istemci tutarı okunmaz."""
     req = req or {}
     legal_docs.require_acceptance(req)
@@ -6440,7 +6440,7 @@ async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = Non
     doc["discount_total"] = discount_total
     doc["grand_total"] = grand_total
     doc["total_amount"] = total
-    doc["legal_accept"] = legal_docs.acceptance_record(req)
+    doc["legal_accept"] = dict(legal_accept) if legal_accept is not None else legal_docs.acceptance_record(req)
     if payment:
         doc["payment_intent_id"] = str(payment.get("payment_intent_id") or payment.get("intent_id") or "")
         doc["payment_status"] = "paid"
@@ -6588,6 +6588,64 @@ async def _mark_b2b_order_review(intent_id: str, company_id: str, contact_name: 
         logger.exception("b2b order review notify failed intent=%s", intent_id)
 
 
+_B2B_ORDER_CLAIM_TTL = timedelta(minutes=5)
+
+
+def _b2b_order_claim_stale(intent: dict, now: Optional[datetime] = None) -> bool:
+    """Claim var, sipariş yok ve süre dolduysa (ya da zaman damgası yok/bozuksa) devralınabilir."""
+    if not intent.get("order_claim"):
+        return False
+    raw = intent.get("order_claim_at")
+    if not raw:
+        return True
+    try:
+        at = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+    except Exception:
+        return True
+    now = now or datetime.now(timezone.utc)
+    return (now - at) >= _B2B_ORDER_CLAIM_TTL
+
+
+async def _acquire_b2b_order_claim(intent_id: str, *, previous: Optional[str] = None) -> str:
+    """Boş veya süresi dolmuş claim'i atomik alır. Kazanan claim kimliğini döner."""
+    claim = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    query: Dict[str, Any] = {
+        "_id": intent_id,
+        "b2b_order_id": {"$exists": False},
+        "order_error": {"$ne": "review"},
+    }
+    if previous is None:
+        query["order_claim"] = {"$exists": False}
+    else:
+        cutoff = (now - _B2B_ORDER_CLAIM_TTL).isoformat(timespec="microseconds")
+        query["order_claim"] = previous
+        query["$or"] = [
+            {"order_claim_at": {"$lte": cutoff}},
+            {"order_claim_at": {"$exists": False}},
+        ]
+    claimed = await db.payment_intents.update_one(
+        query,
+        {"$set": {"order_claim": claim, "order_claim_at": now.isoformat(timespec="microseconds")}},
+    )
+    if int(getattr(claimed, "modified_count", 0) or 0) < 1:
+        return ""
+    return claim
+
+
+async def _link_existing_b2b_order(intent_id: str, sales_id: str) -> bool:
+    existing = await db.orders.find_one({"_id": sales_id})
+    if not existing:
+        return False
+    await db.payment_intents.update_one(
+        {"_id": intent_id, "b2b_order_id": {"$exists": False}},
+        {"$set": {"b2b_order_id": sales_id, "order_number": existing.get("order_number"), "order_error": None}},
+    )
+    return True
+
+
 async def finalize_b2b_order_payment(intent_id: str) -> None:
     """Ödenmiş b2b_order intent'inden tek sipariş. Banka order_id alanına dokunulmaz."""
     intent = await db.payment_intents.find_one({"_id": intent_id})
@@ -6599,19 +6657,27 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
         return
     if not intent.get("collection_tx_id"):
         return
-    claim = str(uuid.uuid4())
-    claimed = await db.payment_intents.update_one(
-        {"_id": intent_id, "b2b_order_id": {"$exists": False}, "order_claim": {"$exists": False}},
-        {"$set": {"order_claim": claim}},
-    )
     sales_id = f"b2bord_{intent_id}"
-    if int(getattr(claimed, "modified_count", 0) or 0) < 1:
-        existing = await db.orders.find_one({"_id": sales_id})
-        if existing:
-            await db.payment_intents.update_one(
-                {"_id": intent_id, "b2b_order_id": {"$exists": False}},
-                {"$set": {"b2b_order_id": sales_id, "order_number": existing.get("order_number"), "order_error": None}},
-            )
+    if await _link_existing_b2b_order(intent_id, sales_id):
+        return
+    previous = str(intent.get("order_claim") or "")
+    if previous and not _b2b_order_claim_stale(intent):
+        return
+    claim = await _acquire_b2b_order_claim(intent_id, previous=previous or None)
+    if not claim:
+        if await _link_existing_b2b_order(intent_id, sales_id):
+            return
+        fresh = await db.payment_intents.find_one({"_id": intent_id}) or {}
+        if fresh.get("b2b_order_id") or fresh.get("order_error") == "review":
+            return
+        if fresh.get("order_claim") and not _b2b_order_claim_stale(fresh):
+            return
+        contact = await db.contacts.find_one({"_id": intent.get("contact_id")}) if intent.get("contact_id") else None
+        await _mark_b2b_order_review(
+            intent_id,
+            str(intent.get("company_id") or ""),
+            (contact or {}).get("name") or "Cari",
+        )
         return
     company_id = str(intent.get("company_id") or "")
     contact_name = "Cari"
@@ -6634,10 +6700,12 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
             if not product:
                 raise HTTPException(status_code=409, detail="review")
         paid = float(Decimal(str(intent.get("ledger_amount") or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        stored_accept = draft.get("legal_accept") if isinstance(draft.get("legal_accept"), dict) else None
         result = await _create_b2b_order_core(
             contact, rows, draft,
             payment={"payment_intent_id": intent_id, "paid_amount": paid},
             order_id=sales_id,
+            legal_accept=stored_accept,
         )
         order = result.get("order") or {}
         await db.payment_intents.update_one(

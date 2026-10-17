@@ -10,6 +10,7 @@ import copy
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -686,3 +687,108 @@ def test_paid_order_cannot_be_edited_or_deleted_but_cancel_request_works(api):
     cancel = client.post(f"/api/public/b2b/{TOKEN}/orders/{oid}/cancel-request", json={"reason": "yanlış"})
     assert cancel.status_code == 200, cancel.text
     assert cancel.json()["order"]["cancel_request"]["status"] == "pending"
+
+
+def _accept_body():
+    return _order_body(accept_mss=True, accept_obf=True, accept_kvkk=True)
+
+
+def _paid_without_order(client, db):
+    _require_card(db, True)
+    started = client.post(f"/api/public/b2b/{TOKEN}/order-payments", json=_accept_body())
+    assert started.status_code == 200, started.text
+    intent = next(d for d in db.payment_intents.docs if d["_id"] == started.json()["intent_id"])
+    vpos_api._finalize_b2b_order = None
+    back = _callback(client, intent)
+    assert back.status_code == 303
+    assert _sales(db) == []
+    assert len(db.bank_transactions.docs) == 2
+    vpos_api._finalize_b2b_order = server.finalize_b2b_order_payment
+    return intent
+
+
+def _set_claim(db, intent_id, *, minutes_ago):
+    live = next(d for d in db.payment_intents.docs if d["_id"] == intent_id)
+    live["order_claim"] = "stuck-claim"
+    live["order_claim_at"] = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat(timespec="microseconds")
+    live.pop("b2b_order_id", None)
+    live.pop("order_number", None)
+    live.pop("order_error", None)
+    return live
+
+
+def test_card_order_copies_legal_accept_and_cardless_records_request(api):
+    client, db = api
+    plain = client.post(f"/api/public/b2b/{TOKEN}/orders", json=_accept_body())
+    assert plain.status_code == 200, plain.text
+    recorded = plain.json()["order"]["legal_accept"]
+    assert recorded["accept_mss"] is True
+    assert recorded["accept_obf"] is True
+    assert recorded["accept_kvkk"] is True
+    assert recorded["accepted_at"]
+    assert recorded["version"]
+    db.orders.docs[:] = [_active_cart()]
+    db.notifications.docs.clear()
+    db.invoices.docs.clear()
+    _require_card(db, True)
+    started = client.post(f"/api/public/b2b/{TOKEN}/order-payments", json=_accept_body())
+    assert started.status_code == 200, started.text
+    intent = next(d for d in db.payment_intents.docs if d["_id"] == started.json()["intent_id"])
+    stored = copy.deepcopy(intent["order_draft"]["legal_accept"])
+    assert stored["accept_mss"] is True
+    assert stored["accept_obf"] is True
+    assert stored["accept_kvkk"] is True
+    assert stored["accepted_at"]
+    _callback(client, intent)
+    order = _sales(db)[0]
+    assert order["legal_accept"] == stored
+    assert order["legal_accept"]["accepted_at"] == stored["accepted_at"]
+    for key in ("accepted_at", "ip", "client_ip"):
+        if key in stored:
+            assert order["legal_accept"][key] == stored[key]
+
+
+def test_stale_claim_retries_once_fresh_claim_waits(api):
+    client, db = api
+    intent = _paid_without_order(client, db)
+    _set_claim(db, intent["_id"], minutes_ago=0)
+    asyncio.run(server.finalize_b2b_order_payment(intent["_id"]))
+    assert _sales(db) == []
+    assert len(db.bank_transactions.docs) == 2
+    _set_claim(db, intent["_id"], minutes_ago=6)
+    asyncio.run(server.finalize_b2b_order_payment(intent["_id"]))
+    assert len(_sales(db)) == 1
+    assert _sales(db)[0]["_id"] == f"b2bord_{intent['_id']}"
+    assert len(db.bank_transactions.docs) == 2
+    assert _sales(db)[0]["legal_accept"]["accept_mss"] is True
+
+
+def test_concurrent_stale_claim_takeover_opens_one_order(api):
+    client, db = api
+    intent = _paid_without_order(client, db)
+    _set_claim(db, intent["_id"], minutes_ago=6)
+
+    async def _both():
+        await asyncio.gather(
+            server.finalize_b2b_order_payment(intent["_id"]),
+            server.finalize_b2b_order_payment(intent["_id"]),
+        )
+
+    asyncio.run(_both())
+    assert len(_sales(db)) == 1
+    assert len(db.bank_transactions.docs) == 2
+    assert _sales(db)[0]["payment_status"] == "paid"
+
+
+def test_failed_claim_takeover_flags_review(api):
+    client, db = api
+    intent = _paid_without_order(client, db)
+    live = next(d for d in db.payment_intents.docs if d["_id"] == intent["_id"])
+    live["order_claim"] = "stuck-claim"
+    live["order_claim_at"] = "not-a-date"
+    asyncio.run(server.finalize_b2b_order_payment(intent["_id"]))
+    assert _sales(db) == []
+    assert len(db.bank_transactions.docs) == 2
+    fresh = next(d for d in db.payment_intents.docs if d["_id"] == intent["_id"])
+    assert fresh["order_error"] == "review"
+    assert any(n.get("type") == "b2b_order_payment_review" for n in db.notifications.docs)
