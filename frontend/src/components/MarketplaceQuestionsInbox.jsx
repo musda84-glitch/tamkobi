@@ -11,7 +11,15 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { channelTr } from "../utils/labels";
 
-const waitingStatus = (q) => q?.status === "WAITING_FOR_ANSWER";
+const filled = (value) => {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+};
+
+/** Cevap bekliyor ve henüz cevap metni / cevap zamanı yazılmamış. */
+const waitingStatus = (q) =>
+  q?.status === "WAITING_FOR_ANSWER" && !filled(q?.answer) && !filled(q?.answered_at);
 
 const shortTime = (s) => {
   if (!s) return "—";
@@ -22,7 +30,7 @@ const shortTime = (s) => {
   }
 };
 
-/** Dashboard: son gelen pazaryeri müşteri soruları (kısa liste). */
+/** Dashboard: cevap bekleyen pazaryeri müşteri soruları (en fazla 6). */
 export function MarketplaceQuestionsInbox({ companyId }) {
   const [items, setItems] = useState([]);
   const [waiting, setWaiting] = useState(0);
@@ -32,17 +40,13 @@ export function MarketplaceQuestionsInbox({ companyId }) {
     if (!companyId) return;
     try {
       const r = await axios.get(`${API_URL}/marketplace/questions`, {
-        params: { company_id: companyId },
+        params: { company_id: companyId, status: "WAITING_FOR_ANSWER" },
       });
       const rows = Array.isArray(r.data) ? r.data : [];
-      const pending = rows.filter(waitingStatus);
-      const sorted = [...rows].sort((a, b) => {
-        const aw = waitingStatus(a) ? 0 : 1;
-        const bw = waitingStatus(b) ? 0 : 1;
-        if (aw !== bw) return aw - bw;
-        return String(b.asked_at || "").localeCompare(String(a.asked_at || ""));
-      });
-      setItems(sorted.slice(0, 6));
+      const pending = rows.filter(waitingStatus).sort((a, b) =>
+        String(b.asked_at || "").localeCompare(String(a.asked_at || ""))
+      );
+      setItems(pending.slice(0, 6));
       setWaiting(pending.length);
     } catch {
       /* sessiz */
@@ -90,19 +94,17 @@ export function MarketplaceQuestionsInbox({ companyId }) {
         </div>
       ) : items.length === 0 ? (
         <div className="px-4 py-3 text-center text-slate-400 text-xs" data-testid="marketplace-questions-empty">
-          Son gelen pazaryeri müşteri sorusu yok.
+          Cevap bekleyen soru yok.
         </div>
       ) : (
         <ul className="divide-y divide-slate-100 max-h-40 overflow-y-auto" data-testid="marketplace-questions-list">
           {items.map((q) => {
             const id = q.id || q._id || q.external_id;
-            const wait = waitingStatus(q);
             return (
               <li key={id} className="px-4 py-2.5 flex items-start gap-2" data-testid={`marketplace-question-${id}`}>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
                     <span className="text-[10px] font-semibold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">{channelTr(q.channel)}</span>
-                    {wait && <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">Cevap bekliyor</span>}
                     <span className="text-[10px] text-slate-400">{shortTime(q.asked_at)}</span>
                   </div>
                   <div className="text-xs font-bold text-slate-900 truncate">{q.product_name || "Ürün"}</div>
