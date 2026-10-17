@@ -1,15 +1,16 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ShoppingCart, Package, FileText, Truck, CalendarClock, Loader2, Search, CheckCircle2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { getPriceDecimals, setPriceDecimals } from "../utils/money";
 import { fmt, b2bGross, b2bNet, b2bOrderGross, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { B2BCatalogCard } from "../components/B2BCatalogCard";
+import { B2BCartPage } from "../components/B2BCartPage";
 import { ScanButton } from "../components/CameraScanner";
-import { addCartLine, cartHasItems, cartHeading, cartQtyByProduct, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
+import { addCartLine, cartHasItems, cartQtyByProduct, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "../utils/b2bCatalogWindow";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
@@ -17,10 +18,20 @@ import { classifyTestPayment, navigation, postBankForm } from "../components/Vpo
 
 const ALL_TABS = [
   { id: "catalog", label: "Ürünler", Icon: Package },
+  { id: "cart", label: "Sepet", Icon: ShoppingCart, flag: "allow_orders" },
   { id: "orders", label: "Siparişlerim", Icon: Truck },
   { id: "statement", label: "Hesap Ekstresi", Icon: FileText, flag: "show_statement" },
   { id: "installments", label: "Taksitlerim", Icon: CalendarClock, flag: "show_installments" },
 ];
+
+function CartCountBadge({ count }) {
+  if (!count) return null;
+  return (
+    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-500 text-white text-[10px] font-black" data-testid="b2b-cart-badge" aria-label={`Sepette ${count} kalem`}>
+      {count}
+    </span>
+  );
+}
 
 function installmentDueText(row) {
   const due = String(row.due_date || "").slice(0, 10);
@@ -32,6 +43,10 @@ function installmentDueText(row) {
 
 export default function B2BPortalPage() {
   const { token } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const portalHome = `/portal/${token}`;
+  const onCartPath = location.pathname.replace(/\/+$/, "") === `${portalHome}/sepet`;
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("catalog");
@@ -136,6 +151,12 @@ export default function B2BPortalPage() {
     if (!tabs.some((t) => t.id === tab)) setTab("catalog");
   }, [data, tabs, tab]);
 
+  useEffect(() => {
+    if (!data || !onCartPath || allowOrders) return;
+    navigate(portalHome, { replace: true });
+    setTab("catalog");
+  }, [data, onCartPath, allowOrders, navigate, portalHome]);
+
   const addWithQty = useCallback((p, qty, lineNote) => {
     if (!allowOrders) return;
     setCart((c) => addCartLine(c, p.id, qty, String(lineNote || "").trim()));
@@ -179,6 +200,15 @@ export default function B2BPortalPage() {
     else toast.message(hit.message);
   };
 
+  const activeTab = onCartPath && allowOrders ? "cart" : tab;
+  const selectTab = (id) => {
+    if (id === "cart") {
+      if (!onCartPath) navigate(`${portalHome}/sepet`);
+      return;
+    }
+    setTab(id);
+    if (onCartPath) navigate(portalHome);
+  };
   const orderPayload = () => ({
     items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
     note,
@@ -222,7 +252,7 @@ export default function B2BPortalPage() {
       setSheet(false);
       toast.success(r.data.message);
       load();
-      setTab("orders");
+      selectTab("orders");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       const body = e.response?.data || {};
@@ -264,7 +294,7 @@ export default function B2BPortalPage() {
       setSheet(false);
       toast.success(r.data.message || "Bekleyen sepet kaydedildi.");
       await load();
-      setTab("orders");
+      selectTab("orders");
     } catch (e) {
       // API yoksa / çevrimdışı: yerel bekleyen sepet (eski davranış)
       const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
@@ -309,7 +339,7 @@ export default function B2BPortalPage() {
         await axios.delete(`${API_URL}/public/b2b/${token}/held-carts/${serverOrd.id || serverOrd._id}`);
         await load();
         toast.message("Bekleyen sepet yüklendi.");
-        setTab("catalog");
+        selectTab("cart");
       } catch (e) {
         toast.error(e.response?.data?.detail || "Bekleyen sepet yüklenemedi.");
       } finally {
@@ -325,6 +355,7 @@ export default function B2BPortalPage() {
       setCustomerOrderNo(r.meta.customerOrderNo || "");
     }
     toast.message("Bekleyen sepet yüklendi.");
+    selectTab("cart");
   };
 
   const removeHeld = async (holdId) => {
@@ -368,12 +399,31 @@ export default function B2BPortalPage() {
     setCustomerOrderNo,
     onHold: holdCart,
   };
-  const tabCols = Math.min(4, Math.max(2, tabs.length));
+  const tabCols = Math.min(5, Math.max(2, tabs.length));
   const ordersTabCount = portalOrderRows.length;
 
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
-      <B2BHeader company={data.company} contact={data.contact} token={token} onPasswordChanged={load} />
+      <div className="relative">
+        <B2BHeader company={data.company} contact={data.contact} token={token} onPasswordChanged={load} />
+        {allowOrders && (
+          <div className="bg-slate-900">
+            <div className="max-w-7xl mx-auto px-3 sm:px-4 pb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => selectTab("cart")}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white text-slate-900 px-3 py-1.5 text-xs font-bold"
+                data-testid="b2b-header-cart"
+                aria-label="Sepet"
+              >
+                <ShoppingCart className="w-4 h-4" />
+                Sepet
+                <CartCountBadge count={lines.length} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4">
         {settings.welcome_note ? (
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-3 py-2.5 text-xs sm:text-sm" data-testid="b2b-welcome-note">
@@ -390,15 +440,16 @@ export default function B2BPortalPage() {
             <button
               key={k}
               type="button"
-              onClick={() => setTab(k)}
-              className={`flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 px-1 sm:px-3 py-2 rounded-lg text-[10px] sm:text-xs font-semibold leading-tight ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+              onClick={() => selectTab(k)}
+              className={`flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 px-1 sm:px-3 py-2 rounded-lg text-[10px] sm:text-xs font-semibold leading-tight ${activeTab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
               data-testid={`b2b-tab-${k}`}
             >
               <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-              <span className="text-center">
+              <span className="text-center inline-flex items-center justify-center gap-1">
                 {l}
                 {k === "orders" && ordersTabCount > 0 ? ` (${ordersTabCount})` : ""}
                 {k === "installments" && installments.length > 0 ? ` (${installments.length})` : ""}
+                {k === "cart" ? <CartCountBadge count={lines.length} /> : null}
               </span>
             </button>
           ))}
@@ -415,7 +466,7 @@ export default function B2BPortalPage() {
           </div>
         )}
 
-        {tab === "catalog" && (
+        {activeTab === "catalog" && (
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             <aside className="md:col-span-3 lg:col-span-2 order-1" data-testid="b2b-categories">
               <div className="bg-white rounded-2xl border p-2 sm:p-2.5 md:sticky md:top-4">
@@ -436,13 +487,18 @@ export default function B2BPortalPage() {
               </div>
             </aside>
 
-            <div className={`md:col-span-9 ${allowOrders ? "lg:col-span-7" : "lg:col-span-10"} space-y-3 order-2`}>
+            <div className="md:col-span-9 lg:col-span-10 space-y-3 order-2">
               {allowAiCart && (
                 <B2BAiCart
                   token={token}
                   products={data.products}
                   onApply={(sel) => {
                     setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c));
+                    if (sel?.length) {
+                      toast.success("Sepete eklendi.", {
+                        action: { label: "Sepete git", onClick: () => selectTab("cart") },
+                      });
+                    }
                   }}
                 />
               )}
@@ -451,7 +507,7 @@ export default function B2BPortalPage() {
                   Bu portalda sipariş alımı kapalı. Ürünleri inceleyebilirsiniz; sipariş için tedarikçinizle iletişime geçin.
                 </div>
               )}
-              <div className="flex gap-2 items-stretch">
+              <div className="flex flex-wrap gap-2 items-stretch">
                 <div className="relative flex-1 min-w-0">
                   <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
                   <input
@@ -464,6 +520,17 @@ export default function B2BPortalPage() {
                     inputMode="search"
                   />
                 </div>
+                {allowOrders && (
+                  <button
+                    type="button"
+                    disabled={lines.length === 0}
+                    onClick={() => selectTab("cart")}
+                    className="shrink-0 px-3 rounded-xl border bg-white text-[11px] sm:text-xs font-bold text-slate-800 disabled:opacity-40"
+                    data-testid="b2b-go-cart"
+                  >
+                    {`Sepete git (${lines.length} kalem · ${fmt(cartTotal)})`}
+                  </button>
+                )}
                 <label className="shrink-0 flex flex-col justify-center">
                   <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Adet</span>
                   <input
@@ -491,7 +558,7 @@ export default function B2BPortalPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3" data-testid="b2b-catalog-grid">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3" data-testid="b2b-catalog-grid">
                 {shownProds.map((p) => (
                   <B2BCatalogCard
                     key={p.id}
@@ -523,43 +590,40 @@ export default function B2BPortalPage() {
                 ) : null}
               </div>
             </div>
-
-            {allowOrders && (
-              <div className="hidden lg:block lg:col-span-3 order-3 bg-white rounded-2xl border p-4 space-y-3 h-fit lg:sticky lg:top-4" data-testid="b2b-cart">
-                <div className="font-bold text-slate-900 flex items-center gap-2" data-testid="b2b-cart-heading">
-                  <ShoppingCart className="w-4 h-4" /> {cartHeading(lines)}
-                </div>
-                {heldTabs.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5" data-testid="b2b-held-tabs">
-                    {heldTabs.map((h) => (
-                      <div key={h.id} className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => loadHeld(h.id)}
-                          className="px-2 py-1 rounded-lg text-[10px] font-bold border bg-amber-50 text-amber-900 border-amber-200"
-                          data-testid={`b2b-held-tab-${h.id}`}
-                        >
-                          {h.label}
-                        </button>
-                        <button type="button" onClick={() => removeHeld(h.id)} className="text-[10px] text-rose-600 font-semibold px-1" data-testid={`b2b-held-discard-${h.id}`} title="Sil">×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {minOrder > 0 && <div className="text-[10px] text-slate-500">Min. sipariş: <b>{fmt(minOrder)} ₺</b></div>}
-                <CartBody {...cartBodyProps} />
-              </div>
-            )}
           </div>
         )}
 
-        {tab === "orders" && (
+        {activeTab === "cart" && allowOrders && (
+          <B2BCartPage
+            lines={lines}
+            sub={sub}
+            vat={vat}
+            note={note}
+            setNote={setNote}
+            customerOrderNo={customerOrderNo}
+            setCustomerOrderNo={setCustomerOrderNo}
+            setQty={setQty}
+            submit={submit}
+            busy={busy}
+            onHold={holdCart}
+            heldTabs={heldTabs}
+            loadHeld={loadHeld}
+            removeHeld={removeHeld}
+            showStock={showStock}
+            minOrder={minOrder}
+            discount={Number(data.contact?.discount) || 0}
+            cardOrderRequired={!!data.card_order_required}
+            onBack={() => selectTab("catalog")}
+          />
+        )}
+
+        {activeTab === "orders" && (
           <OrdersList orders={portalOrderRows} heldRows={[]} token={token} products={data.products} company={data.company} onChanged={load} />
         )}
-        {tab === "statement" && settings.show_statement !== false && (
+        {activeTab === "statement" && settings.show_statement !== false && (
           <StatementList invoices={data.invoices} company={data.company} balance={data.contact.balance} token={token} cardPayment={settings.card_payment} />
         )}
-        {tab === "installments" && settings.show_installments !== false && (
+        {activeTab === "installments" && settings.show_installments !== false && (
           <div className="bg-white rounded-2xl border divide-y text-xs" data-testid="b2b-installments">
             {installments.length === 0 && <div className="p-8 text-center text-slate-400">Bekleyen taksit yok.</div>}
             {installments.map((i) => {
@@ -593,8 +657,8 @@ export default function B2BPortalPage() {
         </div>
       ) : null}
 
-      {tab === "catalog" && allowOrders && (
-        <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet} heldCount={heldTabs.length}>
+      {activeTab === "catalog" && allowOrders && (
+        <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet} heldCount={heldTabs.length} onOpenCart={() => selectTab("cart")}>
           {heldTabs.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pb-2" data-testid="b2b-held-tabs-mobile">
               {heldTabs.map((h) => (
