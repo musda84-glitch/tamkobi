@@ -438,4 +438,6 @@ export type B2BPortal = {
   installments: B2BInstallment[];
   settings: B2BSettings;
   legal?: B2BLegalLink[];
+  /** Sunucu: sipariş ancak kart ödemesinden sonra oluşur. Kart verisi mobilde alınmaz. */
+  card_order_required?: boolean;
 };

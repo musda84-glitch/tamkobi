@@ -73,7 +73,7 @@ export function B2BSheet({
 const styles = StyleSheet.create({
   wrap: { flex: 1, justifyContent: "flex-end" },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(15,23,42,0.45)",
   },
   sheet: {

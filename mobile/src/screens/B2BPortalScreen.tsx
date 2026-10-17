@@ -2,8 +2,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Platform, Pressable, RefreshControl, Share, Text, TextInput, View } from "react-native";
+import { FlatList, Linking, Platform, Pressable, RefreshControl, Share, Text, TextInput, View } from "react-native";
 import { del, get, post, put } from "../api/client";
+import { ApiHttpError } from "../api/errors";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
 import { B2BMobileCartBar } from "../components/b2b/B2BMobileCartBar";
@@ -243,6 +244,50 @@ function Chip({ label, active, onPress, testID }: { label: string; active: boole
   );
 }
 
+const CARD_ORDER_NOTE = "Bu bayide sipariş kartla ödeme sonrası oluşturulur.";
+
+function flagTrue(value: unknown): boolean {
+  return value === true || value === 1 || value === "true" || value === "1";
+}
+
+/** 402 veya gövde/detail içindeki card_required: sipariş web portalında kartla açılır. */
+export function isB2BCardRequired(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const rec = err as {
+    status?: number;
+    detail?: unknown;
+    body?: unknown;
+    response?: { status?: number; data?: unknown };
+  };
+  const status = rec instanceof ApiHttpError
+    ? rec.status
+    : (typeof rec.status === "number" ? rec.status : rec.response?.status);
+  if (status === 402) return true;
+  const blobs = [rec.detail, rec.body, rec.response?.data];
+  for (const blob of blobs) {
+    if (!blob || typeof blob !== "object") continue;
+    const obj = blob as { card_required?: unknown; detail?: unknown };
+    if (flagTrue(obj.card_required)) return true;
+    const nested = obj.detail;
+    if (nested && typeof nested === "object" && flagTrue((nested as { card_required?: unknown }).card_required)) return true;
+  }
+  return false;
+}
+
+function b2bWebPayUrl(baseUrl: string, token: string): string {
+  const root = String(baseUrl || "").replace(/\/+$/, "");
+  return `${root}/portal/${token}/sepet`;
+}
+
+function CardOrderNotice({ onPay, testID }: { onPay: () => void; testID: string }) {
+  return (
+    <Card testID={testID}>
+      <Text style={{ color: colors.text, fontWeight: "700" }}>{CARD_ORDER_NOTE}</Text>
+      <PrimaryButton testID={`${testID}-pay`} title="Web'de öde" onPress={onPay} color={colors.primary} />
+    </Card>
+  );
+}
+
 function cartStorageKey(token: string) {
   return `tamkobi.b2bCart.${token}`;
 }
@@ -290,6 +335,7 @@ export function B2BPortalScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [addedId, setAddedId] = useState<string | null>(null);
   const [flashOn, setFlashOn] = useState(false);
+  const [cardPayForced, setCardPayForced] = useState(false);
   const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -341,6 +387,7 @@ export function B2BPortalScreen() {
     return () => clearTimeout(t);
   }, [b2bToken, cart, note, customerOrderNo, data, client]);
 
+  const cardPayRequired = Boolean(data?.card_order_required) || cardPayForced;
   const settings = data?.settings || {};
   const showPrices = settings.show_prices !== false;
   const showStock = settings.show_stock !== false;
@@ -505,8 +552,14 @@ export function B2BPortalScreen() {
     return () => clearTimeout(t);
   }, [message]);
 
+  const openWebPay = () => {
+    if (!b2bToken) return;
+    Linking.openURL(b2bWebPayUrl(baseUrl, b2bToken)).catch(() => null);
+  };
+
   const submitOrder = async () => {
     if (!allowOrders || !b2bToken) return;
+    if (cardPayRequired) return;
     if (minOrder > 0 && cartTotal + 1e-9 < minOrder) {
       setError(`Minimum sipariş tutarı ${fmtMoney(minOrder)}.`);
       return;
@@ -537,7 +590,12 @@ export function B2BPortalScreen() {
       setTab("orders");
       await load();
     } catch (err) {
-      setError(apiErrorMessage(err, "Sipariş gönderilemedi."));
+      if (isB2BCardRequired(err)) {
+        setCardPayForced(true);
+        setError(null);
+      } else {
+        setError(apiErrorMessage(err, "Sipariş gönderilemedi."));
+      }
     } finally {
       setBusy(false);
     }
@@ -1002,6 +1060,7 @@ export function B2BPortalScreen() {
             ))}
           </View>
         ) : null}
+        {cardPayRequired ? <CardOrderNotice onPay={openWebPay} testID="b2b-card-order-required" /> : null}
         {!lines.length ? <Empty icon="cart-outline" title="Sepet boş" /> : (
           <View>
             {lines.map((l) => (
@@ -1124,7 +1183,11 @@ export function B2BPortalScreen() {
               </View>
             ) : null}
             <PrimaryButton testID="b2b-hold-cart" title="Beklemeye Al" onPress={holdCart} color="#B45309" />
-            <PrimaryButton testID="b2b-order-submit" title={busy ? "Gönderiliyor…" : "Siparişi Gönder"} onPress={submitOrder} loading={busy} color={colors.primary} />
+            {cardPayRequired ? (
+              <CardOrderNotice onPay={openWebPay} testID="b2b-card-order-pay" />
+            ) : (
+              <PrimaryButton testID="b2b-order-submit" title={busy ? "Gönderiliyor…" : "Siparişi Gönder"} onPress={submitOrder} loading={busy} color={colors.primary} />
+            )}
           </View>
         )}
       </B2BSheet>

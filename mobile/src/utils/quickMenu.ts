@@ -91,6 +91,7 @@ const TASK_PATH_MAP: Record<string, string> = {
   "/personnel": "/personnel",
   "/notifications": "/notifications",
   "/settings": "/settings",
+  "/hesap": "/settings",
   "/search": "/search",
 };
 
