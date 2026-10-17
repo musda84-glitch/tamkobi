@@ -131,7 +131,7 @@ test("shows the six newest waiting questions and the full waiting count", async 
 
   await renderInbox();
 
-  const rendered = [...host.querySelectorAll("[data-testid^='marketplace-question-']")];
+  const rendered = [...host.querySelectorAll("li[data-testid^='marketplace-question-']")];
   expect(rendered.map((el) => el.getAttribute("data-testid"))).toEqual([
     "marketplace-question-q8",
     "marketplace-question-q7",
@@ -152,5 +152,5 @@ test("links to the full questions tab", async () => {
 
   expect(host.querySelector("[data-testid='marketplace-questions-see-all']")?.getAttribute("href")).toBe("/orders?tab=questions");
   const open = [...host.querySelectorAll("a")].find((el) => el.textContent.includes("Aç"));
-  expect(open?.getAttribute("href")).toBe("/orders?tab=questions");
+  expect(open?.getAttribute("href")).toBe("/orders?tab=questions&question=q1");
 });
