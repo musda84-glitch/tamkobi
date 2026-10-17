@@ -49,7 +49,7 @@ const Modal = ({ title, onClose, children, testId }) => (
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
-export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
+export const PartnersPanel = ({ companyId, accounts, onCashChanged, focusApprovalId = "" }) => {
   const [partners, setPartners] = useState([]);
   const [summary, setSummary] = useState(null);
   const [txs, setTxs] = useState([]);
@@ -436,7 +436,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   return (
     <div className="space-y-5" data-testid="partners-panel">
-      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${(serverPaging ? serverItems[0]?.id : txs[0]?.id) || ""}-${modal || ""}`} onChanged={() => { load(); bumpCash(); }} />
+      <CashApprovalsBanner companyId={companyId} refreshKey={`${partners.length}-${(serverPaging ? serverItems[0]?.id : txs[0]?.id) || ""}-${modal || ""}`} onChanged={() => { load(); bumpCash(); }} focusId={focusApprovalId} />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>

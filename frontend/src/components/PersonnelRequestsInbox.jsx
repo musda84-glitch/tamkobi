@@ -217,7 +217,7 @@ export function EmployeeRequestChips({
 }
 
 /** Personel talepleri bildirim kutusu — izin / erken çıkış / puantaj itirazı */
-export function PersonnelRequestsInbox({ companyId, onChanged, compact = false }) {
+export function PersonnelRequestsInbox({ companyId, onChanged, compact = false, focusId = "", focusKind = "" }) {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [count, setCount] = useState(0);
@@ -238,6 +238,14 @@ export function PersonnelRequestsInbox({ companyId, onChanged, compact = false }
   }, [companyId]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
+  useEffect(() => {
+    if (!focusId) return;
+    const hit = items.find((it) => String(it.id) === String(focusId) && (
+      !focusKind || it.kind === focusKind || (focusKind === "overtime" && (it.kind === "overtime_confirm" || it.kind === "yevmiye_adjustment"))
+    ));
+    if (!hit) return;
+    document.querySelector(`[data-testid="personnel-request-${hit.kind}-${hit.id}"]`)?.scrollIntoView?.({ block: "center" });
+  }, [focusId, focusKind, items]);
   useDataRefresh(load, { companyId, scopes: ["personnel", "attendance"] });
 
   const decideLeave = async (id, status) => {
@@ -432,8 +440,11 @@ export function PersonnelRequestsInbox({ companyId, onChanged, compact = false }
             const meta = KIND_META[it.kind] || KIND_META.leave;
             const Icon = meta.Icon;
             const busy = busyId === it.id;
+            const focused = Boolean(focusId) && String(it.id) === String(focusId) && (
+              !focusKind || it.kind === focusKind || (focusKind === "overtime" && (it.kind === "overtime_confirm" || it.kind === "yevmiye_adjustment"))
+            );
             return (
-              <li key={`${it.kind}-${it.id}`} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3" data-testid={`personnel-request-${it.kind}-${it.id}`}>
+              <li key={`${it.kind}-${it.id}`} className={`px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 ${focused ? "bg-amber-50 ring-2 ring-inset ring-amber-300" : ""}`} data-testid={`personnel-request-${it.kind}-${it.id}`} data-open-focus={focused ? "1" : "0"}>
                 <div className="flex items-start gap-2.5 min-w-0 flex-1">
                   <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-bold shrink-0 ${meta.chip}`}>
                     <Icon className="w-3 h-3" /> {meta.label}

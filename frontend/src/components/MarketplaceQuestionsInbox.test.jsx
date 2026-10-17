@@ -50,6 +50,7 @@ test("shows waiting marketplace questions preview", async () => {
   expect(host.textContent).toContain("Kulaklık Pro");
   expect(host.textContent).toContain("Kargo ne zaman çıkar?");
   expect(host.querySelector("[data-testid='marketplace-questions-see-all']")?.getAttribute("href")).toBe("/orders?tab=questions");
+  expect(host.querySelector("[data-testid='marketplace-question-open-q1']")?.getAttribute("href")).toBe("/orders?tab=questions&question=q1");
 });
 
 test("empty state", async () => {

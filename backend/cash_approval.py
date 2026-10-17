@@ -27,6 +27,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def open_link(kind: str, req_id: str) -> str:
+    """Kasa onayı: mevcut sekme kalsın, talep id'si eklensin."""
+    base = "/banking?tab=partners" if kind != "virman" else "/banking"
+    rid = str(req_id or "").strip()
+    if not rid:
+        return base
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}approval={rid}"
+
+
 async def enabled(db, company_id: str) -> bool:
     c = await db.companies.find_one({"_id": company_id}) or {}
     return bool(c.get("cash_dual_approval"))
@@ -66,7 +76,7 @@ async def queue(db, *, company_id: str, kind: str, payload: dict, account_ids: L
     import notify as _notify
     title = "Kasa/banka işlemi onay bekliyor"
     message = f"{actor_name}: {summary}. Diğer yöneticinin onayı gerekli."
-    link = "/banking?tab=partners" if kind != "virman" else "/banking"
+    link = open_link(kind, req_id)
     await _notify.insert_notification(db, {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,

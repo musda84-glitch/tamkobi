@@ -409,12 +409,13 @@ def test_cash_approval_queues_email_and_survives_errors():
             assert note["type"] == "cash_approval"
             assert note["title"] == "Kasa/banka işlemi onay bekliyor"
             assert note["message"] == "Ali: 100 ₺. Diğer yöneticinin onayı gerekli."
-            assert note["link"] == "/banking"
+            assert note["link"] == f"/banking?approval={first['request_id']}"
             assert note["ref_type"] == "cash_approval"
             assert note["ref_id"] == first["request_id"]
             assert note["roles"] == notify.roles_for_type("cash_approval")
             assert note["target"]["type"] == "cash_approval"
-            assert note["target"]["route"] == "/banking"
+            assert note["target"]["id"] == first["request_id"]
+            assert note["target"]["route"] == f"/banking?approval={first['request_id']}"
             assert len(_outbox(db)) == 1
             dup = await event_notify.queue_event_email(
                 "c1", "cash_approval", note["title"], note["message"],

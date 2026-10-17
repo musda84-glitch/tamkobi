@@ -13,12 +13,16 @@ import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./Tx
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
-export const LeaveRequestsPanel = ({ companyId, employees, onChanged }) => {
+export const LeaveRequestsPanel = ({ companyId, employees, onChanged, focusId = "" }) => {
   const [leaves, setLeaves] = useState([]);
   const [form, setForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [show, setShow] = useState(false);
   const load = useCallback(async () => { const r = await axios.get(`${API_URL}/personnel/leaves?company_id=${companyId}`); setLeaves(r.data); }, [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!focusId) return;
+    document.querySelector(`[data-testid="leave-row-${focusId}"]`)?.scrollIntoView?.({ block: "center" });
+  }, [focusId, leaves]);
   const save = async (e) => { e.preventDefault(); try { await axios.post(`${API_URL}/personnel/leaves`, { ...form, employee_id: form.employee_id || employees[0]?.id }); toast.success("İzin talebi oluşturuldu."); setShow(false); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const decide = async (id, status) => { try { await axios.post(`${API_URL}/personnel/leaves/${id}/decide`, { status }); toast.success(status === "approved" ? "İzin onaylandı." : "İzin reddedildi."); load(); onChanged?.(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const cancelLeave = async (l) => {
@@ -60,7 +64,7 @@ export const LeaveRequestsPanel = ({ companyId, employees, onChanged }) => {
               const st = leaveStatusView(l.status);
               const acts = leaveRowActions(l.status);
               return (
-              <tr key={l.id} data-testid={`leave-row-${l.id}`}>
+              <tr key={l.id} data-testid={`leave-row-${l.id}`} data-open-focus={String(focusId) === String(l.id) ? "1" : "0"} className={String(focusId) === String(l.id) ? "bg-amber-50 ring-2 ring-inset ring-amber-300" : ""}>
                 <td className="px-4 py-2 font-semibold text-slate-900">{l.employee_name}</td><td className="px-4 py-2">{LEAVE_TYPES[l.type]}</td><td className="px-4 py-2 font-mono text-slate-500">{l.start_date} → {l.end_date}</td><td className="px-4 py-2 text-right font-bold">{l.days}</td>
                 <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${st.className}`}>{st.label}</span></td>
                 <td className="px-4 py-2 text-right">

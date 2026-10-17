@@ -58,6 +58,7 @@ import {
   Receipt,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { MISSING_RECORD } from "../utils/notificationTarget";
 
 const hasSgk = (emp) => Boolean(emp?.sgk_insured) || Boolean(String(emp?.sgk_number || "").trim());
 const isBankAcc = (a) => {
@@ -80,6 +81,12 @@ export default function PersonnelPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "payroll";
   const setTab = (t) => setSearchParams({ tab: t }, { replace: true });
+  const focusLeave = searchParams.get("leave") || "";
+  const focusAdvance = searchParams.get("advance") || "";
+  const focusOvertime = searchParams.get("overtime") || "";
+  const [openLeaveId, setOpenLeaveId] = useState("");
+  const [openAdvanceId, setOpenAdvanceId] = useState("");
+  const [openOvertimeId, setOpenOvertimeId] = useState("");
   const [payrolls, setPayrolls] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -318,6 +325,42 @@ export default function PersonnelPage() {
     }
   }, [companyId]);
   useEffect(() => { loadPendingReqs(); }, [loadPendingReqs]);
+
+  useEffect(() => {
+    let cancel = false;
+    const rowsOf = (data) => (Array.isArray(data) ? data : (data?.items || data?.records || []));
+    const hasId = (rows, id) => rows.some((row) => String(row?.id || row?._id || "") === String(id));
+    const openOrToast = (setter, id, ok) => {
+      if (cancel) return;
+      if (ok) setter(id);
+      else {
+        setter("");
+        toast.error(MISSING_RECORD);
+      }
+    };
+    if (focusLeave) {
+      axios.get(`${API_URL}/personnel/leaves?company_id=${companyId}`)
+        .then((r) => openOrToast(setOpenLeaveId, focusLeave, hasId(rowsOf(r.data), focusLeave)))
+        .catch(() => { if (!cancel) toast.error(MISSING_RECORD); });
+    } else setOpenLeaveId("");
+    if (focusAdvance) {
+      axios.get(`${API_URL}/personnel/bonuses?company_id=${companyId}`)
+        .then((r) => openOrToast(setOpenAdvanceId, focusAdvance, hasId(rowsOf(r.data), focusAdvance)))
+        .catch(() => { if (!cancel) toast.error(MISSING_RECORD); });
+    } else setOpenAdvanceId("");
+    if (focusOvertime) {
+      const month = new Date().toISOString().slice(0, 7);
+      Promise.all([
+        axios.get(`${API_URL}/personnel/pending-requests`, { params: { company_id: companyId } }).catch(() => ({ data: { items: [] } })),
+        axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`).catch(() => ({ data: { records: [] } })),
+      ]).then(([pending, att]) => {
+        const items = rowsOf(pending.data);
+        const records = att.data?.records || att.data?.summary || [];
+        openOrToast(setOpenOvertimeId, focusOvertime, hasId(items, focusOvertime) || hasId(records, focusOvertime));
+      }).catch(() => { if (!cancel) toast.error(MISSING_RECORD); });
+    } else setOpenOvertimeId("");
+    return () => { cancel = true; };
+  }, [focusLeave, focusAdvance, focusOvertime, companyId]);
   useDataRefresh(loadPendingReqs, { companyId, scopes: ["personnel", "attendance"] });
 
   const handleSaveEmployee = async (e) => {
@@ -696,6 +739,8 @@ export default function PersonnelPage() {
       <PersonnelRequestsInbox
         companyId={companyId}
         onChanged={() => { loadPersonnelData(); loadPendingReqs(); }}
+        focusId={openLeaveId || openAdvanceId || openOvertimeId}
+        focusKind={openLeaveId ? "leave" : openAdvanceId ? "advance" : openOvertimeId ? "overtime" : ""}
       />
 
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">
@@ -704,8 +749,8 @@ export default function PersonnelPage() {
           <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`personnel-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
-      {tab === "attendance" && <AttendancePanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
-      {tab === "leaves" && <LeaveRequestsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} onChanged={loadPersonnelData} />}
+      {tab === "attendance" && <AttendancePanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} focusId={openOvertimeId} />}
+      {tab === "leaves" && <LeaveRequestsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} onChanged={loadPersonnelData} focusId={openLeaveId} />}
       {tab === "salary" && <SalaryCalculator />}
       {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
       {tab === "payroll" && (<>

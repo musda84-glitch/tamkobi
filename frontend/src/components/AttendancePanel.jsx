@@ -17,7 +17,7 @@ import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 import { cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint } from "../utils/employeeCardStatus";
 import { punchLabelClass } from "../utils/punchLabels";
 
-export const AttendancePanel = ({ companyId }) => {
+export const AttendancePanel = ({ companyId, focusId = "" }) => {
   const [month, setMonth] = useState(() => attendanceCalendarMonth());
   const [data, setData] = useState(null);
   const [schedEmp, setSchedEmp] = useState(null);
@@ -27,6 +27,16 @@ export const AttendancePanel = ({ companyId }) => {
   const [punchBusyId, setPunchBusyId] = useState(null);
   const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } }, [companyId, month]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!focusId || !data?.records) return;
+    const rec = (data.records || []).find((r) => String(r.id || r._id) === String(focusId));
+    if (!rec?.employee_id) return;
+    setRecOpen((m) => (m[rec.employee_id] ? m : { ...m, [rec.employee_id]: true }));
+  }, [focusId, data]);
+  useEffect(() => {
+    if (!focusId) return;
+    document.querySelector(`[data-testid="att-rec-${focusId}"]`)?.scrollIntoView?.({ block: "center" });
+  }, [focusId, data, recOpen]);
   const act = async (employee_id, body) => {
     setPunchBusyId(employee_id);
     try {
@@ -175,7 +185,7 @@ export const AttendancePanel = ({ companyId }) => {
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700">{attendanceGroupToggleLabel(open, g.records.length)}{open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</span>
           </button>
           {open ? g.records.map((r) => (
-        <div key={r.id} className={`px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 ${r.is_off_day ? "bg-amber-50/40" : ""}`} data-testid={`att-rec-${r.id}`}>
+        <div key={r.id} className={`px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 ${String(focusId) === String(r.id) ? "bg-amber-50 ring-2 ring-inset ring-amber-300" : r.is_off_day ? "bg-amber-50/40" : ""}`} data-testid={`att-rec-${r.id}`} data-open-focus={String(focusId) === String(r.id) ? "1" : "0"}>
           <span className="text-slate-400 font-mono">{fmtDmy(r.date)}</span>
           <span className="font-mono">{r.status === "present" ? <><span className="font-bold text-emerald-700">{r.check_in || "--:--"}</span>{" → "}<span className="font-bold text-rose-700">{r.check_out || "--:--"}</span>{` • ${r.hours || 0} sa`}</> : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
           {r.status === "present" ? (
