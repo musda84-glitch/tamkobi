@@ -13,6 +13,7 @@ import { addCartLine, cartHasItems, cartHeading, cartQtyByProduct, discardHeldCa
 import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "../utils/b2bCatalogWindow";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { classifyTestPayment, navigation, postBankForm } from "../components/VposSettingsPanel";
 
 const ALL_TABS = [
   { id: "catalog", label: "Ürünler", Icon: Package },
@@ -51,6 +52,7 @@ export default function B2BPortalPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [sheet, setSheet] = useState(false);
+  const [cardFrame, setCardFrame] = useState("");
   const [visibleCount, setVisibleCount] = useState(B2B_CATALOG_PAGE);
   const loadMoreRef = useRef(null);
   const deferredQ = useDeferredValue(q);
@@ -177,19 +179,42 @@ export default function B2BPortalPage() {
     else toast.message(hit.message);
   };
 
+  const orderPayload = () => ({
+    items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
+    note,
+    customer_order_number: customerOrderNo.trim(),
+  });
+  const runOrderCard = (body) => {
+    const next = classifyTestPayment(body || {});
+    if (next.type === "form") {
+      postBankForm(next.actionUrl, next.fields);
+      return;
+    }
+    if (next.type === "iframe") {
+      setCardFrame(next.url);
+      return;
+    }
+    if (next.type === "redirect") {
+      navigation.assign(next.url);
+      return;
+    }
+    toast.error("Ödeme sayfası açılamadı.");
+  };
   const submit = async () => {
     if (!allowOrders) return;
     if (minOrder > 0 && cartTotal + 1e-9 < minOrder) {
       toast.error(`Minimum sipariş tutarı ${fmt(minOrder)} ₺.`);
       return;
     }
+    const payload = orderPayload();
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, {
-        items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
-        note,
-        customer_order_number: customerOrderNo.trim(),
-      });
+      if (data?.card_order_required) {
+        const pay = await axios.post(`${API_URL}/public/b2b/${token}/order-payments`, payload);
+        runOrderCard(pay.data);
+        return;
+      }
+      const r = await axios.post(`${API_URL}/public/b2b/${token}/orders`, payload);
       setDone(r.data.order);
       setCart({});
       setNote("");
@@ -200,7 +225,21 @@ export default function B2BPortalPage() {
       setTab("orders");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Sipariş gönderilemedi.");
+      const body = e.response?.data || {};
+      const required = e.response?.status === 402 && (body.card_required || body.detail?.card_required);
+      if (required) {
+        try {
+          const pay = await axios.post(`${API_URL}/public/b2b/${token}/order-payments`, payload);
+          runOrderCard(pay.data);
+          return;
+        } catch (payErr) {
+          const payDetail = payErr.response?.data?.detail;
+          toast.error(typeof payDetail === "string" && payDetail.trim() ? payDetail : "Ödeme başlatılamadı.");
+          return;
+        }
+      }
+      const detail = body.detail;
+      toast.error(typeof detail === "string" && detail.trim() ? detail : "Sipariş gönderilemedi.");
     } finally {
       setBusy(false);
     }
@@ -544,6 +583,15 @@ export default function B2BPortalPage() {
           </div>
         )}
       </div>
+
+      {cardFrame ? (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-4 w-full max-w-lg space-y-3">
+            <iframe title="Kartlı sipariş ödemesi" src={cardFrame} className="w-full h-80 border rounded-xl" data-testid="b2b-order-card-iframe" />
+            <button type="button" onClick={() => setCardFrame("")} className="px-3 py-2 border rounded-lg">Kapat</button>
+          </div>
+        </div>
+      ) : null}
 
       {tab === "catalog" && allowOrders && (
         <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet} heldCount={heldTabs.length}>

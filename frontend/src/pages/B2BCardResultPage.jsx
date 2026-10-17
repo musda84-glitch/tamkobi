@@ -30,6 +30,9 @@ export default function B2BCardResultPage() {
           if (cancelled) return;
           const data = res.data || null;
           setRow(data);
+          if (data?.status === "paid" && data?.order_number && token) {
+            try { localStorage.removeItem(`b2b_cart_${token}`); } catch { /* sepet zaten yok */ }
+          }
           const status = data?.status || "";
           if ((status === "pending" || status === "processing") && tries < 4) {
             tries += 1;
@@ -66,6 +69,12 @@ export default function B2BCardResultPage() {
           Yeni bakiye: {formatTrAmount(Number(row.balance || 0))} ₺
         </p>
       )}
+      {row.status === "paid" && row.order_number ? (
+        <p className="text-sm text-emerald-800" data-testid="b2b-card-result-order">Siparişiniz alındı: {row.order_number}</p>
+      ) : null}
+      {row.status === "paid" && row.order_error && !row.order_number ? (
+        <p className="text-sm text-amber-900" data-testid="b2b-card-result-review">Ödemeniz alındı, siparişiniz firma onayında.</p>
+      ) : null}
       {reason && <p className="text-sm text-slate-700" data-testid="b2b-card-result-reason">{reason}</p>}
       <Link to={`/portal/${token}`} className="text-sm font-semibold text-emerald-700 underline" data-testid="b2b-card-result-back">Portala dön</Link>
     </div>

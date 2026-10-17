@@ -30,7 +30,8 @@ export function cardInstallment(value) {
 
 /**
  * Şirket varsayılanı veya cari override kart alanları.
- * Etkin sanal POS yoksa alanlar kilitlenir. Zorunlu ödeme PR-4b'ye kadar kapalıdır.
+ * Etkin sanal POS yoksa alanlar kilitlenir. Siparişte kart zorunlu yalnız şirket ayarıdır
+ * ve kartla ödeme kapalıyken seçilemez.
  */
 export function B2BCardSettingsFields({
   settings,
@@ -45,6 +46,7 @@ export function B2BCardSettingsFields({
   const locked = !vposReady || useCompanyDefault;
   const shown = useCompanyDefault && companyDefaults ? { ...CARD_COMPANY_DEFAULTS, ...companyDefaults } : (settings || {});
   const payer = shown.card_commission_payer === "buyer" ? "buyer" : "seller";
+  const requiredLocked = locked || !shown.card_payment_enabled;
   const set = (key, value) => {
     if (locked) return;
     onChange?.(key, value);
@@ -78,7 +80,11 @@ export function B2BCardSettingsFields({
             type="checkbox"
             checked={!!shown.card_payment_enabled}
             disabled={locked}
-            onChange={(e) => set("card_payment_enabled", e.target.checked)}
+            onChange={(e) => {
+              const on = e.target.checked;
+              set("card_payment_enabled", on);
+              if (!on && showRequired) set("card_payment_required", false);
+            }}
             className="mt-0.5 rounded"
             data-testid={`${testIdPrefix}-enabled`}
           />
@@ -127,18 +133,20 @@ export function B2BCardSettingsFields({
           />
         </div>
         {showRequired && (
-          <label className="sm:col-span-2 flex items-start gap-2 border border-dashed rounded-xl p-2.5 opacity-60 bg-slate-50">
+          <label className={`sm:col-span-2 flex items-start gap-2 border rounded-xl p-2.5 bg-slate-50 ${requiredLocked ? "opacity-60" : "cursor-pointer"}`}>
             <input
               type="checkbox"
-              checked={!!shown.card_payment_required}
-              disabled
-              readOnly
+              checked={!!shown.card_payment_required && !!shown.card_payment_enabled}
+              disabled={requiredLocked}
+              onChange={(e) => set("card_payment_required", e.target.checked)}
               className="mt-0.5 rounded"
               data-testid={`${testIdPrefix}-required`}
             />
             <span>
               <span className="block font-semibold text-slate-800">Siparişte kart zorunlu</span>
-              <span className="block text-[10px] text-slate-500">yakında</span>
+              <span className="block text-[10px] text-slate-500">
+                {shown.card_payment_enabled ? "Sipariş, kart ödemesi tamamlanınca açılır" : "Önce kartla ödemeyi açın"}
+              </span>
             </span>
           </label>
         )}

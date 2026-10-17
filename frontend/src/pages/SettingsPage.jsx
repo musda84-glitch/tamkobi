@@ -735,8 +735,17 @@ export const B2BSettings = ({ companyId }) => {
   }
   if (!d) return null;
   const st = d.settings;
-  const set = (k, v) => setD({ ...d, settings: { ...st, [k]: v } });
-  const save = async (applyAll) => { try { await axios.put(`${API_URL}/companies/${companyId}/b2b-settings`, { ...st, apply_discount_to_all: applyAll }); toast.success(applyAll ? "Kaydedildi, indirim tüm B2B müşterilerine uygulandı." : "B2B ayarları kaydedildi."); load(); } catch { toast.error("Kaydedilemedi."); } };
+  const set = (k, v) => setD((prev) => (prev ? { ...prev, settings: { ...(prev.settings || {}), [k]: v } } : prev));
+  const save = async (applyAll) => {
+    try {
+      await axios.put(`${API_URL}/companies/${companyId}/b2b-settings`, { ...st, apply_discount_to_all: applyAll });
+      toast.success(applyAll ? "Kaydedildi, indirim tüm B2B müşterilerine uygulandı." : "B2B ayarları kaydedildi.");
+      load();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" && detail.trim() ? detail : "Kaydedilemedi.");
+    }
+  };
   const toggleCustomer = async (c, enabled) => { try { const r = await axios.post(`${API_URL}/contacts/${c.id}/b2b-access`, { enabled, base_url: window.location.origin, discount: c.b2b_discount || st.default_discount }); if (enabled) { await navigator.clipboard?.writeText(r.data.link).catch(() => {}); toast.success("Portal linki kopyalandı."); } else toast.success("B2B erişimi kapatıldı."); load(); } catch { toast.error("İşlem başarısız."); } };
   const setDisc = async (c, v) => { try { await axios.post(`${API_URL}/contacts/${c.id}/b2b-access`, { enabled: c.b2b_enabled, discount: Number(v) || 0 }); load(); } catch { toast.error("Güncellenemedi."); } };
   const Tg = ({ k, l, sub }) => <label className="flex items-start gap-2 bg-slate-50 border rounded-xl p-2.5 cursor-pointer"><input type="checkbox" checked={!!st[k]} onChange={(e) => set(k, e.target.checked)} className="mt-0.5 rounded" data-testid={`b2b-set-${k}`} /><span><span className="block font-semibold text-slate-800">{l}</span>{sub && <span className="block text-[10px] text-slate-500">{sub}</span>}</span></label>;
