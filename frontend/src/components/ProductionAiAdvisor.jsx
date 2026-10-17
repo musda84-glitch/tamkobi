@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Bot, Loader2, Sparkles, Send, ChevronDown, ChevronUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { showProductionAiAdvisor } from "../utils/selfPersonnelNav";
+import AiMessageText from "./AiMessageText";
 
 const QUICK = [
   "Güncel üretim ve reçete durumunu yönetici için özetle.",
@@ -82,7 +83,7 @@ export function ProductionAiAdvisor({ companyId, compact = false }) {
             </div>
           )}
           {advice ? (
-            <div className="text-xs text-slate-800 whitespace-pre-wrap bg-white border border-emerald-100 rounded-xl p-3 max-h-64 overflow-y-auto" data-testid="production-ai-advice">{advice}</div>
+            <div className="text-xs text-slate-800 whitespace-pre-wrap bg-white border border-emerald-100 rounded-xl p-3 max-h-64 overflow-y-auto" data-testid="production-ai-advice"><AiMessageText text={advice} /></div>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {QUICK.map((p) => (

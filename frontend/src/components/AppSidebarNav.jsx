@@ -4,6 +4,7 @@ import { Link, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { groupIdOf, groupMenuItems, nextAccordionOpen } from "../navGroups";
 import { iconForNavGroup } from "../navGroupIcons";
+import { useAiStatus } from "../hooks/useAiStatus";
 
 const OPEN_KEY = "nav_groups_open_v4";
 
@@ -17,6 +18,7 @@ function loadOpen() {
 }
 
 export default function AppSidebarNav({ items, collapsed = false, onNavigate, onReorder, counts = {} }) {
+  const { badge: aiModelBadge } = useAiStatus();
   const location = useLocation();
   const groups = useMemo(() => groupMenuItems(items), [items]);
   const activePath = location.pathname;
@@ -65,6 +67,7 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
     const Icon = item.icon;
     const isActive = activePath === item.path;
     const count = Number(counts?.[item.path] || 0);
+    const badge = item.aiBadge ? (aiModelBadge || "") : (item.badge || "");
     return (
       <Link
         key={item.path}
@@ -119,7 +122,7 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
           )}
           {!collapsed && <span className="truncate">{item.label}</span>}
         </div>
-        {!collapsed && (count > 0 || item.badge) && (
+        {!collapsed && (count > 0 || badge) && (
           <span className="flex items-center gap-1 shrink-0">
             {count > 0 && (
               <span
@@ -131,13 +134,14 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
                 {count > 99 ? "99+" : count}
               </span>
             )}
-            {item.badge && (
+            {badge && (
               <span
                 className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
                   isActive ? "bg-white/20 text-white" : item.isAi ? "bg-purple-500/20 text-purple-300" : "bg-slate-800 text-slate-400"
                 }`}
+                data-testid={item.aiBadge ? "nav-ai-badge" : undefined}
               >
-                {item.badge}
+                {badge}
               </span>
             )}
           </span>
