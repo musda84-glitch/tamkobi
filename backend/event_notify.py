@@ -1445,7 +1445,7 @@ async def notify_orders_batch(company_id: str, orders: List[dict]) -> dict:
         oid = str(o.get("_id") or "")
         last = await notify_event(
             company_id, "order_new", title, message,
-            link="/orders",
+            link=f"/orders?open={quote(oid)}" if oid else "/orders",
             ref_type="order",
             ref_id=oid,
             dedupe_key=f"order:{oid}" if oid else None,
@@ -1465,7 +1465,7 @@ async def maybe_gib_credits_low(company_id: str, balance: int, threshold: Option
         company_id, "gib_credits_low",
         f"GİB kontör düşük ({bal})",
         f"Kalan kontör: {bal}. Eşik: {thr}. Yeni paket yükleyin veya platformdan kontör isteyin.",
-        link="/account",
+        link="/hesap",
         ref_type="gib_credits",
         ref_id=str(company_id),
         dedupe_key=f"gib_credits_low:{_today()}",
@@ -1490,11 +1490,12 @@ async def run_receivable_overdue() -> dict:
         total = sum(max(0.0, float(r.get("grand_total") or 0) - float(r.get("paid_amount") or 0)) for r in rows)
         title = f"{len(rows)} vadesi geçmiş alacak"
         message = f"Toplam {_fmt_amount(total)}. Tahsilatları kontrol edin."
+        inv_id = str(rows[0].get("_id") or "") if len(rows) == 1 else ""
         res = await notify_event(
             cid, "receivable_overdue", title, message,
-            link="/invoices",
-            ref_type="receivable",
-            ref_id=cid,
+            link=f"/invoices?open={quote(inv_id)}" if inv_id else "/invoices",
+            ref_type="invoice" if inv_id else "receivable",
+            ref_id=inv_id or cid,
             dedupe_key=f"receivable_overdue:{today}",
         )
         if res.get("status") not in ("skipped",):

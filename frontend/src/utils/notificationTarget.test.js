@@ -50,3 +50,57 @@ test("order, invoice, cari, payment and task detail routes", () => {
 test("missing record copy", () => {
   expect(MISSING_RECORD).toBe("Kayıt bulunamadı");
 });
+
+test("approval routes keep the record id and personnel tabs", () => {
+  expect(notificationTarget({
+    type: "pos_approval",
+    ref_type: "pos_approval",
+    ref_id: "p1",
+    link: "/hizli-satis",
+  }).route).toBe("/hizli-satis?onay=p1");
+  expect(notificationTarget({
+    type: "cash_approval",
+    ref_type: "cash_approval",
+    ref_id: "c1",
+    link: "/banking?tab=partners",
+  }).route).toBe("/banking?tab=partners&approval=c1");
+  expect(notificationTarget({
+    type: "cash_approval",
+    ref_id: "c2",
+    link: "/banking",
+  }).route).toBe("/banking?approval=c2");
+  const leave = notificationTarget({ type: "leave_request", ref_type: "leave_request", ref_id: "lv1", link: "/personnel?tab=leaves" });
+  expect(leave.route).toContain("tab=leaves");
+  expect(leave.route).toContain("leave=lv1");
+  expect(leave.route).not.toContain("employee=");
+  const advance = notificationTarget({ type: "advance_request", ref_id: "ad1" });
+  expect(advance.route).toContain("tab=payroll");
+  expect(advance.route).toContain("advance=ad1");
+  const overtime = notificationTarget({ type: "overtime_confirm", ref_type: "overtime_request", ref_id: "ot1", link: "/personnel?tab=attendance" });
+  expect(overtime.route).toContain("tab=attendance");
+  expect(overtime.route).toContain("overtime=ot1");
+  const yev = notificationTarget({ type: "yevmiye_adjustment", ref_id: "yv1" });
+  expect(yev.type).toBe("overtime_request");
+  expect(yev.route).toContain("tab=attendance");
+  expect(yev.route).toContain("overtime=yv1");
+});
+
+test("personnel tab link is not rewritten as an employee card", () => {
+  const target = notificationTarget({
+    link: "/personnel?tab=leaves",
+    ref_id: "emp-1",
+  });
+  expect(target.route).toContain("tab=leaves");
+  expect(target.route).not.toContain("employee=");
+});
+
+test("stored approval target without an id is completed from ref_id", () => {
+  const target = notificationTarget({
+    type: "cash_approval",
+    ref_id: "req-9",
+    link: "/banking?tab=partners",
+    target: { type: "cash_approval", id: "req-9", route: "/banking?tab=partners" },
+  });
+  expect(target.route).toBe("/banking?tab=partners&approval=req-9");
+  expect(target.id).toBe("req-9");
+});

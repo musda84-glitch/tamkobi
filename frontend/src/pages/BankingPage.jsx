@@ -140,8 +140,15 @@ export default function BankingPage() {
   const focusAccountName = searchParams.get("account") || "";
   const focusTx = searchParams.get("tx") || "";
   const focusPending = searchParams.get("pending") === "1";
+  const approvalId = searchParams.get("approval") || "";
   const missingTxToast = useRef(false);
   const [tab, setTab] = useState(searchParams.get("tab") === "match" ? "accounts" : (searchParams.get("tab") || "accounts"));
+  useEffect(() => {
+    const raw = searchParams.get("tab") || "";
+    if (!raw) return;
+    const next = raw === "match" ? "accounts" : raw;
+    setTab((cur) => (cur === next ? cur : next));
+  }, [searchParams]);
   const [contacts, setContacts] = useState([]);
   const [partnerSummary, setPartnerSummary] = useState(null);
   const [accounts, setAccounts] = useState([]);
@@ -716,7 +723,7 @@ export default function BankingPage() {
         ))}
       </div>
 
-      {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={bumpCashData} />}
+      {tab === "partners" && <PartnersPanel companyId={companyId} accounts={accounts} onCashChanged={bumpCashData} focusApprovalId={approvalId} />}
       {tab === "reconciliation" && <ReconciliationPanel companyId={companyId} canRepairBalances={canRepairBalances} />}
       {tab === "connections" && <BankConnectionsPanel companyId={companyId} accounts={accounts} contacts={contacts} onSynced={bumpCashData} />}
       {openingAccount && (
@@ -729,7 +736,7 @@ export default function BankingPage() {
       )}
 
       {tab === "accounts" && (<>
-      <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={bumpCashData} />
+      <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={bumpCashData} focusId={approvalId} />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="account-groups-grid">
         {partnerSummary && partnerSummary.partner_count > 0 && (
           <button onClick={() => setTab("partners")} className="bg-amber-50/60 p-5 rounded-2xl border border-amber-200 shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left" data-testid="partners-account-card">

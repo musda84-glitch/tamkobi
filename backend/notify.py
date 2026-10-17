@@ -139,6 +139,9 @@ _REF_KIND = {
     "bank_account": "bank_account",
     "cash_approval": "cash_approval",
     "pos_approval": "pos_approval",
+    "leave_request": "leave_request",
+    "advance_request": "advance_request",
+    "overtime_request": "overtime_request",
     "employee": "employee",
     "cheque": "cheque",
     "support": "support",
@@ -160,6 +163,11 @@ _TYPE_KIND = {
     "cash_approval": "cash_approval",
     "pos_approval": "pos_approval",
     "pos_approval_decision": "pos_approval",
+    "leave_request": "leave_request",
+    "advance_request": "advance_request",
+    "overtime_confirm": "overtime_request",
+    "yevmiye_adjustment": "overtime_request",
+    "overtime_request": "overtime_request",
     "receivable_overdue": "invoice",
     "project_photo_pending": "project",
     "role_assigned": "employee",
@@ -180,6 +188,9 @@ _ID_COLLECTIONS = {
     "bank_account": "bank_accounts",
     "cash_approval": "cash_approval_requests",
     "pos_approval": "pos_approvals",
+    "leave_request": "leave_requests",
+    "advance_request": "bonus_payments",
+    "overtime_request": "attendance",
     "employee": "employees",
     "cheque": "cheques",
     "support": "support_tickets",
@@ -269,10 +280,21 @@ def _kind_of(ntype: str, ref_type: str, link: str) -> str:
     if kind:
         return kind
     path = str(link or "").split("?", 1)[0]
+    if (path == "/personnel" or path.startswith("/personnel/")) and _parse_query(link).get("tab"):
+        return ""
     for prefix, mapped in _LINK_KIND:
         if path == prefix or path.startswith(prefix + "/"):
             return mapped
     return ""
+
+
+def _personnel_open(link: str, default_tab: str, key: str, rid: str) -> str:
+    query = _parse_query(link)
+    params: Dict[str, Any] = {"tab": query.get("tab") or default_tab}
+    ident = str(query.get(key) or rid or "")
+    if ident:
+        params[key] = ident
+    return "/personnel" + _q(params)
 
 
 def _route_for(
@@ -347,11 +369,28 @@ def _route_for(
             return link or "/banking"
         return "/banking" + _q(params)
     if kind == "cash_approval":
-        return link or "/banking"
+        query = _parse_query(link)
+        approval = str(query.get("approval") or rid or "")
+        params: Dict[str, Any] = {}
+        if query.get("tab"):
+            params["tab"] = query["tab"]
+        if approval:
+            params["approval"] = approval
+        if not params:
+            return link or "/banking"
+        path = str(link or "/banking").split("?", 1)[0] or "/banking"
+        return path + _q(params)
     if kind == "pos_approval":
-        if link:
-            return link
-        return f"/hizli-satis?onay={rid}" if rid else "/hizli-satis"
+        onay = str(_parse_query(link).get("onay") or rid or "")
+        if onay:
+            return f"/hizli-satis?onay={onay}"
+        return link or "/hizli-satis"
+    if kind == "leave_request":
+        return _personnel_open(link, "leaves", "leave", rid)
+    if kind == "advance_request":
+        return _personnel_open(link, "payroll", "advance", rid)
+    if kind == "overtime_request":
+        return _personnel_open(link, "attendance", "overtime", rid)
     if kind == "employee":
         return f"/personnel?employee={rid}" if rid else (link or "/personnel")
     if kind == "cheque":
@@ -420,6 +459,16 @@ def build_notification_target(
         rid = str(query.get("contact_id") or ref_id or "")
     elif kind == "task":
         rid = str(query.get("task") or ref_id or "")
+    elif kind == "cash_approval":
+        rid = str(query.get("approval") or ref_id or "")
+    elif kind == "pos_approval":
+        rid = str(query.get("onay") or ref_id or "")
+    elif kind == "leave_request":
+        rid = str(query.get("leave") or ref_id or "")
+    elif kind == "advance_request":
+        rid = str(query.get("advance") or ref_id or "")
+    elif kind == "overtime_request":
+        rid = str(query.get("overtime") or ref_id or "")
     elif kind == "order" and not rid:
         numbered = _ORDER_NO_RE.search(text)
         if numbered:
@@ -444,26 +493,61 @@ def build_notification_target(
     return {"type": kind, "id": rid, "route": route}
 
 
+_RECORD_OPEN = {
+    "cash_approval": ("approval", "/banking"),
+    "pos_approval": ("onay", "/hizli-satis"),
+    "leave_request": ("leave", "/personnel?tab=leaves"),
+    "advance_request": ("advance", "/personnel?tab=payroll"),
+    "overtime_request": ("overtime", "/personnel?tab=attendance"),
+}
+
+
+def _complete_record_route(note: Optional[Dict[str, Any]], target: Dict[str, str]) -> Dict[str, str]:
+    """Linkte kayıt id yoksa ref_id ile tamamlar. Linksiz eski kayıt liste sayfasına düşer."""
+    src = note or {}
+    kind = str(target.get("type") or "")
+    spec = _RECORD_OPEN.get(kind)
+    if not spec:
+        if not target.get("route"):
+            typed = _TYPE_KIND.get(str(src.get("type") or "")) or ""
+            if typed in _RECORD_OPEN:
+                rid = str(src.get("ref_id") or "")
+                route = _route_for(typed, rid, link=str(src.get("link") or ""))
+                return {"type": typed, "id": rid, "route": route or _RECORD_OPEN[typed][1]}
+        return target
+    key, fallback = spec
+    route = str(target.get("route") or src.get("link") or "")
+    query = _parse_query(route)
+    rid = str(target.get("id") or src.get("ref_id") or query.get(key) or "")
+    if rid and not query.get(key):
+        route = _route_for(kind, rid, link=route or fallback)
+    elif not route:
+        route = fallback
+    return {"type": kind, "id": rid, "route": route}
+
+
 def infer_notification_target(note: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """Kayıtlı target varsa onu kullan; eski bildirimde type + metinden route üret (yazmaz)."""
     src = note or {}
     stored = src.get("target")
     if isinstance(stored, dict) and stored.get("type") and stored.get("route"):
-        return normalize_target(stored)
-    return build_notification_target(
-        str(src.get("type") or ""),
-        title=str(src.get("title") or ""),
-        message=str(src.get("message") or ""),
-        link=str(src.get("link") or ""),
-        ref_type=src.get("ref_type"),
-        ref_id=src.get("ref_id"),
-        account_id=str(src.get("account_id") or ""),
-        account_name=str(src.get("account_name") or ""),
-        tx_id=str(src.get("tx_id") or ""),
-        ettn=str(src.get("ettn") or ""),
-        project_id=str(src.get("project_id") or ""),
-        pending=src.get("pending") if "pending" in src else None,
-    )
+        base = normalize_target(stored)
+    else:
+        base = build_notification_target(
+            str(src.get("type") or ""),
+            title=str(src.get("title") or ""),
+            message=str(src.get("message") or ""),
+            link=str(src.get("link") or ""),
+            ref_type=src.get("ref_type"),
+            ref_id=src.get("ref_id"),
+            account_id=str(src.get("account_id") or ""),
+            account_name=str(src.get("account_name") or ""),
+            tx_id=str(src.get("tx_id") or ""),
+            ettn=str(src.get("ettn") or ""),
+            project_id=str(src.get("project_id") or ""),
+            pending=src.get("pending") if "pending" in src else None,
+        )
+    return _complete_record_route(src, base)
 
 
 def present_notification(note: Dict[str, Any]) -> Dict[str, Any]:

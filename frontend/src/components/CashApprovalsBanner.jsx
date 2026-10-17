@@ -1,19 +1,35 @@
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, XCircle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { MISSING_RECORD } from "../utils/notificationTarget";
 
-export const CashApprovalsBanner = ({ companyId, onChanged, refreshKey }) => {
+export const CashApprovalsBanner = ({ companyId, onChanged, refreshKey, focusId = "" }) => {
   const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const warned = useRef("");
   const load = useCallback(async () => {
     try {
       const r = await axios.get(`${API_URL}/banking/cash-approvals`, { params: { company_id: companyId, status: "pending" } });
       setItems(r.data || []);
     } catch { /* offline */ }
+    finally { setLoaded(true); }
   }, [companyId]);
   useEffect(() => { load(); }, [load, refreshKey]);
+  useEffect(() => {
+    if (!focusId || !loaded) return;
+    const hit = items.find((r) => String(r.id) === String(focusId));
+    if (!hit) {
+      if (warned.current !== focusId) {
+        warned.current = focusId;
+        toast.error(MISSING_RECORD);
+      }
+      return;
+    }
+    document.querySelector(`[data-testid="cash-approval-${focusId}"]`)?.scrollIntoView?.({ block: "center" });
+  }, [focusId, items, loaded]);
 
   const act = async (id, action) => {
     try {
@@ -28,7 +44,7 @@ export const CashApprovalsBanner = ({ companyId, onChanged, refreshKey }) => {
   return (
     <div className="space-y-2" data-testid="cash-approvals-banner">
       {items.map((r) => (
-        <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-xs" data-testid={`cash-approval-${r.id}`}>
+        <div key={r.id} className={`flex flex-col sm:flex-row sm:items-center gap-2 bg-amber-50 border rounded-xl px-3 py-2.5 text-xs ${String(focusId) === String(r.id) ? "border-amber-500 ring-2 ring-amber-300" : "border-amber-200"}`} data-testid={`cash-approval-${r.id}`} data-open-focus={String(focusId) === String(r.id) ? "1" : "0"}>
           <Clock className="w-4 h-4 text-amber-600 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="font-bold text-slate-900">{r.kind_label || r.kind} · onay bekliyor</div>

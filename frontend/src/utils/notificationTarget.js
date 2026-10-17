@@ -25,6 +25,9 @@ const REF_KIND = {
   bank_account: "bank_account",
   cash_approval: "cash_approval",
   pos_approval: "pos_approval",
+  leave_request: "leave_request",
+  advance_request: "advance_request",
+  overtime_request: "overtime_request",
   employee: "employee",
   cheque: "cheque",
   support: "support",
@@ -43,6 +46,11 @@ const TYPE_KIND = {
   task_assigned: "task",
   cash_approval: "cash_approval",
   pos_approval: "pos_approval",
+  leave_request: "leave_request",
+  advance_request: "advance_request",
+  overtime_confirm: "overtime_request",
+  yevmiye_adjustment: "overtime_request",
+  overtime_request: "overtime_request",
   receivable_overdue: "invoice",
   project_photo_pending: "project",
   role_assigned: "employee",
@@ -86,6 +94,7 @@ function kindOf(note, link) {
   const typed = TYPE_KIND[String(note?.type || "")];
   if (typed) return typed;
   const path = String(link || "").split("?")[0];
+  if ((path === "/personnel" || path.startsWith("/personnel/")) && queryOf(link).tab) return "";
   const table = [
     ["/edoc-inbox", "edoc"],
     ["/orders", "order"],
@@ -107,10 +116,40 @@ function kindOf(note, link) {
   return hit ? hit[1] : "";
 }
 
+function personnelRoute(query, defaultTab, key, rid) {
+  const params = { tab: query.tab || defaultTab };
+  const ident = query[key] || rid || "";
+  if (ident) params[key] = ident;
+  return `/personnel${enc(params)}`;
+}
+
+function finishRoute(kind, route, id) {
+  const query = queryOf(route);
+  if (kind === "cash_approval") {
+    const approval = query.approval || id;
+    if (!approval) return route || "/banking";
+    if (query.approval) return route;
+    const params = {};
+    if (query.tab) params.tab = query.tab;
+    params.approval = approval;
+    return `/banking${enc(params)}`;
+  }
+  if (kind === "pos_approval") {
+    const onay = query.onay || id;
+    return onay ? `/hizli-satis?onay=${encodeURIComponent(onay)}` : (route || "/hizli-satis");
+  }
+  if (kind === "leave_request") return personnelRoute(query, "leaves", "leave", id);
+  if (kind === "advance_request") return personnelRoute(query, "payroll", "advance", id);
+  if (kind === "overtime_request") return personnelRoute(query, "attendance", "overtime", id);
+  return route || "";
+}
+
 export function notificationTarget(note) {
   const stored = note?.target;
   if (stored && stored.type && stored.route) {
-    return { type: String(stored.type), id: String(stored.id || ""), route: String(stored.route) };
+    const type = String(stored.type);
+    const id = String(stored.id || note?.ref_id || queryOf(stored.route).approval || queryOf(stored.route).onay || queryOf(stored.route).leave || queryOf(stored.route).advance || queryOf(stored.route).overtime || "");
+    return { type, id, route: finishRoute(type, String(stored.route), id) };
   }
   const link = String(note?.link || "");
   const query = queryOf(link);
@@ -125,6 +164,11 @@ export function notificationTarget(note) {
     rid = String(note?.account_id || query.account_id || ((note?.ref_type === "bank" || note?.ref_type === "bank_account") ? note?.ref_id : "") || "");
   } else if (kind === "contact") rid = String(query.contact_id || note?.ref_id || "");
   else if (kind === "task") rid = String(query.task || note?.ref_id || "");
+  else if (kind === "cash_approval") rid = String(query.approval || note?.ref_id || "");
+  else if (kind === "pos_approval") rid = String(query.onay || note?.ref_id || "");
+  else if (kind === "leave_request") rid = String(query.leave || note?.ref_id || "");
+  else if (kind === "advance_request") rid = String(query.advance || note?.ref_id || "");
+  else if (kind === "overtime_request") rid = String(query.overtime || note?.ref_id || "");
   const blob = `${link} ${note?.message || ""}`.toLowerCase();
   const pending = note?.pending === true || blob.includes("tab=match") || blob.includes("eşleşme bekliyor") || query.pending === "1";
   if (kind === "order" && !rid) {
@@ -153,8 +197,9 @@ export function notificationTarget(note) {
     route = Object.keys(params).length ? `/banking${enc(params)}` : (link || "/banking");
   } else if (kind === "employee") route = rid ? `/personnel?employee=${rid}` : (link || "/personnel");
   else if (kind === "cheque") route = rid ? `/cheques?open=${rid}` : (link || "/cheques");
-  else if (kind === "pos_approval") route = link || (rid ? `/hizli-satis?onay=${rid}` : "/hizli-satis");
+  else if (kind === "pos_approval") route = finishRoute(kind, link, rid);
+  else if (kind === "cash_approval") route = finishRoute(kind, link, rid);
+  else if (kind === "leave_request" || kind === "advance_request" || kind === "overtime_request") route = finishRoute(kind, link, rid);
   else if (kind === "license") route = link || "/hesap";
-  else if (!route && kind === "cash_approval") route = "/banking";
   return { type: kind, id: rid, route: route || "" };
 }

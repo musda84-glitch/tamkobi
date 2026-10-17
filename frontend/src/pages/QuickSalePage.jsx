@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   Banknote,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { MISSING_RECORD } from "../utils/notificationTarget";
 import { usePosSession } from "../context/PosSessionContext";
 import { actionIsFree, isPendingApproval, mixedChange } from "../utils/posCashier";
 import { CameraScanner, ScanButton } from "../components/CameraScanner";
@@ -124,6 +126,10 @@ function ShortcutTile({ product, onClick, tablet }) {
 export default function QuickSalePage() {
   const { activeCompany } = useAuth();
   const pos = usePosSession();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const onayId = searchParams.get("onay") || "";
+  const [approvalCard, setApprovalCard] = useState(null);
+  const openedOnay = useRef("");
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const posRules = pos?.session?.rules || pos?.rules || {};
   const barcodeRef = useRef(null);
@@ -212,6 +218,43 @@ export default function QuickSalePage() {
   }, [tabletMode]);
 
   useEffect(() => { focusBarcode(); }, [tabletMode, focusBarcode]);
+
+  useEffect(() => {
+    if (!onayId || openedOnay.current === onayId) return undefined;
+    openedOnay.current = onayId;
+    let cancel = false;
+    axios.get(`${API_URL}/pos/approvals/${encodeURIComponent(onayId)}`)
+      .then((r) => {
+        if (cancel) return;
+        setApprovalCard(r.data || null);
+        if (!r.data) toast.error(MISSING_RECORD);
+      })
+      .catch(() => {
+        if (!cancel) toast.error(MISSING_RECORD);
+      })
+      .finally(() => {
+        if (cancel) return;
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("onay");
+          return next;
+        }, { replace: true });
+      });
+    return () => { cancel = true; };
+  }, [onayId, setSearchParams]);
+
+  const decidePosApproval = async (action) => {
+    const id = approvalCard?.id || approvalCard?._id;
+    if (!id) return;
+    try {
+      const r = await axios.post(`${API_URL}/pos/approvals/${id}/${action}`, {});
+      toast.success(r.data?.message || (action === "approve" ? "Onaylandı" : "Reddedildi"));
+      setApprovalCard(null);
+      await pos.reload?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem yapılamadı.");
+    }
+  };
 
   useEffect(() => {
     const sc = pos?.session?.cart;
@@ -1285,6 +1328,27 @@ export default function QuickSalePage() {
                 <button type="submit" className="w-full bg-slate-900 text-white rounded-xl py-2 font-bold" data-testid="pos-shift-close">Gün sonu kapat</button>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {approvalCard && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" data-testid="pos-approval-card">
+          <div className="bg-white rounded-2xl border border-amber-200 shadow-xl max-w-md w-full p-4 space-y-2">
+            <div className="font-bold text-slate-900">{approvalCard.kind_label || approvalCard.kind || "POS onay"} · onay bekliyor</div>
+            <div className="text-sm text-slate-600">{approvalCard.summary || "—"}</div>
+            {approvalCard.requested_by_name ? <div className="text-xs text-slate-400">{approvalCard.requested_by_name}</div> : null}
+            <div className="flex flex-wrap gap-2 justify-end pt-1">
+              <button type="button" onClick={() => setApprovalCard(null)} className="px-3 py-1.5 border rounded-lg text-xs font-semibold" data-testid="pos-approval-close">Kapat</button>
+              {approvalCard.can_approve ? (
+                <>
+                  <button type="button" onClick={() => decidePosApproval("approve")} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold" data-testid="pos-approval-approve">Onayla</button>
+                  <button type="button" onClick={() => decidePosApproval("reject")} className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-xs font-semibold" data-testid="pos-approval-reject">Reddet</button>
+                </>
+              ) : (
+                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">Diğer yönetici onayı bekleniyor</span>
+              )}
+            </div>
           </div>
         </div>
       )}

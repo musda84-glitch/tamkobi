@@ -3146,8 +3146,10 @@ async def maybe_open_overtime_confirm(
         + (f" · ~{hours:g} sa potansiyel fazla mesai" if hours else "")
         + (f" · çıkış toleransı {exit_tol_m} dk" if exit_tol_m else "")
         + ". Evet → artı mesai yaz · Hayır → yazma.",
-        link="/personnel?tab=attendance",
+        link=f"/personnel?tab=attendance&overtime={att_id}",
         dedupe_key=f"otconfirm:{emp.get('_id')}:{day}",
+        ref_id=str(att_id) if att_id else None,
+        ref_type="overtime_request",
     )
     return req
 
@@ -3890,8 +3892,10 @@ async def sync_yevmiye_adjustment(emp: dict, rec: dict, schedule: dict) -> Optio
         f"{emp.get('full_name')} {rec.get('date')}: tam {wage} ₺ → kesilecek {proposed} ₺ · Ücret kes / ücret kesme"
         + (f" · {late} dk geç" if late else "")
         + (f" · {early} dk erken" if early else ""),
-        link="/personnel?tab=attendance",
+        link=f"/personnel?tab=attendance&overtime={rec.get('id') or rec.get('_id')}",
         dedupe_key=f"yev:{emp['_id']}:{rec.get('date')}",
+        ref_id=str(rec.get("id") or rec.get("_id") or ""),
+        ref_type="overtime_request",
     )
     return bonus
 
@@ -4462,7 +4466,32 @@ def init_notify(mail_account_fn, smtp_send_fn):
     _mail_account_fn, _smtp_send_fn = mail_account_fn, smtp_send_fn
 
 
-async def notify_managers(company_id: str, ntype: str, title: str, message: str, link: str = "/personnel?tab=attendance", dedupe_key: Optional[str] = None) -> dict:
+# Onay kaydı → mevcut personel sekmesi + id parametresi + ref_type. Yeni sekme açılmaz.
+_APPROVAL_OPEN = {
+    "leave_request": ("/personnel?tab=leaves", "leave", "leave_request"),
+    "advance_request": ("/personnel?tab=payroll", "advance", "advance_request"),
+    "overtime_confirm": ("/personnel?tab=attendance", "overtime", "overtime_request"),
+    "yevmiye_adjustment": ("/personnel?tab=attendance", "overtime", "overtime_request"),
+}
+
+
+def approval_notify_link(ntype: str, ref_id: str = "", link: str = "") -> str:
+    """İzin/avans/mesai bildiriminde sekmeyi koruyup kayıt id'sini ekler."""
+    spec = _APPROVAL_OPEN.get(ntype)
+    base = link or (spec[0] if spec else "/personnel?tab=attendance")
+    rid = str(ref_id or "").strip()
+    if not spec or not rid:
+        return base
+    key = spec[1]
+    if f"{key}=" in base:
+        return base
+    if "tab=" not in base:
+        base = spec[0]
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}{key}={rid}"
+
+
+async def notify_managers(company_id: str, ntype: str, title: str, message: str, link: str = "/personnel?tab=attendance", dedupe_key: Optional[str] = None, ref_id: Optional[str] = None, ref_type: Optional[str] = None) -> dict:
     if dedupe_key:
         if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}"}):
             return {"status": "duplicate", "mail": {"status": "skipped"}}
@@ -4478,15 +4507,22 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
         except Exception:
             logger.exception("attendance inapp gate failed company=%s type=%s", company_id, ntype)
             write_inapp = True
+    spec = _APPROVAL_OPEN.get(ntype)
+    open_link = approval_notify_link(ntype, ref_id or "", link)
+    resolved_ref = ref_type or (spec[2] if spec and ref_id else None)
     if write_inapp:
-        await _notify.insert_notification(_db, _notify.notification_doc(company_id, ntype, title, message, link=link, roles=roles))
+        await _notify.insert_notification(_db, _notify.notification_doc(
+            company_id, ntype, title, message, link=open_link, roles=roles,
+            ref_type=resolved_ref, ref_id=str(ref_id) if ref_id else None,
+        ))
     mail = {"status": "skipped"}
     if event:
         try:
             import event_notify
             queued = await event_notify.queue_event_email(
                 company_id, event, title, message,
-                link=link, ref_type="attendance",
+                link=open_link, ref_type="attendance",
+                ref_id=str(ref_id) if ref_id else None,
                 dedupe_key=f"{ntype}:{dedupe_key}" if dedupe_key else None,
             )
             if isinstance(queued, dict):
@@ -5022,8 +5058,10 @@ async def request_my_advance(req: Dict[str, Any], request: Request):
         "advance_request",
         f"Avans talebi: {emp['full_name']}",
         f"{emp['full_name']} {parsed['amount']:,.2f} ₺ avans talep etti{when}. {parsed['note']}".strip(),
-        link="/personnel?tab=payroll",
+        link=f"/personnel?tab=payroll&advance={doc['_id']}",
         dedupe_key=f"advance:{emp['_id']}:{parsed['period']}",
+        ref_id=doc["_id"],
+        ref_type="advance_request",
     )
     return {**_clean(doc), "message": "Avans talebiniz yöneticiye iletildi."}
 
@@ -5075,7 +5113,7 @@ async def create_my_leave(req: Dict[str, Any], request: Request):
            "start_date": req["start_date"], "end_date": req["end_date"], "days": days, "reason": (req.get("reason") or "")[:300], "status": "pending", "source": "self",
            "decided_at": None, "created_at": _now()}
     await _db.leave_requests.insert_one(doc)
-    await notify_managers(emp["company_id"], "leave_request", f"İzin talebi: {emp['full_name']}", f"{emp['full_name']} {LEAVE_TYPES[leave_type].lower()} izin talep etti: {req['start_date']} → {req['end_date']} ({days:g} gün). {doc['reason']}".strip(), link="/personnel?tab=leaves")
+    await notify_managers(emp["company_id"], "leave_request", f"İzin talebi: {emp['full_name']}", f"{emp['full_name']} {LEAVE_TYPES[leave_type].lower()} izin talep etti: {req['start_date']} → {req['end_date']} ({days:g} gün). {doc['reason']}".strip(), link=f"/personnel?tab=leaves&leave={doc['_id']}", ref_id=doc["_id"], ref_type="leave_request")
     return _clean(doc)
 
 

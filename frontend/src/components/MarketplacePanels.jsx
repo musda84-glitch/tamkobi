@@ -1,5 +1,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { RotateCcw, XCircle, MessageCircleQuestion, Send, PackageCheck, Loader2, Receipt, Ban, Truck } from "lucide-react";
@@ -299,11 +300,27 @@ const Q_STATUS_TR = {
 };
 
 export const QuestionsPanel = ({ companyId }) => {
+  const [searchParams] = useSearchParams();
+  const focusQuestion = searchParams.get("question") || "";
+  const missingQuestion = useRef("");
   const [rows, setRows] = useState(null);
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/marketplace/questions?company_id=${companyId}`).then((r) => setRows(r.data)).catch(() => toast.error("Sorular yüklenemedi.")), [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!focusQuestion || !rows) return;
+    const hit = rows.find((q) => [q.id, q._id, q.external_id].some((v) => String(v || "") === String(focusQuestion)));
+    if (!hit) {
+      if (missingQuestion.current !== focusQuestion) {
+        missingQuestion.current = focusQuestion;
+        toast.error("Kayıt bulunamadı");
+      }
+      return;
+    }
+    const el = document.querySelector(`[data-question-id="${hit.id || hit._id || hit.external_id}"]`);
+    el?.scrollIntoView?.({ block: "center" });
+  }, [focusQuestion, rows]);
   const send = async (q) => {
     setBusy(q.id);
     try {
@@ -330,7 +347,7 @@ export const QuestionsPanel = ({ companyId }) => {
         const expired = q.status === "ANSWER_EXPIRED" || q.answer_blocked_reason === "unanswered_time_limit";
         const statusCls = q.status === "ANSWERED" ? "bg-emerald-100 text-emerald-700" : q.status === "WAITING_FOR_ANSWER" ? "bg-amber-100 text-amber-700" : expired ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600";
         return (
-        <div key={q.id} className="px-4 py-3 space-y-1.5" data-testid={`question-${q.external_id}`}>
+        <div key={q.id} className={`px-4 py-3 space-y-1.5 ${[q.id, q._id, q.external_id].some((v) => String(v || "") === String(focusQuestion)) ? "bg-amber-50 ring-2 ring-inset ring-amber-300" : ""}`} data-testid={`question-${q.external_id}`} data-question-id={q.id || q._id || q.external_id} data-open-focus={[q.id, q._id, q.external_id].some((v) => String(v || "") === String(focusQuestion)) ? "1" : "0"}>
           <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">{channelTr(q.channel)}</span><span className="font-semibold text-slate-800">{q.product_name}</span><span className="text-slate-400">{dt(q.asked_at)}</span><span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ${statusCls}`} data-testid={`question-status-${q.external_id}`}>{Q_STATUS_TR[q.status] || q.status}</span></div>
           <div className="bg-slate-50 rounded-xl p-2.5 text-slate-800">“{q.question}”</div>
           {q.answer ? <div className="bg-emerald-50 rounded-xl p-2.5 text-emerald-900"><b>Cevabınız:</b> {q.answer} <span className="text-emerald-600">· {dt(q.answered_at)}</span></div>

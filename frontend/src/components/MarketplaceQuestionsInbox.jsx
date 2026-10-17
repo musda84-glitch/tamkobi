@@ -111,8 +111,9 @@ export function MarketplaceQuestionsInbox({ companyId }) {
                   <div className="text-[11px] text-slate-600 line-clamp-2" title={q.question}>“{q.question || "—"}”</div>
                 </div>
                 <Link
-                  to="/orders?tab=questions"
+                  to={`/orders?tab=questions&question=${encodeURIComponent(id)}`}
                   className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-600 hover:text-slate-900 mt-0.5"
+                  data-testid={`marketplace-question-open-${id}`}
                 >
                   Aç <ChevronRight className="w-3 h-3" />
                 </Link>
