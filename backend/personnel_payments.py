@@ -559,6 +559,161 @@ async def _insert_advance(
     return [{"collection": "bonus_payments", "id": bid, "action": "insert", "paid_delta": round(amount, 2)}]
 
 
+_BANK_MATCH_NO_DEBT = "Bu personelde açık masraf borcu yok — Avans, Maaş veya 'Şirket masrafı' seçin."
+
+
+def _bankmatch_key(tx_id: str) -> str:
+    return f"bankmatch:{str(tx_id or '').strip()}"[:200]
+
+
+def _debt_sort_key(exp: dict):
+    return (str(exp.get("date") or "9999-99-99"), str(exp.get("created_at") or ""), str(exp.get("_id") or ""))
+
+
+async def _open_personnel_debts(db, emp: dict) -> List[dict]:
+    """Açık personel masraf borçları, tarihe göre (FIFO)."""
+    rows = await _rows(db, "expenses", {"employee_id": emp.get("_id"), "company_id": _cid(emp)})
+    pending = [
+        e for e in rows
+        if employee_pay.personnel_debt_open(e) and employee_pay.personnel_debt_amount(e) > 0.004
+    ]
+    pending.sort(key=_debt_sort_key)
+    return pending
+
+
+def _debts_can_cover(pending: List[dict], amount: float) -> bool:
+    """_cover_expenses / _mark_amount: tutarı aşan satır atlanır, sıradakine bakılır."""
+    left = round(amount, 2)
+    for exp in pending:
+        if left <= 0.004:
+            break
+        debt = employee_pay.personnel_debt_amount(exp)
+        if debt <= 0.004 or debt > left + 0.004:
+            continue
+        return True
+    return False
+
+
+async def _existing_bank_tx(db, emp: dict, payload: dict, lines: List[dict]) -> Optional[dict]:
+    """Mevcut bank_sync çıkışına bağlama. Satır 1, tutar = |tx.amount|, aynı şirket."""
+    tx_id = str((payload or {}).get("existing_bank_tx_id") or "").strip()
+    if not tx_id:
+        return None
+    if len(lines) != 1:
+        raise HTTPException(status_code=400, detail="Banka eşleştirmesinde tek ödeme satırı olmalı.")
+    actor = (payload or {}).get("_actor")
+    cid = _cid(emp)
+    if actor:
+        tx = await tenant_access.get_tenant_doc(
+            db, "bank_transactions", tx_id, actor, not_found="Banka hareketi bulunamadı.",
+        )
+        if str(tx.get("company_id") or "") != cid:
+            raise HTTPException(status_code=404, detail="Banka hareketi bulunamadı.")
+    else:
+        tx = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+        if not tx:
+            raise HTTPException(status_code=404, detail="Banka hareketi bulunamadı.")
+    if str(tx.get("type") or "") != "outflow":
+        raise HTTPException(status_code=400, detail="Banka eşleştirmesi yalnızca çıkış hareketlerinde yapılabilir.")
+    if str(tx.get("source") or "") != "bank_sync":
+        raise HTTPException(status_code=400, detail="Yalnızca bankadan gelen hareket personele bağlanabilir.")
+    tx_amount = round(abs(_amt(tx.get("amount"))), 2)
+    if abs(round(lines[0]["amount"], 2) - tx_amount) > 0.02:
+        raise HTTPException(status_code=400, detail="Ödeme tutarı banka hareketiyle aynı olmalı.")
+    bound = str(tx.get("employee_id") or "").strip()
+    if bound and bound != str(emp.get("_id") or ""):
+        raise HTTPException(status_code=400, detail="Banka hareketi bu personele ait değil.")
+    aid = str(lines[0].get("account_id") or "")
+    tx_aid = str(tx.get("account_id") or "")
+    if aid and tx_aid and aid != tx_aid:
+        raise HTTPException(status_code=400, detail="Ödeme hesabı banka hareketinin hesabıyla aynı olmalı.")
+    return tx
+
+
+async def _link_existing_bank_tx(
+    db, emp: dict, tx: dict, movement_id: str, cx: finance_txn.CompensatingTxn,
+) -> str:
+    """Banka bakiyesine ve bank_transactions insert'ine dokunma.
+
+    _link alanları (source / source_type / source_id) yazılmaz; reverse_linked
+    bank_sync kaydını silmesin. Yalnızca personnel_movement_id bağlanır.
+    """
+    cid = _cid(emp)
+    tx_id = tx["_id"]
+    await db.bank_transactions.update_one(
+        {"_id": tx_id, "company_id": cid},
+        {"$set": {"personnel_movement_id": movement_id}},
+    )
+
+    async def _undo(tx_id=tx_id, cid=cid):
+        await db.bank_transactions.update_one(
+            {"_id": tx_id, "company_id": cid},
+            {"$unset": {"personnel_movement_id": ""}},
+        )
+
+    cx.push("bank_link", _undo)
+    return tx.get("account_name") or "Hesap"
+
+
+async def _cover_open_personnel_debts(
+    db, emp: dict, ln: dict, movement_id: str, pay_date: str, *, cx: finance_txn.CompensatingTxn,
+) -> List[dict]:
+    """Açık MSR borçlarını tarihe göre kapat. Yeni gider yazılmaz."""
+    pending = await _open_personnel_debts(db, emp)
+    left = round(ln["amount"], 2)
+    effects: List[dict] = []
+    for exp in pending:
+        if left <= 0.004:
+            break
+        debt = employee_pay.personnel_debt_amount(exp)
+        if debt <= 0.004 or debt > left + 0.004:
+            continue
+        piece = dict(ln)
+        piece["amount"] = debt
+        effects.extend(await _close_personnel_debt(
+            db, emp, exp, piece, movement_id, pay_date, cx=cx,
+        ))
+        if piece.get("expense_id"):
+            ln["expense_id"] = piece["expense_id"]
+        if piece.get("expense_number"):
+            ln["expense_number"] = piece["expense_number"]
+        left = round(left - debt, 2)
+    if not effects:
+        raise HTTPException(status_code=400, detail=_BANK_MATCH_NO_DEBT)
+    return effects
+
+
+async def _open_bank_match_movement(db, emp: dict, key: str) -> Optional[dict]:
+    if not key:
+        return None
+    return await db.personnel_movements.find_one({
+        "company_id": _cid(emp),
+        "idempotency_key": key,
+        "status": {"$nin": ["reversed", "cancelled", "reversing"]},
+    })
+
+
+def _idempotent_movement_result(mov: dict) -> dict:
+    return {
+        "status": "success",
+        "idempotent": True,
+        "paid": [mov.get("kind")],
+        "date": mov.get("date"),
+        "period": mov.get("period"),
+        "lines": [{
+            "id": mov.get("_id"),
+            "kind": mov.get("kind"),
+            "kind_label": mov.get("kind_label"),
+            "amount": mov.get("amount"),
+            "account_name": mov.get("account_name"),
+            "description": mov.get("description") or "",
+            "period": mov.get("period"),
+        }],
+        "receipt_id": mov.get("receipt_id"),
+        "message": "Bu banka hareketi zaten personele işlendi.",
+    }
+
+
 async def _cash_out(
     db, emp: dict, ln: dict, acc: Optional[dict], pay_date: str, period: str, movement_id: str, cx: finance_txn.CompensatingTxn,
 ) -> Optional[str]:
@@ -988,9 +1143,11 @@ async def _apply_payment_lines_body(
     sgk_err = employee_pay.validate_sgk_lines(emp, company, lines, accounts)
     if sgk_err:
         raise HTTPException(status_code=400, detail=sgk_err)
-    cash_err = employee_pay.grouped_cash_shortfall(lines, accounts)
-    if cash_err:
-        raise HTTPException(status_code=400, detail=cash_err)
+    # Mevcut bank_sync çıkışı bakiyeyi zaten düşürdü; kasa yeterlilik kontrolü ikinci çıkış değildir.
+    if not str(payload.get("existing_bank_tx_id") or "").strip():
+        cash_err = employee_pay.grouped_cash_shortfall(lines, accounts)
+        if cash_err:
+            raise HTTPException(status_code=400, detail=cash_err)
 
     balance_lines = employee_pay.payment_lines_affecting_balance(lines)
     preview = employee_pay.payment_after(balance.get("remaining"), balance_lines)
@@ -998,13 +1155,26 @@ async def _apply_payment_lines_body(
     manual_salary = any(ln["kind"] == "salary" for ln in lines) and _amt(balance.get("unpaid_payroll")) <= 0.004
     key = str(payload.get("idempotency_key") or "").strip()[:200]
     receipt_id = f"rcpt_{uuid.uuid4().hex[:10]}"
+    existing_tx = await _existing_bank_tx(db, emp, payload, lines)
+    if (
+        existing_tx
+        and lines[0]["kind"] == "reimburse"
+        and not lines[0].get("expense_id")
+        and not lines[0].get("expense_number")
+    ):
+        pending = await _open_personnel_debts(db, emp)
+        if not _debts_can_cover(pending, lines[0]["amount"]):
+            raise HTTPException(status_code=400, detail=_BANK_MATCH_NO_DEBT)
 
     async def _body(cx: finance_txn.CompensatingTxn) -> dict:
         saved_lines = []
         for ln in lines:
             movement_id = str(uuid.uuid4())
-            acc = accounts.get(ln.get("account_id") or "")
-            account_name = await _cash_out(db, emp, ln, acc, pay_date, period, movement_id, cx)
+            if existing_tx:
+                account_name = await _link_existing_bank_tx(db, emp, existing_tx, movement_id, cx)
+            else:
+                acc = accounts.get(ln.get("account_id") or "")
+                account_name = await _cash_out(db, emp, ln, acc, pay_date, period, movement_id, cx)
             excess = 0.0
             effects: List[dict] = []
             if ln["kind"] in ("salary", "remaining"):
@@ -1033,9 +1203,14 @@ async def _apply_payment_lines_body(
                 )
                 effects.extend(cov)
             elif ln["kind"] == "reimburse":
-                effects.extend(await _apply_reimburse(
-                    db, emp, ln, movement_id, pay_date, period, account_name, cx=cx,
-                ))
+                if existing_tx and not ln.get("expense_id") and not ln.get("expense_number"):
+                    effects.extend(await _cover_open_personnel_debts(
+                        db, emp, ln, movement_id, pay_date, cx=cx,
+                    ))
+                else:
+                    effects.extend(await _apply_reimburse(
+                        db, emp, ln, movement_id, pay_date, period, account_name, cx=cx,
+                    ))
                 excess = 0.0
             if excess > 0.004 and ln["kind"] != "advance":
                 effects.extend(await _insert_advance(
@@ -1072,6 +1247,9 @@ async def _apply_payment_lines_body(
                 "status": "posted",
                 "created_at": _now(),
             }
+            if existing_tx:
+                movement["bank_transaction_id"] = existing_tx["_id"]
+                movement["cash_mode"] = "bank_match"
             await db.personnel_movements.insert_one(movement)
             cx.push("mov", lambda mid=movement_id: db.personnel_movements.delete_one({"_id": mid}))
             saved_lines.append({
@@ -1142,11 +1320,22 @@ async def apply_payment_lines(
     payload = payload or {}
     header = idempotency.header_key(request) if request is not None else ""
     key = header or str(payload.get("idempotency_key") or "").strip()[:200]
+    tx_id = str(payload.get("existing_bank_tx_id") or "").strip()
+    if tx_id:
+        key = _bankmatch_key(tx_id)
     if key and not payload.get("idempotency_key"):
         payload = {**payload, "idempotency_key": key}
+    if tx_id:
+        payload = {**payload, "idempotency_key": key}
+        prior = await _open_bank_match_movement(db, emp, key)
+        if prior:
+            return _idempotent_movement_result(prior)
     if actor is not None and not payload.get("_actor"):
         payload = {**payload, "_actor": actor}
-    req = request if request is not None else (_Hdr(key) if key else None)
+    if tx_id:
+        req = _Hdr(key) if key else None
+    else:
+        req = request if request is not None else (_Hdr(key) if key else None)
 
     async def _go():
         return await _apply_payment_lines_body(
@@ -1226,10 +1415,21 @@ async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
         raise HTTPException(status_code=409, detail="Bu ödemenin geri alınması sürüyor.")
     applied = 0
     try:
-        rev = await linked_moves.reverse_linked(
-            db, SOURCE, mid, mode="delete", actor=actor,
-            reason="ödemeyi geri al", also_expenses=True, company_id=cid or None,
-        )
+        if str(mov.get("cash_mode") or "") == "bank_match":
+            # Bank_sync kaydı ve bakiyesi bankadan geldi; silinmez, bakiye oynatılmaz.
+            btx_id = mov.get("bank_transaction_id")
+            if btx_id:
+                q = {"_id": btx_id, "company_id": cid} if cid else {"_id": btx_id}
+                await db.bank_transactions.update_one(q, {"$unset": {"personnel_movement_id": ""}})
+            ikey = str(mov.get("idempotency_key") or "").strip()
+            if ikey and cid:
+                await db.idempotency_keys.delete_one({"_id": f"{cid}:{ikey}"})
+            rev = {"reversed": 0, "bank": 0, "partner": 0, "expenses": 0}
+        else:
+            rev = await linked_moves.reverse_linked(
+                db, SOURCE, mid, mode="delete", actor=actor,
+                reason="ödemeyi geri al", also_expenses=True, company_id=cid or None,
+            )
         for eff in reversed(list(mov.get("effects") or [])):
             await _undo_effect(db, eff)
             applied += 1

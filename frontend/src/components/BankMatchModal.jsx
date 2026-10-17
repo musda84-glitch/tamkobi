@@ -10,10 +10,13 @@ import { ContactSearchSelect } from "./ContactSearchSelect";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import {
   BANK_MATCH_MODES,
+  DEFAULT_PERSONNEL_PAY_KIND,
+  PERSONNEL_EXPENSE_CATEGORY,
   PERSONNEL_PAY_KINDS,
   expenseCategoryOptionLabel,
   isPersonnelExpenseCategory,
 } from "../utils/bankMatchModes";
+import { expensePersonnelDebtOpen } from "../utils/employeePay";
 
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -29,11 +32,14 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   const [expenseCats, setExpenseCats] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [employeeId, setEmployeeId] = useState("");
-  const [personnelPayKind, setPersonnelPayKind] = useState("expense");
+  const [personnelPayKind, setPersonnelPayKind] = useState(DEFAULT_PERSONNEL_PAY_KIND);
+  const [expenseId, setExpenseId] = useState("");
+  const [openDebts, setOpenDebts] = useState([]);
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const needEmployee = mode === "expense" && isPersonnelExpenseCategory(category);
+  const personnelCategoryOnly = mode === "category" && isPersonnelExpenseCategory(category);
 
   useEffect(() => {
     if (mode !== "expense" || !companyId) return;
@@ -49,21 +55,49 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
       .catch(() => setEmployees([]));
   }, [needEmployee, companyId]);
 
+  useEffect(() => {
+    if (!needEmployee || personnelPayKind !== "reimburse" || !employeeId) {
+      setOpenDebts([]);
+      return undefined;
+    }
+    let cancel = false;
+    axios.get(`${API_URL}/personnel/employees/${employeeId}/card`)
+      .then((r) => {
+        const rows = r.data?.expenses || r.data?.open_personnel_debts || [];
+        const open = (Array.isArray(rows) ? rows : []).filter(expensePersonnelDebtOpen);
+        open.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+        if (!cancel) setOpenDebts(open);
+      })
+      .catch(() => { if (!cancel) setOpenDebts([]); });
+    return () => { cancel = true; };
+  }, [needEmployee, personnelPayKind, employeeId]);
+
   const targets = accounts.filter((a) => (a.id || a._id) !== tx?.account_id && !a.is_integrated);
-  const canSubmit = mode === "category" || mode === "expense"
+  const canSubmit = personnelCategoryOnly ? false : (mode === "category" || mode === "expense"
     ? !!category.trim() && (!needEmployee || (!!employeeId && !!personnelPayKind))
     : mode === "transfer" ? !!targetId
-    : true;
+    : true);
+
+  const resetPersonnel = () => {
+    setEmployeeId("");
+    setPersonnelPayKind(DEFAULT_PERSONNEL_PAY_KIND);
+    setExpenseId("");
+    setOpenDebts([]);
+  };
 
   const onModeChange = (next) => {
     setMode(next);
     if (next !== "contact") setContactId("");
     if (next !== "expense" && next !== "category") setCategory("");
-    if (next !== "expense") {
-      setEmployeeId("");
-      setPersonnelPayKind("expense");
-    }
+    if (next !== "expense") resetPersonnel();
     if (next !== "transfer") setTargetId(tx?.suggested_target_account_id || "");
+  };
+
+  const goExpenseMode = () => {
+    const cat = category.trim() || PERSONNEL_EXPENSE_CATEGORY;
+    setMode("expense");
+    setCategory(cat);
+    setPersonnelPayKind(DEFAULT_PERSONNEL_PAY_KIND);
   };
 
   const submit = async (e) => {
@@ -79,13 +113,17 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         target_account_id: mode === "transfer" ? targetId : null,
         as_expense: mode === "expense",
         employee_id: mode === "expense" && needEmployee ? employeeId || null : null,
-        personnel_pay_kind: mode === "expense" && needEmployee ? personnelPayKind || "expense" : null,
+        personnel_pay_kind: mode === "expense" && needEmployee ? personnelPayKind || DEFAULT_PERSONNEL_PAY_KIND : null,
+        expense_id: mode === "expense" && needEmployee && personnelPayKind === "reimburse" && expenseId ? expenseId : null,
       };
       const { data: matched } = await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
       const kindLabel = PERSONNEL_PAY_KINDS.find(([k]) => k === personnelPayKind)?.[1];
+      const empName = employees.find((row) => (row.id || row._id) === employeeId)?.full_name
+        || employees.find((row) => (row.id || row._id) === employeeId)?.name
+        || "";
       toast.success(mode === "expense"
         ? (needEmployee
-          ? (learn ? `Personel ${kindLabel || "ödeme"} kaydedildi ve öğrenildi.` : `Personel ${kindLabel || "ödeme"} kaydedildi.`)
+          ? `${empName ? `${empName} · ` : ""}${kindLabel || "ödeme"} kaydedildi${learn ? " ve öğrenildi" : ""}.`
           : (learn ? "Masraf kaydedildi ve kural olarak öğrenildi." : "Masraf kaydedildi."))
         : (learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi."));
       onDone?.(matched || { ...(tx || {}), id: txId, match_status: "matched" });
@@ -175,6 +213,14 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
           <div>
             <label className="block font-semibold mb-1">Kategori (zorunlu)</label>
             <input value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-category-${txId}`} />
+            {personnelCategoryOnly && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 px-2 py-2 space-y-1.5" data-testid={`tx-match-personnel-warn-${txId}`}>
+                <p>Personel ödemesi için Masraf modunda personel seçin.</p>
+                <button type="button" onClick={goExpenseMode} className="px-2 py-1 bg-violet-600 text-white rounded-lg font-semibold" data-testid={`tx-match-goto-expense-${txId}`}>
+                  Masraf moduna geç
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -183,7 +229,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
             <label className="block font-semibold mb-1">Masraf kategorisi (zorunlu)</label>
             <select
               value={category}
-              onChange={(e) => { setCategory(e.target.value); setEmployeeId(""); setPersonnelPayKind("expense"); }}
+              onChange={(e) => { setCategory(e.target.value); setEmployeeId(""); setPersonnelPayKind(DEFAULT_PERSONNEL_PAY_KIND); setExpenseId(""); }}
               className={sel}
               data-testid={`tx-match-expense-cat-${txId}`}
             >
@@ -199,18 +245,23 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
               <label className="block font-semibold mb-1">Ödeme türü (zorunlu)</label>
               <select
                 value={personnelPayKind}
-                onChange={(e) => setPersonnelPayKind(e.target.value)}
+                onChange={(e) => { setPersonnelPayKind(e.target.value); setExpenseId(""); }}
                 className={sel}
                 data-testid={`tx-match-pay-kind-${txId}`}
               >
                 {PERSONNEL_PAY_KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
+              {personnelPayKind === "expense" && (
+                <p className="mt-1 text-[11px] text-slate-500" data-testid={`tx-match-expense-note-${txId}`}>
+                  Şirket masrafı personel bakiyesini değiştirmez.
+                </p>
+              )}
             </div>
             <div>
               <label className="block font-semibold mb-1">Personel (zorunlu)</label>
               <select
                 value={employeeId}
-                onChange={(e) => setEmployeeId(e.target.value)}
+                onChange={(e) => { setEmployeeId(e.target.value); setExpenseId(""); }}
                 className={sel}
                 data-testid={`tx-match-employee-${txId}`}
               >
@@ -221,6 +272,24 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
                 })}
               </select>
             </div>
+            {personnelPayKind === "reimburse" && employeeId && (
+              <div>
+                <label className="block font-semibold mb-1">Açık masraf borcu (isteğe bağlı)</label>
+                <select
+                  value={expenseId}
+                  onChange={(e) => setExpenseId(e.target.value)}
+                  className={sel}
+                  data-testid={`tx-match-msr-${txId}`}
+                >
+                  <option value="">Tarihe göre kapat (FIFO)</option>
+                  {openDebts.map((exp) => {
+                    const id = exp.id || exp._id;
+                    const label = [exp.expense_number || "MSR", exp.description || exp.category || ""].filter(Boolean).join(" · ");
+                    return <option key={id} value={id}>{label}</option>;
+                  })}
+                </select>
+              </div>
+            )}
           </>
         )}
 
