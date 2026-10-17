@@ -160,7 +160,7 @@ export default function App() {
                   <Route path="/sevk" element={<OrderPickKioskPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/portal/:token/odeme/:intentId" element={<B2BCardResultPage />} />
-                  <Route path="/portal/:token" element={<B2BPortalPage />} />
+                  <Route path="/portal/:token/*" element={<B2BPortalPage />} />
                   <Route path="/davet/:token" element={<InviteAcceptPage />} />
                   <Route path="/dispatches" element={<DispatchesPage />} />
                   <Route path="/expenses" element={<ExpensesPage />} />

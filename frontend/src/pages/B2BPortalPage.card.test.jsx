@@ -103,7 +103,7 @@ async function show(data) {
     root.render(
       <MemoryRouter initialEntries={["/portal/tok-a"]}>
         <Routes>
-          <Route path="/portal/:token" element={<B2BPortalPage />} />
+          <Route path="/portal/:token/*" element={<B2BPortalPage />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -113,6 +113,7 @@ async function show(data) {
 
 async function addAndSubmit() {
   await act(async () => { host.querySelector('[data-testid="b2b-add-VIDA"]').click(); });
+  await act(async () => { host.querySelector('[data-testid="b2b-go-cart"]').click(); });
   await act(async () => { host.querySelector('[data-testid="b2b-submit-order"]').click(); });
   await act(async () => { await Promise.resolve(); });
 }

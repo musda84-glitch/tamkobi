@@ -223,13 +223,14 @@ export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy,
 );
 
 /* Mobil: alt sabit sepet çubuğu + açılır alt panel */
-export const MobileCartBar = ({ lines, total, open, setOpen, children, heldCount = 0 }) => {
+export const MobileCartBar = ({ lines, total, open, setOpen, children, heldCount = 0, onOpenCart }) => {
   if (lines.length === 0 && !heldCount) return null;
   const count = lines.reduce((s, l) => s + l.qty, 0);
+  const openBar = () => { if (onOpenCart) onOpenCart(); else setOpen(true); };
   return (
     <>
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 p-3 pointer-events-none">
-        <button onClick={() => setOpen(true)} className="pointer-events-auto w-full flex items-center justify-between bg-slate-900 text-white rounded-2xl px-4 py-3 shadow-2xl" data-testid="b2b-mobile-cart-bar">
+        <button onClick={openBar} className="pointer-events-auto w-full flex items-center justify-between bg-slate-900 text-white rounded-2xl px-4 py-3 shadow-2xl" data-testid="b2b-mobile-cart-bar">
           <span className="flex items-center gap-2 font-bold text-sm">
             <span className="relative">
               <ShoppingCart className="w-5 h-5" />
