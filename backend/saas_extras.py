@@ -371,19 +371,17 @@ async def payment_providers():
     return {"stripe": True, "paytr": c["enabled"] and bool(c["merchant_id"] and c["merchant_key"] and c["merchant_salt"])}
 
 
-@router.post("/payments/paytr/session")
-async def paytr_session(req: Dict[str, Any], request: Request):
+async def _require_paytr_ready() -> Dict[str, Any]:
     c = await paytr_conf()
     if not (c["enabled"] and c["merchant_id"] and c["merchant_key"] and c["merchant_salt"]):
         raise HTTPException(status_code=400, detail="PayTR aktif değil; sistem yöneticisi PayTR bilgilerini girmeli.")
-    item_req = req
-    try:
-        payer = await saas._user_dep(request)
-    except HTTPException:
-        payer = None
-    if isinstance(payer, dict) and payer:
-        item_req = {**req, "company_id": tenant_access.resolve_company_id(payer, req.get("company_id"))}
-    item = await saas_billing.resolve_checkout_item(item_req)
+    return c
+
+
+async def _paytr_session_core(req: Dict[str, Any], request: Request):
+    """company_id gövdede hazır. Yenileme token'ı oturum firmasının üstüne yazılmaz."""
+    c = await _require_paytr_ready()
+    item = await saas_billing.resolve_checkout_item(req)
     cid = item["company_id"]
     company = await _db.companies.find_one({"_id": cid})
     if not company:
@@ -416,6 +414,19 @@ async def paytr_session(req: Dict[str, Any], request: Request):
         await _db.payment_transactions.update_one({"merchant_oid": oid}, {"$set": {"status": "token_failed", "payment_status": "failed", "paytr_error": res.get("reason"), "updated_at": _now()}})
         raise HTTPException(status_code=502, detail=f"PayTR token alınamadı: {res.get('reason', 'bilinmeyen hata')}")
     return {"merchant_oid": oid, "iframe_token": res["token"], "iframe_url": f"https://www.paytr.com/odeme/guvenli/{res['token']}"}
+
+
+@router.post("/payments/paytr/session")
+async def paytr_session(req: Dict[str, Any], request: Request):
+    await _require_paytr_ready()
+    item_req = req
+    try:
+        payer = await saas._user_dep(request)
+    except HTTPException:
+        payer = None
+    if isinstance(payer, dict) and payer:
+        item_req = {**req, "company_id": tenant_access.resolve_company_id(payer, req.get("company_id"))}
+    return await _paytr_session_core(item_req, request)
 
 
 @router.post("/payments/paytr/callback")

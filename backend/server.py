@@ -21983,10 +21983,10 @@ async def _apply_shopfloor_station_grouping(company_id: str, enabled: bool) -> i
 
 
 @api_router.post("/production/work-orders/shopfloor-settings")
-async def put_shopfloor_settings(req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def put_shopfloor_settings(req: Dict[str, Any] = None, user: Any = Depends(get_current_user)):
     """Atölye: aynı istasyonu peşi sıra işle — kalan adımları yeniden sıralar."""
     req = req or {}
-    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     c = await db.companies.find_one({"_id": company_id})
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")

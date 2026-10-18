@@ -107,11 +107,10 @@ async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------- Payments ----------------
-@router.post("/payments/checkout")
-async def create_checkout(req: Dict[str, Any], request: Request, user: dict = Depends(saas._user_dep)):
+async def _create_checkout_core(req: Dict[str, Any], request: Request):
+    """company_id gövdede hazır. Oturum çözümü çağırana aittir."""
     import public_url as pu
-    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
-    item = await resolve_checkout_item({**req, "company_id": cid})
+    item = await resolve_checkout_item(req)
     st = await settings()
     origin = pu.resolve_public_base_url(
         platform_public_url=st.get("public_url"),
@@ -122,6 +121,12 @@ async def create_checkout(req: Dict[str, Any], request: Request, user: dict = De
     session = await sc.create_checkout_session(CheckoutSessionRequest(amount=item["amount"], currency=st.get("currency", "try"), success_url=f"{origin}/odeme/basarili?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{origin}/odeme/iptal", metadata=meta))
     await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "session_id": session.session_id, "company_id": item["company_id"], "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": item["amount"], "currency": st.get("currency", "try"), "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
     return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+@router.post("/payments/checkout")
+async def create_checkout(req: Dict[str, Any], request: Request, user: Optional[dict] = Depends(saas._user_dep)):
+    cid = tenant_access.resolve_caller_company(user, req.get("company_id"))
+    return await _create_checkout_core({**req, "company_id": cid}, request)
 
 
 async def _apply_payment(tx: dict):
