@@ -4810,8 +4810,8 @@ async def get_shifts(company_id: Optional[str] = None, week_start: Optional[str]
 
 
 @router.put("/personnel/shifts")
-async def put_shifts(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def put_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     items = req.get("items") or []
     if not isinstance(items, list) or not items:
         raise HTTPException(status_code=400, detail="items listesi gerekli.")
@@ -4853,8 +4853,8 @@ async def delete_shift(shift_id: str, user: dict = Depends(_user_dep)):
 
 
 @router.post("/personnel/shifts/copy-week")
-async def copy_week(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def copy_week(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     src = _week_dates(req["from_week_start"])
     dst = _week_dates(req["to_week_start"])
     plans = await _db.shift_plans.find({"company_id": company_id, "date": {"$in": src}}).to_list(2000)
@@ -5156,11 +5156,12 @@ async def list_shift_templates(company_id: Optional[str] = None, user: dict = De
 
 
 @router.post("/personnel/shift-templates")
-async def create_shift_template(req: Dict[str, Any]):
+async def create_shift_template(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     name = (req.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Şablon adı gerekli.")
-    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "name": name[:60], "days": _clean_template_days(req.get("days")), "created_at": _now()}
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name[:60], "days": _clean_template_days(req.get("days")), "created_at": _now()}
     await _db.shift_templates.insert_one(doc)
     return _clean(doc)
 
@@ -5174,9 +5175,9 @@ async def delete_shift_template(tpl_id: str, user: dict = Depends(_user_dep)):
 
 
 @router.post("/personnel/shifts/bulk-assign")
-async def bulk_assign_shifts(req: Dict[str, Any]):
+async def bulk_assign_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Bir şablonu departmanın (veya seçili personelin) tüm haftasına tek seferde uygula."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     dates = _week_dates(req.get("week_start") or _today())
     days = _clean_template_days(req.get("days") or (await _db.shift_templates.find_one({"_id": req.get("template_id")}) or {}).get("days"))
     q: Dict[str, Any] = {"company_id": company_id, "status": "active"}

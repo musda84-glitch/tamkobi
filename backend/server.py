@@ -727,6 +727,7 @@ async def _issue_session_for_user(
     companies = await db.companies.find({"_id": {"$in": user.get("company_ids", []) or []}}).to_list(100)
     plat = await saas_billing.settings() if is_sa else {}
     needs_setup = superadmin_2fa.needs_2fa_setup(user, plat)
+    active_cid = str(user.get("active_company_id") or "").strip() or None
     out = {
         "token": token,
         "requires_2fa_setup": needs_setup,
@@ -737,7 +738,7 @@ async def _issue_session_for_user(
             "user_number": await user_numbers.ensure_user_number(db, user),
             "role": user.get("role", "admin"),
             "company_ids": user.get("company_ids", []),
-            "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
+            "active_company_id": active_cid,
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"),
             "permissions": role_doc.get("permissions", {}),
@@ -749,7 +750,7 @@ async def _issue_session_for_user(
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },
         "companies": clean_docs(companies),
-        "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
+        "license": await saas.effective(active_cid) if active_cid else None,
     }
     if kind == _ha.KIND_IK:
         out["redirect"] = "/personelim"
@@ -1683,9 +1684,14 @@ async def get_einvoice_settings(company_id: Optional[str] = None, user: dict = D
     return await _einvoice_settings_payload(cid)
 
 @api_router.put("/einvoice/settings")
-async def save_einvoice_settings(req: Dict[str, Any]):
+async def save_einvoice_settings(req: Dict[str, Any], user: Any = Depends(get_current_user)):
     """Tenant may only enter connection fields for the integrator assigned by platform admin."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    if isinstance(user, dict):
+        company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    else:
+        company_id = str(req.get("company_id") or "").strip()
+        if not company_id:
+            raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     provider = existing.get("provider") or ""
     if not provider:
@@ -1870,9 +1876,9 @@ def _isnet_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict
 
 
 @api_router.post("/integrations/isnet/save")
-async def isnet_save_settings(req: Dict[str, Any]):
+async def isnet_save_settings(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """İşNet Net-e Fatura kimlik bilgilerini kaydeder (provider=isnet)."""
-    company_id = (req.get("company_id") or "").strip() or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     if not await db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
@@ -1950,9 +1956,9 @@ async def isnet_support_pack(company_id: Optional[str] = None, user: dict = Depe
 
 
 @api_router.post("/integrations/isnet/test")
-async def isnet_test_connection(req: Dict[str, Any]):
+async def isnet_test_connection(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Formdaki veya kayıtlı İşNet bilgileriyle SOAP (IP–VKN) bağlantı testi."""
-    company_id = (req.get("company_id") or "").strip() or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     fields = _isnet_payload(req, existing)
     settings = {
@@ -1998,9 +2004,9 @@ def _isnet_portal_payload(req: Dict[str, Any], existing: Optional[dict] = None) 
 
 
 @api_router.post("/integrations/isnet-portal/save")
-async def isnet_portal_save_settings(req: Dict[str, Any]):
+async def isnet_portal_save_settings(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """İşNet NetteFatura Web Portal kimlik bilgilerini kaydeder (provider=isnet_portal)."""
-    company_id = (req.get("company_id") or "").strip() or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     if not await db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
@@ -2036,9 +2042,9 @@ async def isnet_portal_save_settings(req: Dict[str, Any]):
 
 
 @api_router.post("/integrations/isnet-portal/test")
-async def isnet_portal_test_connection(req: Dict[str, Any]):
+async def isnet_portal_test_connection(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Formdaki veya kayıtlı İşNet portal bilgileriyle bağlantı testi."""
-    company_id = (req.get("company_id") or "").strip() or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     fields = _isnet_portal_payload(req, existing)
     password = (req.get("password") or "").strip() or _einvoice_password(existing)
@@ -2298,10 +2304,12 @@ async def upload_generic_file(
     file: UploadFile = File(...),
     entity: str = Query("misc"),
     entity_id: str = Query(""),
-    company_id: str = Query("comp_nexus_main_01"),
+    company_id: Optional[str] = Query(None),
     stage: str = Query(""),
     stage_label: str = Query(""),
+    user: dict = Depends(get_current_user),
 ):
+    company_id = tenant_access.resolve_company_id(user, company_id if isinstance(company_id, str) else None)
     entity = {"quotes": "quote", "projects": "project", "surveys": "survey", "contacts": "contact", "employee_photos": "employee_photo", "personnel_photo": "employee_photo", "partners": "partner_photo", "partner": "partner_photo"}.get(entity, entity)
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/pdf":
@@ -3799,6 +3807,7 @@ async def get_me(request: Request):
     is_sa = bool(user.get("is_super_admin"))
     plat = await saas_billing.settings() if is_sa else {}
     needs_setup = superadmin_2fa.needs_2fa_setup(user, plat)
+    active_cid = str(user.get("active_company_id") or "").strip() or None
     return {
         "user": {
             "id": user_id,
@@ -3806,7 +3815,7 @@ async def get_me(request: Request):
             "name": user["name"],
             "user_number": await user_numbers.ensure_user_number(db, user),
             "role": user.get("role", "admin"),
-            "active_company_id": user.get("active_company_id", "comp_nexus_main_01"),
+            "active_company_id": active_cid,
             "preferences": user.get("preferences", {}),
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": is_sa,
@@ -3819,7 +3828,7 @@ async def get_me(request: Request):
         "authenticated": True,
         "impersonation": await saas_extras.impersonation_info(request),
         "companies": clean_docs(companies),
-        "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
+        "license": await saas.effective(active_cid) if active_cid else None,
     }
 
 @api_router.post("/auth/switch-company")
@@ -7115,9 +7124,9 @@ async def list_units(company_id: Optional[str] = None, user: dict = Depends(get_
     return [{"name": u, "count": used.get(u, 0)} for u in saved]
 
 @api_router.post("/products/units")
-async def add_unit(req: Dict[str, Any]):
+async def add_unit(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     name = (req.get("name") or "").strip()
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     if not name:
         raise HTTPException(status_code=400, detail="Birim adı boş olamaz.")
     await db.units.update_one({"company_id": company_id, "name": name}, {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name}}, upsert=True)
@@ -7150,9 +7159,9 @@ async def list_product_categories(company_id: Optional[str] = None, user: dict =
     return sorted([{"name": c, "count": counts.get(c, 0)} for c in counts], key=lambda x: (-x["count"], x["name"]))
 
 @api_router.post("/products/categories")
-async def add_product_category(req: Dict[str, Any]):
+async def add_product_category(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     name = (req.get("name") or "").strip()
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     if not name:
         raise HTTPException(status_code=400, detail="Kategori adı boş olamaz.")
     await db.product_categories.update_one({"company_id": company_id, "name": name}, {"$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "name": name, "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
@@ -7420,9 +7429,9 @@ async def _next_purchase_order_number(company_id: str) -> str:
 
 
 @api_router.post("/products/reorder-purchases")
-async def reorder_purchases(req: Dict[str, Any]):
+async def reorder_purchases(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Kritik stok → tedarikçiye verilen sipariş (alış faturası değil)."""
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     raw_lines = req.get("lines") or []
     fallback = req.get("contact_id") or ""
     if not raw_lines:
@@ -7676,7 +7685,9 @@ async def create_product(product: Product, user: dict = Depends(get_current_user
 async def copy_product(product_id: str, user: dict = Depends(get_current_user)):
     """Stok kartını kopyala: yeni SKU/barkod, stok 0; görsel ve fiyat alanları korunur."""
     src = await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
-    company_id = src.get("company_id") or "comp_nexus_main_01"
+    company_id = str(src.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
     await saas.check_product_limit(company_id)
     now = datetime.now(timezone.utc).isoformat()
     new_id = str(uuid.uuid4())
@@ -7743,11 +7754,14 @@ async def update_product(product_id: str, updated: Dict[str, Any], user: dict = 
     await db.products.update_one({"_id": product_id}, {"$set": updated})
     if updated.get("category") or updated.get("unit"):
         cur = await db.products.find_one({"_id": product_id}, {"company_id": 1})
-        cid = (cur or {}).get("company_id", "comp_nexus_main_01")
-        if updated.get("category"):
-            await _remember_category(cid, updated["category"])
-        if updated.get("unit"):
-            await _remember_unit(cid, updated["unit"])
+        cid = str((cur or {}).get("company_id") or "").strip()
+        if not cid:
+            logger.warning("Ürün kategori/birim atlandı: kayıtta firma bilgisi yok (%s)", product_id)
+        else:
+            if updated.get("category"):
+                await _remember_category(cid, updated["category"])
+            if updated.get("unit"):
+                await _remember_unit(cid, updated["unit"])
     res = await db.products.find_one({"_id": product_id})
     return clean_doc(res)
 
@@ -7970,7 +7984,7 @@ async def pos_checkout(req: Dict[str, Any], request: Request):
 
 async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Optional[dict] = None):
     pos_meta = {
-        "company_id": req.get("company_id", "comp_nexus_main_01"),
+        "company_id": str(req.get("company_id") or "").strip(),
         "payment_method": (req.get("payment_method") or "cash").lower(),
         "cash_amount": req.get("cash_amount") or 0,
         "card_amount": req.get("card_amount") or 0,
@@ -7978,7 +7992,9 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
     }
     if user and (user.get("_id") or user.get("id") or user.get("role")):
         pos_meta = await pos_cashier.preflight_checkout(user, req)
-    company_id = pos_meta.get("company_id") or req.get("company_id", "comp_nexus_main_01")
+    company_id = str(pos_meta.get("company_id") or req.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     items_in = req.get("items") or []
     if not items_in:
         raise HTTPException(status_code=400, detail="Sepet boş.")
@@ -8224,17 +8240,16 @@ async def pos_lookup_receipt(invoice_number: str, company_id: Optional[str] = No
 
 
 @api_router.post("/pos/return")
-async def pos_return(req: Dict[str, Any], request: Request):
+async def pos_return(req: Dict[str, Any], request: Request, user: Any = Depends(get_current_user)):
     """POS fiş iadesi: stok geri + kasa çıkışı + iade kaydı."""
-    user = None
-    try:
-        user = await get_current_user(request)
-    except HTTPException:
+    if isinstance(user, dict):
+        company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    else:
         user = None
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    if user:
-        company_id = tenant_access.resolve_company_id(user, company_id)
-        req = {**req, "company_id": company_id}
+        company_id = str(req.get("company_id") or "").strip()
+        if not company_id:
+            raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
+    req = {**req, "company_id": company_id}
     return await idempotency.run(
         db, company_id, request, "pos/return",
         lambda: _pos_return_core(req, request, user),
@@ -8251,7 +8266,9 @@ async def _pos_return_core(req: Dict[str, Any], request: Request, user: Optional
             "cashier_user_id": req.get("cashier_user_id"),
             "cashier_name": req.get("cashier_name"),
         }
-    company_id = (pos_meta or {}).get("company_id") or req.get("company_id", "comp_nexus_main_01")
+    company_id = str((pos_meta or {}).get("company_id") or req.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     invoice_number = req.get("invoice_number") or ""
     invoice_id = req.get("invoice_id")
     inv = None
@@ -8624,7 +8641,9 @@ async def _store_product_image_bytes(
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
     opt = image_opt.optimize_product_upload(data, content_type, filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
-    company_id = product.get("company_id") or "comp_nexus_main_01"
+    company_id = str(product.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
     await saas.check_storage_limit(company_id, len(data))
     try:
         import storage_manager
@@ -9261,7 +9280,9 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
     reason = _invoice_copy_block_reason(inv)
     if reason:
         raise HTTPException(status_code=400, detail=reason)
-    company_id = inv.get("company_id") or "comp_nexus_main_01"
+    company_id = str(inv.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
     src_no = inv.get("invoice_number") or invoice_id
 
     if mode == "to_supplier_order":
@@ -12863,7 +12884,9 @@ async def _execute_virman(req: Dict[str, Any]):
     target_raw = req.get("target_account_id")
     amount = float(req.get("amount", 0))
     description = req.get("description", "Hesaplar Arası Virman Transferi")
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = str(req.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     via_customer_card = bool(req.get("via_customer_card"))
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
@@ -12943,11 +12966,11 @@ async def _execute_virman(req: Dict[str, Any]):
 
 
 @api_router.post("/banking/virman")
-async def perform_virman(req: Dict[str, Any], request: Request):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def perform_virman(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    req = {**req, "company_id": company_id}
     if float(req.get("amount") or 0) <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
-    user = await get_current_user(request)
     pending = await cash_approval.maybe_queue(
         db, company_id=company_id, kind="virman", payload=req,
         account_ids=_virman_bank_account_ids(req),
@@ -13380,7 +13403,9 @@ async def create_partner_transaction(req: Dict[str, Any], request: Request):
 
 
 async def _execute_distribute_profit(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = str(req.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     total_profit = float(req.get("total_profit", 0))
     if total_profit <= 0:
         raise HTTPException(status_code=400, detail="Dağıtılacak kâr sıfırdan büyük olmalıdır.")
@@ -15622,14 +15647,16 @@ async def whatsapp_logs(company_id: Optional[str] = None, contact_id: Optional[s
     return clean_docs(await db.whatsapp_logs.find(q).sort("created_at", -1).to_list(300))
 
 @api_router.post("/comm/whatsapp/logs")
-async def whatsapp_log(req: Dict[str, Any]):
+async def whatsapp_log(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    req = {**req, "company_id": company_id}
     phone = comm_service.normalize_phone(req.get("phone", ""))
     if not phone:
         raise HTTPException(status_code=400, detail="Geçerli bir GSM numarası gerekli.")
     message = (req.get("message") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Mesaj boş olamaz.")
-    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"),
+    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id"), "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"),
            "to": phone, "phone": phone, "message": message, "direction": req.get("direction", "outbound"), "status": "logged", "context": req.get("context", "manual"),
            "wa_link": f"https://wa.me/90{phone}?text={quote(message)}", "created_at": datetime.now(timezone.utc).isoformat()}
     await db.whatsapp_logs.insert_one(doc)
@@ -15656,8 +15683,8 @@ async def list_stock_counts(company_id: Optional[str] = None, user: dict = Depen
     return clean_docs(counts)
 
 @api_router.post("/warehouses/stock-counts")
-async def create_stock_count(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_stock_count(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     wh = await db.warehouses.find_one({"_id": req.get("warehouse_id")}) if req.get("warehouse_id") else None
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "name": req.get("name") or f"Sayım {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')}",
            "warehouse_id": req.get("warehouse_id"), "warehouse_name": wh.get("name") if wh else "Tüm Depolar", "status": "open", "items": [],
@@ -16496,7 +16523,8 @@ async def list_mappings(company_id: Optional[str] = None, user: dict = Depends(g
     return clean_docs(await db.marketplace_mappings.find({"company_id": cid}).sort("created_at", -1).to_list(1000))
 
 @api_router.post("/integrations/ecommerce/mappings")
-async def create_mapping(req: Dict[str, Any]):
+async def create_mapping(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     product = await db.products.find_one({"_id": req.get("product_id")})
     if not product:
         raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
@@ -16504,7 +16532,7 @@ async def create_mapping(req: Dict[str, Any]):
     ext_sku = (req.get("marketplace_sku") or "").strip()
     if not channel or not ext_sku:
         raise HTTPException(status_code=400, detail="Pazaryeri ve pazaryeri SKU/barkod zorunludur.")
-    doc = {"company_id": req.get("company_id", "comp_nexus_main_01"), "channel": channel, "marketplace_sku": ext_sku, "marketplace_product_id": req.get("marketplace_product_id", ""),
+    doc = {"company_id": company_id, "channel": channel, "marketplace_sku": ext_sku, "marketplace_product_id": req.get("marketplace_product_id", ""),
            "product_id": product["_id"], "product_name": product["name"], "sku": product.get("sku"), "variant_id": req.get("variant_id"), "sync_stock": bool(req.get("sync_stock", True)),
            "sync_price": bool(req.get("sync_price", True)), "updated_at": datetime.now(timezone.utc).isoformat()}
     await db.marketplace_mappings.update_one({"company_id": doc["company_id"], "channel": channel, "marketplace_sku": ext_sku},
@@ -17492,7 +17520,9 @@ async def wa_webhook(request: Request):
 
 async def wa_send(req: Dict[str, Any]):
     import public_url as pu
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = str(req.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
     phone = comm_service.normalize_phone(req.get("phone", ""))
     message = await pu.rewrite_outbound_doc_text(db, (req.get("message") or "").strip())
@@ -17702,9 +17732,9 @@ async def _ensure_order_contact(o: dict) -> Optional[dict]:
     return c
 
 @api_router.post("/orders/auto-contacts")
-async def backfill_order_contacts(req: Dict[str, Any]):
+async def backfill_order_contacts(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Carisi olmayan tüm siparişler için cari bul/oluştur."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     linked = created = skipped = 0
     async for o in db.orders.find({"company_id": company_id, "$or": [{"contact_id": None}, {"contact_id": {"$exists": False}}, {"contact_id": ""}]}):
         c = await _ensure_order_contact(o)
@@ -18338,8 +18368,8 @@ async def ecommerce_channel_catalog(company_id: Optional[str] = None, user: dict
     return {"groups": [{"group": g, "channels": [{"code": c, "name": n, "added": c in existing, "live_api": LIVE_API_CHANNELS.get(c)} for c, n in chs]} for g, chs in CHANNEL_CATALOG.items()]}
 
 @api_router.post("/integrations/ecommerce/add-channel")
-async def add_ecommerce_channel(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01"); code = (req.get("channel") or "").strip().lower()
+async def add_ecommerce_channel(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id")); code = (req.get("channel") or "").strip().lower()
     name = next((n for chs in CHANNEL_CATALOG.values() for c, n in chs if c == code), None)
     if not name:
         raise HTTPException(status_code=400, detail="Katalogda olmayan kanal.")
@@ -18373,7 +18403,10 @@ async def _sync_ecommerce_channel_core(
         config = await db.integration_configs.find_one({"_id": channel_id})
         if not config:
             raise HTTPException(status_code=404, detail="Entegrasyon bulunamadı.")
-    company_id = config.get("company_id", "comp_nexus_main_01")
+    company_id = str(config.get("company_id") or "").strip()
+    if not company_id:
+        logger.warning("Pazaryeri senkronu atlandı: kayıtta firma bilgisi yok (%s)", channel_id)
+        return {"status": "skipped", "message": "Kayıtta firma bilgisi yok."}
     channel = config.get("channel", "trendyol")
     now = datetime.now(timezone.utc).isoformat()
     sync_days = marketplace_providers.resolve_sync_days(
@@ -18868,12 +18901,12 @@ async def _shopphp_refresh_cached_prices(company_id: str, sent: List[dict]) -> N
     await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
 
 @api_router.post("/marketplace/products/equalize-from-stock")
-async def marketplace_equalize_from_stock(req: Dict[str, Any]):
+async def marketplace_equalize_from_stock(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Stok kartındaki fiyat/stok değerlerini tüm canlı (yazılabilir) pazaryerlerine aynı şekilde gönder.
 
     İsteğe bağlı `barcodes` / `channels` ile daraltılabilir. Eşleşmeyen barkodlar atlanır.
     """
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     only_barcodes = {str(b).strip() for b in (req.get("barcodes") or []) if str(b).strip()} or None
     only_channels = {str(c).strip() for c in (req.get("channels") or []) if str(c).strip()} or None
     results = []
@@ -18923,9 +18956,9 @@ async def marketplace_equalize_from_stock(req: Dict[str, Any]):
 
 
 @api_router.post("/marketplace/products/push")
-async def marketplace_push_price_stock(req: Dict[str, Any]):
+async def marketplace_push_price_stock(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Seçili ürünlerin fiyat / stok / aktiflik bilgisini pazaryerine gönder. items: [{barcode, sale_price?, list_price?, quantity?, active?}] veya from_stock=true → eşleşen stok kartından."""
-    company_id = req.get("company_id", "comp_nexus_main_01"); channel = req.get("channel", "trendyol")
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id")); channel = req.get("channel", "trendyol")
     cfg = await db.integration_configs.find_one({"company_id": company_id, "channel": channel})
     if channel == "shopphp":
         if not cfg or not marketplace_providers.has_shopphp_credentials(cfg):
@@ -18994,9 +19027,9 @@ async def marketplace_push_logs(company_id: Optional[str] = None, channel: str =
     return [{"id": l["_id"], "created_at": l["created_at"], "batch_request_id": l.get("batch_request_id"), "sent": len(l.get("items") or []), "items": l.get("items"), "status": l.get("status") or "SENT", "failed_items": l.get("failed_items") or [], "errors": l.get("errors") or [], "unmatched": l.get("unmatched") or [], "checked_at": l.get("checked_at")} for l in logs]
 
 @api_router.post("/marketplace/product-create")
-async def create_product_from_marketplace(req: Dict[str, Any]):
+async def create_product_from_marketplace(req: Dict[str, Any], user: Any = Depends(get_current_user)):
     """Eşleşmeyen pazaryeri ürününden stok kartı oluştur (barkod/SKU otomatik eşlenir)."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     name = (req.get("product_name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Ürün adı gerekli.")
@@ -19043,9 +19076,9 @@ async def create_product_from_marketplace(req: Dict[str, Any]):
 
 
 @api_router.post("/marketplace/product-create-bulk")
-async def create_products_from_marketplace_bulk(req: Dict[str, Any]):
+async def create_products_from_marketplace_bulk(req: Dict[str, Any], user: Any = Depends(get_current_user)):
     """Eşleşmeyen pazaryeri ürünlerine toplu stok kartı aç; entegrasyon görsellerini de yükler."""
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     channel = str(req.get("channel") or "trendyol").strip().lower()
     items = list(req.get("items") or [])
     if not items:
@@ -19139,10 +19172,10 @@ async def match_marketplace_product(req: Dict[str, Any]):
 
 
 @api_router.post("/marketplace/product-match-suggest")
-async def suggest_marketplace_product_matches(req: Dict[str, Any]):
+async def suggest_marketplace_product_matches(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Pazaryeri satırları için stok kartı önerileri (barkod/SKU/ad benzerliği + isteğe bağlı AI)."""
     import marketplace_match as mpm
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     rows = list(req.get("rows") or [])
     if not rows:
         return {"suggestions": {}, "mode": "empty", "count": 0}
@@ -19252,10 +19285,10 @@ async def list_marketplace_claims(company_id: Optional[str] = None, status: Opti
 
 
 @api_router.post("/marketplace/claims/sync")
-async def sync_marketplace_claims(req: Dict[str, Any] = None):
+async def sync_marketplace_claims(req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Yalnızca iade taleplerini Trendyol'dan çek (sipariş senkronundan bağımsız)."""
     req = req or {}
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     days = max(1, min(45, int(req.get("days") or 14)))
     channels = await db.integration_configs.find({
         "company_id": company_id,
@@ -19560,8 +19593,8 @@ async def cargo_catalog(company_id: Optional[str] = None, user: dict = Depends(g
     return [{**c, "installed": c["carrier_code"] in existing} for c in CARGO_CATALOG]
 
 @api_router.post("/integrations/cargo")
-async def add_cargo_integration(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def add_cargo_integration(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     cat = next((c for c in CARGO_CATALOG if c["carrier_code"] == req.get("carrier_code")), None)
     if not cat:
         raise HTTPException(status_code=400, detail="Bilinmeyen kargo sağlayıcısı.")
@@ -19705,9 +19738,9 @@ async def update_cargo_integration(carrier_id: str, data: Dict[str, Any], user: 
     return cargo_providers.mask_config(clean_doc(await db.cargo_configs.find_one({"_id": carrier_id})))
 
 @api_router.post("/cargo/auto-ship")
-async def cargo_auto_ship(req: Dict[str, Any]):
+async def cargo_auto_ship(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Onaylı/hazırlanıyor durumundaki kargosuz siparişleri seçili taşıyıcıda (Geliver vb.) toplu kargola. dry_run=true → yalnızca aday liste."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     carrier_code = req.get("carrier_code", "geliver")
     channels = [c.lower() for c in (req.get("channels") or ["shopphp", "trendyol"])]
     statuses = req.get("statuses") or ["approved", "preparing"]
@@ -19766,8 +19799,8 @@ async def _enrich_order_items_from_products(order: dict) -> dict:
 
 
 @api_router.post("/cargo/create-shipment")
-async def create_cargo_shipment(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_cargo_shipment(req: Dict[str, Any], user: Any = Depends(get_current_user)):
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     carrier_code = req.get("carrier_code") or req.get("carrier")
     if not carrier_code:
         # Prefer connected Geliver when caller omits carrier (UI "Kargola" shortcut).
@@ -20739,7 +20772,9 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         if not order:
             raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
         order = await tenant_access.get_tenant_doc(db, "orders", order["_id"], user, not_found="Sipariş bulunamadı.")
-        company_id = order.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+        company_id = str(order.get("company_id") or "").strip()
+        if not company_id:
+            raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
         real_oid = str(order.get("_id") or order_id)
         items = order.get("items") if isinstance(order.get("items"), list) else []
         pids = list({
@@ -21342,9 +21377,9 @@ async def production_missing_plan(company_id: Optional[str] = None, user: dict =
 
 
 @api_router.post("/production/missing-plan/create")
-async def production_missing_plan_create(req: Dict[str, Any]):
+async def production_missing_plan_create(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Seçilen eksik ürünlerden üretim emri oluştur; ilgili bildirimleri okundu işaretle."""
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     lines = req.get("items") or req.get("lines") or []
     if not lines:
         raise HTTPException(status_code=400, detail="Planlanacak kalem yok.")
@@ -21552,8 +21587,8 @@ async def list_production_orders(
     return clean_docs(rows)
 
 @api_router.post("/production/orders")
-async def create_production_order(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_production_order(req: Dict[str, Any], user: Any = Depends(get_current_user)):
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     recipe = None
     if req.get("recipe_id"):
         recipe = await db.recipes.find_one({"_id": req["recipe_id"]})
@@ -21882,9 +21917,9 @@ async def _shopfloor_require_mesaim_check_in(emp: Dict[str, Any]) -> None:
 
 
 @api_router.post("/production/work-orders/shopfloor-unlock")
-async def shopfloor_unlock(req: Dict[str, Any]):
+async def shopfloor_unlock(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Tablet atölye: operatör seçmeden önce personel şifresi / bağlı kullanıcı şifresi doğrulanır."""
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     emp_id = (req.get("employee_id") or "").strip()
     password = str(req.get("password") or "")
     if not emp_id or not password:
@@ -21948,10 +21983,10 @@ async def _apply_shopfloor_station_grouping(company_id: str, enabled: bool) -> i
 
 
 @api_router.post("/production/work-orders/shopfloor-settings")
-async def put_shopfloor_settings(req: Dict[str, Any] = None):
+async def put_shopfloor_settings(req: Dict[str, Any] = None, user: Any = Depends(get_current_user)):
     """Atölye: aynı istasyonu peşi sıra işle — kalan adımları yeniden sıralar."""
     req = req or {}
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     c = await db.companies.find_one({"_id": company_id})
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
@@ -22077,7 +22112,10 @@ async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = 
     if w["status"] != "in_progress":
         raise HTTPException(status_code=400, detail="Sadece devam eden adım duraklatılabilir.")
     who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
-    policy = await _shopfloor_pause_policy(w.get("company_id") or "comp_nexus_main_01", who)
+    _pause_cid = str(w.get("company_id") or "").strip()
+    if not _pause_cid:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
+    policy = await _shopfloor_pause_policy(_pause_cid, who)
     if not policy.get("allowed"):
         raise HTTPException(status_code=400, detail=policy.get("reason") or sfp.PAUSE_OUTSIDE_DETAIL)
     await db.work_orders.update_one(
@@ -22273,10 +22311,10 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict =
 
 
 @api_router.post("/production/work-orders/trash-completed")
-async def trash_completed_work_orders(req: Dict[str, Any] = None):
+async def trash_completed_work_orders(req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Atölye: tamamlanan iş emirlerini çöp kutusuna taşı (30 gün geri alınabilir)."""
     req = req or {}
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     q: Dict[str, Any] = {"company_id": company_id, "status": "done"}
     if req.get("station"):
         q["station"] = req["station"]
@@ -22365,7 +22403,9 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user:
             status_code=400,
             detail="Tamamlanan adım buradan silinmez; “Tamamlananları çöpe taşı” veya üretim emri iptali kullanın.",
         )
-    company_id = w.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+    company_id = str(w.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
     who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
     if not who:
         raise HTTPException(status_code=400, detail="Silme talebi için operatör seçin.")
@@ -22455,7 +22495,9 @@ async def admin_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user: d
     """Acil: yönetici şifresiyle anında çöpe taşı (onay kuyruğunu atlar)."""
     req = req or {}
     w = await _wo(wo_id, user)
-    company_id = w.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+    company_id = str(w.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
     admin = await _verify_company_admin_password(company_id, req.get("password") or "")
     who = admin.get("name") or admin.get("email") or "yönetici"
     result = await _soft_trash_work_order_cascade(w, note_prefix=f"Atölye silme · {who}")
@@ -24077,8 +24119,13 @@ async def list_payrolls(company_id: Optional[str] = None, period: Optional[str] 
     return clean_docs(payrolls)
 
 @api_router.post("/personnel/generate-payroll")
-async def generate_payroll(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def generate_payroll(req: Dict[str, Any], user: Any = Depends(get_current_user)):
+    if isinstance(user, dict):
+        company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    else:
+        company_id = str(req.get("company_id") or "").strip()
+        if not company_id:
+            raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     period = req.get("period") or employee_pay.istanbul_period()
     employee_id = req.get("employee_id")
     q = {"company_id": company_id, "status": "active"}
@@ -24313,7 +24360,7 @@ async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)
 # ----------------- AI FİNANSAL DANIŞMAN -----------------
 class AIChatRequest(BaseModel):
     message: str
-    company_id: Optional[str] = "comp_nexus_main_01"
+    company_id: Optional[str] = None
 
 
 class ProductionAIChatRequest(BaseModel):
@@ -24745,10 +24792,11 @@ def _require_request_token(request: Request) -> str:
 async def ai_cheque_extract(
     request: Request,
     file: UploadFile = File(...),
-    company_id: str = Query("comp_nexus_main_01"),
+    company_id: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ):
     _require_request_token(request)
+    company_id = tenant_access.resolve_company_id(user, company_id if isinstance(company_id, str) else None)
     saas._require_company_access(user, company_id)
     name = file.filename or "cheque.jpg"
     data = await file.read()
@@ -24795,10 +24843,11 @@ async def ai_cheque_extract(
 async def ai_expense_extract(
     request: Request,
     file: UploadFile = File(...),
-    company_id: str = Query("comp_nexus_main_01"),
+    company_id: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ):
     _require_request_token(request)
+    company_id = tenant_access.resolve_company_id(user, company_id if isinstance(company_id, str) else None)
     saas._require_company_access(user, company_id)
     name = file.filename or "expense.jpg"
     data = await file.read()

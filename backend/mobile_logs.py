@@ -99,9 +99,8 @@ async def list_mobile_logs(
 
 
 @router.post("/logs")
-async def create_mobile_log(req: Dict[str, Any], request: Request):
-    company_id = str(req.get("company_id") or "").strip() or "comp_nexus_main_01"
-    user = await _require_company_user(request, company_id)
+async def create_mobile_log(req: Dict[str, Any], request: Request, user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     message = str(req.get("message") or req.get("error") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Log mesajı gerekli.")

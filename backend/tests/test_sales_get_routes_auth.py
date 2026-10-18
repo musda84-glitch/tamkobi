@@ -651,8 +651,9 @@ def test_compute_prices_reads_the_same_rule_as_the_helper(api):
 
     fees = lambda cfg, ch: {"commission_rate": 0, "commission_vat_rate": 0, "service_fee": 0, "cargo_fee": 0}
     with patch.dict(pricing._deps, {"marketplace_products": marketplace_products, "channel_fees": fees}):
-        priced = _run(pricing.compute_prices({"company_id": COMP_A, "channel": "trendyol"}))
-        defaulted = _run(pricing.compute_prices({"channel": "trendyol"}))
+        user = _user_a()
+        priced = _run(pricing.compute_prices({"company_id": COMP_A, "channel": "trendyol"}, user=user))
+        defaulted = _run(pricing.compute_prices({"channel": "trendyol"}, user=user))
     rules = client.get("/api/pricing/rules", headers=_auth("user-a"))
     assert rules.status_code == 200, rules.text
     helper = _run(pricing._rules_payload(COMP_A))
@@ -660,6 +661,6 @@ def test_compute_prices_reads_the_same_rule_as_the_helper(api):
     assert priced["rule"] == helper["trendyol"]
     assert priced["rule"]["margin_pct"] == 40.0
     assert seen[0] == COMP_A
-    assert seen[1] == NEXUS
+    assert seen[1] == COMP_A
     assert defaulted["channel"] == "trendyol"
     _no_foreign(rules.text)

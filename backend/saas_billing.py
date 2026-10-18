@@ -12,6 +12,7 @@ from emergentintegrations.payments.stripe.checkout import StripeCheckout, Checko
 import rbac
 import gib_credits
 import saas
+import tenant_access
 import user_numbers
 from auth_utils import hash_password, create_access_token, create_refresh_token, auth_cookie_kwargs
 
@@ -83,7 +84,9 @@ def _checkout(public_base: str) -> StripeCheckout:
 
 
 async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
-    cid = req.get("company_id") or "comp_nexus_main_01"
+    cid = str(req.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     if not await _db.companies.find_one({"_id": cid}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     if req.get("pack_id") or req.get("product_type") == "gib_credits":
@@ -104,8 +107,8 @@ async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------- Payments ----------------
-@router.post("/payments/checkout")
-async def create_checkout(req: Dict[str, Any], request: Request):
+async def _create_checkout_core(req: Dict[str, Any], request: Request):
+    """company_id gövdede hazır. Oturum çözümü çağırana aittir."""
     import public_url as pu
     item = await resolve_checkout_item(req)
     st = await settings()
@@ -118,6 +121,12 @@ async def create_checkout(req: Dict[str, Any], request: Request):
     session = await sc.create_checkout_session(CheckoutSessionRequest(amount=item["amount"], currency=st.get("currency", "try"), success_url=f"{origin}/odeme/basarili?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{origin}/odeme/iptal", metadata=meta))
     await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "session_id": session.session_id, "company_id": item["company_id"], "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": item["amount"], "currency": st.get("currency", "try"), "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
     return {"checkout_url": session.url, "session_id": session.session_id}
+
+
+@router.post("/payments/checkout")
+async def create_checkout(req: Dict[str, Any], request: Request, user: Optional[dict] = Depends(saas._user_dep)):
+    cid = tenant_access.resolve_caller_company(user, req.get("company_id"))
+    return await _create_checkout_core({**req, "company_id": cid}, request)
 
 
 async def _apply_payment(tx: dict):

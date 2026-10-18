@@ -79,8 +79,8 @@ async def get_rules(company_id: Optional[str] = None, user: dict = Depends(_user
 
 
 @router.put("/pricing/rules/{channel}")
-async def put_rule(channel: str, req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def put_rule(channel: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     rule = {k: req.get(k, DEFAULT_RULE[k]) for k in DEFAULT_RULE}
     for k in ("margin_pct", "min_price", "max_price", "list_price_markup_pct"):
         rule[k] = float(rule[k] or 0)
@@ -89,9 +89,15 @@ async def put_rule(channel: str, req: Dict[str, Any]):
 
 
 @router.post("/pricing/compute")
-async def compute_prices(req: Dict[str, Any]):
+async def compute_prices(req: Dict[str, Any], user: Any = Depends(_user_dep)):
     """Kanal önbelleğindeki eşleşmiş pazaryeri ürünleri için önerilen fiyatları hesapla."""
-    company_id = req.get("company_id", "comp_nexus_main_01"); channel = req.get("channel", "trendyol")
+    if isinstance(user, dict):
+        company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    else:
+        company_id = str(req.get("company_id") or "").strip()
+        if not company_id:
+            raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
+    channel = req.get("channel", "trendyol")
     rule = {**DEFAULT_RULE, **(req.get("rule") or {})} if req.get("rule") else (await _rules_payload(company_id)).get(channel, DEFAULT_RULE)
     cfg = await _db.integration_configs.find_one({"company_id": company_id, "channel": channel}) or {}
     fees = _deps["channel_fees"](cfg, channel)

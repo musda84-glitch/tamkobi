@@ -93,6 +93,13 @@ def producible_order_lines(
     return out
 
 
+def _require_record_company_id(value: Any) -> str:
+    cid = str(value or "").strip()
+    if not cid:
+        raise ValueError("Kayıtta firma bilgisi yok.")
+    return cid
+
+
 def build_order_recipe_payload(
     order: Dict[str, Any],
     lines: List[Dict[str, Any]],
@@ -145,7 +152,7 @@ def build_order_recipe_payload(
         notes_parts.append(customer)
     notes_parts.append(f"{len(lines)} kalem")
     return {
-        "company_id": company_id or order.get("company_id") or "comp_nexus_main_01",
+        "company_id": _require_record_company_id(company_id or order.get("company_id")),
         "name": f"Sipariş {order_number}",
         "code": f"BOM-{str(uuid.uuid4().int)[:6]}",
         "finished_product_id": first["product_id"],
@@ -175,7 +182,7 @@ def recipe_mongo_doc(payload: Dict[str, Any]) -> Dict[str, Any]:
     sales_order_number = payload.get("sales_order_number")
     doc = {
         "_id": str(uuid.uuid4()),
-        "company_id": payload.get("company_id") or "comp_nexus_main_01",
+        "company_id": _require_record_company_id(payload.get("company_id")),
         "name": payload.get("name") or "Sipariş reçetesi",
         "code": payload.get("code") or f"BOM-{str(uuid.uuid4().int)[:6]}",
         "finished_product_id": str(payload.get("finished_product_id") or ""),

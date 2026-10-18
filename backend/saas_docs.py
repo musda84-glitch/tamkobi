@@ -607,6 +607,6 @@ async def renew_checkout(token: str, req: Dict[str, Any], request: Request):
     body = {"company_id": p["cid"], "plan_id": req.get("plan_id") or p.get("pid"), "period": req.get("period", "monthly"), "origin_url": req.get("origin_url")}
     if req.get("provider") == "paytr":
         import saas_extras
-        return await saas_extras.paytr_session(body, request)
+        return await saas_extras._paytr_session_core(body, request)
     import saas_billing
-    return await saas_billing.create_checkout(body, request)
+    return await saas_billing._create_checkout_core(body, request)

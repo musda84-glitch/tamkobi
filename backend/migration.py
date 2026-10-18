@@ -269,7 +269,8 @@ async def migration_template(entity: str):
 
 
 @router.post("/migration/parse")
-async def migration_parse(file: UploadFile = File(...), entity: str = Form(...), source: str = Form("other"), company_id: str = Form("comp_nexus_main_01")):
+async def migration_parse(file: UploadFile = File(...), entity: str = Form(...), source: str = Form("other"), company_id: Optional[str] = Form(None), user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id if isinstance(company_id, str) else None)
     if entity not in ENTITIES:
         raise HTTPException(status_code=400, detail="Geçersiz veri türü.")
     data = await file.read()
@@ -646,8 +647,8 @@ async def bh_warehouses(company_id: Optional[str] = None, user: dict = Depends(_
 
 
 @router.post("/migration/bizimhesap/test")
-async def bh_test(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def bh_test(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     token, firm_id = await _bh_creds(company_id, req.get("token") or "", req.get("firm_id") or "")
     warehouses = _unwrap(await _bh_get("/warehouses", token, firm_id, timeout=30.0))
     wh = [{"id": str(_pick(w, "id", "warehouseId", "depoId", "code", default="")), "name": _pick(w, "name", "title", "warehouseName", "depoAdi", default="Depo")} for w in warehouses]
@@ -696,8 +697,8 @@ def _bh_match_existing(by_bh, by_bc, by_sku, ext_id: str, barcode: str, code: st
 
 
 @router.post("/migration/bizimhesap/import")
-async def bh_import(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def bh_import(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     token, firm_id = await _bh_creds(company_id)
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
     with_images = req.get("with_images", True)
@@ -861,9 +862,9 @@ def bh_customer_balances(row: dict, invert: bool = False, include_cheques: bool 
 
 
 @router.post("/migration/bizimhesap/import-customers")
-async def bh_import_customers(req: Dict[str, Any]):
+async def bh_import_customers(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """BizimHesap /customers → cariler (ünvan, VKN, vergi dairesi, telefon, e-posta, adres, yetkili, bakiye, çek/senet)."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     token, firm_id = await _bh_creds(company_id)
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "update"
     invert = bool(req.get("invert_sign", False))

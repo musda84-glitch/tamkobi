@@ -119,6 +119,13 @@ async def _next_file_number(company_id: str, kind: str) -> str:
     return f"{prefix}-{year}-{str(n).zfill(4)}"
 
 
+def _require_company_id(req: Dict[str, Any], existing: Optional[dict] = None) -> str:
+    cid = str(req.get("company_id") or (existing or {}).get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
+    return cid
+
+
 def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[str, Any]:
     kind = (req.get("kind") or (existing or {}).get("kind") or "export").lower()
     if kind not in ("import", "export"):
@@ -143,7 +150,7 @@ def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[
             "total_fx": round(qty * price, 2),
         })
     base = {
-        "company_id": req.get("company_id") or (existing or {}).get("company_id") or "comp_nexus_main_01",
+        "company_id": _require_company_id(req, existing),
         "kind": kind,
         "status": req.get("status") or (existing or {}).get("status") or "draft",
         "contact_id": req.get("contact_id") or "",
