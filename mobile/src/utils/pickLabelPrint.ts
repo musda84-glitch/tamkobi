@@ -17,8 +17,93 @@ import {
 
 const TEMPLATE_FETCH_CONFIRM = "Etiket şablonları alınamadı (oturum/firma). Hazır şablonla basılsın mı?";
 
-function mmToPx(mm: number): number {
+export function mmToPx(mm: number): number {
   return Math.max(40, Math.round(mm * 3.78));
+}
+
+export type TemplateLabelJob = {
+  tpl: LabelTemplateLike;
+  product: {
+    name?: string;
+    sku?: string;
+    barcode?: string;
+    sale_price?: number;
+    vat_rate?: number;
+    currency?: string;
+    price_includes_vat?: boolean;
+    tags?: string[];
+    category?: string;
+    variant_name?: string;
+    image_url?: string;
+    label_image_url?: string;
+  };
+};
+
+/** Şablon HTML'ini sistem yazdırma ekranına, olmazsa PDF paylaşımına gönderir. */
+export async function deliverTemplateLabelHtml(opts: {
+  title: string;
+  filename: string;
+  jobs: TemplateLabelJob[];
+  company?: { name?: string; logo_url?: string } | null;
+  mediaBase?: string;
+  token?: string | null;
+  mode?: "print" | "pdf";
+}): Promise<boolean> {
+  const jobs = opts.jobs || [];
+  if (!jobs.length) return false;
+  const mode = opts.mode === "pdf" ? "pdf" : "print";
+  const bySize = new Map<string, TemplateLabelJob[]>();
+  for (const job of jobs) {
+    const key = `${Number(job.tpl.width_mm) || 50}x${Number(job.tpl.height_mm) || 30}`;
+    const group = bySize.get(key);
+    if (group) group.push(job);
+    else bySize.set(key, [job]);
+  }
+  const company = opts.company?.name || opts.company?.logo_url
+    ? { name: opts.company?.name || undefined, logo_url: opts.company?.logo_url || undefined }
+    : undefined;
+  let anyOk = false;
+  for (const group of bySize.values()) {
+    let { html, widthMm, heightMm } = templateLabelDocumentHtml(
+      opts.title,
+      group,
+      company,
+      mode === "print" && Platform.OS === "web",
+      { mediaBase: opts.mediaBase },
+    );
+    try {
+      html = await embedLabelHtmlImages(html, opts.mediaBase, opts.token);
+    } catch {
+      /* absolute URL fallback */
+    }
+    const px = { width: mmToPx(widthMm), height: mmToPx(heightMm) };
+    if (mode === "pdf") {
+      try {
+        if (await htmlToPdfFile(html, opts.filename, px)) anyOk = true;
+      } catch {
+        /* fail */
+      }
+      continue;
+    }
+    if (Platform.OS === "web") {
+      if (printHtmlWeb(html)) anyOk = true;
+      continue;
+    }
+    try {
+      if (await printHtmlNative(html, px)) {
+        anyOk = true;
+        continue;
+      }
+    } catch {
+      /* PDF */
+    }
+    try {
+      if (await htmlToPdfFile(html, opts.filename, px)) anyOk = true;
+    } catch {
+      /* fail */
+    }
+  }
+  return anyOk;
 }
 
 function printHtmlWeb(html: string): boolean {
@@ -162,53 +247,19 @@ export async function printPickProductLabels(
     /* sistem yazıcısına düş */
   }
 
-  // Aynı boyutta grupla (termal @page tek boyut)
-  const bySize = new Map<string, typeof jobs>();
-  for (const job of jobs) {
-    const key = `${Number(job.tpl.width_mm) || 50}x${Number(job.tpl.height_mm) || 30}`;
-    if (!bySize.has(key)) bySize.set(key, []);
-    bySize.get(key)!.push(job);
-  }
-
   const title = `Ürün etiketleri ${orderNumber || ""}`.trim();
   const filename = `etiket-${safePrintFilename(orderNumber, "urun")}.pdf`;
   const printCompany = companyObj?.name || companyObj?.logo_url
     ? { name: companyObj?.name || undefined, logo_url: companyObj?.logo_url || undefined }
     : undefined;
-  let anyOk = false;
-
-  for (const group of bySize.values()) {
-    let { html, widthMm, heightMm } = templateLabelDocumentHtml(
-      title,
-      group,
-      printCompany,
-      Platform.OS === "web",
-      { mediaBase },
-    );
-    try {
-      html = await embedLabelHtmlImages(html, mediaBase, token);
-    } catch {
-      /* absolute URL fallback */
-    }
-    const px = { width: mmToPx(widthMm), height: mmToPx(heightMm) };
-    if (Platform.OS === "web") {
-      if (printHtmlWeb(html)) anyOk = true;
-      continue;
-    }
-    try {
-      if (await printHtmlNative(html, px)) {
-        anyOk = true;
-        continue;
-      }
-    } catch {
-      /* PDF */
-    }
-    try {
-      if (await htmlToPdfFile(html, filename, px)) anyOk = true;
-    } catch {
-      /* fail */
-    }
-  }
-
-  return { count: jobs.length, ok: anyOk };
+  const ok = await deliverTemplateLabelHtml({
+    title,
+    filename,
+    jobs,
+    company: printCompany,
+    mediaBase,
+    token,
+    mode: "print",
+  });
+  return { count: jobs.length, ok };
 }

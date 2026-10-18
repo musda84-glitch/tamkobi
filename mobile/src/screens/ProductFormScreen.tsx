@@ -30,6 +30,7 @@ import {
   type ProductDraft,
 } from "../utils/productDraft";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi, unitSelectGroups } from "../utils/stockUnits";
+import { printProductLabelsPdf } from "../utils/labelPdf";
 import { defaultLabelPrinter, printProductLabel, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import {
   PRINTER_PRESETS,
@@ -119,7 +120,7 @@ function confirmDelete(name: string, onYes: () => void) {
 }
 
 export function ProductFormScreen({ productId }: { productId?: string }) {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, activeCompany } = useAuth();
   const canEdit = can("/stock", "edit");
   const isNew = !productId;
   const [draft, setDraft] = useState<ProductDraft>(emptyProductDraft());
@@ -140,6 +141,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [tcpBusy, setTcpBusy] = useState(false);
   const [tcpError, setTcpError] = useState<string | null>(null);
   const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
+  const [labelTemplateId, setLabelTemplateId] = useState<string | null>(null);
   const ethCfg = eth || defaultEthernetPrinter();
 
   const runDiscover = async () => {
@@ -182,6 +184,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
     try {
       const p = await get<Product>(client, `/products/${productId}`);
       setDraft(draftFromProduct(p));
+      setLabelTemplateId(p?.label_template_id || null);
       setPhotos(productGalleryUrls(p));
       setError(null);
     } catch (err) {
@@ -706,6 +709,46 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
             const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
             setTcpError(msg);
             setError(msg);
+          } finally {
+            setTcpBusy(false);
+          }
+        }}
+        onPdf={async (mode, copies, opts) => {
+          setTcpBusy(true);
+          setTcpError(null);
+          try {
+            const ok = await printProductLabelsPdf(client, companyId, [{
+              product: {
+                name: draft.name,
+                sku: draft.sku,
+                barcode: draft.barcode || draft.sku,
+                sale_price: Number(draft.sale_price) || null,
+                vat_rate: Number(draft.vat_rate) || 20,
+                price_includes_vat: draft.price_includes_vat,
+                category: draft.category,
+                label_template_id: labelTemplateId,
+                image_url: photos[0],
+              },
+              copies,
+              includePrice: opts.includePrice,
+            }], mode, activeCompany);
+            if (!ok) {
+              const msg = mode === "pdf" ? "PDF paylaşılamadı." : "Etiket yazdırılamadı.";
+              setTcpError(msg);
+              setError(msg);
+              setMessage(null);
+              return;
+            }
+            setMessage(mode === "pdf"
+              ? `Etiket PDF paylaşıldı (${copies} adet).`
+              : `Etiket yazdırıldı (${copies} adet).`);
+            setError(null);
+            setTcpPrint(false);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket yazdırılamadı.");
+            setTcpError(msg);
+            setError(msg);
+            setMessage(null);
           } finally {
             setTcpBusy(false);
           }
