@@ -65,6 +65,7 @@ export function BankMatchForm({
   error,
   onSubmit,
   onCancel,
+  replace = false,
 }: {
   tx: BankMatchTx;
   draft: MatchDraft;
@@ -79,6 +80,7 @@ export function BankMatchForm({
   error?: string | null;
   onSubmit: () => void;
   onCancel: () => void;
+  replace?: boolean;
 }) {
   const { client, companyId } = useAuth();
   const [openDebts, setOpenDebts] = useState<Record<string, unknown>[]>([]);
@@ -360,7 +362,7 @@ export function BankMatchForm({
             title="Eşleştir"
             testID={`match-btn-${txId}`}
             color="#F59E0B"
-            disabled={!canSubmitMatch(draft)}
+            disabled={!canSubmitMatch(draft) || (replace && draft.mode === "contact" && !draft.contact_id)}
             loading={!!busy}
             onPress={onSubmit}
           />

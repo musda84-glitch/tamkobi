@@ -1,6 +1,11 @@
 import { post, type ApiClient } from "../api/client";
-import { matchPayload, type BankMatchTx, type MatchDraft } from "./bankMatch";
+import { emptyMatchDraft, matchPayload, type BankMatchTx, type MatchDraft, type MatchMode } from "./bankMatch";
 import { idOf } from "./money";
+
+type ReplaceSource = BankMatchTx & {
+  expense_id?: string | null;
+  as_expense?: boolean | null;
+};
 
 export type TxMatchState = "unmatched" | "matched" | "rematching";
 
@@ -19,6 +24,30 @@ export function submitMatch(
 /** POST /banking/transactions/{id}/unmatch. */
 export function unmatchTx(client: ApiClient, tx: BankMatchTx) {
   return post(client, `/banking/transactions/${idOf(tx)}/unmatch`, {});
+}
+
+/**
+ * Değiştir formu: emptyMatchDraft üstüne mevcut eşleşme.
+ * expense_id / as_expense → expense; target var ve contact yok → transfer;
+ * eşleşmiş, contact yok, kategori dolu → category; diğer → contact.
+ */
+export function replaceMatchDraft(tx?: ReplaceSource | null): MatchDraft {
+  const base = emptyMatchDraft(tx);
+  const contactId = String(tx?.contact_id || tx?.suggested_contact_id || "");
+  const targetId = String(tx?.target_account_id || "");
+  const category = String(tx?.category || "");
+  const matched = String(tx?.match_status || "") === "matched";
+  let mode: MatchMode = "contact";
+  if (tx?.expense_id || tx?.as_expense) mode = "expense";
+  else if (targetId && !contactId) mode = "transfer";
+  else if (matched && !contactId && category.trim()) mode = "category";
+  return {
+    ...base,
+    mode,
+    contact_id: contactId,
+    target_account_id: targetId,
+    category,
+  };
 }
 
 /** bank_sync değilse null. rematching / matched / unmatched aynen döner. */

@@ -7,7 +7,7 @@ import { BankMatchForm } from "./BankMatchForm";
 import { confirmAction } from "./chips";
 import { colors } from "../theme";
 import { emptyMatchDraft, type MatchDraft } from "../utils/bankMatch";
-import { submitMatch, txMatchState, unmatchTx } from "../utils/bankMatchActions";
+import { replaceMatchDraft, submitMatch, txMatchState, unmatchTx } from "../utils/bankMatchActions";
 import { sanitizeActorLabel, txCreatedSourceLabel, txUserColumnLabel } from "../utils/bankMatchLabel";
 import type { BankAccount, BankTx, ExpenseCategory, Partner } from "../utils/finance";
 import type { Employee } from "../utils/personnel";
@@ -121,8 +121,8 @@ export function BankTxCard({
 
   const openMatch = (replace: boolean) => {
     setReplacing(replace);
-    setDraft(emptyMatchDraft(tx));
-    setContactLabel(tx.suggested_contact_name || "");
+    setDraft(replace ? replaceMatchDraft(tx) : emptyMatchDraft(tx));
+    setContactLabel(replace ? (tx.contact_name || tx.suggested_contact_name || "") : (tx.suggested_contact_name || ""));
     setFormError(null);
     setDetail(false);
     setMatchOpen(true);
@@ -272,6 +272,7 @@ export function BankTxCard({
           error={formError}
           onSubmit={save}
           onCancel={closeMatch}
+          replace={replacing}
         />
       </B2BSheet>
     </View>

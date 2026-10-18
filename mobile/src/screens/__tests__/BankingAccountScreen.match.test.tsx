@@ -132,7 +132,7 @@ function integratedAccount(extra: Record<string, unknown> = {}) {
 function movementRows() {
   return [
     { id: "tx-open", source: "bank_sync", match_status: "unmatched", type: "inflow", amount: 50, description: "Gelen havale", date: "2026-10-17", category: "Havale" },
-    { id: "tx-done", source: "bank_sync", match_status: "matched", type: "outflow", amount: 80, description: "Kira ödemesi", date: "2026-10-16", category: "Kira", matched_by_name: "Ayşe", created_by_name: "Mehmet" },
+    { id: "tx-done", source: "bank_sync", match_status: "matched", type: "outflow", amount: 80, description: "Kira ödemesi", date: "2026-10-16", category: "Kira", contact_id: "c-ahmet", contact_name: "Ahmet Ticaret", matched_by_name: "Ayşe", created_by_name: "Mehmet" },
     { id: "tx-lock", source: "bank_sync", match_status: "rematching", type: "inflow", amount: 10, description: "Kilitli hareket", date: "2026-10-15" },
     { id: "tx-manual", source: "manual", match_status: "unmatched", type: "inflow", amount: 5, description: "Elden tahsilat", date: "2026-10-14" },
     { id: "tx-partner", source: "partner", match_status: "matched", type: "outflow", amount: 3, description: "Ortak çıkışı", date: "2026-10-13" },
@@ -256,6 +256,7 @@ describe("BankingAccountScreen match actions", () => {
     await show();
     await pressId(container, "bank-tx-rematch-tx-done");
     expect(textOf(findByTestId(container, "bank-match-sheet"))).toContain("Eşleştirmeyi değiştir");
+    expect(textOf(findByTestId(container, "match-contact-select-tx-done"))).toContain("Ahmet Ticaret");
     expect(postsTo("/unmatch")).toHaveLength(0);
     await pressId(container, "match-btn-tx-done");
     await flush();
@@ -263,6 +264,20 @@ describe("BankingAccountScreen match actions", () => {
     expect(postsTo("/match")).toHaveLength(1);
     expect(postsTo("/match")[0][1]).toBe("/banking/transactions/tx-done/match");
     expect(postsTo("/match")[0][2].replace).toBe(true);
+    expect(postsTo("/match")[0][2].contact_id).toBe("c-ahmet");
+  });
+
+  it("disables replace when the current contact is cleared", async () => {
+    await show();
+    await pressId(container, "bank-tx-rematch-tx-done");
+    expect(textOf(findByTestId(container, "match-contact-select-tx-done"))).toContain("Ahmet Ticaret");
+    await pressId(container, "match-contact-select-tx-done");
+    await pressId(container, "match-contact-select-tx-done-empty");
+    const button = findByTestId(container, "match-btn-tx-done");
+    expect(reactProps(button)?.disabled).toBe(true);
+    await pressId(container, "match-btn-tx-done");
+    expect(postsTo("/match")).toHaveLength(0);
+    expect(postsTo("/unmatch")).toHaveLength(0);
   });
 
   it("cancels replace without a request", async () => {
