@@ -115,7 +115,14 @@ export function TxMobileCard({
 }
 
 /** Cards below `md` (768px); table unchanged on desktop. */
-export function TxResponsiveList({ cards, table, cardsTestId, tableWrapTestId, empty }) {
+export function TxResponsiveList({
+  cards,
+  table,
+  cardsTestId,
+  tableWrapTestId,
+  empty,
+  tableWrapClassName = "hidden md:block overflow-x-auto",
+}) {
   const hasCards = cards != null;
   return (
     <div data-tx-responsive-list="1">
@@ -126,7 +133,7 @@ export function TxResponsiveList({ cards, table, cardsTestId, tableWrapTestId, e
       >
         {hasCards ? cards : empty}
       </div>
-      <div className="hidden md:block overflow-x-auto" data-testid={tableWrapTestId}>
+      <div className={tableWrapClassName} data-testid={tableWrapTestId}>
         {table}
       </div>
     </div>
