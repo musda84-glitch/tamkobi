@@ -13,6 +13,7 @@ import {
   canSubmitMatch,
   connStatusTone,
   connStatusTr,
+  DEFAULT_PERSONNEL_PAY_KIND,
   employeeSelectGroups,
   emptyMatchDraft,
   isPersonnelExpenseCategory,
@@ -22,6 +23,9 @@ import {
   matchResultLabel,
   matchTargets,
   matchedViaTr,
+  PERSONNEL_EXPENSE_CATEGORY,
+  PERSONNEL_PAY_KINDS,
+  personnelCategoryOnly,
   personnelPayKindGroups,
   ruleLabel,
   suggestionLabel,
@@ -35,8 +39,15 @@ import {
 } from "../utils/bankMatch";
 import { txUserColumnLabel } from "../utils/bankMatchLabel";
 import type { BankAccount, ExpenseCategory, Partner } from "../utils/finance";
-import type { Employee } from "../utils/personnel";
+import { expensePersonnelDebtOpen, type Employee } from "../utils/personnel";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+
+function openDebtOptionLabel(exp: Record<string, unknown>): string {
+  const num = String(exp.expense_number || exp.number || "MSR");
+  const date = fmtDate(exp.date ? String(exp.date) : "");
+  const amount = exp.personnel_debt_amount ?? exp.total ?? exp.amount;
+  return `${num} · ${date} · ${fmtMoney(amount)}`;
+}
 
 export function BankingMatchPanel({
   accounts,
@@ -69,6 +80,8 @@ export function BankingMatchPanel({
   const [ruleContactLabel, setRuleContactLabel] = useState("");
   const [contactLabel, setContactLabel] = useState("");
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [openDebts, setOpenDebts] = useState<Record<string, unknown>[]>([]);
+  const [debtsReady, setDebtsReady] = useState(false);
   const [ready, setReady] = useState(false);
   const openedFocus = React.useRef("");
 
@@ -100,6 +113,34 @@ export function BankingMatchPanel({
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const employeeId = draft.employee_id;
+    const show = draft.mode === "expense" && draft.personnel_pay_kind === "reimburse" && !!employeeId;
+    if (!show) {
+      setOpenDebts([]);
+      setDebtsReady(false);
+      return undefined;
+    }
+    let cancel = false;
+    setDebtsReady(false);
+    get<{ expenses?: unknown; open_personnel_debts?: unknown }>(
+      client,
+      `/personnel/employees/${employeeId}/card`,
+      { company_id: companyId },
+    ).then((data) => {
+      const raw = data?.expenses || data?.open_personnel_debts || [];
+      const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+      const open = rows.filter(expensePersonnelDebtOpen);
+      open.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+      if (!cancel) setOpenDebts(open);
+    }).catch(() => {
+      if (!cancel) setOpenDebts([]);
+    }).finally(() => {
+      if (!cancel) setDebtsReady(true);
+    });
+    return () => { cancel = true; };
+  }, [client, companyId, draft.mode, draft.personnel_pay_kind, draft.employee_id]);
 
   useEffect(() => {
     if (!ready || !focusTxId || openedFocus.current === focusTxId) return;
@@ -170,10 +211,19 @@ export function BankingMatchPanel({
 
   const submitMatch = () => {
     if (!active || !canSubmitMatch(draft)) return;
+    const personnel = draft.mode === "expense" && isPersonnelExpenseCategory(draft.category);
+    const employee = employees.find((e) => idOf(e) === draft.employee_id) as { full_name?: string; name?: string } | undefined;
+    const employeeName = employee?.full_name || employee?.name || "";
+    const kindLabel = PERSONNEL_PAY_KINDS.find((k) => k.key === draft.personnel_pay_kind)?.label || "";
     run("match", async () => {
       await post(client, `/banking/transactions/${idOf(active)}/match`, matchPayload(draft));
       setActive(null);
-      setMessage(draft.learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi.");
+      if (personnel) {
+        const learned = draft.learn ? " ve kural olarak öğrenildi" : "";
+        setMessage(`${employeeName} · ${kindLabel} eşleştirildi${learned}.`);
+      } else {
+        setMessage(draft.learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi.");
+      }
     });
   };
 
@@ -225,6 +275,12 @@ export function BankingMatchPanel({
   const needPersonnel = draft.mode === "expense" && isPersonnelExpenseCategory(draft.category);
   const expenseCatGroups = useMemo(() => matchExpenseCategoryGroups(expenseCats), [expenseCats]);
   const employeeGroups = useMemo(() => employeeSelectGroups(employees), [employees]);
+  const openDebtGroups = useMemo(() => {
+    const options = openDebts
+      .map((exp) => ({ value: idOf(exp), label: openDebtOptionLabel(exp) }))
+      .filter((o) => o.value);
+    return options.length ? [{ label: "Açık masraf borçları", options }] : [];
+  }, [openDebts]);
 
   const tiles = [
     canEdit && connections.length ? { key: "sync", label: "Tümünü senkronize", icon: "sync" as const, tone: "indigo" as const, testID: "sync-all-btn", busy: busy === "sync-all", onPress: syncAll } : null,
@@ -440,7 +496,8 @@ export function BankingMatchPanel({
                     target_account_id: m.key === "transfer" ? d.target_account_id : "",
                     category: m.key === "expense" || m.key === "category" ? d.category : "",
                     employee_id: "",
-                    personnel_pay_kind: "expense",
+                    personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+                    expense_id: "",
                   }))}
                 />
               ))}
@@ -469,20 +526,63 @@ export function BankingMatchPanel({
               />
             ) : null}
             {draft.mode === "category" ? (
-              <Field
-                label="Kategori (zorunlu)"
-                testID={`match-category-${idOf(active)}`}
-                value={draft.category}
-                onChangeText={(v) => setDraft({ ...draft, category: v })}
-                placeholder="Kategori"
-              />
+              <>
+                <Field
+                  label="Kategori (zorunlu)"
+                  testID={`match-category-${idOf(active)}`}
+                  value={draft.category}
+                  onChangeText={(v) => setDraft({
+                    ...draft,
+                    category: v,
+                    personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+                    expense_id: "",
+                  })}
+                  placeholder="Kategori"
+                />
+                {personnelCategoryOnly(draft) ? (
+                  <View
+                    testID={`match-personnel-warn-${idOf(active)}`}
+                    style={{
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: "#FDE68A",
+                      backgroundColor: colors.amber50,
+                      borderRadius: 12,
+                      padding: 10,
+                      gap: 8,
+                    }}
+                  >
+                    <Text style={{ color: "#92400E", fontSize: 12, fontWeight: "700" }}>
+                      {"Personel ödemesi için 'Masraf' modunda personel seçin."}
+                    </Text>
+                    <PrimaryButton
+                      title="Masraf moduna geç"
+                      testID={`match-goto-expense-${idOf(active)}`}
+                      color="#7C3AED"
+                      onPress={() => setDraft((d) => ({
+                        ...d,
+                        mode: "expense",
+                        category: d.category.trim() || PERSONNEL_EXPENSE_CATEGORY,
+                        personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+                        expense_id: "",
+                      }))}
+                    />
+                  </View>
+                ) : null}
+              </>
             ) : null}
             {draft.mode === "expense" ? (
               <GroupedSelect
                 label="Masraf kategorisi (zorunlu)"
                 testID={`match-expense-cat-${idOf(active)}`}
                 value={draft.category}
-                onChange={(v) => setDraft({ ...draft, category: v, employee_id: "", personnel_pay_kind: "expense" })}
+                onChange={(v) => setDraft({
+                  ...draft,
+                  category: v,
+                  employee_id: "",
+                  personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+                  expense_id: "",
+                })}
                 groups={expenseCatGroups}
                 emptyLabel="Kategori seçin…"
               />
@@ -493,18 +593,42 @@ export function BankingMatchPanel({
                   label="Ödeme türü (zorunlu)"
                   testID={`match-pay-kind-${idOf(active)}`}
                   value={draft.personnel_pay_kind}
-                  onChange={(v) => setDraft({ ...draft, personnel_pay_kind: (v || "expense") as PersonnelPayKind })}
+                  onChange={(v) => setDraft({
+                    ...draft,
+                    personnel_pay_kind: (v || DEFAULT_PERSONNEL_PAY_KIND) as PersonnelPayKind,
+                    expense_id: "",
+                  })}
                   groups={personnelPayKindGroups()}
                   emptyLabel="Ödeme türü"
                 />
+                {draft.personnel_pay_kind === "expense" ? (
+                  <Muted testID={`match-expense-note-${idOf(active)}`}>Personel bakiyesini değiştirmez.</Muted>
+                ) : null}
                 <GroupedSelect
                   label="Personel (zorunlu)"
                   testID={`match-employee-${idOf(active)}`}
                   value={draft.employee_id}
-                  onChange={(v) => setDraft({ ...draft, employee_id: v })}
+                  onChange={(v) => setDraft({ ...draft, employee_id: v, expense_id: "" })}
                   groups={employeeGroups}
                   emptyLabel="Personel seçin…"
                 />
+                {draft.personnel_pay_kind === "reimburse" && draft.employee_id ? (
+                  <>
+                    <GroupedSelect
+                      label="Açık masraf borcu (isteğe bağlı)"
+                      testID={`match-msr-${idOf(active)}`}
+                      value={draft.expense_id || ""}
+                      onChange={(v) => setDraft({ ...draft, expense_id: v })}
+                      groups={openDebtGroups}
+                      emptyLabel="Otomatik (en eski açık borçlar)"
+                    />
+                    {debtsReady && !openDebts.length ? (
+                      <Muted testID={`match-msr-empty-${idOf(active)}`}>
+                        Açık masraf borcu görünmüyor; kaydederseniz sunucu uyarı verebilir.
+                      </Muted>
+                    ) : null}
+                  </>
+                ) : null}
               </>
             ) : null}
             <Chip
