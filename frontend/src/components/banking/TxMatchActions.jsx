@@ -35,7 +35,10 @@ export function TxMatchActions({
   if (!tx || tx.source !== "bank_sync") return null;
   const txId = tx.id || tx._id;
   const labels = LABEL[variant] || LABEL.compact;
-  const btn = "inline-flex items-center justify-center rounded-lg px-2 py-1 text-[11px] font-semibold whitespace-nowrap";
+  const compact = variant !== "full";
+  const btn = compact
+    ? "inline-flex items-center justify-center rounded-lg px-1.5 py-1 text-[11px] font-semibold whitespace-nowrap shrink-0"
+    : "inline-flex items-center justify-center rounded-lg px-2 py-1 text-[11px] font-semibold whitespace-nowrap";
 
   const openFresh = (e) => {
     e?.stopPropagation?.();
@@ -91,7 +94,7 @@ export function TxMatchActions({
   return (
     <>
       {controls ? (
-        <span className="inline-flex items-center gap-1" data-testid={`tx-match-actions-${txId}`} onClick={(e) => e.stopPropagation()}>
+        <span className={`inline-flex items-center gap-1 ${compact ? "shrink-0 whitespace-nowrap" : ""}`} data-testid={`tx-match-actions-${txId}`} onClick={(e) => e.stopPropagation()}>
           {controls}
         </span>
       ) : null}

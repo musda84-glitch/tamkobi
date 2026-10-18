@@ -72,7 +72,7 @@ function AccountRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-xs font-bold text-slate-900 truncate" title={accountDisplayLabel(acc)}>{accountDisplayLabel(acc)}</div>
+              <div className="text-xs font-bold text-slate-900 line-clamp-2 break-words" title={accountDisplayLabel(acc)}>{accountDisplayLabel(acc)}</div>
               <div className="text-[10px] text-slate-500 truncate">
                 {accountTypeLabel(acc.type)}
                 {masked ? ` · ${masked}` : ""}

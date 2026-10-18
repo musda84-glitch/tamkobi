@@ -1008,10 +1008,13 @@ export default function BankingPage() {
                     accounts={accounts}
                     companyId={companyId}
                     onChanged={bumpCashData}
+                    variant="compact"
                   />
                   <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />
                 </>
               );
+              const showAccountCol = !selectedAccount;
+              const txColCount = showAccountCol ? 7 : 6;
               const cards = shownRows.length === 0 ? (
                 <div className="text-center text-slate-400 py-6">{emptyTxLabel}</div>
               ) : (
@@ -1023,7 +1026,7 @@ export default function BankingPage() {
                         testId={`tx-card-${id}`}
                         className={(tx.id || tx._id) === focusTx ? "ring-2 ring-amber-400 bg-amber-50" : ""}
                         date={fmtDate(tx.date)}
-                        party={txAccountLabel(tx, accounts)}
+                        party={selectedAccount ? null : txAccountLabel(tx, accounts)}
                         badge={<TxTypeBadge label={bankKind(tx)} kind={tx.type} />}
                         amount={bankAmount(tx)}
                         amountClassName={bankAmountCls(tx)}
@@ -1035,23 +1038,33 @@ export default function BankingPage() {
                   );
                 })
               );
+              const actionHeadCls = "sticky right-0 z-10 bg-white shrink-0 w-auto whitespace-nowrap px-1 py-2 text-right";
               const table = (
-              <table className="w-full text-left text-xs text-slate-600 min-w-[860px]">
+              <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600">
+                <colgroup>
+                  <col style={{ width: showAccountCol ? "4.25rem" : "4.5rem" }} />
+                  {showAccountCol ? <col style={{ width: "5.25rem" }} /> : null}
+                  <col style={{ width: showAccountCol ? "4.75rem" : "5.5rem" }} />
+                  <col />
+                  <col className="hidden lg:table-column" style={{ width: showAccountCol ? "4.5rem" : "5rem" }} />
+                  <col style={{ width: showAccountCol ? "5.25rem" : "5.75rem" }} />
+                  <col style={{ width: "11.5rem" }} />
+                </colgroup>
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                   <tr>
-                    <th className="px-3 py-2">Tarih</th>
-                    <th className="px-3 py-2">Hesap</th>
-                    <th className="px-3 py-2">Kategori</th>
-                    <th className="px-3 py-2">Açıklama / Cari</th>
-                    <th className="px-3 py-2">Kullanıcı</th>
-                    <th className="px-3 py-2 text-right">Tutar</th>
-                    <th className="px-2 py-2 text-right">İşlem</th>
+                    <th className="px-2 py-2 whitespace-nowrap">Tarih</th>
+                    {showAccountCol ? <th className="px-2 py-2 max-w-[140px]">Hesap</th> : null}
+                    <th className="px-2 py-2">Kategori</th>
+                    <th className="px-2 py-2 min-w-0">Açıklama / Cari</th>
+                    <th className="px-2 py-2 hidden lg:table-cell max-w-[120px]">Kullanıcı</th>
+                    <th className="px-2 py-2 text-right whitespace-nowrap">Tutar</th>
+                    <th className={actionHeadCls}>İşlem</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {shownRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-6 text-center text-slate-400">{emptyTxLabel}</td>
+                      <td colSpan={txColCount} className="px-3 py-6 text-center text-slate-400">{emptyTxLabel}</td>
                     </tr>
                   ) : (
                     shownRows.map((tx) => {
@@ -1059,26 +1072,31 @@ export default function BankingPage() {
                       const descFull = [txDescriptionLabel(tx), tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? `kart sahibi ${tx.owner_contact_name}` : ""].filter(Boolean).join(" · ");
                       const userFull = txUserColumnLabel(tx);
                       const accountFull = txAccountLabel(tx, accounts);
+                      const focused = id === focusTx;
                       return (
                         <tr
                           key={id}
                           onClick={() => setDetailTxId(id)}
-                          className={`hover:bg-slate-50/70 transition cursor-pointer whitespace-nowrap [content-visibility:auto] [contain-intrinsic-size:auto_36px] ${id === focusTx ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`}
+                          className={`group hover:bg-slate-50/70 transition cursor-pointer [content-visibility:auto] [contain-intrinsic-size:auto_36px] ${focused ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`}
                           data-testid={`tx-row-${id}`}
                         >
-                          <td className="px-3 py-1.5 text-slate-500 font-mono" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
-                          <td className="px-3 py-1.5 font-semibold text-slate-900 max-w-[140px]"><div className="truncate" title={accountFull}>{accountFull}</div></td>
-                          <td className="px-3 py-1.5 max-w-[140px]">
-                            <span className={`inline-flex items-center gap-1 max-w-full text-[11px] px-2 py-0.5 rounded-md font-semibold ${
+                          <td className="px-2 py-1.5 text-slate-500 font-mono whitespace-nowrap overflow-hidden" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
+                          {showAccountCol ? (
+                            <td className="px-2 py-1.5 font-semibold text-slate-900 max-w-[140px] overflow-hidden">
+                              <div className="truncate" title={accountFull}>{accountFull}</div>
+                            </td>
+                          ) : null}
+                          <td className="px-2 py-1.5 overflow-hidden">
+                            <span className={`inline-flex items-center gap-1 max-w-full min-w-0 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                               tx.type === "inflow" ? "bg-emerald-50 text-emerald-700" : tx.type === "outflow" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"
                             }`} title={tx.category || bankKind(tx)}>
                               {tx.type === "inflow" ? <ArrowDownRight className="w-3 h-3 shrink-0" /> : tx.type === "outflow" ? <ArrowUpRight className="w-3 h-3 shrink-0" /> : <ArrowRightLeft className="w-3 h-3 shrink-0" />}
                               <span className="truncate">{tx.category || bankKind(tx)}</span>
                             </span>
                           </td>
-                          <td className="px-3 py-1.5 text-slate-700 max-w-[220px]" data-testid={`tx-desc-${id}`}>
-                            <div className="flex items-center gap-1 min-w-0">
-                              <span className="truncate font-medium text-slate-800" title={descFull || tx.description || ""}>{txDescriptionLabel(tx)}</span>
+                          <td className="px-2 py-1.5 text-slate-700 min-w-0 overflow-hidden" data-testid={`tx-desc-${id}`}>
+                            <div className="flex flex-wrap items-center gap-1 min-w-0">
+                              <span className="truncate min-w-0 max-w-full font-medium text-slate-800" title={descFull || tx.description || ""}>{txDescriptionLabel(tx)}</span>
                               {tx.customer_card && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`tx-customer-card-${id}`}>MÜŞTERİ KARTI</span>}
                               {tx.source === "bank_sync" && <span className={`shrink-0 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
                               {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${id}`}>{matchStatusLabel(tx)}</span>}
@@ -1087,14 +1105,17 @@ export default function BankingPage() {
                               {tx.source === "bank_match" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                             </div>
                           </td>
-                          <td className="px-3 py-1.5 text-slate-600 max-w-[9rem]" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
+                          <td className="px-2 py-1.5 text-slate-600 hidden lg:table-cell max-w-[120px] overflow-hidden" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
                             <div className="truncate">{txUserColumnLabelShort(tx) || <span className="text-slate-300">—</span>}</div>
                           </td>
-                          <td className={`px-3 py-1.5 text-right font-bold ${bankAmountCls(tx)}`}>
+                          <td className={`px-2 py-1.5 text-right font-bold whitespace-nowrap overflow-hidden ${bankAmountCls(tx)}`}>
                             {bankAmount(tx)}
                           </td>
-                          <td className="px-2 py-1 text-right" onClick={(e) => e.stopPropagation()}>
-                            <div className="inline-flex items-center justify-end gap-1">
+                          <td
+                            className={`sticky right-0 z-10 shrink-0 w-auto whitespace-nowrap px-1 py-1 text-right ${focused ? "bg-amber-50" : "bg-white group-hover:bg-slate-50"}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="inline-flex items-center justify-end gap-1 shrink-0 whitespace-nowrap">
                               {rowActions(tx)}
                             </div>
                           </td>
@@ -1106,12 +1127,13 @@ export default function BankingPage() {
               </table>
               );
               return (
-                <div className="overflow-x-hidden min-w-0">
+                <div className="min-w-0 w-full">
                   <TxResponsiveList
                     cards={cards}
                     table={table}
                     cardsTestId="bank-tx-cards"
                     tableWrapTestId="bank-tx-table-wrap"
+                    tableWrapClassName="hidden md:block w-full min-w-0 max-md:overflow-x-auto"
                   />
                   {listHasMore && (
                     <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
