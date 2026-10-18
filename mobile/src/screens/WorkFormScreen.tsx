@@ -796,6 +796,42 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         : survey?.survey_number || "Keşif";
   const quoteProjectAction = kind === "quote" ? quoteToProjectAction(quote) : null;
 
+  const screenScroll = useRef<{ scrollTo?: (opts: { y: number; animated?: boolean }) => void } | null>(null);
+  const photosAnchor = useRef<any>(null);
+  const productionAnchor = useRef<any>(null);
+  const scrolledSection = useRef("");
+  const scrollFocusedSection = useCallback(() => {
+    const key = String(focusSection || "").trim();
+    if (kind !== "project" || (key !== "photos" && key !== "production")) return;
+    if (scrolledSection.current === key) return;
+    const child = key === "photos" ? photosAnchor.current : productionAnchor.current;
+    const scroller = screenScroll.current;
+    if (!child || !scroller?.scrollTo) return;
+    const mark = () => { scrolledSection.current = key; };
+    const webNode = child as { scrollIntoView?: (opts?: ScrollIntoViewOptions) => void };
+    if (Platform.OS === "web" && typeof webNode.scrollIntoView === "function") {
+      webNode.scrollIntoView({ block: "start", behavior: "smooth" });
+      mark();
+      return;
+    }
+    if (typeof child.measureLayout !== "function") return;
+    child.measureLayout(
+      scroller,
+      (_x: number, y: number) => {
+        scroller.scrollTo?.({ y: Math.max(0, y - 8), animated: true });
+        mark();
+      },
+      () => undefined,
+    );
+  }, [focusSection, kind]);
+  useEffect(() => {
+    const key = String(focusSection || "").trim();
+    if (kind !== "project" || (key !== "photos" && key !== "production")) return undefined;
+    scrolledSection.current = "";
+    const t = setTimeout(scrollFocusedSection, 80);
+    return () => clearTimeout(t);
+  }, [focusSection, kind, project, productionSteps.length, scrollFocusedSection]);
+
   const focus = String(focusSection || "").trim();
   const projectDocs = !isNew && kind === "project" && project
     ? projectMetricSectionOrder(focus).map((key) => {
@@ -894,7 +930,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   ) : null;
 
   return (
-    <Screen stickyTop={(cariSearch || stockSearch) ? <>{cariSearch}{stockSearch}</> : undefined}>
+    <Screen scrollRef={screenScroll} stickyTop={(cariSearch || stockSearch) ? <>{cariSearch}{stockSearch}</> : undefined}>
       {kind === "quote" ? (
         <Stack.Screen
           options={{
@@ -1001,6 +1037,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           <MoneyInput label="Bütçe" testID="p-budget" value={budget} onChange={(n) => setBudget(n ?? "")} editable={canEdit} />
           <DateField label="Başlangıç" testID="p-start" value={startDate} onChangeText={setStartDate} editable={canEdit} defaultToday />
           <DateField label="Bitiş" testID="p-end" value={endDate} onChangeText={setEndDate} min={startDate} editable={canEdit} />
+          <View ref={productionAnchor} collapsable={false} onLayout={scrollFocusedSection}>
           <Card testID="pf-production-order-block">
             <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Üretim emri</Text>
             <Muted>Seçilen üretim emrinin adımları proje dosyasında görünür. Müşteri takip linkinde göstermek için aşağıdaki seçeneği açın.</Muted>
@@ -1067,6 +1104,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               </View>
             ) : null}
           </Card>
+          </View>
         </>
       ) : null}
       {kind === "survey" ? <DateField label="Keşif tarihi" testID="s-date" value={surveyDate} onChangeText={setSurveyDate} editable={canEdit} /> : null}
@@ -1397,17 +1435,19 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <LocationPicker label="Konum" value={location} onChange={setLocation} editable={canEdit} showRadius testID="work-location" />
       ) : null}
       {kind === "project" && project ? (
-        <ProjectStagePhotos
-          project={project}
-          stages={projectStages}
-          editable={canEdit}
-          onChanged={(patch: { stage_photos: StagePhoto[]; images: string[] }) => {
-            setProject((cur) => (cur ? { ...cur, ...patch } : cur));
-            setPhotos(patch.images);
-          }}
-          onPreview={() => setWorkPreview(true)}
-          testID="project-stage-photos"
-        />
+        <View ref={photosAnchor} collapsable={false} onLayout={scrollFocusedSection}>
+          <ProjectStagePhotos
+            project={project}
+            stages={projectStages}
+            editable={canEdit}
+            onChanged={(patch: { stage_photos: StagePhoto[]; images: string[] }) => {
+              setProject((cur) => (cur ? { ...cur, ...patch } : cur));
+              setPhotos(patch.images);
+            }}
+            onPreview={() => setWorkPreview(true)}
+            testID="project-stage-photos"
+          />
+        </View>
       ) : (
         <ImageUploader
           entity={kind}

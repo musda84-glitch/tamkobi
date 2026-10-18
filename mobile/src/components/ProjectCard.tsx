@@ -1,18 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, Platform, Pressable, Share, Text, View } from "react-native";
-import { get, post, put } from "../api/client";
+import { del, get, post, put } from "../api/client";
 import { normalizeApiBase } from "../api/url";
 import { apiErrorMessage } from "../auth/AuthContext";
 import { B2BSheet } from "./b2b/B2BSheet";
-import { ProjectStagePhotos, ProjectWorkPreview } from "./ProjectStagePhotos";
-import { Chip } from "./chips";
+import { ProjectPhotoStrip } from "./ProjectStagePhotos";
+import { ProjectStageStepper } from "./ProjectStageStepper";
+import { Chip, confirmAction } from "./chips";
 import { GroupedSelect } from "./GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, Muted, PrimaryButton, Row } from "./kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { statusTr } from "../utils/labels";
-import { fmtMoney, idOf } from "../utils/money";
+import { idOf } from "../utils/money";
 import { mapsLink } from "../utils/geo";
 import type { ProjectStage } from "../utils/projectStages";
 import type { Employee, ProjectTask } from "../utils/personnel";
@@ -24,8 +25,6 @@ import {
   validateApprovalSend,
 } from "../utils/quoteApproval";
 import {
-  PROJECT_QUOTE_ACTION,
-  PROJECT_NEW_QUOTE_ACTION,
   PROJECT_MAPS_ACTION,
   projectQuoteNavParams,
   canCompleteProject,
@@ -34,9 +33,9 @@ import {
   cleanProjectTasks,
   emptyProjectTask,
   projectCardBits,
+  projectMoneyLine,
   addressToggleLabel,
   shouldCollapseAddress,
-  projectStatusSelectGroups,
   projectTaskRows,
   projectTaskSummary,
   projectTrackingPayload,
@@ -136,7 +135,7 @@ export function ProjectCard({
   onTrack,
   onCollect,
   onPhotos,
-  onPreview,
+  onDelete,
 }: {
   project: ProjectDoc;
   stages: ProjectStage[];
@@ -149,16 +148,26 @@ export function ProjectCard({
   onTrack: () => void;
   onCollect?: () => void;
   onPhotos: (id: string, patch: Pick<ProjectDoc, "stage_photos" | "images">) => void;
-  onPreview: () => void;
+  onDelete: () => void;
 }) {
   const id = idOf(project);
   const bits = projectCardBits(project);
   const collapseAddr = shouldCollapseAddress(bits.address);
   const [showAddr, setShowAddr] = useState(!collapseAddr);
+  const [moreOpen, setMoreOpen] = useState(false);
   const taskBits = projectTaskSummary(project.tasks);
   const trackLabel = trackingBadgeLabel(project.tracking);
+  const moneyParts = projectMoneyLine(bits).split(" · ");
+  const [budgetLabel, quotedLabel, invoicedLabel, expenseLabel] = moneyParts;
+  const steps = project.production_steps || [];
+  const productionRef = project.production_order_code || project.recipe_name || "";
+  const productionLine = `🏭 ${productionRef ? `${productionRef} · ` : ""}${steps.length} adım · ${project.show_production_steps ? "Müşteri görür" : "Gizli"}`;
+  const closeMore = (fn?: () => void) => {
+    setMoreOpen(false);
+    fn?.();
+  };
   return (
-    <Card testID={`project-row-${id}`}>
+    <Card testID={`project-row-${id}`} style={{ width: "100%", alignSelf: "stretch" }}>
       <Pressable onPress={() => go("ProjectDetail", { id })}>
         {bits.codes ? <Muted>{bits.codes}</Muted> : null}
         <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -185,31 +194,23 @@ export function ProjectCard({
           ) : null}
         </View>
       ) : null}
-      <Row style={{ alignItems: "stretch", gap: 6, marginTop: 4 }}>
-        <Metric label="Bütçe" value={fmtMoney(bits.budget)} testID={`project-budget-${id}`} onPress={() => go("ProjectDetail", { id })} />
-        <Metric
-          label="Teklif"
-          value={`${bits.quoteCount} · ${fmtMoney(bits.quoted)}`}
-          testID={`project-quoted-${id}`}
-          onPress={() => go("ProjectDetail", { id, section: "quotes" })}
-        />
-      </Row>
-      <Row style={{ alignItems: "stretch", gap: 6, marginTop: 6 }}>
-        <Metric
-          label="Faturalanan"
-          value={fmtMoney(bits.invoiced)}
-          testID={`project-invoiced-${id}`}
-          tone="green"
-          onPress={() => go("ProjectDetail", { id, section: "invoices" })}
-        />
-        <Metric
-          label="Masraf"
-          value={fmtMoney(bits.expense)}
-          testID={`project-expense-total-${id}`}
-          tone="rose"
-          onPress={() => go("ProjectDetail", { id, section: "expenses" })}
-        />
-      </Row>
+      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "nowrap", marginTop: 4, gap: 0 }}>
+        <Pressable testID={`project-budget-${id}`} onPress={() => go("ProjectDetail", { id })} style={{ flexShrink: 1, minWidth: 0 }}>
+          <Muted numberOfLines={1}>{budgetLabel}</Muted>
+        </Pressable>
+        <Muted> · </Muted>
+        <Pressable testID={`project-quoted-${id}`} onPress={() => go("ProjectDetail", { id, section: "quotes" })} style={{ flexShrink: 1, minWidth: 0 }}>
+          <Muted numberOfLines={1}>{quotedLabel}</Muted>
+        </Pressable>
+        <Muted> · </Muted>
+        <Pressable testID={`project-invoiced-${id}`} onPress={() => go("ProjectDetail", { id, section: "invoices" })} style={{ flexShrink: 1, minWidth: 0 }}>
+          <Muted numberOfLines={1}>{invoicedLabel}</Muted>
+        </Pressable>
+        <Muted> · </Muted>
+        <Pressable testID={`project-expense-total-${id}`} onPress={() => go("ProjectDetail", { id, section: "expenses" })} style={{ flexShrink: 1, minWidth: 0 }}>
+          <Muted numberOfLines={1}>{expenseLabel}</Muted>
+        </Pressable>
+      </View>
       {taskBits || trackLabel || onCollect ? (
         <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
           {taskBits ? (
@@ -233,153 +234,121 @@ export function ProjectCard({
           ) : null}
         </Row>
       ) : null}
-      {canEdit ? (
-        <View style={{ marginTop: 8 }}>
-          <GroupedSelect
-            dense
-            label="Aşama"
-            testID={`project-status-${id}`}
-            value={project.status || "planning"}
-            onChange={(v) => !statusBusy && onStatus(v)}
-            groups={projectStatusSelectGroups(project.status, stages)}
-            emptyLabel="Aşama seçin"
-          />
-        </View>
-      ) : null}
-      <ProjectStagePhotos
+      <ProjectStageStepper
+        projectId={id}
+        status={project.status}
+        stages={stages}
+        canEdit={canEdit}
+        statusBusy={statusBusy}
+        onStatus={onStatus}
+      />
+      <ProjectPhotoStrip
         project={project}
         stages={stages}
         editable={canEdit}
         onChanged={(patch) => onPhotos(id, patch)}
-        onPreview={onPreview}
         testID={`project-stage-photos-${id}`}
       />
-      <View style={{ gap: 6, marginTop: 8 }}>
+      {steps.length > 0 ? (
+        <Pressable
+          testID={`project-recipe-steps-${id}`}
+          onPress={() => go("ProjectDetail", { id, section: "production" })}
+          style={{ marginTop: 4 }}
+        >
+          <Muted numberOfLines={1}>{productionLine}</Muted>
+        </Pressable>
+      ) : null}
+      <Row style={{ alignItems: "stretch", marginTop: 8 }}>
+        {canQuote ? (
+          <ActionBtn
+            title="+ Teklif"
+            testID={`project-new-quote-${id}`}
+            onPress={() => go("QuoteNew", projectQuoteNavParams(project))}
+            bg="#FFFBEB"
+            border="#FDE68A"
+            color="#92400E"
+          />
+        ) : null}
+        {canEdit && canCompleteProject(project.status, stages) ? (
+          <ActionBtn
+            title="✓ Tamamla"
+            testID={`project-quote-${id}`}
+            onPress={() => !statusBusy && onStatus("completed")}
+            bg={colors.primary}
+            color="#fff"
+          />
+        ) : null}
+        <Pressable
+          testID={`project-more-${id}`}
+          accessibilityLabel="Diğer işlemler"
+          onPress={() => setMoreOpen(true)}
+          style={{
+            width: 44,
+            minHeight: 40,
+            borderRadius: 10,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#F8FAFC",
+            borderWidth: 1,
+            borderColor: "#CBD5E1",
+          }}
+        >
+          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }}>⋯</Text>
+        </Pressable>
+      </Row>
+      <B2BSheet
+        visible={moreOpen}
+        title="Diğer işlemler"
+        subtitle={bits.name}
+        onClose={() => setMoreOpen(false)}
+        testID="project-more-sheet"
+      >
         {canEdit ? (
-          <ActionBtn
-            title="Proje Düzenle"
-            testID={`project-edit-${id}`}
-            onPress={() => go("ProjectDetail", { id })}
-            bg="#F8FAFC"
-            border="#CBD5E1"
-            color="#1E293B"
-          />
+          <Pressable testID={`project-edit-${id}`} onPress={() => closeMore(() => go("ProjectDetail", { id }))} style={moreItemStyle}>
+            <Text style={moreItemText}>Proje Düzenle</Text>
+          </Pressable>
         ) : null}
-        {(project.production_steps || []).length > 0 ? (
-          <View
-            testID={`project-recipe-steps-${id}`}
-            style={{ borderRadius: 10, borderWidth: 1, borderColor: "#E2E8F0", backgroundColor: "#F8FAFC", padding: 8, gap: 4 }}
-          >
-            <Row style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={{ fontSize: 11, fontWeight: "800", color: colors.text }}>
-                Üretim adımları{(project.production_order_code || project.recipe_name) ? ` · ${project.production_order_code || project.recipe_name}` : ""}
-              </Text>
-              <View
-                style={{
-                  backgroundColor: project.show_production_steps ? "#ECFDF5" : "#F1F5F9",
-                  borderRadius: 999,
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                }}
-              >
-                <Text style={{ fontSize: 10, fontWeight: "700", color: project.show_production_steps ? "#047857" : "#64748B" }}>
-                  {project.show_production_steps ? "Müşteri görür" : "Gizli"}
-                </Text>
-              </View>
-            </Row>
-            {(project.production_steps || []).slice(0, 6).map((st, i) => (
-              <Text key={`${st.no || i}-${st.name}`} style={{ fontSize: 11, color: colors.muted }} numberOfLines={2}>
-                <Text style={{ fontWeight: "700", color: colors.text }}>{st.no || i + 1}. {st.name}</Text>
-                {st.station ? ` · ${st.station}` : ""}
-                {st.material_name ? ` — ${st.material_name}` : ""}
-              </Text>
-            ))}
-            {(project.production_steps || []).length > 6 ? (
-              <Muted>+{(project.production_steps || []).length - 6} adım daha</Muted>
-            ) : null}
-          </View>
+        {canExp ? (
+          <Pressable testID={`project-expense-${id}`} onPress={() => closeMore(() => go("ProjectDetail", { id, open_expense: "1" }))} style={moreItemStyle}>
+            <Text style={moreItemText}>Masraf Ekle</Text>
+          </Pressable>
         ) : null}
-        <Row style={{ flexWrap: "wrap" }}>
-          {canQuote ? (
-            <ActionBtn
-              title={PROJECT_NEW_QUOTE_ACTION}
-              testID={`project-new-quote-${id}`}
-              onPress={() => go("QuoteNew", projectQuoteNavParams(project))}
-              bg="#FFFBEB"
-              border="#FDE68A"
-              color="#92400E"
-            />
-          ) : null}
-          <ActionBtn
-            title={PROJECT_MAPS_ACTION}
-            testID={`project-maps-${id}`}
-            onPress={() => openProjectLocation(project)}
-            bg="#FFF1F2"
-            border="#FECDD3"
-            color="#9F1239"
-          />
-        </Row>
-        {canExp || canEdit ? (
-          <Row style={{ flexWrap: "wrap" }}>
-            {canExp ? (
-              <ActionBtn
-                title="Masraf Ekle"
-                testID={`project-expense-${id}`}
-                onPress={() => go("ProjectDetail", { id, open_expense: "1" })}
-                bg={colors.rose50}
-                border="#FECDD3"
-                color="#9F1239"
-              />
-            ) : null}
-            {canEdit ? (
-              <ActionBtn
-                title="Görev Ata"
-                testID={`project-team-${id}`}
-                onPress={onTeam}
-                bg={colors.indigo50}
-                border="#C7D2FE"
-                color="#3730A3"
-              />
-            ) : null}
-          </Row>
+        {canEdit ? (
+          <Pressable testID={`project-team-${id}`} onPress={() => closeMore(onTeam)} style={moreItemStyle}>
+            <Text style={moreItemText}>Görev Ata</Text>
+          </Pressable>
         ) : null}
-        {canEdit || onCollect ? (
-          <Row style={{ flexWrap: "wrap" }}>
-            {onCollect ? (
-              <ActionBtn
-                title="Tahsilat"
-                testID={`project-collect-${id}`}
-                onPress={onCollect}
-                bg={colors.emerald50}
-                border="#A7F3D0"
-                color="#047857"
-              />
-            ) : null}
-            {canEdit ? (
-              <ActionBtn
-                title="Takip Linki"
-                testID={`project-track-${id}`}
-                onPress={onTrack}
-                bg={colors.indigo50}
-                border="#C7D2FE"
-                color="#3730A3"
-              />
-            ) : null}
-            {canEdit && canCompleteProject(project.status) ? (
-              <ActionBtn
-                title={PROJECT_QUOTE_ACTION}
-                testID={`project-quote-${id}`}
-                onPress={() => !statusBusy && onStatus("completed")}
-                bg={colors.primary}
-                color="#fff"
-              />
-            ) : null}
-          </Row>
+        {onCollect ? (
+          <Pressable testID={`project-collect-${id}`} onPress={() => closeMore(onCollect)} style={moreItemStyle}>
+            <Text style={moreItemText}>Tahsilat</Text>
+          </Pressable>
         ) : null}
-      </View>
+        {canEdit ? (
+          <Pressable testID={`project-track-${id}`} onPress={() => closeMore(onTrack)} style={moreItemStyle}>
+            <Text style={moreItemText}>Takip Linki</Text>
+          </Pressable>
+        ) : null}
+        <Pressable testID={`project-maps-${id}`} onPress={() => closeMore(() => openProjectLocation(project))} style={moreItemStyle}>
+          <Text style={moreItemText}>{PROJECT_MAPS_ACTION}</Text>
+        </Pressable>
+        <Pressable testID={`project-photos-open-${id}`} onPress={() => closeMore(() => go("ProjectDetail", { id, section: "photos" }))} style={moreItemStyle}>
+          <Text style={moreItemText}>Detay / tüm fotoğraflar</Text>
+        </Pressable>
+        {canEdit ? (
+          <Pressable testID={`project-delete-${id}`} onPress={() => closeMore(onDelete)} style={moreItemStyle}>
+            <Text style={[moreItemText, { color: colors.danger }]}>Projeyi sil</Text>
+          </Pressable>
+        ) : null}
+        <Pressable testID={`project-more-cancel-${id}`} onPress={() => setMoreOpen(false)} style={moreItemStyle}>
+          <Text style={moreItemText}>Vazgeç</Text>
+        </Pressable>
+      </B2BSheet>
     </Card>
   );
 }
+
+const moreItemStyle = { minHeight: 44, justifyContent: "center" as const, paddingHorizontal: 2 };
+const moreItemText = { fontWeight: "800" as const, color: colors.text, fontSize: 14 };
 
 export function ProjectTeamSheet({
   visible,
@@ -645,6 +614,7 @@ export function ProjectCardsHost({
   onPatch,
   onError,
   onCollect,
+  onRemoved,
 }: {
   projects: ProjectDoc[];
   stages: ProjectStage[];
@@ -657,16 +627,28 @@ export function ProjectCardsHost({
   onPatch: (id: string, patch: Partial<ProjectDoc>) => void;
   onError: (msg: string) => void;
   onCollect?: (project: ProjectDoc) => void;
+  onRemoved?: (id: string) => void;
 }) {
   const [teamProject, setTeamProject] = useState<ProjectDoc | null>(null);
   const [trackProject, setTrackProject] = useState<ProjectDoc | null>(null);
-  const [previewProject, setPreviewProject] = useState<ProjectDoc | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
 
   const applyPatch = (id: string, patch: Partial<ProjectDoc>) => {
     onPatch(id, patch);
     setTeamProject((cur) => (cur && idOf(cur) === id ? { ...cur, ...patch } : cur));
     setTrackProject((cur) => (cur && idOf(cur) === id ? { ...cur, ...patch } : cur));
+  };
+
+  const removeProject = (id: string) => {
+    confirmAction("Sil", "Kayıt çöp kutusuna taşınsın mı?", () => {
+      del(client, `/projects/${id}`)
+        .then(() => {
+          onRemoved?.(id);
+          setTeamProject((cur) => (cur && idOf(cur) === id ? null : cur));
+          setTrackProject((cur) => (cur && idOf(cur) === id ? null : cur));
+        })
+        .catch((err) => onError(apiErrorMessage(err, "Silinemedi.")));
+    });
   };
 
   const setProjectStatus = async (id: string, status: string) => {
@@ -701,7 +683,7 @@ export function ProjectCardsHost({
             onTrack={() => setTrackProject(project)}
             onCollect={onCollect ? () => onCollect(project) : undefined}
             onPhotos={(pid, patch) => applyPatch(pid, patch)}
-            onPreview={() => setPreviewProject(project)}
+            onDelete={() => removeProject(id)}
           />
         );
       })}
@@ -726,20 +708,6 @@ export function ProjectCardsHost({
         onMinted={(id, tracking) => applyPatch(id, { tracking })}
         onError={onError}
       />
-      <B2BSheet
-        visible={!!previewProject}
-        title="Yapılan işler"
-        subtitle={previewProject ? `${previewProject.contact_name || "Müşteri"} · takip linkinde böyle görünür` : undefined}
-        onClose={() => setPreviewProject(null)}
-        testID="project-work-preview-sheet"
-      >
-        {previewProject ? (
-          <ProjectWorkPreview
-            project={projects.find((p) => idOf(p) === idOf(previewProject)) || previewProject}
-            stages={stages}
-          />
-        ) : null}
-      </B2BSheet>
     </>
   );
 }

@@ -210,6 +210,14 @@ export function ContactDetailScreen() {
     });
   }, []);
 
+  const removeContactProject = useCallback((pid: string) => {
+    setLightProjects((rows) => (rows ? rows.filter((p) => idOf(p) !== pid) : rows));
+    setData((ov: any) => {
+      if (!ov?.projects) return ov;
+      return { ...ov, projects: ov.projects.filter((p: any) => idOf(p) !== pid) };
+    });
+  }, []);
+
   const c = data?.contact || data || {};
   const summary = data?.summary || {};
   const bal = contactDisplayBalance(c, summary);
@@ -1293,6 +1301,7 @@ export function ContactDetailScreen() {
               companyId={companyId}
               baseUrl={baseUrl}
               onPatch={patchContactProject}
+              onRemoved={removeContactProject}
               onError={setError}
               onCollect={canBank ? () => { void openPay(); } : undefined}
             />
