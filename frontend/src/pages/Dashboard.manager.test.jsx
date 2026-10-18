@@ -75,6 +75,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   summary = { production, projects };
+  mockAuth.activeCompany = { id: "c1", name: "Demo A.Ş." };
   mockAuth.user = { role: "admin" };
   mockAuth.can = (path) => path === "/production" || path === "/projects";
   mockAuth.moduleOn = (path) => path === "/production" || path === "/projects";
@@ -163,6 +164,18 @@ test("does not request manager summary without production and project access", a
   await renderDash();
   expect(summaryCalls()).toHaveLength(0);
   expect(host.querySelector("[data-testid='dashboard-section-manager']")).toBeNull();
+});
+
+test("does not request dashboard data and shows the notice when no company is selected", async () => {
+  mockAuth.activeCompany = null;
+  mockAuth.can = () => true;
+  mockAuth.moduleOn = () => true;
+  await renderDash();
+  const urls = axios.get.mock.calls.map((call) => String(call[0]));
+  expect(urls.some((url) => url.includes("/dashboard/stats"))).toBe(false);
+  expect(urls.some((url) => url.includes("/dashboard/manager-summary"))).toBe(false);
+  expect(host.querySelector("[data-testid='no-company']")).toBeTruthy();
+  expect(host.textContent).toContain("Firma seçili değil");
 });
 
 test("staff home does not include the manager section", async () => {

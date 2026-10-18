@@ -77,6 +77,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   statsBody = baseStats();
+  mockAuth.activeCompany = { id: "c1", name: "Demo A.Ş." };
   mockAuth.user = { role: "admin" };
   mockAuth.can = () => false;
   mockAuth.moduleOn = () => false;
@@ -145,6 +146,16 @@ test("shows today sales for a positive amount and for zero", async () => {
   statsBody = baseStats({ today_sales: 0 });
   await renderDash();
   expect(host.textContent).toContain("Bugün: 0,00 ₺");
+});
+
+test("does not request dashboard data and shows the notice when no company is selected", async () => {
+  mockAuth.activeCompany = null;
+  await renderDash();
+  const urls = axios.get.mock.calls.map((call) => String(call[0]));
+  expect(urls.some((url) => url.includes("/dashboard/stats"))).toBe(false);
+  expect(urls.some((url) => url.includes("/dashboard/manager-summary"))).toBe(false);
+  expect(host.querySelector("[data-testid='no-company']")).toBeTruthy();
+  expect(host.textContent).toContain("Firma seçili değil");
 });
 
 test("negative net profit uses a red card and expense subline", async () => {
