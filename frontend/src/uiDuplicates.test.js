@@ -74,7 +74,6 @@ const ALLOWED_DUPLICATE_TESTIDS = {
   "pages/ProjectsPage.jsx": [
     "{`quote-project-link-${q.quote_number}`}",
     "{`survey-done-${s.survey_number}`}", "{`survey-to-quote-${s.survey_number}`}",
-    "{`project-print-quote-${p.project_number}`}",
   ],
   "pages/SettingsPage.jsx": ['"einvoice-assigned-provider"', '"einvoice-isnet-logo-hint"'],
   "pages/SupportPage.jsx": ["{`support-att-${i}`}"],

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send, Eye, EyeOff, Factory, ListOrdered } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Pencil, CheckCircle2, Check, CalendarClock, Send, Factory, ListOrdered } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
@@ -12,23 +12,17 @@ import { MoneyInput } from "../components/MoneyInput";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { QuoteSendApprovalModal, ApprovalBadge } from "../components/QuoteSendApprovalModal";
-import { ProjectTrackingModal, TrackingBadge } from "../components/ProjectTrackingModal";
-import { ProjectStagePhotos } from "../components/ProjectStagePhotos";
+import { ProjectTrackingModal } from "../components/ProjectTrackingModal";
 import { ProjectExpenseModal, ProjectTeamTasksModal } from "../components/ProjectExpenseTeamModals";
-import { MapPin, LocateFixed, Link2 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../components/ui/dropdown-menu";
+import { ProjectRowCard } from "../components/ProjectRowCard";
+import { ProjectDetailPanel } from "../components/ProjectDetailPanel";
+import { MapPin, LocateFixed } from "lucide-react";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
-import { addressToggleLabel, shouldCollapseAddress } from "../utils/addressToggle";
 import { DEFAULT_LOCATION_RADIUS_M, LOCATION_RADIUS_OPTIONS, normalizeRadiusM } from "../utils/locationRadius";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { activeCompanyId } from "../utils/activeCompanyId";
@@ -263,6 +257,28 @@ const toQuoteLinePayload = (it) => {
 
 const FILTER_KEY = "tamkobi_qp_only_pending";
 const SHOW_COMPLETED_KEY = "tamkobi_qp_show_completed_projects";
+
+function readCompletedFilterRaw() {
+  try {
+    const sessionValue = sessionStorage.getItem(SHOW_COMPLETED_KEY);
+    if (sessionValue != null && sessionValue !== "") return sessionValue;
+    const localValue = localStorage.getItem(SHOW_COMPLETED_KEY);
+    if (localValue != null && localValue !== "") return localValue;
+  } catch { /* ignore */ }
+  return "0";
+}
+
+function projectFilterFromRaw(raw) {
+  if (raw === "1" || raw === "true" || raw === "all") return "all";
+  if (raw === "completed") return "completed";
+  return "active";
+}
+
+function writeCompletedFilter(mode) {
+  const value = mode === "all" ? "1" : mode === "completed" ? "completed" : "0";
+  try { sessionStorage.setItem(SHOW_COMPLETED_KEY, value); } catch { /* ignore */ }
+  try { localStorage.setItem(SHOW_COMPLETED_KEY, value); } catch { /* ignore */ }
+}
 
 export default function ProjectsPage({ section } = {}) {
   const { activeCompany, loading: authLoading } = useAuth();
@@ -657,31 +673,56 @@ export default function ProjectsPage({ section } = {}) {
   const [onlyPending, setOnlyPending] = useState(() => {
     try { return sessionStorage.getItem(FILTER_KEY) === "1"; } catch { return false; }
   });
-  const [showCompletedProjects, setShowCompletedProjects] = useState(() => {
-    try { return sessionStorage.getItem(SHOW_COMPLETED_KEY) === "1"; } catch { return false; }
-  });
-  const [openAddr, setOpenAddr] = useState({});
+  const [showCompletedProjects, setShowCompletedProjects] = useState(() => projectFilterFromRaw(readCompletedFilterRaw()) === "all");
+  const [projectFilter, setProjectFilter] = useState(() => projectFilterFromRaw(readCompletedFilterRaw()));
+  const [detailProjectId, setDetailProjectId] = useState("");
+  const [detailTab, setDetailTab] = useState("photos");
   const toggleOnlyPending = (on) => {
     setOnlyPending(on);
     try { sessionStorage.setItem(FILTER_KEY, on ? "1" : "0"); } catch { /* ignore */ }
   };
   const toggleShowCompleted = (on) => {
-    setShowCompletedProjects(on);
-    try { sessionStorage.setItem(SHOW_COMPLETED_KEY, on ? "1" : "0"); } catch { /* ignore */ }
+    const mode = on ? "all" : "active";
+    setShowCompletedProjects(!!on);
+    setProjectFilter(mode);
+    writeCompletedFilter(mode);
+  };
+  const selectProjectFilter = (mode) => {
+    if (mode === "completed") {
+      setShowCompletedProjects(false);
+      setProjectFilter("completed");
+      writeCompletedFilter("completed");
+      return;
+    }
+    toggleShowCompleted(mode === "all");
   };
   const isCompletedProject = (p) => p.status === finalStage || p.status === "completed";
   const pendingQuotes = quotes.filter((q) => q.status === "draft" || (q.status === "sent" && (!q.approval || q.approval.status === "pending")) || (q.status === "accepted" && !q.project_id && !q.invoice_id));
   const pendingSurveys = surveys.filter((s) => s.status === "planned" || (s.status === "done" && !s.quote_id));
   const completedProjects = projects.filter(isCompletedProject);
   const activeProjects = projects.filter((p) => !isCompletedProject(p));
-  const visibleProjects = showCompletedProjects ? projects : activeProjects;
+  const visibleProjects = projectFilter === "completed" ? completedProjects : (showCompletedProjects ? projects : activeProjects);
+  const detailProject = useMemo(() => {
+    if (!detailProjectId) return null;
+    return projects.find((p) => String(p.id || p._id) === String(detailProjectId)) || null;
+  }, [projects, detailProjectId]);
+  useEffect(() => {
+    if (!detailProjectId || listLoading) return;
+    if (!projects.some((p) => String(p.id || p._id) === String(detailProjectId))) setDetailProjectId("");
+  }, [detailProjectId, listLoading, projects]);
+  const openProjectDetail = (project, nextTab = "photos") => {
+    const id = project?.id || project?._id;
+    if (!id) return;
+    setDetailProjectId(String(id));
+    setDetailTab(nextTab || "photos");
+  };
   const visibleQuotes = onlyPending ? pendingQuotes : quotes;
   const visibleSurveys = onlyPending ? pendingSurveys : surveys;
   const { visible: pagedQuotes, hasMore: quotesHasMore, sentinelRef: quotesSentinelRef } = useInfiniteRows(visibleQuotes, {
     resetKey: `q|${onlyPending}|${visibleQuotes.length}`,
   });
   const { visible: pagedProjects, hasMore: projectsHasMore, sentinelRef: projectsSentinelRef } = useInfiniteRows(visibleProjects, {
-    resetKey: `p|${showCompletedProjects}|${visibleProjects.length}`,
+    resetKey: `p|${projectFilter}|${visibleProjects.length}`,
   });
   const { visible: pagedSurveys, hasMore: surveysHasMore, sentinelRef: surveysSentinelRef } = useInfiniteRows(visibleSurveys, {
     resetKey: `s|${onlyPending}|${visibleSurveys.length}`,
@@ -733,16 +774,20 @@ export default function ProjectsPage({ section } = {}) {
       </div>
       <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto">{TABS.map(([k, l, Icon, n]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`projects-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l} <span className="text-slate-400">({n})</span></button>)}
         {tab === "projects" ? (
-          <button
-            type="button"
-            onClick={() => toggleShowCompleted(!showCompletedProjects)}
-            className={`ml-auto mb-px inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${showCompletedProjects ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
-            data-testid="toggle-completed-projects"
-          >
-            {showCompletedProjects ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-            {showCompletedProjects ? "Tamamlananları gizle" : "Tamamlananları göster"}
-            {completedProjects.length ? ` (${completedProjects.length})` : ""}
-          </button>
+          <div className="ml-auto mb-px flex shrink-0 items-center gap-1" data-testid="project-filter-chips">
+            {[["active", "Aktif", activeProjects.length], ["completed", "Tamamlanan", completedProjects.length], ["all", "Tümü", projects.length]].map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={projectFilter === key}
+                onClick={() => selectProjectFilter(key)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${projectFilter === key ? "border-emerald-600 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                data-testid={`project-filter-${key}`}
+              >
+                {`${label} (${count})`}
+              </button>
+            ))}
+          </div>
         ) : (
           <label className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-500 pb-1 cursor-pointer" data-testid="only-pending-toggle">
             <input type="checkbox" checked={onlyPending} onChange={(e) => toggleOnlyPending(e.target.checked)} className="rounded" />
@@ -750,8 +795,8 @@ export default function ProjectsPage({ section } = {}) {
           </label>
         )}
       </div>
-      {tab === "projects" && !showCompletedProjects && completedProjects.length > 0 && (
-        <p className="text-[11px] text-slate-400 -mt-3" data-testid="completed-projects-hint">{completedProjects.length} tamamlanan proje gizlendi — «Tamamlananları göster» ile açılır.</p>
+      {tab === "projects" && projectFilter === "active" && completedProjects.length > 0 && (
+        <p className="text-[11px] text-slate-400 -mt-3" data-testid="completed-projects-hint">{completedProjects.length} tamamlanan proje gizlendi — «Tamamlanan» veya «Tümü» ile açılır.</p>
       )}
       {tab !== "projects" && onlyPending && hiddenCount > 0 && <p className="text-[11px] text-slate-400 -mt-3" data-testid="archived-hint">{hiddenCount} kayıt filtrelendi — gönderilen teklifler ve yapılan keşifler listede gizli; filtreyi kapatınca görünür.</p>}
 
@@ -837,159 +882,63 @@ export default function ProjectsPage({ section } = {}) {
       )}
 
       {!listLoading && tab === "projects" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {visibleProjects.length === 0 && (
-            <div className="col-span-full text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl" data-testid="projects-empty">
-              {!showCompletedProjects && completedProjects.length
-                ? "Açık proje yok — tamamlananları göstermek için üstteki düğmeyi kullanın."
-                : "Henüz proje yok."}
-            </div>
+        <div className={detailProject ? "flex flex-col gap-3 lg:flex-row lg:items-start" : "space-y-3"}>
+          <div className="min-w-0 flex-1 space-y-3">
+            {visibleProjects.length === 0 && (
+              <div className="text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl" data-testid="projects-empty">
+                {projectFilter === "completed"
+                  ? "Tamamlanan proje yok."
+                  : projectFilter === "active" && completedProjects.length
+                    ? "Açık proje yok — tamamlananları göstermek için «Tamamlanan» veya «Tümü» filtresini kullanın."
+                    : "Henüz proje yok."}
+              </div>
+            )}
+            {pagedProjects.map((p) => (
+              <ProjectRowCard
+                key={p.id || p._id || p.project_number}
+                project={p}
+                stages={projectStages}
+                finalStage={finalStage}
+                statusMap={projectStatusMap}
+                statusFallback={STATUS}
+                quotes={quotesForProject(p)}
+                completed={isCompletedProject(p)}
+                flashed={!!(focusFlash && focusFlash === String(p.project_number || p.id || p._id))}
+                selected={String(detailProjectId) === String(p.id || p._id)}
+                onSetStatus={setStatus}
+                onAddQuote={openQuoteForProject}
+                onEdit={openEditProject}
+                onPrintQuote={openPrintQuote}
+                onExpense={setExpenseProject}
+                onTeam={setTeamProject}
+                onTrack={openTracking}
+                onDelete={() => del("projects", p.id)}
+                onOpenDetail={(nextTab) => openProjectDetail(p, nextTab)}
+              />
+            ))}
+            {projectsHasMore && (
+              <div ref={projectsSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="projects-load-more">
+                Daha fazla proje yükleniyor…
+              </div>
+            )}
+          </div>
+          {detailProject && (
+            <ProjectDetailPanel
+              project={detailProject}
+              tab={detailTab}
+              onTabChange={setDetailTab}
+              onClose={() => setDetailProjectId("")}
+              stages={projectStages}
+              quotes={quotesForProject(detailProject)}
+              onUpdated={load}
+              onAddQuote={openQuoteForProject}
+              onEdit={openEditProject}
+              onPrintQuote={openPrintQuote}
+              onExpense={setExpenseProject}
+              onTeam={setTeamProject}
+              onTrack={openTracking}
+            />
           )}
-          {pagedProjects.map((p) => (
-            <div
-              key={p.id}
-              className={`bg-white border rounded-2xl p-4 space-y-2 text-xs transition ring-offset-2 [content-visibility:auto] [contain-intrinsic-size:auto_280px] ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"} ${focusFlash && focusFlash === String(p.project_number || p.id || p._id) ? "ring-2 ring-emerald-500 border-emerald-400 shadow-md" : ""}`}
-              data-testid={`project-card-${p.project_number}`}
-            >
-              <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"}{p.address && (!shouldCollapseAddress(p.address) || openAddr[p.id]) ? ` • ${p.address}` : ""}{shouldCollapseAddress(p.address) ? <button type="button" onClick={() => setOpenAddr((s) => ({ ...s, [p.id]: !s[p.id] }))} className="ml-1 text-emerald-700 font-semibold" data-testid={`project-addr-toggle-${p.id}`}>{addressToggleLabel(!!openAddr[p.id])}</button> : null}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
-              <div className="grid grid-cols-2 gap-1 text-[10px]" data-testid={`project-stats-${p.project_number}`}>
-                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Bütçe</div><b>{fmt(p.budget)} ₺</b></div>
-                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Teklif</div><b>{p.quote_count || 0} • {fmt(p.quoted_total)} ₺</b></div>
-                <div className="bg-slate-50 rounded-lg p-1.5"><div className="text-slate-400">Faturalanan</div><b className="text-emerald-700">{fmt(p.invoiced_total)} ₺</b></div>
-                <div className="bg-slate-50 rounded-lg p-1.5" data-testid={`project-expense-total-${p.project_number}`}>
-                  <div className="text-slate-400">Masraf</div>
-                  <b className={(p.expense_total || 0) > 0 ? "text-rose-700" : ""}>{fmt(p.expense_total)} ₺</b>
-                  {(p.purchase_invoice_total || 0) > 0 ? (
-                    <div className="text-[9px] text-slate-400 font-semibold mt-0.5">Harcanan {fmt(p.cost_total)} ₺</div>
-                  ) : null}
-                </div>
-              </div>
-              {p.description && <p className="text-slate-600">{p.description}</p>}
-              {(p.production_steps || []).length > 0 && (
-                <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-2.5 py-2 space-y-1" data-testid={`project-recipe-steps-${p.project_number}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
-                      <ListOrdered className="w-3 h-3" /> Üretim adımları
-                      {(p.production_order_code || p.recipe_name) ? (
-                        <span className="normal-case text-slate-500">· {p.production_order_code || p.recipe_name}</span>
-                      ) : null}
-                    </div>
-                    <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ${p.show_production_steps ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={p.show_production_steps ? "Müşteri takip linkinde görünür" : "Sadece iç ekranda"}>
-                      {p.show_production_steps ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                      {p.show_production_steps ? "Müşteri görür" : "Gizli"}
-                    </span>
-                  </div>
-                  <ol className="space-y-0.5">
-                    {(p.production_steps || []).slice(0, 6).map((st, i) => (
-                      <li key={`${st.no || i}-${st.name}`} className="text-[11px] text-slate-700 flex gap-1.5">
-                        <span className="font-mono text-slate-400 shrink-0">{st.no || i + 1}.</span>
-                        <span className="min-w-0 truncate">
-                          <span className="font-semibold">{st.name}</span>
-                          {st.station ? <span className="text-slate-400"> · {st.station}</span> : null}
-                        </span>
-                      </li>
-                    ))}
-                    {(p.production_steps || []).length > 6 && (
-                      <li className="text-[10px] text-slate-400 font-semibold">+{(p.production_steps || []).length - 6} adım daha</li>
-                    )}
-                  </ol>
-                </div>
-              )}
-              <ProjectStagePhotos project={p} stages={projectStages} onUpdated={load} />
-              <div className="flex items-center gap-1.5 flex-wrap"><TrackingBadge project={p} /></div>
-              {(() => {
-                const tasks = p.tasks || [];
-                const assigned = tasks.filter((t) => t.assignee_name || t.assignee_id);
-                const done = tasks.filter((t) => t.done || t.status === "done" || t.status === "completed").length;
-                if (!tasks.length) return null;
-                return (
-                  <div className="flex flex-wrap gap-1.5 text-[10px]" data-testid={`project-summary-${p.project_number}`}>
-                    <button
-                      type="button"
-                      onClick={() => setTeamProject(p)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100 hover:bg-indigo-100"
-                      data-testid={`project-tasks-${p.id || p.project_number}`}
-                      title="Görev ve atamaları aç"
-                    >
-                      <Users className="w-3 h-3" /> {done}/{tasks.length} görev{assigned.length ? ` · ${assigned.length} atanmış` : ""}
-                    </button>
-                  </div>
-                );
-              })()}
-              <div className="grid grid-cols-2 gap-1.5" data-testid={`project-quick-actions-${p.project_number}`}>
-                <button type="button" onClick={() => openEditProject(p)} className="col-span-2 flex items-center justify-center gap-1.5 px-2.5 py-2 border border-slate-300 text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-xl font-bold" data-testid={`project-edit-${p.project_number}`} title="Proje bilgilerini düzenle">
-                  <Pencil className="w-3.5 h-3.5" /> Proje Düzenle
-                </button>
-                <button type="button" onClick={() => openQuoteForProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl font-bold" data-testid={`project-add-quote-${p.project_number}`} title="Bu projeye yeni teklif ekle">
-                  <FileSignature className="w-3.5 h-3.5" /> Teklif Ekle
-                </button>
-                {(() => {
-                  const linked = quotesForProject(p);
-                  const printCls = "flex items-center justify-center gap-1.5 px-2.5 py-2 border border-sky-200 text-sky-800 bg-sky-50 hover:bg-sky-100 rounded-xl font-bold disabled:opacity-40 disabled:hover:bg-sky-50 w-full";
-                  if (linked.length > 1) {
-                    return (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button type="button" className={printCls} data-testid={`project-print-quote-${p.project_number}`} title={`${linked.length} teklif — yazdırılacak olanı seçin`}>
-                            <Printer className="w-3.5 h-3.5" /> Teklif Yazdır
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="z-[80] w-56 rounded-xl p-1" data-testid={`project-print-quote-menu-${p.project_number}`}>
-                          {linked.map((q) => (
-                            <DropdownMenuItem key={q.id || q.quote_number} onSelect={() => openPrintQuote(q)} className="text-xs font-semibold" data-testid={`project-print-quote-item-${q.quote_number}`}>
-                              {q.quote_number}{q.title ? ` · ${q.title}` : ""}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    );
-                  }
-                  return (
-                    <button type="button" disabled={!linked.length} onClick={() => openPrintQuote(linked[0])} className={printCls} data-testid={`project-print-quote-${p.project_number}`} title={linked.length ? `${linked[0].quote_number} teklifini yazdır` : "Bu projede yazdırılacak teklif yok"}>
-                      <Printer className="w-3.5 h-3.5" /> Teklif Yazdır
-                    </button>
-                  );
-                })()}
-                <button type="button" onClick={() => setExpenseProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-rose-200 text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-xl font-bold" data-testid={`project-expense-${p.project_number}`} title="Bu projeye masraf ekle">
-                  <Receipt className="w-3.5 h-3.5" /> Masraf Ekle
-                </button>
-                <button type="button" onClick={() => setTeamProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-indigo-200 text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-xl font-bold" data-testid={`project-team-${p.project_number}`} title="Personel ata ve görev dağıt">
-                  <Users className="w-3.5 h-3.5" /> Personel / Görev
-                </button>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t">
-                <select value={p.status} onChange={(e) => setStatus("projects", p.id, e.target.value)} className="bg-slate-50 border rounded-lg p-1.5 text-[11px] min-w-0 flex-1 sm:flex-none" data-testid={`project-status-${p.project_number}`}>
-                  {!projectStages.some((s) => s.key === p.status) && p.status ? <option value={p.status}>{STATUS[p.status]?.[0] || p.status}</option> : null}
-                  {projectStages.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-                <button onClick={() => openTracking(p)} className="flex items-center gap-1 px-2.5 py-1.5 border border-emerald-200 text-emerald-700 bg-emerald-50 rounded-lg font-semibold" data-testid={`project-track-${p.project_number}`} title="Müşteriye durum takip linki gönder"><Link2 className="w-3.5 h-3.5" /> Takip Linki</button>
-                {p.status !== finalStage ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!window.confirm(`${p.name || p.project_number} projesi tamamlandı olarak işaretlensin mi?`)) return;
-                      setStatus("projects", p.id, finalStage);
-                    }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-semibold"
-                    data-testid={`project-complete-${p.project_number}`}
-                    title="Projeyi tamamlandı yap"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Projeyi Tamamla
-                  </button>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg font-semibold" data-testid={`project-completed-${p.project_number}`}>
-                    <CheckCircle2 className="w-3.5 h-3.5" /> {projectStatusMap[finalStage]?.[0] || "Proje Tamamlandı"}
-                  </span>
-                )}
-                <button onClick={() => del("projects", p.id)} className="p-1.5 text-slate-300 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {!listLoading && tab === "projects" && projectsHasMore && (
-        <div ref={projectsSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="projects-load-more">
-          Daha fazla proje yükleniyor…
         </div>
       )}
 
