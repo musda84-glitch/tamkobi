@@ -992,6 +992,17 @@ def _eq(val, expected) -> bool:
     return val == expected
 
 
+def _eval_cond(doc: dict, cond):
+    """$cond: [if, then, else] veya {if, then, else}. Koşul $eq/$gte sonucudur."""
+    if isinstance(cond, (list, tuple)) and len(cond) == 3:
+        iff, then, els = cond
+    elif isinstance(cond, dict):
+        iff, then, els = cond.get("if"), cond.get("then"), cond.get("else")
+    else:
+        return 0
+    return eval_expr(doc, then if eval_expr(doc, iff) else els)
+
+
 def eval_expr(doc: dict, expr):
     if isinstance(expr, str) and expr.startswith("$") and not expr.startswith("$$"):
         return scalar_at(doc, expr[1:])
@@ -1000,6 +1011,8 @@ def eval_expr(doc: dict, expr):
             a, b = expr["$ifNull"]
             v = eval_expr(doc, a)
             return eval_expr(doc, b) if v is MISSING or v is None else v
+        if "$cond" in expr:
+            return _eval_cond(doc, expr["$cond"])
         if "$lte" in expr:
             a, b = expr["$lte"]
             return _cmp(eval_expr(doc, a), eval_expr(doc, b)) <= 0
@@ -1432,7 +1445,7 @@ def _agg_group_id(doc: dict, expr):
 
 
 def aggregate_rows(docs: Sequence[dict], pipeline: Sequence[dict]) -> List[dict]:
-    """$match + $group ($sum / $ifNull). Motor aggregate ile aynı satır şekli."""
+    """$match + $group ($sum / $ifNull / $cond). Motor aggregate ile aynı satır şekli."""
     rows: List[dict] = list(docs or [])
     grouped: Optional[List[dict]] = None
     for stage in pipeline or []:
