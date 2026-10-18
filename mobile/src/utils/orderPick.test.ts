@@ -1,13 +1,16 @@
 import {
   adjustPayload,
   canShip,
+  isDecimalUnit,
   lineRemaining,
   parsePickedQtyDraft,
   pickLineNote,
+  pickLineState,
   pickPercent,
   pickStatusTone,
   pickStatusTr,
   pickSummaryText,
+  pickUnitsSummaryText,
   pendingPickCount,
   pendingSevkCount,
   scanErrorMessage,
@@ -37,6 +40,32 @@ describe("orderPick", () => {
     expect(pickPercent({ ordered: 0, picked: 0 })).toBe(0);
     expect(pickPercent({ ordered: 3, picked: 9 })).toBe(100);
     expect(pickSummaryText({ ordered: 10, picked: 4, missing_lines: 2 }, 3)).toBe("4/10 adet · 3 kalem · 2 eksik satır");
+  });
+
+  it("classifies a pick line as done, partial or empty", () => {
+    expect(pickLineState({ picked_qty: 5, ordered_qty: 5 })).toBe("done");
+    expect(pickLineState({ picked_qty: 3, ordered_qty: 5 })).toBe("partial");
+    expect(pickLineState({ picked_qty: 0, ordered_qty: 5 })).toBe("empty");
+    expect(pickLineState({ picked_qty: 0, ordered_qty: 0 })).toBe("empty");
+  });
+
+  it("treats weight, length and volume units as decimal", () => {
+    expect(isDecimalUnit("kg")).toBe(true);
+    expect(isDecimalUnit("Kg")).toBe(true);
+    expect(isDecimalUnit("metre")).toBe(true);
+    expect(isDecimalUnit("m²")).toBe(true);
+    expect(isDecimalUnit("adet")).toBe(false);
+    expect(isDecimalUnit("paket")).toBe(false);
+    expect(isDecimalUnit("")).toBe(false);
+    expect(isDecimalUnit(undefined)).toBe(false);
+    expect(isDecimalUnit("ad")).toBe(false);
+    expect(isDecimalUnit("pcs")).toBe(false);
+  });
+
+  it("summarizes picked units under the order title", () => {
+    expect(pickUnitsSummaryText("Cari", 4, { ordered: 20, picked: 9 })).toBe("Cari · 4 kalem · 9 / 20 adet toplandı");
+    expect(pickUnitsSummaryText("  ", 2, { ordered: 6, picked: 1 })).toBe("2 kalem · 1 / 6 adet toplandı");
+    expect(pickUnitsSummaryText(null, 0, null)).toBe("0 kalem · 0 / 0 adet toplandı");
   });
 
   it("only allows full shipment when every line is picked", () => {

@@ -119,6 +119,77 @@ export function pickSummaryText(progress?: PickProgress | null, itemCount?: numb
   return parts.join(" · ");
 }
 
+export type PickLineState = "done" | "partial" | "empty";
+
+/** Tamam: toplanan ≥ sipariş ve sipariş > 0. Kısmi: bir kısmı toplanmış. Diğerleri boş. */
+export function pickLineState(line: PickLine): PickLineState {
+  const ordered = num(line.ordered_qty);
+  const picked = num(line.picked_qty);
+  if (ordered > 0 && picked >= ordered) return "done";
+  if (picked > 0) return "partial";
+  return "empty";
+}
+
+const DECIMAL_UNITS = new Set([
+  "kg", "kgs", "kilogram", "kilogramme", "kilo",
+  "g", "gr", "gram", "gramme",
+  "m", "mt", "mtr", "metre", "meter",
+  "cm", "santim", "santimetre",
+  "mm", "milimetre",
+  "lt", "l", "ltr", "litre", "liter",
+  "ml", "mililitre",
+  "m2", "metrekare", "mkare",
+  "m3", "metrekup", "mkup",
+  "ton",
+]);
+
+/** Ağırlık, uzunluk, alan ve hacim birimleri ondalık kabul eder. Adet, ad, pcs, paket ve boş birim tam sayıdır. */
+export function isDecimalUnit(unit?: string | null): boolean {
+  const key = foldUnit(unit);
+  return key !== "" && DECIMAL_UNITS.has(key);
+}
+
+function foldUnit(unit?: string | null): string {
+  return String(unit || "")
+    .trim()
+    .replace(/İ/g, "i")
+    .replace(/I/g, "ı")
+    .toLowerCase()
+    .replace(/ı/g, "i")
+    .replace(/ş/g, "s")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .replace(/â/g, "a")
+    .replace(/î/g, "i")
+    .replace(/û/g, "u")
+    .replace(/²/g, "2")
+    .replace(/³/g, "3")
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function fmtPickCount(value: number): string {
+  return num(value).toLocaleString("tr-TR", { maximumFractionDigits: 3 });
+}
+
+/** Başlık altı: müşteri · n kalem · picked / ordered adet toplandı. Adetler progress'ten okunur. */
+export function pickUnitsSummaryText(
+  customer?: string | null,
+  itemCount?: number | null,
+  progress?: PickProgress | null,
+): string {
+  const name = String(customer || "").trim();
+  const count = Math.max(0, Math.round(num(itemCount)));
+  const parts = [
+    `${fmtPickCount(count)} kalem`,
+    `${fmtPickCount(num(progress?.picked))} / ${fmtPickCount(num(progress?.ordered))} adet toplandı`,
+  ];
+  if (name) parts.unshift(name);
+  return parts.join(" · ");
+}
+
 export function canShip(progress?: PickProgress | null): boolean {
   return !!progress?.complete;
 }

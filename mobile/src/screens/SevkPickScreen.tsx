@@ -1,29 +1,31 @@
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import React, { useCallback, useRef, useState } from "react";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { confirmAction, n } from "../components/chips";
-import { QuantityInput } from "../components/MoneyInput";
 import { LabelPrintSheet } from "../components/LabelPrintSheet";
+import { PickQtyKeypad, nextPickDraft } from "../components/PickQtyKeypad";
 import { ProductThumb } from "../components/ProductThumb";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
-import { colors } from "../theme";
+import { colors, radius, spacing } from "../theme";
 import { idOf } from "../utils/money";
 import {
   adjustPayload,
   canMarkDeliveredFromPick,
   canShip,
+  isDecimalUnit,
   lineRemaining,
   parsePickedQtyDraft,
   pickLineNote,
+  pickLineState,
   pickPercent,
   pickStatusTone,
   pickStatusTr,
-  pickSummaryText,
+  pickUnitsSummaryText,
   scanErrorMessage,
   scanPickPayload,
   type PickLine,
@@ -50,29 +52,47 @@ export function SevkPickScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string | number>>({});
+  const draftsRef = useRef(qtyDrafts);
+  const openRef = useRef<string | null>(null);
+  const replaceRef = useRef(true);
+  const [openLineKey, setOpenLineKey] = useState<string | null>(null);
   const [scanQty, setScanQty] = useState("1");
   const [shipPrint, setShipPrint] = useState(false);
   const [shipBusy, setShipBusy] = useState(false);
   const [shipError, setShipError] = useState<string | null>(null);
   const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
 
+  const resetEntry = useCallback(() => {
+    openRef.current = null;
+    replaceRef.current = true;
+    draftsRef.current = {};
+    setOpenLineKey(null);
+    setQtyDrafts({});
+  }, []);
+
   const load = useCallback(async () => {
     if (!canView) return;
     try {
       const s = await get<PickSession>(client, `/order-picks/${id}`);
       setSession(s);
-      setQtyDrafts({});
+      resetEntry();
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Toplama oturumu açılamadı."));
     }
-  }, [canView, client, id]);
+  }, [canView, client, id, resetEntry]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    void load();
+    return () => {
+      // Ekran blur: yazılan taslak gönderilmez.
+      resetEntry();
+    };
+  }, [load, resetEntry]));
 
   const apply = (s: PickSession) => {
     setSession(s);
-    setQtyDrafts({});
+    resetEntry();
     if (s.message) setMessage(s.message);
   };
 
@@ -94,35 +114,87 @@ export function SevkPickScreen() {
     }
   };
 
-  const adjust = async (line: PickLine, nextQty: number) => {
+  const adjust = async (line: PickLine, nextQty: number, keepError = false) => {
     setBusy(true);
     try {
       const s = await post<PickSession>(client, `/order-picks/${id}/adjust`, adjustPayload(line, nextQty));
       apply(s);
-      setError(null);
+      if (!keepError) setError(null);
+      return true;
     } catch (err) {
       setError(apiErrorMessage(err, "Kalem güncellenemedi."));
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  const commitQty = (line: PickLine, idx: number) => {
+  const commitQty = async (line: PickLine, idx: number) => {
     const key = lineKey(line, idx);
     const picked = Number(line.picked_qty) || 0;
     const ordered = Number(line.ordered_qty) || 0;
-    const raw = qtyDrafts[key];
-    setQtyDrafts((d) => {
-      const next = { ...d };
-      delete next[key];
-      return next;
-    });
+    const raw = draftsRef.current[key];
+    const nextDrafts = { ...draftsRef.current };
+    delete nextDrafts[key];
+    draftsRef.current = nextDrafts;
+    setQtyDrafts(nextDrafts);
     const parsed = parsePickedQtyDraft(raw == null || raw === "" ? undefined : String(raw), picked, ordered);
     if (parsed == null || Math.abs(parsed - picked) < 1e-9) return;
-    if (Number(String(raw || "").trim().replace(",", ".")) > ordered) {
+    const typed = Number(String(raw || "").trim().replace(",", "."));
+    const over = Number.isFinite(typed) && typed > ordered;
+    const ok = await adjust(line, parsed, over);
+    if (ok && over) {
       setError(`${line.product_name || "Kalem"}: siparişte ${ordered} adet var, ${picked} okutuldu.`);
     }
-    adjust(line, parsed);
+  };
+
+  const writeDrafts = (next: Record<string, string | number>) => {
+    draftsRef.current = next;
+    setQtyDrafts(next);
+  };
+
+  const openKeypad = (line: PickLine, idx: number) => {
+    const key = lineKey(line, idx);
+    if (openRef.current === key) return;
+    if (openRef.current) {
+      const next = { ...draftsRef.current };
+      delete next[openRef.current];
+      writeDrafts(next);
+    }
+    replaceRef.current = true;
+    openRef.current = key;
+    setOpenLineKey(key);
+  };
+
+  const cancelKeypad = () => {
+    const prev = openRef.current;
+    openRef.current = null;
+    replaceRef.current = true;
+    setOpenLineKey(null);
+    if (!prev || !(prev in draftsRef.current)) return;
+    const next = { ...draftsRef.current };
+    delete next[prev];
+    writeDrafts(next);
+  };
+
+  const onKeypadKey = (line: PickLine, idx: number, token: string) => {
+    const key = lineKey(line, idx);
+    const current = replaceRef.current ? "" : String(draftsRef.current[key] ?? "");
+    replaceRef.current = false;
+    writeDrafts({ ...draftsRef.current, [key]: nextPickDraft(current, token, isDecimalUnit(line.unit)) });
+  };
+
+  const confirmKeypad = async (line: PickLine, idx: number) => {
+    const pending = commitQty(line, idx);
+    openRef.current = null;
+    replaceRef.current = true;
+    setOpenLineKey(null);
+    await pending;
+  };
+
+  const onLinePress = (line: PickLine, idx: number) => {
+    const key = lineKey(line, idx);
+    if (openRef.current && openRef.current !== key) cancelKeypad();
   };
 
   const runAction = async (path: string, body: Record<string, unknown>, fallback: string) => {
@@ -198,13 +270,13 @@ export function SevkPickScreen() {
   return (
     <Screen onRefresh={load}>
       <H1>{session?.order_number || name || "Sevkiyat"}</H1>
-      <Row style={{ justifyContent: "space-between" }}>
-        <Muted>{[session?.customer_name, session?.city].filter(Boolean).join(" · ")}</Muted>
+      <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+        <Muted>{pickUnitsSummaryText(session?.customer_name, items.length, session?.progress)}</Muted>
         <Badge label={pickStatusTr(session?.status)} tone={pickStatusTone(session?.status)} />
       </Row>
+      {session?.city ? <Muted>{session.city}</Muted> : null}
       <ProgressBar percent={percent} />
-      <Row style={{ justifyContent: "space-between" }}>
-        <Muted>{pickSummaryText(session?.progress, items.length)}</Muted>
+      <Row style={{ justifyContent: "flex-end" }}>
         <Text style={{ fontWeight: "800", color: colors.text }}>%{percent}</Text>
       </Row>
       <ErrorBanner message={error} />
@@ -261,15 +333,41 @@ export function SevkPickScreen() {
       {items.map((line, idx) => {
         const picked = Number(line.picked_qty) || 0;
         const ordered = Number(line.ordered_qty) || 0;
-        const done = picked >= ordered && ordered > 0;
+        const done = pickLineState(line) === "done";
+        const key = lineKey(line, idx);
+        const lineId = line.line_index ?? idx;
+        const editing = openLineKey === key;
+        const accent = done ? colors.primary : "#F59E0B";
+        const draft = qtyDrafts[key];
+        const shown = editing && typeof draft === "string" ? draft : pickedLabel(picked);
+        const qtyLabel = qtyBoxText(shown, line.unit);
         return (
-          <Card key={`${line.line_index ?? idx}-${line.product_id || line.product_name}`} testID={`sevk-line-${line.line_index ?? idx}`}>
-            <Row style={{ justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <ProductThumb uri={line.image_url || ""} size={44} testID={`sevk-line-thumb-${line.line_index ?? idx}`} />
+          <Pressable
+            key={`${line.line_index ?? idx}-${line.product_id || line.product_name}`}
+            testID={`sevk-line-${lineId}`}
+            onPress={() => onLinePress(line, idx)}
+            style={{
+              backgroundColor: done ? colors.emerald50 : colors.surface,
+              borderColor: colors.border,
+              borderWidth: 1,
+              borderLeftWidth: 4,
+              borderLeftColor: accent,
+              borderRadius: radius.lg,
+              padding: spacing.sm + 2,
+              gap: 6,
+            }}
+          >
+            <Row style={{ justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+              <ProductThumb uri={line.image_url || ""} size={44} testID={`sevk-line-thumb-${lineId}`} />
               <Text style={{ fontWeight: "700", color: colors.text, flex: 1 }} numberOfLines={2}>{line.product_name || "Kalem"}</Text>
-              <Text style={{ fontWeight: "800", color: done ? colors.primary : colors.danger }}>{picked}/{ordered}</Text>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={{ fontSize: 22, fontWeight: "800", color: accent }}>{picked}/{ordered}</Text>
+                <Text style={{ fontSize: 12, fontWeight: "800", color: accent }}>
+                  {done ? "✓ Tamam" : `${String(lineRemaining(line)).replace(".", ",")} eksik`}
+                </Text>
+              </View>
             </Row>
-            <Muted>{[line.sku, line.barcode].filter(Boolean).join(" · ") || "Kod yok"}{done ? "" : ` · ${lineRemaining(line)} kaldı`}</Muted>
+            <Muted>{[line.sku, line.barcode].filter(Boolean).join(" · ") || "Kod yok"}</Muted>
             {pickLineNote(line) ? (
               <View
                 style={{
@@ -281,7 +379,7 @@ export function SevkPickScreen() {
                   borderWidth: 1,
                   borderColor: "#fde68a",
                 }}
-                testID={`sevk-line-note-${line.line_index ?? idx}`}
+                testID={`sevk-line-note-${lineId}`}
               >
                 <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", lineHeight: 16 }}>
                   Sipariş stok notu · {pickLineNote(line)}
@@ -289,47 +387,54 @@ export function SevkPickScreen() {
               </View>
             ) : null}
             {canEdit ? (
-              <Row>
-                <View style={{ flex: 1 }}>
-                  <PrimaryButton title="−" onPress={() => adjust(line, picked - 1)} disabled={busy || picked <= 0} color={colors.secondary} testID={`sevk-minus-${line.line_index ?? idx}`} />
-                </View>
-                <View style={{ width: 76, alignItems: "center" }}>
-                  <QuantityInput
-                    testID={`sevk-qty-${line.line_index ?? idx}`}
-                    value={qtyDrafts[lineKey(line, idx)] ?? picked}
-                    editable={!busy}
-                    dense
-                    containerStyle={{ width: 76 }}
-                    onChange={(n) => setQtyDrafts((d) => ({ ...d, [lineKey(line, idx)]: n ?? "" }))}
-                    onBlur={() => commitQty(line, idx)}
-                    style={{
-                      width: 76,
-                      minHeight: 44,
-                      textAlign: "center",
-                      fontWeight: "800",
-                      fontSize: 18,
-                      color: done ? colors.primary : colors.text,
-                      borderWidth: 0,
-                      borderBottomWidth: 2,
-                      borderBottomColor: colors.border,
-                      backgroundColor: "transparent",
-                      paddingHorizontal: 0,
-                      paddingVertical: 0,
-                    }}
+              <>
+                <Row>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton title="−" onPress={() => adjust(line, picked - 1)} disabled={busy || picked <= 0} color={colors.secondary} testID={`sevk-minus-${lineId}`} />
+                  </View>
+                  <View style={{ flex: 1.2, minWidth: 76 }}>
+                    <Pressable
+                      testID={`sevk-qty-${lineId}`}
+                      accessibilityLabel={qtyLabel}
+                      onPress={() => openKeypad(line, idx)}
+                      disabled={busy}
+                      style={{
+                        minHeight: 44,
+                        paddingHorizontal: 6,
+                        borderRadius: 10,
+                        borderWidth: 2,
+                        borderColor: colors.indigo,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: editing ? colors.indigo50 : "#fff",
+                        opacity: busy ? 0.5 : 1,
+                      }}
+                    >
+                      <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 15, color: colors.indigo }}>{qtyLabel}</Text>
+                    </Pressable>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton title="+" onPress={() => adjust(line, picked + 1)} disabled={busy || done} color={colors.primary} testID={`sevk-plus-${lineId}`} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton title="Tümü" icon="checkmark-done" onPress={() => adjust(line, ordered)} disabled={busy || done} color={done ? colors.muted : colors.indigo} testID={`sevk-all-${lineId}`} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton title="Etiket" icon="pricetag" onPress={() => printLabels([line])} disabled={busy} color={colors.secondary} testID={`sevk-label-${lineId}`} />
+                  </View>
+                </Row>
+                {editing ? (
+                  <PickQtyKeypad
+                    index={lineId}
+                    decimal={isDecimalUnit(line.unit)}
+                    disabled={busy}
+                    onKey={(token) => onKeypadKey(line, idx, token)}
+                    onConfirm={() => confirmKeypad(line, idx)}
                   />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <PrimaryButton title="+" onPress={() => adjust(line, picked + 1)} disabled={busy || done} color={colors.primary} testID={`sevk-plus-${line.line_index ?? idx}`} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <PrimaryButton title="Tümü" icon="checkmark-done" onPress={() => adjust(line, ordered)} disabled={busy || done} color={colors.indigo} testID={`sevk-all-${line.line_index ?? idx}`} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <PrimaryButton title="Etiket" icon="pricetag" onPress={() => printLabels([line])} disabled={busy} color={colors.secondary} testID={`sevk-label-${line.line_index ?? idx}`} />
-                </View>
-              </Row>
+                ) : null}
+              </>
             ) : null}
-          </Card>
+          </Pressable>
         );
       })}
 
@@ -473,4 +578,14 @@ export function SevkPickScreen() {
       />
     </Screen>
   );
+}
+
+function pickedLabel(picked: number): string {
+  const rounded = Math.round((Number(picked) || 0) * 1000) / 1000;
+  return String(rounded).replace(".", ",");
+}
+
+function qtyBoxText(shown: string, unit?: string): string {
+  const name = String(unit || "").trim() || "adet";
+  return shown === "" ? name : `${shown} ${name}`;
 }
