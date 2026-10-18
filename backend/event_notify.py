@@ -1092,6 +1092,53 @@ async def _enqueue_order_outbox(
     return True
 
 
+async def enqueue_morning_summary_email(
+    company_id: str,
+    *,
+    emails,
+    subject: str,
+    html: str,
+    text: str,
+    day: str,
+    manual: bool = False,
+) -> bool:
+    """Sabah özeti e-postasını notify_outbox'a yazar. SMTP çağırmaz.
+
+    Zamanlanmış gönderim aynı gün tek satırdır (duplicate key → mevcut satır).
+    Manuel gönderim her çağrıda yeni satır açar.
+    """
+    cid = str(company_id or "").strip()
+    day_key = str(day or "").strip()
+    suffix = "m" if manual else "s"
+    out_id = f"out:{cid}:morning_summary:{day_key}:{suffix}"
+    if manual:
+        out_id = f"{out_id}:{uuid.uuid4().hex}"
+    if isinstance(emails, str):
+        to = [emails] if emails.strip() else []
+    else:
+        to = [str(item) for item in (emails or []) if str(item or "").strip()]
+    doc = {
+        "_id": out_id,
+        "company_id": cid,
+        "event": "morning_summary",
+        "channels": {"email": True, "sms": False},
+        "digest": "instant",
+        "status": "pending",
+        "attempts": 0,
+        "to": to,
+        "subject": str(subject or ""),
+        "html": str(html or ""),
+        "text": str(text or ""),
+        "created_at": _now(),
+    }
+    try:
+        await _db.notify_outbox.insert_one(doc)
+    except Exception:
+        existing = await _db.notify_outbox.find_one({"_id": doc["_id"]})
+        return bool(existing)
+    return True
+
+
 async def _company_logo_abs(logo_url: str) -> str:
     raw = str(logo_url or "").strip()
     if not raw:
@@ -2721,6 +2768,70 @@ async def _deliver_generic(company_id: str, event: str, rows: List[dict], claim_
         return 0
 
 
+def _morning_summary_recipients(row: dict) -> List[str]:
+    raw = row.get("to")
+    if isinstance(raw, str):
+        raw = [raw]
+    out: List[str] = []
+    seen = set()
+    for item in raw or []:
+        email = str(item or "").strip()
+        if not email or "@" not in email or email in seen:
+            continue
+        seen.add(email)
+        out.append(email)
+    return out
+
+
+async def _deliver_morning_summary(company_id: str, rows: List[dict], claim_id: str) -> int:
+    """Kuyruktaki hazır HTML/metin. Alıcı satırdaki to listesidir, prefs değil."""
+    prefs = await get_prefs(company_id)
+    try:
+        pending = [
+            row for row in rows
+            if (row.get("channels") or {}).get("email") and not row.get("email_sent")
+        ]
+        if not pending:
+            await _mark_rows(rows, claim_id, "skipped")
+            return len(rows)
+        blocked, nxt = await _email_over_cap(company_id, prefs)
+        if blocked:
+            await _defer_rows(rows, claim_id, nxt)
+            return len(rows)
+        company = await _db.companies.find_one({"_id": company_id}, {"name": 1}) or {}
+        company_name = str(company.get("name") or "Firma").strip() or "Firma"
+        reply_to = await _company_reply_to(company_id, prefs)
+        delivered = 0
+        for row in pending:
+            to = _morning_summary_recipients(row)
+            if not to:
+                await _mark_rows([row], claim_id, "skipped")
+                delivered += 1
+                continue
+            result = await mail_service.send_mail(
+                to,
+                str(row.get("subject") or ""),
+                str(row.get("text") or ""),
+                html=str(row.get("html") or ""),
+                purpose="transactional",
+                company_id=company_id,
+                reply_to=reply_to,
+                from_name=company_name,
+            )
+            if (result or {}).get("status") != "sent":
+                await _retry_rows([row], claim_id)
+                continue
+            sent_to = result.get("to") or to
+            await _record_notify_mail(company_id, list(sent_to), str(row.get("subject") or ""))
+            await _mark_rows([row], claim_id, "sent", {"email_sent": True})
+            delivered += 1
+        return delivered
+    except Exception:
+        logger.exception("notify morning summary company=%s", company_id)
+        await _retry_rows(rows, claim_id)
+        return 0
+
+
 async def flush_notify_outbox(*, force: bool = False) -> dict:
     """Saatlik/günlük özet ve order_new gruplamasını claim ile işler."""
     await _release_stale_sending()
@@ -2765,6 +2876,8 @@ async def flush_notify_outbox(*, force: bool = False) -> dict:
             continue
         if ev == "order_new":
             flushed += await _deliver_order_batch(cid, claimed, claim_id)
+        elif ev == "morning_summary":
+            flushed += await _deliver_morning_summary(cid, claimed, claim_id)
         else:
             flushed += await _deliver_generic(cid, ev, claimed, claim_id)
     return {"flushed": flushed, "at": _now()}

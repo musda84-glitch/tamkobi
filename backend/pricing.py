@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import comm_service
+import morning_summary_email
 import tenant_access
 
 router = APIRouter(prefix="/api")
@@ -157,8 +158,12 @@ async def build_summary(company_id: str) -> Dict[str, Any]:
         c = by_ch.setdefault(o.get("channel") or "manual", {"count": 0, "total": 0.0})
         c["count"] += 1; c["total"] += float(o.get("total_amount") or 0)
     pending_ship = await _db.orders.count_documents({"company_id": company_id, "order_status": {"$in": ["approved", "preparing"]}, "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}, {"cargo_tracking_number": {"$exists": False}}]})
-    low = [p async for p in _db.products.find({"company_id": company_id, "track_stock": {"$ne": False}, "$expr": {"$lte": ["$stock_quantity", {"$ifNull": ["$min_stock_alert", 5]}]}}, {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1}).limit(15)]
-    low_count = await _db.products.count_documents({"company_id": company_id, "track_stock": {"$ne": False}, "$expr": {"$lte": ["$stock_quantity", {"$ifNull": ["$min_stock_alert", 5]}]}})
+    low_query = {"company_id": company_id, "track_stock": {"$ne": False}, "$expr": {"$lte": ["$stock_quantity", {"$ifNull": ["$min_stock_alert", 5]}]}}
+    low_fields = {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1}
+    low_docs = [p async for p in _db.products.find(low_query, low_fields).limit(morning_summary_email.LOW_STOCK_FETCH)]
+    low_docs.sort(key=morning_summary_email.stock_sort_key)
+    low = low_docs[:morning_summary_email.LOW_STOCK_KEEP]
+    low_count = await _db.products.count_documents(low_query)
     today = now.strftime("%Y-%m-%d")
     overdue = await _db.invoices.find({"company_id": company_id, "invoice_type": "sales", "payment_status": {"$in": ["unpaid", "partially_paid"]}, "due_date": {"$lt": today}, "status": {"$ne": "cancelled"}}, {"grand_total": 1, "paid_amount": 1, "contact_name": 1}).to_list(500)
     overdue_total = sum(float(i.get("grand_total") or 0) - float(i.get("paid_amount") or 0) for i in overdue)
@@ -168,15 +173,18 @@ async def build_summary(company_id: str) -> Dict[str, Any]:
 
 
 def render_text(s: Dict[str, Any], company_name: str) -> str:
-    lines = [f"☀️ {company_name} — Sabah Özeti {s['date']}", "", f"🛒 Yeni siparişler (son 24s+): {s['orders_total']} adet · {s['orders_amount']:,.2f} ₺"]
+    fmt_int = morning_summary_email.fmt_int
+    fmt_try = morning_summary_email.fmt_try
+    fmt_min = morning_summary_email.fmt_min
+    lines = [f"☀️ {company_name} — Sabah Özeti {s['date']}", "", f"🛒 Yeni siparişler (son 24s+): {fmt_int(s['orders_total'])} adet · {fmt_try(s['orders_amount'])}"]
     for ch, c in sorted(s["orders_by_channel"].items(), key=lambda x: -x[1]["total"]):
-        lines.append(f"   • {ch}: {c['count']} sipariş · {c['total']:,.2f} ₺")
-    lines += [f"📦 Kargo bekleyen sipariş: {s['pending_shipments']}", f"⚠️ Kritik stok: {s['low_stock_count']} ürün"]
+        lines.append(f"   • {ch}: {fmt_int(c['count'])} sipariş · {fmt_try(c['total'])}")
+    lines += [f"📦 Kargo bekleyen sipariş: {fmt_int(s['pending_shipments'])}", f"⚠️ Kritik stok: {fmt_int(s['low_stock_count'])} ürün"]
     for p in s["low_stock"][:8]:
-        lines.append(f"   • {p['name']} ({p.get('sku') or '-'}): {p['qty']} / min {p.get('min')}")
-    lines += [f"💸 Vadesi geçen alacak: {s['overdue_count']} fatura · {s['overdue_total']:,.2f} ₺"]
+        lines.append(f"   • {p['name']} ({p.get('sku') or '-'}): {fmt_int(p.get('qty'))} / min {fmt_min(p.get('min'))}")
+    lines += [f"💸 Vadesi geçen alacak: {fmt_int(s['overdue_count'])} fatura · {fmt_try(s['overdue_total'])}"]
     if s.get("open_claims"):
-        lines.append(f"↩️ Açık iade/talep: {s['open_claims']}")
+        lines.append(f"↩️ Açık iade/talep: {fmt_int(s['open_claims'])}")
     return "\n".join(lines)
 
 
@@ -221,10 +229,27 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
     result: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "email": None, "whatsapp": None}
     if st["emails"]:
         try:
-            acc = await _deps["mail_account"](company_id)
-            html = "<pre style='font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap'>" + text.replace("<", "&lt;") + "</pre>"
-            await comm_service.smtp_send(acc, st["emails"], f"Sabah Özeti {s['date']} — {comp.get('name') or 'TamKobi'}", text, html)
-            result["email"] = {"ok": True, "to": st["emails"]}
+            import event_notify
+            name = comp.get("name") or "TamKobi"
+            stock_link = await event_notify.app_link("/stock")
+            logo = ""
+            raw_logo = str(comp.get("logo_url") or "").strip()
+            if raw_logo:
+                logo = await event_notify._company_logo_abs(raw_logo)
+            html_body = morning_summary_email.render_summary_html(s, name, stock_link, logo_url_abs=logo)
+            email_text = morning_summary_email.render_summary_text(s, name, stock_link)
+            queued = await event_notify.enqueue_morning_summary_email(
+                company_id,
+                emails=st["emails"],
+                subject=f"Sabah Özeti {s['date']} — {name}",
+                html=html_body,
+                text=email_text,
+                day=datetime.now(TR_TZ).strftime("%Y-%m-%d"),
+                manual=manual,
+            )
+            if not queued:
+                raise RuntimeError("Sabah özeti kuyruğa yazılamadı.")
+            result["email"] = {"ok": True, "queued": True, "to": list(st["emails"])}
         except HTTPException as e:
             if getattr(e, "status_code", None) == 409:
                 logger.warning("mail needs_reauth company=%s context=morning_summary: %s", company_id, e.detail)

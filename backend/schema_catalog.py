@@ -771,7 +771,7 @@ COLLECTIONS = {
     "notify_outbox": {
         "scope": SCOPE_TENANT,
         "description": "Saatlik/günlük özet ve yeni sipariş e-posta kuyruğu.",
-        "keys": ("_id", "company_id", "event", "ref_id", "due_at", "status", "claim_id", "channels", "dedupe_key", "created_at"),
+        "keys": ("_id", "company_id", "event", "ref_id", "due_at", "status", "claim_id", "channels", "dedupe_key", "created_at", "to", "subject", "html", "text"),
         "refs": ("companies._id",),
     },
     "notify_event_dedupe": {
