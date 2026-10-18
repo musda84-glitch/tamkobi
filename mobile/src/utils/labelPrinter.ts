@@ -161,6 +161,28 @@ export async function fetchCompanyLabelPrinter(
   return { ...fromCompanyLabelPrinter(raw), configured: !!raw?.configured && !!String(raw?.host || "").trim() };
 }
 
+/** Bu telefon, yoksa şirket varsayılanı. Ağ hatası fırlatmaz. */
+export async function resolveLabelPrinter(
+  client: ApiClient,
+  companyId?: string | null,
+): Promise<LabelPrinterSettings & { source: "device" | "company" | "none" }> {
+  const local = await loadLabelPrinter(companyId);
+  if (local.host.trim()) return { ...local, source: "device" };
+  const id = String(companyId || "").trim();
+  if (id) {
+    try {
+      const remote = await fetchCompanyLabelPrinter(client, id);
+      if (remote.configured && remote.host.trim()) {
+        const saved = await saveLabelPrinter(remote, companyId);
+        return { ...saved, source: "company" };
+      }
+    } catch {
+      /* şirket varsayılanı okunamadı */
+    }
+  }
+  return { ...defaultLabelPrinter(), source: "none" };
+}
+
 export async function saveCompanyLabelPrinter(
   client: ApiClient,
   companyId: string,

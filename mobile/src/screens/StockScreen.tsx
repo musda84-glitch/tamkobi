@@ -26,7 +26,7 @@ import { listRowText } from "../utils/listRow";
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
-import { loadLabelPrinter, printProductLabel } from "../utils/labelPrinter";
+import { defaultLabelPrinter, printProductLabel, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
 export function StockScreen() {
@@ -52,6 +52,7 @@ export function StockScreen() {
   const [printFor, setPrintFor] = useState<Product | null>(null);
   const [printBusy, setPrintBusy] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
 
   const applyRows = useCallback((raw: unknown) => {
     try {
@@ -195,6 +196,13 @@ export function StockScreen() {
     }
   };
 
+  const openProductLabel = async (p: Product) => {
+    setPrintError(null);
+    const resolved = await resolveLabelPrinter(client, companyId);
+    setLabelPrinter(resolved);
+    setPrintFor(p);
+  };
+
   const catGroups = useMemo(() => productCategoryGroups(cats, rows), [cats, rows]);
 
   const matched = useMemo(() => {
@@ -278,7 +286,7 @@ export function StockScreen() {
                   <PrimaryButton
                     title="Etiket bas"
                     icon="print"
-                    onPress={() => { setPrintError(null); setPrintFor(p); }}
+                    onPress={() => { void openProductLabel(p); }}
                     color={colors.indigo}
                     testID={`stock-label-${idOf(p)}`}
                   />
@@ -337,13 +345,20 @@ export function StockScreen() {
           error={printError}
           allowPrice={printFor?.sale_price != null}
           testID="stock-list-label-sheet"
+          printerHost={labelPrinter.host}
+          printerPort={labelPrinter.port}
+          onSavePrinter={async (host, port) => {
+            const saved = await saveLabelPrinter({ host, port }, companyId);
+            setLabelPrinter(saved);
+          }}
+          onOpenPrinters={() => go("Printers")}
           onClose={() => setPrintFor(null)}
           onPrint={async (copies, opts) => {
             if (!printFor) return;
             setPrintBusy(true);
             setPrintError(null);
             try {
-              const settings = await loadLabelPrinter(companyId);
+              const settings = await resolveLabelPrinter(client, companyId);
               await printProductLabel({
                 settings,
                 copies,

@@ -8,8 +8,8 @@ import {
   defaultLabelPrinter,
   fetchCompanyLabelPrinter,
   labelPrinterConfigError,
-  loadLabelPrinter,
   printTestLabel,
+  resolveLabelPrinter,
   saveCompanyLabelPrinter,
   saveLabelPrinter,
   type LabelPrinterSettings,
@@ -29,24 +29,13 @@ export function PrintersScreen() {
   useEffect(() => {
     let live = true;
     (async () => {
-      const local = await loadLabelPrinter(companyId);
+      const resolved = await resolveLabelPrinter(client, companyId);
       if (!live) return;
-      if (local.host) {
-        apply(local);
-        return;
+      const { source, ...settings } = resolved;
+      apply(settings);
+      if (source === "company") {
+        setMessage("Şirket varsayılanı yüklendi. Kaydet derseniz bu telefonda da saklanır.");
       }
-      try {
-        const remote = await fetchCompanyLabelPrinter(client, companyId);
-        if (!live) return;
-        if (remote.configured) {
-          apply(remote);
-          setMessage("Şirket varsayılanı yüklendi. Kaydet derseniz bu telefonda da saklanır.");
-          return;
-        }
-      } catch {
-        /* şirket varsayılanı okunamadı */
-      }
-      apply(local);
     })();
     return () => {
       live = false;

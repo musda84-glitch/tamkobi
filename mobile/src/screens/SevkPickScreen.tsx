@@ -29,7 +29,7 @@ import {
   type PickSession,
 } from "../utils/orderPick";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
-import { loadLabelPrinter, printShipmentLabels } from "../utils/labelPrinter";
+import { defaultLabelPrinter, printShipmentLabels, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import { printPickProductLabels } from "../utils/pickLabelPrint";
 import { canSevkDraftInvoice, canSevkOpenOrder } from "../utils/permissions";
 import { ProgressBar } from "./SevkScreen";
@@ -52,6 +52,7 @@ export function SevkPickScreen() {
   const [shipPrint, setShipPrint] = useState(false);
   const [shipBusy, setShipBusy] = useState(false);
   const [shipError, setShipError] = useState<string | null>(null);
+  const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
 
   const load = useCallback(async () => {
     if (!canView) return;
@@ -174,6 +175,13 @@ export function SevkPickScreen() {
   const percent = pickPercent(session?.progress);
   const shipReady = canShip(session?.progress);
   const awaitDeliver = canMarkDeliveredFromPick(session);
+
+  const openShipLabel = async () => {
+    setShipError(null);
+    const resolved = await resolveLabelPrinter(client, companyId);
+    setLabelPrinter(resolved);
+    setShipPrint(true);
+  };
 
   if (!canView) {
     return (
@@ -336,7 +344,7 @@ export function SevkPickScreen() {
           icon="print"
           color={colors.primary}
           testID="sevk-ship-label"
-          onPress={() => { setShipError(null); setShipPrint(true); }}
+          onPress={() => { void openShipLabel(); }}
         />
       ) : null}
       <LabelPrintSheet
@@ -348,12 +356,19 @@ export function SevkPickScreen() {
         busy={shipBusy}
         error={shipError}
         testID="sevk-ship-sheet"
+        printerHost={labelPrinter.host}
+        printerPort={labelPrinter.port}
+        onSavePrinter={async (host, port) => {
+          const saved = await saveLabelPrinter({ host, port }, companyId);
+          setLabelPrinter(saved);
+        }}
+        onOpenPrinters={() => go("Printers")}
         onClose={() => setShipPrint(false)}
         onPrint={async (copies) => {
           setShipBusy(true);
           setShipError(null);
           try {
-            const settings = await loadLabelPrinter(companyId);
+            const settings = await resolveLabelPrinter(client, companyId);
             const address = [session?.shipping_address, session?.city].filter(Boolean).join(" ");
             await printShipmentLabels({
               settings,

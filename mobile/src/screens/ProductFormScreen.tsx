@@ -12,6 +12,7 @@ import { LabelPrintSheet } from "../components/LabelPrintSheet";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { go } from "../nav";
 import { colors, spacing } from "../theme";
 import type { Product } from "../types";
 import { idOf } from "../utils/money";
@@ -29,7 +30,7 @@ import {
   type ProductDraft,
 } from "../utils/productDraft";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi, unitSelectGroups } from "../utils/stockUnits";
-import { loadLabelPrinter, printProductLabel } from "../utils/labelPrinter";
+import { defaultLabelPrinter, printProductLabel, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import {
   PRINTER_PRESETS,
   defaultEthernetPrinter,
@@ -138,6 +139,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [tcpPrint, setTcpPrint] = useState(false);
   const [tcpBusy, setTcpBusy] = useState(false);
   const [tcpError, setTcpError] = useState<string | null>(null);
+  const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
   const ethCfg = eth || defaultEthernetPrinter();
 
   const runDiscover = async () => {
@@ -244,6 +246,13 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         setBusy(false);
       }
     });
+  };
+
+  const openTcpLabel = async () => {
+    setTcpError(null);
+    const resolved = await resolveLabelPrinter(client, companyId);
+    setLabelPrinter(resolved);
+    setTcpPrint(true);
   };
 
   if (!canEdit) {
@@ -423,7 +432,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
           title="Etiket bas"
           icon="print"
           color={colors.primary}
-          onPress={() => { setTcpError(null); setTcpPrint(true); }}
+          onPress={() => { void openTcpLabel(); }}
         />
       ) : null}
 
@@ -666,12 +675,19 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         error={tcpError}
         allowPrice={draft.sale_price !== "" && draft.sale_price != null}
         testID="stock-tcp-sheet"
+        printerHost={labelPrinter.host}
+        printerPort={labelPrinter.port}
+        onSavePrinter={async (host, port) => {
+          const saved = await saveLabelPrinter({ host, port }, companyId);
+          setLabelPrinter(saved);
+        }}
+        onOpenPrinters={() => go("Printers")}
         onClose={() => setTcpPrint(false)}
         onPrint={async (copies, opts) => {
           setTcpBusy(true);
           setTcpError(null);
           try {
-            const settings = await loadLabelPrinter(companyId);
+            const settings = await resolveLabelPrinter(client, companyId);
             await printProductLabel({
               settings,
               copies,
