@@ -135,6 +135,7 @@ export type Partner = {
   total_capital_in?: number;
   total_withdrawn?: number;
   total_profit_share?: number;
+  monthly_salary?: number | null;
   is_active?: boolean;
   photo_url?: string | null;
 };
@@ -558,6 +559,47 @@ export function partnerCardCashFlow(
     color: bm.color,
     receivedLabel: bm.receivedLabel,
     paidLabel: bm.paidLabel,
+  };
+}
+
+/** Web isPartnerLedgerType: kasa/bankaya dokunmayan fiş (credit/debit/salary). */
+export function isPartnerLedgerType(type?: string | null): boolean {
+  return type === "credit" || type === "debit" || type === "salary";
+}
+
+/** Para koy / para çek — hesap seçilir. */
+export function isPartnerCashType(type?: string | null): boolean {
+  return type === "capital_in" || type === "withdrawal";
+}
+
+export type PartnerTxPayload = {
+  partner_id: string;
+  type: string;
+  amount: number;
+  account_id: string | null;
+  description: string;
+  company_id: string;
+};
+
+/** Web PartnersPanel saveTx: ledger fişte account_id null, tutar sayı. */
+export function partnerTxPayload(input: {
+  partner_id: string;
+  type: string;
+  amount: number | string;
+  account_id?: string | null;
+  description?: string | null;
+  company_id?: string | null;
+}): PartnerTxPayload {
+  const ledger = isPartnerLedgerType(input.type);
+  const amount = Number(input.amount);
+  const account = input.account_id ? String(input.account_id) : null;
+  return {
+    partner_id: String(input.partner_id || ""),
+    type: String(input.type || ""),
+    amount: Number.isFinite(amount) ? amount : 0,
+    account_id: ledger ? null : account,
+    description: String(input.description || ""),
+    company_id: String(input.company_id || ""),
   };
 }
 
