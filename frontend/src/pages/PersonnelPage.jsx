@@ -875,7 +875,7 @@ export default function PersonnelPage() {
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3" data-testid="employee-cards-grid">
+      <div className="flex flex-col gap-2" data-testid="employee-cards-grid">
         {shownEmployees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
@@ -894,7 +894,7 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col ${menuOpen ? "relative z-20" : ""} ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_88px]"}`}
+            className={`min-w-0 bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col ${menuOpen ? "relative z-20" : ""} ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_88px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
@@ -915,10 +915,10 @@ export default function PersonnelPage() {
                 event.preventDefault();
                 toggleCardExpanded(empKey);
               }}
-              className="flex w-full flex-row flex-nowrap items-center min-h-[72px] cursor-pointer text-left"
+              className="flex w-full min-w-0 cursor-pointer flex-col items-stretch gap-3.5 text-left md:flex-row md:flex-nowrap md:items-center min-h-[72px]"
             >
-              <div className="flex w-full min-w-0 flex-col items-center gap-3" data-testid={`employee-card-identity-${empKey}`}>
-                <div className="flex w-full items-center gap-3">
+              <div className="contents items-center min-w-0" data-testid={`employee-card-identity-${empKey}`}>
+                <div className="flex w-full min-w-0 shrink-0 items-center gap-3 md:w-[250px]">
                   <div className="relative shrink-0">
                     <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-black text-slate-500" data-testid={`employee-photo-${idSuffix}`}>
                       {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="h-full w-full object-cover" /> : cardInitials(emp.full_name)}
@@ -962,7 +962,8 @@ export default function PersonnelPage() {
                   </span>
                 </div>
 
-                <div className={`w-full rounded-2xl border px-3 py-3 ${BALANCE_BOX[view.tone]}`} data-testid={`employee-receivable-${idSuffix}`}>
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className={`w-full max-w-full shrink-0 rounded-2xl border px-3 py-3 md:w-[280px] ${BALANCE_BOX[view.tone]}`} data-testid={`employee-receivable-${idSuffix}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-xl font-black leading-none">{fmtCardMoney(view.amount)}</div>
@@ -983,10 +984,7 @@ export default function PersonnelPage() {
                   ) : null}
                 </div>
 
-                <div className="flex w-full flex-row flex-nowrap items-center" data-testid={`employee-card-right-${empKey}`}>
-                  <div className="flex w-full min-w-0 flex-col gap-3">
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="min-w-0" data-testid={`employee-card-today-${empKey}`}>
+                      <div className="w-[6.75rem] shrink-0" data-testid={`employee-card-today-${empKey}`}>
                         <button
                           type="button"
                           onClick={(event) => {
@@ -1040,23 +1038,27 @@ export default function PersonnelPage() {
                           </div>
                         ) : null}
                       </div>
-                      <div className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-1.5" data-testid={`employee-card-today-work-${empKey}`}>
+                      <div className="w-[6.75rem] shrink-0 rounded-xl border border-slate-200 bg-white px-2 py-1.5" data-testid={`employee-card-today-work-${empKey}`}>
                         <div className="text-[8px] font-bold uppercase tracking-wide leading-none text-slate-400">Bugün mesai</div>
                         <div className="text-[13px] font-black leading-tight text-slate-800">{todayWorkLabel(today)}</div>
                       </div>
+                      {otOn ? (
                       <div
-                        className={`min-w-0 w-full !w-full !h-auto w-[132px] h-9 rounded-xl border px-2 py-1.5 ${otOn ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}
+                        className="w-[6.75rem] shrink-0 rounded-xl border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-indigo-700"
                         data-testid={`employee-card-loc-${empKey}`}
-                        title={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
+                        title={`Atanan fazla mesai ${otCap}`}
                       >
                         <div data-testid={`employee-card-assigned-ot-${empKey}`}>
-                          <div className={`text-[8px] font-bold uppercase tracking-wide leading-none ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
-                          <div className={`text-[13px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>{otCap}</div>
+                          <div className="text-[8px] font-bold uppercase tracking-wide leading-none text-indigo-600">Mesai</div>
+                          <div className="text-[13px] font-black leading-tight text-indigo-800">{otCap}</div>
                         </div>
                       </div>
-                    </div>
+                      ) : null}
+                </div>
 
-                    <div className="flex min-w-0 flex-1 flex-row flex-nowrap items-center gap-1.5" data-testid={`employee-card-mid-${empKey}`} onClick={stopCardToggle} onKeyDown={stopCardToggle}>
+                <div className="flex shrink-0 flex-row flex-wrap items-center gap-1.5 md:ml-auto md:flex-nowrap" data-testid={`employee-card-right-${empKey}`}>
+                    <div className="flex min-w-0 flex-1 flex-row flex-wrap items-center gap-1.5 md:flex-nowrap" data-testid={`employee-card-mid-${empKey}`} onClick={stopCardToggle} onKeyDown={stopCardToggle}>
+                      {empReqs.length > 0 ? (
                       <div onClick={stopCardToggle}>
                         <EmployeeRequestChips
                           items={empReqs}
@@ -1076,7 +1078,8 @@ export default function PersonnelPage() {
                           onViewDispute={() => setTab("attendance")}
                         />
                       </div>
-                      <div className="flex h-9 shrink-0 flex-nowrap items-center gap-1.5" data-testid={`employee-card-actions-${empKey}`}>
+                      ) : null}
+                      <div className="flex shrink-0 flex-wrap items-center gap-1.5 md:flex-nowrap" data-testid={`employee-card-actions-${empKey}`}>
                         <button
                           type="button"
                           onClick={(event) => { stopCardToggle(event); openSettleFor(emp); }}
@@ -1149,9 +1152,10 @@ export default function PersonnelPage() {
                     </div>
                   </div>
                 </div>
+            </div>
 
-                {cardOpen ? (
-                  <div className="w-full space-y-2 pt-1 border-t border-slate-100" data-testid={`employee-card-details-${idSuffix}`} onClick={stopCardToggle}>
+            {cardOpen ? (
+                  <div className="w-full basis-full space-y-2 pt-1 border-t border-slate-100" data-testid={`employee-card-details-${idSuffix}`} onClick={stopCardToggle}>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
                       <div className="flex items-center gap-1.5">
                         <Phone className="w-3.5 h-3.5 text-slate-400" />
@@ -1197,14 +1201,12 @@ export default function PersonnelPage() {
                     </div>
                   </div>
                 ) : null}
-              </div>
-            </div>
           </div>
           </div>
             );
           })}
         {shownEmployees.length === 0 ? (
-          <div className="col-span-full rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">Bu filtrede personel yok.</div>
+          <div className="w-full rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">Bu filtrede personel yok.</div>
         ) : null}
       </div>
       {employeesHasMore && (
