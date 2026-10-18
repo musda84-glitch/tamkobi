@@ -126,7 +126,7 @@ test("employee card strip is a single compact horizontal row", async () => {
   expect(card).not.toBeNull();
   expect(card.textContent).toContain("Soner Akkaya");
   expect(card.textContent).toContain("Kalan izin");
-  expect(host.querySelector('[data-testid="employee-receivable-14479874352"]')?.textContent).toMatch(/Kalan alacak/);
+  expect(host.querySelector('[data-testid="employee-receivable-14479874352"]')?.textContent).toMatch(/Ödenecek/);
   expect(host.querySelector('[data-testid="employee-no-pay-start-14479874352"]')?.textContent).toBe("Hak ediş tarihi tanımlı değil");
   const strip = host.querySelector('[data-testid="employee-card-strip-emp_1"]');
   expect(strip).not.toBeNull();
@@ -152,7 +152,6 @@ test("employee card strip is a single compact horizontal row", async () => {
   expect(requestBox?.textContent).toContain("Talepler");
   expect(requestBox?.className).toMatch(/\bh-9\b/);
   expect(actions?.textContent).toMatch(/Hareketler/);
-  expect(actions?.textContent).toMatch(/Personel Kartı/);
   expect(actions?.className).toMatch(/\bh-9\b/);
   expect(mid.contains(host.querySelector('[data-testid="employee-receivable-14479874352"]'))).toBe(false);
   const right = host.querySelector('[data-testid="employee-card-right-emp_1"]');
@@ -165,6 +164,10 @@ test("employee card strip is a single compact horizontal row", async () => {
   expect(loc.className).toMatch(/w-\[132px\]/);
   expect(loc.className).toMatch(/\bh-9\b/);
   expect(right.contains(loc)).toBe(true);
+  await act(async () => {
+    host.querySelector('[data-testid="employee-more-btn-emp_1"]').click();
+  });
+  expect(host.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Kart/);
   const editBtn = host.querySelector('[data-testid="employee-edit-14479874352"]');
   const delBtn = host.querySelector('[data-testid="employee-delete-14479874352"]');
   expect(right.contains(editBtn)).toBe(true);

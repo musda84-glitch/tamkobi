@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -19,7 +19,8 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, formatLeaveRemainingLine, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, presenceTodayOf, remainingDue } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, fmtCardMoney, formatLeaveRemainingLine, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, presenceTodayOf } from "../utils/personnelCard";
+import { balanceView, filterEmployees, presenceChip, presenceState, teamNetView, teamSummary, todayWorkLabel } from "../utils/personnelCardView";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
@@ -56,9 +57,80 @@ import {
   ChevronUp,
   Users,
   Receipt,
+  MoreHorizontal,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { MISSING_RECORD } from "../utils/notificationTarget";
+
+const BALANCE_BOX = {
+  pay: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  owes: "border-rose-200 bg-rose-50 text-rose-900",
+  zero: "border-slate-200 bg-slate-50 text-slate-700",
+};
+
+const PRESENCE_PILL = {
+  in: { label: "● Mesaide", box: "border-emerald-200 bg-emerald-50 text-emerald-800", dot: "bg-emerald-500" },
+  overtime: { label: "Fazla mesaide", box: "border-indigo-200 bg-indigo-50 text-indigo-800", dot: "bg-indigo-500" },
+  out: { label: "Mesai dışı", box: "border-slate-200 bg-slate-100 text-slate-600", dot: "bg-slate-400" },
+};
+
+const MENU_ITEM = "flex h-9 w-full items-center gap-2 px-3 text-left text-[12px] font-semibold text-slate-700 hover:bg-slate-50";
+
+function cardInitials(name) {
+  return String(name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+}
+
+function stopCardToggle(event) {
+  event.stopPropagation();
+}
+
+function cardToggleBlocked(event) {
+  return Boolean(event.target?.closest?.("button, input, textarea, select, a, label"));
+}
+
+function CardMoreMenu({ empKey, open, onOpen, onClose, children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event) => {
+      if (!ref.current || ref.current.contains(event.target)) return;
+      onClose();
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+  return (
+    <div className="relative" ref={ref} data-menu-root="" onClick={stopCardToggle} onKeyDown={stopCardToggle}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-testid={`employee-more-btn-${empKey}`}
+        onClick={(event) => {
+          stopCardToggle(event);
+          if (open) onClose();
+          else onOpen();
+        }}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+        title="Diğer işlemler"
+      >
+        <MoreHorizontal className="w-4 h-4" />
+      </button>
+      {open ? (
+        <div role="menu" data-testid={`employee-more-menu-${empKey}`} className="absolute right-0 top-full z-30 mt-1 min-w-[11.5rem] rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const hasSgk = (emp) => Boolean(emp?.sgk_insured) || Boolean(String(emp?.sgk_number || "").trim());
 const isBankAcc = (a) => {
@@ -109,6 +181,9 @@ export default function PersonnelPage() {
   const [settlePay, setSettlePay] = useState(null);
   const [roleOptions, setRoleOptions] = useState([]);
   const [expandedCards, setExpandedCards] = useState({});
+  const [empFilter, setEmpFilter] = useState("all");
+  const [menuKey, setMenuKey] = useState("");
+  const closeMenu = useCallback(() => setMenuKey(""), []);
 
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
 
@@ -695,6 +770,16 @@ export default function PersonnelPage() {
   const { visible: pagedPayrolls, hasMore: payrollsHasMore, sentinelRef: payrollsSentinelRef } = useInfiniteRows(payrolls, {
     resetKey: payrolls.length,
   });
+  const employeeForPresence = (emp) => {
+    const key = empIdOf(emp);
+    const workplace = emp.workplace || attWork[key];
+    if (!workplace || workplace === emp.workplace) return emp;
+    return { ...emp, workplace };
+  };
+  const presenceEmployees = employees.map(employeeForPresence);
+  const team = teamSummary(presenceEmployees, attToday);
+  const netTeam = teamNetView(team.netRemaining);
+  const shownEmployees = filterEmployees(pagedEmployees.map(employeeForPresence), empFilter, attToday);
 
   return (
     <div className="space-y-6" data-testid="personnel-page">
@@ -754,314 +839,362 @@ export default function PersonnelPage() {
       {tab === "salary" && <SalaryCalculator />}
       {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
       {tab === "payroll" && (<>
-      {/* Employees Cards — yatay şerit; alt bölüm Genişlet/Daralt */}
-      <div className="grid grid-cols-1 gap-3" data-testid="employee-cards-grid">
-        {pagedEmployees.map((emp) => {
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3" data-testid="personnel-team-summary">
+        <div className="text-sm font-bold text-slate-900">
+          <span className="text-emerald-700">{team.inCount}</span>
+          <span className="text-slate-400"> / {team.total}</span>
+          {" "}şu an mesaide
+        </div>
+        <div className="text-left sm:text-right">
+          <div className={`text-[11px] font-bold uppercase tracking-wide ${netTeam.tone === "owes" ? "text-rose-700" : netTeam.tone === "pay" ? "text-emerald-700" : "text-slate-500"}`}>{netTeam.label}</div>
+          <div className={`text-base font-black ${netTeam.tone === "owes" ? "text-rose-800" : netTeam.tone === "pay" ? "text-emerald-800" : "text-slate-700"}`}>{fmtCardMoney(netTeam.amount)}</div>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {[["all", "Tümü"], ["in", "Mesaide"], ["balance", "Bakiyesi olan"]].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            data-testid={`personnel-filter-${id}`}
+            aria-pressed={empFilter === id}
+            onClick={() => { setEmpFilter(id); setMenuKey(""); }}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${empFilter === id ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3" data-testid="employee-cards-grid">
+        {shownEmployees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
             const cardOpen = Boolean(expandedCards[empKey]);
+            const today = attToday[empKey];
+            const view = balanceView(emp.balance);
+            const state = presenceState(emp, today);
+            const pill = PRESENCE_PILL[state];
+            const presence = presenceChip(emp, today);
+            const roleLine = [emp.position, emp.department].filter(Boolean).join(" · ") || "—";
+            const punch = todayAttendanceParts(today);
+            const otCap = assignedOvertimeCellCaption(today);
+            const otOn = otCap !== "--:--";
+            const menuOpen = menuKey === empKey;
+            const idSuffix = emp.tc_kimlik || empKey;
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_88px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col ${menuOpen ? "relative z-20" : ""} ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_88px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
-          <div className="px-3 py-2 flex flex-col gap-1.5" data-testid={`employee-card-strip-${empKey}`}>
-            {/* Tek satır şerit: kimlik | aksiyonlar | mesai+düzenle — yükseklik ~88px */}
-            <div className="flex flex-row flex-nowrap items-center gap-2.5 min-h-[72px]">
-              <div className="flex items-center gap-2 min-w-0 w-[200px] xl:w-[220px] shrink-0" data-testid={`employee-card-identity-${empKey}`}>
-                <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[10px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
-                  {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
-                </div>
-                <div className="min-w-0 leading-tight">
-                  <div className="flex items-center gap-1 min-w-0">
-                    <h3 className="font-bold text-slate-900 text-[13px] truncate">{emp.full_name}</h3>
-                    {isDailyWage(emp) ? <span className="shrink-0 text-[9px] font-bold px-1 py-px rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
-                    <span className="shrink-0 text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-px rounded-full font-semibold">Aktif</span>
-                    {(() => {
-                      const presence = employeePresenceChip({
-                        status: emp.status,
-                        workplace: emp.workplace || attWork[empKey],
-                        location_last_inside: emp.location_last_inside,
-                        location_last_ok: emp.location_last_ok,
-                        location_inside_at: emp.location_inside_at,
-                        today: attToday[empKey],
-                      });
-                      return presence ? (
-                        <span
-                          data-testid={`emp-presence-${empKey}`}
-                          className="shrink-0 text-[9px] px-1.5 py-px rounded-full font-semibold border"
-                          style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}
-                        >
-                          {presence.label}
-                        </span>
-                      ) : null;
-                    })()}
-                  </div>
-                  <div className="text-[11px] text-indigo-600 font-semibold truncate">{emp.position || "—"}</div>
-                  <div className="text-[10px] text-slate-400 truncate">{emp.department || ""}</div>
-                  <div className="text-[10px] text-slate-500 truncate" data-testid={`employee-leave-${empKey}`}>
-                    {formatLeaveRemainingLine(emp)}
-                    {emp.performance?.overall != null ? ` · %${emp.performance.overall}` : ""}
-                  </div>
-                  <div className="text-[10px] truncate" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
-                    <span className="text-slate-400">Kalan alacak: </span>
-                    <span className={`font-extrabold ${(Number(emp.balance?.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
-                      {fmtCardMoney(remainingDue(emp.balance))}
-                    </span>
-                    {emp.balance?.advances ? (
-                      <span className="text-amber-800 font-extrabold"> · Avans {fmtCardMoney(emp.balance.advances)}</span>
-                    ) : null}
-                    {!hasPayStartDate(emp) ? (
-                      <span className="block text-amber-800 font-semibold" data-testid={`employee-no-pay-start-${emp.tc_kimlik || empKey}`}>{PAY_START_MISSING_MSG}</span>
-                    ) : null}
-                  </div>
-                  {emp.workplace?.kind === "task" ? (
-                    <div className="text-[10px] font-semibold text-indigo-700 truncate" data-testid={`employee-workplace-${empKey}`}>
-                      Görev · {workplaceShort(emp.workplace)}
+          <div className="px-3 py-2 flex flex-col gap-3" data-testid={`employee-card-strip-${empKey}`}>
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={cardOpen}
+              data-expanded={cardOpen ? "1" : "0"}
+              data-testid={`employee-card-expand-${idSuffix}`}
+              onClick={(event) => {
+                if (cardToggleBlocked(event)) return;
+                toggleCardExpanded(empKey);
+              }}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                toggleCardExpanded(empKey);
+              }}
+              className="flex w-full flex-row flex-nowrap items-center min-h-[72px] cursor-pointer text-left"
+            >
+              <div className="flex w-full min-w-0 flex-col items-center gap-3" data-testid={`employee-card-identity-${empKey}`}>
+                <div className="flex w-full items-center gap-3">
+                  <div className="relative shrink-0">
+                    <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-black text-slate-500" data-testid={`employee-photo-${idSuffix}`}>
+                      {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="h-full w-full object-cover" /> : cardInitials(emp.full_name)}
                     </div>
+                    <span className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${pill.dot}`} />
+                  </div>
+                  <div className="min-w-0 flex-1 leading-tight">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <h3 className="truncate text-sm font-bold text-slate-900">{emp.full_name}</h3>
+                      {isDailyWage(emp) ? <span className="shrink-0 text-[9px] font-bold px-1 py-px rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
+                      {empReqs.length > 0 ? (
+                        <span className="relative shrink-0" title={`${empReqs.length} bekleyen talep`}>
+                          <Bell className="w-3.5 h-3.5 text-amber-600" />
+                          <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
+                            {empReqs.length}
+                          </span>
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="truncate text-[12px] text-slate-500">{roleLine}</div>
+                    {presence ? (
+                      <span
+                        data-testid={`emp-presence-${empKey}`}
+                        className="mt-0.5 inline-flex text-[9px] px-1.5 py-px rounded-full font-semibold border"
+                        style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}
+                      >
+                        {presence.label}
+                      </span>
+                    ) : null}
+                    {emp.workplace?.kind === "task" ? (
+                      <div className="text-[10px] font-semibold text-indigo-700 truncate" data-testid={`employee-workplace-${empKey}`}>
+                        Görev · {workplaceShort(emp.workplace)}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span
+                    data-testid={`employee-status-pill-${empKey}`}
+                    className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-bold ${pill.box}`}
+                  >
+                    {pill.label}
+                  </span>
+                </div>
+
+                <div className={`w-full rounded-2xl border px-3 py-3 ${BALANCE_BOX[view.tone]}`} data-testid={`employee-receivable-${idSuffix}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xl font-black leading-none">{fmtCardMoney(view.amount)}</div>
+                      <div className="mt-1 text-[11px] font-bold uppercase tracking-wide">{view.label}</div>
+                    </div>
+                    <div className="text-right text-[11px] font-semibold">
+                      {emp.balance?.advances ? (
+                        <div className="font-extrabold text-amber-800">Avans {fmtCardMoney(emp.balance.advances)}</div>
+                      ) : null}
+                      <div data-testid={`employee-leave-${empKey}`} className={view.tone === "zero" ? "text-slate-600" : "opacity-80"}>
+                        {formatLeaveRemainingLine(emp)}
+                        {emp.performance?.overall != null ? ` · %${emp.performance.overall}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  {!hasPayStartDate(emp) ? (
+                    <span className="mt-1 block text-[11px] font-semibold text-amber-800" data-testid={`employee-no-pay-start-${idSuffix}`}>{PAY_START_MISSING_MSG}</span>
                   ) : null}
                 </div>
-              </div>
 
-              <div className="flex flex-row flex-nowrap items-center gap-1.5 min-w-0 flex-1 overflow-x-auto" data-testid={`employee-card-mid-${empKey}`}>
-            <EmployeeRequestChips
-              items={empReqs}
-              compact
-              testId={`employee-card-requests-${emp.tc_kimlik || empKey}`}
-              busyId={busyReqId}
-              onDecideLeave={decideLeave}
-              onDecideEarly={decideEarly}
-              onDecideIntraday={decideIntraday}
-              onDecideAdvance={decideAdvance}
-              onDecideYevmiye={decideYevmiye}
-              onDecideLocationExit={decideLocationExit}
-              onDecideOvertimeConfirm={decideOvertimeConfirm}
-              onDecideGeoConfirm={decideGeoConfirm}
-              onDecideDispute={decideDispute}
-              onDecideWorkOrderTrash={decideWorkOrderTrash}
-              onViewDispute={() => setTab("attendance")}
-            />
-
-            <div className="flex flex-nowrap items-center gap-1.5 h-9 shrink-0" data-testid={`employee-card-actions-${empKey}`}>
-              <button
-                type="button"
-                onClick={() => setMovesEmp(emp)}
-                className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 whitespace-nowrap"
-                data-testid={`emp-card-moves-btn-${empKey}`}
-              >
-                <Receipt className="w-3.5 h-3.5" /> Hareketler
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp)}
-                className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap"
-                title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
-                data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
-              </button>
-              <span className="flex flex-nowrap items-center gap-1.5 h-9" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
-                <button
-                  type="button"
-                  onClick={() => setTaskEmp(emp)}
-                  className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 whitespace-nowrap"
-                  data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
-                >
-                  <ClipboardList className="w-3.5 h-3.5" /> Görev
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openOvertimeFor(emp)}
-                  className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 whitespace-nowrap"
-                  data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
-                >
-                  <Timer className="w-3.5 h-3.5" /> F. Mesai
-                </button>
-              </span>
-              <button
-                type="button"
-                onClick={() => setCardEmp(emp)}
-                className="inline-flex h-9 items-center justify-center px-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold whitespace-nowrap"
-                data-testid={`employee-card-btn-${emp.tc_kimlik}`}
-              >
-                Personel Kartı
-              </button>
-            </div>
-              </div>
-
-              <div className="flex flex-row flex-nowrap items-center justify-end gap-1.5 shrink-0" data-testid={`employee-card-right-${empKey}`}>
-              {(() => {
-                const punch = todayAttendanceParts(attToday[empKey]);
-                const otCap = assignedOvertimeCellCaption(attToday[empKey]);
-                const otOn = otCap !== "--:--";
-                const punchOpen = punchConfirm?.id === empKey && punchConfirm.action === "check_in";
-                return (
-                  <div
-                    className={`w-[132px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200 ${punchOpen ? "h-auto" : "h-9"}`}
-                    data-testid={`employee-card-loc-${empKey}`}
-                  >
-                    <div className={`grid grid-cols-2 gap-0.5 ${punchOpen ? "" : "h-full"}`}>
+                <div className="flex w-full flex-row flex-nowrap items-center" data-testid={`employee-card-right-${empKey}`}>
+                  <div className="flex w-full min-w-0 flex-col gap-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="min-w-0" data-testid={`employee-card-today-${empKey}`}>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            stopCardToggle(event);
+                            setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", today) });
+                          }}
+                          disabled={punchBusyId === empKey}
+                          className={`w-full rounded-xl border px-2 py-1.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "border-emerald-300 bg-emerald-100" : "border-slate-200 bg-white"}`}
+                          data-testid={`employee-card-today-in-${empKey}`}
+                          title="Unutulan giriş kaydı"
+                        >
+                          <div className="text-[8px] font-bold uppercase tracking-wide leading-none text-emerald-700">Giriş</div>
+                          <div className="text-[13px] font-black leading-tight text-emerald-800">
+                            {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
+                          </div>
+                        </button>
+                        {punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? (
+                          <div className="mt-1 flex flex-col gap-1" data-testid={`employee-card-punch-confirm-${empKey}`} onClick={stopCardToggle} onKeyDown={stopCardToggle}>
+                            <label className={`text-[10px] font-bold ${punchLabelClass("Giriş saati")}`}>
+                              Giriş saati
+                              <input
+                                type="time"
+                                autoFocus
+                                value={punchConfirm.time || ""}
+                                onChange={(e) => setPunchConfirm((cur) => (cur ? { ...cur, time: e.target.value } : cur))}
+                                className="mt-0.5 block w-full border rounded-lg p-1.5 bg-white"
+                                data-testid={`employee-card-punch-time-${empKey}`}
+                              />
+                            </label>
+                            <span className="min-w-0 text-[10px] text-slate-600">{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</span>
+                            <span className="text-[10px] font-semibold text-amber-700" data-testid={`employee-card-punch-hint-${empKey}`}>{cardPunchTimeHint(cardPunchAttempts(today, punchConfirm.action), punchConfirm.action)}</span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(event) => { stopCardToggle(event); cardPunch(emp, punchConfirm.action, punchConfirm.time); }}
+                                disabled={punchBusyId === empKey}
+                                className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 bg-emerald-600"
+                                data-testid={`employee-card-punch-yes-${empKey}`}
+                              >
+                                {punchBusyId === empKey ? "…" : "Kaydet"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => { stopCardToggle(event); setPunchConfirm(null); }}
+                                className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700"
+                                data-testid={`employee-card-punch-no-${empKey}`}
+                              >
+                                Vazgeç
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-1.5" data-testid={`employee-card-today-work-${empKey}`}>
+                        <div className="text-[8px] font-bold uppercase tracking-wide leading-none text-slate-400">Bugün mesai</div>
+                        <div className="text-[13px] font-black leading-tight text-slate-800">{todayWorkLabel(today)}</div>
+                      </div>
                       <div
-                        className={`min-w-0 h-full rounded-md px-1 py-0.5 text-left bg-white flex flex-col justify-center ${otOn ? "text-indigo-700" : "text-slate-400"}`}
-                        data-testid={`employee-card-assigned-ot-${empKey}`}
+                        className={`min-w-0 w-full !w-full !h-auto w-[132px] h-9 rounded-xl border px-2 py-1.5 ${otOn ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}
+                        data-testid={`employee-card-loc-${empKey}`}
                         title={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
                       >
-                        <div className={`text-[8px] font-bold uppercase tracking-wide leading-none ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
-                        <div className={`text-[11px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>
-                          {otCap}
+                        <div data-testid={`employee-card-assigned-ot-${empKey}`}>
+                          <div className={`text-[8px] font-bold uppercase tracking-wide leading-none ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
+                          <div className={`text-[13px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>{otCap}</div>
                         </div>
-                      </div>
-                      <div className="min-w-0 h-full" data-testid={`employee-card-today-${empKey}`}>
-                      <button
-                        type="button"
-                        onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", attToday[empKey]) })}
-                        disabled={punchBusyId === empKey}
-                        className={`w-full h-full min-w-0 rounded-md px-1 py-0.5 text-left disabled:opacity-50 flex flex-col justify-center ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
-                        data-testid={`employee-card-today-in-${empKey}`}
-                        title="Unutulan giriş kaydı"
-                      >
-                        <div className="text-[8px] font-bold uppercase tracking-wide leading-none text-emerald-700">Giriş</div>
-                        <div className="text-[11px] font-black text-emerald-800 leading-tight">
-                          {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
-                        </div>
-                      </button>
                       </div>
                     </div>
-                    {punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? (
-                      <div className="flex flex-col gap-1 px-1 pt-1" data-testid={`employee-card-punch-confirm-${empKey}`}>
-                        <label className={`text-[10px] font-bold ${punchLabelClass("Giriş saati")}`}>
-                          Giriş saati
-                          <input
-                            type="time"
-                            autoFocus
-                            value={punchConfirm.time || ""}
-                            onChange={(e) => setPunchConfirm((cur) => (cur ? { ...cur, time: e.target.value } : cur))}
-                            className="mt-0.5 block w-full border rounded-lg p-1.5 bg-white"
-                            data-testid={`employee-card-punch-time-${empKey}`}
-                          />
-                        </label>
-                        <span className="min-w-0 text-[10px] text-slate-600">{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</span>
-                        <span className="text-[10px] font-semibold text-amber-700" data-testid={`employee-card-punch-hint-${empKey}`}>{cardPunchTimeHint(cardPunchAttempts(attToday[empKey], punchConfirm.action), punchConfirm.action)}</span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => cardPunch(emp, punchConfirm.action, punchConfirm.time)}
-                            disabled={punchBusyId === empKey}
-                            className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 bg-emerald-600"
-                            data-testid={`employee-card-punch-yes-${empKey}`}
-                          >
-                            {punchBusyId === empKey ? "…" : "Kaydet"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPunchConfirm(null)}
-                            className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700"
-                            data-testid={`employee-card-punch-no-${empKey}`}
-                          >
-                            Vazgeç
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })()}
-              <div className="flex items-center justify-end gap-1 shrink-0 h-9">
-                {empReqs.length > 0 && (
-                  <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
-                    <Bell className="w-3.5 h-3.5 text-amber-600" />
-                    <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
-                      {empReqs.length}
-                    </span>
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => openEditEmployee(emp)}
-                  className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                  title="Düzenle"
-                  data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                {canDeletePersonnel ? (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteEmployee(emp)}
-                  className="inline-flex h-9 w-9 items-center justify-center border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
-                  title="Sil"
-                  data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                ) : null}
-              </div>
-              </div>
-            </div>
 
-            {cardOpen ? (
-              <div className="space-y-2 pt-1 border-t border-slate-100" data-testid={`employee-card-details-${emp.tc_kimlik || empKey}`}>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
-                  <div className="flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{emp.phone || '-'}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{emp.email || '-'}</span>
+                    <div className="flex min-w-0 flex-1 flex-row flex-nowrap items-center gap-1.5" data-testid={`employee-card-mid-${empKey}`} onClick={stopCardToggle} onKeyDown={stopCardToggle}>
+                      <div onClick={stopCardToggle}>
+                        <EmployeeRequestChips
+                          items={empReqs}
+                          compact
+                          testId={`employee-card-requests-${idSuffix}`}
+                          busyId={busyReqId}
+                          onDecideLeave={decideLeave}
+                          onDecideEarly={decideEarly}
+                          onDecideIntraday={decideIntraday}
+                          onDecideAdvance={decideAdvance}
+                          onDecideYevmiye={decideYevmiye}
+                          onDecideLocationExit={decideLocationExit}
+                          onDecideOvertimeConfirm={decideOvertimeConfirm}
+                          onDecideGeoConfirm={decideGeoConfirm}
+                          onDecideDispute={decideDispute}
+                          onDecideWorkOrderTrash={decideWorkOrderTrash}
+                          onViewDispute={() => setTab("attendance")}
+                        />
+                      </div>
+                      <div className="flex h-9 shrink-0 flex-nowrap items-center gap-1.5" data-testid={`employee-card-actions-${empKey}`}>
+                        <button
+                          type="button"
+                          onClick={(event) => { stopCardToggle(event); openSettleFor(emp); }}
+                          className="inline-flex h-9 items-center justify-center gap-1 rounded-lg bg-emerald-600 px-3 text-[11px] font-semibold text-white hover:bg-emerald-700 whitespace-nowrap"
+                          title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
+                          data-testid={`employee-pay-btn-${idSuffix}`}
+                        >
+                          <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => { stopCardToggle(event); setMovesEmp(emp); }}
+                          className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 whitespace-nowrap"
+                          data-testid={`emp-card-moves-btn-${empKey}`}
+                        >
+                          <Receipt className="w-3.5 h-3.5" /> Hareketler
+                        </button>
+                        <CardMoreMenu empKey={empKey} open={menuOpen} onOpen={() => setMenuKey(empKey)} onClose={closeMenu}>
+                          <span className="flex flex-col" data-testid={`employee-work-actions-${idSuffix}`}>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(event) => { stopCardToggle(event); setMenuKey(""); setTaskEmp(emp); }}
+                              className={MENU_ITEM}
+                              data-testid={`employee-task-btn-${idSuffix}`}
+                            >
+                              <ClipboardList className="w-3.5 h-3.5" /> Görev ata
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(event) => { stopCardToggle(event); setMenuKey(""); openOvertimeFor(emp); }}
+                              className={MENU_ITEM}
+                              data-testid={`employee-overtime-btn-${idSuffix}`}
+                            >
+                              <Timer className="w-3.5 h-3.5" /> + Mesai
+                            </button>
+                          </span>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={(event) => { stopCardToggle(event); setMenuKey(""); setCardEmp(emp); }}
+                            className={MENU_ITEM}
+                            data-testid={`employee-card-btn-${emp.tc_kimlik}`}
+                          >
+                            Kart
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={(event) => { stopCardToggle(event); setMenuKey(""); openEditEmployee(emp); }}
+                            className={MENU_ITEM}
+                            data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
+                          >
+                            <Pencil className="w-3.5 h-3.5" /> Düzenle
+                          </button>
+                          {canDeletePersonnel ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(event) => { stopCardToggle(event); setMenuKey(""); handleDeleteEmployee(emp); }}
+                              className={`${MENU_ITEM} text-rose-700 hover:bg-rose-50`}
+                              data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Sil
+                            </button>
+                          ) : null}
+                        </CardMoreMenu>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-1" data-testid={`employee-comp-${empKey}`}>
-                  {employeeCompGroups(employeeCompRows(emp, emp.balance)).map((group) => (
-                    <div
-                      key={group.key}
-                      className="min-w-0 rounded-lg bg-slate-50 px-2.5 py-1.5 space-y-0.5"
-                      data-testid={`employee-comp-group-${group.key}-${empKey}`}
-                    >
-                      <div className="text-[9px] font-extrabold uppercase tracking-wide text-slate-400">{group.title}</div>
-                      {group.rows.map((row) => (
-                        <div key={row.key} className="flex items-baseline justify-between gap-2">
-                          <span
-                            className="min-w-0 truncate text-[10px] text-slate-500"
-                            data-testid={row.key === "bonus" && row.days != null ? `employee-comp-bonus-days-${empKey}` : undefined}
-                          >
-                            {employeeCompRowCaption(row, isDailyWage(emp))}
-                          </span>
-                          <span
-                            className={`shrink-0 text-[11px] font-extrabold ${row.key === "total" ? "text-emerald-700" : "text-slate-900"}`}
-                            data-testid={
-                              row.key === "total" ? `employee-remaining-${empKey}`
-                                : row.key === "bonus" ? `employee-bonus-due-${emp.tc_kimlik || empKey}`
-                                  : row.key === "overtime" ? `employee-ot-due-${emp.tc_kimlik || empKey}`
-                                    : `employee-comp-${row.key}-${empKey}`
-                            }
-                          >
-                            {fmtCardMoney(row.value)}
-                          </span>
+                {cardOpen ? (
+                  <div className="w-full space-y-2 pt-1 border-t border-slate-100" data-testid={`employee-card-details-${idSuffix}`} onClick={stopCardToggle}>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                      <div className="flex items-center gap-1.5">
+                        <Phone className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{emp.phone || '-'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Mail className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{emp.email || '-'}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1" data-testid={`employee-comp-${empKey}`}>
+                      {employeeCompGroups(employeeCompRows(emp, emp.balance)).map((group) => (
+                        <div
+                          key={group.key}
+                          className="min-w-0 rounded-lg bg-slate-50 px-2.5 py-1.5 space-y-0.5"
+                          data-testid={`employee-comp-group-${group.key}-${empKey}`}
+                        >
+                          <div className="text-[9px] font-extrabold uppercase tracking-wide text-slate-400">{group.title}</div>
+                          {group.rows.map((row) => (
+                            <div key={row.key} className="flex items-baseline justify-between gap-2">
+                              <span
+                                className="min-w-0 truncate text-[10px] text-slate-500"
+                                data-testid={row.key === "bonus" && row.days != null ? `employee-comp-bonus-days-${empKey}` : undefined}
+                              >
+                                {employeeCompRowCaption(row, isDailyWage(emp))}
+                              </span>
+                              <span
+                                className={`shrink-0 text-[11px] font-extrabold ${row.key === "total" ? "text-emerald-700" : "text-slate-900"}`}
+                                data-testid={
+                                  row.key === "total" ? `employee-remaining-${empKey}`
+                                    : row.key === "bonus" ? `employee-bonus-due-${idSuffix}`
+                                      : row.key === "overtime" ? `employee-ot-due-${idSuffix}`
+                                        : `employee-comp-${row.key}-${empKey}`
+                                }
+                              >
+                                {fmtCardMoney(row.value)}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
-            <button
-              type="button"
-              onClick={() => toggleCardExpanded(empKey)}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-t border-slate-100"
-              aria-expanded={cardOpen}
-              data-testid={`employee-card-expand-${emp.tc_kimlik || empKey}`}
-            >
-              {cardOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              {cardOpen ? "Daralt" : "Genişlet"}
-            </button>
           </div>
             );
           })}
+        {shownEmployees.length === 0 ? (
+          <div className="col-span-full rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">Bu filtrede personel yok.</div>
+        ) : null}
       </div>
       {employeesHasMore && (
         <div ref={employeesSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="personnel-load-more">
