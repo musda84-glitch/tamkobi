@@ -163,6 +163,21 @@ export function stagePhotoRows(
   return rows;
 }
 
+/** ProjectStagePhotos ızgarasıyla aynı sıra: aşama satırları, sonra eşlenmemişler. */
+export function selectedProjectPhotoUrls(
+  project: { status?: string; stage_photos?: StagePhoto[]; images?: string[] } | null | undefined,
+  stages?: ProjectStage[] | null,
+): string[] {
+  const urls: string[] = [];
+  for (const row of stagePhotoRows(project, stages)) {
+    for (const item of row.items) {
+      if (!item.url || urls.includes(item.url)) continue;
+      urls.push(item.url);
+    }
+  }
+  return urls;
+}
+
 /** Personel yükü / onaysız foto müşteriye açılana kadar silik. */
 export function stagePhotoFaded(photo?: StagePhoto | null): boolean {
   return photoVisibility(photo) !== "show";

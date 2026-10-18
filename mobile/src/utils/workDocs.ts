@@ -1,10 +1,10 @@
 import { normalizeApiBase } from "../api/url";
 import { coordValue, normalizeRadiusM } from "./geo";
-import { fmtDate, idOf } from "./money";
+import { fmtDate, fmtMoney, idOf } from "./money";
 import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } from "./personnel";
 import { productImage } from "./productDisplay";
 import { isCompletedProjectStatus, type ProjectStage } from "./projectStages";
-import type { StagePhoto } from "./stagePhotos";
+import { selectedProjectPhotoUrls, type StagePhoto } from "./stagePhotos";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
@@ -738,6 +738,35 @@ export function projectCardBits(p: ProjectDoc) {
     invoiced: Number(p.invoiced_total) || 0,
     expense: Number(p.expense_total) || 0,
   };
+}
+
+/** Kart para satırı: Bütçe · Teklif · Fatura · Masraf (fmtMoney). */
+export function projectMoneyLine(bits: Pick<ReturnType<typeof projectCardBits>, "budget" | "quoted" | "invoiced" | "expense">): string {
+  return `Bütçe ${fmtMoney(bits.budget)} · Teklif ${fmtMoney(bits.quoted)} · Fatura ${fmtMoney(bits.invoiced)} · Masraf ${fmtMoney(bits.expense)}`;
+}
+
+export type ProjectListChip = "active" | "completed" | "all";
+
+/** Proje listesi çipleri. active = tamamlanmamış, completed = isCompletedProjectStatus. */
+export function projectListFilter<T extends { status?: string | null }>(
+  projects: T[] | null | undefined,
+  chip: ProjectListChip,
+  stages?: ProjectStage[] | null,
+): T[] {
+  const rows = projects || [];
+  if (chip === "all") return rows.slice();
+  const wantDone = chip === "completed";
+  return rows.filter((p) => isCompletedProjectStatus(p.status, stages) === wantDone);
+}
+
+/** Kart şeridi: ProjectStagePhotos ile aynı seçim, en fazla `max` adres. */
+export function projectThumbs(
+  project: { status?: string; stage_photos?: StagePhoto[]; images?: string[] } | null | undefined,
+  max = 3,
+  stages?: ProjectStage[] | null,
+): string[] {
+  const limit = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 3;
+  return selectedProjectPhotoUrls(project, stages).slice(0, limit);
 }
 
 export function addressToggleLabel(expanded: boolean): string {

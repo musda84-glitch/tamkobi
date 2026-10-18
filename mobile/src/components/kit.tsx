@@ -26,7 +26,7 @@ import { MonthField } from "./MonthField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
-export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false, onScrollY, scroll = true }: {
+export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false, onScrollY, scroll = true, scrollRef: externalScrollRef }: {
   children: React.ReactNode;
   stickyTop?: React.ReactNode;
   stickyBottom?: React.ReactNode;
@@ -37,8 +37,15 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
   onScrollY?: (y: number) => void;
   /** false: dışarıda FlatList vb. kendi kaydırmasını kullanır (iç ScrollView yok). */
   scroll?: boolean;
+  /** Dışarıdan scrollTo (proje detayında photos / production). */
+  scrollRef?: React.MutableRefObject<{ scrollTo?: (opts: { y: number; animated?: boolean }) => void } | null>;
 }) {
   const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll(scroll);
+  const setScrollRef = React.useCallback((node: unknown) => {
+    (scrollRef as React.MutableRefObject<unknown>).current = node;
+    if (!externalScrollRef) return;
+    externalScrollRef.current = node as { scrollTo?: (opts: { y: number; animated?: boolean }) => void } | null;
+  }, [externalScrollRef, scrollRef]);
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
   const sticky = stickyTop ? (
     <View
@@ -58,7 +65,7 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
       {sticky}
       {scroll ? (
         <ScrollView
-          ref={scrollRef}
+          ref={setScrollRef as never}
           style={styles.flex}
           contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: bottom }]}
           {...scrollProps}

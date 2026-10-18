@@ -4,13 +4,14 @@ import { Pressable, Text, View } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ProjectCardsHost, openWorkLocation } from "../components/ProjectCard";
-import { Badge, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
+import { Chip } from "../components/chips";
+import { Badge, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { mapsLink } from "../utils/geo";
-import { isCompletedProjectStatus, normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
+import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import {
   SURVEY_MAPS_ACTION,
   asWorkList,
@@ -24,6 +25,8 @@ import {
   type ProjectDoc,
   type QuoteDoc,
   type SurveyDoc,
+  projectListFilter,
+  type ProjectListChip,
   type WorkKind,
 } from "../utils/workDocs";
 
@@ -46,7 +49,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [projectChip, setProjectChip] = useState<ProjectListChip>("active");
   const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
   const loadGen = useRef(0);
 
@@ -102,7 +105,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       }));
     }
     if (kind === "project") {
-      const pool = showCompleted ? projects : projects.filter((r) => !isCompletedProjectStatus(r.status, projectStages));
+      const pool = projectListFilter(projects, projectChip, projectStages);
       const list = s ? pool.filter((r) => [r.project_number, r.name, r.contact_name, r.quote_number, r.address].some((v) => String(v || "").toLowerCase().includes(s))) : pool;
       return list.slice(0, 80).map((r) => ({ id: idOf(r), title: r.name || "", subtitle: "", right: "", quote: undefined as QuoteDoc | undefined, survey: undefined as SurveyDoc | undefined, project: r }));
     }
@@ -117,12 +120,17 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       survey: r,
       project: undefined as ProjectDoc | undefined,
     }));
-  }, [kind, q, quotes, projects, surveys, showCompleted, projectStages]);
+  }, [kind, q, quotes, projects, surveys, projectChip, projectStages]);
 
-  const completedProjectCount = useMemo(
-    () => (kind === "project" ? projects.filter((p) => isCompletedProjectStatus(p.status, projectStages)).length : 0),
-    [kind, projects, projectStages],
-  );
+  const projectCounts = useMemo(() => ({
+    active: projectListFilter(projects, "active", projectStages).length,
+    completed: projectListFilter(projects, "completed", projectStages).length,
+    all: projects.length,
+  }), [projects, projectStages]);
+
+  const removeProject = useCallback((pid: string) => {
+    setProjects((rows) => rows.filter((p) => idOf(p) !== pid));
+  }, []);
 
   return (
     <Screen
@@ -141,18 +149,23 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       {kind === "project" && canEdit ? (
         <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
       ) : null}
-      {kind === "project" && completedProjectCount ? (
-        <>
-          <PrimaryButton
-            title={showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${completedProjectCount})`}
-            onPress={() => setShowCompleted((v) => !v)}
-            color={colors.secondary}
-            testID="toggle-completed-projects"
-          />
-          {!showCompleted ? (
-            <Muted testID="completed-projects-hint">{completedProjectCount} tamamlanan proje gizlendi.</Muted>
-          ) : null}
-        </>
+      {kind === "project" ? (
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          {([
+            ["active", "Aktif", projectCounts.active],
+            ["completed", "Tamamlanan", projectCounts.completed],
+            ["all", "Tümü", projectCounts.all],
+          ] as const).map(([key, label, count]) => (
+            <Chip
+              key={key}
+              fill
+              label={`${label} (${count})`}
+              active={projectChip === key}
+              onPress={() => setProjectChip(key)}
+              testID={`project-filter-${key}`}
+            />
+          ))}
+        </View>
       ) : null}
       <ErrorBanner message={error} />
       {!filtered.length ? (
@@ -162,8 +175,8 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           hint={
             !companyId || (refreshing && !quotes.length && !projects.length && !surveys.length)
               ? "Kayıtlar getiriliyor."
-              : kind === "project" && completedProjectCount && !showCompleted
-              ? "Açık proje yok — tamamlananları göstermek için üstteki düğmeyi kullanın."
+              : kind === "project" && projectChip === "active" && projectCounts.completed > 0 && !q.trim()
+              ? "Açık proje yok — Tamamlanan veya Tümü ile bakın."
               : canEdit ? `${newButtonLabel(kind)} ile başlayın.` : undefined
           }
         />
@@ -178,6 +191,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
           companyId={companyId}
           baseUrl={baseUrl}
           onPatch={patchProject}
+          onRemoved={removeProject}
           onError={setError}
           onCollect={canBank ? (project) => {
             const cid = String(project.contact_id || "");

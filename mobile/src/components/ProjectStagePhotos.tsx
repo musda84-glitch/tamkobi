@@ -3,8 +3,8 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { fileUrl, post, put, upload } from "../api/client";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { fileUrl, post, put, upload, type ApiClient } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors, radius } from "../theme";
 import { compressPickerAsset } from "../utils/compressUploadImage";
@@ -21,9 +21,62 @@ import {
   SURVEY_STAGE_PHOTO_LABEL,
   type StagePhoto,
 } from "../utils/stagePhotos";
-import type { ProjectStage } from "../utils/projectStages";
-import type { ProjectDoc } from "../utils/workDocs";
+import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
+import { projectThumbs, type ProjectDoc } from "../utils/workDocs";
+import { go } from "../nav";
 import { Muted, Row } from "./kit";
+
+export { selectedProjectPhotoUrls } from "../utils/stagePhotos";
+
+type StagePhotoPatch = { stage_photos: StagePhoto[]; images: string[] };
+
+/** Kamera / galeri seçimi ve yükleme. Izgara ile şerit aynı akışı kullanır. */
+export async function addProjectStagePhotoFromDevice(args: {
+  client: ApiClient;
+  companyId: string;
+  projectId: string;
+  project: { stage_photos?: StagePhoto[]; images?: string[] };
+  stage: { key: string; label: string };
+  fromCamera: boolean;
+  onUploadStart?: () => void;
+}): Promise<
+  | { status: "saved"; patch: StagePhotoPatch }
+  | { status: "canceled" }
+  | { status: "denied"; message: string }
+  | { status: "missing-url"; message: string }
+> {
+  const perm = args.fromCamera
+    ? await ImagePicker.requestCameraPermissionsAsync()
+    : await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (perm.status !== "granted") {
+    return { status: "denied", message: args.fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi." };
+  }
+  const res = args.fromCamera
+    ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
+    : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+  if (res.canceled || !res.assets?.length) return { status: "canceled" };
+  args.onUploadStart?.();
+  const form = new FormData();
+  const compact = await compressPickerAsset(res.assets[0]);
+  const { blob, name } = await resolveUploadBlob(compact);
+  appendUploadBlob(form, blob, name);
+  const { path, query } = imageUploadRequest("project", args.projectId, args.companyId, {
+    stage: args.stage.key,
+    stage_label: args.stage.label,
+  });
+  const uploaded = await upload<unknown>(args.client, path, form, query);
+  const url = uploadedImageUrl(uploaded);
+  if (!url) return { status: "missing-url", message: "Fotoğraf yüklendi ama adres dönmedi." };
+  return {
+    status: "saved",
+    patch: appendStagePhoto(args.project.stage_photos, args.project.images, {
+      url,
+      stage: args.stage.key,
+      stage_label: args.stage.label,
+      created_at: new Date().toISOString(),
+    }),
+  };
+}
 
 const CELL = 34;
 const stageRowStyle = {
@@ -61,36 +114,20 @@ export function ProjectStagePhotos({
   const pick = async (stage: { key: string; label: string }, fromCamera: boolean) => {
     if (!id) { setError("Önce projeyi kaydedin."); return; }
     try {
-      const perm = fromCamera
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (perm.status !== "granted") {
-        setError(fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi.");
-        return;
-      }
-      const res = fromCamera
-        ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
-        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
-      if (res.canceled || !res.assets?.length) return;
-      setBusyKey(stage.key);
-      setError(null);
-      const form = new FormData();
-      const compact = await compressPickerAsset(res.assets[0]);
-      const { blob, name } = await resolveUploadBlob(compact);
-      appendUploadBlob(form, blob, name);
-      const { path, query } = imageUploadRequest("project", id, companyId, {
-        stage: stage.key,
-        stage_label: stage.label,
+      const result = await addProjectStagePhotoFromDevice({
+        client,
+        companyId,
+        projectId: id,
+        project,
+        stage,
+        fromCamera,
+        onUploadStart: () => {
+          setBusyKey(stage.key);
+          setError(null);
+        },
       });
-      const uploaded = await upload<unknown>(client, path, form, query);
-      const url = uploadedImageUrl(uploaded);
-      if (!url) { setError("Fotoğraf yüklendi ama adres dönmedi."); return; }
-      onChanged(appendStagePhoto(project.stage_photos, project.images, {
-        url,
-        stage: stage.key,
-        stage_label: stage.label,
-        created_at: new Date().toISOString(),
-      }));
+      if (result.status === "saved") onChanged(result.patch);
+      else if (result.status === "denied" || result.status === "missing-url") setError(result.message);
     } catch (err) {
       setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
     } finally {
@@ -334,6 +371,99 @@ export function ProjectWorkPreview({
           </View>
         </View>
       ))}
+    </View>
+  );
+}
+
+/** Kart şeridi: en fazla 3 küçük resim. Tam ızgara detayda kalır. */
+export function ProjectPhotoStrip({
+  project,
+  stages,
+  editable = false,
+  onChanged,
+  testID,
+}: {
+  project: ProjectDoc;
+  stages: ProjectStage[];
+  editable?: boolean;
+  onChanged: (patch: StagePhotoPatch) => void;
+  testID?: string;
+}) {
+  const { client, companyId } = useAuth();
+  const id = idOf(project);
+  const tid = testID || `project-stage-photos-${id}`;
+  const thumbs = projectThumbs(project, 3, stages);
+  const count = stagePhotoCount(project);
+  const current = normalizeProjectStages(stages).find((s) => s.key === project.status) || normalizeProjectStages(stages)[0];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (fromCamera: boolean) => {
+    if (!id) { setError("Önce projeyi kaydedin."); return; }
+    if (!current) return;
+    try {
+      const result = await addProjectStagePhotoFromDevice({
+        client,
+        companyId,
+        projectId: id,
+        project,
+        stage: current,
+        fromCamera,
+        onUploadStart: () => {
+          setBusy(true);
+          setError(null);
+        },
+      });
+      if (result.status === "saved") onChanged(result.patch);
+      else if (result.status === "denied" || result.status === "missing-url") setError(result.message);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = () => {
+    if (busy || !current) return;
+    Alert.alert("+ Fotoğraf", current.label, [
+      { text: "Vazgeç", style: "cancel" },
+      { text: "Kamera", onPress: () => { void run(true); } },
+      { text: "Galeri", onPress: () => { void run(false); } },
+    ]);
+  };
+
+  return (
+    <View testID={tid} style={{ marginTop: 8, gap: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Pressable
+          onPress={() => go("ProjectDetail", { id, section: "photos" })}
+          style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 }}
+        >
+          {thumbs.map((url) => (
+            <Image
+              key={url}
+              source={{ uri: fileUrl(client.baseUrl, url) }}
+              style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border }}
+              contentFit="cover"
+            />
+          ))}
+          <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.muted, fontSize: 12, fontWeight: "700" }}>
+            {count ? `${count} fotoğraf` : "Fotoğraf yok"}
+          </Text>
+        </Pressable>
+        {editable ? (
+          <Pressable
+            testID={`project-photo-add-${id}`}
+            onPress={add}
+            disabled={busy}
+            hitSlop={6}
+            style={{ flexShrink: 0, paddingVertical: 6, paddingHorizontal: 4 }}
+          >
+            <Text style={{ fontWeight: "800", color: colors.primary, fontSize: 13 }}>{busy ? "…" : "+ Fotoğraf"}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {error ? <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>{error}</Text> : null}
     </View>
   );
 }

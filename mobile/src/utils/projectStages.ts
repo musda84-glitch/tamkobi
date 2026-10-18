@@ -53,3 +53,20 @@ export function isCompletedProjectStatus(status?: string | null, stages?: Projec
   const row = list.find((s) => s.key === key);
   return Boolean(row?.is_final || /tamamland/i.test(row?.label || ""));
 }
+
+export type ProjectStageVisual = "done" | "current" | "todo";
+
+/** Stepper: geçmiş ✓, mevcut dolu, sonrakiler boş. Bilinmeyen durumun tüm adımları todo. */
+export function projectStageState(
+  stages: ProjectStage[] | null | undefined,
+  current: string | null | undefined,
+  key: string,
+): ProjectStageVisual {
+  const list = normalizeProjectStages(stages);
+  const idx = list.findIndex((s) => s.key === String(current || "").trim());
+  const at = list.findIndex((s) => s.key === key);
+  if (idx < 0 || at < 0) return "todo";
+  if (at < idx) return "done";
+  if (at === idx) return "current";
+  return "todo";
+}
