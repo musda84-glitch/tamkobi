@@ -8,6 +8,7 @@ import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { confirmAction, n } from "../components/chips";
 import { QuantityInput } from "../components/MoneyInput";
 import { LabelPrintSheet } from "../components/LabelPrintSheet";
+import { ProductThumb } from "../components/ProductThumb";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -263,7 +264,8 @@ export function SevkPickScreen() {
         const done = picked >= ordered && ordered > 0;
         return (
           <Card key={`${line.line_index ?? idx}-${line.product_id || line.product_name}`} testID={`sevk-line-${line.line_index ?? idx}`}>
-            <Row style={{ justifyContent: "space-between" }}>
+            <Row style={{ justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+              <ProductThumb uri={line.image_url || ""} size={44} testID={`sevk-line-thumb-${line.line_index ?? idx}`} />
               <Text style={{ fontWeight: "700", color: colors.text, flex: 1 }} numberOfLines={2}>{line.product_name || "Kalem"}</Text>
               <Text style={{ fontWeight: "800", color: done ? colors.primary : colors.danger }}>{picked}/{ordered}</Text>
             </Row>
