@@ -33,6 +33,8 @@ import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, st
 import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } from "../utils/workParks";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { B2BCardSettingsFields } from "../components/B2BCardSettingsFields";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
@@ -46,7 +48,7 @@ const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bi
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { axios.get(`${API_URL}/companies/${companyId}`).then((r) => setC(r.data)); }, [companyId]);
+  useEffect(() => { if (!companyId) return undefined; axios.get(`${API_URL}/companies/${companyId}`).then((r) => setC(r.data)); return undefined; }, [companyId]);
   if (!c) return null;
   const set = (k, v) => setC({ ...c, [k]: v });
   const save = async (e) => {
@@ -698,6 +700,7 @@ export const B2BSettings = ({ companyId }) => {
   const [loadError, setLoadError] = useState("");
   const savePwd = async (e) => { e.preventDefault(); if ((pwd.password || "").length < 6) return toast.error("Şifre en az 6 karakter olmalı."); try { await axios.post(`${API_URL}/contacts/${pwd.c.id}/b2b-access`, { enabled: true, discount: pwd.c.b2b_discount, password: pwd.password, login_email: pwd.login_email, base_url: window.location.origin }); toast.success(`${pwd.c.name} için B2B giriş bilgileri kaydedildi.`); setPwd(null); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const load = useCallback(() => {
+    if (!companyId) { setLoadState("ready"); setD(null); return Promise.resolve(); }
     setLoadState("loading");
     return axios.get(`${API_URL}/companies/${companyId}/b2b-settings`).then((r) => {
       setD(r.data);
@@ -711,6 +714,7 @@ export const B2BSettings = ({ companyId }) => {
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
+    if (!companyId) return undefined;
     let cancelled = false;
     axios.get(`${API_URL}/vpos/collect-options`, { params: { company_id: companyId } })
       .then((r) => { if (!cancelled) setVposReady(!!r.data?.enabled); })
@@ -796,7 +800,7 @@ export default function SettingsPage({ embedded = false }) {
   const { activeCompany, can, user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const tab = readSettingsTab(searchParams, embedded);
   const resolvedTab = resolveSettingsTab(tab);
   // Doğrudan /settings adresi firma ayarı yetkisi ister. Masaüstü indirmesi
@@ -815,9 +819,15 @@ export default function SettingsPage({ embedded = false }) {
     if (resolvedTab === tab) return;
     setSearchParams((prev) => writeSettingsTab(prev, embedded, resolvedTab), { replace: true });
   }, [tab, resolvedTab, embedded, setSearchParams]);
-  useEffect(() => { axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {}); axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [companyId]);
+  useEffect(() => {
+    if (!companyId) return undefined;
+    axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {});
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {});
+    return undefined;
+  }, [companyId]);
   return (
     <div className="space-y-6" data-testid="settings-page">
+      {!companyId && <NoCompanyNotice />}
       {!embedded && <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>}
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">

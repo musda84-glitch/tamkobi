@@ -11,6 +11,8 @@ import { BarcodeRenderer } from "./BarcodeRenderer";
 import { printPageCss } from "../utils/printPageCss";
 
 export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "./NoCompanyNotice";
 
 const mediaUrl = (v) => {
   if (v == null || v === "") return "";
@@ -209,7 +211,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contactBalance, setContactBalance] = useState(null);
   const [partyContact, setPartyContact] = useState(null);
-  const companyId = company?.id || company?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(company);
   const compactForm = isOrderQuotePrint(docType);
   const items = doc.items || [];
   const productIds = useMemo(
@@ -229,6 +231,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     || {}
   );
   useEffect(() => {
+    if (!companyId) return undefined;
     const needsNameFallback = items.some((it) => {
       if (it.image_url || it.thumbnail_url) return false;
       if (it.product_id || String(it.sku || "").trim()) return false;
@@ -308,6 +311,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     return () => { loaders.forEach((img) => { img.src = ""; }); };
   }, [items, prodById, prodBySku, prodByName]);
   useEffect(() => {
+    if (!companyId) { setTpl({}); return undefined; }
     const load = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
       const all = r.data || {};
       const cats = Object.entries(all)
@@ -326,6 +330,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   useEffect(() => {
+    if (!companyId) return undefined;
     const cid = doc.contact_id;
     const name = String(doc.contact_name || doc.customer_name || "").trim().toLocaleLowerCase("tr-TR");
     if (!cid && !name) {
@@ -405,6 +410,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" data-testid="print-document">
+        {!companyId && <NoCompanyNotice />}
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700">Yazdırma Önizleme — {TITLES[docType]}</span>
           <div className="flex items-center gap-2">
@@ -680,6 +686,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
 export const PrintTemplateEditor = ({ companyId, docType, onClose, onSaved }) => {
   const [tpl, setTpl] = useState(null);
   useEffect(() => {
+    if (!companyId) return undefined;
     axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
       setTpl(r.data?.[docType] || { title_override: "", primary_color: "#059669", header_note: "", footer_note: "", font_size: "sm", layout: "classic", paper: "A4" });
     });

@@ -25,7 +25,10 @@ export const AttendancePanel = ({ companyId, focusId = "" }) => {
   const [recOpen, setRecOpen] = useState({});
   const [listPunch, setListPunch] = useState(null);
   const [punchBusyId, setPunchBusyId] = useState(null);
-  const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } }, [companyId, month]);
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); }
+  }, [companyId, month]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!focusId || !data?.records) return;

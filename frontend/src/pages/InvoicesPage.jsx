@@ -100,6 +100,8 @@ import {
   CircleHelp,
   FileCheck2, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw, PackagePlus, Loader2 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const typeBadge = (inv) => {
   if (inv.e_type === "expense_slip") return ["Gider Pusulası", "bg-rose-50 text-rose-800"];
@@ -185,7 +187,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const { activeCompany, addonOn, can } = useAuth();
   const canDeleteInv = can("/invoices", "delete");
   const canIssueInv = can("/invoices", "edit");
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const {
     settings: einvoiceSettings,
     loading: einvoiceLoading,
@@ -615,6 +617,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
 
   const loadCatalog = useCallback(async () => {
+    if (!companyId) return;
     try {
       const [cntRows, prodRows] = await Promise.all([
         cachedList("contacts", companyId, { onCached: setContacts }),
@@ -625,6 +628,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     } catch { /* form kataloğu */ }
   }, [companyId]);
   const loadData = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId) {
+      if (!silent) setLoading(false);
+      return;
+    }
     if (invoicesServerPagingEnabled() && SERVER_INVOICE_TABS.has(filterType)) {
       setReloadTick((n) => n + 1);
       return;
@@ -664,6 +671,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   }, [serverPaging, loadCatalog]);
   useEffect(() => {
     if (!serverPaging) return undefined;
+    if (!companyId) {
+      setLoading(false);
+      return undefined;
+    }
     const gen = ++listReq.current;
     pageRef.current = 1;
     loadingMore.current = false;
@@ -762,6 +773,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   }, [companyId, filterType, contactFilter, filters, showCancelled]);
   useEffect(() => { setSelected([]); setSelectedAllFiltered(false); }, [listResetKey]);
   useEffect(() => {
+    if (!companyId) return undefined;
     let cancelled = false;
     axios.get(`${API_URL}/projects?company_id=${companyId}`)
       .then((r) => { if (!cancelled) setProjects(Array.isArray(r.data) ? r.data : []); })
@@ -990,7 +1002,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try {
       let contact = findRetailContact(contacts);
       if (!contact) {
-        const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+        if (!companyId) { toast.error("Firma seçili değil"); return; }
+        const company_id = companyId;
         const r = await axios.post(`${API_URL}/contacts`, retailContactCreatePayload(company_id));
         contact = r.data;
         setContacts((prev) => [contact, ...prev]);
@@ -1033,8 +1046,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const ship = String(formData.shipping_address || contactRow?.address || "").trim();
       const city = String(formData.city || contactRow?.city || "").trim();
       const phone = String(formData.customer_phone || contactRow?.phone || "").trim();
+      if (!companyId) { toast.error("Firma seçili değil"); return; }
       const payload = {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         ...formData,
         shipping_address: ship && ship !== "-" ? ship : (formData.shipping_address || null),
         city: city && city !== "-" ? city : (formData.city || null),
@@ -1531,6 +1545,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
   return (
     <div className="space-y-6" data-testid="invoices-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -2213,7 +2228,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           invoice={eFaturaJob.invoice || null}
           invoices={eFaturaJob.invoices || (eFaturaJob.invoice ? [eFaturaJob.invoice] : [])}
           contacts={contacts}
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           onClose={() => {
             setEFaturaJob(null);
             loadData({ silent: true });
@@ -2339,20 +2354,20 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         />
       )}
       {invoiceCopy.modal}
-      {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
+      {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompanyId(activeCompany)} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && printInv.e_type === "expense_slip" && (
         <ExpenseSlipPrint doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} />
       )}
       {printInv && printInv.e_type !== "expense_slip" && (
         <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />
       )}
-      {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
+      {editTpl && <PrintTemplateEditor companyId={activeCompanyId(activeCompany)} docType="invoice" onClose={() => setEditTpl(false)} />}
       {notifyInvoice && (() => {
         const c = contacts.find(cnt => cnt.id === notifyInvoice.contact_id) || {};
         const overdue = notifyInvoice.payment_status !== 'paid';
         return (
           <QuickMessageModal
-            companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+            companyId={activeCompanyId(activeCompany)}
             recipient={{ contact_id: notifyInvoice.contact_id, name: notifyInvoice.contact_name, phone: c.phone, email: c.email }}
             defaultSubject={overdue ? `Tahsilat Hatırlatması - ${notifyInvoice.invoice_number}` : `Fatura Bildirimi - ${notifyInvoice.invoice_number}`}
             defaultMessage={overdue ? TEMPLATES.reminder(notifyInvoice) : TEMPLATES.invoice(notifyInvoice)}
@@ -2473,7 +2488,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <option value="import">İthalat</option>
                   </select>
                 </div>
-                <FxPicker compact companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv-fx" />
+                <FxPicker compact companyId={activeCompanyId(activeCompany)} date={formData.issue_date} currency={formData.currency} rate={formData.fx_rate} source={formData.fx_source} onChange={(p) => setFormData({ ...formData, ...p })} testId="inv-fx" />
                 <div className="min-w-[12rem] flex-1">
                   <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Tevkifat</label>
                   <select value={formData.withholding_rate ? `${formData.withholding_rate}|${formData.withholding_code}` : ""} onChange={(e) => { const [r, c] = e.target.value.split("|"); setFormData({ ...formData, withholding_rate: Number(r || 0), withholding_code: c || "" }); }} className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium" data-testid="inv-withholding-select">
@@ -2528,7 +2543,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </label>
                   {(contactFieldsOpen || !(formData.contact_id || formData.contact_name)) ? (
                     <ContactSearchSelect
-                      companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+                      companyId={activeCompanyId(activeCompany)}
                       value={formData.contact_id}
                       valueLabel={formData.contact_name || ""}
                       placeholder="Cari ara ve seç..."
@@ -2647,13 +2662,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </div>
               </div>
               {quickContact && (
-                <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
+                <QuickContactForm companyId={activeCompanyId(activeCompany)} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
                   onCreated={(c) => { setContacts((prev) => [c, ...prev]); setContactFieldsOpen(false); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(fd.e_type) ? "e_archive" : fd.e_type })); setQuickContact(false); }} />
               )}
               <details className="rounded-md border border-slate-200 bg-white px-2 py-1">
                 <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">GİB’den getir</summary>
                 <div className="pt-1.5">
-                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType, meta) => { setContactFieldsOpen(false); setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
+                  <GibContactLookup companyId={activeCompanyId(activeCompany)} onSelect={(c, eType, meta) => { setContactFieldsOpen(false); setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
               </details>
               </div>
@@ -2938,7 +2953,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{paymentModalInvoice.invoice_type === "sales" ? "Kasa / Banka / POS / Ortak (tahsilat)" : "Kasa / Banka / Kart / Ortak"}</label>
-                <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={paymentModalInvoice.invoice_type === "sales"} fetchAccounts={false} />
+                <PaymentTargetSelect companyId={activeCompanyId(activeCompany)} accounts={bankAccounts} value={paymentAccount} onChange={setPaymentAccount} testId="payment-account-select" collectableOnly={paymentModalInvoice.invoice_type === "sales"} fetchAccounts={false} />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t">

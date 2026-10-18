@@ -17,14 +17,17 @@ export const NotificationBell = ({ companyId }) => {
   const ref = useRef(null);
   const soundRef = useRef({ seen: [], seeded: false });
   const navigate = useNavigate();
-  const load = useCallback(() => axios.get(`${API_URL}/notifications?company_id=${companyId}`).then((r) => {
+  const load = useCallback(() => {
+    if (!companyId) return Promise.resolve();
+    return axios.get(`${API_URL}/notifications?company_id=${companyId}`).then((r) => {
     const rows = Array.isArray(r.data) ? r.data : [];
     const unreadIds = rows.filter((n) => !n.is_read).map((n) => String(n.id || n._id || ""));
     const plan = notifySoundPlan(soundRef.current.seen, unreadIds, soundRef.current.seeded);
     soundRef.current = { seen: plan.seen, seeded: plan.seeded };
     if (plan.play) playTamkobiNotify();
     setItems(rows);
-  }).catch(() => {}), [companyId]);
+  }).catch(() => {});
+  }, [companyId]);
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
   useDataRefresh(load, { companyId, scopes: ["orders", "notifications", "all"] });
   useEffect(() => {

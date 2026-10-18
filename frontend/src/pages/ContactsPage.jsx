@@ -37,6 +37,8 @@ import {
 import { useDataRefresh } from "../utils/dataRefresh";
 import { fmtMoney } from "../utils/money";
 import { isContactsServerPagingEnabled } from "../utils/featureFlags";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 const CONTACT_PAGE_SIZES = [20, 50, 100];
 const EMPTY_CONTACT_ROWS = [];
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { label: "Durum", value: (r) => r.is_active === false ? "Pasif" : "Aktif" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
@@ -59,7 +61,7 @@ export default function ContactsPage() {
   const [locationContact, setLocationContact] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const detailContactId = searchParams.get("contact_id");
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const serverPaging = isContactsServerPagingEnabled();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -78,9 +80,13 @@ export default function ContactsPage() {
   const [editContact, setEditContact] = useState(null);
 
   const loadContacts = useCallback(async ({ silent = false } = {}) => {
+    const cid = activeCompanyId(activeCompany);
+    if (!cid) {
+      if (!silent) setLoading(false);
+      return;
+    }
     try {
       if (!silent) setLoading(true);
-      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const rows = await cachedList("contacts", cid, { filter: contactTypeFilter(filterType), onCached: setContacts });
       axios.get(`${API_URL}/contacts/flags?company_id=${cid}`).then((r) => setFlags(r.data)).catch(() => {});
       setContacts(rows);
@@ -101,6 +107,7 @@ export default function ContactsPage() {
   }, [serverPaging, filterKey]);
   useEffect(() => {
     if (!serverPaging) return undefined;
+    if (!companyId) { setLoading(false); return undefined; }
     const gen = ++serverGen.current;
     const ctrl = new AbortController();
     let alive = true;
@@ -218,6 +225,7 @@ export default function ContactsPage() {
 
   return (
     <div className="space-y-6" data-testid="contacts-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -364,7 +372,7 @@ export default function ContactsPage() {
         />
       )}
 
-      {(showAddModal || editContact) && <ContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={(saved) => { setShowAddModal(false); setEditContact(null); if (saved?.deleted && detailContactId) setSearchParams({}); if (serverPaging) setReloadTick((n) => n + 1); else loadContacts(); }} />}
+      {(showAddModal || editContact) && <ContactForm companyId={activeCompanyId(activeCompany)} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={(saved) => { setShowAddModal(false); setEditContact(null); if (saved?.deleted && detailContactId) setSearchParams({}); if (serverPaging) setReloadTick((n) => n + 1); else loadContacts(); }} />}
 
       {/* CARİ EKSTRESİ MODAL */}
       {selectedContactStatement && statementData && (
@@ -380,7 +388,7 @@ export default function ContactsPage() {
               </button>
             </div>
 
-            <StatementShareBar contact={selectedContactStatement} rows={buildStatementRows(statementData)} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+            <StatementShareBar contact={selectedContactStatement} rows={buildStatementRows(statementData)} companyId={activeCompanyId(activeCompany)} />
 
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between"><h4 className="font-bold text-slate-800">Hesap Hareketleri (Fatura & Ödeme)</h4><div className="flex items-center gap-2 text-[10px] font-semibold"><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" /> Fatura (Borç)</span><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" /> Tahsilat / Ödeme</span></div></div>

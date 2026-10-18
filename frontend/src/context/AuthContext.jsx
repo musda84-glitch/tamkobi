@@ -8,6 +8,7 @@ import { personelMenuPathAllowed, selfPersonnelNavAllowed } from "../utils/selfP
 import { authPermPath, canAccessPath, isAddonEnabled, isFeatureEnabled, isModuleEnabled } from "../utils/authAccess";
 import { setPriceDecimals } from "../utils/money";
 import { getHostKind, hostUrl } from "../utils/hosts";
+import { activeCompanyId } from "../utils/activeCompanyId";
 
 const AuthContext = createContext(null);
 
@@ -260,8 +261,9 @@ export const AuthProvider = ({ children }) => {
 
   const refreshLicense = useCallback(async (cid) => {
     try {
+      const company_id = cid || activeCompanyId(activeCompany);
       const l = await axios.get(`${API_URL}/license/me`, {
-        params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" },
+        params: company_id ? { company_id } : {},
       });
       setLicense(l.data);
     } catch { /* ignore */ }

@@ -59,6 +59,8 @@ import {
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { MISSING_RECORD } from "../utils/notificationTarget";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const hasSgk = (emp) => Boolean(emp?.sgk_insured) || Boolean(String(emp?.sgk_number || "").trim());
 const isBankAcc = (a) => {
@@ -110,7 +112,7 @@ export default function PersonnelPage() {
   const [roleOptions, setRoleOptions] = useState([]);
   const [expandedCards, setExpandedCards] = useState({});
 
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
 
   const toggleCardExpanded = useCallback((key) => {
     setExpandedCards((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -203,6 +205,7 @@ export default function PersonnelPage() {
       const fd = new FormData();
       fd.append("file", file);
       const eid = editingEmp?.id || editingEmp?._id || "";
+      if (!companyId) { toast.error("Firma seçili değil"); return; }
       const r = await axios.post(`${API_URL}/files/upload?entity=employee_photo&entity_id=${encodeURIComponent(eid)}&company_id=${encodeURIComponent(companyId)}`, fd);
       setNewEmployee((prev) => ({ ...prev, photo_url: r.data.url }));
       toast.success(r.data?.saved_pct ? `Fotoğraf yüklendi (≈%${r.data.saved_pct} küçültüldü).` : "Fotoğraf yüklendi.");
@@ -212,6 +215,10 @@ export default function PersonnelPage() {
   };
 
   const loadPersonnelData = useCallback(async () => {
+    if (!companyId) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const [empRes, payRes, bankRes, attRes] = await Promise.all([
@@ -327,6 +334,7 @@ export default function PersonnelPage() {
   useEffect(() => { loadPendingReqs(); }, [loadPendingReqs]);
 
   useEffect(() => {
+    if (!companyId) return undefined;
     let cancel = false;
     const rowsOf = (data) => (Array.isArray(data) ? data : (data?.items || data?.records || []));
     const hasId = (rows, id) => rows.some((row) => String(row?.id || row?._id || "") === String(id));
@@ -412,6 +420,7 @@ export default function PersonnelPage() {
         await axios.put(`${API_URL}/personnel/employees/${id}`, body);
         toast.success("Personel güncellendi.");
       } else {
+        if (!companyId) { toast.error("Firma seçili değil"); return; }
         await axios.post(`${API_URL}/personnel/employees`, { company_id: companyId, ...body });
         toast.success("Personel başarıyla kaydedildi.");
       }
@@ -436,10 +445,11 @@ export default function PersonnelPage() {
   };
 
   const handleGeneratePayroll = async () => {
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       const currentMonth = new Date().toISOString().slice(0, 7);
       const res = await axios.post(`${API_URL}/personnel/generate-payroll`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         period: currentMonth
       });
       toast.success(res.data.message);
@@ -698,6 +708,7 @@ export default function PersonnelPage() {
 
   return (
     <div className="space-y-6" data-testid="personnel-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -749,10 +760,10 @@ export default function PersonnelPage() {
           <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`personnel-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
-      {tab === "attendance" && <AttendancePanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} focusId={openOvertimeId} />}
-      {tab === "leaves" && <LeaveRequestsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} onChanged={loadPersonnelData} focusId={openLeaveId} />}
+      {tab === "attendance" && <AttendancePanel companyId={activeCompanyId(activeCompany)} focusId={openOvertimeId} />}
+      {tab === "leaves" && <LeaveRequestsPanel companyId={activeCompanyId(activeCompany)} employees={employees} onChanged={loadPersonnelData} focusId={openLeaveId} />}
       {tab === "salary" && <SalaryCalculator />}
-      {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
+      {tab === "bonus" && <BonusPanel companyId={activeCompanyId(activeCompany)} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
       {tab === "payroll" && (<>
       {/* Employees Cards — yatay şerit; alt bölüm Genişlet/Daralt */}
       <div className="grid grid-cols-1 gap-3" data-testid="employee-cards-grid">
@@ -1209,7 +1220,7 @@ export default function PersonnelPage() {
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{sgkPay ? "Banka hesabı" : "Ödemenin yapılacağı hesap"}</label>
                 <PaymentTargetSelect
-                  companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+                  companyId={activeCompanyId(activeCompany)}
                   accounts={bankAccounts}
                   value={selectedBankId}
                   onChange={setSelectedBankId}

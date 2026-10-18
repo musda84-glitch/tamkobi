@@ -42,6 +42,8 @@ import {
   Pie,
   Cell
 } from "recharts";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const STAFF_HIDDEN_SECTIONS = new Set(["kpis", "charts", "bottom", "ai", "decision", "overview", "demo"]);
 
@@ -51,9 +53,14 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const financeHome = showHomeFinanceSummary(user);
   const fetchStats = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId) {
+      setStats(null);
+      if (!silent) setLoading(false);
+      return;
+    }
     try {
       if (!silent) setLoading(true);
       const res = await axios.get(`${API_URL}/dashboard/stats?company_id=${companyId}`);
@@ -72,6 +79,7 @@ export default function Dashboard() {
   const staffHome = !financeHome;
   const staffRow = (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4" data-testid="dashboard-staff-row">
+      {!companyId && <NoCompanyNotice />}
       {staffHome ? (
         <Link
           to="/personelim?tab=gorevler"
@@ -157,7 +165,7 @@ export default function Dashboard() {
         <OpsAlertsPanel companyId={companyId} />
       </div>
     ),
-    overview: <OverviewPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />,
+    overview: <OverviewPanel companyId={activeCompanyId(activeCompany)} />,
     decision: stats.decision?.length > 0 ? (
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="dashboard-decision">
         <div className="text-[10px] uppercase tracking-wide text-slate-400 font-bold">Yönetici karar özeti</div>
@@ -168,7 +176,7 @@ export default function Dashboard() {
         </div>
       </div>
     ) : null,
-    demo: <DemoContentCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} variant="dashboard" />,
+    demo: <DemoContentCard companyId={activeCompanyId(activeCompany)} variant="dashboard" />,
     ai: (
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden border border-slate-800">
         <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>

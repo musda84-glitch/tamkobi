@@ -62,6 +62,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const PRODUCT_PAGE_SIZES = [20, 50, 100];
 const EMPTY_PRODUCT_ROWS = [];
@@ -90,7 +92,11 @@ export default function StockBarcodePage() {
   }, [searchParams]);
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
-  const loadCategories = useCallback(() => axios.get(`${API_URL}/products/categories?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCategories(r.data)).catch(() => {}), [activeCompany]);
+  const loadCategories = useCallback(() => {
+    const cid = activeCompanyId(activeCompany);
+    if (!cid) return Promise.resolve();
+    return axios.get(`${API_URL}/products/categories?company_id=${cid}`).then((r) => setCategories(r.data)).catch(() => {});
+  }, [activeCompany]);
   const [loading, setLoading] = useState(true);
 
   // Modals & Scanner state
@@ -170,7 +176,7 @@ export default function StockBarcodePage() {
   };
 
   const productId = (p) => p?.id || p?._id;
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const serverPaging = isProductsServerPagingEnabled();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -367,6 +373,7 @@ export default function StockBarcodePage() {
   };
   const submitReorder = async () => {
     if (!reorder?.lines?.length) return;
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     setReorder((s) => ({ ...s, busy: true }));
     try {
       const r = await axios.post(`${API_URL}/products/reorder-purchases`, {
@@ -413,6 +420,11 @@ export default function StockBarcodePage() {
   });
 
   const loadProducts = useCallback(async (opts) => {
+    const cid = activeCompanyId(activeCompany);
+    if (!cid) {
+      if (!(opts && opts.silent)) setLoading(false);
+      return;
+    }
     if (serverPaging) {
       setReloadTick((n) => n + 1);
       return;
@@ -421,7 +433,6 @@ export default function StockBarcodePage() {
     const gen = ++loadGenRef.current;
     try {
       if (!silent) setLoading(true);
-      const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       loadCategories();
       axios.get(`${API_URL}/products/units?company_id=${cid}`).then((r) => { if (gen === loadGenRef.current) setUnits(r.data); }).catch(() => {});
       const rows = await cachedList("products", cid, {
@@ -447,6 +458,7 @@ export default function StockBarcodePage() {
   }, [serverPaging, filterKey]);
   useEffect(() => {
     if (!serverPaging) return undefined;
+    if (!companyId) { setLoading(false); return undefined; }
     const gen = ++serverGen.current;
     const ctrl = new AbortController();
     let alive = true;
@@ -496,6 +508,7 @@ export default function StockBarcodePage() {
   }, [serverPaging, companyId, page, pageSize, filterCategory, stockF, searchTerm, brand, warehouseId, cardStatus, reloadTick, loadCategories]);
   useEffect(() => {
     if (!serverPaging) return undefined;
+    if (!companyId) return undefined;
     let alive = true;
     axios.get(`${API_URL}/warehouses`, { params: { company_id: companyId } })
       .then((r) => { if (alive) setWarehouses(Array.isArray(r.data) ? r.data : []); })
@@ -504,6 +517,7 @@ export default function StockBarcodePage() {
   }, [serverPaging, companyId]);
   useEffect(() => {
     if (!serverPaging || pageTab !== "labels") return undefined;
+    if (!companyId) return undefined;
     let alive = true;
     cachedList("products", companyId, { onCached: (rows) => { if (alive) setLabelCatalog(rows || []); } })
       .then((rows) => { if (alive) setLabelCatalog(rows || []); })
@@ -519,10 +533,11 @@ export default function StockBarcodePage() {
       toast.error("Lütfen ürün adı ve SKU kodunu girin.");
       return;
     }
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       const n = (v) => (v === "" || v == null ? null : Number(v));
       const res = await axios.post(`${API_URL}/products`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         ...newProduct,
         gtip: (newProduct.gtip || "").trim() || null,
         origin_country: (newProduct.origin_country || "").trim() || null,
@@ -623,6 +638,7 @@ export default function StockBarcodePage() {
       toast.error("Miktar 0'dan büyük olmalı.");
       return;
     }
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     setScanSelling(true);
     try {
       let contact;
@@ -740,6 +756,7 @@ export default function StockBarcodePage() {
 
   return (
     <div className="space-y-6" data-testid="stock-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -790,8 +807,8 @@ export default function StockBarcodePage() {
         ))}
       </div>
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
-      {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
-      {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
+      {aiStockImport && <AiStockImportModal companyId={activeCompanyId(activeCompany)} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
+      {produceProduct && <ProductionOrderModal companyId={activeCompanyId(activeCompany)} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {movesProduct && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setMovesProduct(null))}>
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="stock-moves-modal">
@@ -910,17 +927,17 @@ export default function StockBarcodePage() {
       )}
       {labelQuickProduct && (
         <LabelQuickPrint
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           product={labelQuickProduct}
           company={activeCompany}
           onClose={() => setLabelQuickProduct(null)}
           onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }}
         />
       )}
-      {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={serverPaging ? labelCatalog : products} company={activeCompany} />}
-      {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
+      {pageTab === "labels" && <LabelDesigner companyId={activeCompanyId(activeCompany)} products={serverPaging ? labelCatalog : products} company={activeCompany} />}
+      {pageTab === "count" && <StockCountPanel companyId={activeCompanyId(activeCompany)} warehouses={[]} />}
       {pageTab === "products" && (<>
-      <ProductProfitPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+      <ProductProfitPanel companyId={activeCompanyId(activeCompany)} />
       <StockToolbar categories={categories} filterCategory={filterCategory} setFilterCategory={setFilterCategory} f={stockF} setF={setStockF} search={searchTerm} setSearch={setSearchTerm} count={resultCount} stockValue={stockValue} criticalCount={criticalCount} rows={filtered} onReorderCritical={() => openReorder()} paging={serverPaging} zeroCount={serverPaging ? Number(summary?.zero_count || 0) : undefined} negativeCount={serverPaging ? Number(summary?.negative_count || 0) : undefined} quantityTotal={serverPaging ? Number(summary?.quantity_total || 0) : undefined} loadRows={serverPaging ? loadExportRows : undefined} brand={brand} setBrand={setBrand} brands={summary?.brands || []} warehouseId={warehouseId} setWarehouseId={setWarehouseId} warehouses={warehouses} cardStatus={cardStatus} setCardStatus={setCardStatus} />
 
       {selected.length > 0 && (

@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { History, Search } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ExportButtons } from "../components/ExportButtons";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const inputCls = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs";
 
@@ -29,7 +31,7 @@ const COLUMNS = [
 export default function CompanyAuditPage() {
   const { activeCompany, user } = useAuth();
   const navigate = useNavigate();
-  const companyId = activeCompany?.id || activeCompany?._id || "";
+  const companyId = activeCompanyId(activeCompany);
   const [filters, setFilters] = useState({ user_id: "", module: "", action: "", date_from: "", date_to: "", q: "" });
   const [applied, setApplied] = useState(filters);
   const [data, setData] = useState(null);
@@ -86,6 +88,7 @@ export default function CompanyAuditPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="company-audit-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">

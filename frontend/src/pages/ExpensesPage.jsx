@@ -21,6 +21,8 @@ import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../ut
 import { expenseDateRange } from "../utils/expenseDateRange";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 const EXP_COLS = [
   { key: "expense_number", label: "Masraf No" },
   { label: "Tarih", value: (r) => fmtDate(r.date) },
@@ -264,7 +266,7 @@ const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: acc
 export default function ExpensesPage() {
   const { activeCompany, user } = useAuth();
   const [searchParams] = useSearchParams();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const openExpenseId = searchParams.get("open") || "";
   const actorName = user?.name || user?.email || "";
   const [data, setData] = useState({ expenses: [], summary: null });
@@ -282,6 +284,7 @@ export default function ExpensesPage() {
   }, [qDraft]);
   // Kategoriler şirket değişince bir kez (filtre değişiminde değil).
   useEffect(() => {
+    if (!companyId) return undefined;
     let cancelled = false;
     axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`)
       .then((r) => { if (!cancelled) setCategories(Array.isArray(r.data) ? r.data : []); })
@@ -289,6 +292,7 @@ export default function ExpensesPage() {
     return () => { cancelled = true; };
   }, [companyId]);
   const load = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId) return;
     const p = new URLSearchParams({
       company_id: companyId,
       category: filters.category,
@@ -302,7 +306,7 @@ export default function ExpensesPage() {
   }, [companyId, filters.category, filters.status, filters.from, filters.to, filters.q]);
   useEffect(() => { load().catch(() => toast.error("Masraflar yüklenemedi.")); }, [load]);
   useEffect(() => {
-    if (!openExpenseId) return undefined;
+    if (!companyId || !openExpenseId) return undefined;
     let cancel = false;
     axios.get(`${API_URL}/expenses`, { params: { company_id: companyId } })
       .then((r) => {
@@ -354,6 +358,7 @@ export default function ExpensesPage() {
   const maxCat = s?.by_category?.[0]?.total || 1;
   return (
     <div className="space-y-6" data-testid="expenses-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Masraflar</h1><p className="text-xs sm:text-sm text-slate-500">Kira, fatura, yakıt, yemek, personel masrafları — kategori bazlı gider takibi ve kasa/banka entegrasyonu</p></div>
         <div className="flex gap-2 self-start">

@@ -10,12 +10,14 @@ import {
   ClipboardList, Plus, Scan, CheckCircle2, Minus, Maximize2, Minimize2,
   Loader2, AlertTriangle, ArrowLeft, Camera
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => Number(n || 0).toLocaleString("tr-TR");
 
 export default function StockCountKioskPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [warehouses, setWarehouses] = useState([]);
   const [counts, setCounts] = useState([]);
   const [active, setActive] = useState(null);
@@ -32,6 +34,12 @@ export default function StockCountKioskPage() {
   const qty = parseScanQtyInput(scanQty);
 
   const loadList = useCallback(async () => {
+    if (!companyId) {
+      setCounts([]);
+      setWarehouses([]);
+      setLoadError("Firma seçili değil");
+      return;
+    }
     try {
       const [c, w] = await Promise.all([
         axios.get(`${API_URL}/warehouses/stock-counts?company_id=${companyId}`),
@@ -56,6 +64,7 @@ export default function StockCountKioskPage() {
 
   const create = async (e) => {
     e.preventDefault();
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       const r = await axios.post(`${API_URL}/warehouses/stock-counts`, {
         company_id: companyId,
@@ -124,6 +133,7 @@ export default function StockCountKioskPage() {
 
   const body = (
     <div className="max-w-xl mx-auto space-y-4 pb-8" data-testid="stock-count-kiosk">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex items-start justify-between gap-2">
         <div>
           <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2"><ClipboardList className="w-6 h-6 text-violet-600" /> Stok Sayımı</h1>

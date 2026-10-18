@@ -3,6 +3,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { getHostKind } from "../utils/hosts";
 import { notifyDataChanged } from "../utils/dataRefresh";
 import { companyEventStreamEnabled, createChangeBuffer, nextRetryDelay } from "../utils/companyEvents";
+import { activeCompanyId } from "../utils/activeCompanyId";
 
 /**
  * Şirket SSE kanalı: ilgili sorguları yeniler, kopunca yeniden bağlanır,
@@ -10,7 +11,7 @@ import { companyEventStreamEnabled, createChangeBuffer, nextRetryDelay } from ".
  */
 export function CompanyEventBridge() {
   const { authenticated, activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "";
+  const companyId = activeCompanyId(activeCompany);
   const streamEnabled = companyEventStreamEnabled(getHostKind());
 
   useEffect(() => {

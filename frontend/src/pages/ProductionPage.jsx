@@ -11,13 +11,15 @@ import { QuantityInput } from "../components/MoneyInput";
 import { filterMissingByOrder, missingLinesForOrder } from "../utils/missingOrderLines";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const STATUS = { planned: ["Planlandı", "bg-slate-100 text-slate-700", Clock], in_production: ["Üretimde", "bg-amber-50 text-amber-700", Play], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700", CheckCircle2], cancelled: ["İptal", "bg-rose-50 text-rose-700", XCircle] };
 
 export default function ProductionPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const tab = params.get("tab") || "orders";
@@ -70,7 +72,7 @@ export default function ProductionPage() {
   };
 
   const loadProducts = useCallback(async () => {
-    if (productsLoaded) return;
+    if (!companyId || productsLoaded) return;
     try {
       const p = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
       setProducts(p.data || []);
@@ -81,6 +83,10 @@ export default function ProductionPage() {
   }, [companyId, productsLoaded]);
 
   const loadOrders = useCallback(async () => {
+    if (!companyId) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const statusQs = filter === "open" ? "&status=open" : filter === "all" ? "" : `&status=${filter}`;
@@ -103,6 +109,7 @@ export default function ProductionPage() {
   }, [companyId, filter]);
 
   const loadRecipes = useCallback(async () => {
+    if (!companyId) return;
     try {
       const r = await axios.get(`${API_URL}/production/recipes?company_id=${companyId}`);
       setRecipes(r.data || []);
@@ -113,6 +120,7 @@ export default function ProductionPage() {
   }, [companyId]);
 
   const loadMissing = useCallback(async () => {
+    if (!companyId) { setMissingLoading(false); return; }
     try {
       setMissingLoading(true);
       const r = await axios.get(`${API_URL}/production/missing-plan`, { params: { company_id: companyId } });
@@ -275,6 +283,7 @@ export default function ProductionPage() {
 
   return (
     <div className="space-y-6" data-testid="production-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Üretim & Reçeteler</h1><p className="text-xs sm:text-sm text-slate-500">Eksik ürün bildirimi → üretim planla → emir ver → hammadde düşsün, mamul stoğa girsin</p></div>
         <div className="flex gap-2">

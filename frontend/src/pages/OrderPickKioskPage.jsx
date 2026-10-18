@@ -16,6 +16,8 @@ import { QuantityInput } from "../components/MoneyInput";
 import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 
 let _overscanAudioCtx = null;
@@ -100,7 +102,7 @@ const ST = {
 
 export default function OrderPickKioskPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "";
+  const companyId = activeCompanyId(activeCompany);
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const orderId = params.get("order");
@@ -327,6 +329,7 @@ export default function OrderPickKioskPage() {
   if (!ses) {
     return (
       <div className="space-y-4" data-testid="order-pick-kiosk">
+        {!companyId && <NoCompanyNotice />}
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2"><ScanLine className="w-6 h-6 text-emerald-600" /> Depo Sevkiyatı</h1>

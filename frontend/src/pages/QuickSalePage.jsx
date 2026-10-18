@@ -40,6 +40,8 @@ import { productListImageUrl } from "../utils/productImages";
 import { fmtMoney } from "../utils/money";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { parseBarcodeWithQty, parseScanQtyInput } from "../utils/scanQty";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
 
@@ -130,7 +132,7 @@ export default function QuickSalePage() {
   const onayId = searchParams.get("onay") || "";
   const [approvalCard, setApprovalCard] = useState(null);
   const openedOnay = useRef("");
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const posRules = pos?.session?.rules || pos?.rules || {};
   const barcodeRef = useRef(null);
   const pendingScanQtyRef = useRef(1);
@@ -181,6 +183,7 @@ export default function QuickSalePage() {
   const [showShift, setShowShift] = useState(false);
 
   const loadProducts = useCallback(async () => {
+    if (!companyId) { setLoading(false); setProducts([]); return; }
     setLoading(true);
     try {
       const { data } = await axios.get(`${API_URL}/products`, { params: { company_id: companyId } });
@@ -796,6 +799,7 @@ export default function QuickSalePage() {
 
   return (
     <div className={shell} data-testid="quick-sale-page">
+      {!companyId && <NoCompanyNotice />}
       <div className={`flex flex-wrap items-end justify-between gap-3 ${tabletMode ? "shrink-0" : ""}`}>
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">

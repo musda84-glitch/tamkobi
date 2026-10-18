@@ -21,13 +21,17 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
   const inputRef = useRef(null);
   const qty = parseScanQtyInput(scanQty);
 
-  const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/warehouses/stock-counts?company_id=${companyId}`); setCounts(r.data); } catch { toast.error("Sayımlar yüklenemedi."); } }, [companyId]);
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    try { const r = await axios.get(`${API_URL}/warehouses/stock-counts?company_id=${companyId}`); setCounts(r.data); } catch { toast.error("Sayımlar yüklenemedi."); }
+  }, [companyId]);
   useEffect(() => { load(); }, [load]);
 
   const open = async (id) => { const r = await axios.get(`${API_URL}/warehouses/stock-counts/${id}`); setActive(r.data); setTimeout(() => inputRef.current?.focus(), 100); };
 
   const create = async (e) => {
     e.preventDefault();
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try { const r = await axios.post(`${API_URL}/warehouses/stock-counts`, { company_id: companyId, ...newForm, warehouse_id: newForm.warehouse_id || null }); toast.success("Sayım oturumu açıldı."); setShowNew(false); load(); setActive(r.data); setTimeout(() => inputRef.current?.focus(), 100); }
     catch (err) { toast.error(err.response?.data?.detail || "Sayım oluşturulamadı."); }
   };

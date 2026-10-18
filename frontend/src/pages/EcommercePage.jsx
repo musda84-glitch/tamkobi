@@ -20,9 +20,12 @@ import {
   ArrowDown,
   Trash2
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 export default function EcommercePage() {
   const { activeCompany } = useAuth();
+  const companyId = activeCompanyId(activeCompany);
   const [integrations, setIntegrations] = useState([]);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -33,16 +36,17 @@ export default function EcommercePage() {
   const [selectedConfig, setSelectedConfig] = useState(null);
 
   const loadIntegrations = useCallback(async () => {
+    if (!companyId) { setLoading(false); return; }
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
+      const res = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`);
       setIntegrations(res.data);
     } catch (err) {
       toast.error("Entegrasyonlar yüklenemedi.");
     } finally {
       setLoading(false);
     }
-  }, [activeCompany]);
+  }, [companyId]);
   useEffect(() => { loadIntegrations(); }, [loadIntegrations]);
 
   const handleTestConnection = async (channelId) => {
@@ -102,7 +106,11 @@ export default function EcommercePage() {
   useEffect(() => { if (selectedConfig) setRest({ email: selectedConfig.rest_email || "", password: "", auto: selectedConfig.rest_auto_push !== false }); }, [selectedConfig?.id, selectedConfig?._id]); // eslint-disable-line react-hooks/exhaustive-deps
   const saveRest = async () => { try { const r = await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}/rest-credentials`, { rest_email: rest.email, rest_password: rest.password || undefined, rest_auto_push: rest.auto }); setSelectedConfig({ ...selectedConfig, rest_email: r.data.rest_email, rest_configured: r.data.rest_configured, rest_auto_push: r.data.rest_auto_push }); toast.success("REST bilgileri kaydedildi."); loadIntegrations(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } };
   const testRest = async () => { try { if (rest.password) await saveRest(); const r = await axios.post(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}/rest-test`); toast.success(r.data.message); } catch (e) { toast.error(e.response?.data?.detail || "REST testi başarısız."); } };
-  useEffect(() => { axios.get(`${API_URL}/banking/accounts?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setAccounts(r.data)).catch(() => {}); }, [activeCompany]);
+  useEffect(() => {
+    if (!companyId) return undefined;
+    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {});
+    return undefined;
+  }, [companyId]);
   const handleSaveConfig = async (e) => {
     e.preventDefault();
     try {
@@ -139,6 +147,7 @@ export default function EcommercePage() {
 
   return (
     <div className="space-y-6" data-testid="ecommerce-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -147,7 +156,7 @@ export default function EcommercePage() {
         </div>
         <button onClick={() => setCatalogOpen(true)} className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 self-start" data-testid="add-channel-btn"><Layers className="w-4 h-4" /> Kanal Ekle (69 kanal)</button>
       </div>
-      {catalogOpen && <ChannelCatalogModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setCatalogOpen(false)} onAdded={loadIntegrations} />}
+      {catalogOpen && <ChannelCatalogModal companyId={activeCompanyId(activeCompany)} onClose={() => setCatalogOpen(false)} onAdded={loadIntegrations} />}
 
       {/* Info Banner */}
       <div className="bg-indigo-50/80 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3 text-xs text-indigo-950">
@@ -370,7 +379,7 @@ export default function EcommercePage() {
       )}
       <div className="pt-4 border-t border-slate-200">
         <h2 className="text-base font-bold text-slate-900 mb-3">Ürün Eşleştirme (Pazaryeri SKU ↔ Stok Kartı)</h2>
-        <ProductMappingPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+        <ProductMappingPanel companyId={activeCompanyId(activeCompany)} />
       </div>
     </div>
   );

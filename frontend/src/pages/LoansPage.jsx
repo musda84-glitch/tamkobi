@@ -12,6 +12,8 @@ import { useAiStatus } from "../hooks/useAiStatus";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { MoneyInput } from "../components/MoneyInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -64,12 +66,16 @@ const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
 
 export default function LoansPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [data, setData] = useState({ loans: [], summary: null });
   const [accounts, setAccounts] = useState([]);
   const [modal, setModal] = useState(false);
   const [open, setOpen] = useState(null);
-  const load = useCallback(async () => { const [l, a] = await Promise.all([axios.get(`${API_URL}/loans?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)]); setData(l.data); setAccounts(a.data); }, [companyId]);
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    const [l, a] = await Promise.all([axios.get(`${API_URL}/loans?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)]);
+    setData(l.data); setAccounts(a.data);
+  }, [companyId]);
   useEffect(() => { load().catch(() => toast.error("Krediler yüklenemedi.")); }, [load]);
   const refreshSilent = useCallback(() => load(), [load]);
   useDataRefresh(refreshSilent, { companyId, scopes: ["cash", "expenses"] });
@@ -80,6 +86,7 @@ export default function LoansPage() {
   const COLS = [{ key: "name", label: "Kredi" }, { key: "bank", label: "Banka" }, { key: "principal", label: "Anapara", num: true }, { key: "term_months", label: "Vade" }, { key: "paid_count", label: "Ödenen" }, { key: "remaining_debt", label: "Kalan Borç", num: true }, { label: "Sonraki Vade", value: (r) => r.next_installment?.due_date || "-" }];
   return (
     <div className="space-y-6" data-testid="loans-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"><div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Krediler</h1><p className="text-xs sm:text-sm text-slate-500">Banka kredileri, ödeme planı takibi, taksit ödemeleri ve finansman gideri</p></div>
         <div className="flex gap-2 self-start"><ExportButtons rows={data.loans} columns={COLS} filename="krediler" title="Kredi Listesi" size="md" /><button onClick={() => setModal(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md" data-testid="loan-new-btn"><Plus className="w-4 h-4" /> Yeni Kredi</button></div></div>
       {s && <div className="grid grid-cols-2 lg:grid-cols-4 gap-3"><Stat label="Aktif Kredi" value={s.count} testid="loan-stat-count" /><Stat label="Toplam Kalan Borç" value={`${fmt(s.total_debt)} ₺`} cls="text-rose-600" testid="loan-stat-debt" /><Stat label="Bu Ay Ödenecek" value={`${fmt(s.due_this_month)} ₺`} cls="text-amber-600" /><Stat label="Gecikmiş Taksit" value={s.overdue} cls={s.overdue ? "text-rose-600" : ""} /></div>}

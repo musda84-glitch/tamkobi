@@ -16,6 +16,8 @@ import { compressImageFile } from "../utils/compressImage";
 import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeScanHint } from "../utils/chequeScan";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -268,7 +270,7 @@ const ActionModal = ({ kind, row, accounts, companyId, onClose, onDone }) => {
 
 export default function ChequesPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [data, setData] = useState({ cheques: [], summary: null });
   const [accounts, setAccounts] = useState([]);
   const [tab, setTab] = useState("all");
@@ -284,6 +286,7 @@ export default function ChequesPage() {
   }, [q]);
 
   const load = useCallback(async () => {
+    if (!companyId) return;
     const params = new URLSearchParams({ company_id: companyId });
     if (tab === "received" || tab === "issued") params.set("direction", tab);
     if (tab === "open") params.set("status", "open");
@@ -328,6 +331,7 @@ export default function ChequesPage() {
 
   return (
     <div className="space-y-6" data-testid="cheques-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Çek / Senet</h1>

@@ -7,6 +7,8 @@ import { API_URL, BACKEND_URL, useAuth } from "../context/AuthContext";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { AiAccountantDocsPanel } from "../components/AiAccountantDocsPanel";
 import { AccTaxObligationsPanel } from "../components/AccTaxObligationsPanel";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const MAX_BACKUP_DAYS = 62;
@@ -25,7 +27,7 @@ const spanDays = (from, to) => {
 
 export default function AccountantPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [d, setD] = useState(null);
   const bounds = useMemo(() => monthBounds(month), [month]);
@@ -33,13 +35,16 @@ export default function AccountantPage() {
   const [dateTo, setDateTo] = useState(bounds.to);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
-  const loadSummary = () => axios.get(`${API_URL}/accountant/summary?company_id=${companyId}&month=${month}`).then((r) => setD(r.data)).catch(() => toast.error("Özet yüklenemedi."));
+  const loadSummary = () => {
+    if (!companyId) return Promise.resolve();
+    return axios.get(`${API_URL}/accountant/summary?company_id=${companyId}&month=${month}`).then((r) => setD(r.data)).catch(() => toast.error("Özet yüklenemedi."));
+  };
   useEffect(() => { setDateFrom(bounds.from); setDateTo(bounds.to); }, [bounds.from, bounds.to]);
   useEffect(() => { loadSummary(); }, [companyId, month]);
   const days = spanDays(dateFrom, dateTo);
   const rangeOk = days >= 1 && days <= MAX_BACKUP_DAYS;
   useEffect(() => {
-    if (!rangeOk) { setPreview(null); return; }
+    if (!companyId || !rangeOk) { setPreview(null); return; }
     axios.get(`${API_URL}/accountant/edocs`, { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo } })
       .then((r) => setPreview(r.data))
       .catch(() => setPreview(null));
@@ -76,11 +81,12 @@ export default function AccountantPage() {
       toast.error(typeof detail === "string" ? detail : "Yedek indirilemedi.");
     } finally { setBusy(false); }
   };
-  if (!d) return null;
+  if (!d) return companyId ? null : <NoCompanyNotice />;
   const Card = ({ icon: Icon, title, rows, color }) => <div className="bg-white border border-slate-200 rounded-2xl p-4 text-xs space-y-1.5" data-testid={`acc-card-${title}`}><div className={`flex items-center gap-2 font-bold ${color}`}><Icon className="w-4 h-4" /> {title}</div>{rows.map(([l, v, b]) => <div key={l} className={`flex justify-between ${b ? "font-bold text-slate-900 border-t pt-1" : "text-slate-600"}`}><span>{l}</span><span>{typeof v === "number" ? `${fmt(v)} ₺` : v}</span></div>)}</div>;
   const last = preview?.last_backup;
   return (
     <div className="space-y-6" data-testid="accountant-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Mali Müşavir Paneli</h1><p className="text-xs sm:text-sm text-slate-500">Aylık KDV, fatura, kasa/banka, bordro ve ödenecek vergi özeti</p></div>
         <div className="flex items-center gap-2"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-lg p-2 text-xs" data-testid="acc-month-input" /><button onClick={() => exp("invoices")} className="flex items-center gap-1 px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold" data-testid="acc-export-invoices"><Download className="w-3.5 h-3.5" /> Faturalar CSV</button><button onClick={() => exp("transactions")} className="flex items-center gap-1 px-3 py-2 border rounded-xl text-xs font-semibold" data-testid="acc-export-tx"><Download className="w-3.5 h-3.5" /> Kasa/Banka CSV</button></div>

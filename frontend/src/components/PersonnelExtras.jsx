@@ -17,7 +17,11 @@ export const LeaveRequestsPanel = ({ companyId, employees, onChanged, focusId = 
   const [leaves, setLeaves] = useState([]);
   const [form, setForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [show, setShow] = useState(false);
-  const load = useCallback(async () => { const r = await axios.get(`${API_URL}/personnel/leaves?company_id=${companyId}`); setLeaves(r.data); }, [companyId]);
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    const r = await axios.get(`${API_URL}/personnel/leaves?company_id=${companyId}`);
+    setLeaves(r.data);
+  }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!focusId) return;
@@ -112,9 +116,13 @@ export const SalaryCalculator = () => {
 export const BonusPanel = ({ companyId, employees, accounts, onChanged }) => {
   const [bonuses, setBonuses] = useState([]);
   const [form, setForm] = useState({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), account_id: "", note: "" });
-  const load = useCallback(async () => { const r = await axios.get(`${API_URL}/personnel/bonuses?company_id=${companyId}`); setBonuses(r.data); }, [companyId]);
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    const r = await axios.get(`${API_URL}/personnel/bonuses?company_id=${companyId}`);
+    setBonuses(r.data);
+  }, [companyId]);
   useEffect(() => { load(); }, [load]);
-  const save = async (e) => { e.preventDefault(); try { const { account_id: target, ...rest } = form; await axios.post(`${API_URL}/personnel/bonuses`, { ...rest, employee_id: form.employee_id || employees[0]?.id, amount: Number(form.amount), ...splitPaymentTarget(target) }); toast.success("Ödeme kaydedildi."); setForm({ ...form, amount: "", note: "" }); load(); onChanged?.(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
+  const save = async (e) => { e.preventDefault(); if (!companyId) { toast.error("Firma seçili değil"); return; } try { const { account_id: target, ...rest } = form; await axios.post(`${API_URL}/personnel/bonuses`, { ...rest, employee_id: form.employee_id || employees[0]?.id, amount: Number(form.amount), ...splitPaymentTarget(target) }); toast.success("Ödeme kaydedildi."); setForm({ ...form, amount: "", note: "" }); load(); onChanged?.(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const remove = async (id) => { await axios.delete(`${API_URL}/personnel/bonuses/${id}`); load(); onChanged?.(); };
   const total = bonuses.filter((b) => b.period === form.period).reduce((s, b) => s + b.amount, 0);
   return (
