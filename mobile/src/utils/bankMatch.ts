@@ -13,13 +13,16 @@ export const MATCH_MODES = [
 /** Varsayılan personel masraf kategorisi (API değeri; UI etiketi "Personel"). */
 export const PERSONNEL_EXPENSE_CATEGORY = "Personel Masrafı";
 
-/** Personel seçilince ödeme türleri. */
+/** Personel seçilince ödeme türleri. Varsayılan: masraf iadesi. */
 export const PERSONNEL_PAY_KINDS = [
-  { key: "expense", label: "Masraf" },
+  { key: "reimburse", label: "Masraf iadesi" },
   { key: "advance", label: "Avans" },
-  { key: "overtime", label: "Mesai" },
   { key: "salary", label: "Maaş" },
+  { key: "overtime", label: "Mesai" },
+  { key: "expense", label: "Şirket masrafı (personel adına)" },
 ] as const;
+
+export const DEFAULT_PERSONNEL_PAY_KIND = "reimburse";
 
 export type PersonnelPayKind = (typeof PERSONNEL_PAY_KINDS)[number]["key"];
 
@@ -80,6 +83,7 @@ export type MatchDraft = {
   category: string;
   employee_id: string;
   personnel_pay_kind: PersonnelPayKind;
+  expense_id?: string;
   learn: boolean;
 };
 
@@ -89,6 +93,11 @@ export type SelectGroup = { label: string; options: { value: string; label: stri
 export function isPersonnelExpenseCategory(category?: string | null): boolean {
   const n = String(category || "").trim();
   return /^personel(\s+masraf[ıi])?$/i.test(n) || /personel/i.test(n);
+}
+
+/** Sadece Kategori + personel kategorisi: ödeme için Masraf modu gerekir. */
+export function personnelCategoryOnly(d: { mode?: string | null; category?: string | null }): boolean {
+  return d.mode === "category" && isPersonnelExpenseCategory(d.category);
 }
 
 /** Kategori select etiketi — Personel Masrafı → Personel. */
@@ -106,7 +115,8 @@ export function emptyMatchDraft(tx?: BankMatchTx | null): MatchDraft {
     target_account_id: "",
     category: "",
     employee_id: "",
-    personnel_pay_kind: "expense",
+    personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+    expense_id: "",
     learn: true,
   };
 }
@@ -135,6 +145,7 @@ export function matchTargets(accounts: BankAccount[], tx: BankMatchTx): BankAcco
 }
 
 export function canSubmitMatch(d: MatchDraft): boolean {
+  if (personnelCategoryOnly(d)) return false;
   if (d.mode === "category") return !!d.category.trim();
   if (d.mode === "expense") {
     if (!d.category.trim()) return false;
@@ -157,7 +168,8 @@ export function matchPayload(d: MatchDraft) {
     target_account_id: d.mode === "transfer" ? d.target_account_id || null : null,
     as_expense: d.mode === "expense",
     employee_id: personnel ? d.employee_id || null : null,
-    personnel_pay_kind: personnel ? d.personnel_pay_kind || "expense" : null,
+    personnel_pay_kind: personnel ? d.personnel_pay_kind || DEFAULT_PERSONNEL_PAY_KIND : null,
+    expense_id: personnel && d.personnel_pay_kind === "reimburse" && d.expense_id ? d.expense_id : null,
   };
 }
 

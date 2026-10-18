@@ -1,5 +1,6 @@
 import type { Invoice } from "../types";
 import {
+  DEFAULT_PERSONNEL_PAY_KIND,
   MATCH_MODES,
   PERSONNEL_PAY_KINDS,
   canSubmitMatch,
@@ -16,9 +17,11 @@ import {
   matchTargets,
   matchedViaTr,
   openInvoices,
+  personnelCategoryOnly,
   ruleLabel,
   suggestionLabel,
   transferSelectGroups,
+  type PersonnelPayKind,
 } from "./bankMatch";
 
 const salesOpen: Invoice = {
@@ -83,11 +86,15 @@ describe("match draft / payload", () => {
     expect(d.contact_id).toBe("c9");
     expect(d.learn).toBe(true);
     expect(d.employee_id).toBe("");
-    expect(d.personnel_pay_kind).toBe("expense");
+    expect(d.personnel_pay_kind).toBe(DEFAULT_PERSONNEL_PAY_KIND);
+    expect(d.expense_id).toBe("");
     expect(canSubmitMatch(d)).toBe(true);
     expect(canSubmitMatch({ ...d, mode: "transfer" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "  " })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "Kira" })).toBe(true);
+    expect(personnelCategoryOnly({ ...d, mode: "category", category: "Personel Masrafı" })).toBe(true);
+    expect(personnelCategoryOnly({ ...d, mode: "expense", category: "Personel Masrafı" })).toBe(false);
+    expect(canSubmitMatch({ ...d, mode: "category", category: "Personel Masrafı" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "expense" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "expense", category: "Yakıt" })).toBe(true);
     expect(canSubmitMatch({ ...d, mode: "expense", category: "Personel Masrafı" })).toBe(false);
@@ -103,7 +110,14 @@ describe("match draft / payload", () => {
   it("labels Personel and lists pay kinds", () => {
     expect(isPersonnelExpenseCategory("Personel Masrafı")).toBe(true);
     expect(expenseCategoryOptionLabel("Personel Masrafı")).toBe("Personel");
-    expect(PERSONNEL_PAY_KINDS.map((k) => k.label)).toEqual(["Masraf", "Avans", "Mesai", "Maaş"]);
+    expect(PERSONNEL_PAY_KINDS.map((k) => k.label)).toEqual([
+      "Masraf iadesi",
+      "Avans",
+      "Maaş",
+      "Mesai",
+      "Şirket masrafı (personel adına)",
+    ]);
+    expect(PERSONNEL_PAY_KINDS.map((k) => k.key)).toEqual(["reimburse", "advance", "salary", "overtime", "expense"]);
     const groups = matchExpenseCategoryGroups([{ name: "Yakıt" }, { name: "Personel Masrafı" }]);
     expect(groups[0].options.map((o) => o.label)).toEqual(["Yakıt", "Personel"]);
     expect(groups[0].options.find((o) => o.label === "Personel")?.value).toBe("Personel Masrafı");
@@ -160,6 +174,7 @@ describe("match draft / payload", () => {
       as_expense: false,
       employee_id: null,
       personnel_pay_kind: null,
+      expense_id: null,
     });
     const transfer = matchPayload({ ...base, mode: "transfer", contact_id: "c1", target_account_id: "acc2" });
     expect(transfer.contact_id).toBeNull();
@@ -179,7 +194,44 @@ describe("match draft / payload", () => {
     expect(personnel.as_expense).toBe(true);
     expect(personnel.employee_id).toBe("e1");
     expect(personnel.personnel_pay_kind).toBe("salary");
+    expect(personnel.expense_id).toBeNull();
     expect(personnel.contact_id).toBeNull();
+    const reimburse = matchPayload({
+      ...base,
+      mode: "expense",
+      category: "Personel Masrafı",
+      employee_id: "e1",
+      personnel_pay_kind: "reimburse",
+      expense_id: "msr-1",
+    });
+    expect(reimburse.as_expense).toBe(true);
+    expect(reimburse.employee_id).toBe("e1");
+    expect(reimburse.personnel_pay_kind).toBe("reimburse");
+    expect(reimburse.expense_id).toBe("msr-1");
+    const advance = matchPayload({
+      ...base,
+      mode: "expense",
+      category: "Personel Masrafı",
+      employee_id: "e1",
+      personnel_pay_kind: "advance",
+      expense_id: "msr-1",
+    });
+    expect(advance.personnel_pay_kind).toBe("advance");
+    expect(advance.expense_id).toBeNull();
+    const omitted = matchPayload({
+      ...base,
+      mode: "expense",
+      category: "Personel",
+      employee_id: "e1",
+      personnel_pay_kind: "" as PersonnelPayKind,
+      expense_id: "msr-1",
+    });
+    expect(omitted.personnel_pay_kind).toBe(DEFAULT_PERSONNEL_PAY_KIND);
+    expect(omitted.expense_id).toBeNull();
+    const fuel = matchPayload({ ...base, mode: "expense", category: "Yakıt", expense_id: "msr-1" });
+    expect(fuel.expense_id).toBeNull();
+    expect(fuel.personnel_pay_kind).toBeNull();
+    expect(fuel.employee_id).toBeNull();
   });
 });
 
