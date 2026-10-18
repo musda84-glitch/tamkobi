@@ -10,6 +10,7 @@ import { notifyDataChanged } from "../utils/dataRefresh";
 import { PickLabelPrintHost } from "../components/PickLabelPrintHost";
 import { canMarkDeliveredFromPick } from "../utils/pickDeliver";
 import { pickLineNote } from "../utils/pickLineNote";
+import { pickProgressLabel } from "../utils/pickProgress";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { QuantityInput } from "../components/MoneyInput";
 import {
@@ -74,6 +75,18 @@ const findScanLine = (items, raw) => {
 
 const isLineComplete = (it) =>
   it && Number(it.picked_qty) >= Number(it.ordered_qty) - 1e-9;
+
+function PickThumb({ imageUrl }) {
+  const img = resolveImageUrl(imageUrl);
+  if (img) {
+    return <img src={img} alt="" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" />;
+  }
+  return (
+    <div className="w-14 h-14 rounded-xl border bg-slate-50 flex items-center justify-center text-slate-300 shrink-0">
+      <Package className="w-6 h-6" />
+    </div>
+  );
+}
 
 const ST = {
   idle: ["Bekliyor", "bg-slate-100 text-slate-600"],
@@ -308,6 +321,7 @@ export default function OrderPickKioskPage() {
 
   const prog = ses?.progress || {};
   const pct = prog.ordered ? Math.round((prog.picked / prog.ordered) * 100) : 0;
+  const progressLabel = pickProgressLabel(prog, (ses?.items || []).length);
   const awaitDeliver = canMarkDeliveredFromPick(ses);
 
   if (!ses) {
@@ -360,10 +374,21 @@ export default function OrderPickKioskPage() {
           <div className="font-mono font-bold truncate">{ses.order_number}</div>
           <div className="text-[11px] text-slate-300 truncate">{ses.customer_name} · {ses.city || ""}</div>
         </div>
-        <div className="text-right"><div className="text-lg font-black">{pct}%</div><div className="text-[10px] text-slate-400">{prog.picked}/{prog.ordered}</div></div>
         <button type="button" disabled={busy || !(ses.items || []).length} onClick={() => printLabels(ses.items)} className="px-3 py-2 rounded-lg bg-white/10 font-bold text-xs flex items-center gap-1.5" data-testid="pick-print-labels">
           <Printer className="w-4 h-4" /> Etiket yazdır
         </button>
+      </div>
+      <div className="bg-white border-b px-3 py-2.5 print:hidden" data-testid="pick-progress">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0" data-testid="pick-progress-text">
+            <div className="text-sm font-bold text-slate-900">{progressLabel.lines}</div>
+            <div className="text-xs font-medium text-slate-500">{progressLabel.qty}</div>
+          </div>
+          <div className="text-lg font-black tabular-nums text-slate-900">%{pct}</div>
+        </div>
+        <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-2 bg-emerald-500" style={{ width: `${pct}%` }} data-testid="pick-progress-bar" />
+        </div>
       </div>
       {!awaitDeliver ? (
       <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(); }}>
@@ -386,64 +411,88 @@ export default function OrderPickKioskPage() {
           Sipariş sevk edildi. Teslimatı onaylamak için «Teslim edildi»ye basın.
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2 print:hidden">
+      <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3 content-start print:hidden">
         {(ses.items || []).map((it, idx) => {
           const done = isLineComplete(it);
-          const img = resolveImageUrl(it.image_url);
           const warnLine = overscanFlash && (
             overscanFlash.lineIndex === it.line_index
             || overscanFlash.lineIndex === idx
             || String(it.product_name) === String(overscanFlash.productName)
           );
+          const pickedQty = Number(it.picked_qty) || 0;
+          const orderedQty = Number(it.ordered_qty) || 0;
+          const shortQty = Math.max(0, Math.round((orderedQty - pickedQty) * 1000) / 1000);
+          const accent = warnLine
+            ? "border-rose-500 ring-2 ring-rose-400 bg-rose-50 animate-pulse relative z-[91]"
+            : done
+              ? "border-l-4 border-l-emerald-500 bg-emerald-50"
+              : "border-l-4 border-l-amber-500 bg-white";
           return (
-            <div key={idx} className={`bg-white rounded-2xl border p-3 flex gap-3 items-center transition ${warnLine ? "border-rose-500 ring-2 ring-rose-400 bg-rose-50 animate-pulse relative z-[91]" : done ? "border-emerald-300" : "border-slate-200"}`} data-testid={`pick-line-${idx}`}>
-              {img ? <img src={img} alt="" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" /> : <div className="w-14 h-14 rounded-xl border bg-slate-50 flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
-              <div className="min-w-0 flex-1">
-                <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
-                <div className="text-[11px] text-slate-500 font-mono">{it.sku || it.barcode || "—"}</div>
-                {pickLineNote(it) ? (
-                  <div className="mt-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-snug" data-testid={`pick-line-note-${idx}`}>
-                    <span className="font-semibold text-amber-700/80">Sipariş stok notu · </span>
-                    {pickLineNote(it)}
+            <div key={idx} className={`rounded-2xl border p-3 flex flex-col gap-2 transition ${accent}`} data-testid={`pick-line-${idx}`}>
+              <div className="flex gap-3 items-start">
+                <PickThumb imageUrl={it.image_url} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-slate-900 leading-tight line-clamp-2">{it.product_name}</div>
+                  <div className="text-[11px] text-slate-500 font-mono">{it.sku || it.barcode || "—"}</div>
+                  <div className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[11px] font-bold ${done ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`} data-testid={`pick-line-tag-${idx}`}>
+                    {done ? "✓ Tamam" : `${shortQty.toLocaleString("tr-TR", { maximumFractionDigits: 3 })} eksik`}
                   </div>
-                ) : null}
-                <div className="h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden"><div className={`h-1.5 ${warnLine ? "bg-rose-500" : done ? "bg-emerald-500" : "bg-amber-400"}`} style={{ width: `${it.ordered_qty ? Math.min(100, (it.picked_qty / it.ordered_qty) * 100) : 0}%` }} /></div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button onClick={() => bump(it, -1)} className="w-11 h-11 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
-                <div className="w-14 text-center">
-                  <QuantityInput
-                    value={qtyDrafts[idx] ?? it.picked_qty}
-                    disabled={busy}
-                    onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
-                    onChange={(n) => setQtyDrafts((d) => ({ ...d, [idx]: n ?? "" }))}
-                    onBlur={() => {
-                      if (qtyCancelRef.current) {
-                        qtyCancelRef.current = false;
-                        setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
-                        return;
-                      }
-                      const raw = qtyDrafts[idx];
-                      setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
-                      if (raw === undefined || raw === "") return;
-                      applyPickedQty(it, raw);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") { e.currentTarget.blur(); }
-                      if (e.key === "Escape") {
-                        qtyCancelRef.current = true;
-                        setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    className={`w-full text-center text-xl font-black bg-transparent border-b-2 outline-none py-0 ${warnLine ? "text-rose-700 border-rose-400" : "border-slate-200 focus:border-emerald-500"}`}
-                    data-testid={`pick-qty-input-${idx}`}
-                    aria-label="Okutulan miktar"
-                  />
-                  <div className="text-[10px] text-slate-400">/ {it.ordered_qty}</div>
                 </div>
-                <button onClick={() => bump(it, 1)} className={`w-11 h-11 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
-                <button type="button" onClick={() => printLabels([it])} className="w-11 h-11 rounded-xl bg-slate-900 text-white" title="Etiket yazdır" data-testid={`pick-label-${idx}`}><Printer className="w-4 h-4 mx-auto" /></button>
+                <div className="text-right shrink-0">
+                  <div className={`text-2xl font-black leading-none tabular-nums ${done ? "text-emerald-700" : "text-slate-900"}`}>{pickedQty.toLocaleString("tr-TR", { maximumFractionDigits: 3 })}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">/ {it.ordered_qty}</div>
+                </div>
+              </div>
+              {pickLineNote(it) ? (
+                <div className="mt-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-snug" data-testid={`pick-line-note-${idx}`}>
+                  <span className="font-semibold text-amber-700/80">Sipariş stok notu · </span>
+                  {pickLineNote(it)}
+                </div>
+              ) : null}
+              <div className="flex gap-2 w-full items-center mt-auto">
+                <button onClick={() => bump(it, -1)} className="h-11 flex-1 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
+                <QuantityInput
+                  value={qtyDrafts[idx] ?? it.picked_qty}
+                  disabled={busy}
+                  inputMode="numeric"
+                  onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
+                  onChange={(n) => setQtyDrafts((d) => ({ ...d, [idx]: n ?? "" }))}
+                  onBlur={() => {
+                    if (qtyCancelRef.current) {
+                      qtyCancelRef.current = false;
+                      setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                      return;
+                    }
+                    const raw = qtyDrafts[idx];
+                    setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                    if (raw === undefined || raw === "") return;
+                    applyPickedQty(it, raw);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.currentTarget.blur(); }
+                    if (e.key === "Escape") {
+                      qtyCancelRef.current = true;
+                      setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  className={`w-20 h-11 shrink-0 text-center text-lg font-black rounded-xl border-2 outline-none ${warnLine ? "text-rose-700 border-rose-400 bg-white" : "border-slate-200 bg-white focus:border-emerald-500"}`}
+                  data-testid={`pick-qty-input-${idx}`}
+                  aria-label="Okutulan miktar"
+                />
+                <button onClick={() => bump(it, 1)} className={`h-11 flex-1 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
+                <button
+                  type="button"
+                  disabled={done}
+                  onClick={() => applyPickedQty(it, Number(it.ordered_qty) || 0)}
+                  className={`h-11 flex-1 rounded-xl text-xs font-bold ${done ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white"}`}
+                  data-testid={`pick-all-${idx}`}
+                >
+                  Tümü
+                </button>
+                <button type="button" onClick={() => printLabels([it])} className="h-11 flex-1 rounded-xl bg-slate-900 text-white text-xs font-bold inline-flex items-center justify-center gap-1" title="Etiket yazdır" data-testid={`pick-label-${idx}`}>
+                  <Printer className="w-4 h-4" /> Etiket
+                </button>
               </div>
             </div>
           );
