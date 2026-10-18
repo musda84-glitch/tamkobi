@@ -71,6 +71,11 @@ export type BankAccount = {
   is_integrated?: boolean;
   integration_provider?: string;
   integration_status?: string;
+  connection_id?: string | null;
+  last_synced_at?: string | null;
+  month_in?: number | null;
+  month_out?: number | null;
+  unmatched_count?: number | null;
   is_customer_card_pool?: boolean;
 };
 
@@ -97,6 +102,9 @@ export type BankTx = {
   created_by_name?: string;
   suggested_contact_id?: string;
   suggested_contact_name?: string;
+  suggested_target_account_id?: string;
+  suggested_target_account_name?: string;
+  suggested_category?: string;
   counterparty?: string;
   related_invoice_id?: string;
   related_invoice_number?: string;
