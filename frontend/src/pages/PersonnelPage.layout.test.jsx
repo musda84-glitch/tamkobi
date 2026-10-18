@@ -149,21 +149,17 @@ test("employee card strip is a single compact horizontal row", async () => {
   expect(mid.className).not.toMatch(/max-w-2xl/);
   const requestBox = mid.querySelector('[data-testid="employee-card-requests-14479874352"]');
   const actions = mid.querySelector('[data-testid="employee-card-actions-emp_1"]');
-  expect(requestBox?.textContent).toContain("Talepler");
-  expect(requestBox?.className).toMatch(/\bh-9\b/);
+  expect(requestBox).toBeNull();
+  expect(host.textContent).not.toMatch(/Talepler \(0\)/);
   expect(actions?.textContent).toMatch(/Hareketler/);
-  expect(actions?.className).toMatch(/\bh-9\b/);
   expect(mid.contains(host.querySelector('[data-testid="employee-receivable-14479874352"]'))).toBe(false);
   const right = host.querySelector('[data-testid="employee-card-right-emp_1"]');
   expect(right).not.toBeNull();
   expect(right.className).toMatch(/flex-row/);
   expect(right.className).toMatch(/flex-nowrap/);
   expect(right.className).toMatch(/items-center/);
-  const loc = host.querySelector('[data-testid="employee-card-loc-emp_1"]');
-  expect(loc).not.toBeNull();
-  expect(loc.className).toMatch(/w-\[132px\]/);
-  expect(loc.className).toMatch(/\bh-9\b/);
-  expect(right.contains(loc)).toBe(true);
+  expect(host.querySelector('[data-testid="employee-card-loc-emp_1"]')).toBeNull();
+  expect(host.querySelector('[data-testid="employee-card-assigned-ot-emp_1"]')).toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="employee-more-btn-emp_1"]').click();
   });
@@ -175,8 +171,11 @@ test("employee card strip is a single compact horizontal row", async () => {
   expect(editBtn.className).toMatch(/\bh-9\b/);
   expect(delBtn.className).toMatch(/\bh-9\b/);
   expect(card.className).toMatch(/contain-intrinsic-size:auto_88px/);
-  expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).toContain("grid-cols-1");
-  expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).not.toMatch(/xl:grid-cols-2/);
+  const cardsGrid = host.querySelector('[data-testid="employee-cards-grid"]');
+  expect(cardsGrid?.className).toMatch(/flex-col/);
+  expect(cardsGrid?.className).not.toMatch(/md:grid-cols-2/);
+  expect(cardsGrid?.className).not.toMatch(/2xl:grid-cols-3/);
+  expect(cardsGrid?.className).not.toMatch(/xl:grid-cols-2/);
   expect(host.querySelector('[data-testid="employee-card-details-14479874352"]')).toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="employee-card-expand-14479874352"]').click();
