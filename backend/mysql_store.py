@@ -1412,6 +1412,58 @@ def _emit_company_change(collection: str, doc) -> None:
         return
 
 
+def _agg_number(doc: dict, expr) -> float:
+    val = eval_expr(doc, expr)
+    if val is MISSING or val is None:
+        return 0.0
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _agg_group_id(doc: dict, expr):
+    if expr is None:
+        return None
+    if isinstance(expr, str) and expr.startswith("$"):
+        val = scalar_at(doc, expr[1:])
+        return None if val is MISSING else val
+    return expr
+
+
+def aggregate_rows(docs: Sequence[dict], pipeline: Sequence[dict]) -> List[dict]:
+    """$match + $group ($sum / $ifNull). Motor aggregate ile aynı satır şekli."""
+    rows: List[dict] = list(docs or [])
+    grouped: Optional[List[dict]] = None
+    for stage in pipeline or []:
+        if not isinstance(stage, dict) or len(stage) != 1:
+            raise ValueError("aggregate aşaması tek operatör olmalı")
+        op, spec = next(iter(stage.items()))
+        if op == "$match":
+            rows = [doc for doc in rows if match_query(doc, spec or {})]
+            grouped = None
+            continue
+        if op == "$group":
+            spec = spec or {}
+            buckets: Dict[Any, dict] = {}
+            order: List[Any] = []
+            for doc in rows:
+                key = _agg_group_id(doc, spec.get("_id"))
+                if key not in buckets:
+                    buckets[key] = {"_id": key}
+                    order.append(key)
+                bucket = buckets[key]
+                for field, expr in spec.items():
+                    if field == "_id" or not isinstance(expr, dict) or "$sum" not in expr:
+                        continue
+                    bucket[field] = bucket.get(field, 0.0) + _agg_number(doc, expr["$sum"])
+            grouped = [buckets[key] for key in order]
+            rows = grouped
+            continue
+        raise ValueError(f"desteklenmeyen aggregate aşaması: {op}")
+    return grouped if grouped is not None else rows
+
+
 class MySQLCollection:
     def __init__(self, db: "MySQLDatabase", name: str):
         self._db = db
@@ -1772,6 +1824,34 @@ class MySQLCollection:
             _audit_sql("COUNT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
             return int((row or [0])[0] or 0)
         return len(await self._load_filtered(query))
+
+    def aggregate(self, pipeline):
+        """Motor ile aynı: aggregate() senkron, to_list() async. $match + $group."""
+
+        async def _rows():
+            docs: List[dict] = []
+            matched = False
+            for stage in pipeline or []:
+                if isinstance(stage, dict) and "$match" in stage and not matched:
+                    docs = await self._load_filtered(stage.get("$match"))
+                    matched = True
+                    break
+            if not matched:
+                docs = await self._load_filtered({})
+            return aggregate_rows(docs, pipeline)
+
+        cursor_box: Dict[str, Any] = {}
+
+        class _LazyCursor:
+            async def to_list(self, length=None):
+                if "rows" not in cursor_box:
+                    cursor_box["rows"] = await _rows()
+                rows = cursor_box["rows"]
+                if length is None:
+                    return list(rows)
+                return list(rows)[: int(length)]
+
+        return _LazyCursor()
 
     async def distinct(self, key: str, query: Optional[dict] = None):
         docs = await self._load_filtered(query)

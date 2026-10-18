@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 import comm_service
 import morning_summary_email
+import stock_critical
 import tenant_access
 
 router = APIRouter(prefix="/api")
@@ -158,7 +159,7 @@ async def build_summary(company_id: str) -> Dict[str, Any]:
         c = by_ch.setdefault(o.get("channel") or "manual", {"count": 0, "total": 0.0})
         c["count"] += 1; c["total"] += float(o.get("total_amount") or 0)
     pending_ship = await _db.orders.count_documents({"company_id": company_id, "order_status": {"$in": ["approved", "preparing"]}, "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}, {"cargo_tracking_number": {"$exists": False}}]})
-    low_query = {"company_id": company_id, "track_stock": {"$ne": False}, "$expr": {"$lte": ["$stock_quantity", {"$ifNull": ["$min_stock_alert", 5]}]}}
+    low_query = stock_critical.critical_stock_query(company_id)
     low_fields = {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1}
     low_docs = [p async for p in _db.products.find(low_query, low_fields).limit(morning_summary_email.LOW_STOCK_FETCH)]
     low_docs.sort(key=morning_summary_email.stock_sort_key)

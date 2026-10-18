@@ -52,6 +52,7 @@ STATS_KEYS = {
     "total_bank_balance", "total_receivables", "total_payables", "receivable_count", "payable_count",
     "monthly_sales", "monthly_expenses", "net_profit", "sales_change_pct", "pending_orders_count",
     "low_stock_count", "total_stock_value", "chart_data", "channels_breakdown", "recent_invoices",
+    "today_sales",
     "recent_orders", "low_stock_products", "decision",
 }
 AI_METRIC_KEYS = {
