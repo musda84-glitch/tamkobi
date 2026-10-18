@@ -13,6 +13,7 @@ import { pickLineNote } from "../utils/pickLineNote";
 import { pickProgressLabel } from "../utils/pickProgress";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { QuantityInput } from "../components/MoneyInput";
+import QtyKeypad from "../components/QtyKeypad";
 import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
@@ -111,6 +112,7 @@ export default function OrderPickKioskPage() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [qtyDrafts, setQtyDrafts] = useState({});
+  const [keypadIdx, setKeypadIdx] = useState(null);
   const [scanQty, setScanQty] = useState("1");
   const [overscanFlash, setOverscanFlash] = useState(null);
   const [labelPrintReq, setLabelPrintReq] = useState(null);
@@ -144,6 +146,7 @@ export default function OrderPickKioskPage() {
       const r = await axios.get(`${API_URL}/order-picks/${id}`);
       setSes(r.data);
       setQtyDrafts({});
+      setKeypadIdx(null);
       setParams({ order: id }, { replace: true });
       setTimeout(() => inputRef.current?.focus(), 80);
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş açılamadı."); }
@@ -185,7 +188,17 @@ export default function OrderPickKioskPage() {
     overscanTimer.current = setTimeout(() => setOverscanFlash(null), 2800);
   }, []);
 
-  const back = () => { setSes(null); setParams({}, { replace: true }); loadList(); };
+  const back = () => { setKeypadIdx(null); setSes(null); setParams({}, { replace: true }); loadList(); };
+
+  const holdScanFocus = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const closeKeypad = () => {
+    setKeypadIdx(null);
+    inputRef.current?.focus();
+  };
 
   const printLabels = (items) => {
     const list = (items || []).filter(Boolean);
@@ -383,11 +396,10 @@ export default function OrderPickKioskPage() {
       </div>
       <div className="bg-white border-b px-3 py-2.5 print:hidden" data-testid="pick-progress">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0" data-testid="pick-progress-text">
-            <div className="text-sm font-bold text-slate-900">{progressLabel.lines}</div>
-            <div className="text-xs font-medium text-slate-500">{progressLabel.qty}</div>
+          <div className="min-w-0 text-sm font-bold leading-snug text-slate-900" data-testid="pick-progress-text">
+            {progressLabel.lines} · {progressLabel.qty}
           </div>
-          <div className="text-lg font-black tabular-nums text-slate-900">%{pct}</div>
+          <div className="shrink-0 text-3xl font-black tabular-nums leading-none text-slate-900">%{pct}</div>
         </div>
         <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
           <div className="h-2 bg-emerald-500" style={{ width: `${pct}%` }} data-testid="pick-progress-bar" />
@@ -414,7 +426,7 @@ export default function OrderPickKioskPage() {
           Sipariş sevk edildi. Teslimatı onaylamak için «Teslim edildi»ye basın.
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3 content-start print:hidden">
+      <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 lg:grid-cols-2 gap-3 content-start print:hidden">
         {(ses.items || []).map((it, idx) => {
           const done = isLineComplete(it);
           const warnLine = overscanFlash && (
@@ -431,7 +443,7 @@ export default function OrderPickKioskPage() {
               ? "border-l-4 border-l-emerald-500 bg-emerald-50"
               : "border-l-4 border-l-amber-500 bg-white";
           return (
-            <div key={idx} className={`rounded-2xl border p-3 flex flex-col gap-2 transition ${accent}`} data-testid={`pick-line-${idx}`}>
+            <div key={idx} className={`relative rounded-2xl border p-3 flex flex-col gap-2 transition ${keypadIdx === idx && !warnLine ? "z-20" : ""} ${accent}`} data-testid={`pick-line-${idx}`}>
               <div className="flex gap-3 items-start">
                 <PickThumb imageUrl={it.image_url} />
                 <div className="min-w-0 flex-1">
@@ -458,11 +470,15 @@ export default function OrderPickKioskPage() {
                   value={qtyDrafts[idx] ?? it.picked_qty}
                   disabled={busy}
                   inputMode="numeric"
-                  onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
+                  onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setKeypadIdx(null); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
                   onChange={(n) => setQtyDrafts((d) => ({ ...d, [idx]: n ?? "" }))}
                   onBlur={() => {
                     if (qtyCancelRef.current) {
                       qtyCancelRef.current = false;
+                      setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                      return;
+                    }
+                    if (keypadIdx === idx) {
                       setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
                       return;
                     }
@@ -479,10 +495,22 @@ export default function OrderPickKioskPage() {
                       e.currentTarget.blur();
                     }
                   }}
+                  onMouseDown={holdScanFocus}
+                  onClick={() => setKeypadIdx(idx)}
                   className={`w-20 h-11 shrink-0 text-center text-lg font-black rounded-xl border-2 outline-none ${warnLine ? "text-rose-700 border-rose-400 bg-white" : "border-slate-200 bg-white focus:border-emerald-500"}`}
                   data-testid={`pick-qty-input-${idx}`}
                   aria-label="Okutulan miktar"
                 />
+                <button
+                  type="button"
+                  aria-label="Adet tuş takımı"
+                  title="Tuş takımı"
+                  onMouseDown={holdScanFocus}
+                  onClick={() => setKeypadIdx(idx)}
+                  className="h-11 w-9 shrink-0 rounded-xl border border-slate-200 bg-white text-base font-bold text-slate-500"
+                >
+                  ✎
+                </button>
                 <button onClick={() => bump(it, 1)} className={`h-11 flex-1 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
                 <button
                   type="button"
@@ -497,6 +525,19 @@ export default function OrderPickKioskPage() {
                   <Printer className="w-4 h-4" /> Etiket
                 </button>
               </div>
+              {keypadIdx === idx && (
+                <div className="absolute inset-x-2 bottom-2 z-30 max-w-full" data-testid={`pick-keypad-${idx}`}>
+                  <QtyKeypad
+                    value={pickedQty}
+                    max={orderedQty}
+                    onConfirm={(n) => {
+                      closeKeypad();
+                      applyPickedQty(it, n);
+                    }}
+                    onCancel={closeKeypad}
+                  />
+                </div>
+              )}
             </div>
           );
         })}
