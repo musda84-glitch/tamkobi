@@ -30,6 +30,7 @@ sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 import addons  # noqa: E402
 import auth_utils  # noqa: E402
 import comm_service  # noqa: E402
+import event_notify  # noqa: E402
 import pricing  # noqa: E402
 import rbac  # noqa: E402
 import saas  # noqa: E402
@@ -333,12 +334,13 @@ def api():
     db.users.docs.append(_user("user-sa", [], "", superadmin=True))
     db.users.docs.append(_user("user-sa-a", [COMP_A], COMP_A, superadmin=True))
     _seed(db)
-    prev = (server.db, rbac._db, saas._db, addons._db, pricing._db, pricing._current_user, dict(pricing._deps))
+    prev = (server.db, rbac._db, saas._db, addons._db, pricing._db, pricing._current_user, dict(pricing._deps), event_notify._db)
     server.db = db
     rbac._db = db
     saas._db = db
     addons._db = db
     pricing._db = db
+    event_notify._db = db
     pricing._current_user = server.get_current_user
 
     async def mail_account(company_id):
@@ -370,7 +372,7 @@ def api():
     finally:
         if entered:
             client.__exit__(None, None, None)
-        server.db, rbac._db, saas._db, addons._db, pricing._db, pricing._current_user, pricing._deps = prev
+        server.db, rbac._db, saas._db, addons._db, pricing._db, pricing._current_user, pricing._deps, event_notify._db = prev
         router.on_startup[:] = saved_up
         router.on_shutdown[:] = saved_down
         saas.invalidate()
@@ -733,11 +735,16 @@ def test_morning_summary_settings_preview_and_send_stay_on_own_company(api):
     assert sent.json()["message"] == "Sabah özeti gönderildi."
     assert "Firma A" in sent.json()["text"]
     _no_foreign(sent.text)
-    assert db.side["mail"] == [COMP_A]
-    assert db.side["smtp"][0]["to"] == ["a@firma.test"]
+    assert db.side["mail"] == []
+    assert db.side["smtp"] == []
+    queued = [doc for doc in db.notify_outbox.docs if doc.get("company_id") == COMP_A and doc.get("event") == "morning_summary"]
+    assert len(queued) == 1
+    assert queued[0]["to"] == ["a@firma.test"]
+    assert queued[0]["html"] and queued[0]["text"]
+    assert "B-SECRET" not in queued[0]["html"] and "B-SECRET" not in queued[0]["text"]
     assert db.side["wa"][0]["company_id"] == COMP_A
     assert db.side["wa"][0]["to"] == "5551112233"
-    assert "B-SECRET" not in db.side["smtp"][0]["body"]
+    assert "☀️" in db.side["wa"][0]["message"] and "<table" not in db.side["wa"][0]["message"]
     logs = [doc for doc in db.morning_summary_logs.docs if doc["company_id"] == COMP_A]
     assert len(logs) == 1 and logs[0]["manual"] is True
     assert all(doc["company_id"] != COMP_B for doc in db.morning_summary_logs.docs)
@@ -832,8 +839,10 @@ def test_scheduler_uses_send_summary_helper_not_the_route(api):
     # Seeded schedules are 07:30 and 09:45. 10:00 is after both, including at midnight.
     _run_scheduler_once(_FrozenPricingDateTime(10, 0), called)
     assert called["routes"] == []
-    assert set(db.side["mail"]) == {COMP_A, COMP_B}
-    assert {row["to"][0] for row in db.side["smtp"]} == {"a@firma.test", "b-secret@firma.test"}
+    assert db.side["mail"] == []
+    assert db.side["smtp"] == []
+    queued = [doc for doc in db.notify_outbox.docs if doc.get("event") == "morning_summary"]
+    assert {doc["to"][0] for doc in queued} == {"a@firma.test", "b-secret@firma.test"}
     logs = db.morning_summary_logs.docs
     assert {doc["company_id"] for doc in logs} == {COMP_A, COMP_B}
     assert all(doc["manual"] is False for doc in logs)
@@ -859,8 +868,10 @@ def test_scheduler_sends_at_0800_tr_not_at_0759(api):
 
     _run_scheduler_once(_FrozenPricingDateTime(8, 0), called)
     assert called["routes"] == []
-    assert set(db.side["mail"]) == {COMP_A, COMP_B}
-    assert {row["to"][0] for row in db.side["smtp"]} == {"a@firma.test", "b-secret@firma.test"}
+    assert db.side["mail"] == []
+    assert db.side["smtp"] == []
+    queued = [doc for doc in db.notify_outbox.docs if doc.get("event") == "morning_summary"]
+    assert {doc["to"][0] for doc in queued} == {"a@firma.test", "b-secret@firma.test"}
     logs = db.morning_summary_logs.docs
     assert {doc["company_id"] for doc in logs} == {COMP_A, COMP_B}
     assert all(doc["manual"] is False for doc in logs)
