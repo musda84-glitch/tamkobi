@@ -21,7 +21,9 @@ import {
   locationConsentStatusLabel,
   type LocationConsent,
 } from "../utils/locationConsent";
+import { readHomeStartPage, writeHomeStartPage, type HomeStartPage } from "../utils/homeStartPage";
 import { idOf } from "../utils/money";
+import { showHomeFinanceSummary } from "../utils/permissions";
 import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { getStoredPushToken, isFcmPushError, presentLocalNotification, readPushLastError, registerDevicePush, type PushResult, type PushStatus } from "../utils/pushRegister";
 import { go } from "../nav";
@@ -98,8 +100,10 @@ export function SettingsScreen() {
   const [punchMode, setPunchMode] = useState("off");
   const [zone, setZone] = useState("Europe/Istanbul");
   const [newPin, setNewPin] = useState("");
+  const [startPage, setStartPage] = useState<HomeStartPage>("overview");
 
   const linkedEmployee = Boolean(user?.employee_id);
+  const financeHome = showHomeFinanceSummary(user);
   const empId = String(user?.employee_id || idOf(me) || "").trim();
   const consentOk = locationConsentAccepted(consent);
 
@@ -155,6 +159,23 @@ export function SettingsScreen() {
     setProfileName(String(user?.name || ""));
     setProfilePhone(String(user?.phone || ""));
   }, [user?.name, user?.phone]);
+
+  useEffect(() => {
+    if (!financeHome) return undefined;
+    let live = true;
+    readHomeStartPage(String(user?.id || ""), String(companyId || "")).then((page) => {
+      if (!live) return;
+      setStartPage(page);
+    });
+    return () => { live = false; };
+  }, [financeHome, user?.id, companyId]);
+
+  const saveStartPage = async (page: HomeStartPage) => {
+    setStartPage(page);
+    setError(null);
+    await writeHomeStartPage(String(user?.id || ""), String(companyId || ""), page);
+    setMessage("Açılış ekranı kaydedildi.");
+  };
 
   const saveProfile = async () => {
     const name = profileName.trim();
@@ -266,6 +287,49 @@ export function SettingsScreen() {
         <Muted>Ağ etiket yazıcısı (Xprinter XP-490B, TSPL, port 9100).</Muted>
         <PrimaryButton title="Yazıcılar" testID="settings-open-printers" icon="print" onPress={() => go("Printers")} color={colors.indigo} />
       </Card>
+
+      {financeHome ? (
+        <Card testID="settings-start-page">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Açılış ekranı</Text>
+          <Muted>Uygulama açıldığında yönetici ana ekranı bu sayfadan başlar.</Muted>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              testID="settings-start-overview"
+              onPress={() => saveStartPage("overview")}
+              style={{
+                flex: 1,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 999,
+                backgroundColor: startPage === "overview" ? colors.primary : "#fff",
+                borderWidth: 1,
+                borderColor: startPage === "overview" ? colors.primary : colors.border,
+              }}
+            >
+              <Text style={{ color: startPage === "overview" ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>Genel Bakış</Text>
+            </Pressable>
+            <Pressable
+              testID="settings-start-tiles"
+              onPress={() => saveStartPage("tiles")}
+              style={{
+                flex: 1,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 999,
+                backgroundColor: startPage === "tiles" ? colors.primary : "#fff",
+                borderWidth: 1,
+                borderColor: startPage === "tiles" ? colors.primary : colors.border,
+              }}
+            >
+              <Text style={{ color: startPage === "tiles" ? "#fff" : colors.text, fontWeight: "700", fontSize: 12 }}>Butonlar</Text>
+            </Pressable>
+          </View>
+        </Card>
+      ) : null}
 
       <Card testID="settings-profile">
         <Text style={{ fontWeight: "800", color: colors.text }}>Profilim</Text>

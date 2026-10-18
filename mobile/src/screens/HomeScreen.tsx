@@ -1,19 +1,18 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, ScrollView, View, useWindowDimensions } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
-import { ActionTiles, type ActionTile } from "../components/ActionTiles";
-import { Badge, Card, ErrorBanner, Muted, Row, Screen, StatRows } from "../components/kit";
-import { NotificationsPanel } from "../components/NotificationsPanel";
-import { ManagerApprovalsPanel } from "../components/ManagerApprovalsPanel";
-import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
+import type { ActionTile } from "../components/ActionTiles";
+import { HomeOverviewPage } from "../components/home/HomeOverviewPage";
+import { HomeTilesPage } from "../components/home/HomeTilesPage";
+import { Screen } from "../components/kit";
 import { goHref } from "../nav";
 import { colors } from "../theme";
-import type { DashboardStats, Notification, Overview } from "../types";
-import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
+import type { DashboardStats, ManagerSummary, Notification, Overview } from "../types";
+import { visibleHomeTasks } from "../utils/dashboard";
 import { requestConfirm } from "../utils/confirmDialog";
 import {
   HOME_QUICK_EXTRA_KEY,
@@ -26,9 +25,10 @@ import {
   serializeExtraTileIds,
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
-import { fmtMoney, idOf } from "../utils/money";
+import { readHomeStartPage, startPageIndex } from "../utils/homeStartPage";
+import { idOf } from "../utils/money";
+import { resolveMediaUrl } from "../utils/media";
 import {
-  latestNotifications,
   MISSING_RECORD,
   NOTIFICATIONS_CLEAR_PATH,
   NOTIFICATIONS_READ_ALL_PATH,
@@ -41,13 +41,16 @@ import {
   visibleNotifications,
 } from "../utils/notifications";
 import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
-import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
+import { splitNotificationsTile, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
 
 export function HomeScreen() {
-  const { client, companyId, user, license } = useAuth();
+  const { client, companyId, user, license, activeCompany, baseUrl } = useAuth();
   const { live, refresh: refreshBadges } = useBadges();
+  const { width } = useWindowDimensions();
+  const pagerRef = useRef<{ scrollTo: (opts: { x: number; y: number; animated?: boolean }) => void } | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [manager, setManager] = useState<ManagerSummary | null>(null);
   const [notes, setNotes] = useState<Notification[]>([]);
   const [openTasks, setOpenTasks] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +58,11 @@ export function HomeScreen() {
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const [clearingNotes, setClearingNotes] = useState(false);
+  const [startReady, setStartReady] = useState(false);
+  const [startIndex, setStartIndex] = useState(0);
+  const [page, setPage] = useState(0);
+  const [frameHeight, setFrameHeight] = useState(0);
+  const [dotsHeight, setDotsHeight] = useState(0);
 
   const showFinance = showHomeFinanceSummary(user);
   const showRefresh = showHomeRefreshTile(user);
@@ -111,7 +119,7 @@ export function HomeScreen() {
     setRefreshing(true);
     try {
       const staff = hasSelfPersonnelRecord(user);
-      const [ov, list, st, me] = await Promise.all([
+      const [ov, list, st, me, mgr] = await Promise.all([
         get<Overview>(client, "/dashboard/overview", { company_id: companyId }),
         get<Notification[]>(client, "/notifications", { company_id: companyId }).catch(() => []),
         showFinance
@@ -119,6 +127,9 @@ export function HomeScreen() {
           : Promise.resolve(null),
         staff
           ? get<{ tasks?: { done?: boolean }[]; work_orders?: unknown[] }>(client, "/personnel/me").catch(() => null)
+          : Promise.resolve(null),
+        showFinance
+          ? get<ManagerSummary>(client, "/dashboard/manager-summary", { company_id: companyId }).catch(() => null)
           : Promise.resolve(null),
         refreshBadges(),
       ]);
@@ -131,6 +142,7 @@ export function HomeScreen() {
       setOverview(ov ? { ...ov, tasks: homeTasks } : ov);
       setNotes(visibleNotifications(list || [], user));
       setStats(st);
+      setManager(mgr);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Özet yüklenemedi."));
@@ -149,6 +161,24 @@ export function HomeScreen() {
     });
     load();
   }, [load]));
+
+  useEffect(() => {
+    if (!showFinance) return undefined;
+    let live = true;
+    readHomeStartPage(String(user?.id || ""), String(companyId || "")).then((mode) => {
+      if (!live) return;
+      const index = startPageIndex(mode);
+      setStartIndex(index);
+      setPage(index);
+      setStartReady(true);
+    });
+    return () => { live = false; };
+  }, [showFinance, user?.id, companyId]);
+
+  useEffect(() => {
+    if (!showFinance || !startReady || width <= 0) return;
+    pagerRef.current?.scrollTo({ x: startIndex * width, y: 0, animated: false });
+  }, [showFinance, startReady, startIndex, width]);
 
   const openNotification = useCallback(async (n: Notification) => {
     const id = idOf(n);
@@ -219,85 +249,111 @@ export function HomeScreen() {
     }
   }, [clearingNotes, client, companyId, notes, refreshBadges]);
 
-  const profitRow = netProfitRow(stats);
+  const tilesPage = (
+    <HomeTilesPage
+      error={error}
+      quickItems={quickItems}
+      showRefresh={showRefresh}
+      refreshing={refreshing}
+      onRefresh={load}
+      showApprovals={showApprovals}
+      client={client}
+      companyId={companyId}
+      onBadgesChanged={refreshBadges}
+      showMessages={showMessages}
+      notifications={notifications}
+      notes={notes}
+      clearingNotes={clearingNotes}
+      onOpenAllNotes={() => { if (notifications) goHref(notifications.href); }}
+      onOpenNote={(n) => { void openNotification(n); }}
+      onDeleteNote={(n) => { void deleteNotification(n); }}
+      onClearNotes={() => { void clearAllNotifications(); }}
+      onMarkAllRead={() => { void markAllRead(); }}
+      showFinance={showFinance}
+      stats={stats}
+      overview={overview}
+    />
+  );
 
+  if (!showFinance) {
+    return (
+      <Screen onRefresh={load} refreshing={refreshing}>
+        {tilesPage}
+      </Screen>
+    );
+  }
+
+  if (!startReady) {
+    return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  }
+
+  const pageOffset = startIndex * width;
+  const pageHeight = frameHeight > dotsHeight ? frameHeight - dotsHeight : 0;
   return (
-    <Screen onRefresh={load} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-
-      <View testID="home-quick-menu">
-        <ActionTiles
-          size="md"
-          items={[
-            ...quickItems,
-            ...(showRefresh ? [{
-              key: "refresh",
-              label: "Yenile",
-              icon: "refresh" as const,
-              tone: "slate" as const,
-              testID: "home-quick-refresh",
-              onPress: load,
-              busy: refreshing,
-            }] : []),
-          ]}
-        />
-        {showApprovals ? (
-          <View style={{ marginTop: 8 }}>
-            <ManagerApprovalsPanel client={client} companyId={companyId} onChanged={refreshBadges} />
-          </View>
-        ) : null}
-        {showMessages ? (
-          <View style={{ marginTop: 8 }}>
-            <StaffMessagesPanel client={client} onChanged={refreshBadges} />
-          </View>
-        ) : null}
-        {notifications ? (
-          <View style={{ marginTop: 4 }}>
-            <NotificationsPanel
-              items={latestNotifications(notes)}
-              unread={unreadCount(notes)}
-              totalCount={notes.length}
-              clearing={clearingNotes}
-              onOpenAll={() => goHref(notifications.href)}
-              onOpenItem={(n) => { void openNotification(n); }}
-              onDeleteItem={(n) => { void deleteNotification(n); }}
-              onClearAll={() => { void clearAllNotifications(); }}
-              onMarkAllRead={() => { void markAllRead(); }}
+    <View
+      style={{ flex: 1, backgroundColor: colors.background }}
+      onLayout={(e) => {
+        const next = Math.round(e.nativeEvent.layout.height);
+        setFrameHeight((prev) => (prev === next ? prev : next));
+      }}
+    >
+      <ScrollView
+        ref={pagerRef as never}
+        horizontal
+        pagingEnabled
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator={false}
+        testID="home-pager"
+        style={{ height: pageHeight || undefined, flex: pageHeight ? undefined : 1 }}
+        contentOffset={{ x: pageOffset, y: 0 }}
+        onMomentumScrollEnd={(e) => {
+          if (width <= 0) return;
+          const x = e?.nativeEvent?.contentOffset?.x ?? 0;
+          const next = Math.max(0, Math.min(1, Math.round(x / width)));
+          setPage(next);
+        }}
+      >
+        <View style={{ width, height: pageHeight || undefined }} testID="home-page-overview">
+          <Screen onRefresh={load} refreshing={refreshing}>
+            <HomeOverviewPage
+              userName={user?.name}
+              companyName={activeCompany?.name}
+              logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url) || null}
+              user={user}
+              stats={stats}
+              overview={overview}
+              manager={manager}
             />
-          </View>
-        ) : null}
+          </Screen>
+        </View>
+        <View style={{ width, height: pageHeight || undefined }} testID="home-page-tiles">
+          <Screen onRefresh={load} refreshing={refreshing}>
+            {tilesPage}
+          </Screen>
+        </View>
+      </ScrollView>
+      <View
+        testID="home-pager-dots"
+        onLayout={(e) => {
+          const next = Math.round(e.nativeEvent.layout.height);
+          setDotsHeight((prev) => (prev === next ? prev : next));
+        }}
+        style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, paddingTop: 4, paddingBottom: 8 }}
+      >
+        {[0, 1].map((i) => (
+          <View
+            key={i}
+            testID={`home-pager-dot-${i}`}
+            accessibilityLabel={i === 0 ? "Genel Bakış" : "Butonlar"}
+            style={{
+              width: page === i ? 16 : 6,
+              height: 6,
+              borderRadius: 999,
+              backgroundColor: page === i ? colors.primary : colors.slate200,
+            }}
+          />
+        ))}
       </View>
-
-      {showFinance ? (
-        <StatRows
-          testID="home-summary"
-          items={[
-            { key: "sales", ...monthlySalesRow(stats, overview) },
-            ...(profitRow ? [{ key: "profit", ...profitRow, valueColor: (stats?.net_profit ?? 0) < 0 ? colors.danger : colors.primaryHover }] : []),
-            { key: "collections", label: "Tahsilat", value: fmtMoney(overview?.collections.total), hint: `Gecikmiş ${fmtMoney(overview?.collections.overdue)}` },
-            { key: "payments", label: "Ödeme", value: fmtMoney(overview?.payments.total), hint: `Gecikmiş ${fmtMoney(overview?.payments.overdue)}` },
-            { key: "vat", label: "KDV ödenecek", value: fmtMoney(overview?.vat.payable), hint: `${overview?.vat.days_left ?? "—"} gün` },
-          ]}
-        />
-      ) : null}
-      <Card>
-        <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü işler</Text>
-        {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => {
-          const href = resolveMobilePath(t.path);
-          const row = (
-            <Row style={{ justifyContent: "space-between", paddingVertical: 6 }}>
-              <Text style={{ color: colors.text, flex: 1 }}>{t.label}{t.extra ? ` · ${t.extra}` : ""}</Text>
-              <Badge label={String(t.count)} tone={t.count ? "amber" : "slate"} />
-            </Row>
-          );
-          if (!href) return <View key={t.key}>{row}</View>;
-          return (
-            <Pressable key={t.key} onPress={() => goHref(href)} testID={`home-task-${t.key}`}>
-              {row}
-            </Pressable>
-          );
-        })}
-      </Card>
-    </Screen>
+    </View>
   );
 }

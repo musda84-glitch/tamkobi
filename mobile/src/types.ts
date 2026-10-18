@@ -53,15 +53,50 @@ export type Overview = {
   vat: { month: string; calculated: number; deductible: number; payable: number; days_left: number };
 };
 
+export type LowStockProduct = {
+  id?: string;
+  _id?: string;
+  name?: string;
+  sku?: string;
+  stock_quantity?: number | null;
+  min_stock_alert?: number | null;
+  unit?: string | null;
+};
+
 /** /dashboard/stats — web panosundaki aylık ciro / kâr rakamları. */
 export type DashboardStats = {
-  monthly_sales?: number;
-  monthly_expenses?: number;
-  net_profit?: number;
+  monthly_sales?: number | null;
+  monthly_expenses?: number | null;
+  net_profit?: number | null;
   sales_change_pct?: number | null;
-  total_bank_balance?: number;
-  total_receivables?: number;
-  total_payables?: number;
+  today_sales?: number | null;
+  total_bank_balance?: number | null;
+  total_receivables?: number | null;
+  total_payables?: number | null;
+  low_stock_count?: number | null;
+  low_stock_products?: LowStockProduct[] | null;
+};
+
+/** /dashboard/manager-summary — modül yoksa ilgili anahtar gelmez; ikisi de yoksa {}. */
+export type ManagerProductionSummary = {
+  open?: number | null;
+  in_production?: number | null;
+  late?: number | null;
+  completed_this_month?: number | null;
+  today_done_steps?: number | null;
+  today_produced?: number | null;
+};
+
+export type ManagerProjectsSummary = {
+  active?: number | null;
+  overdue?: number | null;
+  budget_total?: number | null;
+  cost_total?: number | null;
+};
+
+export type ManagerSummary = {
+  production?: ManagerProductionSummary | null;
+  projects?: ManagerProjectsSummary | null;
 };
 
 export type Contact = {
