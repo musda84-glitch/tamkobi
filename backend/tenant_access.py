@@ -56,6 +56,16 @@ def resolve_company_id(user: dict, requested: Optional[str] = None) -> str:
     raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
 
 
+def resolve_caller_company(user: Any, requested: Optional[str] = None) -> str:
+    """HTTP oturumunda resolve_company_id. Doğrudan çağrıda payload company_id zorunlu."""
+    if isinstance(user, dict):
+        return resolve_company_id(user, requested)
+    cid = str(requested or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
+    return cid
+
+
 async def get_tenant_doc(
     db: Any,
     collection: str,

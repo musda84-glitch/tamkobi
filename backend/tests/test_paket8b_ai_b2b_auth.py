@@ -510,7 +510,7 @@ def test_route_signatures_have_auth_and_no_nexus_default():
     assert "req.company_id" not in after_resolve
     assert advisor.index("addons.require") < advisor.index("bank_accounts.find")
     assert server.FinancialAIChatRequest.model_fields["company_id"].default is None
-    assert server.AIChatRequest.model_fields["company_id"].default == "comp_nexus_main_01"
+    assert server.AIChatRequest.model_fields["company_id"].default is None
     public = inspect.getsource(server.b2b_ai_cart_learn)
     assert "get_current_user" not in public
     assert "_ai_cart_learn_mappings" in public

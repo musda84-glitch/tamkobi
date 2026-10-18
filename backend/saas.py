@@ -483,10 +483,21 @@ def invalidate(company_id: Optional[str] = None):
 
 
 async def guard(request: Request, user: Optional[dict], module: Optional[str]):
-    """Middleware hook: modül şirket lisansında kapalıysa 403."""
+    """Middleware hook: modül şirket lisansında kapalıysa 403.
+
+    Sorgu ve aktif firma yoksa gövdedeki company_id'ye karışma; uç nokta
+    resolve_company_id ile karar verir. Demo firmaya düşülmez.
+    """
     if not module or module in CORE_MODULES:
         return None
-    cid = request.query_params.get("company_id") or (user or {}).get("active_company_id") or "comp_nexus_main_01"
+    requested = str(request.query_params.get("company_id") or "").strip()
+    active = str((user or {}).get("active_company_id") or "").strip()
+    if not requested and not active:
+        return None
+    try:
+        cid = tenant_access.resolve_company_id(user or {}, requested or None)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
     lic = await effective(cid)
     if lic["modules"].get(module, True):
         return None
@@ -1619,16 +1630,9 @@ async def license_companies(company_id: Optional[str] = None, user: dict = Depen
 
 
 @router.post("/license/companies")
-async def create_license_company(req: Dict[str, Any], request: Request):
-    parent = req.get("company_id") or "comp_nexus_main_01"
-    user = {}
-    try:
-        user = await _current_user(request)
-    except HTTPException:
-        user = {}
-    if not user_may_access_company(user, parent):
-        raise HTTPException(status_code=403, detail="Bu lisans altında şirket açma yetkiniz yok.")
-    if user and user.get("role") not in (None, "admin") and not user.get("is_super_admin"):
+async def create_license_company(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    parent = tenant_access.resolve_company_id(user, req.get("company_id"))
+    if user.get("role") not in (None, "admin") and not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Yeni şirket yalnızca şirket yöneticisi açabilir.")
     separate = bool((req.get("admin_email") or "").strip() or (req.get("admin_password") or "") or req.get("separate_login"))
     doc = await add_licensed_company(parent, req, attach_user=None if separate else user)
@@ -1653,18 +1657,14 @@ async def create_license_company(req: Dict[str, Any], request: Request):
 
 
 @router.post("/license/upgrade-request")
-async def upgrade_request(req: Dict[str, Any], request: Request):
-    cid = req.get("company_id") or "comp_nexus_main_01"
+async def upgrade_request(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     plan = await _db.saas_plans.find_one({"_id": req.get("plan_id")})
     if not plan:
         raise HTTPException(status_code=400, detail="Paket seçin.")
     if await _db.upgrade_requests.find_one({"company_id": cid, "status": "pending"}):
         raise HTTPException(status_code=400, detail="Bekleyen bir talebiniz zaten var.")
     c = await _db.companies.find_one({"_id": cid}) or {}
-    try:
-        user = await _current_user(request)
-    except HTTPException:
-        user = {}
     doc = {"_id": str(uuid.uuid4()), "company_id": cid, "company_name": c.get("name"), "plan_id": plan["_id"], "plan_name": plan["name"], "modules": [m for m in (req.get("modules") or []) if m in _ALL], "message": (req.get("message") or "")[:500], "requested_by": user.get("email"), "status": "pending", "created_at": _now()}
     await _db.upgrade_requests.insert_one(doc)
     return {"status": "success", "message": f"{plan['name']} paketi için yükseltme talebiniz alındı; sistem yöneticisi onayladığında modüller açılır.", "request": _clean(doc)}

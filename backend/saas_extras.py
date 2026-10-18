@@ -16,6 +16,7 @@ from fastapi.responses import PlainTextResponse
 import comm_service
 import saas
 import saas_billing
+import tenant_access
 from auth_utils import (
     get_jwt_secret, JWT_ALGORITHM, get_user_from_token, session_token,
     auth_cookie_kwargs, SUPERADMIN_ACCESS_SECONDS,
@@ -375,7 +376,14 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     c = await paytr_conf()
     if not (c["enabled"] and c["merchant_id"] and c["merchant_key"] and c["merchant_salt"]):
         raise HTTPException(status_code=400, detail="PayTR aktif değil; sistem yöneticisi PayTR bilgilerini girmeli.")
-    item = await saas_billing.resolve_checkout_item(req)
+    item_req = req
+    try:
+        payer = await saas._user_dep(request)
+    except HTTPException:
+        payer = None
+    if isinstance(payer, dict) and payer:
+        item_req = {**req, "company_id": tenant_access.resolve_company_id(payer, req.get("company_id"))}
+    item = await saas_billing.resolve_checkout_item(item_req)
     cid = item["company_id"]
     company = await _db.companies.find_one({"_id": cid})
     if not company:

@@ -319,7 +319,8 @@ def api():
 
 def test_internal_signatures_keep_wa_send_and_drop_nexus_default():
     assert list(inspect.signature(server.wa_send).parameters) == ["req"]
-    assert "comp_nexus_main_01" in inspect.getsource(server.wa_send)
+    assert "comp_nexus_main_01" not in inspect.getsource(server.wa_send)
+    assert "resolve_company_id" not in inspect.getsource(server.wa_send)
     route = inspect.getsource(server.wa_send_route)
     assert "resolve_company_id" in route
     assert "comp_nexus_main_01" not in route
@@ -578,11 +579,12 @@ def test_whatsapp_send_route_is_authed_and_internal_call_is_not(api):
     assert direct["status"] == "sent"
     assert direct["company_id"] == COMP_A
     assert len(graph_calls) == calls_before + 2
-    legacy = _run(server.wa_send({"phone": "05321112233", "message": "varsayilan"}))
-    assert legacy["company_id"] == NEXUS
-    assert legacy["status"] == "simulated"
+    with pytest.raises(HTTPException) as legacy_exc:
+        _run(server.wa_send({"phone": "05321112233", "message": "varsayilan"}))
+    assert legacy_exc.value.status_code == 400
+    assert legacy_exc.value.detail == "Şirket seçilmedi."
     assert len(graph_calls) == calls_before + 2
-    assert any(d["company_id"] == NEXUS and d["message"] == "varsayilan" for d in db.whatsapp_logs.docs)
+    assert not any(d.get("company_id") == NEXUS for d in db.whatsapp_logs.docs)
 
 
 def test_webhook_signature_and_unknown_phone(api, caplog):

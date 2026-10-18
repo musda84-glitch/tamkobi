@@ -206,11 +206,8 @@ async def get_mine(ticket_id: str, request: Request):
 
 
 @router.post("/support/tickets")
-async def create_ticket(req: Dict[str, Any], request: Request):
-    user = await _user(request)
-    company_id = (req.get("company_id") or user.get("active_company_id") or "comp_nexus_main_01").strip()
-    if not _in_company(user, company_id):
-        raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+async def create_ticket(req: Dict[str, Any], user: dict = Depends(_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     await _require_addon(company_id)
     subject = str(req.get("subject") or "").strip()[:MAX_SUBJECT]
     body = str(req.get("body") or "").strip()[:MAX_BODY]

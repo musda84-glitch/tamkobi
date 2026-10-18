@@ -186,10 +186,12 @@ def enrich_documents(docs: list, obligations: list) -> list:
 @router.post("/tax-obligations/extract")
 async def extract_tax_doc(
     file: UploadFile = File(...),
-    company_id: str = Query("comp_nexus_main_01"),
+    company_id: Optional[str] = Query(None),
     source_kind: str = Query(""),
     month: str = Query(""),
+    user: dict = Depends(_user_dep),
 ):
+    company_id = tenant_access.resolve_company_id(user, company_id if isinstance(company_id, str) else None)
     name = file.filename or "belge.pdf"
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:

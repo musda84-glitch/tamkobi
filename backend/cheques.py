@@ -340,8 +340,8 @@ async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
 
 
 @router.post("/cheques")
-async def create_cheque(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_cheque(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     direction = req.get("direction") or "received"
     instrument = _instrument(req)
     if direction not in ("received", "issued"):

@@ -339,7 +339,8 @@ async def _enrich(doc: dict, company_id: str):
 
 
 @router.post("/edocs/inbox/upload")
-async def upload_edoc(file: UploadFile = File(...), company_id: str = Form("comp_nexus_main_01")):
+async def upload_edoc(file: UploadFile = File(...), company_id: Optional[str] = Form(None), user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id if isinstance(company_id, str) else None)
     data = await file.read()
     name = (file.filename or "").lower()
     if name.endswith(".xml") or data[:5] == b"<?xml" or b"<Invoice" in data[:400] or b"<DespatchAdvice" in data[:400]:

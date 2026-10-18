@@ -227,8 +227,8 @@ async def purge_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
 
 
 @router.post("/trash/empty")
-async def empty_trash(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def empty_trash(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     q: Dict[str, Any] = {"company_id": company_id}
     if req.get("entity_type"):
         q["entity_type"] = req["entity_type"]

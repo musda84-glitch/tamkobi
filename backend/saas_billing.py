@@ -12,6 +12,7 @@ from emergentintegrations.payments.stripe.checkout import StripeCheckout, Checko
 import rbac
 import gib_credits
 import saas
+import tenant_access
 import user_numbers
 from auth_utils import hash_password, create_access_token, create_refresh_token, auth_cookie_kwargs
 
@@ -83,7 +84,9 @@ def _checkout(public_base: str) -> StripeCheckout:
 
 
 async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
-    cid = req.get("company_id") or "comp_nexus_main_01"
+    cid = str(req.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     if not await _db.companies.find_one({"_id": cid}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     if req.get("pack_id") or req.get("product_type") == "gib_credits":
@@ -105,9 +108,10 @@ async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
 
 # ---------------- Payments ----------------
 @router.post("/payments/checkout")
-async def create_checkout(req: Dict[str, Any], request: Request):
+async def create_checkout(req: Dict[str, Any], request: Request, user: dict = Depends(saas._user_dep)):
     import public_url as pu
-    item = await resolve_checkout_item(req)
+    cid = tenant_access.resolve_company_id(user, req.get("company_id"))
+    item = await resolve_checkout_item({**req, "company_id": cid})
     st = await settings()
     origin = pu.resolve_public_base_url(
         platform_public_url=st.get("public_url"),
