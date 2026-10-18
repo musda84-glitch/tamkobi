@@ -9,7 +9,7 @@ import { Badge, Card, Empty, ErrorBanner, Field, Muted, Row, Screen } from "../c
 import { go } from "../nav";
 import { colors } from "../theme";
 import { fmtDate, idOf } from "../utils/money";
-import { loadLabelPrinter, printShipmentLabels } from "../utils/labelPrinter";
+import { defaultLabelPrinter, printShipmentLabels, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import { pickPercent, pickStatusTone, pickStatusTr, pickSummaryText, type PickRow, type PickSession } from "../utils/orderPick";
 
 export function ProgressBar({ percent }: { percent: number }) {
@@ -32,6 +32,7 @@ export function SevkScreen() {
   const [printFor, setPrintFor] = useState<PickRow | null>(null);
   const [printBusy, setPrintBusy] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
 
   const load = useCallback(async () => {
     if (!canView) return;
@@ -54,6 +55,13 @@ export function SevkScreen() {
     if (!s) return rows;
     return rows.filter((r) => [r.order_number, r.customer_name, r.city].some((v) => String(v || "").toLowerCase().includes(s)));
   }, [q, rows]);
+
+  const openShipLabel = async (row: PickRow) => {
+    setPrintError(null);
+    const resolved = await resolveLabelPrinter(client, companyId);
+    setLabelPrinter(resolved);
+    setPrintFor(row);
+  };
 
   if (!canView) {
     return (
@@ -102,7 +110,7 @@ export function SevkScreen() {
               columns={3}
               items={[
                 { key: "pick", label: "Topla", icon: "scan", tone: "emerald", testID: `sevk-open-${idOf(r)}`, onPress: () => go("SevkPick", { id: idOf(r), name: r.order_number }) },
-                { key: "label", label: "Etiket bas", icon: "print", tone: "indigo", testID: `sevk-label-${idOf(r)}`, onPress: () => { setPrintError(null); setPrintFor(r); } },
+                { key: "label", label: "Etiket bas", icon: "print", tone: "indigo", testID: `sevk-label-${idOf(r)}`, onPress: () => { void openShipLabel(r); } },
               ]}
             />
           </Card>
@@ -117,6 +125,13 @@ export function SevkScreen() {
         busy={printBusy}
         error={printError}
         testID="sevk-label-sheet"
+        printerHost={labelPrinter.host}
+        printerPort={labelPrinter.port}
+        onSavePrinter={async (host, port) => {
+          const saved = await saveLabelPrinter({ host, port }, companyId);
+          setLabelPrinter(saved);
+        }}
+        onOpenPrinters={() => go("Printers")}
         onClose={() => setPrintFor(null)}
         onPrint={async (copies) => {
           if (!printFor) return;
@@ -132,7 +147,7 @@ export function SevkScreen() {
             } catch {
               /* listedeki müşteri ve şehir yeter */
             }
-            const settings = await loadLabelPrinter(companyId);
+            const settings = await resolveLabelPrinter(client, companyId);
             await printShipmentLabels({
               settings,
               shipment: {
