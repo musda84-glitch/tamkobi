@@ -10,6 +10,7 @@ import { BankMatchModal } from "./BankMatchModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { MoneyInput } from "./MoneyInput";
 import { accountDisplayLabel } from "../utils/accountLabel";
+import { replaceMatchSession } from "./banking/txMatchSession";
 
 export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
 
@@ -37,6 +38,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
   const [receipt, setReceipt] = useState(false);
   const [editTx, setEditTx] = useState(null);
   const [matchTx, setMatchTx] = useState(null);
+  const [matchReplace, setMatchReplace] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef(null);
   const menuRef = useRef(null);
@@ -83,20 +85,16 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
 
   const onMatch = () => {
     setOpen(false);
-    setMatchTx(tx);
+    const session = { tx, replace: false };
+    setMatchReplace(session.replace);
+    setMatchTx(session.tx);
   };
 
-  const onFixMatch = async () => {
+  const onFixMatch = () => {
     setOpen(false);
-    if (!window.confirm("Mevcut eşleşme geri alınsın ve yeniden eşleştirilsin mi? Cari bakiye / fatura / virman etkileri düzeltilir.")) return;
-    try {
-      await axios.post(`${API_URL}/banking/transactions/${txId}/unmatch`);
-      toast.success("Eşleşme geri alındı; yeni eşleşmeyi seçin.");
-      setMatchTx({ ...tx, match_status: "unmatched", contact_id: null, contact_name: null, related_invoice_id: null, target_account_id: null });
-      onChanged?.();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Eşleşme geri alınamadı.");
-    }
+    const session = replaceMatchSession(tx);
+    setMatchReplace(session.replace);
+    setMatchTx(session.tx);
   };
 
   const onEdit = () => {
@@ -158,7 +156,8 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
       <button
         ref={btnRef}
         type="button"
-        onClick={() => {
+        onClick={(e) => {
+          e.stopPropagation();
           if (open) { setOpen(false); return; }
           placeMenu();
           setOpen(true);
@@ -274,10 +273,11 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
       {matchTx && (
         <BankMatchModal
           tx={matchTx}
+          replace={matchReplace}
           contacts={contacts}
           accounts={accounts}
           companyId={companyId}
-          onClose={() => setMatchTx(null)}
+          onClose={() => { setMatchTx(null); setMatchReplace(false); }}
           onDone={(matched) => onChanged?.(matched)}
         />
       )}

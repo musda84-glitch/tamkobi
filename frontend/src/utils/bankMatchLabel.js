@@ -89,6 +89,41 @@ export function txUserColumnLabel(tx) {
   return created || "";
 }
 
+const USER_COLUMN_SHORT_MAX = 28;
+
+function txUserShortCreated(tx) {
+  const src = String(tx?.source || "");
+  if (src === "bank_sync" || src === "card_statement" || src === "bank_statement") {
+    return tx?.is_simulated ? "Simüle" : "Banka aktarımı";
+  }
+  const created = sanitizeActorLabel(tx?.created_by_name);
+  if (created) return created;
+  if (src === "ledger") return "Sistem";
+  return "";
+}
+
+function ellipsizeLabel(text, max) {
+  const s = String(text || "");
+  if (s.length <= max) return s;
+  if (max <= 1) return "…";
+  return `${s.slice(0, max - 1)}…`;
+}
+
+/**
+ * Kullanıcı sütununun kısa hali: «Banka aktarımı · Mustafa BAL».
+ * En fazla ~28 karakter; sığmazsa … ile biter. txUserColumnLabel aynı kalır.
+ */
+export function txUserColumnLabelShort(tx, max = USER_COLUMN_SHORT_MAX) {
+  const created = txUserShortCreated(tx);
+  const matched = matchActorName(tx);
+  const isMatched = String(tx?.match_status || "") === "matched" && !!matched;
+  let text = "";
+  if (isMatched && created) text = `${created} · ${matched}`;
+  else if (isMatched) text = matched;
+  else text = created || "";
+  return ellipsizeLabel(text, max);
+}
+
 /** @deprecated alias — liste sütunu için txUserColumnLabel kullanın. */
 export function txCreatedByLabel(tx) {
   return txUserColumnLabel(tx);

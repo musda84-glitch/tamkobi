@@ -10,19 +10,19 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { asContactList, canUploadBankStatement } from "../utils/bankStatementUpload";
-import { matchActorTitle, matchStatusLabel, txUserColumnLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
+import { matchActorTitle, matchStatusLabel, txUserColumnLabel, txUserColumnLabelShort, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { filterAccountTransactions } from "../utils/bankAccountTx";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { OpeningBalanceDialog } from "../components/OpeningBalanceDialog";
 import { TxRowMenu } from "../components/TxRowMenu";
-import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "../components/TxMobileCard";
+import { TxMobileCard, TxResponsiveList, TxTypeBadge } from "../components/TxMobileCard";
 import { SearchSelect } from "../components/SearchSelect";
 import { VirmanPartySelect } from "../components/VirmanPartySelect";
 import { MoneyInput } from "../components/MoneyInput";
 
 import { formatTrAmount, fmtDate } from "../utils/money";
-import { PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, partnerSummaryCardMeta } from "../utils/partnerTx";
+import { dateSortKey } from "../utils/dateFormat";
 import { shownAccountBalance, sumShownBalances, totalLiquidity as sumLiquidity } from "../utils/accountTotals";
 import { accountDisplayLabel, accountTypeLabel } from "../utils/accountLabel";
 import { openingEligible } from "../utils/openingBalance";
@@ -51,6 +51,10 @@ import {
 } from "lucide-react";
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
+import { BankSummaryStrip } from "../components/banking/BankSummaryStrip";
+import { BankAccountList } from "../components/banking/BankAccountList";
+import { TxMatchActions } from "../components/banking/TxMatchActions";
+import { TxDetailPanel } from "../components/banking/TxDetailPanel";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -62,12 +66,12 @@ const TABS = [
 const money = (n) => formatTrAmount((n || 0));
 
 const ACCOUNT_GROUPS = [
-  { type: "bank", badge: "Banka Hesapları", unit: "Hesap", icon: Landmark, card: "bg-blue-50/60 border-blue-200", iconBox: "bg-blue-100 text-blue-700", badgeCls: "text-blue-700 bg-blue-100", border: "border-blue-200/60" },
-  { type: "cash_box", badge: "Kasalar", unit: "Kasa", icon: Wallet, card: "bg-emerald-50/60 border-emerald-200", iconBox: "bg-emerald-100 text-emerald-700", badgeCls: "text-emerald-700 bg-emerald-100", border: "border-emerald-200/60" },
-  { type: "pos", badge: "POS Hesapları", unit: "POS", icon: CreditCard, card: "bg-purple-50/60 border-purple-200", iconBox: "bg-purple-100 text-purple-700", badgeCls: "text-purple-700 bg-purple-100", border: "border-purple-200/60" },
-  { type: "okc_pos", badge: "ÖKC POS Cihazları", unit: "ÖKC", icon: Cpu, card: "bg-teal-50/60 border-teal-200", iconBox: "bg-teal-100 text-teal-700", badgeCls: "text-teal-700 bg-teal-100", border: "border-teal-200/60" },
-  { type: "credit_card", badge: "Kredi Kartları", unit: "Kart", icon: CreditCard, card: "bg-fuchsia-50/60 border-fuchsia-200", iconBox: "bg-fuchsia-100 text-fuchsia-700", badgeCls: "text-fuchsia-700 bg-fuchsia-100", border: "border-fuchsia-200/60" },
-  { type: "customer_credit_card", badge: "Müşteri Kartları", unit: "Kart", icon: CreditCard, card: "bg-rose-50/60 border-rose-200", iconBox: "bg-rose-100 text-rose-700", badgeCls: "text-rose-700 bg-rose-100", border: "border-rose-200/60" }
+  { type: "bank", short: "Banka", badge: "Banka Hesapları", unit: "Hesap", icon: Landmark, card: "bg-blue-50/60 border-blue-200", iconBox: "bg-blue-100 text-blue-700", badgeCls: "text-blue-700 bg-blue-100", border: "border-blue-200/60" },
+  { type: "cash_box", short: "Kasa", badge: "Kasalar", unit: "Kasa", icon: Wallet, card: "bg-emerald-50/60 border-emerald-200", iconBox: "bg-emerald-100 text-emerald-700", badgeCls: "text-emerald-700 bg-emerald-100", border: "border-emerald-200/60" },
+  { type: "pos", short: "POS", badge: "POS Hesapları", unit: "POS", icon: CreditCard, card: "bg-purple-50/60 border-purple-200", iconBox: "bg-purple-100 text-purple-700", badgeCls: "text-purple-700 bg-purple-100", border: "border-purple-200/60" },
+  { type: "okc_pos", short: "ÖKC", badge: "ÖKC POS Cihazları", unit: "ÖKC", icon: Cpu, card: "bg-teal-50/60 border-teal-200", iconBox: "bg-teal-100 text-teal-700", badgeCls: "text-teal-700 bg-teal-100", border: "border-teal-200/60" },
+  { type: "credit_card", short: "Kart", badge: "Kredi Kartları", unit: "Kart", icon: CreditCard, card: "bg-fuchsia-50/60 border-fuchsia-200", iconBox: "bg-fuchsia-100 text-fuchsia-700", badgeCls: "text-fuchsia-700 bg-fuchsia-100", border: "border-fuchsia-200/60" },
+  { type: "customer_credit_card", short: "Müşteri kartları", badge: "Müşteri Kartları", unit: "Kart", icon: CreditCard, card: "bg-rose-50/60 border-rose-200", iconBox: "bg-rose-100 text-rose-700", badgeCls: "text-rose-700 bg-rose-100", border: "border-rose-200/60" }
 ];
 
 const accountGroupType = (a) => (
@@ -133,7 +137,8 @@ function mergeMatchedTx(prev, matchedTx) {
 }
 
 export default function BankingPage() {
-  const { activeCompany, addonOn, user } = useAuth();
+  const { activeCompany, addonOn, user, can } = useAuth();
+  const canEditBanking = typeof can === "function" && can("/banking", "edit");
   const canRepairBalances = Boolean(user?.is_super_admin) || ["admin", "owner"].includes(String(user?.role || "").toLowerCase());
   const [searchParams] = useSearchParams();
   const companyId = activeCompanyId(activeCompany);
@@ -168,6 +173,10 @@ export default function BankingPage() {
   const [editingAccount, setEditingAccount] = useState(null);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
   const [cardMenuId, setCardMenuId] = useState(null);
+  const [unmatchedOnly, setUnmatchedOnly] = useState(false);
+  const [txQuery, setTxQuery] = useState("");
+  const [last30, setLast30] = useState(false);
+  const [detailTxId, setDetailTxId] = useState(null);
   const [openingAccount, setOpeningAccount] = useState(null);
   const [cashTick, setCashTick] = useState(0);
   const [serverItems, setServerItems] = useState([]);
@@ -303,7 +312,7 @@ export default function BankingPage() {
       const [accRes, psRes] = await Promise.all([
         onReconciliation
           ? Promise.resolve(null)
-          : axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
+          : axios.get(`${API_URL}/banking/accounts?company_id=${companyId}&with_month=1`),
         axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`).catch(() => ({ data: null }))
       ]);
       if (!accRes || tabRef.current === "reconciliation") {
@@ -625,20 +634,24 @@ export default function BankingPage() {
   const totalLiquidity = sumLiquidity(accounts);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
   const accountDisplayBalance = shownAccountBalance;
-  const grouped = ACCOUNT_GROUPS.map((g) => {
+  const groupedAll = ACCOUNT_GROUPS.map((g) => {
     const items = accounts.filter((a) => accountGroupType(a) === g.type);
     return { ...g, items, total: sumShownBalances(items) };
-  }).filter((g) => g.items.length > 0);
-  const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
+  });
+  const grouped = groupedAll.filter((g) => g.items.length > 0);
+  const stripOf = (type) => groupedAll.find((g) => g.type === type)?.total || 0;
+  const openGroup = groupedAll.find((g) => g.type === selectedGroup) || null;
   const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
   // Eşleşmiş bank_sync satırları da hesap hareketlerinde kalır (match_status filtresi yok).
-  const accountTx = filterAccountTransactions(transactions, {
+  const accountTxBase = filterAccountTransactions(transactions, {
     accountId: selectedAccountId || null,
-    groupIds: selectedAccountId ? null : groupIds,
+    groupIds: selectedAccountId ? null : (groupIds && groupIds.length ? groupIds : null),
   });
-  const pendingTx = focusPending
-    ? accountTx.filter((tx) => (tx.source === "bank_sync" && tx.match_status === "unmatched") || (focusTx && (tx.id || tx._id) === focusTx))
-    : accountTx;
+  const accountTx = (!selectedAccountId && openGroup && openGroup.items.length === 0) ? [] : accountTxBase;
+  const unmatchedRow = (tx) => (tx.source === "bank_sync" && tx.match_status === "unmatched") || (focusTx && (tx.id || tx._id) === focusTx);
+  const unmatchedActive = focusPending || unmatchedOnly;
+  const pendingTx = unmatchedActive ? accountTx.filter(unmatchedRow) : accountTx;
+  const unmatchedCount = accountTx.filter((tx) => tx.source === "bank_sync" && tx.match_status === "unmatched").length;
   const visibleTx = focusTx
     ? [...pendingTx].sort((a, b) => ((a.id || a._id) === focusTx ? -1 : (b.id || b._id) === focusTx ? 1 : 0))
     : pendingTx;
@@ -646,9 +659,43 @@ export default function BankingPage() {
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const { visible: pagedTx, hasMore: txHasMore, sentinelRef: txSentinelRef } = useInfiniteRows(visibleTx, {
-    resetKey: `${selectedAccountId || ""}|${selectedGroup || ""}`,
+    resetKey: `${selectedAccountId || ""}|${selectedGroup || ""}|${unmatchedOnly ? "u" : ""}`,
   });
-  const listRows = serverPaging ? serverItems : pagedTx;
+  const listRows = serverPaging
+    ? ((unmatchedOnly && !focusPending) ? serverItems.filter(unmatchedRow) : serverItems)
+    : pagedTx;
+  const queryNorm = txQuery.trim().toLocaleLowerCase("tr-TR");
+  const last30Key = (() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 30);
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${day}`;
+  })();
+  const shownRows = listRows.filter((tx) => {
+    if (last30) {
+      const key = dateSortKey(tx?.date);
+      if (!key || key < last30Key) return false;
+    }
+    if (!queryNorm) return true;
+    const blob = [
+      txDescriptionLabel(tx),
+      tx?.description,
+      tx?.counterparty,
+      tx?.contact_name,
+      tx?.category,
+      txAccountLabel(tx, accounts),
+      txUserColumnLabel(tx),
+    ].filter(Boolean).join(" ").toLocaleLowerCase("tr-TR");
+    return blob.includes(queryNorm);
+  });
+  const detailTx = detailTxId
+    ? (shownRows.find((t) => (t.id || t._id) === detailTxId)
+      || listRows.find((t) => (t.id || t._id) === detailTxId)
+      || transactions.find((t) => (t.id || t._id) === detailTxId)
+      || null)
+    : null;
   const listHasMore = serverPaging ? serverHasMore : txHasMore;
   const listSentinelRef = serverPaging ? serverSentinelRef : txSentinelRef;
   const listInflow = serverPaging ? serverInflow : txInflow;
@@ -746,367 +793,277 @@ export default function BankingPage() {
 
       {tab === "accounts" && (<>
       <CashApprovalsBanner companyId={companyId} refreshKey={cashTick} onChanged={bumpCashData} focusId={approvalId} />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="account-groups-grid">
-        {partnerSummary && partnerSummary.partner_count > 0 && (
-          <button onClick={() => setTab("partners")} className="bg-amber-50/60 p-5 rounded-2xl border border-amber-200 shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left" data-testid="partners-account-card">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="p-2 rounded-xl bg-amber-100 text-amber-700"><Users className="w-5 h-5" /></div>
-                <span className="text-[10px] uppercase font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">Ortaklar Hesabı</span>
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">{partnerSummary.partner_count} Ortak</h3>
-                <div className="text-xs text-slate-500">Toplam {PARTNER_RECEIVED_LABEL}: {(partnerSummary.total_cash_in ?? partnerSummary.total_capital_in).toLocaleString('tr-TR')} ₺ • Toplam {PARTNER_PAID_LABEL}: {(partnerSummary.total_cash_out ?? partnerSummary.total_withdrawn).toLocaleString('tr-TR')} ₺</div>
-              </div>
-            </div>
-            <div className="pt-3 border-t border-amber-200/60">
-              {(() => {
-                // Ortak kartlarıyla aynı kaynak: present_partner_balance (total_card_pocket)
-                const meta = partnerSummaryCardMeta(partnerSummary);
-                return (
-                  <>
-                    <div className="text-[10px] text-slate-400 uppercase font-semibold" data-testid="partners-account-badge">{meta.label}</div>
-                    <div className={`text-xl font-bold tracking-tight ${meta.amountCls}`} data-testid="partners-account-balance">{formatTrAmount(meta.display)} ₺</div>
-                  </>
-                );
-              })()}
-            </div>
-          </button>
-        )}
-        {grouped.map((g) => {
-          const Icon = g.icon;
-          const isOpen = selectedGroup === g.type;
-          return (
-            <button
-              key={g.type}
-              type="button"
-              onClick={() => { setSelectedGroup(isOpen ? null : g.type); setSelectedAccountId(null); }}
-              className={`${g.card} p-5 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isOpen ? "ring-2 ring-emerald-500/30 shadow-md" : ""}`}
-              data-testid={`account-group-${g.type}`}
-            >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className={`p-2 rounded-xl ${g.iconBox}`}><Icon className="w-5 h-5" /></div>
-                  <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.badgeCls}`}>{g.badge}</span>
-                </div>
-                {g.type === "credit_card" && (
-                  <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">
-                    Tahsilat kapalı · şirket kartı · masraf / ekstre
-                  </div>
-                )}
-                {g.type === "customer_credit_card" && (
-                  <div className="text-[10px] font-bold text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2 py-0.5 w-fit">
-                    Cari virman · müşteri kredi kartı ile işaretlenen hareketler
-                  </div>
-                )}
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
-                  <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
-                  {g.items.some((a) => a.is_integrated) && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {g.items.filter((a) => a.is_integrated).slice(0, 3).map((a) => (
-                        <span key={a.id || a._id} className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5" data-testid={`group-integrated-${a.id || a._id}`}>
-                          <Link2 className="w-2.5 h-2.5" /> {a.integration_provider || "Entegre"}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
-                <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" || g.type === "customer_credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
-                  <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
-                </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {openGroup && (
-        <div className="space-y-3" data-testid={`account-group-members-${openGroup.type}`}>
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-900">{openGroup.badge}</h2>
-            <button type="button" onClick={() => { setSelectedGroup(null); setSelectedAccountId(null); }} className="text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full" data-testid="clear-group-btn"><X className="w-3 h-3 inline" /> Kapat</button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {openGroup.items.map((acc) => {
-              const accId = acc.id || acc._id;
-              const isSelected = selectedAccountId === accId;
-              const isCard = acc.type === "credit_card";
-              const isCustomerCard = isCard && acc.card_owner === "customer";
-              return (
-                <div
-                  key={accId}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelectedAccountId(isSelected ? null : accId)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAccountId(isSelected ? null : accId); } }}
-                  className={`bg-white p-4 rounded-2xl border shadow-sm space-y-3 hover:shadow-md transition flex flex-col justify-between text-left ${isSelected ? "border-emerald-500 ring-2 ring-emerald-500/30 shadow-md" : "border-slate-200/90"} ${cardMenuId === accId ? "relative z-20" : ""}`}
-                  data-testid={`bank-card-${accId}`}
+      <div className="space-y-3" data-testid="account-groups-grid">
+        <BankSummaryStrip
+          liquidity={totalLiquidity}
+          bank={stripOf("bank")}
+          cash={stripOf("cash_box")}
+          pos={stripOf("pos") + stripOf("okc_pos")}
+          customerCards={stripOf("customer_credit_card")}
+          partnerSummary={partnerSummary}
+          onOpenPartners={() => setTab("partners")}
+        />
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,320px)_minmax(0,1fr)] gap-4 items-start">
+          <BankAccountList
+            grouped={grouped}
+            selectedGroup={selectedGroup}
+            selectedAccountId={selectedAccountId}
+            cardMenuId={cardMenuId}
+            onToggleGroup={(type) => {
+              setSelectedGroup((cur) => (cur === type ? null : type));
+              setSelectedAccountId(null);
+            }}
+            onSelectAccount={(id) => setSelectedAccountId((cur) => (cur === id ? null : id))}
+            onToggleMenu={(id) => setCardMenuId((cur) => (cur === id ? null : id))}
+            onEdit={openEditAccount}
+            onDelete={handleDeleteAccount}
+            onOpening={(acc) => { setCardMenuId(null); setOpeningAccount(acc); }}
+            onStatement={(acc) => setStmtAccount({ ...acc, id: acc.id || acc._id })}
+          />
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-hidden min-w-0 space-y-3 p-4" data-testid="transactions-panel">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-1.5" data-testid="tx-filter-chips">
+                {[
+                  ["all", "Tümü", null],
+                  ["bank", "Banka", "bank"],
+                  ["cash", "Kasa", "cash_box"],
+                  ["pos", "POS", "pos"],
+                  ["card", "Kart", "credit_card"],
+                ].map(([key, label, type]) => {
+                  const active = type ? selectedGroup === type : !selectedGroup;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedGroup(type);
+                        setSelectedAccountId(null);
+                      }}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${active ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
+                      data-testid={`tx-filter-${key}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setUnmatchedOnly((v) => !v)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${unmatchedOnly || focusPending ? "bg-amber-500 text-white border-amber-500" : "bg-white text-amber-800 border-amber-200 hover:bg-amber-50"}`}
+                  data-testid="tx-filter-unmatched"
                 >
-                  <div className="space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-sm break-words">{accountDisplayLabel(acc)}</h3>
-                        <div className="text-xs text-slate-500">{accountTypeLabel(acc.type)}</div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        {openingEligible(acc) && (
-                          <div className="relative" data-testid={`account-card-menu-wrap-${accId}`}>
-                            <button
-                              type="button"
-                              onClick={() => setCardMenuId((cur) => (cur === accId ? null : accId))}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100"
-                              title="Hesap menüsü"
-                              aria-label="Hesap menüsü"
-                              data-testid={`account-card-menu-${accId}`}
-                            >
-                              <MoreVertical className="w-3.5 h-3.5" />
-                            </button>
-                            {cardMenuId === accId && (
-                              <div className="absolute right-0 top-8 z-30 min-w-[220px] bg-white border border-slate-200 rounded-xl shadow-lg py-1" data-testid={`account-card-menu-panel-${accId}`}>
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
-                                  data-testid={`add-opening-balance-${accId}`}
-                                  onClick={() => { setCardMenuId(null); setOpeningAccount(acc); }}
-                                >
-                                  Açılış/Devir bakiyesi ekle
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <button type="button" onClick={(e) => openEditAccount(acc, e)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100" title="Düzelt" data-testid={`edit-account-${accId}`}><Pencil className="w-3.5 h-3.5" /></button>
-                        <button type="button" onClick={(e) => handleDeleteAccount(acc, e)} disabled={acc.is_integrated} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30" title={acc.is_integrated ? "Entegre hesap silinemez" : "Sil"} data-testid={`delete-account-${accId}`}><Trash2 className="w-3.5 h-3.5" /></button>
-                      </div>
-                    </div>
-                    {acc.is_integrated && (
-                      <div
-                        className={`flex items-center gap-1 text-[10px] font-bold rounded-md px-2 py-0.5 w-fit border ${
-                          acc.integration_status === "connected"
-                            ? "text-emerald-800 bg-emerald-50 border-emerald-200"
-                            : acc.integration_status === "error"
-                              ? "text-rose-800 bg-rose-50 border-rose-200"
-                              : "text-blue-700 bg-blue-50 border-blue-200"
-                        }`}
-                        data-testid={`integrated-badge-${accId}`}
-                      >
-                        <Link2 className="w-3 h-3" />
-                        ENTEGRE · {acc.integration_provider || "Banka API"}
-                        {acc.integration_status === "connected" ? " · CANLI" : acc.integration_status === "error" ? " · HATA" : acc.integration_status === "simulated" ? " · SİMÜLE" : ""}
-                      </div>
-                    )}
-                    {acc.bank_balance_drift && (
-                      <div className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5 w-fit" data-testid={`balance-drift-${accId}`}>
-                        Banka bakiyesi defterden farklı
-                      </div>
-                    )}
-                    {isCard && (
-                      <div className={`text-[10px] font-bold rounded-md px-2 py-0.5 w-fit border ${isCustomerCard ? "text-rose-800 bg-rose-50 border-rose-200" : "text-fuchsia-800 bg-fuchsia-50 border-fuchsia-200"}`} data-testid={`card-no-collect-${accId}`}>
-                        {isCustomerCard
-                          ? (acc.is_customer_card_pool
-                            ? "Cari virman · müşteri kredi kartı ile işaretlenen hareketler"
-                            : `Müşteri kartı · ${acc.linked_contact_name || "cari"}`)
-                          : "Şirket kartı · tahsilat kapalı · masraf / ekstre"}
-                      </div>
-                    )}
-                    {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${fmtDate(acc.last_statement.due_date)}` : ""}</span><button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
-                    {canUploadBankStatement(acc) && (
-                      <div className="mt-1 flex items-center justify-end">
-                        <button
-                          type="button"
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }}
-                          className="text-[10px] font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 px-2 py-0.5 rounded-md"
-                          title="PDF, Excel veya CSV hesap hareketi yükle"
-                          data-testid={`bank-stmt-btn-${accId}`}
-                        >
-                          Hareket Yükle (AI)
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
-                    <div>
-                      <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
-                      <div className="text-lg font-bold text-slate-900 tracking-tight" data-testid={acc.is_customer_card_pool ? `pool-balance-${accId}` : undefined}>
-                        {money(acc.is_customer_card_pool ? 0 : acc.current_balance)} ₺
-                      </div>
-                      {acc.is_customer_card_pool && (
-                        <div className="text-[10px] text-slate-400 mt-0.5">Giriş + çıkış eşlenik · net 0</div>
-                      )}
-                    </div>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"}`}>{isSelected ? "Hareketler ↓" : "Hareketleri Gör"}</span>
-                  </div>
+                  Eşleşmemiş ({unmatchedCount})
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLast30((v) => !v)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border whitespace-nowrap ${last30 ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200"}`}
+                  data-testid="tx-filter-last-30"
+                >
+                  Son 30 gün
+                </button>
+                <input
+                  type="search"
+                  value={txQuery}
+                  onChange={(e) => setTxQuery(e.target.value)}
+                  placeholder="Ara"
+                  className="w-36 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[11px]"
+                  data-testid="tx-search"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <History className="w-4 h-4 text-slate-500 shrink-0" />
+                <h2 className="text-base font-bold text-slate-900 truncate" data-testid="transactions-title">{selectedAccount ? `${accountDisplayLabel(selectedAccount)} Hareketleri` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}</h2>
+                {(selectedAccount || openGroup) && (
+                  <button onClick={() => { setSelectedAccountId(null); if (selectedAccount) return; setSelectedGroup(null); }} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> {selectedAccount ? "Grup Hareketleri" : "Tüm Hesaplar"}</button>
+                )}
+              </div>
+              {selectedAccount || openGroup ? (
+                <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
+                  <span className="text-slate-500">{listCount} hareket</span>
+                  <span className="font-semibold text-emerald-600">Giren +{formatTrAmount(listInflow)} ₺</span>
+                  <span className="font-semibold text-rose-600">Çıkan -{formatTrAmount(listOutflow)} ₺</span>
+                </div>
+              ) : (
+                <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {simulatedVisible.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearSimulated}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
+                    data-testid="clear-simulated-tx-btn"
+                    title="Banka entegrasyonundan gelen simüle (demo) hareketleri sil"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Simüleleri Sil ({simulatedVisible.length})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { if (!visibleTx.length) { toast.error("Yazdırılacak hareket yok."); return; } setPrintTx(true); }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-40"
+                  disabled={!visibleTx.length}
+                  data-testid="print-statements-btn"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Ekstreleri Yazdır
+                </button>
+              </div>
+            </div>
+
+            {(() => {
+              const emptyTxLabel = serverPaging && serverLoading && serverItems.length === 0
+                ? "Hareketler yükleniyor…"
+                : shownRows.length === 0 && listRows.length > 0
+                  ? "Filtreye uyan hareket yok."
+                  : (selectedAccount ? "Bu hesaba ait hareket bulunmuyor." : "Henüz finansal hareket kaydı bulunmuyor.");
+              const bankKind = (tx) => (tx.type === "inflow" ? "Giriş" : tx.type === "outflow" ? "Çıkış" : "Virman");
+              const bankAmount = (tx) => (tx.type === "inflow" ? `+${tx.amount?.toLocaleString("tr-TR")} ₺` : tx.type === "outflow" ? `-${tx.amount?.toLocaleString("tr-TR")} ₺` : `${tx.amount?.toLocaleString("tr-TR")} ₺`);
+              const bankAmountCls = (tx) => (tx.type === "inflow" ? "text-emerald-600" : tx.type === "outflow" ? "text-rose-600" : "text-indigo-600");
+              const bankDesc = (tx) => {
+                const bits = [txDescriptionLabel(tx)];
+                if (tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name) bits.push(`kart sahibi ${tx.owner_contact_name}`);
+                if (tx.category) bits.push(tx.category);
+                const actor = txUserColumnLabel(tx);
+                if (actor) bits.push(actor);
+                return bits.filter(Boolean).join(" · ");
+              };
+              const bankExtra = (tx, prefix) => (
+                <div className="flex flex-wrap gap-1">
+                  {tx.customer_card && <span className="text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`${prefix}tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
+                  {tx.source === "bank_sync" && <span className={`text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
+                  {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`${prefix}tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
+                  {tx.source === "bank_sync" && tx.match_status === "rematching" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">Eşleştiriliyor…</span>}
+                  {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
+                  {tx.source === "bank_match" && <span className="text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                 </div>
               );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Transactions History */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-hidden min-w-0 space-y-3 p-5" data-testid="transactions-panel">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-slate-500" />
-            <h2 className="text-base font-bold text-slate-900" data-testid="transactions-title">{selectedAccount ? `${accountDisplayLabel(selectedAccount)} Hareketleri` : openGroup ? `${openGroup.badge} Hareketleri` : "Son Finansal Hareketler"}</h2>
-            {(selectedAccount || openGroup) && (
-              <button onClick={() => { setSelectedAccountId(null); if (selectedAccount) return; setSelectedGroup(null); }} className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition" data-testid="clear-account-filter-btn"><X className="w-3 h-3" /> {selectedAccount ? "Grup Hareketleri" : "Tüm Hesaplar"}</button>
-            )}
-          </div>
-          {selectedAccount || openGroup ? (
-            <div className="flex items-center gap-3 text-[11px]" data-testid="account-tx-summary">
-              <span className="text-slate-500">{listCount} hareket</span>
-              <span className="font-semibold text-emerald-600">Giren +{formatTrAmount(listInflow)} ₺</span>
-              <span className="font-semibold text-rose-600">Çıkan -{formatTrAmount(listOutflow)} ₺</span>
-            </div>
-          ) : (
-            <span className="text-xs text-slate-400">Tahsilat, Tediye ve Virman İşlemleri • Gruba veya hesaba tıklayınca filtrelenir</span>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            {simulatedVisible.length > 0 && (
-              <button
-                type="button"
-                onClick={clearSimulated}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
-                data-testid="clear-simulated-tx-btn"
-                title="Banka entegrasyonundan gelen simüle (demo) hareketleri sil"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Simüleleri Sil ({simulatedVisible.length})
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => { if (!visibleTx.length) { toast.error("Yazdırılacak hareket yok."); return; } setPrintTx(true); }}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-40"
-              disabled={!visibleTx.length}
-              data-testid="print-statements-btn"
-            >
-              <Printer className="w-3.5 h-3.5" /> Ekstreleri Yazdır
-            </button>
-          </div>
-        </div>
-
-        {(() => {
-          const emptyTxLabel = serverPaging && serverLoading && serverItems.length === 0
-            ? "Hareketler yükleniyor…"
-            : (selectedAccount ? "Bu hesaba ait hareket bulunmuyor." : "Henüz finansal hareket kaydı bulunmuyor.");
-          const bankKind = (tx) => (tx.type === "inflow" ? "Giriş" : tx.type === "outflow" ? "Çıkış" : "Virman");
-          const bankAmount = (tx) => (tx.type === "inflow" ? `+${tx.amount?.toLocaleString("tr-TR")} ₺` : tx.type === "outflow" ? `-${tx.amount?.toLocaleString("tr-TR")} ₺` : `${tx.amount?.toLocaleString("tr-TR")} ₺`);
-          const bankAmountCls = (tx) => (tx.type === "inflow" ? "text-emerald-600" : tx.type === "outflow" ? "text-rose-600" : "text-indigo-600");
-          const bankDesc = (tx) => {
-            const bits = [txDescriptionLabel(tx)];
-            if (tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name) bits.push(`kart sahibi ${tx.owner_contact_name}`);
-            if (tx.category) bits.push(tx.category);
-            const actor = txUserColumnLabel(tx);
-            if (actor) bits.push(actor);
-            return bits.filter(Boolean).join(" · ");
-          };
-          const bankExtra = (tx, prefix) => (
-            <div className="flex flex-wrap gap-1">
-              {tx.customer_card && <span className="text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`${prefix}tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
-              {tx.source === "bank_sync" && <span className={`text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
-              {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`${prefix}tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
-              {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
-              {tx.source === "bank_match" && <span className="text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
-            </div>
-          );
-          const cards = listRows.length === 0 ? (
-            <div className="text-center text-slate-400 py-6">{emptyTxLabel}</div>
-          ) : (
-            listRows.map((tx) => {
-              const id = tx.id || tx._id;
+              const rowActions = (tx) => (
+                <>
+                  <TxMatchActions
+                    tx={tx}
+                    canEdit={canEditBanking}
+                    contacts={contacts}
+                    accounts={accounts}
+                    companyId={companyId}
+                    onChanged={bumpCashData}
+                  />
+                  <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />
+                </>
+              );
+              const cards = shownRows.length === 0 ? (
+                <div className="text-center text-slate-400 py-6">{emptyTxLabel}</div>
+              ) : (
+                shownRows.map((tx) => {
+                  const id = tx.id || tx._id;
+                  return (
+                    <div key={`card-${id}`} onClick={() => setDetailTxId(id)} className="cursor-pointer">
+                      <TxMobileCard
+                        testId={`tx-card-${id}`}
+                        className={(tx.id || tx._id) === focusTx ? "ring-2 ring-amber-400 bg-amber-50" : ""}
+                        date={fmtDate(tx.date)}
+                        party={txAccountLabel(tx, accounts)}
+                        badge={<TxTypeBadge label={bankKind(tx)} kind={tx.type} />}
+                        amount={bankAmount(tx)}
+                        amountClassName={bankAmountCls(tx)}
+                        description={bankDesc(tx)}
+                        extra={bankExtra(tx, "card-")}
+                        actions={rowActions(tx)}
+                      />
+                    </div>
+                  );
+                })
+              );
+              const table = (
+              <table className="w-full text-left text-xs text-slate-600 min-w-[860px]">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="px-3 py-2">Tarih</th>
+                    <th className="px-3 py-2">Hesap</th>
+                    <th className="px-3 py-2">Kategori</th>
+                    <th className="px-3 py-2">Açıklama / Cari</th>
+                    <th className="px-3 py-2">Kullanıcı</th>
+                    <th className="px-3 py-2 text-right">Tutar</th>
+                    <th className="px-2 py-2 text-right">İşlem</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {shownRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-6 text-center text-slate-400">{emptyTxLabel}</td>
+                    </tr>
+                  ) : (
+                    shownRows.map((tx) => {
+                      const id = tx.id || tx._id;
+                      const descFull = [txDescriptionLabel(tx), tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? `kart sahibi ${tx.owner_contact_name}` : ""].filter(Boolean).join(" · ");
+                      const userFull = txUserColumnLabel(tx);
+                      const accountFull = txAccountLabel(tx, accounts);
+                      return (
+                        <tr
+                          key={id}
+                          onClick={() => setDetailTxId(id)}
+                          className={`hover:bg-slate-50/70 transition cursor-pointer whitespace-nowrap [content-visibility:auto] [contain-intrinsic-size:auto_36px] ${id === focusTx ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`}
+                          data-testid={`tx-row-${id}`}
+                        >
+                          <td className="px-3 py-1.5 text-slate-500 font-mono" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
+                          <td className="px-3 py-1.5 font-semibold text-slate-900 max-w-[140px]"><div className="truncate" title={accountFull}>{accountFull}</div></td>
+                          <td className="px-3 py-1.5 max-w-[140px]">
+                            <span className={`inline-flex items-center gap-1 max-w-full text-[11px] px-2 py-0.5 rounded-md font-semibold ${
+                              tx.type === "inflow" ? "bg-emerald-50 text-emerald-700" : tx.type === "outflow" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"
+                            }`} title={tx.category || bankKind(tx)}>
+                              {tx.type === "inflow" ? <ArrowDownRight className="w-3 h-3 shrink-0" /> : tx.type === "outflow" ? <ArrowUpRight className="w-3 h-3 shrink-0" /> : <ArrowRightLeft className="w-3 h-3 shrink-0" />}
+                              <span className="truncate">{tx.category || bankKind(tx)}</span>
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 text-slate-700 max-w-[220px]" data-testid={`tx-desc-${id}`}>
+                            <div className="flex items-center gap-1 min-w-0">
+                              <span className="truncate font-medium text-slate-800" title={descFull || tx.description || ""}>{txDescriptionLabel(tx)}</span>
+                              {tx.customer_card && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`tx-customer-card-${id}`}>MÜŞTERİ KARTI</span>}
+                              {tx.source === "bank_sync" && <span className={`shrink-0 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
+                              {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${id}`}>{matchStatusLabel(tx)}</span>}
+                              {tx.source === "bank_sync" && tx.match_status === "rematching" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">Eşleştiriliyor…</span>}
+                              {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
+                              {tx.source === "bank_match" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
+                            </div>
+                          </td>
+                          <td className="px-3 py-1.5 text-slate-600 max-w-[9rem]" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
+                            <div className="truncate">{txUserColumnLabelShort(tx) || <span className="text-slate-300">—</span>}</div>
+                          </td>
+                          <td className={`px-3 py-1.5 text-right font-bold ${bankAmountCls(tx)}`}>
+                            {bankAmount(tx)}
+                          </td>
+                          <td className="px-2 py-1 text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="inline-flex items-center justify-end gap-1">
+                              {rowActions(tx)}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+              );
               return (
-                <TxMobileCard
-                  key={`card-${id}`}
-                  testId={`tx-card-${id}`}
-                  className={(tx.id || tx._id) === focusTx ? "ring-2 ring-amber-400 bg-amber-50" : ""}
-                  date={fmtDate(tx.date)}
-                  party={txAccountLabel(tx, accounts)}
-                  badge={<TxTypeBadge label={bankKind(tx)} kind={tx.type} />}
-                  amount={bankAmount(tx)}
-                  amountClassName={bankAmountCls(tx)}
-                  description={bankDesc(tx)}
-                  extra={bankExtra(tx, "card-")}
-                  actions={<TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />}
+                <TxResponsiveList
+                  cards={cards}
+                  table={table}
+                  cardsTestId="bank-tx-cards"
+                  tableWrapTestId="bank-tx-table-wrap"
                 />
               );
-            })
-          );
-          const table = (
-          <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
-              <tr>
-                <th className="px-4 py-2.5">Tarih</th>
-                <th className="px-4 py-2.5">Hesap / Kasa</th>
-                <th className="px-4 py-2.5">İşlem Türü & Kategori</th>
-                <th className="px-4 py-2.5">Açıklama / Cari</th>
-                <th className="px-4 py-2.5">Kullanıcı</th>
-                <th className="px-4 py-2.5 text-right">Tutar</th>
-                <th className="px-3 py-2.5 text-right w-12">İşlem</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {listRows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-slate-400">{emptyTxLabel}</td>
-                </tr>
-              ) : (
-                listRows.map((tx) => (
-                  <tr key={tx.id || tx._id} className={`hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px] ${(tx.id || tx._id) === focusTx ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`} data-testid={`tx-row-${tx.id || tx._id}`}>
-                    <td className="px-4 py-2.5 text-slate-500 font-mono" data-testid={`tx-date-${tx.id || tx._id}`}>{fmtDate(tx.date)}</td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx, accounts)}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
-                        tx.type === 'inflow' ? 'bg-emerald-50 text-emerald-700' : tx.type === 'outflow' ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'
-                      }`}>
-                        {tx.type === 'inflow' ? <ArrowDownRight className="w-3 h-3" /> : tx.type === 'outflow' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowRightLeft className="w-3 h-3" />}
-                        {tx.category || tx.type}
-                      </span>
-                    </td>
-                    <td className={`px-4 py-2.5 text-slate-700 ${TX_WRAP_CLASS}`} data-testid={`tx-desc-${tx.id || tx._id}`}>
-                      <span className="font-medium text-slate-800">{txDescriptionLabel(tx)}</span>
-                      {tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? ` · kart sahibi ${tx.owner_contact_name}` : ""}
-                      {" "}
-                      {tx.customer_card && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
-                      {tx.source === "bank_sync" && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
-                      {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
-                      {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
-                      {tx.source === "bank_match" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap" data-testid={`tx-actor-${tx.id || tx._id}`} title={txUserColumnLabel(tx) || undefined}>
-                      {txUserColumnLabel(tx) || <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className={`px-4 py-2.5 text-right font-bold ${bankAmountCls(tx)}`}>
-                      {bankAmount(tx)}
-                    </td>
-                    <td className="px-2 py-1.5 text-right">
-                      <TxRowMenu tx={tx} accounts={accounts} company={activeCompany} contacts={contacts} onChanged={bumpCashData} />
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          );
-          return (
-            <TxResponsiveList
-              cards={cards}
-              table={table}
-              cardsTestId="bank-tx-cards"
-              tableWrapTestId="bank-tx-table-wrap"
-            />
-          );
-        })()}
-        {listHasMore && (
-          <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
-            Daha fazla hareket yükleniyor…
+            })()}
+            {listHasMore && (
+              <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
+                Daha fazla hareket yükleniyor…
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
       {printTx && (
         <AccountStatementPrint
@@ -1117,6 +1074,17 @@ export default function BankingPage() {
           onClose={() => setPrintTx(false)}
         />
       )}
+      <TxDetailPanel
+        tx={detailTx}
+        accountLabel={detailTx ? txAccountLabel(detailTx, accounts) : ""}
+        accounts={accounts}
+        contacts={contacts}
+        company={activeCompany}
+        companyId={companyId}
+        canEdit={canEditBanking}
+        onClose={() => setDetailTxId(null)}
+        onChanged={bumpCashData}
+      />
       </>)}
 
       {/* VIRMAN MODAL */}
