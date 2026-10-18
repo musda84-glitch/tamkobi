@@ -66,6 +66,7 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { TimeInput } from "./TimeInput";
 import { useInvoiceLineExpand } from "../hooks/useInvoiceLineExpand";
 import { InvoiceLinesTable } from "./InvoiceLinesTable";
+import { activeCompanyId } from "../utils/activeCompanyId";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["b2b", "B2B Portal", KeyRound], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -1686,7 +1687,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         )}
       {editContactOpen && (
         <ContactForm
-          companyId={c.company_id || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={c.company_id || activeCompanyId(activeCompany)}
           contact={c}
           onClose={() => setEditContactOpen(false)}
           onSaved={(saved) => {

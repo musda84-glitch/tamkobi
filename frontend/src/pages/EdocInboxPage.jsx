@@ -16,6 +16,8 @@ import {
   canSendCommercialResponse, commercialBadge, inboxProcessLabel, inboxProcessSuccess,
 } from "../utils/edocInbox";
 import { EINVOICE_INBOX_BACKFILL_DAYS, einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const STATUS = {
@@ -85,7 +87,7 @@ export default function EdocInboxPage() {
   const kindFilter = inboxKindFromQuery(searchParams.get("kind"));
   const focusEttn = (searchParams.get("ettn") || "").replace(/…|\.\.\.$/, "");
   const focusDocId = searchParams.get("id") || "";
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("pending");
   const [sel, setSel] = useState(null);
@@ -103,18 +105,21 @@ export default function EdocInboxPage() {
 
   const integrator = providerLabel(einvoice?.provider, einvoice?.provider_name);
 
-  const load = useCallback(() => axios
+  const load = useCallback(() => {
+    if (!companyId) return Promise.resolve();
+    return axios
     .get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId, status: inboxStatusKey(status) } })
     .then((r) => {
       setData(r.data);
       setSel((prev) => (prev ? r.data.items.find((i) => i.id === prev.id) || null : null));
     })
-    .catch(() => toast.error("Gelen belgeler yüklenemedi.")), [companyId, status]);
+    .catch(() => toast.error("Gelen belgeler yüklenemedi."));
+  }, [companyId, status]);
 
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!focusEttn && !focusDocId) return undefined;
+    if (!companyId || (!focusEttn && !focusDocId)) return undefined;
     let cancel = false;
     axios.get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId } })
       .then((r) => {
@@ -374,6 +379,7 @@ export default function EdocInboxPage() {
 
   return (
     <div className="space-y-4" data-testid="edoc-inbox-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2">

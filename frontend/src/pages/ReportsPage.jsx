@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { BarChart3, Download, Printer, TrendingUp, TrendingDown, Clock, Package, Wallet, Percent, PieChart } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const KINDS = [["sales", "Satış", TrendingUp], ["purchases", "Alış", TrendingDown], ["aging", "Cari Yaşlandırma", Clock], ["stock", "Stok", Package], ["cashflow", "Nakit Akışı", Wallet], ["vat", "KDV", Percent], ["profit", "Kârlılık", PieChart]];
@@ -22,7 +24,7 @@ const cell = (v, t) => t === "m" ? fmt(v) + " ₺" : t === "p" ? `%${fmt(v)}` : 
 
 export default function ReportsPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const first = new Date(); first.setDate(1);
   const [kind, setKind] = useState("sales");
   const [from, setFrom] = useState(first.toISOString().slice(0, 10));
@@ -30,7 +32,10 @@ export default function ReportsPage() {
   const [group, setGroup] = useState("contact");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const load = useCallback(async () => { setLoading(true); try { const r = await axios.get(`${API_URL}/reports/${kind}?company_id=${companyId}&date_from=${from}&date_to=${to}&group=${group}`); setData(r.data); } catch { toast.error("Rapor alınamadı."); } finally { setLoading(false); } }, [kind, from, to, group, companyId]);
+  const load = useCallback(async () => {
+    if (!companyId) { setLoading(false); setData(null); return; }
+    setLoading(true); try { const r = await axios.get(`${API_URL}/reports/${kind}?company_id=${companyId}&date_from=${from}&date_to=${to}&group=${group}`); setData(r.data); } catch { toast.error("Rapor alınamadı."); } finally { setLoading(false); }
+  }, [kind, from, to, group, companyId]);
   useEffect(() => { load(); }, [load]);
   const cols = COLS[kind];
   const rows = data?.rows || [];
@@ -44,6 +49,7 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-5" data-testid="reports-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><BarChart3 className="w-6 h-6 text-emerald-600" /> Raporlar</h1><p className="text-xs sm:text-sm text-slate-500">Satış, alış, yaşlandırma, stok, nakit akışı, KDV ve kârlılık — tarih filtresi, Excel/PDF</p></div>
         <div className="flex flex-wrap items-center gap-2 text-xs no-print">

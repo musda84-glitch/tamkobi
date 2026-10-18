@@ -27,9 +27,12 @@ import {
 } from "recharts";
 import { useAiStatus } from "../hooks/useAiStatus";
 import AiMessageText from "../components/AiMessageText";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 export default function AIAssistantPage() {
   const { activeCompany } = useAuth();
+  const companyId = activeCompanyId(activeCompany);
   const { badge } = useAiStatus();
   const aiBadge = badge || "Yapay Zeka";
   const [messages, setMessages] = useState([
@@ -51,13 +54,14 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
   }, [messages]);
 
   const loadForecast = useCallback(async () => {
+    if (!companyId) return;
     try {
-      const res = await axios.get(`${API_URL}/ai/cashflow-forecast?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`);
+      const res = await axios.get(`${API_URL}/ai/cashflow-forecast?company_id=${companyId}`);
       setForecast(res.data);
     } catch (err) {
       console.error("Nakit tahmini yüklenemedi", err);
     }
-  }, [activeCompany]);
+  }, [companyId]);
   useEffect(() => { loadForecast(); }, [loadForecast]);
 
   const handleSendMessage = async (msgText) => {
@@ -69,10 +73,11 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
     setInputMessage("");
     setLoading(true);
 
+    if (!companyId) { toast.error("Firma seçili değil"); setLoading(false); return; }
     try {
       const res = await axios.post(`${API_URL}/ai/financial-advisor`, {
         message: textToSend,
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"
+        company_id: companyId
       });
 
       setMessages((prev) => [
@@ -99,6 +104,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
 
   return (
     <div className="space-y-6" data-testid="ai-assistant-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

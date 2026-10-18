@@ -71,6 +71,7 @@ import {
   PanelLeft,
   Unplug,
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
 
 const formatElapsed = (startedAt) => {
   if (!startedAt) return "";
@@ -381,16 +382,16 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           <div className="ml-auto min-w-0 flex items-center justify-end gap-1.5 sm:gap-2.5">
             {erpShortcuts && (
               <div className="hidden sm:flex items-center gap-2 shrink-0">
-                <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+                <HeaderQuickActions companyId={activeCompanyId(activeCompany)} />
               </div>
             )}
             {erpShortcuts && (
               <div className="hidden md:flex items-center shrink-0">
-                <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+                <RadialQuickMenu companyId={activeCompanyId(activeCompany)} />
               </div>
             )}
             <HelpButton />
-            <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+            <NotificationBell companyId={activeCompanyId(activeCompany)} />
             {erpShortcuts && feature("header_barcode") && personelMenuPathAllowed("/stock", user) && (
               <Link to="/stock?scan=true" className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition shrink-0" data-testid="quick-barcode-scan-btn" title="Barkod Oku">
                 <QrCode className="w-4 h-4 md:w-3.5 md:h-3.5 text-indigo-600" />
@@ -418,7 +419,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           </div>
         </header>
 
-        <SupportContactBar companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+        <SupportContactBar companyId={activeCompanyId(activeCompany)} />
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>
         )}
@@ -429,7 +430,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
               <div className="text-sm">Rolünüz: {user?.role_name}. Yetki için yöneticinizle iletişime geçin.</div>
             </div>
           ) : lockedModule ? (
-            <ModuleLockedPanel path={location.pathname} license={license} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+            <ModuleLockedPanel path={location.pathname} license={license} companyId={activeCompanyId(activeCompany)} />
           ) : (
             <PanelBoundary key={location.pathname} label="Sayfa">
               {children}

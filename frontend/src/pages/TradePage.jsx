@@ -10,6 +10,8 @@ import { FxPicker } from "../components/FxPicker";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { statusTr } from "../utils/labels";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const emptyItem = () => ({ product_id: "", name: "", sku: "", gtip: "", origin_country: "", quantity: 1, unit: "Adet", unit_price_fx: 0, net_weight: 0 });
 const emptyForm = (kind) => ({
@@ -23,7 +25,7 @@ const emptyForm = (kind) => ({
 
 export default function TradePage() {
   const { activeCompany, can } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const canEdit = can("/dis-ticaret", "edit");
   const [kind, setKind] = useState("export");
   const [rows, setRows] = useState([]);
@@ -36,6 +38,7 @@ export default function TradePage() {
   const [printDoc, setPrintDoc] = useState(null);
 
   const load = useCallback(async () => {
+    if (!companyId) return;
     try {
       const [f, m, c, p] = await Promise.all([
         axios.get(`${API_URL}/trade-files?company_id=${companyId}&kind=${kind}`),
@@ -125,6 +128,7 @@ export default function TradePage() {
 
   return (
     <div className="space-y-5" data-testid="trade-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Globe className="w-6 h-6 text-sky-600" /> İthalat / İhracat</h1>

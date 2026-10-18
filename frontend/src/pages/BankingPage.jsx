@@ -49,6 +49,8 @@ import {
   Scale,
   MoreVertical
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const TABS = [
   { key: "accounts", label: "Hesaplar & Hareketler", icon: Landmark },
@@ -134,7 +136,7 @@ export default function BankingPage() {
   const { activeCompany, addonOn, user } = useAuth();
   const canRepairBalances = Boolean(user?.is_super_admin) || ["admin", "owner"].includes(String(user?.role || "").toLowerCase());
   const [searchParams] = useSearchParams();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const contactVirmanId = searchParams.get("contact_id") || "";
   const focusAccountId = searchParams.get("account_id") || "";
   const focusAccountName = searchParams.get("account") || "";
@@ -277,6 +279,10 @@ export default function BankingPage() {
   tabRef.current = tab;
   const driftKeyRef = useRef("");
   const loadBankingData = useCallback(async ({ silent = false } = {}) => {
+    if (!companyId) {
+      if (!silent) setLoading(false);
+      return;
+    }
     try {
       if (!silent) setLoading(true);
       // Hareket ve cari listesi kartı bekletmez: önce önbellek, ağ arkada.
@@ -471,7 +477,8 @@ export default function BankingPage() {
   const handleSaveAccount = async (e) => {
     e.preventDefault();
     try {
-      const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const company_id = companyId;
+      if (!editingAccount && !company_id) { toast.error("Firma seçili değil"); return; }
       const isCard = newAccount.type === "credit_card";
       const isCustomerCard = isCard && newAccount.card_owner === "customer";
       const last4 = String(newAccount.card_last4 || "").replace(/\D/g, "").slice(-4);
@@ -596,9 +603,10 @@ export default function BankingPage() {
       toast.error("Kaynak ve hedef aynı olamaz.");
       return;
     }
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       const res = await axios.post(`${API_URL}/banking/virman`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         source_account_id: virmanForm.source_account_id,
         target_account_id: virmanForm.target_account_id,
         amount: Number(virmanForm.amount),
@@ -676,6 +684,7 @@ export default function BankingPage() {
 
   return (
     <div className="space-y-6" data-testid="banking-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

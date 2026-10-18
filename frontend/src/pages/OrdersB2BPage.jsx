@@ -95,6 +95,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const ORDER_EXPORT_LINE_COLS = [
   { label: "Sipariş No", value: (r) => r.order_number },
@@ -270,7 +272,7 @@ export default function OrdersB2BPage() {
   const [cancelDialog, setCancelDialog] = useState(null);
   /** Yalnızca Yenile / menü yenile — sayfa açılışı veya F5 bunu true yapmaz. */
   const [mpSyncing, setMpSyncing] = useState(false);
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const syncMarketplaceOrdersRef = useRef(async () => {});
   const toggleSel = (id) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
   const selectedOrders = () => orders.filter((o) => {
@@ -660,8 +662,9 @@ export default function OrdersB2BPage() {
   const [aiImport, setAiImport] = useState(false);
   const [autoShip, setAutoShip] = useState(false);
   const autoContacts = async () => {
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     setAutoBusy(true);
-    try { const r = await axios.post(`${API_URL}/orders/auto-contacts`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" }); toast.success(r.data.message); loadData(); }
+    try { const r = await axios.post(`${API_URL}/orders/auto-contacts`, { company_id: companyId }); toast.success(r.data.message); loadData(); }
     catch (err) { toast.error(err.response?.data?.detail || "Cariler eşlenemedi."); } finally { setAutoBusy(false); }
   };
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
@@ -859,6 +862,7 @@ export default function OrdersB2BPage() {
   const [b2bCustomer, setB2bCustomer] = useState("");
 
   const loadCatalog = useCallback(async (cid) => {
+    if (!cid) return;
     try {
       const [prodRows, cntRows] = await Promise.all([
         cachedList("products", cid, {
@@ -890,6 +894,10 @@ export default function OrdersB2BPage() {
   }, [companyId, loadCatalog]);
 
   const runFetch = useCallback(async (pageToFetch, silent) => {
+    if (!companyId) {
+      if (!silent) setLoading(false);
+      return;
+    }
     const req = ++listReq.current;
     loadingMore.current = true;
     if (pageToFetch === 1 && !silent) setLoading(true);
@@ -1129,7 +1137,7 @@ export default function OrdersB2BPage() {
     const missingImg = items.some((it) => !(it.image_url || it.thumbnail_url));
     if (missingImg && items.length) {
       try {
-        const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+        const companyId = activeCompanyId(activeCompany);
         const ids = [...new Set(items.map((it) => it.product_id).filter(Boolean))];
         const skus = [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))];
         let products = [];
@@ -1212,7 +1220,8 @@ export default function OrdersB2BPage() {
       toast.error("E-Fatura / E-Arşiv yalnızca faturalaşmış siparişlerden kesilir. Önce Faturalaştırın.");
       return;
     }
-    const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+    const companyId = activeCompanyId(activeCompany);
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     const resolved = eType === "e_invoice" ? "e_invoice" : "e_archive";
     const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
     if (!opts.skipConfirm && !window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;
@@ -1576,7 +1585,8 @@ export default function OrdersB2BPage() {
 
   const handleCreateCargoForOrder = async (order) => {
     try {
-      const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+      const companyId = activeCompanyId(activeCompany);
+      if (!companyId) { toast.error("Firma seçili değil"); return; }
       let carrier = order.cargo_carrier || "geliver";
       try {
         const cfg = await axios.get(`${API_URL}/integrations/cargo`, { params: { company_id: companyId } });
@@ -1637,9 +1647,10 @@ export default function OrdersB2BPage() {
       return;
     }
 
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       await axios.post(`${API_URL}/orders`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         channel: "b2b",
         customer_name: selectedContact?.name || "B2B Bayi",
         customer_email: selectedContact?.email || "bayi@tamkobi.com",
@@ -1664,8 +1675,9 @@ export default function OrdersB2BPage() {
 
   return (
     <div className="space-y-6" data-testid="orders-b2b-page">
+      {!companyId && <NoCompanyNotice />}
       {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
-      {shipOrder && <CreateShipmentModal order={shipOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setShipOrder(null)} onDone={loadData} />}
+      {shipOrder && <CreateShipmentModal order={shipOrder} companyId={activeCompanyId(activeCompany)} onClose={() => setShipOrder(null)} onDone={loadData} />}
       {cargoChangeOrder && (
         <ChangeMarketplaceCargoModal
           order={cargoChangeOrder}
@@ -1673,7 +1685,7 @@ export default function OrdersB2BPage() {
           onDone={loadData}
         />
       )}
-      {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
+      {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompanyId(activeCompany)} onClose={() => setApproveOrder(null)} onDone={loadData} />}
       {bulkEInvoiceConfirm && (
         <BulkEInvoiceConfirmModal
           orders={bulkEInvoiceConfirm.orders}
@@ -1687,7 +1699,7 @@ export default function OrdersB2BPage() {
           order={eFaturaOrder || null}
           invoices={eFaturaOrders || undefined}
           contacts={contacts}
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           onClose={() => {
             setEFaturaOrder(null);
             setEFaturaOrders(null);
@@ -1824,10 +1836,10 @@ export default function OrdersB2BPage() {
           }}
         />
       )}
-      {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="order" onClose={() => setEditTpl(false)} />}
+      {editTpl && <PrintTemplateEditor companyId={activeCompanyId(activeCompany)} docType="order" onClose={() => setEditTpl(false)} />}
       {notifyOrder && (
         <QuickMessageModal
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           recipient={{ name: notifyOrder.customer_name, phone: notifyOrder.customer_phone, email: notifyOrder.customer_email }}
           defaultSubject={notifyOrder._notifySubject || `Siparişiniz Yola Çıktı - ${notifyOrder.order_number}`}
           defaultMessage={notifyOrder._notifyMessage || TEMPLATES.order(notifyOrder)}
@@ -1888,17 +1900,17 @@ export default function OrdersB2BPage() {
         </div>
         </div>
       </div>
-      {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
+      {activeTab === "claims" && <ClaimsPanel companyId={activeCompanyId(activeCompany)} />}
       {activeTab === "cancelled" && <CancelledPanel companyId={companyId} closedCount={listMeta.closed_count} />}
-      {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
-      {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
-      {activeTab === "pricing" && <PricingCenter companyId={activeCompany?.id || "comp_nexus_main_01"} />}
-      {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
-      {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={productCatalog} onClose={closeNewOrder} onSaved={loadData} />}
+      {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompanyId(activeCompany)} />}
+      {activeTab === "questions" && <QuestionsPanel companyId={activeCompanyId(activeCompany)} />}
+      {activeTab === "pricing" && <PricingCenter companyId={activeCompanyId(activeCompany)} />}
+      {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompanyId(activeCompany)} />}
+      {newOrder && <NewOrderModal companyId={activeCompanyId(activeCompany)} products={productCatalog} onClose={closeNewOrder} onSaved={loadData} />}
       {editOrder && <OrderEditModal order={editOrder} products={productCatalog} onClose={() => setEditOrder(null)} onSaved={loadData} />}
       {produceFromOrder && (
         <ProductionOrderModal
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           product={produceFromOrder.product}
           source="sales_order"
           onClose={() => setProduceFromOrder(null)}
@@ -1908,15 +1920,15 @@ export default function OrdersB2BPage() {
       {produceRecipeOrd && (
         <OrderProduceRecipeModal
           order={produceRecipeOrd}
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           lineCount={producibleLinesForOrder(produceRecipeOrd, productCatalog).length}
           busy={produceBusyId === (produceRecipeOrd.id || produceRecipeOrd._id)}
           onClose={() => !produceBusyId && setProduceRecipeOrd(null)}
           onConfirm={submitProduceRecipe}
         />
       )}
-      {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}
-      {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
+      {autoShip && <AutoShipModal companyId={activeCompanyId(activeCompany)} onClose={() => setAutoShip(false)} onDone={loadData} />}
+      {aiImport && <AiOrderImportModal companyId={activeCompanyId(activeCompany)} onClose={() => setAiImport(false)} onSaved={loadData} />}
       {lineStock && (
         <OrderLineStockModal
           order={lineStock.order}
@@ -1924,7 +1936,7 @@ export default function OrdersB2BPage() {
           itemIndex={lineStock.itemIndex}
           product={lineStock.product}
           products={productCatalog}
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           onClose={() => setLineStock(null)}
           onMatched={(updated) => {
             if (updated) {
@@ -1934,7 +1946,7 @@ export default function OrdersB2BPage() {
             }
           }}
           onProductUpdated={() => {
-            axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}&lite=1`)
+            axios.get(`${API_URL}/products?company_id=${activeCompanyId(activeCompany)}&lite=1`)
               .then((r) => { setAllProducts(r.data || []); setProducts(r.data || []); })
               .catch(() => {});
           }}

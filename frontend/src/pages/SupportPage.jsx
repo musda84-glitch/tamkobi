@@ -7,6 +7,8 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const cred = { withCredentials: true };
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-amber-400 outline-none";
@@ -220,7 +222,7 @@ const DeletionConfirmPanel = ({ companyId, canEdit }) => {
 
 export default function SupportPage() {
   const { activeCompany, addonOn, user, can, moduleOn } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const canEdit = user?.role === "admin";
   const [meta, setMeta] = useState({ statuses: [], categories: [], priorities: [] });
   const [rows, setRows] = useState([]);
@@ -230,6 +232,7 @@ export default function SupportPage() {
   const [replyFiles, setReplyFiles] = useState([]);
   const [busy, setBusy] = useState("");
   const load = useCallback(async () => {
+    if (!companyId) return;
     try {
       const [m, t] = await Promise.all([
         axios.get(`${API_URL}/support/meta`, cred),
@@ -275,6 +278,7 @@ export default function SupportPage() {
 
   return (
     <div className="space-y-4" data-testid="support-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Destek Talepleri</h1>

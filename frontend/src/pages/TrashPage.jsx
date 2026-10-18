@@ -8,6 +8,8 @@ import { useEscape } from "../utils/useEscape";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { notifyDataChanged } from "../utils/dataRefresh";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 /** Çöp geri alma / silme sonrası hangi IndexedDB koleksiyonları düşürülsün. */
 export function trashNotifyScopes(entityType) {
@@ -181,7 +183,7 @@ const MobileLogsPanel = ({ companyId, q }) => {
 
 export default function TrashPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [data, setData] = useState(null);
   const [type, setType] = useState("");
   const [section, setSection] = useState("trash"); // trash | mobile_logs
@@ -189,8 +191,12 @@ export default function TrashPage() {
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(null);
   const [logCount, setLogCount] = useState(0);
-  const load = useCallback(() => axios.get(`${API_URL}/trash`, { params: { company_id: companyId, entity_type: type || undefined, q: q || undefined } }).then((r) => setData(r.data)).catch(() => toast.error("Çöp kutusu yüklenemedi.")), [companyId, type, q]);
+  const load = useCallback(() => {
+    if (!companyId) return Promise.resolve();
+    return axios.get(`${API_URL}/trash`, { params: { company_id: companyId, entity_type: type || undefined, q: q || undefined } }).then((r) => setData(r.data)).catch(() => toast.error("Çöp kutusu yüklenemedi."));
+  }, [companyId, type, q]);
   const loadLogCount = useCallback(() => {
+    if (!companyId) { setLogCount(0); return; }
     axios.get(`${API_URL}/mobile/logs`, { params: { company_id: companyId, limit: 500 } })
       .then((r) => setLogCount(r.data?.total ?? (r.data?.items || []).length))
       .catch(() => setLogCount(0));
@@ -246,6 +252,7 @@ export default function TrashPage() {
 
   return (
     <div className="space-y-5" data-testid="trash-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Trash2 className="w-6 h-6 text-slate-500" /> Çöp Kutusu</h1>

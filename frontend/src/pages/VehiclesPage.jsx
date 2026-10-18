@@ -15,6 +15,8 @@ import {
   vehicleTitle,
   VEHICLE_STATUSES,
 } from "../utils/vehicles";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 function VehicleModal({ open, initial, companyId, onClose, onSaved }) {
   useEscape(onClose);
@@ -116,7 +118,7 @@ function VehicleModal({ open, initial, companyId, onClose, onSaved }) {
 
 export default function VehiclesPage() {
   const { activeCompany, can } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const canEdit = can("/vehicles", "edit");
   const canDelete = can("/vehicles", "delete");
   const [rows, setRows] = useState([]);
@@ -127,6 +129,7 @@ export default function VehiclesPage() {
   const [modal, setModal] = useState(null); // null | {} | row
 
   const load = useCallback(async () => {
+    if (!companyId) { setLoading(false); setRows([]); return; }
     setLoading(true);
     try {
       const r = await axios.get(`${API_URL}/vehicles`, { params: { company_id: companyId } });
@@ -164,6 +167,7 @@ export default function VehiclesPage() {
 
   return (
     <div className="space-y-6" data-testid="vehicles-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">

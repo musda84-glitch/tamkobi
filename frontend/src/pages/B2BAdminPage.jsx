@@ -5,13 +5,16 @@ import { ShoppingCart, Copy, ExternalLink, FileSpreadsheet, KeyRound } from "luc
 import { useAuth } from "../context/AuthContext";
 import { B2BSettings } from "./SettingsPage";
 import { LegalTextsPanel } from "../components/LegalTextsPanel";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 export default function B2BAdminPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const url = `${window.location.origin}/b2b/giris`;
   return (
     <div className="space-y-5" data-testid="b2b-admin-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="w-6 h-6 text-emerald-600" /> B2B Portal Yönetimi</h1><p className="text-sm text-slate-500">Şirket varsayılanları ve müşteri erişim listesi. Her carinin kendi portal özellikleri cari kartı → <b>B2B Portal</b> sekmesinden ayarlanır.</p></div>
         <div className="bg-slate-900 text-white rounded-2xl px-4 py-3 text-xs flex flex-wrap items-center gap-3" data-testid="b2b-login-url-card"><div><div className="text-[10px] uppercase tracking-wider text-slate-400">Müşteri giriş adresi</div><div className="font-mono font-bold text-emerald-300">{url}</div></div><button onClick={() => { navigator.clipboard?.writeText(url); toast.success("Adres kopyalandı."); }} className="px-3 py-1.5 bg-white/10 rounded-lg font-semibold flex items-center gap-1 hover:bg-white/20" data-testid="b2b-copy-url"><Copy className="w-3.5 h-3.5" /> Kopyala</button><a href={url} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-emerald-500 text-slate-900 rounded-lg font-bold flex items-center gap-1" data-testid="b2b-open-url"><ExternalLink className="w-3.5 h-3.5" /> Aç</a></div>

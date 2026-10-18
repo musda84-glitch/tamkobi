@@ -10,6 +10,7 @@ import { LabelQuickPrint } from "./LabelDesigner";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { useAuth } from "../context/AuthContext";
+import { activeCompanyId } from "../utils/activeCompanyId";
 
 const TABS = [
   { key: "general", label: "Genel & Barkod", icon: Pencil },
@@ -29,13 +30,13 @@ export const ProductDetailModal = ({ product, initialTab = "images", onClose, on
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       {showLabel && (
         <LabelQuickPrint
-          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          companyId={activeCompanyId(activeCompany)}
           product={product}
           company={activeCompany}
           onClose={() => setShowLabel(false)}
         />
       )}
-      {showProduce && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={product} onClose={() => setShowProduce(false)} />}
+      {showProduce && <ProductionOrderModal companyId={activeCompanyId(activeCompany)} product={product} onClose={() => setShowProduce(false)} />}
       <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200" data-testid="product-detail-modal" onClick={(ev) => ev.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div className="flex items-center gap-3">

@@ -9,13 +9,15 @@ import { InstallmentRows } from "../components/InstallmentPlanModal";
 import { QuickMessageModal } from "../components/QuickMessageModal";
 import { formatTrAmount } from "../utils/money";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const FILTERS = [["pending", "Bekleyen"], ["overdue", "Vadesi Geçen"], ["receivable", "Alacak (Satış)"], ["payable", "Borç (Alış)"], ["paid", "Ödenen"], ["all", "Tümü"]];
 
 export default function InstallmentsPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -25,6 +27,7 @@ export default function InstallmentsPage() {
   const [remind, setRemind] = useState(null);
 
   const load = useCallback(async () => {
+    if (!companyId) return;
     const qs = filter === "receivable" || filter === "payable" ? `direction=${filter}&status=pending` : `status=${filter === "all" ? "" : filter}`;
     try {
       const [r, s, a, c] = await Promise.all([axios.get(`${API_URL}/installments?company_id=${companyId}&${qs}`), axios.get(`${API_URL}/installments/summary?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`)]);
@@ -44,6 +47,7 @@ export default function InstallmentsPage() {
 
   return (
     <div className="space-y-6" data-testid="installments-page">
+      {!companyId && <NoCompanyNotice />}
       <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Taksitler</h1><p className="text-xs sm:text-sm text-slate-500">Satış & alış faturalarının taksit planları, vade takibi ve tahsilat/ödeme</p></div>
       {summary && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">

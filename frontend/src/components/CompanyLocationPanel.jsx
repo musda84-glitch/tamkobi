@@ -13,9 +13,13 @@ export const CompanyLocationPanel = ({ companyId }) => {
   const [radius, setRadius] = useState(300);
   const [busy, setBusy] = useState(null);
   const [pending, setPending] = useState(null);
-  const load = () => axios.get(`${API_URL}/companies/${companyId}`).then((r) => { setLoc(r.data.location || null); if (r.data.location?.radius_m) setRadius(r.data.location.radius_m); }).catch(() => {});
+  const load = () => {
+    if (!companyId) return Promise.resolve();
+    return axios.get(`${API_URL}/companies/${companyId}`).then((r) => { setLoc(r.data.location || null); if (r.data.location?.radius_m) setRadius(r.data.location.radius_m); }).catch(() => {});
+  };
   useEffect(() => { load(); }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async (latitude, longitude, label) => {
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     setBusy("save");
     try { await axios.put(`${API_URL}/companies/${companyId}/location`, { latitude, longitude, radius_m: Number(radius) || 300, label }); toast.success("Firma konumu kaydedildi. Personel bu noktanın " + radius + " m içinden giriş/çıkış yapabilir."); setResults([]); setPending(null); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(null); }

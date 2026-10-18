@@ -17,13 +17,15 @@ import {
   Smartphone, Search, Plus, Minus, Trash2, UserPlus, Maximize2, Minimize2,
   RefreshCw, Package, ShoppingCart, CheckCircle2, MapPin, Phone, X,
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const pid = (p) => p?.id || p?._id || "";
 
 export default function FieldSalesPage() {
   const { activeCompany, user, can } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const canEdit = can("/saha", "edit");
 
   const [products, setProducts] = useState([]);
@@ -41,6 +43,7 @@ export default function FieldSalesPage() {
   const [showCart, setShowCart] = useState(false);
 
   const load = useCallback(async () => {
+    if (!companyId) return;
     try {
       const [p, o] = await Promise.all([
         axios.get(`${API_URL}/products?company_id=${companyId}`),
@@ -212,6 +215,7 @@ export default function FieldSalesPage() {
 
   return (
     <div className={shell} data-testid="field-sales-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">

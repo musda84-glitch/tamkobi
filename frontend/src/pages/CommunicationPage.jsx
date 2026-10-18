@@ -8,6 +8,8 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { MailClient } from "../components/MailClient";
 import { SmsCenter } from "../components/SmsCenter";
 import { BulkCampaign } from "../components/BulkCampaign";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const TABS = [
   { key: "mail", label: "E-posta (Outlook)", icon: Mail },
@@ -19,14 +21,19 @@ const TABS = [
 export default function CommunicationPage() {
   const { activeCompany } = useAuth();
   const [searchParams] = useSearchParams();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [tab, setTab] = useState(searchParams.get("tab") || "mail");
   const [contacts, setContacts] = useState([]);
 
-  useEffect(() => { axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {}); }, [companyId]);
+  useEffect(() => {
+    if (!companyId) return undefined;
+    axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContacts(r.data)).catch(() => {});
+    return undefined;
+  }, [companyId]);
 
   return (
     <div className="space-y-6" data-testid="communication-page">
+      {!companyId && <NoCompanyNotice />}
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">İletişim Merkezi</h1>
         <p className="text-xs sm:text-sm text-slate-500">E-posta kutunuz, SMS (Netgsm / İleti Merkezi / Verimor), WhatsApp görüşmeleri ve toplu kampanyalar tek ekranda</p>

@@ -31,6 +31,8 @@ import { workMapsLink } from "../utils/mapsLink";
 import { addressToggleLabel, shouldCollapseAddress } from "../utils/addressToggle";
 import { DEFAULT_LOCATION_RADIUS_M, LOCATION_RADIUS_OPTIONS, normalizeRadiusM } from "../utils/locationRadius";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -267,7 +269,7 @@ export default function ProjectsPage({ section } = {}) {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const companyId = activeCompany?.id || activeCompany?._id || (!authLoading ? "comp_nexus_main_01" : "");
+  const companyId = activeCompanyId(activeCompany);
   const pathTab = section || (location.pathname.includes("/surveys") ? "surveys" : location.pathname.includes("/projects") && !location.pathname.includes("/quotes") ? "projects" : "quotes");
   const [tab, setTab] = useState(pathTab);
   useEffect(() => { setTab(pathTab); }, [pathTab]);
@@ -724,6 +726,7 @@ export default function ProjectsPage({ section } = {}) {
 
   return (
     <div className="space-y-6" data-testid="projects-page">
+      {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Teklif / Proje / Keşif</h1><p className="text-xs sm:text-sm text-slate-500">Tamamlanan aşama bir sonrakine geçebilir; proje aşamalarını müşteriye SMS / e-posta / WhatsApp linkiyle paylaşın</p></div>
         <button onClick={() => openForm(kind)} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold" data-testid={`new-${kind}-btn`}><Plus className="w-4 h-4" /> {kind === "quote" ? "Yeni Teklif" : kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</button>

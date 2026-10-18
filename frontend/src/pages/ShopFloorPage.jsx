@@ -15,6 +15,8 @@ import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { formatTrQty } from "../utils/money";
 import { QuantityInput } from "../components/MoneyInput";
 import { useLivePoll } from "../hooks/useLivePoll";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const woId = (w) => String(w?.id || w?._id || "");
 
@@ -22,7 +24,7 @@ const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["
 
 export default function ShopFloorPage() {
   const { activeCompany } = useAuth();
-  const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const companyId = activeCompanyId(activeCompany);
   const [wos, setWos] = useState([]);
   /** İstasyon filtresinden bağımsız in_progress listesi — operatör kilit kontrolü için */
   const [lockWos, setLockWos] = useState([]);
@@ -49,7 +51,10 @@ export default function ShopFloorPage() {
   const [trashReqErr, setTrashReqErr] = useState("");
   const [pausePolicy, setPausePolicy] = useState({ allowed: true, phase: "mesai", reason: null, deadline: null });
   const [loadError, setLoadError] = useState("");
-  const loadPerf = useCallback(() => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {}), [companyId]);
+  const loadPerf = useCallback(() => {
+    if (!companyId) return Promise.resolve();
+    return axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {});
+  }, [companyId]);
   useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
 
   const loadPausePolicy = useCallback(async (opName) => {
@@ -68,6 +73,11 @@ export default function ShopFloorPage() {
   }, [companyId]);
 
   const load = useCallback(async () => {
+    if (!companyId) {
+      setLoadError("Firma seçili değil");
+      setWos([]);
+      return;
+    }
     try {
       const bust = `_=${Date.now()}`;
       const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
@@ -106,6 +116,7 @@ export default function ShopFloorPage() {
   useEffect(() => { localStorage.setItem("nx_station", station); }, [station]);
   useEffect(() => { localStorage.setItem("nx_group_same_station", groupSameStation ? "1" : "0"); }, [groupSameStation]);
   useEffect(() => {
+    if (!companyId) return undefined;
     axios.get(`${API_URL}/production/work-orders/shopfloor-settings`, { params: { company_id: companyId } })
       .then((r) => {
         if (typeof r.data?.group_same_station === "boolean") {
@@ -228,6 +239,7 @@ export default function ShopFloorPage() {
     }
     return (
       <div className={`space-y-4 ${extraClass}`} data-testid="shopfloor-station-groups">
+        {!companyId && <NoCompanyNotice />}
         {shopFloorStationSections(arrangeWos(list)).map((sec) => (
           <div key={sec.key} data-testid={`shopfloor-station-group-${sec.key}`}>
             <div className="flex items-center gap-2 mb-2">

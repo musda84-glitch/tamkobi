@@ -17,9 +17,12 @@ import {
   Settings,
   QrCode
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 export default function CargoPage() {
   const { activeCompany } = useAuth();
+  const companyId = activeCompanyId(activeCompany);
   const [cargoConfigs, setCargoConfigs] = useState([]);
   const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,17 +34,21 @@ export default function CargoPage() {
   const [catalog, setCatalog] = useState([]);
   const [addProv, setAddProv] = useState(null);
   const [creds, setCreds] = useState({});
-  const loadCatalog = useCallback(() => axios.get(`${API_URL}/integrations/cargo/catalog?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`).then((r) => setCatalog(r.data)).catch(() => {}), [activeCompany]);
+  const loadCatalog = useCallback(() => {
+    if (!companyId) return Promise.resolve();
+    return axios.get(`${API_URL}/integrations/cargo/catalog?company_id=${companyId}`).then((r) => setCatalog(r.data)).catch(() => {});
+  }, [companyId]);
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
-  const addProvider = async () => { try { const r = await axios.post(`${API_URL}/integrations/cargo`, { company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01", carrier_code: addProv.carrier_code, ...creds }); toast.success(r.data.message); setAddProv(null); setCreds({}); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Eklenemedi."); } };
+  const addProvider = async () => { if (!companyId) { toast.error("Firma seçili değil"); return; } try { const r = await axios.post(`${API_URL}/integrations/cargo`, { company_id: companyId, carrier_code: addProv.carrier_code, ...creds }); toast.success(r.data.message); setAddProv(null); setCreds({}); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Eklenemedi."); } };
   const refreshShipment = async (shp) => { try { const r = await axios.post(`${API_URL}/cargo/shipments/${shp.id || shp._id}/refresh`); toast.success(`Güncellendi: ${r.data.tracking_number}${r.data.provider_status ? " · " + r.data.provider_status : ""}`); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); } };
   const removeProvider = async (car) => { if (!window.confirm(`${car.carrier_name} kaldırılsın mı?`)) return; try { await axios.delete(`${API_URL}/integrations/cargo/${car.id}`); toast.success("Kaldırıldı."); loadCatalog(); loadCargoData(); } catch (err) { toast.error(err.response?.data?.detail || "Kaldırılamadı."); } };
   const loadCargoData = useCallback(async () => {
+    if (!companyId) { setLoading(false); return; }
     try {
       setLoading(true);
       const [confRes, shipRes] = await Promise.all([
-        axios.get(`${API_URL}/integrations/cargo?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/cargo/shipments?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
+        axios.get(`${API_URL}/integrations/cargo?company_id=${companyId}`),
+        axios.get(`${API_URL}/cargo/shipments?company_id=${companyId}`)
       ]);
       setCargoConfigs(confRes.data);
       setShipments(shipRes.data);
@@ -50,11 +57,12 @@ export default function CargoPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeCompany]);
+  }, [companyId]);
   useEffect(() => { loadCargoData(); }, [loadCargoData]);
 
   return (
     <div className="space-y-6" data-testid="cargo-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

@@ -18,9 +18,12 @@ import {
   CheckCircle2
   , ClipboardList
 } from "lucide-react";
+import { activeCompanyId } from "../utils/activeCompanyId";
+import NoCompanyNotice from "../components/NoCompanyNotice";
 
 export default function WarehousePage() {
   const { activeCompany } = useAuth();
+  const companyId = activeCompanyId(activeCompany);
   const [warehouses, setWarehouses] = useState([]);
   const [showCount, setShowCount] = useState(false);
   const [searchParams] = useSearchParams();
@@ -51,12 +54,16 @@ export default function WarehousePage() {
   });
 
   const loadWarehouseData = useCallback(async () => {
+    if (!companyId) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const [whRes, trRes, prodRes] = await Promise.all([
-        axios.get(`${API_URL}/warehouses?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/warehouses/transfers?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`)
+        axios.get(`${API_URL}/warehouses?company_id=${companyId}`),
+        axios.get(`${API_URL}/warehouses/transfers?company_id=${companyId}`),
+        axios.get(`${API_URL}/products?company_id=${companyId}`)
       ]);
       setWarehouses(whRes.data);
       setTransfers(trRes.data);
@@ -74,14 +81,15 @@ export default function WarehousePage() {
     } finally {
       setLoading(false);
     }
-  }, [activeCompany]);
+  }, [companyId]);
   useEffect(() => { loadWarehouseData(); }, [loadWarehouseData]);
 
   const handleSaveWarehouse = async (e) => {
     e.preventDefault();
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       await axios.post(`${API_URL}/warehouses`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         ...newWarehouse
       });
       toast.success("Yeni depo başarıyla tanımlandı.");
@@ -99,9 +107,10 @@ export default function WarehousePage() {
       return;
     }
     const p = products.find(prod => (prod.id === transferForm.product_id || prod._id === transferForm.product_id));
+    if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
       await axios.post(`${API_URL}/warehouses/transfer`, {
-        company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
+        company_id: companyId,
         product_name: p?.name || "Ürün",
         ...transferForm,
         quantity: Number(transferForm.quantity)
@@ -116,6 +125,7 @@ export default function WarehousePage() {
 
   return (
     <div className="space-y-6" data-testid="warehouses-page">
+      {!companyId && <NoCompanyNotice />}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -144,7 +154,7 @@ export default function WarehousePage() {
           </button>
         </div>
       </div>
-      {showCount && <div data-testid="warehouse-stock-count"><StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={warehouses} /></div>}
+      {showCount && <div data-testid="warehouse-stock-count"><StockCountPanel companyId={activeCompanyId(activeCompany)} warehouses={warehouses} /></div>}
 
       <div className="flex items-center gap-1 border-b border-slate-200">
         {[["warehouses", "Depolar & Transferler", Building2], ["count", "Stok Sayımı (Stoklar sayfasına taşındı)", ClipboardList]].map(([k, l, Icon]) => (

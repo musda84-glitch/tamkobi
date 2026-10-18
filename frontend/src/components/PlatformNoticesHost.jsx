@@ -9,6 +9,7 @@ import {
   makeTransportNotice,
   pickVisibleNotice,
 } from "../utils/platformNotices";
+import { activeCompanyId } from "../utils/activeCompanyId";
 
 const POLL_MS = 60_000;
 const POLL_ACTIVE_MS = 8_000;
@@ -20,7 +21,7 @@ const POLL_ACTIVE_MS = 8_000;
  */
 export function PlatformNoticesHost({ disabled = false }) {
   const { activeCompany } = useAuth() || {};
-  const companyId = activeCompany?.id || activeCompany?._id || "";
+  const companyId = activeCompanyId(activeCompany);
   const [payload, setPayload] = useState(null);
   const [transportNotice, setTransportNotice] = useState(null);
   const [closedIds, setClosedIds] = useState(() => new Set());
