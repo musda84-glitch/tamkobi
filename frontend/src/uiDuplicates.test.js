@@ -79,6 +79,15 @@ const ALLOWED_DUPLICATE_TESTIDS = {
   "pages/SupportPage.jsx": ["{`support-att-${i}`}"],
   // Tur hedefleri: gerçek düğme HelpButton'da; burada CSS seçici olarak geçer.
   "help/pageRegistry.js": ['"help-page-btn"'],
+  // slimWhenEmpty boş satırı ile dolu kart aynı testid'yi taşır; ikisi birden çizilmez.
+  "components/PersonnelRequestsInbox.jsx": ['"personnel-requests-inbox"', '"personnel-requests-empty"'],
+  "components/EdocPendingInbox.jsx": ['"edoc-pending-inbox"', '"edoc-pending-empty"', '"edoc-pending-see-all"'],
+  "components/MarketplaceQuestionsInbox.jsx": ['"marketplace-questions-inbox"', '"marketplace-questions-empty"', '"marketplace-questions-see-all"'],
+  // Açık emir / aktif proje yoksa ince satır, varsa kart; ikisi birden çizilmez.
+  "components/DashboardProductionCard.jsx": ['"dashboard-production-card"'],
+  "components/DashboardProjectsCard.jsx": ['"dashboard-projects-card"'],
+  // Kritik stok listesi ile diğer operasyon grupları aynı testid'yi ayrı dallarda kullanır.
+  "components/OpsAlertsPanel.jsx": ['"ops-alerts-list"'],
 };
 
 function sourceFiles(dir = SRC, out = []) {
