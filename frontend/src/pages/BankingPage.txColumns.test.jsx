@@ -165,6 +165,19 @@ function descriptionRoomPx() {
   return TABLE_PX - fixedRemSum() * REM_PX;
 }
 
+function remWidths() {
+  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')]
+    .map((col) => String(col.style.width || ""))
+    .filter((width) => width.endsWith("rem"))
+    .map((width) => Number.parseFloat(width));
+}
+
+function amountCell(txId) {
+  const row = host.querySelector(`[data-testid="tx-row-${txId}"]`);
+  const cells = [...row.querySelectorAll("td")];
+  return cells[cells.length - 2];
+}
+
 async function renderPage() {
   root = createRoot(host);
   await act(async () => { root.render(<BankingPage />); });
@@ -183,6 +196,11 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   await renderPage();
   expect(headerLabels()).toContain("Hesap");
   expect(descriptionRoomPx()).toBeGreaterThanOrEqual(160);
+  expect(remWidths()[0]).toBeGreaterThanOrEqual(5.25);
+  expect(remWidths()[remWidths().length - 2]).toBeGreaterThanOrEqual(6.25);
+  const tumuAmount = amountCell("tx_open");
+  expect(tumuAmount.getAttribute("title")).toBe(tumuAmount.textContent.trim());
+  expect(tumuAmount.className).toContain("overflow-hidden");
   expect(host.querySelector('[data-testid="tx-filter-unmatched"]').textContent).toBe("Eşleşmemiş (1)");
 
   await openBankAccount();
@@ -202,10 +220,14 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(actionTh.className).toContain("right-0");
   expect(actionTh.className).toContain("whitespace-nowrap");
   expect(actionTh.className).toContain("bg-slate-50");
-  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(160);
+  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(200);
   const cols = [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
-  expect(cols[0].style.width).toBe("5.25rem");
-  expect(cols[cols.length - 1].style.width).toBe("9.5rem");
+  expect(Number.parseFloat(cols[0].style.width)).toBeGreaterThanOrEqual(5.25);
+  expect(remWidths()[remWidths().length - 2]).toBeGreaterThanOrEqual(6.25);
+  expect(cols[cols.length - 1].style.width).toBe("8.25rem");
+  const selectedAmount = amountCell("tx_open");
+  expect(selectedAmount.getAttribute("title")).toBe(selectedAmount.textContent.trim());
+  expect(selectedAmount.className).toContain("overflow-hidden");
   const userTh = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Kullanıcı");
   expect(userTh.className).toContain("hidden");
   expect(userTh.className).toContain("xl:table-cell");

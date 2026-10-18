@@ -1055,18 +1055,18 @@ export default function BankingPage() {
               <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600">
                 <colgroup>
                   <col style={{ width: "5.25rem" }} />
-                  {showAccountCol ? <col style={{ width: "4.75rem" }} /> : null}
-                  <col style={{ width: showAccountCol ? "3rem" : "4rem" }} />
+                  {showAccountCol ? <col style={{ width: "4.25rem" }} /> : null}
+                  <col style={{ width: showAccountCol ? "2.75rem" : "4rem" }} />
                   <col />
                   <col className="hidden xl:table-column w-0 2xl:w-[7.5rem]" />
-                  <col style={{ width: showAccountCol ? "4.25rem" : "5.25rem" }} />
-                  <col style={{ width: "9.5rem" }} />
+                  <col style={{ width: "6.25rem" }} />
+                  <col style={{ width: "8.25rem" }} />
                 </colgroup>
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                   <tr>
                     <th className="px-1 py-2 whitespace-nowrap font-mono">Tarih</th>
-                    {showAccountCol ? <th className="px-1 py-2 max-w-[5rem]">Hesap</th> : null}
-                    <th className="px-1 py-2">Kategori</th>
+                    {showAccountCol ? <th className="px-1 py-2 max-w-[4.25rem] overflow-hidden"><div className="truncate">Hesap</div></th> : null}
+                    <th className="px-1 py-2 overflow-hidden truncate" title="Kategori">Kategori</th>
                     <th className="px-2 py-2 min-w-0">Açıklama / Cari</th>
                     <th className="px-0 2xl:px-2 py-2 hidden xl:table-cell max-w-[120px] w-0 2xl:w-[7.5rem] overflow-hidden">Kullanıcı</th>
                     <th className="px-1 py-2 text-right whitespace-nowrap">Tutar</th>
@@ -1094,7 +1094,7 @@ export default function BankingPage() {
                         >
                           <td className="px-1 py-1.5 text-slate-500 font-mono whitespace-nowrap" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
                           {showAccountCol ? (
-                            <td className="px-1 py-1.5 font-semibold text-slate-900 max-w-[5rem] overflow-hidden">
+                            <td className="px-1 py-1.5 font-semibold text-slate-900 max-w-[4.25rem] overflow-hidden">
                               <div className="truncate" title={accountFull}>{accountFull}</div>
                             </td>
                           ) : null}
@@ -1120,11 +1120,11 @@ export default function BankingPage() {
                           <td className="px-0 2xl:px-2 py-1.5 text-slate-600 hidden xl:table-cell max-w-[120px] w-0 2xl:w-[7.5rem] overflow-hidden" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
                             <div className="truncate">{txUserColumnLabelShort(tx) || <span className="text-slate-300">—</span>}</div>
                           </td>
-                          <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap overflow-hidden ${bankAmountCls(tx)}`}>
+                          <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap overflow-hidden ${bankAmountCls(tx)}`} title={bankAmount(tx)}>
                             {bankAmount(tx)}
                           </td>
                           <td
-                            className={`sticky right-0 z-10 shrink-0 w-auto whitespace-nowrap px-1 py-1 text-right ${focused ? "bg-amber-50" : "bg-white group-hover:bg-slate-50"}`}
+                            className={`sticky right-0 z-10 shrink-0 w-auto whitespace-nowrap px-0 py-1 text-right ${focused ? "bg-amber-50" : "bg-white group-hover:bg-slate-50"}`}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div className="inline-flex items-center justify-end gap-0.5 shrink-0 whitespace-nowrap">
