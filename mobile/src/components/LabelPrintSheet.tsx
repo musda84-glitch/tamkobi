@@ -32,6 +32,7 @@ export function LabelPrintSheet({
   hint,
   onClose,
   onPrint,
+  onPdf,
   testID = "label-print-sheet",
   printerHost,
   printerPort,
@@ -49,6 +50,8 @@ export function LabelPrintSheet({
   hint?: string;
   onClose: () => void;
   onPrint: (copies: number, opts: { includePrice: boolean }) => void;
+  /** Sistem yazdırma ekranı ("print") veya PDF paylaşımı ("pdf"). IP baskısından bağımsız. */
+  onPdf?: (mode: "print" | "pdf", copies: number, opts: { includePrice: boolean }) => Promise<void> | void;
   testID?: string;
   printerHost?: string;
   printerPort?: number;
@@ -171,6 +174,24 @@ export function LabelPrintSheet({
         disabled={!copies}
         onPress={() => { void submit(); }}
       />
+      {onPdf ? (
+        <View style={{ gap: 8, marginTop: 8 }}>
+          <PrimaryButton
+            title="Telefondan yazdır"
+            testID={`${testID}-phone`}
+            color={colors.secondary}
+            disabled={!!busy || !copies}
+            onPress={() => { void onPdf("print", copies, { includePrice }); }}
+          />
+          <PrimaryButton
+            title="PDF paylaş"
+            testID={`${testID}-pdf`}
+            color={colors.secondary}
+            disabled={!!busy || !copies}
+            onPress={() => { void onPdf("pdf", copies, { includePrice }); }}
+          />
+        </View>
+      ) : null}
     </B2BSheet>
   );
 }

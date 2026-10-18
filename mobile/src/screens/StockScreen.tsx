@@ -26,11 +26,12 @@ import { listRowText } from "../utils/listRow";
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
+import { printProductLabelsPdf } from "../utils/labelPdf";
 import { defaultLabelPrinter, printProductLabel, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
 export function StockScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, activeCompany } = useAuth();
   const canEdit = can("/stock", "edit");
   const canInvoice = can("/invoices", "edit");
   const params = useLocalSearchParams<{ scan?: string | string[] }>();
@@ -375,6 +376,35 @@ export function StockScreen() {
               setPrintFor(null);
             } catch (err) {
               const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+              setPrintError(msg);
+              setError(msg);
+            } finally {
+              setPrintBusy(false);
+            }
+          }}
+          onPdf={async (mode, copies, opts) => {
+            if (!printFor) return;
+            setPrintBusy(true);
+            setPrintError(null);
+            try {
+              const ok = await printProductLabelsPdf(client, companyId, [{
+                product: printFor,
+                copies,
+                includePrice: opts.includePrice,
+              }], mode, activeCompany);
+              if (!ok) {
+                const msg = mode === "pdf" ? "PDF paylaşılamadı." : "Etiket yazdırılamadı.";
+                setPrintError(msg);
+                setError(msg);
+                return;
+              }
+              setError(null);
+              setSaleMsg(mode === "pdf"
+                ? `Etiket PDF paylaşıldı (${copies} adet).`
+                : `Etiket yazdırıldı (${copies} adet).`);
+              setPrintFor(null);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket yazdırılamadı.");
               setPrintError(msg);
               setError(msg);
             } finally {

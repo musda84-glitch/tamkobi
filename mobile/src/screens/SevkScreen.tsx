@@ -9,6 +9,7 @@ import { Badge, Card, Empty, ErrorBanner, Field, Muted, Row, Screen } from "../c
 import { go } from "../nav";
 import { colors } from "../theme";
 import { fmtDate, idOf } from "../utils/money";
+import { printShipmentLabelsPdf } from "../utils/labelPdf";
 import { defaultLabelPrinter, printShipmentLabels, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import { pickPercent, pickStatusTone, pickStatusTr, pickSummaryText, type PickRow, type PickSession } from "../utils/orderPick";
 
@@ -32,6 +33,7 @@ export function SevkScreen() {
   const [printFor, setPrintFor] = useState<PickRow | null>(null);
   const [printBusy, setPrintBusy] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [labelPrinter, setLabelPrinter] = useState<LabelPrinterSettings>(defaultLabelPrinter());
 
   const load = useCallback(async () => {
@@ -58,6 +60,7 @@ export function SevkScreen() {
 
   const openShipLabel = async (row: PickRow) => {
     setPrintError(null);
+    setMessage(null);
     const resolved = await resolveLabelPrinter(client, companyId);
     setLabelPrinter(resolved);
     setPrintFor(row);
@@ -90,6 +93,7 @@ export function SevkScreen() {
       )}
     >
       <ErrorBanner message={error} />
+      {message ? <Muted testID="sevk-message">{message}</Muted> : null}
       {!filtered.length ? (
         <Empty icon="cube-outline" title="Toplanacak sipariş yok" hint="Yeni siparişler geldiğinde burada listelenir." />
       ) : filtered.map((r) => {
@@ -163,6 +167,47 @@ export function SevkScreen() {
             const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
             setPrintError(msg);
             setError(msg);
+          } finally {
+            setPrintBusy(false);
+          }
+        }}
+        onPdf={async (mode, copies) => {
+          if (!printFor) return;
+          setPrintBusy(true);
+          setPrintError(null);
+          try {
+            let address = String(printFor.city || "").trim();
+            let customer = printFor.customer_name || "";
+            try {
+              const session = await get<PickSession>(client, `/order-picks/${idOf(printFor)}`);
+              address = String(session.shipping_address || address || session.city || "").trim();
+              customer = session.customer_name || customer;
+            } catch {
+              /* listedeki müşteri ve şehir yeter */
+            }
+            const ok = await printShipmentLabelsPdf(client, companyId, {
+              orderNo: printFor.order_number,
+              customer,
+              address,
+              packageTotal: copies,
+            }, mode);
+            if (!ok) {
+              const msg = mode === "pdf" ? "PDF paylaşılamadı." : "Etiket yazdırılamadı.";
+              setPrintError(msg);
+              setError(msg);
+              setMessage(null);
+              return;
+            }
+            setError(null);
+            setMessage(mode === "pdf"
+              ? `Koli etiketi PDF paylaşıldı (${copies} adet).`
+              : `Koli etiketi yazdırıldı (${copies} adet).`);
+            setPrintFor(null);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+            setPrintError(msg);
+            setError(msg);
+            setMessage(null);
           } finally {
             setPrintBusy(false);
           }

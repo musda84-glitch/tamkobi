@@ -29,6 +29,7 @@ import {
   type PickSession,
 } from "../utils/orderPick";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { printShipmentLabelsPdf } from "../utils/labelPdf";
 import { defaultLabelPrinter, printShipmentLabels, resolveLabelPrinter, saveLabelPrinter, type LabelPrinterSettings } from "../utils/labelPrinter";
 import { printPickProductLabels } from "../utils/pickLabelPrint";
 import { canSevkDraftInvoice, canSevkOpenOrder } from "../utils/permissions";
@@ -178,6 +179,7 @@ export function SevkPickScreen() {
 
   const openShipLabel = async () => {
     setShipError(null);
+    setMessage(null);
     const resolved = await resolveLabelPrinter(client, companyId);
     setLabelPrinter(resolved);
     setShipPrint(true);
@@ -386,6 +388,38 @@ export function SevkPickScreen() {
             const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
             setShipError(msg);
             setError(msg);
+          } finally {
+            setShipBusy(false);
+          }
+        }}
+        onPdf={async (mode, copies) => {
+          setShipBusy(true);
+          setShipError(null);
+          try {
+            const address = [session?.shipping_address, session?.city].filter(Boolean).join(" ");
+            const ok = await printShipmentLabelsPdf(client, companyId, {
+              orderNo: session?.order_number,
+              customer: session?.customer_name,
+              address,
+              packageTotal: copies,
+            }, mode);
+            if (!ok) {
+              const msg = mode === "pdf" ? "PDF paylaşılamadı." : "Etiket yazdırılamadı.";
+              setShipError(msg);
+              setError(msg);
+              setMessage(null);
+              return;
+            }
+            setMessage(mode === "pdf"
+              ? `Koli etiketi PDF paylaşıldı (${copies} adet).`
+              : `Koli etiketi yazdırıldı (${copies} adet).`);
+            setError(null);
+            setShipPrint(false);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : apiErrorMessage(err, "Etiket basılamadı.");
+            setShipError(msg);
+            setError(msg);
+            setMessage(null);
           } finally {
             setShipBusy(false);
           }
