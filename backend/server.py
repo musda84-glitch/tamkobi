@@ -156,6 +156,7 @@ import company_audit
 import finance_txn
 import migration
 import pricing
+from stock_critical import _is_critical_stock
 from report_helpers import issue_q as _issue_q, report_insights as _report_insights
 import edocs
 import n11faturam
@@ -4120,10 +4121,78 @@ async def erp_reset_post(token: str, req: Dict[str, Any]):
 _TR_MON = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
 _CHANNEL_COLORS = {"trendyol": "#f97316", "hepsiburada": "#ea580c", "b2b": "#3b82f6", "shopify": "#10b981",
                    "amazon": "#232f3e", "n11": "#7c3aed", "manual": "#64748b", "shopphp": "#0ea5e9"}
+_IST = ZoneInfo("Europe/Istanbul")
+_REVENUE_SKIP_STATUS = frozenset({"draft", "cancelled", "canceled", "void"})
+_OPEN_PRODUCTION = ("planned", "in_production")
+
+
+def _tr_now() -> datetime:
+    """Europe/Istanbul şimdi (e_invoice.istanbul_now)."""
+    return e_invoice.istanbul_now()
+
+
+def _tr_day_utc_bounds(day) -> tuple:
+    """TR takvim günü [başlangıç, ertesi gün) — UTC ISO, sonek yok (Z ve +00:00 ile sıralanır)."""
+    start = datetime(day.year, day.month, day.day, tzinfo=_IST)
+    end = start + timedelta(days=1)
+    fmt = "%Y-%m-%dT%H:%M:%S"
+    return start.astimezone(timezone.utc).strftime(fmt), end.astimezone(timezone.utc).strftime(fmt)
+
+
+def _filled_before_today(value, today: str) -> bool:
+    """Dolu tarih bugünden önceyse True. Boş / None gecikmiş sayılmaz."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    key = text[:10] if len(text) >= 10 and text[4] == "-" and text[7] == "-" else text
+    return key < today
+
+
+def _counts_toward_revenue(inv: dict) -> bool:
+    return str(inv.get("status") or "") not in _REVENUE_SKIP_STATUS
+
+
+def _critical_stock_ratio(p: dict) -> float:
+    try:
+        minimum = float(p.get("min_stock_alert") or 0)
+        qty = float(p.get("stock_quantity") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if minimum <= 0:
+        return 0.0
+    return qty / minimum
+
+
+def _completed_in_tr_month_query(company_id: str, now: Optional[datetime] = None) -> dict:
+    """Tamamlanan üretim: end_date'in TR ayı. UTC 31. gün 22:00 ertesi aya düşer."""
+    local = (now or _tr_now()).astimezone(_IST)
+    month = local.strftime("%Y-%m")
+    start_local = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start_local.month == 12:
+        end_local = start_local.replace(year=start_local.year + 1, month=1)
+    else:
+        end_local = start_local.replace(month=start_local.month + 1)
+    fmt = "%Y-%m-%dT%H:%M:%S"
+    start_s = start_local.astimezone(timezone.utc).strftime(fmt)
+    end_s = end_local.astimezone(timezone.utc).strftime(fmt)
+    return {
+        "company_id": company_id,
+        "status": "completed",
+        "$or": [
+            {"$and": [
+                {"end_date": {"$regex": f"^{month}"}},
+                {"end_date": {"$lt": end_s}},
+            ]},
+            {"$and": [
+                {"end_date": {"$gte": start_s}},
+                {"end_date": {"$lt": f"{month}-01"}},
+            ]},
+        ],
+    }
 
 
 async def dashboard_overview_payload(company_id: str):
-    now = datetime.now(timezone.utc)
+    now = _tr_now()
     today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
     invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, early_leaves, budgets = await asyncio.gather(
@@ -4165,7 +4234,7 @@ async def dashboard_overview_payload(company_id: str):
     purch_vat = round(sum(float(i.get("vat_total", 0)) for i in invs if i.get("invoice_type") == "purchase" and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(month)), 2)
     exp_vat = round(sum(float(e.get("vat_amount", 0) or 0) for e in exp_rows), 2)
     nxt = (now.replace(day=1) + timedelta(days=32)).replace(day=26)
-    crit = len([p for p in products if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") or 0)])
+    crit = len([p for p in products if _is_critical_stock(p)])
     pick_missing = await db.notifications.count_documents({
         "company_id": company_id,
         "type": {"$in": ["order_pick_missing", "order_pick_production"]},
@@ -4197,7 +4266,7 @@ async def dashboard_overview(company_id: Optional[str] = None, user: dict = Depe
 
 
 def _stock_alert_min(p: dict) -> float:
-    """Unset min matches dashboard stats (default 5). Explicit 0 stays 0."""
+    """Üretim eksik planı: min boşsa 5. Dashboard kritik stok bu varsayımı kullanmaz."""
     raw = p.get("min_stock_alert")
     if raw is None or raw == "":
         return 5.0
@@ -4255,23 +4324,30 @@ async def dashboard_ops_alerts_payload(company_id: str):
             {"order_code": 1, "order_number": 1, "finished_product_name": 1, "product_name": 1, "status": 1, "quantity": 1, "planned_quantity": 1, "created_at": 1},
         ).sort("created_at", -1).to_list(8),
     )
+    def _ops_low_row(p: dict) -> dict:
+        try:
+            qty = float(p.get("stock_quantity") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        try:
+            mn = float(p.get("min_stock_alert") or 0)
+        except (TypeError, ValueError):
+            mn = 0.0
+        shortage = round(max(0.0, mn - qty), 2)
+        return {
+            "id": str(p.get("_id") or ""),
+            "title": p.get("name") or p.get("sku") or "Ürün",
+            "detail": f"Stok {qty:g} · min {mn:g}" + (f" · {p['sku']}" if p.get("sku") else ""),
+            "path": "/stock?status=critical&q=" + quote(str(p.get("sku") or p.get("name") or "")),
+            "qty": qty,
+            "min": mn,
+            "shortage": shortage,
+        }
+
     low_sorted = sorted(
-        [
-            {
-                "id": str(p.get("_id") or ""),
-                "title": p.get("name") or p.get("sku") or "Ürün",
-                "detail": f"Stok {float(p.get('stock_quantity') or 0):g} · min {_stock_alert_min(p):g}"
-                + (f" · {p['sku']}" if p.get("sku") else ""),
-                "path": "/stock?status=critical&q=" + quote(str(p.get("sku") or p.get("name") or "")),
-                "_qty": float(p.get("stock_quantity") or 0),
-            }
-            for p in products
-            if float(p.get("stock_quantity") or 0) <= _stock_alert_min(p)
-        ],
-        key=lambda x: x["_qty"],
+        (_ops_low_row(p) for p in products if _is_critical_stock(p)),
+        key=lambda x: (-x["shortage"], x["qty"]),
     )
-    for row in low_sorted:
-        row.pop("_qty", None)
 
     def _fmt_try(n):
         try:
@@ -4394,8 +4470,9 @@ async def dashboard_tile_badges(company_id: Optional[str] = None, user: dict = D
 
 
 async def dashboard_stats_payload(company_id: str):
-    now = datetime.now(timezone.utc)
+    now = _tr_now()
     month = now.strftime("%Y-%m")
+    today = now.strftime("%Y-%m-%d")
     prev = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     months = []
     cursor = now.replace(day=1)
@@ -4410,7 +4487,7 @@ async def dashboard_stats_payload(company_id: str):
         db.invoices.find(_issue_q(company_id, start, None, {"invoice_type": {"$in": ["sales", "purchase"]}}),
                          {"invoice_type": 1, "status": 1, "grand_total": 1, "issue_date": 1, "contact_name": 1, "invoice_number": 1, "gib_status": 1}).to_list(20000),
         db.orders.find({"company_id": company_id}, {"order_status": 1, "channel": 1, "total_amount": 1, "grand_total": 1}).to_list(5000),
-        db.products.find({"company_id": company_id}, {"stock_quantity": 1, "min_stock_alert": 1, "purchase_price": 1, "name": 1, "sku": 1}).to_list(5000),
+        db.products.find({"company_id": company_id}, {"stock_quantity": 1, "min_stock_alert": 1, "purchase_price": 1, "name": 1, "sku": 1, "track_stock": 1}).to_list(5000),
         db.invoices.find({"company_id": company_id, "status": {"$ne": "cancelled"}},
                          {"contact_name": 1, "invoice_number": 1, "issue_date": 1, "grand_total": 1, "status": 1, "gib_status": 1}).sort("issue_date", -1).limit(5).to_list(5),
     )
@@ -4420,7 +4497,11 @@ async def dashboard_stats_payload(company_id: str):
     total_receivables = sum(float(c.get("balance", 0)) for c in recv_rows)
     total_payables = abs(sum(float(c.get("balance", 0)) for c in pay_rows))
     def month_sum(ym, typ):
-        return sum(float(i.get("grand_total", 0) or 0) for i in invs if i.get("invoice_type") == typ and i.get("status") != "draft" and (i.get("issue_date") or "").startswith(ym))
+        return sum(
+            float(i.get("grand_total", 0) or 0)
+            for i in invs
+            if i.get("invoice_type") == typ and _counts_toward_revenue(i) and (i.get("issue_date") or "").startswith(ym)
+        )
     chart_data = []
     for ym in months:
         gelir = month_sum(ym, "sales")
@@ -4434,8 +4515,14 @@ async def dashboard_stats_payload(company_id: str):
     purchase_total = month_sum(month, "purchase")
     prev_sales = month_sum(prev, "sales")
     sales_change_pct = round(((sales_total - prev_sales) / prev_sales) * 100, 1) if prev_sales else None
+    today_sales = round(sum(
+        float(i.get("grand_total", 0) or 0)
+        for i in invs
+        if i.get("invoice_type") == "sales" and _counts_toward_revenue(i) and (i.get("issue_date") or "") == today
+    ), 2)
     pending_orders = [o for o in orders if o.get("order_status") in ["pending", "approved", "preparing"]]
-    low_stock = [p for p in products if (p.get("stock_quantity") or 0) <= (p.get("min_stock_alert") if p.get("min_stock_alert") is not None else 5)]
+    low_stock = [p for p in products if _is_critical_stock(p)]
+    low_stock_by_ratio = sorted(low_stock, key=_critical_stock_ratio)
     total_stock_value = sum(float(p.get("stock_quantity", 0) or 0) * float(p.get("purchase_price", 0) or 0) for p in products)
     ch_amt: Dict[str, float] = {}
     for o in orders:
@@ -4461,6 +4548,7 @@ async def dashboard_stats_payload(company_id: str):
         "receivable_count": len(recv_rows),
         "payable_count": len(pay_rows),
         "monthly_sales": sales_total,
+        "today_sales": today_sales,
         "monthly_expenses": purchase_total,
         "net_profit": sales_total - purchase_total,
         "sales_change_pct": sales_change_pct,
@@ -4471,7 +4559,7 @@ async def dashboard_stats_payload(company_id: str):
         "channels_breakdown": channels_breakdown,
         "recent_invoices": clean_docs(recent_invs),
         "recent_orders": clean_docs(pending_orders[:5]),
-        "low_stock_products": clean_docs(low_stock[:5]),
+        "low_stock_products": clean_docs(low_stock_by_ratio[:5]),
         "decision": decision[:4],
     }
 
@@ -4480,6 +4568,227 @@ async def dashboard_stats_payload(company_id: str):
 async def get_dashboard_stats(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     return await dashboard_stats_payload(cid)
+
+
+def _role_may_view_module(user: dict, role_doc: dict, module: str) -> bool:
+    """Süper admin / admin / owner serbest; diğerleri rol belgesindeki view."""
+    if user.get("is_super_admin"):
+        return True
+    role = str(user.get("role") or "").strip().lower()
+    if role in ("admin", "owner"):
+        return True
+    perms = (role_doc or {}).get("permissions") or {}
+    return rbac.level_allows(perms.get(module), "view")
+
+
+async def _license_module_enabled(company_id: str, module: str) -> bool:
+    """isModuleEnabled: modules haritası yoksa açık; açıkça false ise kapalı."""
+    lic = await saas.effective(company_id)
+    modules = lic.get("modules") if isinstance(lic, dict) else None
+    if not modules:
+        return True
+    return modules.get(module) is not False
+
+
+async def _manager_summary_access(user: dict, cid: str) -> tuple:
+    role_doc = await rbac.role_for(user, cid)
+    allow_production = _role_may_view_module(user, role_doc, "/production")
+    allow_projects = _role_may_view_module(user, role_doc, "/projects")
+    if allow_production and not await _license_module_enabled(cid, "/production"):
+        allow_production = False
+    if allow_projects and not await _license_module_enabled(cid, "/projects"):
+        allow_projects = False
+    return allow_production, allow_projects
+
+
+_MGR_PO_PROJ = {
+    "order_code": 1,
+    "finished_product_name": 1,
+    "planned_quantity": 1,
+    "completed_quantity": 1,
+    "status": 1,
+    "planned_date": 1,
+    "created_at": 1,
+}
+
+
+async def _manager_production_block(cid: str, today: str, now: datetime) -> dict:
+    day_start, day_end = _tr_day_utc_bounds(now.date())
+    open_q = {"company_id": cid, "status": {"$in": list(_OPEN_PRODUCTION)}}
+    late_q = {**open_q, "planned_date": {"$gt": "", "$lt": today}}
+    done_q = {"company_id": cid, "status": "done", "finished_at": {"$gte": day_start, "$lt": day_end}}
+    open_n, in_prod, late_n, done_month, today_steps, produced_rows, dated = await asyncio.gather(
+        db.production_orders.count_documents(open_q),
+        db.production_orders.count_documents({"company_id": cid, "status": "in_production"}),
+        db.production_orders.count_documents(late_q),
+        db.production_orders.count_documents(_completed_in_tr_month_query(cid, now)),
+        db.work_orders.count_documents(done_q),
+        db.work_orders.aggregate([
+            {"$match": done_q},
+            {"$group": {"_id": None, "produced": {"$sum": {"$ifNull": ["$produced_qty", 0]}}}},
+        ]).to_list(1),
+        db.production_orders.find({**open_q, "planned_date": {"$gt": ""}}, _MGR_PO_PROJ).sort("planned_date", 1).to_list(3),
+    )
+    top = list(dated)
+    if len(top) < 3:
+        undated = await db.production_orders.find(
+            {**open_q, "$or": [{"planned_date": None}, {"planned_date": ""}, {"planned_date": {"$exists": False}}]},
+            _MGR_PO_PROJ,
+        ).sort("created_at", 1).to_list(3 - len(top))
+        top.extend(undated)
+    steps_by: Dict[str, list] = {}
+    oids = [row["_id"] for row in top]
+    if oids:
+        wos = await db.work_orders.find(
+            {"company_id": cid, "order_id": {"$in": oids}},
+            {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
+        ).to_list(500)
+        for w in wos:
+            steps_by.setdefault(w.get("order_id"), []).append(w)
+    top_orders = []
+    for row in top:
+        ws = sorted(steps_by.get(row["_id"], []), key=lambda x: x.get("step_no") or 0)
+        summary = _production_steps_summary(ws)
+        top_orders.append({
+            "id": str(row.get("_id") or ""),
+            "order_code": row.get("order_code"),
+            "finished_product_name": row.get("finished_product_name"),
+            "planned_quantity": row.get("planned_quantity"),
+            "completed_quantity": row.get("completed_quantity"),
+            "status": row.get("status"),
+            "planned_date": row.get("planned_date"),
+            "late": _filled_before_today(row.get("planned_date"), today),
+            "steps": {
+                "done": summary["done"],
+                "total": summary["total"],
+                "current_step_name": summary.get("current_step_name"),
+            },
+        })
+    produced = float((produced_rows[0] if produced_rows else {}).get("produced") or 0)
+    return {
+        "open": int(open_n or 0),
+        "in_production": int(in_prod or 0),
+        "late": int(late_n or 0),
+        "completed_this_month": int(done_month or 0),
+        "today_done_steps": int(today_steps or 0),
+        "today_produced": round(produced, 2),
+        "top_orders": top_orders,
+    }
+
+
+def _project_done_statuses(final_key: str) -> list:
+    return list({str(final_key or ""), "completed"} - {""})
+
+
+def _project_progress(stages: list, status: Any) -> int:
+    keys = [s.get("key") for s in stages]
+    if status not in keys or not stages:
+        return 0
+    return int(round(100 * (keys.index(status) + 1) / len(stages)))
+
+
+async def _manager_projects_block(cid: str, today: str) -> dict:
+    import project_stages as ps
+    company = await db.companies.find_one({"_id": cid}, {"project_stages": 1}) or {}
+    stages = ps.normalize_project_stages(company.get("project_stages"))
+    final_key = ps.final_stage_key(stages)
+    done = _project_done_statuses(final_key)
+    active_q = {"company_id": cid, "status": {"$nin": done}}
+    overdue_q = {**active_q, "end_date": {"$gt": "", "$lt": today}}
+    labels = {s.get("key"): s.get("label") or "" for s in stages}
+    proj = {"name": 1, "project_number": 1, "status": 1, "end_date": 1, "budget": 1}
+    active_n, overdue_n, budget_rows, id_rows = await asyncio.gather(
+        db.projects.count_documents(active_q),
+        db.projects.count_documents(overdue_q),
+        db.projects.aggregate([
+            {"$match": active_q},
+            {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$budget", 0]}}}},
+        ]).to_list(1),
+        db.projects.find(active_q, {"_id": 1}).to_list(5000),
+    )
+    active_ids = [row["_id"] for row in id_rows]
+    exp_rows: list = []
+    inv_rows: list = []
+    if active_ids:
+        exp_rows, inv_rows = await asyncio.gather(
+            db.expenses.aggregate([
+                {"$match": {"company_id": cid, "project_id": {"$in": active_ids}}},
+                {"$group": {"_id": "$project_id", "total": {"$sum": {"$ifNull": ["$total", 0]}}}},
+            ]).to_list(None),
+            db.invoices.aggregate([
+                {"$match": {
+                    "company_id": cid,
+                    "invoice_type": "purchase",
+                    "project_id": {"$in": active_ids},
+                    "status": {"$nin": ["draft", "cancelled", "canceled", "void"]},
+                }},
+                {"$group": {"_id": "$project_id", "total": {"$sum": {"$ifNull": ["$grand_total", 0]}}}},
+            ]).to_list(None),
+        )
+    exp_map = {row.get("_id"): float(row.get("total") or 0) for row in exp_rows}
+    inv_map = {row.get("_id"): float(row.get("total") or 0) for row in inv_rows}
+    cost_total = round(sum(exp_map.get(pid, 0) + inv_map.get(pid, 0) for pid in active_ids), 2)
+    budget_total = round(float((budget_rows[0] if budget_rows else {}).get("total") or 0), 2)
+    top = await db.projects.find(overdue_q, proj).sort("end_date", 1).to_list(3)
+    if len(top) < 3:
+        top.extend(await db.projects.find(
+            {**active_q, "end_date": {"$gte": today}}, proj,
+        ).sort("end_date", 1).to_list(3 - len(top)))
+    if len(top) < 3:
+        top.extend(await db.projects.find(
+            {**active_q, "$or": [{"end_date": None}, {"end_date": ""}, {"end_date": {"$exists": False}}]},
+            proj,
+        ).sort("name", 1).to_list(3 - len(top)))
+    top_projects = []
+    for row in top:
+        pid = row.get("_id")
+        top_projects.append({
+            "id": str(pid or ""),
+            "name": row.get("name"),
+            "project_number": row.get("project_number"),
+            "status": row.get("status"),
+            "stage_label": labels.get(row.get("status"), ""),
+            "progress_pct": _project_progress(stages, row.get("status")),
+            "end_date": row.get("end_date"),
+            "overdue": _filled_before_today(row.get("end_date"), today),
+            "budget": round(float(row.get("budget") or 0), 2),
+            "cost_total": round(exp_map.get(pid, 0) + inv_map.get(pid, 0), 2),
+        })
+    return {
+        "active": int(active_n or 0),
+        "overdue": int(overdue_n or 0),
+        "budget_total": budget_total,
+        "cost_total": cost_total,
+        "top_projects": top_projects,
+    }
+
+
+async def dashboard_manager_summary_payload(cid: str, allow_production: bool, allow_projects: bool) -> dict:
+    if not allow_production and not allow_projects:
+        return {}
+    now = _tr_now()
+    today = now.strftime("%Y-%m-%d")
+    out: Dict[str, Any] = {}
+    if allow_production and allow_projects:
+        production, projects = await asyncio.gather(
+            _manager_production_block(cid, today, now),
+            _manager_projects_block(cid, today),
+        )
+        out["production"] = production
+        out["projects"] = projects
+    elif allow_production:
+        out["production"] = await _manager_production_block(cid, today, now)
+    else:
+        out["projects"] = await _manager_projects_block(cid, today)
+    return out
+
+
+@api_router.get("/dashboard/manager-summary")
+async def dashboard_manager_summary(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Üretim ve proje özeti. Modül anahtarı yalnız view yetkisi ve lisans açıksa döner."""
+    cid = tenant_access.resolve_company_id(user, company_id)
+    allow_production, allow_projects = await _manager_summary_access(user, cid)
+    return await dashboard_manager_summary_payload(cid, allow_production, allow_projects)
 
 # ----------------- CARİLER (MÜŞTERİ & TEDARİKÇİ) -----------------
 @api_router.get("/contacts")
@@ -21486,7 +21795,7 @@ def _production_kpi_from_orders(rows: List[Dict[str, Any]], month: str) -> Dict[
 async def production_order_kpis(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Hafif sayaçlar — MySQL'de COUNT(*) (JSON yüklemeden); eksik bildirim Python filtresi."""
     cid = tenant_access.resolve_company_id(user, company_id)
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    month = _tr_now().strftime("%Y-%m")
     open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
         db.production_orders.count_documents({"company_id": cid, "status": {"$in": ["planned", "in_production"]}}),
         db.production_orders.count_documents({"company_id": cid, "status": "in_production"}),
@@ -24970,7 +25279,7 @@ async def ask_financial_ai(req: FinancialAIChatRequest, user: dict = Depends(get
     expenses = sum(i.get("grand_total", 0) for i in invoices if i.get("invoice_type") == "purchase")
     orders = await db.orders.find({"company_id": cid, "order_status": "pending"}).to_list(100)
     products = await db.products.find({"company_id": cid}).to_list(500)
-    low_stock = [p for p in products if p.get("stock_quantity", 0) <= p.get("min_stock_alert", 5)]
+    low_stock = [p for p in products if _is_critical_stock(p)]
 
     context = {
         "company_id": cid,

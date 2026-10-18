@@ -16,7 +16,6 @@ button_html = notify_email_layout.button_html
 
 LOW_STOCK_FETCH = 500
 LOW_STOCK_KEEP = 10
-_DEFAULT_MIN = 5
 
 
 def fmt_int(x) -> str:
@@ -30,9 +29,9 @@ def fmt_try(x) -> str:
 
 
 def fmt_min(raw) -> str:
-    """min yoksa build_summary $ifNull varsayılanı (5)."""
+    """Min eşiği. Boş veya geçersiz değer sayıya çevrilmez (varsayılan 5 yok)."""
     if raw is None or raw == "":
-        return fmt_int(_DEFAULT_MIN)
+        return "—"
     return fmt_int(raw)
 
 
@@ -56,14 +55,13 @@ def raw_min(item: dict):
 
 
 def stock_sort_key(item: dict) -> Tuple[int, float, str]:
-    """stock/min artan. min yoksa 5. min ≤ 0 en sona."""
+    """stock/min artan. min yok, geçersiz veya ≤ 0 en sona (varsayılan 5 yok)."""
     qty = _as_float(item.get("qty", item.get("stock_quantity")), 0.0)
     raw = raw_min(item)
     name = str(item.get("name") or "")
     if raw is None or raw == "":
-        mn = float(_DEFAULT_MIN)
-    else:
-        mn = _as_float(raw, float(_DEFAULT_MIN))
+        return (1, qty, name)
+    mn = _as_float(raw, 0.0)
     if mn <= 0:
         return (1, qty, name)
     return (0, qty / mn, name)

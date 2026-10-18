@@ -185,7 +185,8 @@ def test_fmt_tr_numbers():
     assert morning_summary_email.fmt_int(1234) == "1.234"
     assert morning_summary_email.fmt_try(5208.33) == "5.208,33 ₺"
     assert morning_summary_email.fmt_try(1234.50) == "1.234,50 ₺"
-    assert morning_summary_email.fmt_min(None) == "5"
+    assert morning_summary_email.fmt_min(None) == "—"
+    assert morning_summary_email.fmt_min("") == "—"
     assert morning_summary_email.fmt_min(5.0) == "5"
 
 
@@ -210,8 +211,9 @@ def test_summary_html_kpis_and_lowest_stock_first():
     assert "Orta" in rows[1]
     assert ">3</td>" in rows[1]
     assert ">5</td>" in rows[1]
-    assert "Yok" in rows[2]
-    assert ">5</td>" in rows[2]
+    assert "P0" in rows[2]
+    assert ">1</td>" in rows[2]
+    assert "Yok" not in html
     assert "Sifir" not in html
     assert "(SON)" not in html
     assert "ve 4 ürün daha" in html
@@ -338,16 +340,15 @@ def test_build_summary_sorts_ratio_and_keeps_full_count():
     summary = _run(pricing.build_summary("c1"))
     assert db.limits == [morning_summary_email.LOW_STOCK_FETCH]
     assert morning_summary_email.LOW_STOCK_FETCH == 500
-    assert summary["low_stock_count"] == 13
+    assert summary["low_stock_count"] == 11
     assert len(summary["low_stock"]) == 10
     assert summary["low_stock"][0]["name"] == "M00"
     names = [row["name"] for row in summary["low_stock"]]
     assert "Sifir" not in names
+    assert "Yok" not in names
     assert "Saglikli" not in names
     assert "Servis" not in names
-    yok = next(row for row in summary["low_stock"] if row["name"] == "Yok")
-    assert yok["min"] is None
-    assert yok["qty"] == 1
+    assert names[-1] == "M09"
     assert set(summary) == {
         "date", "orders_total", "orders_amount", "orders_by_channel",
         "pending_shipments", "low_stock_count", "low_stock",
