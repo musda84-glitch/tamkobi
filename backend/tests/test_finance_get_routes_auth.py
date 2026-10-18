@@ -407,6 +407,7 @@ def _legacy_accounts(db, company_id):
             "integration_provider": (conn.get("provider_name") if conn else None),
             "integration_status": (conn.get("status") if conn else None),
             "connection_id": (conn.get("_id") if conn else None),
+            "last_synced_at": (conn.get("last_synced_at") if conn else None),
         }
         if row.get("is_customer_card_pool"):
             row["current_balance"] = 0.0

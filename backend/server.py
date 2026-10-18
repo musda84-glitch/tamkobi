@@ -129,6 +129,7 @@ import contact_balance
 import contact_activity
 import account_balance
 import bank_tx_page
+import bank_rematch
 import partner_tx_page
 import contact_list_page
 import order_list_page
@@ -11941,16 +11942,19 @@ async def get_report(kind: str, company_id: Optional[str] = None, date_from: Opt
 
 # ----------------- BANKA, KASA, POS & VİRMAN -----------------
 @api_router.get("/banking/accounts")
-async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int = 0, user: dict = Depends(get_current_user)):
+async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int = 0, with_month: int = 0, user: dict = Depends(get_current_user)):
     # Masraf, tahsilat ve virman ekranlarındaki kasa/banka seçicisini bu uç besliyor;
     # eksik dönen bir hesap kullanıcı için "kasam kayboldu" demek.
     # Salt okunur: kasa bakiyesi cevapta hareket toplamıdır, bank_accounts yazılmaz.
     # Kasa bakiyesi yalnız kasa hesaplarının hareketleri (iki IN sorgusu).
     # Drift (ledger_balance, balance_drift, bank_balance_drift) yalnız ?with_drift=1
     # ve o yol şirketin tüm bank_transactions kayıtlarını okumaya devam eder.
+    # Ay özeti (month_in, month_out, unmatched_count) yalnız ?with_month=1 ve tek aggregate.
+    # Varsayılan çağrı bu alanları eklemez, ek sorgu açmaz.
     cid = tenant_access.resolve_company_id(user, company_id)
     accounts = await db.bank_accounts.find({"company_id": cid}).sort("account_name", 1).to_list(2000)
     want_drift = bool(int(with_drift or 0))
+    want_month = bool(int(with_month or 0))
     has_cash = any(str(a.get("type") or "") == "cash_box" for a in (accounts or []))
     txs = None
     if want_drift:
@@ -11971,6 +11975,7 @@ async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int =
             "integration_provider": (conn.get("provider_name") if conn else None),
             "integration_status": (conn.get("status") if conn else None),
             "connection_id": (conn.get("_id") if conn else None),
+            "last_synced_at": (conn.get("last_synced_at") if conn else None),
         }
         # Müşteri Kartları havuzu: giriş+çıkış defteri — bakiye her zaman 0 (yazmadan)
         if row.get("is_customer_card_pool"):
@@ -11978,6 +11983,8 @@ async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int =
         out.append(row)
     if want_drift:
         await account_balance.annotate_listed_accounts(db, cid or "", out, txs if txs is not None else [])
+    if want_month:
+        await bank_rematch.attach_month_totals(db, cid or "", out)
     return out
 
 
@@ -15230,6 +15237,12 @@ async def _auto_match_pending_for_account(company_id: str, account_id: Optional[
 @api_router.post("/banking/transactions/{tx_id}/match")
 async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     tx = await tenant_access.get_tenant_doc(db, "bank_transactions", tx_id, user, not_found="Hareket bulunamadı.")
+    # replace=false (varsayılan): eşleşmiş hareket 400. replace=true mevcut _unmatch + _apply_match.
+    if bank_rematch.replace_requested(req):
+        actor = await _optional_actor(request)
+        return await bank_rematch.replace_matched_transaction(
+            db, tx, req or {}, actor, unmatch=_unmatch, apply_match=_apply_match,
+        )
     if tx.get("match_status") == "matched":
         raise HTTPException(status_code=400, detail="Bu hareket zaten eşleştirilmiş.")
     actor = await _optional_actor(request)
