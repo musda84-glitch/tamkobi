@@ -37,7 +37,7 @@ export function TxMatchActions({
   const labels = LABEL[variant] || LABEL.compact;
   const compact = variant !== "full";
   const btn = compact
-    ? "inline-flex items-center justify-center rounded-lg px-1.5 py-1 text-[11px] font-semibold whitespace-nowrap shrink-0"
+    ? "inline-flex items-center justify-center rounded-lg px-1 py-1 text-[11px] font-semibold whitespace-nowrap shrink-0"
     : "inline-flex items-center justify-center rounded-lg px-2 py-1 text-[11px] font-semibold whitespace-nowrap";
 
   const openFresh = (e) => {

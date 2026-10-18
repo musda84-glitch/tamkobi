@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { formatTrAmount } from "../../utils/money";
-import { accountDisplayLabel, accountMaskedRef, accountTypeLabel } from "../../utils/accountLabel";
+import { accountDisplayLabel, accountTypeLabel, isIban, maskedRef } from "../../utils/accountLabel";
 import { AccountActionsMenu, accountMonogram, relativeSyncLabel } from "./BankAccountList";
 
 function hasField(account, key) {
@@ -18,7 +18,7 @@ function moneyOrDash(account, key) {
   return `${formatTrAmount(account[key])} ₺`;
 }
 
-function countOrDash(account, key) {
+export function countOrDash(account, key) {
   if (!hasField(account, key)) return "—";
   const num = Number(account[key]);
   if (!Number.isFinite(num)) return "—";
@@ -26,11 +26,9 @@ function countOrDash(account, key) {
 }
 
 export function accountDetailSubtitle(account) {
-  const masked = accountMaskedRef(account);
-  const parts = [
-    `IBAN ${masked || "—"}`,
-    accountTypeLabel(account?.type) || "—",
-  ];
+  const parts = [];
+  if (isIban(account?.iban)) parts.push(`IBAN ${maskedRef(account.iban)}`);
+  parts.push(accountTypeLabel(account?.type) || "—");
   if (account?.is_integrated) {
     parts.push("ENTEGRE", account.integration_provider || "—", "CANLI");
   }

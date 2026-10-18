@@ -71,7 +71,9 @@ jest.mock("../components/CardStatementImport", () => ({ CardStatementImport: () 
 jest.mock("../components/CashApprovalsBanner", () => ({ CashApprovalsBanner: () => null }));
 jest.mock("../components/AccountStatementPrint", () => ({ AccountStatementPrint: () => null }));
 jest.mock("../components/SearchSelect", () => ({ SearchSelect: () => null }));
-jest.mock("../components/VirmanPartySelect", () => ({ VirmanPartySelect: () => null }));
+jest.mock("../components/VirmanPartySelect", () => ({
+  VirmanPartySelect: ({ value, testId }) => <div data-testid={testId}>{value || ""}</div>,
+}));
 jest.mock("../hooks/useInfiniteRows", () => ({
   useInfiniteRows: (rows) => ({ visible: rows || [], hasMore: false, sentinelRef: { current: null } }),
 }));
@@ -82,6 +84,14 @@ const ACC_BANK = {
   bank_name: "Kuveyt Türk",
   account_name: "Vadesiz TL Uzun Hesap Adı",
   current_balance: 6716.58,
+  unmatched_count: 12,
+};
+const ACC_CASH = {
+  id: "acc_cash",
+  type: "cash_box",
+  bank_name: "Merkez",
+  account_name: "Kasa",
+  current_balance: 80,
 };
 
 let host;
@@ -102,7 +112,7 @@ beforeEach(() => {
   quiet = jest.spyOn(console, "error").mockImplementation(() => {});
   axios.get.mockImplementation((url) => {
     const u = String(url);
-    if (u.includes("/banking/accounts")) return Promise.resolve({ data: [ACC_BANK] });
+    if (u.includes("/banking/accounts")) return Promise.resolve({ data: [ACC_BANK, ACC_CASH] });
     if (u.includes("/banking/partners/summary")) {
       return Promise.resolve({ data: { partner_count: 0, total_cash_net: 0 } });
     }
@@ -141,6 +151,20 @@ function headerLabels() {
   return [...host.querySelectorAll("thead th")].map((th) => th.textContent.trim());
 }
 
+const REM_PX = 16;
+const TABLE_PX = 590;
+
+function fixedRemSum() {
+  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')]
+    .map((col) => String(col.style.width || ""))
+    .filter((width) => width.endsWith("rem"))
+    .reduce((sum, width) => sum + Number.parseFloat(width), 0);
+}
+
+function descriptionRoomPx() {
+  return TABLE_PX - fixedRemSum() * REM_PX;
+}
+
 async function renderPage() {
   root = createRoot(host);
   await act(async () => { root.render(<BankingPage />); });
@@ -158,6 +182,8 @@ async function openBankAccount() {
 test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmeleri görünür", async () => {
   await renderPage();
   expect(headerLabels()).toContain("Hesap");
+  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(160);
+  expect(host.querySelector('[data-testid="tx-filter-unmatched"]').textContent).toBe("Eşleşmemiş (1)");
 
   await openBankAccount();
 
@@ -175,6 +201,17 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(actionTh.className).toContain("sticky");
   expect(actionTh.className).toContain("right-0");
   expect(actionTh.className).toContain("whitespace-nowrap");
+  expect(actionTh.className).toContain("bg-slate-50");
+  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(160);
+  const cols = [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
+  expect(cols[0].style.width).toBe("5.25rem");
+  expect(cols[cols.length - 1].style.width).toBe("9.5rem");
+  const userTh = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Kullanıcı");
+  expect(userTh.className).toContain("hidden");
+  expect(userTh.className).toContain("xl:table-cell");
+  expect(host.querySelector('[data-testid="tx-filter-unmatched"]').textContent).toBe("Eşleşmemiş (12)");
+  expect(host.querySelector('[data-testid="account-kpi-unmatched-value"]').textContent).toBe("12");
+  expect(host.querySelector('[data-testid="account-detail-subtitle"]').textContent).not.toContain("IBAN");
   const table = host.querySelector('[data-testid="bank-tx-table-wrap"] table');
   expect(table.className).toContain("table-fixed");
   expect(table.className).not.toContain("min-w-[");
@@ -186,4 +223,29 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(name).toBeTruthy();
   expect(name.getAttribute("title")).toBe("Kuveyt Türk · Vadesiz TL Uzun Hesap Adı");
   expect(host.querySelector('[data-testid="tx-row-tx_open"] [data-testid="tx-match-btn-tx_open"]')).toBeTruthy();
+});
+
+test("kasa hesabında IBAN satırı yok ve virman hedefi kaynakla aynı kalmaz", async () => {
+  await renderPage();
+  await act(async () => { host.querySelector('[data-testid="virman-modal-btn"]').click(); });
+  await flush(2);
+  expect(host.querySelector('[data-testid="virman-source"]').textContent).toBe("acc_bank");
+  expect(host.querySelector('[data-testid="virman-target"]').textContent).toBe("acc_cash");
+  const cancel = [...host.querySelectorAll("button")].find((btn) => btn.textContent.trim() === "İptal");
+  await act(async () => { cancel.click(); });
+  await flush(1);
+
+  await act(async () => { host.querySelector('[data-testid="account-group-cash_box"]').click(); });
+  await flush(2);
+  await act(async () => { host.querySelector('[data-testid="bank-card-acc_cash"]').click(); });
+  await flush(4);
+  expect(host.querySelector('[data-testid="account-detail-subtitle"]').textContent).not.toContain("IBAN");
+  expect(host.querySelector('[data-testid="account-detail-subtitle"]').textContent).toContain("Kasa");
+
+  await act(async () => { host.querySelector('[data-testid="account-detail-virman"]').click(); });
+  await flush(2);
+  expect(host.querySelector('[data-testid="virman-source"]').textContent).toBe("acc_cash");
+  expect(host.querySelector('[data-testid="virman-target"]').textContent).toBe("acc_bank");
+  expect(host.querySelector('[data-testid="virman-target"]').textContent)
+    .not.toBe(host.querySelector('[data-testid="virman-source"]').textContent);
 });

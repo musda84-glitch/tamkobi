@@ -53,7 +53,7 @@ import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 import { BankSummaryStrip } from "../components/banking/BankSummaryStrip";
 import { BankAccountList } from "../components/banking/BankAccountList";
-import { BankAccountDetailHeader } from "../components/banking/BankAccountDetailHeader";
+import { BankAccountDetailHeader, countOrDash } from "../components/banking/BankAccountDetailHeader";
 import { TxMatchActions } from "../components/banking/TxMatchActions";
 import { TxDetailPanel } from "../components/banking/TxDetailPanel";
 
@@ -672,7 +672,10 @@ export default function BankingPage() {
   const unmatchedRow = (tx) => (tx.source === "bank_sync" && tx.match_status === "unmatched") || (focusTx && (tx.id || tx._id) === focusTx);
   const unmatchedActive = focusPending || unmatchedOnly;
   const pendingTx = unmatchedActive ? accountTx.filter(unmatchedRow) : accountTx;
-  const unmatchedCount = accountTx.filter((tx) => tx.source === "bank_sync" && tx.match_status === "unmatched").length;
+  const loadedUnmatchedCount = accountTx.filter((tx) => tx.source === "bank_sync" && tx.match_status === "unmatched").length;
+  const unmatchedCount = selectedAccount
+    ? countOrDash(selectedAccount, "unmatched_count")
+    : String(loadedUnmatchedCount);
   const visibleTx = focusTx
     ? [...pendingTx].sort((a, b) => ((a.id || a._id) === focusTx ? -1 : (b.id || b._id) === focusTx ? 1 : 0))
     : pendingTx;
@@ -859,10 +862,19 @@ export default function BankingPage() {
                 }}
                 onSynced={() => loadBankingData()}
                 onVirman={() => {
-                  if (!selectedAccount.is_integrated) {
-                    const id = selectedAccount.id || selectedAccount._id;
-                    setVirmanForm((prev) => ({ ...prev, source_account_id: id }));
-                  }
+                  const id = selectedAccount.id || selectedAccount._id;
+                  setVirmanForm((prev) => {
+                    const source = selectedAccount.is_integrated ? prev.source_account_id : id;
+                    let target = prev.target_account_id;
+                    if (source && target === source) {
+                      const other = accounts.find((a) => {
+                        const aid = a.id || a._id;
+                        return aid && aid !== source && !a.is_integrated;
+                      });
+                      target = other ? (other.id || other._id) : "";
+                    }
+                    return { ...prev, source_account_id: source, target_account_id: target };
+                  });
                   setShowVirmanModal(true);
                 }}
                 onStatement={() => setStmtAccount({ ...selectedAccount, id: selectedAccount.id || selectedAccount._id })}
@@ -1038,26 +1050,26 @@ export default function BankingPage() {
                   );
                 })
               );
-              const actionHeadCls = "sticky right-0 z-10 bg-white shrink-0 w-auto whitespace-nowrap px-1 py-2 text-right";
+              const actionHeadCls = "sticky right-0 z-10 bg-slate-50 shrink-0 w-auto whitespace-nowrap px-1 py-2 text-right";
               const table = (
               <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600">
                 <colgroup>
-                  <col style={{ width: showAccountCol ? "4.25rem" : "4.5rem" }} />
-                  {showAccountCol ? <col style={{ width: "5.25rem" }} /> : null}
-                  <col style={{ width: showAccountCol ? "4.75rem" : "5.5rem" }} />
+                  <col style={{ width: "5.25rem" }} />
+                  {showAccountCol ? <col style={{ width: "4.75rem" }} /> : null}
+                  <col style={{ width: showAccountCol ? "3rem" : "4rem" }} />
                   <col />
-                  <col className="hidden lg:table-column" style={{ width: showAccountCol ? "4.5rem" : "5rem" }} />
-                  <col style={{ width: showAccountCol ? "5.25rem" : "5.75rem" }} />
-                  <col style={{ width: "11.5rem" }} />
+                  <col className="hidden xl:table-column w-0 2xl:w-[7.5rem]" />
+                  <col style={{ width: showAccountCol ? "4.25rem" : "5.25rem" }} />
+                  <col style={{ width: "9.5rem" }} />
                 </colgroup>
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                   <tr>
-                    <th className="px-2 py-2 whitespace-nowrap">Tarih</th>
-                    {showAccountCol ? <th className="px-2 py-2 max-w-[140px]">Hesap</th> : null}
-                    <th className="px-2 py-2">Kategori</th>
+                    <th className="px-1 py-2 whitespace-nowrap font-mono">Tarih</th>
+                    {showAccountCol ? <th className="px-1 py-2 max-w-[5rem]">Hesap</th> : null}
+                    <th className="px-1 py-2">Kategori</th>
                     <th className="px-2 py-2 min-w-0">Açıklama / Cari</th>
-                    <th className="px-2 py-2 hidden lg:table-cell max-w-[120px]">Kullanıcı</th>
-                    <th className="px-2 py-2 text-right whitespace-nowrap">Tutar</th>
+                    <th className="px-0 2xl:px-2 py-2 hidden xl:table-cell max-w-[120px] w-0 2xl:w-[7.5rem] overflow-hidden">Kullanıcı</th>
+                    <th className="px-1 py-2 text-right whitespace-nowrap">Tutar</th>
                     <th className={actionHeadCls}>İşlem</th>
                   </tr>
                 </thead>
@@ -1080,13 +1092,13 @@ export default function BankingPage() {
                           className={`group hover:bg-slate-50/70 transition cursor-pointer [content-visibility:auto] [contain-intrinsic-size:auto_36px] ${focused ? "bg-amber-50 ring-2 ring-inset ring-amber-400" : ""}`}
                           data-testid={`tx-row-${id}`}
                         >
-                          <td className="px-2 py-1.5 text-slate-500 font-mono whitespace-nowrap overflow-hidden" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
+                          <td className="px-1 py-1.5 text-slate-500 font-mono whitespace-nowrap" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
                           {showAccountCol ? (
-                            <td className="px-2 py-1.5 font-semibold text-slate-900 max-w-[140px] overflow-hidden">
+                            <td className="px-1 py-1.5 font-semibold text-slate-900 max-w-[5rem] overflow-hidden">
                               <div className="truncate" title={accountFull}>{accountFull}</div>
                             </td>
                           ) : null}
-                          <td className="px-2 py-1.5 overflow-hidden">
+                          <td className="px-1 py-1.5 overflow-hidden">
                             <span className={`inline-flex items-center gap-1 max-w-full min-w-0 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                               tx.type === "inflow" ? "bg-emerald-50 text-emerald-700" : tx.type === "outflow" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"
                             }`} title={tx.category || bankKind(tx)}>
@@ -1105,17 +1117,17 @@ export default function BankingPage() {
                               {tx.source === "bank_match" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                             </div>
                           </td>
-                          <td className="px-2 py-1.5 text-slate-600 hidden lg:table-cell max-w-[120px] overflow-hidden" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
+                          <td className="px-0 2xl:px-2 py-1.5 text-slate-600 hidden xl:table-cell max-w-[120px] w-0 2xl:w-[7.5rem] overflow-hidden" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
                             <div className="truncate">{txUserColumnLabelShort(tx) || <span className="text-slate-300">—</span>}</div>
                           </td>
-                          <td className={`px-2 py-1.5 text-right font-bold whitespace-nowrap overflow-hidden ${bankAmountCls(tx)}`}>
+                          <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap overflow-hidden ${bankAmountCls(tx)}`}>
                             {bankAmount(tx)}
                           </td>
                           <td
                             className={`sticky right-0 z-10 shrink-0 w-auto whitespace-nowrap px-1 py-1 text-right ${focused ? "bg-amber-50" : "bg-white group-hover:bg-slate-50"}`}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div className="inline-flex items-center justify-end gap-1 shrink-0 whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-0.5 shrink-0 whitespace-nowrap">
                               {rowActions(tx)}
                             </div>
                           </td>
