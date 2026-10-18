@@ -7,6 +7,7 @@ import {
   txCreatedSourceLabel,
   txDescriptionLabel,
   txUserColumnLabel,
+  txUserColumnLabelShort,
 } from "./bankMatchLabel";
 
 describe("bankMatchLabel", () => {
@@ -111,6 +112,30 @@ describe("bankMatchLabel", () => {
       source: "bank_sync",
     })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Ali");
     expect(txUserColumnLabel({ created_by_name: "tamkobi.com", source: "bank_sync" })).toBe("Sistem (Banka aktarımı)");
+  });
+
+  it("txUserColumnLabelShort keeps bank transfer plus matcher within 28 characters", () => {
+    const exact = txUserColumnLabelShort({
+      source: "bank_sync",
+      match_status: "matched",
+      matched_by_name: "Mustafa BAL",
+    });
+    expect(exact).toBe("Banka aktarımı · Mustafa BAL");
+    expect(exact.length).toBeLessThanOrEqual(28);
+    expect(txUserColumnLabel({
+      source: "bank_sync",
+      match_status: "matched",
+      matched_by_name: "Mustafa BAL",
+    })).toBe("Oluşturan: Sistem (Banka aktarımı) · Eşleştiren: Mustafa BAL");
+    const long = txUserColumnLabelShort({
+      source: "bank_sync",
+      match_status: "matched",
+      matched_by_name: "Çok Uzun İsim Soyisimli Kişi",
+    });
+    expect(long.length).toBe(28);
+    expect(long.endsWith("…")).toBe(true);
+    expect(long.startsWith("Banka aktarımı")).toBe(true);
+    expect(txUserColumnLabelShort({ created_by_name: "Ayşe", source: "manual" })).toBe("Ayşe");
   });
 
   it("hides platform CRM emails that are not company users", () => {

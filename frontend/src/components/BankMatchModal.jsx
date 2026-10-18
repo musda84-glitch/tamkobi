@@ -21,13 +21,23 @@ import { expensePersonnelDebtOpen } from "../utils/employeePay";
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 
+function initialMatchMode(tx) {
+  const contact = tx?.suggested_contact_id || tx?.contact_id;
+  const target = tx?.suggested_target_account_id || tx?.target_account_id;
+  const matched = String(tx?.match_status || "") === "matched";
+  if (tx?.expense_id || tx?.as_expense) return "expense";
+  if (target && !contact) return "transfer";
+  if (matched && !contact && String(tx?.category || "").trim()) return "category";
+  return "contact";
+}
+
 /** Banka hareketi eşleştirme / düzeltme modalı — hareketler listesi ve entegrasyon paneli ortak. */
-export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, onClose, onDone }) {
+export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, onClose, onDone, replace = false }) {
   const txId = tx?.id || tx?._id;
   const isIn = tx?.type === "inflow";
-  const [mode, setMode] = useState("contact");
+  const [mode, setMode] = useState(() => initialMatchMode(tx));
   const [contactId, setContactId] = useState(tx?.suggested_contact_id || tx?.contact_id || "");
-  const [targetId, setTargetId] = useState(tx?.suggested_target_account_id || "");
+  const [targetId, setTargetId] = useState(tx?.suggested_target_account_id || tx?.target_account_id || "");
   const [category, setCategory] = useState(tx?.category || "");
   const [expenseCats, setExpenseCats] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -90,7 +100,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
     if (next !== "contact") setContactId("");
     if (next !== "expense" && next !== "category") setCategory("");
     if (next !== "expense") resetPersonnel();
-    if (next !== "transfer") setTargetId(tx?.suggested_target_account_id || "");
+    if (next !== "transfer") setTargetId(tx?.suggested_target_account_id || tx?.target_account_id || "");
   };
 
   const goExpenseMode = () => {
@@ -116,6 +126,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         personnel_pay_kind: mode === "expense" && needEmployee ? personnelPayKind || DEFAULT_PERSONNEL_PAY_KIND : null,
         expense_id: mode === "expense" && needEmployee && personnelPayKind === "reimburse" && expenseId ? expenseId : null,
       };
+      if (replace) body.replace = true;
       const { data: matched } = await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
       const kindLabel = PERSONNEL_PAY_KINDS.find(([k]) => k === personnelPayKind)?.[1];
       const empName = employees.find((row) => (row.id || row._id) === employeeId)?.full_name
@@ -147,7 +158,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         <div className="flex items-start justify-between gap-3 border-b pb-2">
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-              <Link2 className="w-4 h-4 text-violet-600 shrink-0" /> Eşleşme
+              <Link2 className="w-4 h-4 text-violet-600 shrink-0" /> {replace ? "Eşleştirmeyi değiştir" : "Eşleşme"}
             </h3>
             <p className="text-[11px] text-slate-500 mt-0.5 truncate" title={tx.description}>
               {fmtDate(tx.date)} · {isIn ? "+" : "-"}{fmt(tx.amount)} ₺ · {tx.description}
