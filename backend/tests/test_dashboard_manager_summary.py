@@ -1,5 +1,6 @@
-"""GET /dashboard/manager-summary — geçici MongoDB 27999, tamkobi_test_* .
+"""GET /dashboard/manager-summary.
 
+Bellek içi koleksiyon mysql_store sorgusunu kullanır. Motor ve mongod gerekmez.
 Canlı veritabanına ve 8021 portuna bağlanmaz.
 """
 from __future__ import annotations
@@ -27,7 +28,7 @@ import addons  # noqa: E402
 import rbac  # noqa: E402
 import saas  # noqa: E402
 import server  # noqa: E402
-from mongo_27999 import ensure_mongod  # noqa: E402
+from dashboard_memdb import MemDB  # noqa: E402
 
 CO = "co_mgr"
 CO_OTHER = "co_other"
@@ -86,13 +87,6 @@ async def _role(db, cid, code, production, projects):
     })
 
 
-@pytest.fixture(scope="module")
-def mongo_url():
-    url = ensure_mongod()
-    assert "27999" in url and "8021" not in url
-    return url
-
-
 def test_route_resolves_company_and_passes_cid_to_role_for():
     src = inspect.getsource(server.dashboard_manager_summary)
     access = inspect.getsource(server._manager_summary_access)
@@ -103,14 +97,9 @@ def test_route_resolves_company_and_passes_cid_to_role_for():
     assert any(getattr(route, "path", "") == "/api/dashboard/manager-summary" for route in server.app.routes)
 
 
-def test_manager_summary_permissions_and_payload(mongo_url):
-    from motor.motor_asyncio import AsyncIOMotorClient
-
+def test_manager_summary_permissions_and_payload():
     async def _go():
-        client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=4000)
-        name = "tamkobi_test_dashboard_mgr"
-        db = client[name]
-        await client.drop_database(name)
+        db = MemDB()
         prev = _bind(db)
         try:
             await _seed_october(db)
@@ -143,19 +132,13 @@ def test_manager_summary_permissions_and_payload(mongo_url):
             assert exc.value.status_code in (403, 404)
         finally:
             _restore(prev)
-            client.close()
 
     _run(_go())
 
 
-def test_manager_summary_hides_unlicensed_module(mongo_url):
-    from motor.motor_asyncio import AsyncIOMotorClient
-
+def test_manager_summary_hides_unlicensed_module():
     async def _go():
-        client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=4000)
-        name = "tamkobi_test_dashboard_mgr_lic"
-        db = client[name]
-        await client.drop_database(name)
+        db = MemDB()
         prev = _bind(db)
         try:
             await db.companies.insert_one({"_id": CO_LIC, "name": "Lisans"})
@@ -184,19 +167,13 @@ def test_manager_summary_hides_unlicensed_module(mongo_url):
             assert closed == {}
         finally:
             _restore(prev)
-            client.close()
 
     _run(_go())
 
 
-def test_completed_month_and_kpis_use_istanbul(mongo_url):
-    from motor.motor_asyncio import AsyncIOMotorClient
-
+def test_completed_month_and_kpis_use_istanbul():
     async def _go():
-        client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=4000)
-        name = "tamkobi_test_dashboard_mgr_month"
-        db = client[name]
-        await client.drop_database(name)
+        db = MemDB()
         prev = _bind(db)
         try:
             await db.companies.insert_one({"_id": CO_NOV, "name": "Kasım"})
@@ -232,7 +209,6 @@ def test_completed_month_and_kpis_use_istanbul(mongo_url):
             assert NOV1.astimezone(server._IST).strftime("%Y-%m-%d") == "2026-11-01"
         finally:
             _restore(prev)
-            client.close()
 
     _run(_go())
 

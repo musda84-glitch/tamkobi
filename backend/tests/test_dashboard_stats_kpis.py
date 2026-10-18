@@ -1,5 +1,6 @@
-"""Dashboard ciro, today_sales ve kritik stok — geçici MongoDB 27999.
+"""Dashboard ciro, today_sales ve kritik stok.
 
+Bellek içi koleksiyon mysql_store sorgusunu kullanır. Motor ve mongod gerekmez.
 Canlı veritabanına ve 8021 portuna bağlanmaz.
 """
 from __future__ import annotations
@@ -27,8 +28,8 @@ import pricing  # noqa: E402
 import saas  # noqa: E402
 import server  # noqa: E402
 import stock_critical  # noqa: E402
-from mongo_27999 import URL, ensure_mongod  # noqa: E402
-from mysql_store import aggregate_rows, match_query  # noqa: E402
+from dashboard_memdb import MemDB  # noqa: E402
+from mysql_store import MySQLCollection, aggregate_rows, match_query  # noqa: E402
 
 CO = "co_stats"
 CO_STOCK = "co_stock"
@@ -68,12 +69,51 @@ def _user():
     }
 
 
-@pytest.fixture(scope="module")
-def mongo_url():
-    url = ensure_mongod()
-    assert url.startswith("mongodb://127.0.0.1:27999")
-    assert "8021" not in url
-    return url
+def test_mongo_helper_refuses_port_8021(monkeypatch):
+    import mongo_27999
+
+    monkeypatch.setattr(mongo_27999, "URL", "mongodb://127.0.0.1:8021")
+    with pytest.raises(RuntimeError, match="8021"):
+        mongo_27999.ensure_mongod()
+    monkeypatch.setattr(mongo_27999, "URL", "mongodb://127.0.0.1:27999")
+    monkeypatch.setattr(mongo_27999, "MONGOD", Path("/tmp/no-such-tamkobi-mongod"))
+    monkeypatch.setattr(mongo_27999, "_port_open", lambda: False)
+    with pytest.raises(pytest.skip.Exception):
+        mongo_27999.ensure_mongod()
+
+
+def test_mysql_collection_aggregate_group_shape():
+    """MySQLCollection.aggregate: $match + $group $sum/$ifNull, motor satır şekli."""
+    docs = [
+        {"project_id": "a", "total": 10},
+        {"project_id": "a", "total": None},
+        {"project_id": "b", "total": 2.5},
+        {"project_id": None, "total": 99},
+    ]
+    pipeline = [
+        {"$match": {"project_id": {"$in": ["a", "b"]}}},
+        {"$group": {"_id": "$project_id", "total": {"$sum": {"$ifNull": ["$total", 0]}}}},
+    ]
+    seen = {}
+
+    async def _load(query=None):
+        seen["query"] = query
+        return [dict(doc) for doc in docs if match_query(doc, query or {})]
+
+    coll = MySQLCollection(object(), "invoices")
+    coll._load_filtered = _load
+
+    async def _go():
+        rows = await coll.aggregate(pipeline).to_list(None)
+        one = await coll.aggregate(pipeline).to_list(1)
+        return rows, one
+
+    rows, one = _run(_go())
+    assert seen["query"] == {"project_id": {"$in": ["a", "b"]}}
+    assert rows == aggregate_rows(docs, pipeline)
+    assert {row["_id"]: row["total"] for row in rows} == {"a": 10.0, "b": 2.5}
+    assert list(rows[0]) == ["_id", "total"]
+    assert one == rows[:1]
 
 
 def test_critical_stock_helper_matches_mongo_filter():
@@ -109,13 +149,9 @@ def test_critical_stock_helper_matches_mongo_filter():
     assert {row["_id"]: row["total"] for row in grouped} == {"a": 10.0, "b": 2.5}
 
 
-def test_cancelled_invoices_and_today_sales(mongo_url):
-    from motor.motor_asyncio import AsyncIOMotorClient
-
+def test_cancelled_invoices_and_today_sales():
     async def _go():
-        client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=4000)
-        db = client["tamkobi_test_dashboard_stats"]
-        await client.drop_database("tamkobi_test_dashboard_stats")
+        db = MemDB()
         prev = _bind(db)
         try:
             now = server._tr_now()
@@ -169,18 +205,13 @@ def test_cancelled_invoices_and_today_sales(mongo_url):
             assert "today_sales" in stats
         finally:
             _restore(prev)
-            client.close()
 
     _run(_go())
 
 
-def test_critical_stock_counts_match_across_surfaces(mongo_url):
-    from motor.motor_asyncio import AsyncIOMotorClient
-
+def test_critical_stock_counts_match_across_surfaces():
     async def _go():
-        client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=4000)
-        db = client["tamkobi_test_dashboard_stock"]
-        await client.drop_database("tamkobi_test_dashboard_stock")
+        db = MemDB()
         prev = _bind(db)
         try:
             await db.companies.insert_one({"_id": CO_STOCK, "name": "Stok A"})
@@ -227,6 +258,5 @@ def test_critical_stock_counts_match_across_surfaces(mongo_url):
             assert "EKS" in low["items"][0]["detail"]
         finally:
             _restore(prev)
-            client.close()
 
     _run(_go())

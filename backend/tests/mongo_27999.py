@@ -1,10 +1,16 @@
-"""Geçici MongoDB 127.0.0.1:27999. Canlı veritabanına ve 8021 portuna bağlanmaz."""
+"""İsteğe bağlı geçici MongoDB 127.0.0.1:27999.
+
+Canlı veritabanına ve 8021 portuna bağlanmaz. mongod yoksa ensure_mongod atlar.
+Dashboard testleri bu süreci başlatmaz; bellek içi koleksiyon kullanır.
+"""
 from __future__ import annotations
 
 import socket
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 PORT = 27999
 URL = f"mongodb://127.0.0.1:{PORT}"
@@ -24,8 +30,8 @@ def ensure_mongod() -> str:
         raise RuntimeError("test mongo must not use port 8021")
     if _port_open():
         return URL
-    if not MONGOD.exists():
-        raise RuntimeError(f"mongod yok: {MONGOD}")
+    if not MONGOD.is_file():
+        pytest.skip(f"mongod yok: {MONGOD}")
     DBPATH.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(
         [
