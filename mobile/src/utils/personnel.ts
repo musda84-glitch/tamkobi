@@ -752,6 +752,50 @@ export function employeePresenceChip(opts?: {
   return null;
 }
 
+/** Mesaide: iş yeri, görev yeri veya fazla mesai. Mesai bitti ve yer bilgisi yok sayılmaz. */
+export function isOnShift(chip?: Pick<EmployeePresenceChip, "key"> | null): boolean {
+  const key = chip?.key;
+  return key === "work" || key === "duty" || key === "overtime";
+}
+
+export type PersonnelListFilter = "all" | "onshift" | "balance";
+
+const BALANCE_FILTER_EPS = 0.009;
+
+/** Bordro üst özeti: mesaideki kişi sayısı ve işaretli bakiye toplamı. */
+export function personnelShiftSummary(
+  employees: readonly unknown[] | null | undefined,
+  chips: readonly (Pick<EmployeePresenceChip, "key"> | null | undefined)[] | null | undefined,
+  dues: readonly number[] | null | undefined,
+): { onShift: number; total: number; balanceSum: number } {
+  const list = Array.isArray(employees) ? employees : [];
+  const chipList = chips || [];
+  const dueList = dues || [];
+  let onShift = 0;
+  let balanceSum = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    if (isOnShift(chipList[i])) onShift += 1;
+    const due = Number(dueList[i]);
+    if (Number.isFinite(due)) balanceSum += due;
+  }
+  return { onShift, total: list.length, balanceSum };
+}
+
+/** Bordro liste filtresi. Bakiye eşiği mutlak değerdir; işaret değişmez. */
+export function filterEmployeesForChip<T>(
+  employees: readonly T[] | null | undefined,
+  filter: PersonnelListFilter,
+  chips: readonly (Pick<EmployeePresenceChip, "key"> | null | undefined)[] | null | undefined,
+  dues: readonly number[] | null | undefined,
+): T[] {
+  const list = Array.isArray(employees) ? employees : [];
+  if (filter === "onshift") return list.filter((_, i) => isOnShift((chips || [])[i]));
+  if (filter === "balance") {
+    return list.filter((_, i) => Math.abs(Number((dues || [])[i]) || 0) > BALANCE_FILTER_EPS);
+  }
+  return list.slice();
+}
+
 export function openEmployeeTasks(card?: EmployeeCard | null) {
   return (card?.tasks || []).filter((t) => !t.done);
 }
@@ -2254,6 +2298,14 @@ export function employeePayButtonLabel(emp?: { balance?: EmployeeBalance | null 
   const due = employeePayButtonDue(emp, balance);
   if (!due) return "Öde";
   return `Öde · ${fmtMoney(due)}`;
+}
+
+/** Büyük kart butonu: employeePayButtonLabel tutarı, başlık "Öde / Mahsup". */
+export function employeeSettleButtonLabel(emp?: { balance?: EmployeeBalance | null } | null, balance?: EmployeeBalance | null): string {
+  const pay = employeePayButtonLabel(emp, balance);
+  if (pay === "Öde") return "Öde / Mahsup";
+  if (pay.startsWith("Öde")) return `Öde / Mahsup${pay.slice("Öde".length)}`;
+  return pay;
 }
 
 export function validateAdvance(amount: string | number): string | null {

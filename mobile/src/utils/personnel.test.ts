@@ -12,6 +12,8 @@ import {
   payrollStatusTr,
   remainingDue,
   employeePayButtonDue,
+  employeePayButtonLabel,
+  employeeSettleButtonLabel,
   bonusPaidDate,
   employeeCompRows,
   remainingLeaveDays,
@@ -89,6 +91,9 @@ import {
   hasEmployeeDetails,
   employeeStatusLabel,
   employeePresenceChip,
+  isOnShift,
+  personnelShiftSummary,
+  filterEmployeesForChip,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
   requestActionLook,
@@ -968,5 +973,45 @@ describe("project task assign", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].label).toBe("Yapılacak işler");
     expect(groups[0].options.map((o) => o.label)).toEqual(["Montaj · Ali"]);
+  });
+});
+
+describe("payroll shift summary", () => {
+  const work = { key: "work" as const, label: "İş Yerinde", color: "", bg: "", border: "" };
+  const duty = { key: "duty" as const, label: "Görev Yerinde", color: "", bg: "", border: "" };
+  const overtime = { key: "overtime" as const, label: "Fazla Mesaide", color: "", bg: "", border: "" };
+  const done = { key: "done" as const, label: "Mesai Bitti", color: "", bg: "", border: "" };
+
+  it("treats work, duty, and overtime as on shift", () => {
+    expect(isOnShift(work)).toBe(true);
+    expect(isOnShift(duty)).toBe(true);
+    expect(isOnShift(overtime)).toBe(true);
+    expect(isOnShift(done)).toBe(false);
+    expect(isOnShift(null)).toBe(false);
+  });
+
+  it("counts who is on shift and keeps the signed balance sum", () => {
+    const employees = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(personnelShiftSummary(employees, [work, done, overtime], [-500, 0, 1200])).toEqual({
+      onShift: 2,
+      total: 3,
+      balanceSum: 700,
+    });
+  });
+
+  it("filters on-shift staff and non-zero balances, including negatives", () => {
+    const employees = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }];
+    const chips = [work, done, null, duty, done];
+    const dues = [-500, 0, 0.001, 0, -20];
+    expect(filterEmployeesForChip(employees, "onshift", chips, dues).map((row) => row.id)).toEqual(["a", "d"]);
+    expect(filterEmployeesForChip(employees, "balance", chips, dues).map((row) => row.id)).toEqual(["a", "e"]);
+    expect(filterEmployeesForChip(employees, "all", chips, dues)).toHaveLength(5);
+  });
+
+  it("writes the full settle amount without changing the pay label", () => {
+    expect(employeePayButtonLabel({ balance: { remaining: 12345.67 } })).toBe("Öde · 12.345,67 ₺");
+    expect(employeeSettleButtonLabel({ balance: { remaining: 12345.67 } })).toBe("Öde / Mahsup · 12.345,67 ₺");
+    expect(employeeSettleButtonLabel({ balance: { remaining: -500 } })).toBe("Öde / Mahsup · -500,00 ₺");
+    expect(employeeSettleButtonLabel({ balance: { remaining: 0 } })).toBe("Öde / Mahsup");
   });
 });

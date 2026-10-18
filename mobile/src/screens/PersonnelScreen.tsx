@@ -60,6 +60,7 @@ import {
   employeeCompGroups,
   employeeCompRowCaption,
   employeePayButtonLabel,
+  employeeSettleButtonLabel,
   unpaidPayrollTotal,
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
@@ -115,6 +116,9 @@ import {
   employeeDutyBoard,
   employeeStatusLabel,
   employeePresenceChip,
+  isOnShift,
+  personnelShiftSummary,
+  filterEmployeesForChip,
   presenceTodayOf,
   openEmployeeTasks,
   remainingLeaveDays,
@@ -312,6 +316,12 @@ function AttendanceRecCard({
   );
 }
 
+function dueTone(due: number): { color: string; bg: string } {
+  if (due < 0) return { color: colors.warning, bg: colors.amber50 };
+  if (due > 0) return { color: colors.danger, bg: colors.rose50 };
+  return { color: colors.primaryHover, bg: colors.emerald50 };
+}
+
 export function PersonnelScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/personnel", "edit");
@@ -398,6 +408,8 @@ export function PersonnelScreen() {
   const [bonuses, setBonuses] = useState<EmployeeBonus[]>([]);
   const [bonusForm, setBonusForm] = useState<{ employee_id: string; type: string; amount: string | number; period: string; note: string }>({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
   const [settleEmp, setSettleEmp] = useState<Employee | null>(null);
+  const [moreEmp, setMoreEmp] = useState<Employee | null>(null);
+  const [payrollFilter, setPayrollFilter] = useState<"all" | "onshift" | "balance">("all");
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
   const [reimburseEmp, setReimburseEmp] = useState<Employee | null>(null);
   const [reimburseAmount, setReimburseAmount] = useState<string | number>("");
@@ -1509,6 +1521,33 @@ export function PersonnelScreen() {
   const loadAmount = monthlyPayrollLoad(employees);
   const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
   const payGroups = paymentTargetGroups(accounts, partners, { partnersFirst: true });
+  const payrollRows = employees.map((emp) => {
+    const eid = idOf(emp);
+    const unpaid = unpaidPayrollTotal(eid, payrolls);
+    const due = remainingDue(balances[eid], unpaid);
+    const bal = balances[eid];
+    const attSum = (attendance?.summary || []).find((s) => s.employee_id === eid);
+    const presence = employeePresenceChip({
+      status: emp.status,
+      workplace: emp.workplace || cards[eid]?.workplace || attSum?.workplace || null,
+      location_last_inside: emp.location_last_inside ?? cards[eid]?.employee?.location_last_inside,
+      location_last_ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok,
+      location_inside_at: emp.location_inside_at ?? cards[eid]?.employee?.location_inside_at,
+      today: presenceTodayOf(attSum),
+    });
+    return { emp, eid, due, bal, attSum, presence, daysPresent: attSum?.days_present || 0 };
+  });
+  const shiftSummary = personnelShiftSummary(
+    payrollRows.map((row) => row.emp),
+    payrollRows.map((row) => row.presence),
+    payrollRows.map((row) => row.due),
+  );
+  const shownPayrollRows = filterEmployeesForChip(
+    payrollRows,
+    payrollFilter,
+    payrollRows.map((row) => row.presence),
+    payrollRows.map((row) => row.due),
+  );
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -1580,21 +1619,22 @@ export function PersonnelScreen() {
         <>
           {!employees.length ? (
             <Empty icon="people-outline" title="Çalışan yok" />
-          ) : employees.map((emp) => {
-            const eid = idOf(emp);
-            const unpaid = unpaidPayrollTotal(eid, payrolls);
-            const due = remainingDue(balances[eid], unpaid);
-            const bal = balances[eid];
-            const attSum = (attendance?.summary || []).find((s) => s.employee_id === eid);
-            const daysPresent = attSum?.days_present || 0;
-            const presence = employeePresenceChip({
-              status: emp.status,
-              workplace: emp.workplace || cards[eid]?.workplace || attSum?.workplace || null,
-              location_last_inside: emp.location_last_inside ?? cards[eid]?.employee?.location_last_inside,
-              location_last_ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok,
-              location_inside_at: emp.location_inside_at ?? cards[eid]?.employee?.location_inside_at,
-              today: presenceTodayOf(attSum),
-            });
+          ) : (
+            <>
+          <Card testID="personnel-shift-summary" style={{ gap: 4 }}>
+            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 15 }}>
+              Mesaide {shiftSummary.onShift} / {shiftSummary.total}
+            </Text>
+            <Text style={{ fontWeight: "800", fontSize: 15, color: dueTone(shiftSummary.balanceSum).color }}>
+              Toplam bakiye {fmtMoney(shiftSummary.balanceSum)}
+            </Text>
+          </Card>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <Chip label="Tümü" active={payrollFilter === "all"} testID="personnel-filter-all" onPress={() => setPayrollFilter("all")} />
+            <Chip label="Mesaide" active={payrollFilter === "onshift"} testID="personnel-filter-onshift" onPress={() => setPayrollFilter("onshift")} />
+            <Chip label="Bakiyesi olan" active={payrollFilter === "balance"} testID="personnel-filter-balance" onPress={() => setPayrollFilter("balance")} />
+          </View>
+          {shownPayrollRows.length ? shownPayrollRows.map(({ emp, eid, due, bal, presence, daysPresent }) => {
             const fromPays = yevmiyeAccrual({ payrolls: payrolls.filter((p) => p.employee_id === eid), employeeId: eid });
             const comp = employeeCompRows(emp, bal, {
               daysPresent,
@@ -1628,6 +1668,15 @@ export function PersonnelScreen() {
                     <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                       <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
                         <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }} numberOfLines={1}>{emp.full_name}</Text>
+                        {isOnShift(presence) ? (
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                            <View
+                              testID={`emp-onshift-dot-${eid}`}
+                              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary }}
+                            />
+                            <Text testID={`emp-onshift-label-${eid}`} style={{ fontSize: 11, fontWeight: "800", color: colors.primary }}>Mesaide</Text>
+                          </View>
+                        ) : null}
                         <Text
                           testID={`emp-status-${eid}`}
                           style={{ fontSize: 9, fontWeight: "800", color: emp.status === "terminated" ? "#BE123C" : colors.primaryHover, backgroundColor: emp.status === "terminated" ? colors.rose50 : colors.emerald50, overflow: "hidden", borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 }}
@@ -1648,15 +1697,6 @@ export function PersonnelScreen() {
                       </View>
                       {emp.position ? <Text style={{ fontSize: 11, fontWeight: "700", color: "#4F46E5" }} numberOfLines={1}>{emp.position}</Text> : null}
                       {emp.department ? <Muted numberOfLines={1}>{emp.department}</Muted> : null}
-                      <Muted testID={`emp-leave-${eid}`} numberOfLines={1}>
-                        Kalan izin: {cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
-                        {cards[eid]?.performance?.overall != null ? ` · %${cards[eid].performance.overall}` : ""}
-                      </Muted>
-                      <Text testID={`emp-receivable-${emp.tc_kimlik || eid}`} style={{ fontSize: 11 }} numberOfLines={1}>
-                        <Text style={{ color: colors.muted }}>Kalan alacak: </Text>
-                        <Text style={{ fontWeight: "800", color: due < 0 ? colors.warning : due > 0 ? colors.danger : colors.primaryHover }}>{fmtMoney(due)}</Text>
-                        {bal?.advances ? <Text style={{ fontWeight: "800", color: "#B45309" }}>{` · Avans ${fmtMoney(bal.advances)}`}</Text> : null}
-                      </Text>
                       {emp.workplace?.kind === "task" ? (
                         <Text testID={`emp-workplace-strip-${eid}`} style={{ fontSize: 10, fontWeight: "700", color: "#4338CA" }} numberOfLines={1}>
                           Görev · {workplaceShort(emp.workplace)}
@@ -1666,21 +1706,30 @@ export function PersonnelScreen() {
                   </View>
 
                   {(() => {
-                    const pendingCount = requestsForEmployee(pendingReqs, eid).length;
-                    if (!pendingCount) return null;
+                    const tone = dueTone(due);
+                    const leaveLeft = cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp);
+                    const leaveYear = cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14;
                     return (
-                      <Pressable
-                        testID={`emp-card-requests-strip-${eid}`}
-                        onPress={() => {
-                          setCardOpen((cur) => ({ ...cur, [eid]: true }));
-                          setRequestsOpen((cur) => ({ ...cur, [eid]: true }));
-                        }}
-                        style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 32, paddingHorizontal: 8, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A" }}
+                      <View
+                        testID={`emp-card-balance-${eid}`}
+                        style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, backgroundColor: tone.bg, borderWidth: 1, borderColor: tone.color }}
                       >
-                        <Ionicons name="notifications" size={14} color="#B45309" />
-                        <Text style={{ flex: 1, fontSize: 11, fontWeight: "700", color: "#92400E" }}>Talepler ({pendingCount})</Text>
-                        <Ionicons name="chevron-forward" size={14} color="#92400E" />
-                      </Pressable>
+                        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                          <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted }}>Bakiye</Text>
+                          <Text testID={`emp-receivable-${emp.tc_kimlik || eid}`} style={{ fontSize: 20, fontWeight: "900", color: tone.color }}>
+                            {fmtMoney(due)}
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                          {bal?.advances ? (
+                            <Text style={{ fontSize: 11, fontWeight: "800", color: "#B45309" }}>Avans {fmtMoney(bal.advances)}</Text>
+                          ) : null}
+                          <Text testID={`emp-leave-${eid}`} style={{ fontSize: 11, fontWeight: "700", color: colors.text }}>
+                            İzin {leaveLeft}/{leaveYear} gün
+                            {cards[eid]?.performance?.overall != null ? ` · %${cards[eid].performance.overall}` : ""}
+                          </Text>
+                        </View>
+                      </View>
                     );
                   })()}
 
@@ -1689,21 +1738,22 @@ export function PersonnelScreen() {
                     const punch = todayAttendanceParts(today);
                     const otCap = assignedOvertimeCellCaption(today);
                     const otOn = otCap !== "--:--";
-                    const otColor = otOn ? "#4F46E5" : colors.muted;
                     return (
                       <View
                         testID={`emp-card-loc-${eid}`}
                         style={{ padding: 2, borderRadius: 8, backgroundColor: colors.slate50, borderWidth: 1, borderColor: colors.border }}
                       >
                         <Row style={{ alignItems: "stretch", gap: 3 }}>
-                          <View
-                            testID={`emp-card-assigned-ot-${eid}`}
-                            accessibilityLabel={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
-                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6, backgroundColor: "#fff", justifyContent: "center" }}
-                          >
-                            <Text style={{ fontSize: 8, fontWeight: "800", color: otColor, letterSpacing: 0.3 }}>MESAİ</Text>
-                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: otColor }}>{otCap}</Text>
-                          </View>
+                          {otOn ? (
+                            <View
+                              testID={`emp-card-assigned-ot-${eid}`}
+                              accessibilityLabel={`Atanan fazla mesai ${otCap}`}
+                              style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6, backgroundColor: "#fff", justifyContent: "center" }}
+                            >
+                              <Text style={{ fontSize: 8, fontWeight: "800", color: "#4F46E5", letterSpacing: 0.3 }}>MESAİ</Text>
+                              <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: "#4F46E5" }}>{otCap}</Text>
+                            </View>
+                          ) : null}
                           <Pressable
                             testID={`emp-card-today-in-${eid}`}
                             disabled={!canEdit || punchBusy === eid}
@@ -1749,32 +1799,47 @@ export function PersonnelScreen() {
                     );
                   })()}
 
-                  <View testID={`emp-card-actions-${eid}`} style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {canEdit ? (
+                    <Pressable
+                      testID={`employee-pay-btn-${emp.tc_kimlik || eid}`}
+                      accessibilityRole="button"
+                      onPress={() => setSettleEmp(emp)}
+                      style={{ width: "100%", alignSelf: "stretch", minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15, textAlign: "center" }}>
+                        {employeeSettleButtonLabel({ balance: bal }, bal)}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  <View testID={`emp-card-actions-${eid}`} style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                    {(() => {
+                      const pendingCount = requestsForEmployee(pendingReqs, eid).length;
+                      if (!pendingCount) return null;
+                      return (
+                        <Pressable
+                          testID={`emp-card-requests-strip-${eid}`}
+                          onPress={() => {
+                            setCardOpen((cur) => ({ ...cur, [eid]: true }));
+                            setRequestsOpen((cur) => ({ ...cur, [eid]: true }));
+                          }}
+                          style={{ flexGrow: 0, flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 6, minHeight: 36, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A" }}
+                        >
+                          <Ionicons name="notifications" size={14} color="#B45309" />
+                          <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: "700", color: "#92400E" }}>Talepler ({pendingCount})</Text>
+                        </Pressable>
+                      );
+                    })()}
                     <StripChip title="Hareketler" icon={employeeCardActionIcon("moves")} color={colors.secondary} bg="#F8FAFC" testID={`emp-card-moves-btn-${eid}`} onPress={() => openMoves(emp)} />
                     {canEdit ? (
                       <StripChip
-                        title={employeePayButtonLabel({ balance: bal }, bal)}
-                        icon={employeeCardActionIcon("salary")}
-                        color={colors.primaryHover}
-                        bg={colors.emerald50}
-                        testID={`employee-pay-btn-${emp.tc_kimlik || eid}`}
-                        onPress={() => setSettleEmp(emp)}
+                        title="⋯"
+                        color={colors.text}
+                        bg={colors.slate50}
+                        testID={`emp-card-more-btn-${eid}`}
+                        onPress={() => setMoreEmp(emp)}
                       />
                     ) : null}
-                    {canEdit ? EMPLOYEE_CARD_WORK_ACTIONS.map((action) => {
-                      const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
-                      return (
-                        <StripChip
-                          key={action.key}
-                          title={employeeCardActionTitle(action, emp)}
-                          icon={employeeCardActionIcon(action.key)}
-                          color={tone.color}
-                          bg={tone.bg}
-                          testID={`emp-card-${action.key}-btn-${eid}`}
-                          onPress={() => empActionHandlers[action.key]?.(emp)}
-                        />
-                      );
-                    }) : null}
                   </View>
 
                   {cardOpen[eid] ? (
@@ -1925,7 +1990,11 @@ export function PersonnelScreen() {
                 </View>
               </Card>
             );
-          })}
+          }) : (
+            <Muted>Bu filtrede personel yok.</Muted>
+          )}
+            </>
+          )}
 
           <Text style={{ fontWeight: "800", color: colors.text, marginTop: 8 }}>Bordro & maaş ödemeleri</Text>
           {!payrolls.length ? <Muted>Bordro kaydı yok. Aylık bordro hesaplayın.</Muted> : payrolls.map((p) => {
@@ -2683,6 +2752,34 @@ export function PersonnelScreen() {
           loading={busy}
           onPress={saveMovesTask}
         />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!moreEmp && canEdit}
+        title={moreEmp?.full_name || "İşlemler"}
+        subtitle="Görev ve mesai"
+        onClose={() => setMoreEmp(null)}
+        testID="emp-card-more-sheet"
+      >
+        {moreEmp ? EMPLOYEE_CARD_WORK_ACTIONS.map((action) => {
+          const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
+          const eid = idOf(moreEmp);
+          return (
+            <Pressable
+              key={action.key}
+              testID={`emp-card-${action.key}-btn-${eid}`}
+              onPress={() => {
+                const emp = moreEmp;
+                setMoreEmp(null);
+                empActionHandlers[action.key]?.(emp);
+              }}
+              style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44, paddingHorizontal: 12, marginBottom: 8, borderRadius: 12, backgroundColor: tone.bg, borderWidth: 1, borderColor: colors.border }}
+            >
+              <Ionicons name={employeeCardActionIcon(action.key) as keyof typeof Ionicons.glyphMap} size={18} color={tone.color} />
+              <Text style={{ fontWeight: "700", fontSize: 14, color: tone.color }}>{employeeCardActionTitle(action, moreEmp)}</Text>
+            </Pressable>
+          );
+        }) : null}
       </B2BSheet>
 
       <B2BSheet
@@ -3594,6 +3691,8 @@ function StripChip({
       style={({ pressed }) => ({
         flexDirection: "row",
         alignItems: "center",
+        flexGrow: 0,
+        flexShrink: 0,
         gap: 5,
         minHeight: 36,
         paddingHorizontal: 10,
