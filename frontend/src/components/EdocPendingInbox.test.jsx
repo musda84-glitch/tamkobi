@@ -68,3 +68,15 @@ test("empty pending list", async () => {
   expect(host.querySelector("[data-testid='edoc-pending-empty']")).toBeTruthy();
   expect(host.textContent).toContain("Bekleyen e-belge yok");
 });
+
+test("slim empty state is a single row", async () => {
+  axios.get.mockResolvedValueOnce({ data: { items: [], counts: { pending: 0 } } });
+  await act(async () => {
+    createRoot(host).render(<EdocPendingInbox companyId="c1" slimWhenEmpty />);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(host.textContent).toContain("Bekleyen e-belge yok");
+  expect(host.textContent).toContain("e Belgeler (bekleyen)");
+  expect(host.querySelector("[data-testid='edoc-pending-see-all']")?.getAttribute("href")).toBe("/edoc-inbox");
+});

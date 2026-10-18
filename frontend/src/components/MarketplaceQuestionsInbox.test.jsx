@@ -64,3 +64,15 @@ test("empty state", async () => {
 
   expect(host.querySelector("[data-testid='marketplace-questions-empty']")).toBeTruthy();
 });
+
+test("slim empty state is a single row", async () => {
+  axios.get.mockResolvedValueOnce({ data: [] });
+  await act(async () => {
+    createRoot(host).render(<MarketplaceQuestionsInbox companyId="c1" slimWhenEmpty />);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(host.textContent).toContain("Cevap bekleyen soru yok");
+  expect(host.textContent).toContain("Sipariş Soruları");
+  expect(host.querySelector("[data-testid='marketplace-questions-see-all']")?.getAttribute("href")).toBe("/orders?tab=questions");
+});

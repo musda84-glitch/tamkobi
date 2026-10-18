@@ -14,7 +14,7 @@ import { uniqueInboxItems } from "../utils/edocInbox";
 import { fmtDate, formatTrAmount } from "../utils/money";
 
 /** Dashboard: bekleyen gelen e-belgeler (kısa liste). */
-export function EdocPendingInbox({ companyId }) {
+export function EdocPendingInbox({ companyId, slimWhenEmpty = false }) {
   const [items, setItems] = useState([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -37,6 +37,17 @@ export function EdocPendingInbox({ companyId }) {
 
   useEffect(() => { setLoading(true); load(); }, [load]);
   useDataRefresh(load, { companyId, scopes: ["invoices", "einvoice"] });
+
+  if (slimWhenEmpty && !loading && items.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex items-center gap-2" data-testid="edoc-pending-inbox">
+        <Inbox className="w-4 h-4 text-indigo-600 shrink-0" />
+        <span className="text-sm font-bold text-slate-900 shrink-0">e Belgeler (bekleyen)</span>
+        <span className="text-xs text-slate-400 truncate" data-testid="edoc-pending-empty">Bekleyen e-belge yok</span>
+        <Link to="/edoc-inbox" className="ml-auto shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-900" data-testid="edoc-pending-see-all">e-Belgeler ›</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="edoc-pending-inbox">

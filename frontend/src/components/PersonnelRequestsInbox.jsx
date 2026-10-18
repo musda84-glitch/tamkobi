@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight, ShieldCheck, Timer, Trash2 } from "lucide-react";
@@ -217,7 +217,7 @@ export function EmployeeRequestChips({
 }
 
 /** Personel talepleri bildirim kutusu — izin / erken çıkış / puantaj itirazı */
-export function PersonnelRequestsInbox({ companyId, onChanged, compact = false, focusId = "", focusKind = "" }) {
+export function PersonnelRequestsInbox({ companyId, onChanged, compact = false, focusId = "", focusKind = "", slimWhenEmpty = false }) {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [count, setCount] = useState(0);
@@ -393,6 +393,17 @@ export function PersonnelRequestsInbox({ companyId, onChanged, compact = false, 
       setBusyId(null);
     }
   };
+
+  if (slimWhenEmpty && !loading && items.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex items-center gap-2" data-testid="personnel-requests-inbox">
+        <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+        <span className="text-sm font-bold text-slate-900 shrink-0">Personel Talepleri</span>
+        <span className="text-xs text-slate-400 truncate" data-testid="personnel-requests-empty">Bekleyen personel talebi yok</span>
+        <Link to="/personnel" className="ml-auto shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-900">Personel ›</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="personnel-requests-inbox">

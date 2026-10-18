@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import axios from "axios";
 import {
   AlertTriangle,
@@ -31,13 +31,129 @@ function groupDest(g) {
   return path;
 }
 
+const QTY_KEYS = ["qty", "quantity", "stock_quantity", "stock"];
+const MIN_KEYS = ["min", "min_stock", "min_stock_alert", "threshold"];
+const STOCK_PREVIEW = 11;
+const DETAIL_RE = /Stok\s*(-?\d+(?:[.,]\d+)?)\s*·\s*(?:min|eşik)\s*(-?\d+(?:[.,]\d+)?)/i;
+
+function parseLooseNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const s = value.trim().replace(/\s/g, "");
+  if (!s || !/^-?\d/.test(s)) return null;
+  let n;
+  if (s.includes(",") && s.includes(".")) n = Number(s.replace(/\./g, "").replace(",", "."));
+  else if (s.includes(",")) n = Number(s.replace(",", "."));
+  else n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pickNumber(item, keys) {
+  if (!item) return null;
+  for (const key of keys) {
+    if (item[key] == null || item[key] === "") continue;
+    const n = parseLooseNumber(item[key]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+/** N: shortage, yoksa max(0, min − qty), yoksa detail "Stok X · min Y". */
+export function resolveStockAlert(item) {
+  if (!item || typeof item !== "object") return null;
+  const qty = pickNumber(item, QTY_KEYS);
+  const min = pickNumber(item, MIN_KEYS);
+  const shortageRaw = item.shortage == null || item.shortage === "" ? null : parseLooseNumber(item.shortage);
+  if (shortageRaw != null) return { n: Math.max(0, shortageRaw), qty, min };
+  if (qty != null && min != null) return { n: Math.max(0, min - qty), qty, min };
+  const match = DETAIL_RE.exec(String(item.detail || ""));
+  if (!match) return null;
+  const parsedQty = parseLooseNumber(match[1]);
+  const parsedMin = parseLooseNumber(match[2]);
+  if (parsedQty == null || parsedMin == null) return null;
+  return { n: Math.max(0, parsedMin - parsedQty), qty: parsedQty, min: parsedMin };
+}
+
+export function sortStockAlerts(items) {
+  return [...(items || [])].sort((a, b) => {
+    const left = resolveStockAlert(a);
+    const right = resolveStockAlert(b);
+    const ln = left ? left.n : -1;
+    const rn = right ? right.n : -1;
+    if (rn !== ln) return rn - ln;
+    const lq = left && left.qty != null ? left.qty : Number.POSITIVE_INFINITY;
+    const rq = right && right.qty != null ? right.qty : Number.POSITIVE_INFINITY;
+    if (lq !== rq) return lq - rq;
+    return String(a?.title || "").localeCompare(String(b?.title || ""), "tr");
+  });
+}
+
+export function formatStockQty(value) {
+  const n = Math.max(0, Number(value) || 0);
+  if (Math.abs(n - Math.round(n)) < 1e-9) return Math.round(n).toLocaleString("tr-TR");
+  return n.toLocaleString("tr-TR", { maximumFractionDigits: 2 });
+}
+
+export function stockBadgeText(info) {
+  if (!info) return "";
+  if (info.n > 0) return `${formatStockQty(info.n)} eksik`;
+  return `${formatStockQty(info.qty == null ? 0 : info.qty)} adet kaldı`;
+}
+
+function withoutNegativeNumbers(text) {
+  return String(text || "").replace(/-(\d)/g, "$1");
+}
+
+function StockList({ items, total }) {
+  const ranked = sortStockAlerts(items);
+  const shown = ranked.slice(0, STOCK_PREVIEW);
+  const extra = Math.max(total, ranked.length) - shown.length;
+  return (
+    <>
+      <ul className="divide-y divide-slate-100 mt-2" data-testid="ops-alerts-list">
+        {shown.map((it) => {
+          const info = resolveStockAlert(it);
+          const big = info && info.n >= 10;
+          return (
+            <li key={`low_stock-${it.id}`} className="px-4 py-2.5 flex items-center gap-2" data-testid={`ops-alert-low_stock-${it.id}`}>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-slate-900 truncate">{it.title}</div>
+                {info && info.qty != null && info.min != null ? (
+                  <div className="text-[11px] text-slate-500">Stok {formatStockQty(info.qty)} · eşik {formatStockQty(info.min)}</div>
+                ) : null}
+              </div>
+              {info ? (
+                <span
+                  className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg ${big ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-800"}`}
+                  data-testid={`ops-stock-badge-${it.id}`}
+                >
+                  {stockBadgeText(info)}
+                </span>
+              ) : (
+                <span className="shrink-0 text-[11px] text-slate-500 text-right max-w-[55%]">{withoutNegativeNumbers(it.detail)}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {extra > 0 ? (
+        <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
+          <Link to="/stock?status=critical" className="text-[11px] font-bold text-slate-700 hover:text-slate-900 inline-flex items-center gap-1" data-testid="ops-stock-more">
+            +{extra} ürün daha · Stok ›
+          </Link>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 /** Dashboard operasyon bildirimleri: stok / üretim / sevk / yeni sipariş */
 export function OpsAlertsPanel({ companyId }) {
-  const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState("pick_missing");
+  const [active, setActive] = useState("low_stock");
+  const userPicked = useRef(false);
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -47,7 +163,8 @@ export function OpsAlertsPanel({ companyId }) {
       setGroups(gs);
       setCount(Number(r.data?.count || 0));
       setActive((prev) => {
-        if (gs.some((g) => g.key === prev && g.count > 0)) return prev;
+        if (userPicked.current && gs.some((g) => g.key === prev && g.count > 0)) return prev;
+        if (gs.some((g) => g.key === "low_stock" && g.count > 0)) return "low_stock";
         const first = gs.find((g) => g.count > 0);
         return first?.key || gs[0]?.key || prev;
       });
@@ -103,7 +220,7 @@ export function OpsAlertsPanel({ companyId }) {
             <button
               key={g.key}
               type="button"
-              onClick={() => navigate(groupDest(g))}
+              onClick={() => { userPicked.current = true; setActive(g.key); }}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-colors ${
                 on ? "bg-slate-900 text-white border-slate-900" : `${meta.tone} hover:opacity-90`
               }`}
@@ -127,6 +244,8 @@ export function OpsAlertsPanel({ companyId }) {
         <div className="px-4 py-6 text-center text-slate-400 text-xs flex items-center justify-center gap-1.5" data-testid="ops-alerts-empty">
           <AlertTriangle className="w-3.5 h-3.5 opacity-50" /> Bu kategoride kayıt yok.
         </div>
+      ) : current.key === "low_stock" ? (
+        <StockList items={items} total={Number(current.count) || items.length} />
       ) : (
         <ul className="divide-y divide-slate-100 max-h-64 overflow-y-auto mt-2" data-testid="ops-alerts-list">
           {items.map((it) => (
@@ -146,7 +265,7 @@ export function OpsAlertsPanel({ companyId }) {
         </ul>
       )}
 
-      {current?.path && current.count > 0 && (
+      {current?.path && current.count > 0 && current.key !== "low_stock" && (
         <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
           <Link to={groupDest(current)} className="text-[11px] font-bold text-slate-700 hover:text-slate-900 inline-flex items-center gap-1" data-testid="ops-alerts-see-all">
             Tümünü gör <ChevronRight className="w-3.5 h-3.5" />

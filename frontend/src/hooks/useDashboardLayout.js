@@ -6,27 +6,29 @@ import { API_URL, useAuth } from "../context/AuthContext";
 const STORAGE_KEY = "dashboard_layout";
 
 export const DEFAULT_DASHBOARD_LAYOUT = [
-  "staff",
-  "alerts",
-  "overview",
-  "decision",
-  "demo",
   "ai",
   "kpis",
+  "overview",
+  "manager",
+  "alerts",
   "charts",
   "bottom",
+  "decision",
+  "demo",
+  "staff",
 ];
 
 const SECTION_LABELS = {
   staff: "Görevlerim & mesajlar",
-  alerts: "Personel & Operasyon",
-  overview: "Tahsilat / Ödeme / Fatura",
+  alerts: "Operasyon bildirimleri",
+  overview: "Tahsilat / Ödeme",
+  manager: "Üretim / Projeler",
   decision: "Yönetici karar özeti",
   demo: "Demo içerik",
-  ai: "AI finans özeti",
+  ai: "Başlık ve bugün",
   kpis: "KPI kartları",
   charts: "Grafikler",
-  bottom: "Faturalar & kritik stok",
+  bottom: "Son faturalar",
 };
 
 export function normalizeLayout(raw) {
@@ -41,7 +43,15 @@ export function normalizeLayout(raw) {
     }
   }
   for (const id of DEFAULT_DASHBOARD_LAYOUT) {
-    if (!seen.has(id)) out.push(id);
+    if (seen.has(id)) continue;
+    if (id === "manager") {
+      const at = out.indexOf("overview");
+      if (at >= 0) out.splice(at + 1, 0, id);
+      else out.push(id);
+    } else {
+      out.push(id);
+    }
+    seen.add(id);
   }
   return out;
 }

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { ArrowLeft, ChevronDown, ChevronUp, Loader2, Megaphone, MessageSquare, Plus, Search, Send, Users } from "lucide-react";
@@ -104,6 +105,7 @@ function ChatRow({ row, onClick, testId }) {
 export function StaffMessagesPanel({
   employeeId,
   compact,
+  slimWhenEmpty = false,
   testId = "staff-messages-panel",
 }) {
   const [data, setData] = useState(null);
@@ -293,6 +295,20 @@ export function StaffMessagesPanel({
       <div className="bg-white border border-violet-200 rounded-[20px] p-2.5 text-xs text-slate-400 flex items-center gap-2" data-testid={testId}>
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mesajlar yükleniyor…
       </div>
+    );
+  }
+
+  if (slimWhenEmpty && !locked && !showThread && !badge) {
+    return (
+      <Link
+        to="/personelim"
+        className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex items-center gap-2 hover:bg-slate-50"
+        data-testid={testId}
+      >
+        <MessageSquare className="w-4 h-4 text-violet-600 shrink-0" />
+        <span className="text-sm font-bold text-slate-900">Mesajlar</span>
+        <span className="ml-auto text-xs text-slate-400">Yeni mesaj yok · Mesajlara git ›</span>
+      </Link>
     );
   }
 

@@ -11,7 +11,10 @@ jest.mock("axios", () => {
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
 jest.mock("../utils/dataRefresh", () => ({ useDataRefresh: () => ({}) }));
-jest.mock("react-router-dom", () => ({ useNavigate: () => jest.fn() }), { virtual: true });
+jest.mock("react-router-dom", () => ({
+  useNavigate: () => jest.fn(),
+  Link: ({ to, children, ...rest }) => <a href={to} {...rest}>{children}</a>,
+}), { virtual: true });
 
 let host;
 
@@ -33,4 +36,15 @@ test("compact empty copy is shorter", async () => {
   });
   expect(host.textContent).toContain("Onay bekleyen personel talebi yok.");
   expect(host.textContent).not.toContain("puantaj itirazı");
+});
+
+test("slim empty state is a single row", async () => {
+  await act(async () => {
+    createRoot(host).render(<PersonnelRequestsInbox companyId="c1" slimWhenEmpty />);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(host.textContent).toContain("Bekleyen personel talebi yok");
+  expect(host.textContent).toContain("Personel Talepleri");
+  expect(host.querySelector("a")?.getAttribute("href")).toBe("/personnel");
 });

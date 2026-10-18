@@ -31,7 +31,7 @@ const shortTime = (s) => {
 };
 
 /** Dashboard: cevap bekleyen pazaryeri müşteri soruları (en fazla 6). */
-export function MarketplaceQuestionsInbox({ companyId }) {
+export function MarketplaceQuestionsInbox({ companyId, slimWhenEmpty = false }) {
   const [items, setItems] = useState([]);
   const [waiting, setWaiting] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -57,6 +57,17 @@ export function MarketplaceQuestionsInbox({ companyId }) {
 
   useEffect(() => { setLoading(true); load(); }, [load]);
   useDataRefresh(load, { companyId, scopes: ["orders"] });
+
+  if (slimWhenEmpty && !loading && items.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex items-center gap-2" data-testid="marketplace-questions-inbox">
+        <MessageCircleQuestion className="w-4 h-4 text-orange-600 shrink-0" />
+        <span className="text-sm font-bold text-slate-900 shrink-0">Sipariş Soruları</span>
+        <span className="text-xs text-slate-400 truncate" data-testid="marketplace-questions-empty">Cevap bekleyen soru yok</span>
+        <Link to="/orders?tab=questions" className="ml-auto shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-900" data-testid="marketplace-questions-see-all">Sorular ›</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="marketplace-questions-inbox">
