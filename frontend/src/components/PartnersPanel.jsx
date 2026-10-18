@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { VirmanPartySelect } from "./VirmanPartySelect";
 import { PartnerTxTable } from "./PartnerTxTable";
+import { PartnerDetailPane } from "./banking/PartnerDetailPane";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
@@ -252,10 +253,18 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged, focusApprova
   const transferAccounts = liveAccounts.filter((a) => !isIntegrated(a));
   const firstAcc = accId(cashAccounts[0]) || accId(liveAccounts[0]) || "";
 
-  const openTxModal = async () => {
+  const openTxModal = async (type) => {
     const list = await refreshAccounts();
     const cash = list.filter((a) => !isCard(a));
-    setTxForm({ partner_id: selectedPartnerId || partners[0]?.id || "", type: "capital_in", amount: "", account_id: accId(cash[0]) || accId(list[0]) || "", description: "" });
+    const kind = typeof type === "string" && ["capital_in", "withdrawal", "credit", "debit"].includes(type) ? type : "capital_in";
+    const ledger = kind === "credit" || kind === "debit";
+    setTxForm({
+      partner_id: selectedPartnerId || partners[0]?.id || "",
+      type: kind,
+      amount: "",
+      account_id: ledger ? "" : (accId(cash[0]) || accId(list[0]) || ""),
+      description: "",
+    });
     setModal("tx");
   };
 
@@ -458,10 +467,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged, focusApprova
             const netAmount = net.display;
             const giris = summary.total_cash_in != null ? summary.total_cash_in : summary.total_capital_in;
             const cikis = summary.total_cash_out != null ? summary.total_cash_out : summary.total_withdrawn;
+            const netLabel = `Net · ${net.label.toLocaleUpperCase("tr-TR")}`;
             return [
-              ["net", net.label, netAmount, net.amountCls],
               ["capital", `Toplam ${PARTNER_RECEIVED_LABEL}`, giris, "text-emerald-700"],
               ["withdrawn", `Toplam ${PARTNER_PAID_LABEL}`, cikis, "text-rose-700"],
+              ["net", netLabel, netAmount, net.amountCls],
             ].map(([id, l, v, c]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>
@@ -472,35 +482,39 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged, focusApprova
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {partners.map((p) => {
-          const selected = selectedPartnerId === p.id;
-          return (
-          <div
-            key={p.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => selectPartner(p.id)}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectPartner(p.id); } }}
-            className={`bg-white border rounded-2xl p-4 space-y-2 shadow-sm cursor-pointer transition ${selected ? "border-amber-500 ring-2 ring-amber-200" : "border-slate-200 hover:border-slate-300"}`}
-            data-testid={`partner-card-${p.name}`}
-            aria-pressed={selected}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3 min-w-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-4 items-start">
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm divide-y divide-slate-100" data-testid="partner-list">
+          {partners.map((p) => {
+            const selected = selectedPartnerId === p.id;
+            const bm = partnerBalanceMeta(p.balance);
+            const br = partnerLedgers[p.id];
+            const g = br ? br.girisDisplay : 0;
+            const c = br ? br.cikisDisplay : 0;
+            return (
+            <div
+              key={p.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => selectPartner(p.id)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectPartner(p.id); } }}
+              className={`px-3 py-3 cursor-pointer transition ${selected ? "bg-amber-50" : "hover:bg-slate-50"}`}
+              data-testid={`partner-card-${p.name}`}
+              aria-pressed={selected}
+            >
+              <div className="flex items-start gap-3">
                 <label
-                  className="relative w-12 h-12 rounded-full shrink-0 cursor-pointer group"
+                  className="relative w-10 h-10 rounded-full shrink-0 cursor-pointer group"
                   title="Fotoğraf yükle"
                   data-testid={`partner-photo-${p.id}`}
                   onClick={(e) => e.stopPropagation()}
                 >
                   {p.photo_url ? (
-                    <img src={resolveImageUrl(p.photo_url)} alt="" className="w-12 h-12 rounded-full object-cover bg-white border border-slate-200" />
+                    <img src={resolveImageUrl(p.photo_url)} alt="" className="w-10 h-10 rounded-full object-cover bg-white border border-slate-200" />
                   ) : (
-                    <div className="w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-sm">{(p.name || "O").slice(0, 2).toUpperCase()}</div>
+                    <div className="w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-xs">{(p.name || "O").slice(0, 2).toUpperCase()}</div>
                   )}
-                  <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-sm group-hover:bg-slate-900">
-                    <Camera className="w-3 h-3" />
+                  <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-sm group-hover:bg-slate-900">
+                    <Camera className="w-2.5 h-2.5" />
                   </span>
                   <input
                     type="file"
@@ -510,106 +524,58 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged, focusApprova
                     data-testid={`partner-photo-input-${p.id}`}
                   />
                 </label>
-                <div className="min-w-0">
-                <div className="font-bold text-slate-900 text-sm">{p.name}</div>
-                <div className="text-[11px] text-slate-500">{p.email || p.phone || "—"}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-900 text-sm truncate">{p.name}</div>
+                      <div className="text-[11px] text-slate-500 truncate">%{p.share_percent} · {p.email || p.phone || "—"}</div>
+                    </div>
+                    <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-2" data-testid={`partner-balance-${p.id}`}>
+                    <div className="text-[10px] text-slate-500 min-w-0">
+                      <span>Aylık maaş </span>
+                      <b className="text-amber-950" data-testid={`partner-salary-${p.id}`}>{partnerSalaryCardText(p, fmt)}</b>
+                      <span> · {PARTNER_RECEIVED_LABEL}: </span>
+                      <b className="text-emerald-700" data-testid={`partner-card-giris-${p.id}`}>{fmt(Math.abs(g))}</b>
+                      <span> · {PARTNER_PAID_LABEL}: </span>
+                      <b className="text-rose-700" data-testid={`partner-card-cikis-${p.id}`}>{fmt(Math.abs(c))}</b>
+                    </div>
+                    <div className={`text-sm font-bold shrink-0 ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(bm.display)} ₺</div>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-2 py-0.5 text-xs font-bold">%{p.share_percent}</span>
+              <div className="mt-2 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                 <button type="button" onClick={(e) => openEditPartner(p, e)} className="p-1.5 text-slate-500 hover:text-indigo-600" title="Düzenle" data-testid={`edit-partner-${p.name}`}><Pencil className="w-4 h-4" /></button>
+                <button type="button" onClick={(e) => openSalary(p, e)} className="p-1.5 text-amber-700 hover:text-amber-900" title="Aylık maaş" data-testid={`partner-salary-btn-${p.id}`}><Banknote className="w-4 h-4" /></button>
+                <button type="button" onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
-            {(() => {
-              const bm = partnerBalanceMeta(p.balance);
-              return (
-            <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`}>
-              <div className="min-w-0">
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
-                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(bm.display)} ₺</div>
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600 shrink-0" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
-            </div>
-              );
-            })()}
-            <button
-              type="button"
-              onClick={(e) => openSalary(p, e)}
-              className="w-full flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/70 px-2.5 py-1.5 text-left hover:bg-amber-50"
-              data-testid={`partner-salary-btn-${p.id}`}
-            >
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900">
-                <Banknote className="w-3.5 h-3.5" /> Aylık maaş
-              </span>
-              <span className="text-[11px] font-bold text-amber-950" data-testid={`partner-salary-${p.id}`}>
-                {partnerSalaryCardText(p, fmt)}
-              </span>
-            </button>
-            {(() => {
-              const br = partnerLedgers[p.id];
-              const g = br ? br.girisDisplay : 0;
-              const c = br ? br.cikisDisplay : 0;
-              return (
-            <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
-              <div>{PARTNER_RECEIVED_LABEL}: <b className="text-emerald-700" data-testid={`partner-card-giris-${p.id}`}>{fmt(Math.abs(g))}</b></div>
-              <div>{PARTNER_PAID_LABEL}: <b className="text-rose-700" data-testid={`partner-card-cikis-${p.id}`}>{fmt(Math.abs(c))}</b></div>
-            </div>
-              );
-            })()}
-          </div>
-          );
-        })}
-        {partners.length === 0 && <div className="col-span-full text-center text-xs text-slate-400 py-6 bg-white border border-dashed rounded-2xl">Henüz ortak tanımlanmadı.</div>}
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-x-hidden min-w-0" data-testid="partner-tx-section">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
-          <div className="text-sm font-bold text-slate-900">
-            Ortak Hareketleri
-            {selectedPartner && <span className="ml-2 font-semibold text-amber-700" data-testid="partner-tx-filter-label">· {selectedPartner.name}</span>}
-          </div>
-          {selectedPartner && (
-            <button
-              type="button"
-              onClick={() => setSelectedPartnerId(null)}
-              className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg px-2 py-1"
-              data-testid="partner-tx-clear-filter"
-            >
-              Tüm ortaklar
-            </button>
-          )}
+            );
+          })}
+          {partners.length === 0 && <div className="text-center text-xs text-slate-400 py-6">Henüz ortak tanımlanmadı.</div>}
         </div>
-        {selectedLedger && (
-          <div
-            className={`px-5 py-3 border-b text-xs space-y-2 ${selectedLedger.drift ? "bg-rose-50/80 border-rose-100" : "bg-slate-50/80 border-slate-100"}`}
-            data-testid="partner-ledger-check"
-          >
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="font-bold text-slate-800">Bakiye kontrolü</div>
-              <div className={selectedLedger.drift || !selectedLedger.netMatchesCard ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"} data-testid="partner-ledger-match">
-                {selectedLedger.drift
-                  ? `Sapma: kayıtlı ${fmt(partnerBalanceMeta(selectedLedger.stored).display)} ₺ ≠ hareket ${fmt(partnerBalanceMeta(selectedLedger.ledger).display)} ₺`
-                  : `Bakiye hareketlerle uyumlu (${fmt(partnerBalanceMeta(selectedLedger.ledger).display)} ₺ ${partnerBalanceMeta(selectedLedger.ledger).label} · ${selectedLedger.count} kayıt)`}
+        <PartnerDetailPane
+          partner={selectedPartner}
+          ledger={selectedLedger}
+          onClose={() => setSelectedPartnerId(null)}
+          onOpenTx={openTxModal}
+        >
+          <div className="border-t border-slate-100 overflow-x-hidden min-w-0" data-testid="partner-tx-section">
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-sm font-bold text-slate-900">
+                Ortak Hareketleri
+                {selectedPartner && <span className="ml-2 font-semibold text-amber-700" data-testid="partner-tx-filter-label">· {selectedPartner.name}</span>}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2" data-testid="partner-ledger-buckets">
-              <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">{PARTNER_RECEIVED_LABEL}</div>
-                <div className="font-bold text-emerald-700" data-testid="partner-ledger-inflow">{fmt(Math.abs(selectedLedger.girisDisplay))} ₺</div>
+            <PartnerTxTable txs={visibleTxs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
+            {serverPaging && serverHasMore && (
+              <div ref={serverSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="partner-tx-load-more">
+                Daha fazla hareket yükleniyor…
               </div>
-              <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">{PARTNER_PAID_LABEL}</div>
-                <div className="font-bold text-rose-700" data-testid="partner-ledger-outflow">{fmt(Math.abs(selectedLedger.cikisDisplay))} ₺</div>
-              </div>
-            </div>
+            )}
           </div>
-        )}
-        <PartnerTxTable txs={visibleTxs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
-        {serverPaging && serverHasMore && (
-          <div ref={serverSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="partner-tx-load-more">
-            Daha fazla hareket yükleniyor…
-          </div>
-        )}
+        </PartnerDetailPane>
       </div>
 
       {modal === "add" && (

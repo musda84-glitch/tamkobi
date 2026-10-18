@@ -7,6 +7,7 @@ import { act } from "react";
 import axios from "axios";
 import BankingPage from "./BankingPage";
 import { DATA_CHANGED_EVENT } from "../utils/dataRefresh";
+import { formatTrAmount } from "../utils/money";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -210,6 +211,41 @@ test("özet kartları hareket ve cari listesi bitmeden görünür", async () => 
   expect(host.textContent).toMatch(/2 Ortak|Ortaklar Hesabı/);
   await act(async () => { releaseLists(); });
   await flush(4);
+});
+
+test("hesap detayında tür çipleri istemci süzmesi yapar ve grup seçimi temizler", async () => {
+  await renderPage();
+  expect(host.querySelector('[data-testid="tx-filter-bank"]')).toBeTruthy();
+  const group = host.querySelector('[data-testid="account-group-bank"]');
+  await act(async () => { group.click(); });
+  await flush(2);
+  await act(async () => { host.querySelector('[data-testid="bank-card-acc_bank"]').click(); });
+  await flush(4);
+  expect(host.querySelector('[data-testid="bank-account-detail-header"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="tx-filter-in"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="tx-filter-out"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="tx-filter-transfer"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="tx-filter-bank"]')).toBeNull();
+  expect(host.querySelector('[data-testid="account-kpi-balance-value"]').textContent).toContain(formatTrAmount(6716.58));
+  expect(host.querySelector('[data-testid="account-kpi-month-in-value"]').textContent).toBe("—");
+  expect(host.textContent).toContain("Test");
+
+  await act(async () => { host.querySelector('[data-testid="tx-filter-out"]').click(); });
+  await flush(2);
+  expect(host.textContent).toContain("Filtreye uyan hareket yok.");
+  expect(host.querySelector('[data-testid="tx-row-tx1"]')).toBeNull();
+
+  await act(async () => { host.querySelector('[data-testid="tx-filter-in"]').click(); });
+  await flush(2);
+  expect(host.querySelector('[data-testid="tx-row-tx1"]')).toBeTruthy();
+
+  await act(async () => { host.querySelector('[data-testid="account-kpi-unmatched"]').click(); });
+  expect(host.querySelector('[data-testid="tx-filter-unmatched"]').className).toMatch(/bg-amber-500/);
+
+  await act(async () => { host.querySelector('[data-testid="account-detail-crumb-group"]').click(); });
+  await flush(2);
+  expect(host.querySelector('[data-testid="bank-account-detail-header"]')).toBeNull();
+  expect(host.querySelector('[data-testid="tx-filter-bank"]').className).toMatch(/bg-slate-900/);
 });
 
 test("virman mevcut hesap listesini kullanır", async () => {
