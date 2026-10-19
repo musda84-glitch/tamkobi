@@ -12,6 +12,7 @@ describe("theme matches web Tailwind tokens", () => {
     expect(colors.secondary).toBe("#0F172A");
     expect(colors.background).toBe("#F8FAFC");
     expect(colors.indigo).toBe("#4F46E5");
+    expect(colors.success).toBe("#059669");
     expect(colors.danger).toBe("#E11D48");
   });
 });
