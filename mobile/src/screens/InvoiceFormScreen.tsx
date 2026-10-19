@@ -7,6 +7,7 @@ import { ApiHttpError } from "../api/errors";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { DateField } from "../components/DateField";
+import { DocLineCard } from "../components/DocLineCard";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { InvoiceLineSheet } from "../components/InvoiceLineSheet";
 import { InvoiceProductSheet } from "../components/InvoiceProductSheet";
@@ -948,35 +949,16 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       />
       <Card>
         {draft.items.map((it, idx) => (
-          <View key={idx} style={{ marginTop: idx ? 8 : 0 }}>
-            <Pressable
-              testID={`inv-item-${idx}`}
-              onPress={() => setSheetIndex(idx)}
-              style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 10, gap: 8, backgroundColor: "#fff" }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text numberOfLines={2} style={{ flex: 1, fontWeight: "800", color: colors.text }}>{it.name || it.product_name || "Kalem"}</Text>
-                <Pressable
-                  onPress={() => removeLine(idx)}
-                  testID={`inv-item-del-${idx}`}
-                  accessibilityLabel="Kalemi sil"
-                  style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-                >
-                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                </Pressable>
-              </View>
-              <View style={{ flexDirection: "row", gap: 6 }}>
-                <LineStat label="ADET" value={String(it.quantity)} />
-                <LineStat label="FİYAT" value={fmtMoney(it.unit_price, draft.currency)} />
-                <LineStat label="KDV" value={`%${it.vat_rate}`} />
-                <LineStat label="İSK" value={`%${it.discount_rate || 0}`} />
-              </View>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={{ color: colors.muted, fontWeight: "700" }}>{it.unit || "Adet"}</Text>
-                <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(it.total_incl, draft.currency)}</Text>
-              </View>
-            </Pressable>
-          </View>
+          <DocLineCard
+            key={idx}
+            line={it}
+            currency={draft.currency}
+            testIDPrefix="inv-item"
+            index={idx}
+            editable
+            onPress={() => setSheetIndex(idx)}
+            onDelete={() => removeLine(idx)}
+          />
         ))}
       </Card>
 
@@ -1114,15 +1096,6 @@ function SectionTitle({ title, right }: { title: string; right?: React.ReactNode
     <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
       <Text style={{ flex: 1, fontSize: 11, fontWeight: "800", letterSpacing: 0.4, color: colors.muted }}>{title}</Text>
       {right}
-    </View>
-  );
-}
-
-function LineStat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ flex: 1, minWidth: 0, backgroundColor: colors.slate50, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 6 }}>
-      <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted }}>{label}</Text>
-      <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: "800", color: colors.text }}>{value}</Text>
     </View>
   );
 }

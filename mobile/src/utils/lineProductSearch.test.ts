@@ -111,7 +111,7 @@ describe("line product name search", () => {
 
   it("fills the quote line from a selected product and persists product_id", () => {
     const row = fillWorkItemFromProduct(
-      { ...emptyItem(), quantity: 3, description: "Kesim" },
+      { ...emptyItem(), quantity: 3, description: "Kesim", discount_rate: 10 },
       catalog[0],
     );
     expect(row).toMatchObject({
@@ -122,6 +122,7 @@ describe("line product name search", () => {
       vat_rate: 20,
       quantity: 3,
       description: "Kesim",
+      discount_rate: 10,
       is_service: false,
       image_url: "/api/files/profil.jpg",
     });

@@ -172,6 +172,38 @@ describe("workDocs", () => {
     expect(saved.items[0].vat_rate).toBe(0);
   });
 
+  it("discounts quote lines like invoice totals and clamps the percent", () => {
+    const line = { name: "Hizmet", quantity: 2, unit_price: 100, vat_rate: 20, unit: "Adet", discount_rate: 10, description: "Kesim notu" };
+    const t = workItemTotals([line]);
+    expect(t.subtotal).toBe(180);
+    expect(t.vat).toBe(36);
+    expect(t.grandTotal).toBe(216);
+    expect(t.lineDiscount).toBe(20);
+    expect(workItemLineGross(line)).toBe(216);
+
+    const gross = { name: "Koltuk", quantity: 1, unit_price: 120, vat_rate: 20, unit: "Adet", price_includes_vat: true, discount_rate: 10 };
+    const g = workItemTotals([gross]);
+    expect(g.subtotal).toBe(90);
+    expect(g.vat).toBe(18);
+    expect(g.grandTotal).toBe(108);
+    expect(g.lineDiscount).toBe(10);
+    expect(workItemLineGross(gross)).toBe(108);
+
+    const kept = workItemPersistFields(line);
+    expect(kept.discount_rate).toBe(10);
+    expect(kept.description).toBe("Kesim notu");
+    expect(workItemPersistFields({ ...line, discount_rate: 150 }).discount_rate).toBe(100);
+    expect(workItemPersistFields({ ...line, discount_rate: -4 }).discount_rate).toBe(0);
+    expect(workItemPersistFields({ ...emptyItem(), name: "Yok" }).discount_rate).toBe(0);
+
+    const saved = quotePayload("comp", { contact_id: "c1", contact_name: "Acme", title: "T", valid_until: "", notes: "" }, [
+      { ...line, discount_rate: 150 },
+    ]);
+    expect(saved.items[0].discount_rate).toBe(100);
+    expect(saved.items[0].description).toBe("Kesim notu");
+    expect(saved.items[0].vat_rate).toBe(20);
+  });
+
   it("totals quote lines with VAT", () => {
     const t = workItemTotals([
       { name: "Kapı", quantity: 2, unit_price: 100, vat_rate: 20, unit: "Adet" },
