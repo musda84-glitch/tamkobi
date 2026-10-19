@@ -1,4 +1,4 @@
-import { computeLine, documentLineTotals, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct, productCardPrice } from "./documentLines";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct, productCardPrice, variantPriceSource, variantUnitPrice } from "./documentLines";
 
 test("computeLine fills dual unit prices and net/gross totals with discount", () => {
   const row = computeLine({
@@ -161,5 +161,34 @@ test("documentLineTotals grandTotal equals subtotal + vat (rounded)", () => {
   ]);
   expect(t.grandTotal).toBeCloseTo(t.subtotal + t.vat, 2);
   expect(Math.abs(t.subtotal + t.vat - t.grandTotal)).toBeLessThan(0.005);
+});
+
+const parentBuy = (prod) => prod.last_purchase_price || prod.purchase_price;
+
+test("variantUnitPrice uses variant purchase cost on purchase invoices", () => {
+  const variant = { price: 300, sale_price: 280, purchase_price: 175.5 };
+  expect(variantUnitPrice(variant, "purchase", 180)).toBe(175.5);
+  expect(variantUnitPrice({ price: 300, sale_price: 280, purchase_price: 0 }, "purchase", parentBuy({ last_purchase_price: 40, purchase_price: 90 }))).toBe(40);
+  expect(variantUnitPrice({ price: 300, sale_price: 280, purchase_price: 0 }, "purchase", parentBuy({ purchase_price: 90 }))).toBe(90);
+  expect(variantUnitPrice({ price: 300, sale_price: 280 }, "purchase", 90)).toBe(90);
+  expect(variantUnitPrice({ price: 300, sale_price: 280, purchase_price: 0 }, "purchase", 12)).not.toBe(300);
+  expect(variantUnitPrice({ price: 300, sale_price: 280, purchase_price: 0 }, "purchase", 12)).not.toBe(280);
+  expect(variantUnitPrice(variant, "sales", 10)).toBe(300);
+  expect(variantUnitPrice({ sale_price: 280 }, "sales", 10)).toBe(280);
+  expect(variantUnitPrice(null, "sales", 10)).toBe(10);
+  expect(variantUnitPrice(undefined, "purchase", 55)).toBe(55);
+});
+
+test("variantPriceSource matches only a purchase line priced from the variant cost", () => {
+  const prod = { variants: [{ sku: "V1", barcode: "B1", purchase_price: 175.5, price: 300 }] };
+  const item = { sku: "V1", barcode: "B1", unit_price: 175.5 };
+  expect(variantPriceSource(prod, item, "purchase")).toBe("variant_purchase");
+  expect(variantPriceSource(prod, { sku: "V1", unit_price: 175.504 }, "purchase")).toBe("variant_purchase");
+  expect(variantPriceSource(prod, { barcode: "B1", unit_price: 175.5 }, "purchase")).toBe("variant_purchase");
+  expect(variantPriceSource(prod, { sku: "V1", unit_price: 175.51 }, "purchase")).toBeNull();
+  expect(variantPriceSource(prod, { sku: "V1", unit_price: 300 }, "purchase")).toBeNull();
+  expect(variantPriceSource(prod, item, "sales")).toBeNull();
+  expect(variantPriceSource(prod, { sku: "OTHER", unit_price: 175.5 }, "purchase")).toBeNull();
+  expect(variantPriceSource({ variants: [{ sku: "V1", purchase_price: 0, price: 175.5 }] }, { sku: "V1", unit_price: 175.5 }, "purchase")).toBeNull();
 });
 

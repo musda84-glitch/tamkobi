@@ -9235,7 +9235,10 @@ async def update_product_variants(product_id: str, req: VariantsUpdateRequest, u
             v.barcode = f"869{str(uuid.uuid4().int)[:10]}"
         if not v.name and v.attributes:
             v.name = " / ".join(v.attributes.values())
-        variants.append(v.model_dump())
+        dumped = v.model_dump()
+        if dumped.get("purchase_price", 0) < 0:
+            dumped["purchase_price"] = 0.0
+        variants.append(dumped)
     has_variants = len(variants) > 0
     update = {
         "has_variants": has_variants,

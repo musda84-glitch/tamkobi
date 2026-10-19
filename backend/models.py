@@ -112,6 +112,7 @@ class ProductVariant(BaseModel):
     barcode: str = ""
     stock: float = 0
     price: float = 0.0
+    purchase_price: float = 0.0
     attributes: Dict[str, str] = {}  # {"Renk": "Mavi", "Beden": "L"}
     image_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
