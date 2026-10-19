@@ -496,4 +496,27 @@ describe("InvoicesScreen", () => {
     expect(findByTestId(container, "create-new-invoice-btn")).toBeNull();
     expect(findByTestId(container, "inv-edoc-inbox-btn")).toBeNull();
   });
+
+  it("opens the editor for a draft and the detail for an issued invoice", async () => {
+    const draft = row({ id: "dr1", status: "draft", invoice_number: "TAS-1", contact_name: "Taslak Cari" });
+    const issued = row({
+      id: "c1",
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "e_invoice",
+      einvoice_state: "sent",
+      gib_status: "Gönderildi",
+      gib_tracking_id: "uuid-1",
+      invoice_number: "GIB-1",
+      contact_name: "Kesilmiş Cari",
+    });
+    (get as unknown as jest.Mock).mockResolvedValue(pageOf([draft, issued], {
+      summary: { count: 2, total_amount: 20, draft_count: 1, approved_count: 1 },
+    }));
+    await show();
+    await pressId(container, "inv-open-dr1");
+    expect(go).toHaveBeenCalledWith("InvoiceEdit", { id: "dr1" });
+    await pressId(container, "inv-open-c1");
+    expect(go).toHaveBeenCalledWith("InvoiceDetail", { id: "c1" });
+  });
 });

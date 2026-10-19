@@ -172,7 +172,7 @@ export function draftFromInvoice(inv: Invoice): InvoiceDraft {
     ...base,
     invoice_type: inv.invoice_type || "sales",
     e_type: inv.e_type || "paper",
-    status: "draft",
+    status: inv.status || "draft",
     contact_id: inv.contact_id || "",
     contact_name: inv.contact_name || "",
     issue_date: String(inv.issue_date || base.issue_date).slice(0, 10),
