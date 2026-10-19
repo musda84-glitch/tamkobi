@@ -140,6 +140,21 @@ class MemColl:
                 return SimpleNamespace(modified_count=1, matched_count=1)
         return SimpleNamespace(modified_count=0, matched_count=0)
 
+    async def update_many(self, query, update, upsert=False):
+        """mysql_store.update_many: eşleşenler matched, içeriği değişenler modified."""
+        query = _split_field_ops(query or {})
+        matched = 0
+        modified = 0
+        for i, doc in enumerate(self.docs):
+            if not match_query(doc, query):
+                continue
+            matched += 1
+            new_doc = apply_update(doc, update, query)
+            if new_doc != doc:
+                self.docs[i] = new_doc
+                modified += 1
+        return SimpleNamespace(matched_count=matched, modified_count=modified, upserted_id=None)
+
 
 class MemDB:
     def __init__(self):
