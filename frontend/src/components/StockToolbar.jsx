@@ -103,9 +103,9 @@ export const StockToolbar = ({
         className={variant === "mobile"
           ? "w-full min-w-0 h-11 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
           : "w-full min-w-[240px] pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"}
-        data-testid="stock-search-input"
+        data-testid={variant === "mobile" ? "stock-search-input-m" : "stock-search-input"}
       />
-      {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="stock-search-clear"><X className="w-3.5 h-3.5" /></button>}
+      {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid={variant === "mobile" ? "stock-search-clear-m" : "stock-search-clear"}><X className="w-3.5 h-3.5" /></button>}
     </div>
   );
   const renderCategory = (variant) => {
@@ -179,19 +179,23 @@ export const StockToolbar = ({
     );
     return variant === "sheet" ? <MobileFilterField label="Kart durumu">{select}</MobileFilterField> : select;
   };
-  const renderActions = () => (
-    <>
-      {criticalCount > 0 && onReorderCritical && (
-        <button type="button" onClick={onReorderCritical} className="px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 font-semibold border border-amber-200 hover:bg-amber-100 flex items-center gap-1" data-testid="stock-reorder-btn">
-          <ShoppingCart className="w-3.5 h-3.5" /> Kritik stok siparişi ({criticalCount})
-        </button>
-      )}
-      <div className="ml-auto flex items-center gap-3 text-slate-500">
-        <ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" loadRows={loadRows} />
-        <div data-testid="stock-result-summary"><b className="text-slate-900">{count}</b> ürün{quantityTotal != null && <> · <b className="text-slate-900">{quantityTotal}</b> adet</>} · Stok değeri (alış) <b className="text-slate-900">{fmtMoney(stockValue, "TRY")}</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-critical-link">{criticalCount} kritik</button></>}{zeroCount > 0 && <> · <button onClick={() => set("status", "zero")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-zero-link">{zeroCount} sıfır</button></>}{negativeCount > 0 && <> · <button onClick={() => set("status", "negative")} className="text-rose-600 font-semibold hover:underline" data-testid="stock-negative-link">{negativeCount} eksi</button></>}</div>
-      </div>
-    </>
-  );
+  const renderActions = (variant) => {
+    const mobile = variant === "mobile";
+    const tid = (id) => (mobile ? `${id}-m` : id);
+    return (
+      <>
+        {criticalCount > 0 && onReorderCritical && (
+          <button type="button" onClick={onReorderCritical} className="px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 font-semibold border border-amber-200 hover:bg-amber-100 flex items-center gap-1" data-testid={tid("stock-reorder-btn")}>
+            <ShoppingCart className="w-3.5 h-3.5" /> Kritik stok siparişi ({criticalCount})
+          </button>
+        )}
+        <div className="ml-auto flex items-center gap-3 text-slate-500">
+          <ExportButtons rows={rows} columns={STOCK_COLS} filename="stok" title="Stok Listesi" loadRows={loadRows} testidSuffix={mobile ? "-m" : ""} />
+          <div data-testid={tid("stock-result-summary")}><b className="text-slate-900">{count}</b> ürün{quantityTotal != null && <> · <b className="text-slate-900">{quantityTotal}</b> adet</>} · Stok değeri (alış) <b className="text-slate-900">{fmtMoney(stockValue, "TRY")}</b>{criticalCount > 0 && <> · <button onClick={() => set("status", "critical")} className="text-rose-600 font-semibold hover:underline" data-testid={tid("stock-critical-link")}>{criticalCount} kritik</button></>}{zeroCount > 0 && <> · <button onClick={() => set("status", "zero")} className="text-rose-600 font-semibold hover:underline" data-testid={tid("stock-zero-link")}>{zeroCount} sıfır</button></>}{negativeCount > 0 && <> · <button onClick={() => set("status", "negative")} className="text-rose-600 font-semibold hover:underline" data-testid={tid("stock-negative-link")}>{negativeCount} eksi</button></>}</div>
+        </div>
+      </>
+    );
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3" data-testid="stock-toolbar">
@@ -207,7 +211,7 @@ export const StockToolbar = ({
       </div>
       <div data-layout="desktop" className="hidden sm:flex flex-wrap items-center gap-2 text-xs sm:mt-2">
         {active > 0 && <button onClick={clearFilters} className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="stock-filters-clear">Filtreleri temizle ({active})</button>}
-        {renderActions()}
+        {renderActions("inline")}
       </div>
       <div data-layout="mobile" className="sm:hidden space-y-2">
         <div className="flex items-center gap-2">
@@ -223,7 +227,7 @@ export const StockToolbar = ({
           </MobileFilterSheet>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {renderActions()}
+          {renderActions("mobile")}
         </div>
       </div>
     </div>

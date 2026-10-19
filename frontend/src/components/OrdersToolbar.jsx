@@ -159,10 +159,10 @@ export const OrdersToolbar = ({
         className={variant === "mobile"
           ? "w-full h-11 min-w-0 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"
           : "w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"}
-        data-testid="ord-search"
+        data-testid={variant === "mobile" ? "ord-search-m" : "ord-search"}
       />
       {f.q && (
-        <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="ord-search-clear">
+        <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid={variant === "mobile" ? "ord-search-clear-m" : "ord-search-clear"}>
           <X className="w-3.5 h-3.5" />
         </button>
       )}
@@ -222,7 +222,7 @@ export const OrdersToolbar = ({
             ? "bg-amber-100 text-amber-900 border-amber-300"
             : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
         }`}
-      data-testid="ord-cancel-request-chip"
+      data-testid={variant === "chip" ? "ord-cancel-request-chip-m" : "ord-cancel-request-chip"}
     >
       İptal talepleri ({counts.cancel_request || 0})
     </button>
@@ -272,24 +272,24 @@ export const OrdersToolbar = ({
       </label>
     );
   };
-  const renderRefresh = () => (onRefresh ? (
+  const renderRefresh = (variant) => (onRefresh ? (
     <button
       type="button"
       onClick={onRefresh}
       disabled={refreshBusy}
       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-      data-testid="ord-refresh-btn"
+      data-testid={variant === "mobile" ? "ord-refresh-btn-m" : "ord-refresh-btn"}
       title="Pazaryerinden sipariş çek (nav/F5 çekmez; otomatik 10 dk + bu buton)"
     >
       <RefreshCw className={`w-3.5 h-3.5 ${refreshBusy ? "animate-spin" : ""}`} />
       {refreshBusy ? "Çekiliyor…" : "Yenile"}
     </button>
   ) : null);
-  const renderSummary = () => (
+  const renderSummary = (variant) => (
     <div className="ml-auto flex items-center gap-3 text-slate-500">
-      {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
-      <ExportButtons rows={rows} loadRows={loadExportRows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" />
-      <div data-testid="ord-result-summary"><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
+      {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} testidSuffix={variant === "mobile" ? "-m" : ""} />}
+      <ExportButtons rows={rows} loadRows={loadExportRows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" testidSuffix={variant === "mobile" ? "-m" : ""} />
+      <div data-testid={variant === "mobile" ? "ord-result-summary-m" : "ord-result-summary"}><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
     </div>
   );
 
@@ -309,8 +309,8 @@ export const OrdersToolbar = ({
         {renderDates("inline")}
         {active > 0 && <button onClick={clearFilters} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="ord-filters-clear">Filtreleri temizle ({active})</button>}
         {renderPageSize("inline")}
-        {renderRefresh()}
-        {renderSummary()}
+        {renderRefresh("inline")}
+        {renderSummary("inline")}
       </div>
       <div data-layout="mobile" className="sm:hidden space-y-2">
         <div className="flex items-center gap-2">
@@ -330,8 +330,8 @@ export const OrdersToolbar = ({
           {renderCancel("chip")}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {renderRefresh()}
-          {renderSummary()}
+          {renderRefresh("mobile")}
+          {renderSummary("mobile")}
         </div>
       </div>
     </div>

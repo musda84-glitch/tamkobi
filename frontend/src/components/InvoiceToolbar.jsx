@@ -104,16 +104,16 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
         className={variant === "mobile"
           ? "w-full h-11 min-w-0 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
           : "w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"}
-        data-testid="inv-search"
+        data-testid={variant === "mobile" ? "inv-search-m" : "inv-search"}
       />
-      {f.q && <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="inv-search-clear"><X className="w-3.5 h-3.5" /></button>}
+      {f.q && <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid={variant === "mobile" ? "inv-search-clear-m" : "inv-search-clear"}><X className="w-3.5 h-3.5" /></button>}
     </div>
   );
   const renderPay = (variant) => {
     if (hidePay) return null;
     const chips = variant === "chips";
     return (
-      <div className={chips ? mobileChipRowClass : "flex items-center gap-1 bg-slate-100 rounded-xl p-0.5"} data-testid="inv-pay-filter">
+      <div className={chips ? mobileChipRowClass : "flex items-center gap-1 bg-slate-100 rounded-xl p-0.5"} data-testid={chips ? "inv-pay-filter-m" : "inv-pay-filter"}>
         {PAY.map(([k, l]) => (
           <button
             key={k}
@@ -122,7 +122,7 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
             className={chips
               ? mobileChipClass(f.pay === k)
               : `px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition ${f.pay === k ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-800"}`}
-            data-testid={`inv-pay-${k}`}
+            data-testid={chips ? `inv-pay-${k}-m` : `inv-pay-${k}`}
           >
             {l}
           </button>
@@ -167,13 +167,17 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
   const renderMax = (variant) => (
     <MoneyInput value={f.max} onChange={(n) => set("max", n ?? "")} placeholder="Max ₺" className={variant === "sheet" ? mobileFilterFieldClass : `${sel} w-24`} data-testid="inv-max" />
   );
-  const renderSummary = () => (
-    <div className="ml-auto flex items-center gap-3 text-slate-500">
-      {onBulkAction && <InvoicesBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
-      <ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} loadRows={loadRows} />
-      <div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b>{draftCount != null && approvedCount != null && <span data-testid="inv-status-counts"> · Taslak <b className="text-slate-900">{draftCount}</b> · Onaylı <b className="text-slate-900">{approvedCount}</b></span>}</div>
-    </div>
-  );
+  const renderSummary = (variant) => {
+    const mobile = variant === "mobile";
+    const tid = (id) => (mobile ? `${id}-m` : id);
+    return (
+      <div className="ml-auto flex items-center gap-3 text-slate-500">
+        {onBulkAction && <InvoicesBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} testidSuffix={mobile ? "-m" : ""} />}
+        <ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} loadRows={loadRows} testidSuffix={mobile ? "-m" : ""} />
+        <div data-testid={tid("inv-result-summary")}><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b>{draftCount != null && approvedCount != null && <span data-testid={tid("inv-status-counts")}> · Taslak <b className="text-slate-900">{draftCount}</b> · Onaylı <b className="text-slate-900">{approvedCount}</b></span>}</div>
+      </div>
+    );
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3" data-testid="invoice-toolbar">
@@ -192,7 +196,7 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
         {renderMin("inline")}
         {renderMax("inline")}
         {active > 0 && <button onClick={clearFilters} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
-        {renderSummary()}
+        {renderSummary("inline")}
       </div>
       <div data-layout="mobile" className="sm:hidden space-y-2">
         <div className="flex items-center gap-2">
@@ -209,7 +213,7 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
         </div>
         {renderPay("chips")}
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {renderSummary()}
+          {renderSummary("mobile")}
         </div>
       </div>
     </div>
