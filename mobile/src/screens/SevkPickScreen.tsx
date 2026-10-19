@@ -450,7 +450,6 @@ export function SevkPickScreen() {
       {session ? (
         <PrimaryButton
           title="Koli etiketi bas"
-          icon="print"
           color={colors.primary}
           testID="sevk-ship-label"
           onPress={() => { void openShipLabel(); }}

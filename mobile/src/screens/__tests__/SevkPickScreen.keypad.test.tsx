@@ -346,6 +346,7 @@ describe("SevkPickScreen keypad", () => {
     const ship = findByTestId(container, "sevk-ship-label");
     expect(ship).toBeTruthy();
     expect(ship.getAttribute("aria-label")).toBe("Koli etiketi bas");
+    expect(textOf(ship)).toBe("Koli etiketi bas");
     expect(textOf(container)).toContain("Etiket yazdır");
     expect(findByTestId(container, "sevk-print-labels")).toBeTruthy();
 
