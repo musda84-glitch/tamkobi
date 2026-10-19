@@ -135,7 +135,7 @@ def test_bank_account_opening_balance_writes_ledger_and_fark_is_zero(db):
         created = await server.create_bank_account(BankAccount(
             company_id="co", type="bank", bank_name="Enpara", account_name="Vadesiz",
             iban=IBAN, currency="TRY", current_balance=75,
-        ))
+        ), _user())
         aid = created["id"]
         stored = await db.bank_accounts.find_one({"_id": aid})
         assert stored["current_balance"] == pytest.approx(75)
@@ -152,23 +152,23 @@ def test_bank_account_opening_balance_writes_ledger_and_fark_is_zero(db):
         pos = await server.create_bank_account(BankAccount(
             company_id="co", type="pos", bank_name="POS", account_name="Mağaza POS",
             currency="TRY", current_balance=12.5,
-        ))
+        ), _user())
         card = await server.create_bank_account(BankAccount(
             company_id="co", type="credit_card", bank_name="Bonus", account_name="Şirket Kart",
             currency="TRY", current_balance=-80, card_owner="company",
-        ))
+        ), _user())
         cash = await server.create_bank_account(BankAccount(
             company_id="co", type="cash_box", bank_name="Kasa", account_name="Merkez",
             currency="TRY", current_balance=10,
-        ))
+        ), _user())
         zero = await server.create_bank_account(BankAccount(
             company_id="co", type="bank", bank_name="Boş", account_name="Sıfır",
             currency="TRY", current_balance=0,
-        ))
+        ), _user())
         pool = await server.create_bank_account(BankAccount(
             company_id="co", type="credit_card", bank_name="Havuz", account_name="Müşteri",
             currency="TRY", current_balance=50, is_customer_card_pool=True, card_owner="customer",
-        ))
+        ), _user())
         assert _openings(db, pos["id"])[0]["amount"] == pytest.approx(12.5)
         card_tx = _openings(db, card["id"])[0]
         assert card_tx["type"] == "outflow"
@@ -191,7 +191,7 @@ def test_put_balance_rewrites_opening_without_increment(db):
         created = await server.create_bank_account(BankAccount(
             company_id="co", type="bank", bank_name="Enpara", account_name="Vadesiz",
             currency="TRY", current_balance=75,
-        ))
+        ), _user())
         aid = created["id"]
         updated = await server.update_bank_account(aid, {"current_balance": 100}, _user())
         assert updated["current_balance"] == pytest.approx(100)
@@ -295,7 +295,7 @@ def test_sync_does_not_change_fark_and_unmatched_totals(db):
         created = await server.create_bank_account(BankAccount(
             company_id="co", type="bank", bank_name="Enpara", account_name="Vadesiz",
             iban=IBAN, currency="TRY", current_balance=75,
-        ))
+        ), _user())
         aid = created["id"]
         await db.bank_connections.insert_one({
             "_id": "conn1",
@@ -614,23 +614,23 @@ def test_duplicate_iban_connection_rejected_and_warnings(db):
         first = await server.create_bank_account(BankAccount(
             company_id="co", type="bank", bank_name="Enpara", account_name="Vadesiz TL",
             iban=IBAN, account_number="1001", currency="TRY", current_balance=0,
-        ))
+        ), _user())
         second = await server.create_bank_account(BankAccount(
             company_id="co", type="bank", bank_name="Enpara", account_name="Vadesiz TL",
             iban=IBAN_SPACED, account_number="1001", currency="TRY", current_balance=0,
-        ))
+        ), _user())
         other = await server.create_bank_account(BankAccount(
             company_id="c2", type="bank", bank_name="Enpara", account_name="Başka",
             iban=IBAN, currency="TRY", current_balance=0,
-        ))
+        ), _user("c2"))
         numbered_a = await server.create_bank_account(BankAccount(
             company_id="co", type="pos", bank_name="POS", account_name="POS A",
             account_number="555", currency="TRY", current_balance=0,
-        ))
+        ), _user())
         numbered_b = await server.create_bank_account(BankAccount(
             company_id="co", type="pos", bank_name="POS", account_name="POS B",
             account_number="555", currency="TRY", current_balance=0,
-        ))
+        ), _user())
 
         async def ok_test(doc):
             return {"ok": True, "simulated": True, "message": "ok"}

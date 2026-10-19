@@ -720,7 +720,16 @@ async def move(db, company_id: str, partner_id: str, amount: float, tx_type: str
     """Adjust partner balance without touching kasa/banka. Returns partner name."""
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
-    partner = await db.partners.find_one({"_id": partner_id})
+    cid = str(company_id or "").strip()
+    query: Dict[str, Any] = {"_id": partner_id, "company_id": cid}
+    if not cid:
+        # Eski çağrılar company_id geçmeyebilir; sorgu bugünkü gibi yalnız _id kalır.
+        query.pop("company_id", None)
+        logger.warning(
+            "partner_pay.move company_id olmadan çağrıldı; ortak şirket filtresiz arandı partner_id=%s",
+            partner_id,
+        )
+    partner = await db.partners.find_one(query)
     if not partner:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     if tx_type not in MUTABLE_TYPES:

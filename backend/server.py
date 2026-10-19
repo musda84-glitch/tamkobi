@@ -12104,7 +12104,8 @@ async def _resolve_card_owner_fields(company_id: str, payload: Dict[str, Any], *
 
 
 @api_router.post("/banking/accounts")
-async def create_bank_account(account: BankAccount):
+async def create_bank_account(account: BankAccount, user: dict = Depends(get_current_user)):
+    account.company_id = tenant_access.resolve_company_id(user, account.company_id)
     doc = sanitize_card_fields(account.to_mongo())
     doc = await _resolve_card_owner_fields(doc.get("company_id") or "", doc)
     if doc.get("is_customer_card_pool"):
@@ -13673,12 +13674,12 @@ PARTNER_MUTABLE_TYPES = partner_pay.MUTABLE_TYPES
 
 
 async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type: str, amount: float, partner_name: str, description: str, date: str, partner_tx_id: Optional[str] = None):
-    acc = await db.bank_accounts.find_one({"_id": account_id})
+    acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": company_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
     await bank_guard.assert_manual_allowed(db, account_id)
     inflow = tx_type == "capital_in"
-    await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": amount if inflow else -amount}})
+    await db.bank_accounts.update_one({"_id": account_id, "company_id": company_id}, {"$inc": {"current_balance": amount if inflow else -amount}})
     tx_doc = {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
@@ -13824,7 +13825,12 @@ async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_curren
     return {"status": "success", "message": msg, "bank_unmatched": bank_unmatched}
 
 async def _execute_partner_tx(req: Dict[str, Any]):
-    partner = await db.partners.find_one({"_id": req.get("partner_id")})
+    company_id = str(req.get("company_id") or "").strip()
+    if company_id:
+        partner = await db.partners.find_one({"_id": req.get("partner_id"), "company_id": company_id})
+    else:
+        # company_id'siz eski onay kuyruğu: kayıt approve sırasında şirket kontrolünden geçmişti.
+        partner = await db.partners.find_one({"_id": req.get("partner_id")})
     if not partner:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     tx_type = req.get("type")
@@ -13855,10 +13861,9 @@ async def _execute_partner_tx(req: Dict[str, Any]):
 
 
 @api_router.post("/banking/partners/transactions")
-async def create_partner_transaction(req: Dict[str, Any], request: Request):
-    partner = await db.partners.find_one({"_id": req.get("partner_id")})
-    if not partner:
-        raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+async def create_partner_transaction(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    partner = await tenant_access.get_tenant_doc(db, "partners", req.get("partner_id"), user, not_found="Ortak bulunamadı.")
+    tenant_access.assert_same_company(user, partner)
     tx_type = req.get("type")
     if tx_type not in PARTNER_MUTABLE_TYPES:
         raise HTTPException(status_code=400, detail="Geçersiz işlem türü. Para koy/çek veya borç/alacak fişi seçin.")
@@ -13870,7 +13875,12 @@ async def create_partner_transaction(req: Dict[str, Any], request: Request):
     payload = dict(req)
     if tx_type in PARTNER_LEDGER_TYPES:
         payload["account_id"] = None
-    user = await get_current_user(request)
+    account_id = payload.get("account_id")
+    if account_id:
+        acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": partner["company_id"]})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+    payload["company_id"] = partner["company_id"]
     label = PARTNER_TX_LABELS.get(tx_type, tx_type or "İşlem")
     pending = await cash_approval.maybe_queue(
         db, company_id=partner["company_id"], kind="partner_tx", payload=payload,
