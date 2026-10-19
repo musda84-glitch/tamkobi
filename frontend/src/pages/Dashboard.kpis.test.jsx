@@ -129,6 +129,22 @@ async function renderDash() {
   }
 }
 
+test("son faturalar tablosu yatay kaydırma sarmalayıcısı içinde render edilir", async () => {
+  statsBody = baseStats({
+    recent_invoices: [{ id: "inv-1", contact_name: "Ada Ltd", invoice_type: "sales", status: "approved", grand_total: 100, issue_date: "2026-10-01" }],
+  });
+  await renderDash();
+  const section = host.querySelector("[data-testid='dashboard-section-bottom']");
+  const table = section.querySelector("table");
+  expect(table).toBeTruthy();
+  expect(table.className).toContain("w-full");
+  const wrap = table.parentElement;
+  expect(wrap.className).toContain("w-full");
+  expect(wrap.className).toContain("max-w-full");
+  expect(wrap.className).toContain("overflow-x-auto");
+  expect(wrap.textContent).toContain("Ada Ltd");
+});
+
 test("hides today line when today_sales is missing and shows draft note", async () => {
   await renderDash();
   expect(host.textContent).toContain("taslak ve iptal hariç");
