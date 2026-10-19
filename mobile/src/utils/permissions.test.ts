@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, feature, hasPortalFeature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, personelMenuPathAllowed, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showProductionAiAdvisor, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, canShipOrder, feature, hasPortalFeature, hasSelfPersonnelRecord, isMoreLinkVisible, isOrderStaffMode, moduleOn, personelMenuPathAllowed, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showProductionAiAdvisor, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -254,6 +254,34 @@ describe("permissions", () => {
     expect(showHomeRefreshTile({ role: "sales", employee_id: null })).toBe(false);
     expect(showHomeRefreshTile({ role: "admin", employee_id: "emp_1" })).toBe(true);
     expect(showHomeRefreshTile({ role: "personel", employee_id: "e2" })).toBe(true);
+  });
+
+  it("lets personel view orders when portal_orders is on, without edit or delete", () => {
+    const personel = {
+      role: "personel",
+      permissions: { "/orders": "none", "/cargo": "none", "/invoices": "edit" },
+      features: { portal_orders: true },
+    };
+    expect(isOrderStaffMode(personel)).toBe(true);
+    expect(can(personel, "/orders")).toBe(true);
+    expect(can(personel, "/orders", "edit")).toBe(false);
+    expect(can(personel, "/orders", "delete")).toBe(false);
+    expect(canShipOrder(personel)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/orders" }, personel, null)).toBe(true);
+    const off = { ...personel, features: {} };
+    expect(isOrderStaffMode(off)).toBe(false);
+    expect(can(off, "/orders")).toBe(false);
+    expect(can(off, "/orders", "edit")).toBe(false);
+    expect(canShipOrder(off)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/orders" }, off, null)).toBe(false);
+    const sales = { role: "sales", permissions: { "/orders": "edit", "/cargo": "none" }, features: {} };
+    expect(canShipOrder(sales)).toBe(true);
+    expect(can(sales, "/orders", "edit")).toBe(true);
+    const viewOnly = { role: "accountant", permissions: { "/orders": "view", "/cargo": "none" }, features: {} };
+    expect(canShipOrder(viewOnly)).toBe(false);
+    expect(can(viewOnly, "/orders")).toBe(true);
+    expect(can(viewOnly, "/orders", "edit")).toBe(false);
+    expect(isOrderStaffMode(sales)).toBe(false);
   });
 
   it("hides production AI advisor from personnel logins", () => {

@@ -51,6 +51,8 @@ describe("selfPersonnelNav", () => {
     expect(personelMenuPathAllowed("/stock", p)).toBe(false);
     expect(personelMenuPathAllowed("/banking", { role: "admin" })).toBe(true);
     expect(personelMenuPathAllowed("/orders", null)).toBe(false);
+    expect(personelMenuPathAllowed("/orders", p)).toBe(false);
+    expect(personelMenuPathAllowed("/orders", { ...p, features: { portal_orders: true } })).toBe(true);
   });
 
   test("personel cannot manage company settings or see finance home", () => {

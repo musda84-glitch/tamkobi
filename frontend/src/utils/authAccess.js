@@ -16,7 +16,14 @@ export function canAccessPath(user, path, level = "view", resolvePath = authPerm
   if (user.role === "admin") return true;
   const featureKey = portalFeatureKey(resolvePath(path));
   // Açık saha özelliği modül none olsa da bu ekranı açar.
-  if (featureKey && hasPortalFeature(user, featureKey)) return true;
+  // portal_orders personelde yalnız menü / görüntüleme; düzenleme modül matrisinde kalır.
+  if (featureKey && hasPortalFeature(user, featureKey)) {
+    if (featureKey === "portal_orders") {
+      if (isPersonelRoleCode(user)) return level === "view";
+    } else {
+      return true;
+    }
+  }
   // Personelde modül mirası yetmez; özellik kapalıysa menüde yok.
   if (featureKey && isPersonelRoleCode(user)) return false;
   const perms = user.permissions;

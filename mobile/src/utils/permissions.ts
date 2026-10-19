@@ -22,6 +22,7 @@ export const PORTAL_FIELD_BY_PATH: Record<string, string> = {
   "/sayim": "portal_sayim",
   "/saha": "portal_saha",
   "/vehicles": "portal_vehicles",
+  "/orders": "portal_orders",
 };
 
 const PORTAL_FEATURE_KEYS = new Set(Object.values(PORTAL_FIELD_BY_PATH));
@@ -88,11 +89,28 @@ function levelAllows(value: PermissionLevel | undefined, level: "view" | "edit" 
   return false;
 }
 
+/** Personel + portal_orders. Sipariş ekranında yalnız beş işlem. */
+export function isOrderStaffMode(user: SessionUser): boolean {
+  return isPersonelRole(user) && hasPortalFeature(user, "portal_orders");
+}
+
+/** Kargola: personel sipariş modu, ya da sipariş/kargo düzenleme. */
+export function canShipOrder(user: SessionUser): boolean {
+  return isOrderStaffMode(user) || can(user, "/orders", "edit") || can(user, "/cargo", "edit");
+}
+
 export function can(user: SessionUser, path: string, level: "view" | "edit" | "delete" = "view"): boolean {
   if (!user) return false;
   if (user.role === "admin") return true;
   const portalKey = PORTAL_FIELD_BY_PATH[permPath(path)];
-  if (portalKey && hasPortalFeature(user, portalKey)) return true;
+  if (portalKey && hasPortalFeature(user, portalKey)) {
+    // portal_orders personelde yalnız görüntüleme. Diğer roller modül matrisinde kalır.
+    if (portalKey === "portal_orders") {
+      if (isPersonelRole(user)) return level === "view";
+    } else {
+      return true;
+    }
+  }
   if (portalKey && isPersonelRole(user)) return false;
   if (isPersonelRole(user) && !personelMenuPathAllowed(path, user)) return false;
   if (path === "/personnel") {

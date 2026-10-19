@@ -396,10 +396,13 @@ export async function printBusinessForm(
   company?: PrintCompany | null,
   client?: ApiClient | null,
   docType: PrintDocType = "order",
-  extras?: { paymentPlan?: PrintPaymentRow[] | null },
+  extras?: { paymentPlan?: PrintPaymentRow[] | null; hidePrices?: boolean },
 ): Promise<boolean> {
   const printCompany = await enrichPrintCompany(client, company);
-  const template = await loadPrintTemplate(client, printCompany, docType);
+  const loadedTemplate = await loadPrintTemplate(client, printCompany, docType);
+  const template = extras?.hidePrices
+    ? { ...loadedTemplate, hide_line_prices: true, hide_all_prices: true }
+    : loadedTemplate;
   const contactBalance = isOrderQuoteType(docType)
     ? await loadContactBalance(client, printCompany, doc)
     : null;
@@ -461,8 +464,11 @@ export async function printOrderForm(
   order: Order,
   company?: PrintCompany | null,
   client?: ApiClient | null,
+  options?: { showPrices?: boolean },
 ): Promise<boolean> {
-  return printBusinessForm(order, company, client, "order");
+  return printBusinessForm(order, company, client, "order", {
+    hidePrices: options?.showPrices === false,
+  });
 }
 
 export async function printInvoiceForm(

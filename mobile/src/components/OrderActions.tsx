@@ -51,6 +51,7 @@ import {
   orderDeleteConfirmMessage,
   type OrderMoreItem,
 } from "../utils/orderMoreMenu";
+import { canShipOrder, isOrderStaffMode } from "../utils/permissions";
 import { printCargoLabel, printInvoiceForm, printOrderForm } from "../utils/orderShare";
 import { emailComposerHref, smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
@@ -124,12 +125,15 @@ export function OrderActions({
   onChanged?: () => void;
   onDeleted?: () => void;
 }) {
-  const { client, activeCompany, companyId, can, feature } = useAuth();
+  const { client, activeCompany, companyId, can, feature, user } = useAuth();
+  const orderStaff = isOrderStaffMode(user);
+  const canShip = canShipOrder(user);
   const [busy, setBusy] = useState<string | null>(null);
   const [cargoOpen, setCargoOpen] = useState(false);
   const [cargoMode, setCargoMode] = useState<"ship" | "change">("ship");
   const [moreOpen, setMoreOpen] = useState(false);
   const [produceOpen, setProduceOpen] = useState(false);
+  const [produceChoiceOpen, setProduceChoiceOpen] = useState(false);
   const [stations, setStations] = useState<string[]>([]);
   const [produceStation, setProduceStation] = useState("");
   const [returnOpen, setReturnOpen] = useState(false);
@@ -185,7 +189,7 @@ export function OrderActions({
     setMoreOpen(false);
     setBusy("print");
     try {
-      await printOrderForm(await ensure(), activeCompany, client);
+      await printOrderForm(await ensure(), activeCompany, client, { showPrices: feature("view_prices") });
       post(client, "/orders/mark-form-printed", { ids: [oid] }).catch(() => null);
       onMessage?.("Sipariş formu yazdırmaya gönderildi.");
       onChanged?.();
@@ -305,6 +309,27 @@ export function OrderActions({
         setBusy(null);
       }
     });
+  };
+
+  const notifyMissing = async () => {
+    setBusy("missing");
+    try {
+      const r = await post<{ message?: string }>(client, `/order-picks/${oid}/notify-missing`, {});
+      onMessage?.(r.message || "Eksik bildirimi gönderildi.");
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Eksik bildirimi gönderilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openStaffShip = () => {
+    if (order.cargo_tracking_number || isWarehouseShipped(order)) {
+      onError?.("Bu sipariş zaten kargolandı.");
+      return;
+    }
+    openShip();
   };
 
   const produceMissing = () => {
@@ -930,9 +955,23 @@ export function OrderActions({
   const moreBtn: ActionDef | null = showMoreActions
     ? { key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical", tone: "slate", busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) }
     : null;
+  const cargoBtn: ActionDef = { key: "cargo", label: "Kargola", icon: "car", tone: "violet", busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : openShip()) };
+  const labelBtn: ActionDef = { key: "label", label: "Kargo etiketi", icon: "car", tone: "teal", busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel };
+  const shipOrLabel: ActionDef[] = !order.cargo_tracking_number
+    ? (canShip ? [cargoBtn] : [])
+    : (showCargoLabel ? [labelBtn] : []);
+  const staffToolbar: ActionDef[] = [
+    { ...printBtn, label: "Sipariş yazdır" },
+    { key: "missing", label: "Eksik bildir", icon: "alert-circle", tone: "amber", busyKey: "missing", testID: `order-notify-missing-${num}`, onPress: notifyMissing },
+    { key: "produceChoice", label: "Üretime al", icon: "construct", tone: "orange", busyKey: "produce", testID: `order-produce-choice-${num}`, onPress: () => setProduceChoiceOpen(true) },
+    { ...cargoBtn, onPress: openStaffShip },
+    ...(showCargoLabel ? [labelBtn] : []),
+  ];
 
   // List (compact): always keep Yazdır + Diğer visible — full toolbar overflows phones.
-  const toolbar: ActionDef[] = isCartOrder
+  const toolbar: ActionDef[] = orderStaff
+    ? staffToolbar
+    : isCartOrder
     ? [
         printBtn,
         { key: "produce", label: "Eksik ürünleri üretime al", icon: "construct", tone: "orange", busyKey: "produce", testID: `order-produce-missing-${num}`, onPress: produceMissing },
@@ -953,11 +992,7 @@ export function OrderActions({
                 onPress: () => runMoreAction({ id: primary.id, label: primary.label, icon: "document-text", testId: primary.id, color: "#059669" }),
               }]
             : []),
-          ...(!order.cargo_tracking_number
-            ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : openShip()) }]
-            : showCargoLabel
-              ? [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]
-              : []),
+          ...shipOrLabel,
           ...(moreBtn ? [moreBtn] : []),
         ]
       : [
@@ -986,11 +1021,7 @@ export function OrderActions({
             onPress: () => onMessage?.(order.invoice_number ? `Fatura: ${order.invoice_number}` : "Sipariş faturalandı."),
           }]
         : []),
-    ...(!order.cargo_tracking_number
-      ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : openShip()) }]
-      : showCargoLabel
-        ? [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]
-        : []),
+    ...shipOrLabel,
     ...(showApprove
       ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
       : []),
@@ -1011,6 +1042,36 @@ export function OrderActions({
         ))}
       </ScrollView>
       {busy ? <Muted>Hazırlanıyor…</Muted> : null}
+
+      <B2BSheet
+        visible={produceChoiceOpen}
+        title="Üretime al"
+        subtitle={(order as { held_label?: string }).held_label || order.order_number || "Sipariş"}
+        onClose={() => !busy && setProduceChoiceOpen(false)}
+        testID={`order-produce-choice-sheet-${num}`}
+      >
+        <PrimaryButton
+          title="Eksik ürünleri üretime al"
+          testID={`order-produce-missing-${num}`}
+          loading={busy === "produce"}
+          disabled={!!busy}
+          onPress={() => {
+            setProduceChoiceOpen(false);
+            produceMissing();
+          }}
+        />
+        <View style={{ height: 8 }} />
+        <PrimaryButton
+          title="Üretim emri ver"
+          testID={`order-produce-btn-${num}`}
+          color={colors.primary}
+          disabled={!!busy}
+          onPress={() => {
+            setProduceChoiceOpen(false);
+            produceOrderRecipe();
+          }}
+        />
+      </B2BSheet>
 
       <B2BSheet
         visible={produceOpen}
@@ -1045,7 +1106,7 @@ export function OrderActions({
         />
       </B2BSheet>
 
-      <B2BSheet
+      {!orderStaff ? <B2BSheet
         visible={moreOpen}
         title="Diğer işlemler"
         subtitle={order.order_number}
@@ -1085,7 +1146,7 @@ export function OrderActions({
             </View>
           );
         })}
-      </B2BSheet>
+      </B2BSheet> : null}
 
       <B2BSheet
         visible={cargoOpen}
@@ -1103,7 +1164,7 @@ export function OrderActions({
           emptyLabel="Kargo firması seçin"
         />
         <View style={{ height: 10 }} />
-        {cargoMode === "ship" ? (
+        {cargoMode === "ship" || orderStaff ? (
           <>
             <PrimaryButton
               title="Kargola"

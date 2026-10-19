@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Clock,
   Factory,
+  Package,
   PackageCheck,
   ShoppingCart,
   User,
@@ -23,6 +24,7 @@ export const IK_NAV_META = {
   "/sayim": { icon: ClipboardList, iconName: "clipboard-list", shortLabel: "Sayım" },
   "/saha": { icon: ShoppingCart, iconName: "shopping-cart", shortLabel: "Saha" },
   "/vehicles": { icon: Car, iconName: "car", shortLabel: "Araç" },
+  "/orders": { icon: Package, iconName: "package", shortLabel: "Sipariş" },
 };
 
 export function ikNavActive(pathname, to) {

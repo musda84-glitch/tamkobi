@@ -29,7 +29,7 @@ def roles_data(admin_headers):
 
 def test_roles_features_shape(roles_data):
     feats = roles_data.get("features")
-    assert isinstance(feats, list) and len(feats) == 19
+    assert isinstance(feats, list) and len(feats) == 20
     keys = {f["key"] for f in feats}
     assert keys == {
         "view_prices", "header_barcode", "header_virman", "header_invoice", "header_ai",
@@ -37,9 +37,15 @@ def test_roles_features_shape(roles_data):
         "order_cargo_label", "order_more_actions", "sevk_open_order", "sevk_draft_invoice",
         "account_companies", "export_personal_data", "company_audit",
         "portal_atolye", "portal_pick", "portal_sayim", "portal_saha", "portal_vehicles",
+        "portal_orders",
     }
     portal = {f["key"] for f in feats if f.get("group") == "portal"}
-    assert portal == {"portal_atolye", "portal_pick", "portal_sayim", "portal_saha", "portal_vehicles"}
+    assert portal == {
+        "portal_atolye", "portal_pick", "portal_sayim", "portal_saha", "portal_vehicles",
+        "portal_orders",
+    }
+    orders_row = next(f for f in feats if f["key"] == "portal_orders")
+    assert orders_row["label"] == "Siparişler (yazdır, eksik bildir, üretime al, kargola, kargo etiketi)"
     for f in feats:
         assert f.get("label")
     # Each role has features dict
