@@ -45,6 +45,8 @@ export type WorkOrder = {
   produced_qty?: number;
   scrap_qty?: number;
   finished_at?: string;
+  paused_at?: string | null;
+  auto_paused?: boolean;
   trash_request_pending?: boolean;
 };
 
@@ -131,7 +133,57 @@ export function runningCount(wos: WorkOrder[]): number {
 }
 
 export function todayDoneCount(wos: WorkOrder[], today = new Date().toISOString().slice(0, 10)): number {
-  return wos.filter((w) => w.status === "done" && String(w.finished_at || "").startsWith(today)).length;
+  return wos.filter((w) => isFinishedOnDay(w, today)).length;
+}
+
+function isFinishedOnDay(w: WorkOrder, today: string): boolean {
+  return w.status === "done" && String(w.finished_at || "").startsWith(today);
+}
+
+export type ShopFloorKpiFilter = "ready" | "active" | "done";
+
+/** Sayaç filtresi. active = devam + duraklatılmış; done yalnız bugün bitenler. */
+export function filterByKpi(
+  list: WorkOrder[] | null | undefined,
+  kpi?: ShopFloorKpiFilter | null,
+  today = new Date().toISOString().slice(0, 10),
+): WorkOrder[] {
+  const rows = list || [];
+  if (kpi === "ready") return rows.filter((w) => w.status === "ready");
+  if (kpi === "active") return rows.filter((w) => w.status === "in_progress" || w.status === "paused");
+  if (kpi === "done") return rows.filter((w) => isFinishedOnDay(w, today));
+  return rows;
+}
+
+const WO_STATUS_RANK: Record<string, number> = {
+  in_progress: 0,
+  paused: 1,
+  ready: 2,
+};
+
+/** in_progress → paused → ready → diğerleri. Eşit durumda giriş sırası korunur. */
+export function sortWorkOrdersByStatus<T extends { status?: string | null }>(list: T[] | null | undefined): T[] {
+  return (list || [])
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const diff = (WO_STATUS_RANK[String(a.item.status || "")] ?? 3) - (WO_STATUS_RANK[String(b.item.status || "")] ?? 3);
+      return diff || a.index - b.index;
+    })
+    .map((row) => row.item);
+}
+
+/** Duraklatmanın üzerinden geçen süre: "12 dk", "1 sa 12 dk". Geçersizse boş. */
+export function pausedForLabel(pausedAt?: string | null, now: Date | number = new Date()): string {
+  if (pausedAt == null || String(pausedAt).trim() === "") return "";
+  const then = new Date(pausedAt).getTime();
+  const nowMs = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(then) || !Number.isFinite(nowMs)) return "";
+  const diff = nowMs - then;
+  if (diff < 0) return "";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins} dk`;
+  const hours = Math.floor(mins / 60);
+  return `${hours} sa ${mins % 60} dk`;
 }
 
 /** Ana ekran rozeti: hazır + devam + duraklatılmış. */

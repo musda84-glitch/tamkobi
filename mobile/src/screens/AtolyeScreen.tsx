@@ -1,13 +1,12 @@
 import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AppState, Image, Modal, Pressable, Switch, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { QuantityInput } from "../components/MoneyInput";
-import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
+import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
 import { archivedAssignedDuties, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
 import { resolveMediaUrl } from "../utils/media";
@@ -15,14 +14,17 @@ import { fmtDate, idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
   employeeLabel,
+  filterByKpi,
   finishOverPlan,
   finishQtyError,
   formatQty,
   groupWorkOrdersByStation,
+  isMine,
   mergeSelfEmployee,
   operatorStationLock,
   operatorStationLockMessage,
   partitionWorkOrders,
+  pausedForLabel,
   readyCount,
   roundNeededQty,
   runningCount,
@@ -30,15 +32,40 @@ import {
   shopFloorOperators,
   shopFloorPausePhaseLabel,
   shopFloorStationSections,
+  sortWorkOrdersByStatus,
   todayDoneCount,
   woCardKey,
   workOrderFinishPlan,
   woStatusTone,
   woStatusTr,
   type PausePolicy,
+  type ShopFloorKpiFilter,
   type WorkOrder,
 } from "../utils/shopFloor";
+import { trUpper } from "../utils/labels";
 import { stationNamesFromParks } from "../utils/workParks";
+
+/** İstasyon grup sırası korunur; durum sırası her grubun içinde uygulanır. */
+function arrangeOpenWorkOrders(list: WorkOrder[], grouped: boolean): WorkOrder[] {
+  if (!grouped) return sortWorkOrdersByStatus(list);
+  return shopFloorStationSections(groupWorkOrdersByStation(list)).flatMap((sec) => sortWorkOrdersByStatus(sec.items));
+}
+
+function stepSegmentCount(w: WorkOrder): number {
+  const n = Number(w.step_count);
+  if (!Number.isFinite(n) || n <= 1) return 1;
+  return Math.floor(n);
+}
+
+function useMinuteNow(enabled: boolean): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, [enabled]);
+  return now;
+}
 
 function WoCard({
   w,
@@ -71,13 +98,27 @@ function WoCard({
   const who = w.operator_name || w.assigned_name;
   const imgs = (w.images || []).map((u) => resolveMediaUrl(baseUrl, u)).filter(Boolean).slice(0, 8);
   const startLocked = !!stationLockMsg;
+  const [detailOpen, setDetailOpen] = useState(false);
+  const now = useMinuteNow(w.status === "paused");
+  const pausedLabel = w.status === "paused" ? pausedForLabel(w.paused_at, now) : "";
+  const segments = stepSegmentCount(w);
+  const activeStep = Number(w.step_count) > 1 ? Math.floor(Number(w.step_no)) : 1;
+  const hasDetail = (w.materials || []).length > 0 || !!w.notes;
   return (
     <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: borderWide ? 2 : 1 }}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Muted>{[w.order_code, w.step_no != null ? `Adım ${w.step_no}/${w.step_count || w.step_no}` : null].filter(Boolean).join(" · ")}</Muted>
+          <View testID={`wo-stepbar-${key}`} style={{ flexDirection: "row", gap: 3, marginTop: 4, marginBottom: 4 }}>
+            {Array.from({ length: segments }, (_, i) => (
+              <View
+                key={i}
+                style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: i + 1 === activeStep ? "#F59E0B" : "#E2E8F0" }}
+              />
+            ))}
+          </View>
           <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{w.step_name || "İş emri"}</Text>
-          <Muted>{w.product_name || ""}</Muted>
+          <Muted numberOfLines={2}>{w.product_name || ""}</Muted>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           {w.trash_request_pending && w.status !== "done" ? (
@@ -88,7 +129,13 @@ function WoCard({
               <Text style={{ color: "#B45309", fontWeight: "800", fontSize: 10 }}>Silme onayı bekliyor</Text>
             </View>
           ) : onTrash && w.status !== "done" ? (
-            <Pressable onPress={onTrash} testID={`wo-trash-${key}`} hitSlop={8} style={{ padding: 4 }}>
+            <Pressable
+              onPress={() => { if (operator) onTrash(); }}
+              disabled={!operator}
+              testID={`wo-trash-${key}`}
+              hitSlop={8}
+              style={{ padding: 4, opacity: operator ? 1 : 0.4 }}
+            >
               <Text style={{ color: "#E11D48", fontWeight: "800", fontSize: 12 }}>Sil</Text>
             </Pressable>
           ) : null}
@@ -114,49 +161,17 @@ function WoCard({
           </View>
         ) : null}
       </View>
-      {(w.materials || []).length > 0 ? (
-        <View
-          testID={`wo-materials-${key}`}
-          style={{ borderWidth: 1, borderColor: "#F1F5F9", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, gap: 4 }}
-        >
-          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Hammaddeler</Text>
-          {(w.materials || []).map((m, i) => {
-            const stockNote = String(m.stock_note || m.note || "").trim();
-            const pname = String(m.product_name || "").trim();
-            const noteIsExtra = !!(
-              stockNote
-              && stockNote.toLocaleLowerCase("tr") !== pname.toLocaleLowerCase("tr")
-            );
-            return (
-            <View key={m.product_id || String(i)} style={{ gap: 2 }} testID={`wo-mat-row-${key}-${i}`}>
-              <Row style={{ justifyContent: "space-between", gap: 8 }}>
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Text
-                    style={{ fontSize: 12, fontWeight: stockNote ? "700" : "400", color: stockNote ? colors.text : colors.muted }}
-                    numberOfLines={3}
-                    testID={stockNote ? `wo-mat-note-${key}-${i}` : undefined}
-                  >
-                    {stockNote || pname || "Hammadde"}
-                  </Text>
-                  {noteIsExtra && pname ? (
-                    <Text style={{ fontSize: 11, color: colors.muted }} numberOfLines={1}>{pname}</Text>
-                  ) : null}
-                </View>
-                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
-                  {formatQty(roundNeededQty(Number(m.needed), m.unit))} {m.unit || ""}
-                </Text>
-              </Row>
-            </View>
-            );
-          })}
-        </View>
-      ) : null}
       {imgs.length > 0 ? (
         <View testID={`wo-images-${key}`} style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {imgs.map((uri) => (
             <Image key={uri} source={{ uri }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: "#E2E8F0" }} />
           ))}
         </View>
+      ) : null}
+      {pausedLabel ? (
+        <Text testID={`wo-paused-for-${key}`} style={{ fontSize: 12, fontWeight: "700", color: "#9A3412" }}>
+          {`⏸ ${pausedLabel} duraklatıldı · ${w.auto_paused ? "Otomatik (mesai dışı)" : "Elle"}`}
+        </Text>
       ) : null}
       <Muted>
         {[
@@ -168,12 +183,63 @@ function WoCard({
             return w.planned_quantity != null ? `${formatQty(w.planned_quantity)} ${w.unit || ""}`.trim() : null;
           })(),
           w.duration_min ? `Hedef ${w.duration_min} dk` : null,
-          w.elapsed_min != null ? `${w.elapsed_min} dk geçti` : null,
+          w.elapsed_min != null ? (w.status === "paused" ? `çalışılan ${w.elapsed_min} dk` : `${w.elapsed_min} dk geçti`) : null,
           who,
           w.planned_date ? `Plan: ${fmtDate(w.planned_date)}` : null,
         ].filter(Boolean).join(" · ")}
       </Muted>
-      {w.notes ? <Muted>{w.notes}</Muted> : null}
+      {hasDetail ? (
+        <Pressable
+          testID={`wo-detail-toggle-${key}`}
+          onPress={() => setDetailOpen((v) => !v)}
+          hitSlop={8}
+          style={{ minHeight: 44, justifyContent: "center" }}
+        >
+          <Text style={{ fontWeight: "800", color: colors.primary }}>Detay</Text>
+        </Pressable>
+      ) : null}
+      {detailOpen && hasDetail ? (
+        <View style={{ gap: 6 }}>
+          {(w.materials || []).length > 0 ? (
+            <View
+              testID={`wo-materials-${key}`}
+              style={{ borderWidth: 1, borderColor: "#F1F5F9", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, gap: 4 }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Hammaddeler</Text>
+              {(w.materials || []).map((m, i) => {
+                const stockNote = String(m.stock_note || m.note || "").trim();
+                const pname = String(m.product_name || "").trim();
+                const noteIsExtra = !!(
+                  stockNote
+                  && stockNote.toLocaleLowerCase("tr") !== pname.toLocaleLowerCase("tr")
+                );
+                return (
+                <View key={m.product_id || String(i)} style={{ gap: 2 }} testID={`wo-mat-row-${key}-${i}`}>
+                  <Row style={{ justifyContent: "space-between", gap: 8 }}>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text
+                        style={{ fontSize: 12, fontWeight: stockNote ? "700" : "400", color: stockNote ? colors.text : colors.muted }}
+                        numberOfLines={3}
+                        testID={stockNote ? `wo-mat-note-${key}-${i}` : undefined}
+                      >
+                        {stockNote || pname || "Hammadde"}
+                      </Text>
+                      {noteIsExtra && pname ? (
+                        <Text style={{ fontSize: 11, color: colors.muted }} numberOfLines={1}>{pname}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+                      {formatQty(roundNeededQty(Number(m.needed), m.unit))} {m.unit || ""}
+                    </Text>
+                  </Row>
+                </View>
+                );
+              })}
+            </View>
+          ) : null}
+          {w.notes ? <Muted>{w.notes}</Muted> : null}
+        </View>
+      ) : null}
       {w.status === "ready" || w.status === "waiting" ? (
         <>
           <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy || startLocked} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
@@ -198,7 +264,7 @@ function WoCard({
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
             {w.status === "paused" && startLocked ? <Muted>{stationLockMsg}</Muted> : null}
-            {w.status === "in_progress" && pauseAllowed === false && pauseHint ? (
+            {w.status === "in_progress" && !!operator && pauseAllowed === false && pauseHint ? (
               <Muted>{pauseHint}</Muted>
             ) : null}
           </View>
@@ -213,6 +279,9 @@ function WoCard({
           {w.scrap_qty ? `, ${w.scrap_qty} fire` : ""}
           {w.operator_name ? ` · ${w.operator_name}` : ""}
         </Muted>
+      ) : null}
+      {!operator ? (
+        <Text testID={`wo-need-operator-${key}`} style={{ fontSize: 11, fontWeight: "700", color: "#B45309", textAlign: "center" }}>Önce operatör seçin</Text>
       ) : null}
     </Card>
   );
@@ -248,6 +317,7 @@ export function AtolyeScreen() {
   const [showArchivedDuties, setShowArchivedDuties] = useState(false);
   const [groupSameStation, setGroupSameStation] = useState(false);
   const [groupBusy, setGroupBusy] = useState(false);
+  const [kpi, setKpi] = useState<ShopFloorKpiFilter | null>(null);
   const [pausePolicy, setPausePolicy] = useState<PausePolicy>({ allowed: true, phase: "mesai" });
 
   const loadPausePolicy = useCallback(async (opName: string) => {
@@ -452,17 +522,32 @@ export function AtolyeScreen() {
   };
 
   const parts = useMemo(() => partitionWorkOrders(wos, operator), [wos, operator]);
+  const visible = useMemo(() => {
+    if (kpi === "done") {
+      const todayDone = filterByKpi(wos, "done");
+      return {
+        mine: todayDone.filter((w) => isMine(w, operator)),
+        others: todayDone.filter((w) => !isMine(w, operator)),
+        waiting: [] as WorkOrder[],
+      };
+    }
+    return {
+      mine: filterByKpi(parts.mine, kpi),
+      others: filterByKpi(parts.others, kpi),
+      waiting: filterByKpi(parts.waiting, kpi),
+    };
+  }, [kpi, operator, parts.mine, parts.others, parts.waiting, wos]);
   const arrangedMine = useMemo(
-    () => (groupSameStation ? groupWorkOrdersByStation(parts.mine) : parts.mine),
-    [groupSameStation, parts.mine],
+    () => arrangeOpenWorkOrders(visible.mine, groupSameStation),
+    [groupSameStation, visible.mine],
   );
   const arrangedOthers = useMemo(
-    () => (groupSameStation ? groupWorkOrdersByStation(parts.others) : parts.others),
-    [groupSameStation, parts.others],
+    () => arrangeOpenWorkOrders(visible.others, groupSameStation),
+    [groupSameStation, visible.others],
   );
   const arrangedWaiting = useMemo(
-    () => (groupSameStation ? groupWorkOrdersByStation(parts.waiting) : parts.waiting),
-    [groupSameStation, parts.waiting],
+    () => (groupSameStation ? groupWorkOrdersByStation(visible.waiting) : visible.waiting),
+    [groupSameStation, visible.waiting],
   );
 
   const toggleGroupSameStation = async (on: boolean) => {
@@ -611,17 +696,38 @@ export function AtolyeScreen() {
     );
   }
 
+  const kpiItems: { key: ShopFloorKpiFilter; testID: string; label: string; value: string; valueColor: string }[] = [
+    { key: "ready", testID: "shopfloor-kpi-ready", label: "Hazır", value: String(readyCount(wos)), valueColor: "#2563EB" },
+    { key: "active", testID: "shopfloor-kpi-active", label: "Devam Eden", value: String(runningCount(wos)), valueColor: "#D97706" },
+    { key: "done", testID: "shopfloor-kpi-done", label: "Bugün Biten", value: String(todayDoneCount(wos)), valueColor: colors.primaryHover },
+  ];
+
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <ProductionAiAdvisor companyId={companyId} compact />
-      <GroupedSelect
-        label="Operatör"
-        testID="shopfloor-operator"
-        value={pendingEmp ? idOf(pendingEmp) : operatorId}
-        onChange={requestOperator}
-        groups={empGroups}
-        emptyLabel="Operatör seçin…"
-      />
+      {!operator ? (
+        <Card
+          testID="shopfloor-no-operator"
+          style={{ backgroundColor: colors.amber50, borderColor: "#F59E0B", borderWidth: 2, paddingVertical: 18, paddingHorizontal: 14, gap: 8 }}
+        >
+          <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 18 }}>Operatör seç ve PIN gir</Text>
+          <Text style={{ fontWeight: "600", color: "#B45309", fontSize: 14 }}>Başla / Devam / Bitir operatör girişinden sonra açılır</Text>
+          <GroupedSelect
+            label="Operatör"
+            testID="shopfloor-operator"
+            value={pendingEmp ? idOf(pendingEmp) : operatorId}
+            onChange={requestOperator}
+            groups={empGroups}
+            emptyLabel="Operatör seçin…"
+          />
+        </Card>
+      ) : (
+        <Row style={{ justifyContent: "space-between" }}>
+          <Muted testID="shopfloor-operator-name">{operator}{user?.employee_id === operatorId ? " · siz" : ""}</Muted>
+          <Pressable onPress={() => requestOperator("")} hitSlop={8} testID="shopfloor-operator-change" style={{ minHeight: 44, justifyContent: "center" }}>
+            <Text style={{ color: colors.primary, fontWeight: "800" }}>değiştir</Text>
+          </Pressable>
+        </Row>
+      )}
       <GroupedSelect
         label="İstasyon"
         testID="shopfloor-station"
@@ -644,13 +750,6 @@ export function AtolyeScreen() {
           />
         </Row>
       </Card>
-      {!operator ? (
-        <Card testID="shopfloor-no-operator" style={{ backgroundColor: colors.amber50 }}>
-          <Text style={{ fontWeight: "700", color: "#92400E" }}>Başlamak için operatörü seçin ve şifrenizi girin.</Text>
-        </Card>
-      ) : (
-        <Muted testID="shopfloor-operator-name">{operator}{user?.employee_id === operatorId ? " · siz" : ""}</Muted>
-      )}
       {operator && pausePolicy?.allowed === false ? (
         <Card testID="shopfloor-pause-blocked" style={{ backgroundColor: "#F1F5F9" }}>
           <Text style={{ fontWeight: "700", color: colors.text }}>
@@ -712,18 +811,43 @@ export function AtolyeScreen() {
         </View>
       ) : null}
 
-      <StatRows
+      <View
         testID="shopfloor-kpis"
-        items={[
-          { key: "ready", label: "Hazır", value: String(readyCount(wos)), valueColor: "#2563EB" },
-          { key: "run", label: "Devam Eden", value: String(runningCount(wos)), valueColor: "#D97706" },
-          { key: "done", label: "Bugün Biten", value: String(todayDoneCount(wos)), valueColor: colors.primaryHover },
-        ]}
-      />
+        style={{ flexDirection: "row", gap: 8 }}
+      >
+        {kpiItems.map((item) => {
+          const selected = kpi === item.key;
+          return (
+            <Pressable
+              key={item.key}
+              testID={item.testID}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => setKpi((cur) => (cur === item.key ? null : item.key))}
+              style={{
+                flex: 1,
+                minHeight: 64,
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 2,
+                paddingHorizontal: 6,
+                paddingVertical: 10,
+                borderRadius: radius.md,
+                borderWidth: 2,
+                borderColor: selected ? "#F59E0B" : colors.border,
+                backgroundColor: selected ? colors.amber50 : colors.surface,
+              }}
+            >
+              <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, textAlign: "center" }} numberOfLines={2}>{trUpper(item.label)}</Text>
+              <Text style={{ fontSize: 22, fontWeight: "800", color: item.valueColor, textAlign: "center" }}>{item.value}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
-      {parts.mine.length ? (
+      {arrangedMine.length ? (
         <View testID="shopfloor-mine">
-          <Text style={{ fontWeight: "800", color: colors.text }}>Benim İşlerim ({parts.mine.length})</Text>
+          <Text style={{ fontWeight: "800", color: colors.text }}>Benim İşlerim ({arrangedMine.length})</Text>
           {renderGrouped(arrangedMine, (w) => (
             <WoCard
               key={woCardKey(w)}
@@ -743,8 +867,8 @@ export function AtolyeScreen() {
         </View>
       ) : null}
 
-      <Text style={{ fontWeight: "800", color: colors.text }}>Açık İş Emirleri ({parts.others.length})</Text>
-      {error ? null : !parts.active.length ? (
+      <Text style={{ fontWeight: "800", color: colors.text }}>Açık İş Emirleri ({arrangedOthers.length})</Text>
+      {error ? null : !parts.active.length && kpi == null ? (
         <Empty icon="build-outline" title="Bekleyen iş emri yok" hint="Üretim & Reçete sayfasından üretim emri verin." />
       ) : renderGrouped(arrangedOthers, (w) => (
         <WoCard
@@ -763,9 +887,9 @@ export function AtolyeScreen() {
         />
       ))}
 
-      {parts.waiting.length ? (
+      {arrangedWaiting.length ? (
         <View testID="shopfloor-waiting">
-          <Text style={{ fontWeight: "800", color: colors.muted }}>Sıradaki Adımlar ({parts.waiting.length})</Text>
+          <Text style={{ fontWeight: "800", color: colors.muted }}>Sıradaki Adımlar ({arrangedWaiting.length})</Text>
           {renderGrouped(arrangedWaiting, (w) => (
             <WoCard
               key={woCardKey(w)}
