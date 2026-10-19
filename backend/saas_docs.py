@@ -550,9 +550,18 @@ def build_quote_pdf(q: Dict[str, Any], company: Dict[str, Any], template: Option
 
 
 @router.get("/quotes/{quote_id}/pdf")
-async def quote_pdf(quote_id: str, download: bool = Query(False)):
+async def quote_pdf(quote_id: str, request: Request, download: bool = Query(False)):
     q = await _db.quotes.find_one({"_id": quote_id})
     if not q:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+    from auth_utils import session_token, get_user_from_token
+    import tenant_access
+
+    tok = session_token(request)
+    if not tok:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    user = await get_user_from_token(tok, _db)
+    if not tenant_access.user_may_access_company(user, q.get("company_id")):
         raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
     company = await _db.companies.find_one({"_id": q["company_id"]}) or {}
     disp = "attachment" if download else "inline"
