@@ -23,6 +23,7 @@ const EVENT_ORDER = [
   "order_new",
   "gib_credits_low",
   "receivable_overdue",
+  "morning_summary",
   "bank_sync",
   "cash_approval",
   "pos_approval",
@@ -49,6 +50,7 @@ const GROUPS = {
   order_new: "sales_invoice",
   gib_credits_low: "sales_invoice",
   receivable_overdue: "sales_invoice",
+  morning_summary: "sales_invoice",
   bank_sync: "bank_cash_pos",
   cash_approval: "bank_cash_pos",
   pos_approval: "bank_cash_pos",
@@ -65,6 +67,7 @@ const LABELS = {
   order_new: "Yeni sipariş",
   gib_credits_low: "GİB kontör düşük",
   receivable_overdue: "Vadesi geçmiş alacak",
+  morning_summary: "Sabah özeti",
   bank_sync: "Banka hareketi (senkron)",
   cash_approval: "Kasa/banka onayı",
   pos_approval: "POS onayı",
@@ -117,11 +120,11 @@ async function renderPanel(props) {
   };
 }
 
-test("grup başlıkları ve on üç olay satırı", async () => {
+test("grup başlıkları ve sabah özeti satırı", async () => {
   axios.get.mockResolvedValue({ data: view() });
   const { host, cleanup } = await renderPanel({ canEdit: true });
   expect(host.querySelector('[data-testid="tenant-notify-table"]')).toBeTruthy();
-  expect(host.querySelectorAll("[data-testid^='tenant-notify-event-']")).toHaveLength(13);
+  expect(host.querySelectorAll("[data-testid^='tenant-notify-event-']")).toHaveLength(14);
   const text = host.textContent;
   const sales = text.indexOf("Satış / Fatura");
   const bank = text.indexOf("Banka / Kasa / POS");
@@ -136,6 +139,10 @@ test("grup başlıkları ve on üç olay satırı", async () => {
   expect(host.querySelector('[data-testid="tenant-notify-group-production_warehouse"]')).toBeTruthy();
   expect(host.querySelector('[data-testid="tenant-notify-group-personnel"]')).toBeTruthy();
   expect(host.querySelector('[data-testid="tenant-notify-event-einvoice_incoming"]')?.textContent).toMatch(/Gelen e-Fatura/);
+  const salesGroup = host.querySelector('[data-testid="tenant-notify-group-sales_invoice"]');
+  const summary = host.querySelector('[data-testid="tenant-notify-event-morning_summary"]');
+  expect(summary?.textContent).toMatch(/Sabah özeti/);
+  expect(salesGroup.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(host.querySelector('[data-testid="tenant-notify-event-bank_sync"]')?.textContent).toMatch(/Banka hareketi/);
   expect(host.querySelector('[data-testid="tenant-notify-event-order_pick_production"]')?.textContent).toMatch(/Üretime gönderildi/);
   expect(host.querySelector('[data-testid="tenant-notify-event-leave_request"]')?.textContent).toMatch(/İzin talebi/);

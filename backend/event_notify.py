@@ -54,6 +54,7 @@ NEW_EVENTS = (
     "leave_request",
     "advance_request",
     "overtime_request",
+    "morning_summary",
 )
 FIRM_EVENTS = TENANT_EVENTS + NEW_EVENTS
 EVENTS = FIRM_EVENTS
@@ -69,6 +70,7 @@ EVENT_GROUPS = {
     "order_new": "sales_invoice",
     "gib_credits_low": "sales_invoice",
     "receivable_overdue": "sales_invoice",
+    "morning_summary": "sales_invoice",
     "bank_sync": "bank_cash_pos",
     "cash_approval": "bank_cash_pos",
     "pos_approval": "bank_cash_pos",
@@ -84,6 +86,7 @@ EVENT_LABELS = {
     "order_new": "Yeni sipariş",
     "gib_credits_low": "GİB kontör düşük",
     "receivable_overdue": "Vadesi geçmiş alacak",
+    "morning_summary": "Sabah özeti",
     "bank_sync": "Banka hareketi (senkron)",
     "cash_approval": "Kasa/banka onayı",
     "pos_approval": "POS onayı",
@@ -1095,13 +1098,19 @@ async def enqueue_morning_summary_email(
     text: str,
     day: str,
     manual: bool = False,
-) -> bool:
+) -> str:
     """Sabah özeti e-postasını notify_outbox'a yazar. SMTP çağırmaz.
 
-    Zamanlanmış gönderim aynı gün tek satırdır (duplicate key → mevcut satır).
+    Platform ve firma e-posta kapısı kapalıysa satır yazılmaz ("disabled").
+    Zamanlanmış gönderim aynı gün tek satırdır (duplicate key → "exists").
     Manuel gönderim her çağrıda yeni satır açar.
+    Dönüş: "queued" | "exists" | "disabled" | "failed".
     """
     cid = str(company_id or "").strip()
+    prefs = await get_prefs(cid)
+    tenant = await get_tenant_prefs(cid)
+    if not effective_channel(prefs, tenant, "morning_summary")["email"]:
+        return "disabled"
     day_key = str(day or "").strip()
     suffix = "m" if manual else "s"
     out_id = f"out:{cid}:morning_summary:{day_key}:{suffix}"
@@ -1129,8 +1138,8 @@ async def enqueue_morning_summary_email(
         await _db.notify_outbox.insert_one(doc)
     except Exception:
         existing = await _db.notify_outbox.find_one({"_id": doc["_id"]})
-        return bool(existing)
-    return True
+        return "exists" if existing else "failed"
+    return "queued"
 
 
 async def _company_logo_abs(logo_url: str) -> str:
@@ -2780,7 +2789,11 @@ def _morning_summary_recipients(row: dict) -> List[str]:
 async def _deliver_morning_summary(company_id: str, rows: List[dict], claim_id: str) -> int:
     """Kuyruktaki hazır HTML/metin. Alıcı satırdaki to listesidir, prefs değil."""
     prefs = await get_prefs(company_id)
+    tenant = await get_tenant_prefs(company_id)
     try:
+        if not effective_channel(prefs, tenant, "morning_summary")["email"]:
+            await _mark_rows(rows, claim_id, "skipped")
+            return len(rows)
         pending = [
             row for row in rows
             if (row.get("channels") or {}).get("email") and not row.get("email_sent")

@@ -234,6 +234,7 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
     comp = await _db.companies.find_one({"_id": company_id}) or {}
     text = render_text(s, comp.get("name") or "TamKobi")
     result: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "email": None, "whatsapp": None}
+    queue_failed = False
     if st["emails"]:
         try:
             import event_notify
@@ -245,7 +246,7 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
                 logo = await event_notify._company_logo_abs(raw_logo)
             html_body = morning_summary_email.render_summary_html(s, name, stock_link, logo_url_abs=logo)
             email_text = morning_summary_email.render_summary_text(s, name, stock_link)
-            queued = await event_notify.enqueue_morning_summary_email(
+            outcome = await event_notify.enqueue_morning_summary_email(
                 company_id,
                 emails=st["emails"],
                 subject=f"Sabah Özeti {s['date']} — {name}",
@@ -254,9 +255,17 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
                 day=datetime.now(TR_TZ).strftime("%Y-%m-%d"),
                 manual=manual,
             )
-            if not queued:
+            if outcome == "disabled":
+                result["email"] = {
+                    "ok": False,
+                    "disabled": True,
+                    "error": "Sabah özeti e-postası yönetim panelinde (ynt) kapalı.",
+                }
+            elif outcome in ("queued", "exists"):
+                result["email"] = {"ok": True, "queued": True, "to": list(st["emails"])}
+            else:
+                queue_failed = not manual
                 raise RuntimeError("Sabah özeti kuyruğa yazılamadı.")
-            result["email"] = {"ok": True, "queued": True, "to": list(st["emails"])}
         except HTTPException as e:
             if getattr(e, "status_code", None) == 409:
                 logger.warning("mail needs_reauth company=%s context=morning_summary: %s", company_id, e.detail)
@@ -276,7 +285,10 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
         result["whatsapp"] = wa
     if not st["emails"] and not st["whatsapp_numbers"]:
         result["error"] = "Alıcı tanımlı değil (e-posta veya WhatsApp numarası ekleyin)."
-    await _db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": {"last_sent": result["at"], "last_result": result, "last_sent_day": datetime.now(TR_TZ).strftime("%Y-%m-%d")}}, upsert=True)
+    sent_fields = {"last_sent": result["at"], "last_result": result}
+    if not queue_failed:
+        sent_fields["last_sent_day"] = datetime.now(TR_TZ).strftime("%Y-%m-%d")
+    await _db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": sent_fields}, upsert=True)
     await _db.morning_summary_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "manual": manual, "text": text, **result})
     return {"status": "success" if not result.get("error") else "error", "message": result.get("error") or "Sabah özeti gönderildi.", "result": result, "text": text}
 
