@@ -243,6 +243,30 @@ test("keypad confirm posts a clamped absolute adjust", async () => {
   ]);
 });
 
+test("a rapid barcode scan closes the keypad and uses the scan flow", async () => {
+  await renderSession();
+  await clickTestId("pick-qty-input-0");
+  const pop = host.querySelector('[data-testid="pick-keypad-0"]');
+  expect(pop.className).toContain("top-full");
+  expect(pop.className).toContain("z-30");
+  const scan = host.querySelector('[data-testid="pick-scan-input"]');
+  scan.focus();
+  let now = 0;
+  const clock = jest.spyOn(performance, "now").mockImplementation(() => now);
+  await act(async () => {
+    for (const key of "8690002") {
+      now += 10;
+      scan.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    }
+    now += 10;
+    scan.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  clock.mockRestore();
+  expect(adjustCalls()).toEqual([]);
+  expect(host.querySelector('[data-testid="pick-overscan-alert"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="pick-keypad-0"]')).toBeNull();
+});
+
 test("escape closes the keypad without an adjust and keeps the quantity", async () => {
   await renderSession();
   const input = host.querySelector('[data-testid="pick-qty-input-0"]');

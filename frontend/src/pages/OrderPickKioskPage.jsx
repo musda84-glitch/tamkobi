@@ -118,8 +118,11 @@ export default function OrderPickKioskPage() {
   const [labelPrintReq, setLabelPrintReq] = useState(null);
   const [loadError, setLoadError] = useState(companyId ? "" : "Firma seçili değil");
   const inputRef = useRef(null);
+  const codeRef = useRef("");
   const overscanTimer = useRef(null);
   const qtyCancelRef = useRef(false);
+
+  useEffect(() => { codeRef.current = code; }, [code]);
 
   const loadList = useCallback(async () => {
     if (!companyId) {
@@ -200,6 +203,13 @@ export default function OrderPickKioskPage() {
     inputRef.current?.focus();
   };
 
+  const setScanCode = (text) => {
+    const next = text == null ? "" : String(text);
+    codeRef.current = next;
+    setCode(next);
+    if (inputRef.current) inputRef.current.value = next;
+  };
+
   const printLabels = (items) => {
     const list = (items || []).filter(Boolean);
     if (!list.length) { toast.error("Yazdırılacak etiket yok."); return; }
@@ -249,6 +259,11 @@ export default function OrderPickKioskPage() {
         if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
       }
     } finally { setBusy(false); setTimeout(() => inputRef.current?.focus(), 50); }
+  };
+
+  const acceptScanText = (text, submit) => {
+    setScanCode(text);
+    if (submit) scan(String(text ?? ""));
   };
 
   const applyPickedQty = async (item, rawQty) => {
@@ -406,8 +421,8 @@ export default function OrderPickKioskPage() {
         </div>
       </div>
       {!awaitDeliver ? (
-      <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(); }}>
-        <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
+      <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(inputRef.current?.value ?? ""); }}>
+        <input ref={inputRef} value={code} onChange={(e) => setScanCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
         <input
           value={scanQtyShown(scanQty)}
           onChange={(e) => setScanQty(e.target.value.replace(/[^\d]/g, ""))}
@@ -443,7 +458,7 @@ export default function OrderPickKioskPage() {
               ? "border-l-4 border-l-emerald-500 bg-emerald-50"
               : "border-l-4 border-l-amber-500 bg-white";
           return (
-            <div key={idx} className={`relative rounded-2xl border p-3 flex flex-col gap-2 transition ${keypadIdx === idx && !warnLine ? "z-20" : ""} ${accent}`} data-testid={`pick-line-${idx}`}>
+            <div key={idx} className={`relative min-w-0 rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2 transition ${keypadIdx === idx && !warnLine ? "z-20" : ""} ${accent}`} data-testid={`pick-line-${idx}`}>
               <div className="flex gap-3 items-start">
                 <PickThumb imageUrl={it.image_url} />
                 <div className="min-w-0 flex-1">
@@ -464,8 +479,9 @@ export default function OrderPickKioskPage() {
                   {pickLineNote(it)}
                 </div>
               ) : null}
-              <div className="flex gap-2 w-full items-center mt-auto">
-                <button onClick={() => bump(it, -1)} className="h-11 flex-1 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
+              <div className="relative mt-auto min-w-0">
+              <div className="flex w-full min-w-0 items-center gap-1">
+                <button onClick={() => bump(it, -1)} className="h-11 min-w-0 flex-1 rounded-xl bg-slate-100 font-bold px-0" data-testid={`pick-minus-${idx}`}><Minus className="w-4 h-4 mx-auto" /></button>
                 <QuantityInput
                   value={qtyDrafts[idx] ?? it.picked_qty}
                   disabled={busy}
@@ -497,7 +513,7 @@ export default function OrderPickKioskPage() {
                   }}
                   onMouseDown={holdScanFocus}
                   onClick={() => setKeypadIdx(idx)}
-                  className={`w-20 h-11 shrink-0 text-center text-lg font-black rounded-xl border-2 outline-none ${warnLine ? "text-rose-700 border-rose-400 bg-white" : "border-slate-200 bg-white focus:border-emerald-500"}`}
+                  className={`w-12 sm:w-20 h-11 min-w-0 shrink px-0.5 text-center text-lg font-black rounded-xl border-2 outline-none ${warnLine ? "text-rose-700 border-rose-400 bg-white" : "border-slate-200 bg-white focus:border-emerald-500"}`}
                   data-testid={`pick-qty-input-${idx}`}
                   aria-label="Okutulan miktar"
                 />
@@ -507,29 +523,31 @@ export default function OrderPickKioskPage() {
                   title="Tuş takımı"
                   onMouseDown={holdScanFocus}
                   onClick={() => setKeypadIdx(idx)}
-                  className="h-11 w-9 shrink-0 rounded-xl border border-slate-200 bg-white text-base font-bold text-slate-500"
+                  className="h-11 w-8 shrink-0 rounded-xl border border-slate-200 bg-white px-0 text-sm font-bold text-slate-500"
                 >
                   ✎
                 </button>
-                <button onClick={() => bump(it, 1)} className={`h-11 flex-1 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
+                <button onClick={() => bump(it, 1)} className={`h-11 min-w-0 flex-1 rounded-xl font-bold px-0 ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-4 h-4 mx-auto" /></button>
                 <button
                   type="button"
                   disabled={done}
                   onClick={() => applyPickedQty(it, Number(it.ordered_qty) || 0)}
-                  className={`h-11 flex-1 rounded-xl text-xs font-bold ${done ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white"}`}
+                  className={`h-11 min-w-0 flex-1 rounded-xl px-0.5 text-[11px] font-bold leading-none ${done ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white"}`}
                   data-testid={`pick-all-${idx}`}
                 >
                   Tümü
                 </button>
-                <button type="button" onClick={() => printLabels([it])} className="h-11 flex-1 rounded-xl bg-slate-900 text-white text-xs font-bold inline-flex items-center justify-center gap-1" title="Etiket yazdır" data-testid={`pick-label-${idx}`}>
-                  <Printer className="w-4 h-4" /> Etiket
+                <button type="button" onClick={() => printLabels([it])} className="h-11 min-w-0 flex-1 rounded-xl bg-slate-900 text-white text-[11px] font-bold leading-none inline-flex items-center justify-center gap-0.5 px-0.5 overflow-hidden" title="Etiket yazdır" data-testid={`pick-label-${idx}`}>
+                  <Printer className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">Etiket</span>
                 </button>
               </div>
               {keypadIdx === idx && (
-                <div className="absolute inset-x-2 bottom-2 z-30 max-w-full" data-testid={`pick-keypad-${idx}`}>
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 w-full max-w-full" data-testid={`pick-keypad-${idx}`}>
                   <QtyKeypad
                     value={pickedQty}
                     max={orderedQty}
+                    scanInputRef={inputRef}
+                    onScanText={acceptScanText}
                     onConfirm={(n) => {
                       closeKeypad();
                       applyPickedQty(it, n);
@@ -538,6 +556,7 @@ export default function OrderPickKioskPage() {
                   />
                 </div>
               )}
+              </div>
             </div>
           );
         })}

@@ -103,6 +103,56 @@ test("ekranda en çok sınırı görünür", async () => {
   expect(host.textContent).toContain("fazlası 5'e indirilir");
 });
 
+test("hızlı okuyucu onaylamaz, vazgeçer ve karakterleri iletir", async () => {
+  const onConfirm = jest.fn();
+  const onCancel = jest.fn();
+  const onScanText = jest.fn();
+  const scanHost = document.createElement("input");
+  document.body.appendChild(scanHost);
+  const scanInputRef = { current: scanHost };
+  let now = 0;
+  const clock = jest.spyOn(performance, "now").mockImplementation(() => now);
+  await renderPad({ value: "", max: 9, onConfirm, onCancel, scanInputRef, onScanText });
+  await act(async () => {
+    for (const key of "8690002") {
+      now += 10;
+      scanHost.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    }
+    now += 10;
+    scanHost.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  expect(onConfirm).not.toHaveBeenCalled();
+  expect(onCancel).toHaveBeenCalled();
+  expect(onScanText.mock.calls.map((call) => call[0])).toContain("8690002");
+  clock.mockRestore();
+  scanHost.remove();
+});
+
+test("yavaş rakam ve Enter sınırlı onaylar", async () => {
+  const onConfirm = jest.fn();
+  const onCancel = jest.fn();
+  const onScanText = jest.fn();
+  const scanHost = document.createElement("input");
+  document.body.appendChild(scanHost);
+  const scanInputRef = { current: scanHost };
+  let now = 0;
+  const clock = jest.spyOn(performance, "now").mockImplementation(() => now);
+  await renderPad({ value: "", max: 5, onConfirm, onCancel, scanInputRef, onScanText });
+  await act(async () => {
+    now = 0;
+    scanHost.dispatchEvent(new KeyboardEvent("keydown", { key: "8", bubbles: true, cancelable: true }));
+  });
+  await act(async () => {
+    now = 80;
+    scanHost.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  expect(onConfirm).toHaveBeenCalledWith(5);
+  expect(onCancel).not.toHaveBeenCalled();
+  expect(onScanText).not.toHaveBeenCalled();
+  clock.mockRestore();
+  scanHost.remove();
+});
+
 test("dışarı tıklayınca onCancel", async () => {
   const onConfirm = jest.fn();
   const onCancel = jest.fn();
