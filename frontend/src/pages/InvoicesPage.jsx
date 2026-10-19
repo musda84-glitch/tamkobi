@@ -2782,7 +2782,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       {/* OFFICIAL E-INVOICE PREVIEW MODAL */}
       {previewInvoice && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-8 space-y-6 shadow-2xl border border-slate-200 max-h-[95vh] overflow-y-auto" data-testid="invoice-preview-modal">
+          <div className="bg-white rounded-2xl max-w-3xl w-full min-w-0 p-8 space-y-6 shadow-2xl border border-slate-200 max-h-[95vh] overflow-y-auto" data-testid="invoice-preview-modal">
             {/* Header controls */}
             <div className="flex items-center justify-between border-b pb-3 no-print">
               <span className="text-xs font-semibold text-slate-500 uppercase">Resmi E-Belge Önizleme</span>
@@ -2836,6 +2836,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               </div>
 
               {/* Items Table */}
+              <div className="w-full max-w-full overflow-x-auto print:overflow-visible">
               <table className="w-full text-xs text-left">
                 <thead className="border-b border-slate-300 text-slate-500 uppercase font-semibold">
                   <tr>
@@ -2862,6 +2863,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   ))}
                 </tbody>
               </table>
+              </div>
 
               {/* Totals & Barcode */}
               <div className="flex justify-between items-end border-t pt-4">

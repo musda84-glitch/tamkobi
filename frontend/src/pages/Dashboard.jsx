@@ -337,6 +337,7 @@ export default function Dashboard() {
             Tüm faturalar ›
           </Link>
         </div>
+        <div className="w-full max-w-full overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-slate-400">
@@ -361,6 +362,7 @@ export default function Dashboard() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     ),
   };

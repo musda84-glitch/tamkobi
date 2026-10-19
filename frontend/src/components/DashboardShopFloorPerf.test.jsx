@@ -63,6 +63,11 @@ test("loads the performance table once when opened", async () => {
   expect(String(axios.get.mock.calls[0][0])).toBe("/api/production/work-orders/performance?company_id=c1");
   expect(view.host.textContent).toContain("Ali");
   expect(view.host.textContent).toContain("CNC");
+  const table = view.host.querySelector("table");
+  expect(table).not.toBeNull();
+  expect(table.parentElement.className).toContain("overflow-x-auto");
+  expect(table.parentElement.className).toContain("max-w-full");
+  expect(table.className).toContain("w-full");
   expect(view.host.textContent).toContain("Operatörler");
   expect(view.host.textContent).toContain("İstasyonlar");
   expect(view.host.textContent).toContain("3 adım tamamlandı");

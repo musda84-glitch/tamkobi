@@ -42,10 +42,11 @@ export function DashboardShopFloorPerf({ companyId }) {
         <span className="text-xs text-slate-400">{open ? "Gizle" : "Göster"}</span>
       </button>
       {open && perf && (
-        <div className="grid md:grid-cols-2 gap-3 mt-3 text-xs">
+        <div className="grid min-w-0 md:grid-cols-2 gap-3 mt-3 text-xs">
           {[["Operatörler", operators], ["İstasyonlar", stations]].map(([title, list]) => (
-            <div key={title}>
+            <div key={title} className="min-w-0">
               <div className="font-semibold text-slate-500 mb-1">{title}</div>
+              <div className="w-full max-w-full overflow-x-auto">
               <table className="w-full">
                 <thead className="text-slate-400 uppercase text-[10px] border-b">
                   <tr>
@@ -73,6 +74,7 @@ export function DashboardShopFloorPerf({ companyId }) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           ))}
         </div>
