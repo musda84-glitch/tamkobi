@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 from types import SimpleNamespace
 
+import tenant_scope
 from mysql_store import aggregate_rows, apply_update, match_query, project_doc, sort_docs
 
 
@@ -100,6 +101,7 @@ class MemColl:
         self.docs = []
 
     def find(self, query=None, projection=None):
+        tenant_scope.check(self.name, "find", query=query)
         query = _split_field_ops(query or {})
         matched = []
         for doc in self.docs:
@@ -108,9 +110,11 @@ class MemColl:
         return MemCursor(matched)
 
     def aggregate(self, pipeline):
+        tenant_scope.check(self.name, "aggregate", pipeline=pipeline)
         return MemCursor(aggregate_rows(self.docs, _split_pipeline(pipeline)))
 
     async def find_one(self, query=None, projection=None, sort=None):
+        tenant_scope.check(self.name, "find_one", query=query)
         query = _split_field_ops(query or {})
         rows = [doc for doc in self.docs if match_query(doc, query)]
         if sort:
@@ -120,19 +124,23 @@ class MemColl:
         return None
 
     async def count_documents(self, query=None):
+        tenant_scope.check(self.name, "count_documents", query=query)
         query = _split_field_ops(query or {})
         return sum(1 for doc in self.docs if match_query(doc, query))
 
     async def insert_one(self, doc):
+        tenant_scope.check(self.name, "insert_one", doc=doc)
         self.docs.append(copy.deepcopy(doc))
         return SimpleNamespace(inserted_id=doc.get("_id"))
 
     async def insert_many(self, docs):
+        tenant_scope.check(self.name, "insert_many", doc=docs)
         copied = [copy.deepcopy(doc) for doc in docs]
         self.docs.extend(copied)
         return SimpleNamespace(inserted_ids=[doc.get("_id") for doc in copied])
 
     async def update_one(self, query, update, upsert=False):
+        tenant_scope.check(self.name, "update_one", query=query, update=update, upsert=upsert)
         query = _split_field_ops(query or {})
         for i, doc in enumerate(self.docs):
             if match_query(doc, query):
@@ -142,6 +150,7 @@ class MemColl:
 
     async def update_many(self, query, update, upsert=False):
         """mysql_store.update_many: eşleşenler matched, içeriği değişenler modified."""
+        tenant_scope.check(self.name, "update_many", query=query, update=update, upsert=upsert)
         query = _split_field_ops(query or {})
         matched = 0
         modified = 0

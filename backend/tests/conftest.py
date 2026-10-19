@@ -2,6 +2,8 @@
 import asyncio
 import os
 
+os.environ.setdefault("TAMKOBI_TENANT_GUARD", "raise")
+
 import pytest
 import requests
 from dotenv import dotenv_values
