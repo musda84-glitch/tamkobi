@@ -9,6 +9,7 @@ import { ExpenseScanButtons } from "../components/ExpenseScanButtons";
 import { Empty, ErrorBanner, Field, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
+import { dateSortKey } from "../utils/calendar";
 import { groupExpensesByMonth } from "../utils/expenseDisplay";
 import { expenseScanNavParams } from "../utils/expenseScan";
 import type { Expense } from "../utils/finance";
@@ -49,10 +50,17 @@ export function ExpensesScreen() {
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
     const list = data.expenses || [];
-    return (s
+    const filtered = s
       ? list.filter((e) => [e.description, e.expense_number, e.category, e.contact_name].some((v) => String(v || "").toLowerCase().includes(s)))
-      : list
-    ).slice(0, 80);
+      : list;
+    return [...filtered].sort((a, b) => {
+      const ka = dateSortKey(a.date);
+      const kb = dateSortKey(b.date);
+      if (!ka && !kb) return 0;
+      if (!ka) return 1;
+      if (!kb) return -1;
+      return kb.localeCompare(ka);
+    }).slice(0, 80);
   }, [data.expenses, q]);
   const groups = useMemo(() => groupExpensesByMonth(rows), [rows]);
   const s = data.summary;

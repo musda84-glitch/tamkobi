@@ -311,6 +311,49 @@ describe("ExpensesScreen", () => {
     expect(go).toHaveBeenCalledWith("ExpenseNew", expect.objectContaining({ amount: "20", category: "Kira" }));
   });
 
+  it("keeps the newest 80 rows when a hundred arrive out of order", async () => {
+    const day = (index: number) => new Date(Date.UTC(2026, 0, 1) + index * 86400000).toISOString().slice(0, 10);
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      id: `n${index}`,
+      expense_number: `MSR-${index}`,
+      date: day(index),
+      category: "Diğer",
+      description: `Kalem ${index}`,
+      total: index + 1,
+      payment_status: "unpaid",
+      currency: "TRY",
+    }));
+    const unordered: typeof rows = [];
+    for (let lo = 0, hi = rows.length - 1; lo <= hi; lo += 1, hi -= 1) {
+      unordered.push(rows[lo]);
+      if (lo !== hi) unordered.push(rows[hi]);
+    }
+    (get as unknown as jest.Mock).mockResolvedValue({ expenses: unordered, summary });
+    await show();
+
+    let shown = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      const node = findByTestId(container, `exp-row-n${index}`);
+      if (index >= 20) {
+        expect(node).toBeTruthy();
+        shown += 1;
+      } else {
+        expect(node).toBeNull();
+      }
+    }
+    expect(shown).toBe(80);
+
+    const totals = new Map<string, number>();
+    rows.slice(20).forEach((row) => {
+      const key = row.date.slice(0, 7);
+      totals.set(key, (totals.get(key) || 0) + row.total);
+    });
+    totals.forEach((amount, key) => {
+      expect(textOf(findByTestId(container, `exp-month-${key}-total`))).toBe(fmtMoney(amount, "TRY"));
+    });
+    expect(textOf(findByTestId(container, "exp-month-2026-01-total"))).toBe(fmtMoney(286, "TRY"));
+  });
+
   it("hides create and scan when the user cannot edit", async () => {
     allowEdit = false;
     await show();
