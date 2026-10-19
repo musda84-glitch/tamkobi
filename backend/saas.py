@@ -965,8 +965,8 @@ async def system_perf_report(_: dict = Depends(require_super_admin)):
     return {"status": "ok", "path": str(path), "alerts": snap.get("alerts") or [], "ok": snap.get("ok")}
 
 
-@router.get("/system/overview")
-async def overview(_: dict = Depends(require_super_admin)):
+async def overview_stats() -> Dict[str, Any]:
+    """/system/overview gövdesi. Yazma yok; expiring 10, recent 5."""
     rows = [await _company_row(c) for c in await _db.companies.find({}).to_list(500)]
     plans = {p["_id"]: p for p in await _db.saas_plans.find({}).to_list(50)}
     by_status: Dict[str, int] = {}
@@ -985,6 +985,11 @@ async def overview(_: dict = Depends(require_super_admin)):
     pending = await _db.upgrade_requests.count_documents({"status": "pending"})
     open_tickets = await _db.support_tickets.count_documents({"status": {"$in": ["open", "in_progress", "waiting_customer"]}})
     return {"companies": len(rows), "users": await _db.users.count_documents({"is_super_admin": {"$ne": True}}), "platform_admins": await _db.users.count_documents({"is_super_admin": True}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "open_tickets": open_tickets, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
+
+
+@router.get("/system/overview")
+async def overview(_: dict = Depends(require_super_admin)):
+    return await overview_stats()
 
 
 @router.get("/system/modules")
@@ -1223,8 +1228,7 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
     }
 
 
-@router.get("/system/quotas")
-async def list_quotas(_: dict = Depends(require_super_admin)):
+async def quota_rows() -> Dict[str, Any]:
     """One row per license (primary company) with live resource usage vs limits."""
     plans = {p["_id"]: p for p in await _db.saas_plans.find({}).to_list(50)}
     rows = []
@@ -1259,6 +1263,11 @@ async def list_quotas(_: dict = Depends(require_super_admin)):
         })
     rows.sort(key=lambda r: (r.get("name") or "").lower())
     return {"quotas": rows, "plans": [{"id": p["_id"], "name": p.get("name"), **{k: int(p.get(k) or 0) for k in QUOTA_KEYS}} for p in plans.values()]}
+
+
+@router.get("/system/quotas")
+async def list_quotas(_: dict = Depends(require_super_admin)):
+    return await quota_rows()
 
 
 @router.post("/system/companies/{company_id}/companies")
@@ -1465,17 +1474,23 @@ async def _super_admin_count() -> int:
     return await _db.users.count_documents({"is_super_admin": True})
 
 
-@router.get("/system/users")
-async def system_list_users(q: Optional[str] = None, _: dict = Depends(require_super_admin)):
+async def platform_user_rows(q: Optional[str] = None, *, assign_numbers: bool = True) -> Dict[str, Any]:
+    """Platform yöneticileri. assign_numbers=True ise eksik user_number yazılır (/system/users)."""
     comps = await _companies_map()
     raw = await _db.users.find({"is_super_admin": True}).sort("name", 1).to_list(2000)
-    for u in raw:
-        await user_numbers.ensure_user_number(_db, u)
+    if assign_numbers:
+        for u in raw:
+            await user_numbers.ensure_user_number(_db, u)
     rows = [_user_row(u, comps) for u in raw]
     if q:
         ql = q.strip().lower()
         rows = [u for u in rows if ql in (u.get("name") or "").lower() or ql in (u.get("email") or "").lower() or ql in (u.get("user_number") or "").lower()]
     return {"users": rows, "companies": [{"id": cid, "name": c.get("name")} for cid, c in comps.items()], "roles": [{"code": r["code"], "name": r["name"]} for r in rbac.DEFAULT_ROLES]}
+
+
+@router.get("/system/users")
+async def system_list_users(q: Optional[str] = None, _: dict = Depends(require_super_admin)):
+    return await platform_user_rows(q, assign_numbers=True)
 
 
 @router.post("/system/users")
@@ -1581,10 +1596,19 @@ async def system_delete_user(user_id: str, admin: dict = Depends(require_super_a
     return {"status": "success"}
 
 
+async def upgrade_request_rows(status: Optional[str] = None, company_id: Optional[str] = None, limit: int = 200) -> list:
+    """Yükseltme talepleri, created_at azalan. company_id yalnızca çağıran süzer."""
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    if company_id:
+        q["company_id"] = company_id
+    return [_clean(r) for r in await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)]
+
+
 @router.get("/system/upgrade-requests")
 async def list_requests(status: Optional[str] = None, _: dict = Depends(require_super_admin)):
-    q = {"status": status} if status else {}
-    return [_clean(r) for r in await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(200)]
+    return await upgrade_request_rows(status=status)
 
 
 @router.put("/system/upgrade-requests/{req_id}")
