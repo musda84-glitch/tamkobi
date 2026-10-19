@@ -81,7 +81,8 @@ function RootStack() {
         <Stack.Screen name="cheques/[id]" options={{ title: "Çek / senet" }} />
         <Stack.Screen name="expenses/index" options={{ title: "Masraflar" }} />
         <Stack.Screen name="expenses/new" options={{ title: "Yeni masraf" }} />
-        <Stack.Screen name="expenses/[id]" options={{ title: "Masraf" }} />
+        <Stack.Screen name="expenses/edit/[id]" options={{ title: "Masrafı düzenle" }} />
+        <Stack.Screen name="expenses/[id]" options={{ title: "Masraf detayı" }} />
         <Stack.Screen name="quotes/index" options={{ title: "Teklifler" }} />
         <Stack.Screen name="quotes/new" options={{ title: "Yeni teklif" }} />
         <Stack.Screen name="quotes/[id]" options={{ title: "Teklif" }} />
