@@ -71,6 +71,7 @@ import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
 import { einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
 import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayload } from "../utils/barcodeSale";
+import { isSameScanLine, resolveScanMatch } from "../utils/variantScan";
 import { paymentAskMessage, shouldAskPaymentAfterSave } from "../utils/invoiceAskPayment";
 import { DespatchSendDialog } from "../components/DespatchSendDialog";
 import { canSendOutgoingDispatch, despatchSendLabel, isIncomingDispatch } from "../utils/despatchShipment";
@@ -812,24 +813,26 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
   const handleScanAddItem = (code) => {
     const c = String(code || "").trim();
-    const prod = products.find((p) => p.barcode === c || p.sku === c || (p.variants || []).some((v) => v.barcode === c));
-    if (!prod) { toast.error(`Barkod eşleşmedi: ${c}`); return; }
+    const match = resolveScanMatch(products, c);
+    if (!match) { toast.error(`Barkod eşleşmedi: ${c}`); return; }
+    const prod = match.product;
+    const v = match.variant;
     const pid = prod.id || prod._id;
-    const existing = formData.items.findIndex((it) => it.product_id === pid);
+    const label = v ? `${prod.name} - ${v.name}` : prod.name;
+    const existing = formData.items.findIndex((it) => isSameScanLine(it, pid, v));
     if (existing >= 0) {
       const items = formData.items.map((it, i) => (i === existing ? computeLine({ ...it, quantity: Number(it.quantity || 0) + 1 }, "quantity") : it));
       setFormData({ ...formData, items });
-      toast.success(`${prod.name} miktarı +1`);
+      toast.success(`${label} miktarı +1`);
       return;
     }
     const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name && !it.product_name);
-    const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
     const price = variantUnitPrice(v, formData.invoice_type, buyPrice(prod, formData.invoice_type));
     const priceIncl = formData.invoice_type !== "purchase" && !!prod.price_includes_vat;
     const line = computeLine({
       ...lineFromProduct(prod, { invoiceType: formData.invoice_type }),
-      name: v ? `${prod.name} - ${v.name}` : prod.name,
-      product_name: v ? `${prod.name} - ${v.name}` : prod.name,
+      name: label,
+      product_name: label,
       unit_price: priceIncl ? 0 : price,
       unit_price_incl: priceIncl ? price : 0,
       sku: v?.sku || prod.sku || "",
@@ -841,7 +844,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     } else {
       setFormData((f) => ({ ...f, items: [...f.items, line] }));
     }
-    toast.success(`${prod.name} eklendi`);
+    toast.success(`${label} eklendi`);
   };
 
   const WITHHOLDING = WITHHOLDING_OPTIONS;

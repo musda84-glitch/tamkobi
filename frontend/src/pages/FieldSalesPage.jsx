@@ -7,6 +7,7 @@ import { productListImageUrl } from "../utils/productImages";
 import { statusTr } from "../utils/labels";
 import { orderStatusLabel } from "../utils/warehouseShip";
 import { lineFromProduct } from "../utils/documentLines";
+import { fieldSaleScanProduct, isSameScanLine, resolveScanMatch } from "../utils/variantScan";
 import { ScanButton } from "../components/CameraScanner";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
@@ -80,11 +81,12 @@ export default function FieldSalesPage() {
   }, 0);
   const count = cart.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
 
-  const addProduct = (p, qty = 1) => {
+  const addProduct = (p, qty = 1, variant = null) => {
     const id = pid(p);
     if (!id && !p.name) return;
+    const src = fieldSaleScanProduct(p, variant);
     setCart((prev) => {
-      const i = prev.findIndex((x) => x.product_id === id && id);
+      const i = id ? prev.findIndex((x) => isSameScanLine(x, id, variant)) : -1;
       if (i >= 0) {
         const next = [...prev];
         const quantity = Number(next[i].quantity) + qty;
@@ -101,9 +103,9 @@ export default function FieldSalesPage() {
         };
         return next;
       }
-      const line = lineFromProduct(p, { invoiceType: "sales", quantity: qty });
+      const line = lineFromProduct(src, { invoiceType: "sales", quantity: qty });
       return [...prev, {
-        product_id: id, product_name: p.name, sku: p.sku || "", barcode: p.barcode || "",
+        product_id: id, product_name: src.name, sku: src.sku || "", barcode: src.barcode || "",
         quantity: qty,
         unit_price: Number(line.unit_price) || 0,
         unit_price_incl: Number(line.unit_price_incl) || 0,
@@ -114,7 +116,7 @@ export default function FieldSalesPage() {
         image_url: p.image_url, stock_quantity: p.stock_quantity,
       }];
     });
-    toast.success(`${p.name} sepete eklendi (${qty})`);
+    toast.success(`${src.name} sepete eklendi (${qty})`);
   };
   const setQty = (i, q) => setCart((prev) => prev.map((it, k) => {
     if (k !== i) return it;
@@ -139,12 +141,19 @@ export default function FieldSalesPage() {
     if (!raw) return;
     setBarcode("");
     const qty = Math.max(1, parseInt(String(scanQty || "1").replace(/\D/g, ""), 10) || 1);
-    const local = products.find((p) => p.barcode === raw || p.sku === raw || (p.variants || []).some((v) => v.barcode === raw || v.sku === raw));
-    if (local) { addProduct(local, qty); setScanStatus(`${local.name} sepete eklendi (${qty})`); return; }
+    const match = resolveScanMatch(products, raw);
+    if (match) {
+      addProduct(match.product, qty, match.variant);
+      const label = match.variant ? `${match.product.name} - ${match.variant.name}` : match.product.name;
+      setScanStatus(`${label} sepete eklendi (${qty})`);
+      return;
+    }
     try {
       const r = await axios.get(`${API_URL}/products/barcode/${encodeURIComponent(raw)}?company_id=${companyId}`);
-      addProduct(r.data, qty);
-      setScanStatus(`${r.data.name} sepete eklendi (${qty})`);
+      const variant = r.data?.matched_variant || null;
+      addProduct(r.data, qty, variant);
+      const label = variant ? `${r.data.name} - ${variant.name}` : r.data.name;
+      setScanStatus(`${label} sepete eklendi (${qty})`);
     } catch {
       const miss = `Barkod bulunamadı: ${raw}`;
       setScanStatus(miss);
