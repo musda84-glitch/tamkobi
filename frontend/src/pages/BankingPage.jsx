@@ -10,7 +10,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { asContactList, canUploadBankStatement } from "../utils/bankStatementUpload";
-import { matchActorTitle, matchStatusLabel, txUserColumnLabel, txUserColumnLabelShort, txDescriptionLabel } from "../utils/bankMatchLabel";
+import { matchActorTitle, matchStatusLabel, txUserColumnLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { filterAccountTransactions } from "../utils/bankAccountTx";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
@@ -828,9 +828,10 @@ export default function BankingPage() {
           partnerSummary={partnerSummary}
           onOpenPartners={() => setTab("partners")}
         />
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,320px)_minmax(0,1fr)] gap-4 items-start">
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm min-w-0 w-full space-y-3 p-4" data-testid="transactions-panel">
           <BankAccountList
             grouped={grouped}
+            groupedAll={groupedAll}
             selectedGroup={selectedGroup}
             selectedAccountId={selectedAccountId}
             cardMenuId={cardMenuId}
@@ -843,12 +844,11 @@ export default function BankingPage() {
               setSelectedAccountId((cur) => (cur === id ? null : id));
             }}
             onToggleMenu={(id) => setCardMenuId((cur) => (cur === id ? null : id))}
-            onEdit={openEditAccount}
-            onDelete={handleDeleteAccount}
+            onEdit={(acc, e) => { setCardMenuId(null); openEditAccount(acc, e); }}
+            onDelete={(acc, e) => { setCardMenuId(null); handleDeleteAccount(acc, e); }}
             onOpening={(acc) => { setCardMenuId(null); setOpeningAccount(acc); }}
-            onStatement={(acc) => setStmtAccount({ ...acc, id: acc.id || acc._id })}
+            onStatement={(acc) => { setCardMenuId(null); setStmtAccount({ ...acc, id: acc.id || acc._id }); }}
           />
-          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm min-w-0 space-y-3 p-4" data-testid="transactions-panel">
             {selectedAccount && (
               <BankAccountDetailHeader
                 account={selectedAccount}
@@ -1052,23 +1052,23 @@ export default function BankingPage() {
               );
               const actionHeadCls = "sticky right-0 z-10 bg-slate-50 shrink-0 w-auto whitespace-nowrap px-1 py-2 text-right";
               const table = (
-              <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600">
+              <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600" style={{ minWidth: showAccountCol ? "calc(51rem + 300px)" : "calc(42rem + 300px)" }}>
                 <colgroup>
-                  <col style={{ width: "5.25rem" }} />
-                  {showAccountCol ? <col style={{ width: "4.25rem" }} /> : null}
-                  <col style={{ width: showAccountCol ? "2.75rem" : "4rem" }} />
+                  <col style={{ width: "6rem" }} />
+                  {showAccountCol ? <col style={{ width: "9rem" }} /> : null}
+                  <col style={{ width: "8.5rem" }} />
                   <col />
-                  <col className="hidden xl:table-column w-0 2xl:w-[7.5rem]" />
-                  <col style={{ width: "6.25rem" }} />
-                  <col style={{ width: "8.25rem" }} />
+                  <col className="hidden lg:table-column" style={{ width: "8rem" }} />
+                  <col style={{ width: "8.5rem" }} />
+                  <col style={{ width: "11rem" }} />
                 </colgroup>
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                   <tr>
                     <th className="px-1 py-2 whitespace-nowrap font-mono">Tarih</th>
-                    {showAccountCol ? <th className="px-1 py-2 max-w-[4.25rem] overflow-hidden"><div className="truncate">Hesap</div></th> : null}
-                    <th className="px-1 py-2 overflow-hidden truncate" title="Kategori">Kategori</th>
+                    {showAccountCol ? <th className="px-1 py-2 whitespace-normal">Hesap</th> : null}
+                    <th className="px-1 py-2 whitespace-normal">Kategori</th>
                     <th className="px-2 py-2 min-w-0">Açıklama / Cari</th>
-                    <th className="px-0 2xl:px-2 py-2 hidden xl:table-cell max-w-[120px] w-0 2xl:w-[7.5rem] overflow-hidden">Kullanıcı</th>
+                    <th className="px-2 py-2 hidden lg:table-cell whitespace-normal">Kullanıcı</th>
                     <th className="px-1 py-2 text-right whitespace-nowrap">Tutar</th>
                     <th className={actionHeadCls}>İşlem</th>
                   </tr>
@@ -1094,16 +1094,16 @@ export default function BankingPage() {
                         >
                           <td className="px-1 py-1.5 text-slate-500 font-mono whitespace-nowrap" data-testid={`tx-date-${id}`}>{fmtDate(tx.date)}</td>
                           {showAccountCol ? (
-                            <td className="px-1 py-1.5 font-semibold text-slate-900 max-w-[4.25rem] overflow-hidden">
-                              <div className="truncate" title={accountFull}>{accountFull}</div>
+                            <td className="px-1 py-1.5 font-semibold text-slate-900 whitespace-normal break-words" data-testid={`tx-account-${id}`}>
+                              {accountFull}
                             </td>
                           ) : null}
-                          <td className="px-1 py-1.5 overflow-hidden">
-                            <span className={`inline-flex items-center gap-1 max-w-full min-w-0 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
+                          <td className="px-1 py-1.5 whitespace-normal">
+                            <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-semibold whitespace-normal ${
                               tx.type === "inflow" ? "bg-emerald-50 text-emerald-700" : tx.type === "outflow" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"
                             }`} title={tx.category || bankKind(tx)}>
                               {tx.type === "inflow" ? <ArrowDownRight className="w-3 h-3 shrink-0" /> : tx.type === "outflow" ? <ArrowUpRight className="w-3 h-3 shrink-0" /> : <ArrowRightLeft className="w-3 h-3 shrink-0" />}
-                              <span className="truncate">{tx.category || bankKind(tx)}</span>
+                              <span>{tx.category || bankKind(tx)}</span>
                             </span>
                           </td>
                           <td className="px-2 py-1.5 text-slate-700 min-w-0 overflow-hidden" data-testid={`tx-desc-${id}`}>
@@ -1117,10 +1117,10 @@ export default function BankingPage() {
                               {tx.source === "bank_match" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                             </div>
                           </td>
-                          <td className="px-0 2xl:px-2 py-1.5 text-slate-600 hidden xl:table-cell max-w-[120px] w-0 2xl:w-[7.5rem] overflow-hidden" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
-                            <div className="truncate">{txUserColumnLabelShort(tx) || <span className="text-slate-300">—</span>}</div>
+                          <td className="px-2 py-1.5 text-slate-600 hidden lg:table-cell whitespace-normal break-words" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
+                            {txUserColumnLabel(tx) || <span className="text-slate-300">—</span>}
                           </td>
-                          <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap overflow-hidden ${bankAmountCls(tx)}`} title={bankAmount(tx)}>
+                          <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap ${bankAmountCls(tx)}`} title={bankAmount(tx)}>
                             {bankAmount(tx)}
                           </td>
                           <td
@@ -1145,7 +1145,7 @@ export default function BankingPage() {
                     table={table}
                     cardsTestId="bank-tx-cards"
                     tableWrapTestId="bank-tx-table-wrap"
-                    tableWrapClassName="hidden md:block w-full min-w-0 max-md:overflow-x-auto"
+                    tableWrapClassName="hidden md:block w-full min-w-0 overflow-x-auto max-md:overflow-x-auto"
                   />
                   {listHasMore && (
                     <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
@@ -1156,7 +1156,6 @@ export default function BankingPage() {
               );
             })()}
           </div>
-        </div>
       </div>
       {printTx && (
         <AccountStatementPrint
