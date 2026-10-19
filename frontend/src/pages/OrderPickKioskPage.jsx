@@ -13,6 +13,7 @@ import { pickLineNote } from "../utils/pickLineNote";
 import { pickProgressLabel } from "../utils/pickProgress";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { QuantityInput } from "../components/MoneyInput";
+import QtyKeypad from "../components/QtyKeypad";
 import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
@@ -111,13 +112,17 @@ export default function OrderPickKioskPage() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [qtyDrafts, setQtyDrafts] = useState({});
+  const [keypadIdx, setKeypadIdx] = useState(null);
   const [scanQty, setScanQty] = useState("1");
   const [overscanFlash, setOverscanFlash] = useState(null);
   const [labelPrintReq, setLabelPrintReq] = useState(null);
   const [loadError, setLoadError] = useState(companyId ? "" : "Firma seçili değil");
   const inputRef = useRef(null);
+  const codeRef = useRef("");
   const overscanTimer = useRef(null);
   const qtyCancelRef = useRef(false);
+
+  useEffect(() => { codeRef.current = code; }, [code]);
 
   const loadList = useCallback(async () => {
     if (!companyId) {
@@ -144,6 +149,7 @@ export default function OrderPickKioskPage() {
       const r = await axios.get(`${API_URL}/order-picks/${id}`);
       setSes(r.data);
       setQtyDrafts({});
+      setKeypadIdx(null);
       setParams({ order: id }, { replace: true });
       setTimeout(() => inputRef.current?.focus(), 80);
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş açılamadı."); }
@@ -185,7 +191,24 @@ export default function OrderPickKioskPage() {
     overscanTimer.current = setTimeout(() => setOverscanFlash(null), 2800);
   }, []);
 
-  const back = () => { setSes(null); setParams({}, { replace: true }); loadList(); };
+  const back = () => { setKeypadIdx(null); setSes(null); setParams({}, { replace: true }); loadList(); };
+
+  const holdScanFocus = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const closeKeypad = () => {
+    setKeypadIdx(null);
+    inputRef.current?.focus();
+  };
+
+  const setScanCode = (text) => {
+    const next = text == null ? "" : String(text);
+    codeRef.current = next;
+    setCode(next);
+    if (inputRef.current) inputRef.current.value = next;
+  };
 
   const printLabels = (items) => {
     const list = (items || []).filter(Boolean);
@@ -236,6 +259,11 @@ export default function OrderPickKioskPage() {
         if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
       }
     } finally { setBusy(false); setTimeout(() => inputRef.current?.focus(), 50); }
+  };
+
+  const acceptScanText = (text, submit) => {
+    setScanCode(text);
+    if (submit) scan(String(text ?? ""));
   };
 
   const applyPickedQty = async (item, rawQty) => {
@@ -383,19 +411,18 @@ export default function OrderPickKioskPage() {
       </div>
       <div className="bg-white border-b px-3 py-2.5 print:hidden" data-testid="pick-progress">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0" data-testid="pick-progress-text">
-            <div className="text-sm font-bold text-slate-900">{progressLabel.lines}</div>
-            <div className="text-xs font-medium text-slate-500">{progressLabel.qty}</div>
+          <div className="min-w-0 text-sm font-bold leading-snug text-slate-900" data-testid="pick-progress-text">
+            {progressLabel.lines} · {progressLabel.qty}
           </div>
-          <div className="text-lg font-black tabular-nums text-slate-900">%{pct}</div>
+          <div className="shrink-0 text-3xl font-black tabular-nums leading-none text-slate-900">%{pct}</div>
         </div>
         <div className="mt-2 h-2 rounded-full bg-slate-100 overflow-hidden">
           <div className="h-2 bg-emerald-500" style={{ width: `${pct}%` }} data-testid="pick-progress-bar" />
         </div>
       </div>
       {!awaitDeliver ? (
-      <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(); }}>
-        <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
+      <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(inputRef.current?.value ?? ""); }}>
+        <input ref={inputRef} value={code} onChange={(e) => setScanCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
         <input
           value={scanQtyShown(scanQty)}
           onChange={(e) => setScanQty(e.target.value.replace(/[^\d]/g, ""))}
@@ -414,7 +441,7 @@ export default function OrderPickKioskPage() {
           Sipariş sevk edildi. Teslimatı onaylamak için «Teslim edildi»ye basın.
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3 content-start print:hidden">
+      <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 lg:grid-cols-2 gap-3 content-start print:hidden">
         {(ses.items || []).map((it, idx) => {
           const done = isLineComplete(it);
           const warnLine = overscanFlash && (
@@ -431,7 +458,7 @@ export default function OrderPickKioskPage() {
               ? "border-l-4 border-l-emerald-500 bg-emerald-50"
               : "border-l-4 border-l-amber-500 bg-white";
           return (
-            <div key={idx} className={`rounded-2xl border p-3 flex flex-col gap-2 transition ${accent}`} data-testid={`pick-line-${idx}`}>
+            <div key={idx} className={`relative min-w-0 rounded-2xl border p-2.5 sm:p-3 flex flex-col gap-2 transition ${keypadIdx === idx && !warnLine ? "z-20" : ""} ${accent}`} data-testid={`pick-line-${idx}`}>
               <div className="flex gap-3 items-start">
                 <PickThumb imageUrl={it.image_url} />
                 <div className="min-w-0 flex-1">
@@ -452,17 +479,22 @@ export default function OrderPickKioskPage() {
                   {pickLineNote(it)}
                 </div>
               ) : null}
-              <div className="flex gap-2 w-full items-center mt-auto">
-                <button onClick={() => bump(it, -1)} className="h-11 flex-1 rounded-xl bg-slate-100 font-bold" data-testid={`pick-minus-${idx}`}><Minus className="w-5 h-5 mx-auto" /></button>
+              <div className="relative mt-auto min-w-0">
+              <div className="flex w-full min-w-0 items-center gap-1">
+                <button onClick={() => bump(it, -1)} className="h-11 min-w-0 flex-1 rounded-xl bg-slate-100 font-bold px-0" data-testid={`pick-minus-${idx}`}><Minus className="w-4 h-4 mx-auto" /></button>
                 <QuantityInput
                   value={qtyDrafts[idx] ?? it.picked_qty}
                   disabled={busy}
                   inputMode="numeric"
-                  onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
+                  onFocus={(e) => { unlockOverscanAudio(); e.target.select(); setKeypadIdx(null); setQtyDrafts((d) => ({ ...d, [idx]: String(it.picked_qty) })); }}
                   onChange={(n) => setQtyDrafts((d) => ({ ...d, [idx]: n ?? "" }))}
                   onBlur={() => {
                     if (qtyCancelRef.current) {
                       qtyCancelRef.current = false;
+                      setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+                      return;
+                    }
+                    if (keypadIdx === idx) {
                       setQtyDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
                       return;
                     }
@@ -479,23 +511,51 @@ export default function OrderPickKioskPage() {
                       e.currentTarget.blur();
                     }
                   }}
-                  className={`w-20 h-11 shrink-0 text-center text-lg font-black rounded-xl border-2 outline-none ${warnLine ? "text-rose-700 border-rose-400 bg-white" : "border-slate-200 bg-white focus:border-emerald-500"}`}
+                  onMouseDown={holdScanFocus}
+                  onClick={() => setKeypadIdx(idx)}
+                  className={`w-12 sm:w-20 h-11 min-w-0 shrink px-0.5 text-center text-lg font-black rounded-xl border-2 outline-none ${warnLine ? "text-rose-700 border-rose-400 bg-white" : "border-slate-200 bg-white focus:border-emerald-500"}`}
                   data-testid={`pick-qty-input-${idx}`}
                   aria-label="Okutulan miktar"
                 />
-                <button onClick={() => bump(it, 1)} className={`h-11 flex-1 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
+                <button
+                  type="button"
+                  aria-label="Adet tuş takımı"
+                  title="Tuş takımı"
+                  onMouseDown={holdScanFocus}
+                  onClick={() => setKeypadIdx(idx)}
+                  className="h-11 w-8 shrink-0 rounded-xl border border-slate-200 bg-white px-0 text-sm font-bold text-slate-500"
+                >
+                  ✎
+                </button>
+                <button onClick={() => bump(it, 1)} className={`h-11 min-w-0 flex-1 rounded-xl font-bold px-0 ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-4 h-4 mx-auto" /></button>
                 <button
                   type="button"
                   disabled={done}
                   onClick={() => applyPickedQty(it, Number(it.ordered_qty) || 0)}
-                  className={`h-11 flex-1 rounded-xl text-xs font-bold ${done ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white"}`}
+                  className={`h-11 min-w-0 flex-1 rounded-xl px-0.5 text-[11px] font-bold leading-none ${done ? "bg-slate-100 text-slate-400" : "bg-indigo-600 text-white"}`}
                   data-testid={`pick-all-${idx}`}
                 >
                   Tümü
                 </button>
-                <button type="button" onClick={() => printLabels([it])} className="h-11 flex-1 rounded-xl bg-slate-900 text-white text-xs font-bold inline-flex items-center justify-center gap-1" title="Etiket yazdır" data-testid={`pick-label-${idx}`}>
-                  <Printer className="w-4 h-4" /> Etiket
+                <button type="button" onClick={() => printLabels([it])} className="h-11 min-w-0 flex-1 rounded-xl bg-slate-900 text-white text-[11px] font-bold leading-none inline-flex items-center justify-center gap-0.5 px-0.5 overflow-hidden" title="Etiket yazdır" data-testid={`pick-label-${idx}`}>
+                  <Printer className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">Etiket</span>
                 </button>
+              </div>
+              {keypadIdx === idx && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 w-full max-w-full" data-testid={`pick-keypad-${idx}`}>
+                  <QtyKeypad
+                    value={pickedQty}
+                    max={orderedQty}
+                    scanInputRef={inputRef}
+                    onScanText={acceptScanText}
+                    onConfirm={(n) => {
+                      closeKeypad();
+                      applyPickedQty(it, n);
+                    }}
+                    onCancel={closeKeypad}
+                  />
+                </div>
+              )}
               </div>
             </div>
           );

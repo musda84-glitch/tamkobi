@@ -194,6 +194,125 @@ test("Tümü fills the line, completed lines stay disabled, and steppers post ab
   expect(adjustCalls()[0][1].picked_qty).toBe(0);
 });
 
+async function clickTestId(id) {
+  await act(async () => {
+    host.querySelector(`[data-testid="${id}"]`).click();
+  });
+}
+
+test("quantity box and pencil open one keypad at a time", async () => {
+  await renderSession();
+  await clickTestId("pick-qty-input-0");
+  expect(host.querySelector('[data-testid="pick-keypad-0"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="pick-keypad-1"]')).toBeNull();
+
+  await act(async () => {
+    host.querySelector('[data-testid="pick-line-1"] button[aria-label="Adet tuş takımı"]').click();
+  });
+  expect(host.querySelector('[data-testid="pick-keypad-0"]')).toBeNull();
+  expect(host.querySelector('[data-testid="pick-keypad-1"]')).toBeTruthy();
+});
+
+test("keypad confirm posts a clamped absolute adjust", async () => {
+  await renderSession();
+  await clickTestId("pick-qty-input-0");
+  await clickTestId("pick-keypad-key-2");
+  await clickTestId("pick-keypad-ok");
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(adjustCalls()).toEqual([
+    ["/api/order-picks/ord-1/adjust", {
+      product_id: "p1",
+      product_name: "Kumaş",
+      line_index: 0,
+      picked_qty: 2,
+    }],
+  ]);
+
+  axios.post.mockClear();
+  await clickTestId("pick-qty-input-0");
+  await clickTestId("pick-keypad-key-9");
+  await clickTestId("pick-keypad-ok");
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(adjustCalls()).toEqual([
+    ["/api/order-picks/ord-1/adjust", {
+      product_id: "p1",
+      product_name: "Kumaş",
+      line_index: 0,
+      picked_qty: 3,
+    }],
+  ]);
+});
+
+test("a rapid barcode scan closes the keypad and uses the scan flow", async () => {
+  await renderSession();
+  await clickTestId("pick-qty-input-0");
+  const pop = host.querySelector('[data-testid="pick-keypad-0"]');
+  expect(pop.className).toContain("top-full");
+  expect(pop.className).toContain("z-30");
+  const scan = host.querySelector('[data-testid="pick-scan-input"]');
+  scan.focus();
+  let now = 0;
+  const clock = jest.spyOn(performance, "now").mockImplementation(() => now);
+  await act(async () => {
+    for (const key of "8690002") {
+      now += 10;
+      scan.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    }
+    now += 10;
+    scan.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  clock.mockRestore();
+  expect(adjustCalls()).toEqual([]);
+  expect(host.querySelector('[data-testid="pick-overscan-alert"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="pick-keypad-0"]')).toBeNull();
+});
+
+test("escape closes the keypad without an adjust and keeps the quantity", async () => {
+  await renderSession();
+  const input = host.querySelector('[data-testid="pick-qty-input-0"]');
+  const before = input.value;
+  await clickTestId("pick-qty-input-0");
+  await clickTestId("pick-keypad-key-8");
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  expect(host.querySelector('[data-testid="pick-keypad-0"]')).toBeNull();
+  expect(axios.post).not.toHaveBeenCalled();
+  expect(host.querySelector('[data-testid="pick-qty-input-0"]').value).toBe(before);
+});
+
+test("closing the keypad returns focus to the scan input", async () => {
+  await renderSession();
+  const scan = host.querySelector('[data-testid="pick-scan-input"]');
+  scan.focus();
+  await clickTestId("pick-qty-input-0");
+  expect(document.activeElement).toBe(scan);
+  await act(async () => {
+    scan.dispatchEvent(new KeyboardEvent("keydown", { key: "7", bubbles: true, cancelable: true }));
+  });
+  expect(scan.value).toBe("");
+  expect(host.querySelector('[data-testid="pick-keypad-display"]').textContent).toContain("7 /");
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  expect(document.activeElement).toBe(scan);
+});
+
+test("progress percent and line status stay on the redesigned cards", async () => {
+  await renderSession();
+  const header = host.querySelector('[data-testid="pick-progress"]');
+  expect(header.textContent).toContain("%67");
+  expect(host.querySelector('[data-testid="pick-progress-text"]').textContent).toContain("2 kalem · 4 / 6 adet toplandı");
+  expect(host.querySelector('[data-testid="pick-line-tag-1"]').textContent).toContain("✓ Tamam");
+  expect(host.querySelector('[data-testid="pick-line-tag-0"]').textContent).toContain("2 eksik");
+  expect(host.querySelector('[data-testid="pick-line-1"]').className).toContain("border-l-emerald-500");
+  expect(host.querySelector('[data-testid="pick-line-0"]').className).toContain("border-l-amber-500");
+  const grid = host.querySelector('[data-testid="pick-line-0"]').parentElement;
+  expect(grid.className).toContain("grid-cols-1");
+  expect(grid.className).toContain("lg:grid-cols-2");
+  expect(grid.className).not.toContain("2xl:grid-cols-3");
+});
+
 test("label, scan, bulk print, and complete actions stay on the session", async () => {
   await renderSession();
   expect(host.querySelector('[data-testid="pick-label-0"]')).toBeTruthy();
