@@ -5,6 +5,7 @@ export const PORTAL_FIELD_BY_PATH = {
   "/sayim": "portal_sayim",
   "/saha": "portal_saha",
   "/vehicles": "portal_vehicles",
+  "/orders": "portal_orders",
 };
 
 export const IK_PORTAL_LINKS = [
@@ -15,6 +16,7 @@ export const IK_PORTAL_LINKS = [
   { to: "/sayim", label: "Stok Sayımı", feature: "portal_sayim" },
   { to: "/saha", label: "Saha Sipariş", feature: "portal_saha" },
   { to: "/vehicles", label: "Araçlarım", feature: "portal_vehicles" },
+  { to: "/orders", label: "Siparişler", feature: "portal_orders" },
 ];
 
 export function portalFeatureKey(path) {

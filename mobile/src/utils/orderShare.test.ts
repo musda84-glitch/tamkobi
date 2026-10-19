@@ -99,6 +99,24 @@ describe("orderShare native print", () => {
     expect(rnShare).not.toHaveBeenCalled();
   });
 
+  it("omits unit price and amount columns when view_prices is off", async () => {
+    const masked = {
+      ...order,
+      grand_total: 0,
+      subtotal: 0,
+      vat_total: 0,
+      items: [{ product_name: "Koltuk", quantity: 2, unit_price: 0, total: 0, total_incl: 0 }],
+    };
+    const ok = await printOrderForm(masked, { name: "Matek" }, null, { showPrices: false });
+    expect(ok).toBe(true);
+    const html = String(printToFileAsync.mock.calls[0]?.[0]?.html || "");
+    expect(html).toContain("Koltuk");
+    expect(html).not.toContain("0,00 ₺");
+    expect(html).not.toContain("Tutar (KDV Dahil)");
+    expect(html).not.toContain("Birim (KDV'siz)");
+    expect(html).not.toContain("data-print-grand-total");
+  });
+
   it("prints the thermal kargo etiketi as HTML when there is no official file", async () => {
     const kind = await printCargoLabel(order, { name: "Matek" }, null);
     expect(kind).toBe("thermal");

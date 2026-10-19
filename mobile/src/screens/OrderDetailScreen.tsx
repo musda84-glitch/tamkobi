@@ -24,17 +24,19 @@ import {
   cancelRequestReason,
 } from "../utils/orderCancelRequest";
 import { pickLineNote } from "../utils/orderPick";
+import { isOrderStaffMode } from "../utils/permissions";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
 export function OrderDetailScreen() {
-  const { client, companyId, can, feature } = useAuth();
+  const { client, companyId, can, feature, user } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
   const [openRow, setOpenRow] = useState<string | null>(null);
-  const canEditItems = (can("/orders", "edit") || can("/saha", "edit")) && canStaffEditOrder(order);
+  const orderStaff = isOrderStaffMode(user);
+  const canEditItems = !orderStaff && (can("/orders", "edit") || can("/saha", "edit")) && canStaffEditOrder(order);
   const showPrices = feature("view_prices");
 
   const load = useCallback(async () => {
@@ -135,7 +137,7 @@ export function OrderDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
       <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} />
-      {cancelRequestActionsVisible(order) ? (
+      {!orderStaff && cancelRequestActionsVisible(order) ? (
         <Row style={{ gap: 8, flexWrap: "wrap" }}>
           <PrimaryButton
             title="İptal talebini onayla"

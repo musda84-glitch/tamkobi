@@ -62,6 +62,7 @@ describe("IK portal nav", () => {
       "/sayim",
       "/saha",
       "/vehicles",
+      "/orders",
     ]);
     IK_PORTAL_LINKS.forEach((link) => {
       const meta = IK_NAV_META[link.to];
@@ -125,6 +126,7 @@ describe("IK portal nav", () => {
       "Stok Sayımı",
       "Saha Sipariş",
       "Araçlarım",
+      "Siparişler",
     ]);
     const desktopParts = desktopLinks.map((a) =>
       [...a.querySelectorAll("span.leading-none")].map((span) => `${span.className.includes("lg:hidden") ? "short" : "full"}:${span.textContent}`),
@@ -137,6 +139,7 @@ describe("IK portal nav", () => {
       ["short:Sayım", "full:Stok Sayımı"],
       ["short:Saha", "full:Saha Sipariş"],
       ["short:Araç", "full:Araçlarım"],
+      ["short:Sipariş", "full:Siparişler"],
     ]);
     expect(mobileLinks.map((a) => a.querySelector("span.leading-none").textContent)).toEqual([
       "Personelim",
@@ -146,6 +149,7 @@ describe("IK portal nav", () => {
       "Sayım",
       "Saha",
       "Araç",
+      "Sipariş",
     ]);
 
     desktopLinks.forEach((a) => {
@@ -184,6 +188,7 @@ describe("IK portal nav", () => {
       "clipboard-list",
       "shopping-cart",
       "car",
+      "package",
     ]);
     expect(iconNames(mobile)).toEqual(iconNames(desktop));
 

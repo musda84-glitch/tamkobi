@@ -48,6 +48,13 @@ describe("authAccess fail-closed", () => {
     expect(canAccessPath({ ...personel, features: { portal_sayim: true } }, "/sayim")).toBe(true);
     const warehouse = { role: "warehouse", permissions: { "/sayim": "edit" }, features: {} };
     expect(canAccessPath(warehouse, "/sayim", "edit")).toBe(true);
+    const ordersOff = { role: "personel", permissions: { "/orders": "edit" }, features: {} };
+    expect(canAccessPath(ordersOff, "/orders")).toBe(false);
+    expect(canAccessPath(ordersOff, "/orders", "edit")).toBe(false);
+    const ordersOn = { ...ordersOff, features: { portal_orders: true } };
+    expect(canAccessPath(ordersOn, "/orders")).toBe(true);
+    expect(canAccessPath(ordersOn, "/orders", "edit")).toBe(false);
+    expect(canAccessPath(ordersOn, "/orders", "delete")).toBe(false);
     expect(isFeatureEnabled(personel, "portal_pick")).toBe(false);
     expect(isFeatureEnabled({ role: "admin" }, "portal_atolye")).toBe(true);
   });

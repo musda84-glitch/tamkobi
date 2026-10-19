@@ -157,11 +157,13 @@ FEATURES = [
     ("portal_sayim", "Stok Sayımı", "İK portalı ve mobil menüde stok sayımı. Kapalıysa personel sayım uçlarında 403 alır. Varsayılan kapalı."),
     ("portal_saha", "Saha Sipariş", "İK portalı ve mobil menüde saha siparişi. Kapalıysa personel saha siparişi oluşturamaz. Varsayılan kapalı."),
     ("portal_vehicles", "Araçlarım", "İK portalı ve mobil menüde araçlar. Kapalıysa personel araç uçlarında 403 alır. Varsayılan kapalı."),
+    ("portal_orders", "Siparişler (yazdır, eksik bildir, üretime al, kargola, kargo etiketi)", "İK portalı ve mobil menüde siparişler. Personel yalnız yazdır, eksik bildir, üretime al, kargola ve kargo etiketi yapabilir. Kapalıysa bu işlemler 403. Varsayılan kapalı."),
 ]
 FEATURE_DEFAULTS: Dict[str, bool] = {k: True for k, _, _ in FEATURES}
 # Saha özellikleri: kayıtlı değilse kapalı (admin role_features içinde her zaman açık).
 PORTAL_FEATURE_KEYS = frozenset({
     "portal_atolye", "portal_pick", "portal_sayim", "portal_saha", "portal_vehicles",
+    "portal_orders",
 })
 # Alan (önek) — personel kapalı özellikte bu ağaca giremez. En uzun önek kazanır.
 PORTAL_AREAS = (
@@ -202,6 +204,27 @@ PORTAL_API_RULES = (
     # Araçlarda filo CRUD yok; personel yalnız okur. Kendi kullanım kaydı ucu yok.
     ("GET", "/api/vehicles", "portal_vehicles", "/vehicles"),
     ("GET", "/api/vehicles/{id}", "portal_vehicles", "/vehicles"),
+)
+# Personel sipariş işlemleri. /api/orders ve /api/cargo PORTAL_AREAS'a eklenmez:
+# personel GET /api/orders saha ekranında da kullanılır; Satış / Depo modül matrisi durur.
+# Alan eşleşmese de middleware, rolde portal_orders açıksa bu listedeki işlemde portal_grant verir.
+# notify-missing, to-production ve work-orders/stations mevcut portal_pick / portal_atolye
+# alanlarındadır; aynı satır PORTAL_API_RULES'a ikinci kez yazılmaz (ilk eşleşen kazanır).
+PORTAL_ORDERS_API_RULES = (
+    ("GET", "/api/orders"),
+    ("GET", "/api/orders/{id}"),
+    ("POST", "/api/orders/mark-form-printed"),
+    ("POST", "/api/order-picks/{id}/notify-missing"),
+    ("POST", "/api/order-picks/{id}/to-production"),
+    ("GET", "/api/production/work-orders/stations"),
+    ("POST", "/api/orders/{id}/production-recipe"),
+    ("GET", "/api/integrations/cargo"),
+    ("GET", "/api/integrations/cargo/catalog"),
+    ("POST", "/api/cargo/create-shipment"),
+    ("POST", "/api/orders/{id}/warehouse-ship"),
+    ("GET", "/api/orders/{id}/cargo-label"),
+    ("GET", "/api/orders/{id}/cargo-label/file"),
+    ("POST", "/api/orders/mark-labels-printed"),
 )
 PORTAL_FEATURE_LABELS = {k: label for k, label, _ in FEATURES if k in PORTAL_FEATURE_KEYS}
 
@@ -277,6 +300,18 @@ def portal_rule_for_path(path: str, method: str = "GET"):
     return None
 
 
+def portal_orders_operation(path: str, method: str = "GET") -> bool:
+    """portal_orders izin listesi. Yöntem + yol birebir; ilk şablon kazanmaz, liste kapalıdır."""
+    p = _portal_norm_path(path)
+    method_u = str(method or "GET").upper()
+    for rule_method, template in PORTAL_ORDERS_API_RULES:
+        if rule_method != method_u:
+            continue
+        if _portal_template_match(template, p):
+            return True
+    return False
+
+
 def portal_admin_operation(path: str, method: str = "GET") -> bool:
     """Portal özelliğinin açmaması gereken yönetici işlemi.
 
@@ -332,6 +367,10 @@ def portal_field_allowed(user: Optional[dict], role: Optional[dict], feature_key
     feats = role_features(role or {"code": role_code, "features": {}})
     field = portal_rule_for_path(path, method_u)
     if field and field[1] == feature_key and feats.get(feature_key):
+        return True
+    # Üç örtüşen uç: mevcut alan özelliği VEYA portal_orders. Diğer order-picks
+    # ve work-orders uçları bu listede değildir.
+    if feats.get("portal_orders") and portal_orders_operation(path, method_u):
         return True
     if role_code == "personel":
         return False
@@ -977,6 +1016,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 helper_feat = ik_helper_read_feature(path, request.method)
             rule = portal_area_for_path(path)
             saha_post = request.method == "POST" and path.rstrip("/") == "/api/orders"
+            role = None
             if helper_feat or rule or (saha_post and normalize_role_code(user.get("role")) == "personel"):
                 role = await role_for(user, cid)
                 if helper_feat and not role_features(role).get(helper_feat):
@@ -993,6 +1033,13 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 if saha_post and normalize_role_code(user.get("role")) == "personel":
                     if not role_features(role).get("portal_saha"):
                         return JSONResponse({"detail": portal_denial_detail("portal_saha")}, status_code=403)
+                    portal_grant = True
+            # portal_orders: alan eşleşmese de listedeki işlemde mutation_allowed atlanır.
+            # POST /api/orders (saha) bu listede yoktur; yukarıdaki kural aynen kalır.
+            if not portal_grant and portal_orders_operation(path, request.method):
+                if role is None:
+                    role = await role_for(user, cid)
+                if role_features(role).get("portal_orders"):
                     portal_grant = True
         if request.method == "GET" or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
             response = await call_next(request)
