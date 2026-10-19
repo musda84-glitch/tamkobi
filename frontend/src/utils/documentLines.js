@@ -63,6 +63,38 @@ export function productCardPrice(prod, invoiceType = "sales") {
   return num(prod.sale_price);
 }
 
+/** Alış faturasında varyant satış fiyatı okunmaz. Diğer tiplerde bugünkü satış fiyatı sırası. */
+export function variantUnitPrice(variant, invoiceType, fallback) {
+  if (invoiceType === "purchase") {
+    const raw = variant && variant.purchase_price;
+    const cost = typeof raw === "number" ? raw : Number(raw);
+    if (Number.isFinite(cost) && cost > 0) return cost;
+    return fallback;
+  }
+  return (variant && (variant.price || variant.sale_price)) || fallback;
+}
+
+/** Alış satırının birim fiyatı varyantın kendi alışından geldiyse "variant_purchase". */
+export function variantPriceSource(prod, item, invoiceType) {
+  if (invoiceType !== "purchase" || !prod || !item) return null;
+  const variants = Array.isArray(prod.variants) ? prod.variants : [];
+  const sku = String(item.sku || "").trim();
+  const barcode = String(item.barcode || "").trim();
+  let variant = null;
+  if (sku) {
+    variant = variants.find((v) => String((v && v.sku) || "").trim() === sku) || null;
+  }
+  if (!variant && barcode) {
+    variant = variants.find((v) => String((v && v.barcode) || "").trim() === barcode) || null;
+  }
+  if (!variant) return null;
+  const cost = Number(variant.purchase_price);
+  const unit = Number(item.unit_price);
+  if (!(cost > 0) || !Number.isFinite(unit)) return null;
+  if (Math.abs(unit - cost) <= 0.005) return "variant_purchase";
+  return null;
+}
+
 function resolveLineNames(item, editedField) {
   // name / product_name düzenlenirken boş string korunur; aksi halde biri diğerine düşer
   // ve kullanıcı metni silemez ("" || eskiAd → eskiAd).

@@ -4,7 +4,7 @@ import axios from "axios";
 import { Plus, Trash2 } from "lucide-react";
 import { SearchSelect } from "./SearchSelect";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct, productCardPrice } from "../utils/documentLines";
+import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct, productCardPrice, variantPriceSource } from "../utils/documentLines";
 import { MoneyInput, QuantityInput } from "./MoneyInput";
 
 const inp = "h-8 w-full bg-white border border-slate-200 rounded px-1.5 text-xs box-border";
@@ -258,6 +258,13 @@ export function DocumentLineEditor({
                     className={`${inp} text-right`}
                     data-testid={kind === "order" ? `new-order-price-${idx}` : testIdPrefix === "inv-item" ? `inv-item-unit-price-${idx}` : `${testIdPrefix}-price-excl-${idx}`}
                   />
+                  {variantPriceSource(
+                    products.find((p) => String(p.id || p._id || "") === String(item.product_id || "")),
+                    item,
+                    invoiceType,
+                  ) === "variant_purchase" ? (
+                    <div className="text-[10px] text-slate-500 text-right" data-testid={`${testIdPrefix}-variant-cost-${idx}`}>Varyant alış fiyatı</div>
+                  ) : null}
                 </td>
                 <td className="px-1.5">
                   <MoneyInput

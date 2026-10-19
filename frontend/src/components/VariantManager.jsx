@@ -7,6 +7,8 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressProductImageFile } from "../utils/compressImage";
 import { MoneyInput, QuantityInput } from "./MoneyInput";
+import { productCardPrice } from "../utils/documentLines";
+import { formatTrAmount } from "../utils/money";
 
 const cartesian = (options) =>
   options.reduce((acc, opt) => acc.flatMap((combo) => opt.values.map((v) => ({ ...combo, [opt.name]: v }))), [{}]);
@@ -108,6 +110,7 @@ export const VariantManager = ({ product, onUpdated }) => {
         barcode: "",
         stock: 0,
         price: product.sale_price || 0,
+        purchase_price: 0,
         image_url: null
       };
     });
@@ -122,7 +125,7 @@ export const VariantManager = ({ product, onUpdated }) => {
       setSaving(true);
       const payload = {
         variant_options: options.filter((o) => o.name.trim()),
-        variants: variants.map((v) => ({ ...v, stock: Number(v.stock || 0), price: Number(v.price || 0), attributes: v.attributes || {} }))
+        variants: variants.map((v) => ({ ...v, stock: Number(v.stock || 0), price: Number(v.price || 0), purchase_price: Number(v.purchase_price || 0), attributes: v.attributes || {} }))
       };
       const res = await axios.put(`${API_URL}/products/${product.id}/variants`, payload, { withCredentials: true });
       onUpdated(res.data);
@@ -136,6 +139,8 @@ export const VariantManager = ({ product, onUpdated }) => {
   };
 
   const totalStock = variants.reduce((s, v) => s + Number(v.stock || 0), 0);
+  const parentPurchase = productCardPrice(product, "purchase");
+  const purchasePlaceholder = parentPurchase > 0 ? `Ana ürün alışı: ₺${formatTrAmount(parentPurchase)}` : "0";
 
   return (
     <div className="space-y-4 text-xs" data-testid="variant-manager">
@@ -162,7 +167,7 @@ export const VariantManager = ({ product, onUpdated }) => {
           <h4 className="font-bold text-slate-800">Varyantlar <span className="text-slate-400 font-medium">({variants.length}) • Toplam Stok: {totalStock}</span></h4>
           <button
             type="button"
-            onClick={() => setVariants([...variants, { variant_id: Math.random().toString(36).slice(2, 10), name: "", attributes: {}, sku: "", barcode: "", stock: 0, price: product.sale_price || 0, image_url: null }])}
+            onClick={() => setVariants([...variants, { variant_id: Math.random().toString(36).slice(2, 10), name: "", attributes: {}, sku: "", barcode: "", stock: 0, price: product.sale_price || 0, purchase_price: 0, image_url: null }])}
             className="flex items-center gap-1 text-emerald-600 font-semibold hover:underline"
             data-testid="add-manual-variant-btn"
           >
@@ -179,7 +184,8 @@ export const VariantManager = ({ product, onUpdated }) => {
                   <th className="px-2 py-2">SKU</th>
                   <th className="px-2 py-2">Barkod</th>
                   <th className="px-2 py-2 w-20">Stok</th>
-                  <th className="px-2 py-2 w-24">Fiyat ({product.currency === "TRY" || !product.currency ? "₺" : product.currency})</th>
+                  <th className="px-2 py-2 w-24">Satış fiyatı ({product.currency === "TRY" || !product.currency ? "₺" : product.currency})</th>
+                  <th className="px-2 py-2 w-24">Alış fiyatı ({product.currency === "TRY" || !product.currency ? "₺" : product.currency})</th>
                   <th className="px-2 py-2"></th>
                 </tr>
               </thead>
@@ -192,6 +198,7 @@ export const VariantManager = ({ product, onUpdated }) => {
                     <td className="px-2 py-1.5"><input value={v.barcode || ""} placeholder="Otomatik" onChange={(e) => updateVariant(idx, "barcode", e.target.value)} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-mono" data-testid="variant-barcode-input" /></td>
                     <td className="px-2 py-1.5"><QuantityInput value={v.stock} onChange={(n) => updateVariant(idx, "stock", n ?? "")} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-bold" data-testid="variant-stock-input" /></td>
                     <td className="px-2 py-1.5"><MoneyInput value={v.price} onChange={(n) => updateVariant(idx, "price", n ?? "")} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1" data-testid="variant-price-input" /></td>
+                    <td className="px-2 py-1.5"><MoneyInput value={Number(v.purchase_price) > 0 ? v.purchase_price : ""} onChange={(n) => updateVariant(idx, "purchase_price", n ?? "")} placeholder={purchasePlaceholder} className="w-full bg-white border border-slate-200 rounded-md px-2 py-1" data-testid="variant-purchase-price-input" /></td>
                     <td className="px-2 py-1.5"><button type="button" onClick={() => setVariants(variants.filter((_, i) => i !== idx))} className="p-1 text-slate-400 hover:text-rose-600" data-testid="remove-variant-btn"><Trash2 className="w-4 h-4" /></button></td>
                   </tr>
                 ))}

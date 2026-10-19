@@ -59,7 +59,7 @@ import { shouldAskBulkEInvoiceDate, todayYmd } from "../utils/orderBulkActions";
 import { FxPicker } from "../components/FxPicker";
 import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
-import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
+import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct, variantUnitPrice } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { invoicesServerPagingEnabled } from "../utils/featureFlags";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
@@ -824,7 +824,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
     const emptyIdx = formData.items.findIndex((it) => !it.product_id && !it.name && !it.product_name);
     const v = (prod.variants || []).find((x) => x.barcode === c || x.sku === c);
-    const price = v?.price || v?.sale_price || buyPrice(prod, formData.invoice_type);
+    const price = variantUnitPrice(v, formData.invoice_type, buyPrice(prod, formData.invoice_type));
     const priceIncl = formData.invoice_type !== "purchase" && !!prod.price_includes_vat;
     const line = computeLine({
       ...lineFromProduct(prod, { invoiceType: formData.invoice_type }),
