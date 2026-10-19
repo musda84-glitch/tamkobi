@@ -2,7 +2,7 @@ import type { Product } from "../types";
 import { computeLine, lineFromProduct, type InvoiceLine, type ProductVariantRef } from "./documentLines";
 import { asList, filterProducts } from "./productDisplay";
 import { fmtMoney, idOf } from "./money";
-import { workItemFromProduct, type WorkItem } from "./workDocs";
+import { clampDiscountRate, workItemFromProduct, type WorkItem } from "./workDocs";
 
 export const LINE_PRODUCT_SEARCH_MIN_CHARS = 2;
 export const LINE_PRODUCT_SEARCH_DEBOUNCE_MS = 300;
@@ -174,6 +174,7 @@ export function fillWorkItemFromProduct(item: WorkItem, prod: LineProductHit | P
     ...filled,
     quantity: Number(item.quantity) || 1,
     description: item.description || "",
+    discount_rate: clampDiscountRate(item.discount_rate),
     is_service: false,
     product_id: idOf(prod),
   };

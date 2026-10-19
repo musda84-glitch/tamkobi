@@ -5,7 +5,7 @@ import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } fro
 import { productImage } from "./productDisplay";
 import { isCompletedProjectStatus, type ProjectStage } from "./projectStages";
 import { selectedProjectPhotoUrls, type StagePhoto } from "./stagePhotos";
-import { productVatRate } from "./documentLines";
+import { computeLine, documentLineTotals, productVatRate, type InvoiceLine } from "./documentLines";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
@@ -17,6 +17,8 @@ export type WorkItem = {
   unit_price: number;
   unit_price_incl?: number;
   vat_rate: number;
+  /** Satır iskonto oranı. Yalnız yüzde, 0–100. Tutar iskontosu yok. */
+  discount_rate?: number;
   unit: string;
   price_includes_vat?: boolean;
   image_url?: string;
@@ -192,7 +194,14 @@ export const SURVEY_STATUSES = [
 ];
 
 export function emptyItem(): WorkItem {
-  return { name: "", quantity: 1, unit_price: 0, vat_rate: 20, unit: "Adet", is_service: false, description: "" };
+  return { name: "", quantity: 1, unit_price: 0, vat_rate: 20, discount_rate: 0, unit: "Adet", is_service: false, description: "" };
+}
+
+/** computeLine ile aynı sınır: 0–100. Boş / sayı olmayan değer 0. */
+export function clampDiscountRate(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(100, Math.max(0, n));
 }
 
 export function namedItems(items: WorkItem[]): WorkItem[] {
@@ -449,39 +458,55 @@ export function workItemPriceFromGross(
   return Math.round((per / (1 + rate / 100)) * 10000) / 10000;
 }
 
+function workItemStoredVat(it: Pick<WorkItem, "vat_rate">): number {
+  const n = Number(it.vat_rate);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** KDV dahil rafta birim fiyat brüt duruyorsa (unit_price_incl yok) brüt say. */
+function workItemPriceIsGross(it: Pick<WorkItem, "price_includes_vat" | "unit_price_incl">): boolean {
+  return !!it.price_includes_vat && !(Number(it.unit_price_incl) > 0);
+}
+
+/** Teklif satırını fatura satırı hesabına çevirir. Yeni formül yok: computeLine. */
+export function workItemInvoiceLine(it: WorkItem): InvoiceLine {
+  const gross = workItemPriceIsGross(it);
+  const vat = workItemStoredVat(it);
+  const shared = {
+    name: it.name || "",
+    product_name: it.name || "",
+    quantity: Number(it.quantity) || 0,
+    unit: it.unit || "Adet",
+    vat_rate: vat,
+    discount_rate: it.discount_rate ?? 0,
+  };
+  if (gross) {
+    return computeLine(
+      { ...shared, unit_price: 0, unit_price_incl: Number(it.unit_price) || 0 },
+      "unit_price_incl",
+    );
+  }
+  return computeLine(
+    {
+      ...shared,
+      unit_price: Number(it.unit_price) || 0,
+      unit_price_incl: Number(it.unit_price_incl) || 0,
+    },
+    "unit_price",
+  );
+}
+
 export function workItemLineGross(it: WorkItem): number {
-  const qty = Number(it.quantity || 0);
-  const rate = Number(it.vat_rate || 0);
-  const price = Number(it.unit_price || 0);
-  const inclusive = !!it.price_includes_vat && !(Number(it.unit_price_incl) > 0);
-  if (inclusive) return Math.round(qty * price * 100) / 100;
-  return Math.round(qty * price * (1 + rate / 100) * 100) / 100;
+  return workItemInvoiceLine(it).total_incl;
 }
 
 export function workItemTotals(items: WorkItem[]) {
-  const rows = namedItems(items);
-  let subtotal = 0;
-  let vat = 0;
-  for (const it of rows) {
-    const qty = Number(it.quantity || 0);
-    const rate = Number(it.vat_rate || 0);
-    const price = Number(it.unit_price || 0);
-    const inclusive = !!it.price_includes_vat && !(Number(it.unit_price_incl) > 0);
-    if (inclusive) {
-      const incl = qty * price;
-      const excl = rate ? incl / (1 + rate / 100) : incl;
-      subtotal += excl;
-      vat += incl - excl;
-    } else {
-      const excl = qty * price;
-      subtotal += excl;
-      vat += excl * (rate / 100);
-    }
-  }
+  const totals = documentLineTotals(namedItems(items).map((it) => workItemInvoiceLine(it)));
   return {
-    subtotal: Math.round(subtotal * 100) / 100,
-    vat: Math.round(vat * 100) / 100,
-    grandTotal: Math.round((subtotal + vat) * 100) / 100,
+    subtotal: totals.subtotal,
+    vat: totals.vat,
+    grandTotal: totals.grandTotal,
+    lineDiscount: totals.lineDiscount,
   };
 }
 
@@ -525,7 +550,7 @@ export function quotePayload(companyId: string, form: { contact_id: string; cont
     valid_until: form.valid_until || null,
     notes: form.notes,
     project_id: form.project_id || undefined,
-    items: namedItems(items),
+    items: namedItems(items).map((it) => ({ ...it, discount_rate: clampDiscountRate(it.discount_rate) })),
   };
 }
 
@@ -669,6 +694,7 @@ export function workItemPersistFields(item: WorkItem): WorkItem {
     unit: item.unit || "Adet",
     unit_price: Number(item.unit_price) || 0,
     vat_rate: productVatRate({ vat_rate: item.vat_rate }),
+    discount_rate: clampDiscountRate(item.discount_rate),
     description: item.description || "",
     is_service,
     product_id: is_service ? "" : String(item.product_id || ""),

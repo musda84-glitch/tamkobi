@@ -11,6 +11,7 @@ import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { DateField } from "../components/DateField";
+import { DocLineCard } from "../components/DocLineCard";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
@@ -66,6 +67,7 @@ import {
   type ExpenseDraft,
 } from "../utils/finance";
 import {
+  clampDiscountRate,
   emptyItem,
   hydrateWorkItem,
   namedItems,
@@ -106,6 +108,7 @@ import {
   quoteLineProductPayload,
   attachProductToWorkItem,
   workItemImage,
+  workItemInvoiceLine,
   workItemLineGross,
   workItemNoteOpen,
   workItemTotals,
@@ -144,6 +147,7 @@ function quoteDraftSig(
       quantity: Number(it.quantity) || 0,
       unit_price: Number(it.unit_price) || 0,
       vat_rate: productVatRate({ vat_rate: it.vat_rate }),
+      discount_rate: clampDiscountRate(it.discount_rate),
       is_service: !!it.is_service,
       description: it.description || "",
       image_url: it.image_url || it.thumbnail_url || "",
@@ -302,7 +306,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setLinkedProjectId(q.project_id || "");
         const its = (q.items || []).filter((i) => i?.name);
         const nextItems = its.length
-          ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: productVatRate({ vat_rate: i.vat_rate }) }))
+          ? its.map((i) => ({
+              ...emptyItem(),
+              ...i,
+              quantity: Number(i.quantity) || 1,
+              unit_price: Number(i.unit_price) || 0,
+              vat_rate: productVatRate({ vat_rate: i.vat_rate }),
+              discount_rate: clampDiscountRate(i.discount_rate),
+            }))
           : [emptyItem()];
         setPhotos(workGalleryWithoutLinePhotos(q.images || [], nextItems));
         setItems(nextItems);
@@ -1177,8 +1188,19 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
               </View>
             );
             return (
+            <View key={i} style={kind === "quote" ? { gap: 8 } : undefined}>
+              {kind === "quote" ? (
+                <DocLineCard
+                  line={workItemInvoiceLine(pricedItems[i] || it)}
+                  currency="TRY"
+                  testIDPrefix="q-item"
+                  index={i}
+                  editable={canEdit}
+                  onPress={() => undefined}
+                  onDelete={() => removeItem(i)}
+                />
+              ) : null}
             <View
-              key={i}
               testID={`q-item-row-${i}`}
               style={{
                 ...itemStripe(i),
@@ -1188,7 +1210,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                 position: "relative",
               }}
             >
-              {canEdit ? (
+              {canEdit && kind !== "quote" ? (
                 <Pressable
                   onPress={() => removeItem(i)}
                   testID={`q-item-del-${i}`}
@@ -1362,27 +1384,29 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       </View>
                     </Row>
                       <Row style={{ alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                        <Pressable
-                          onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
-                          testID={`q-item-note-toggle-${i}`}
-                          accessibilityLabel={noteShown ? "Açıklamayı gizle" : "Açıklama ekle"}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                            minHeight: 32,
-                            paddingHorizontal: 10,
-                            borderRadius: 999,
-                            borderWidth: 1,
-                            borderColor: noteShown ? colors.indigo : colors.border,
-                            backgroundColor: noteShown ? colors.indigo50 : "#fff",
-                          }}
-                        >
-                          <Ionicons name={noteShown ? "chevron-up" : "add"} size={16} color={colors.indigo} />
-                          <Text style={{ fontWeight: "700", fontSize: 12, color: colors.indigo }}>
-                            {noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}
-                          </Text>
-                        </Pressable>
+                        {kind !== "quote" ? (
+                          <Pressable
+                            onPress={() => setNoteOpen((m) => ({ ...m, [i]: !noteShown }))}
+                            testID={`q-item-note-toggle-${i}`}
+                            accessibilityLabel={noteShown ? "Açıklamayı gizle" : "Açıklama ekle"}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 6,
+                              minHeight: 32,
+                              paddingHorizontal: 10,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: noteShown ? colors.indigo : colors.border,
+                              backgroundColor: noteShown ? colors.indigo50 : "#fff",
+                            }}
+                          >
+                            <Ionicons name={noteShown ? "chevron-up" : "add"} size={16} color={colors.indigo} />
+                            <Text style={{ fontWeight: "700", fontSize: 12, color: colors.indigo }}>
+                              {noteShown ? "Açıklamayı gizle" : (it.description || "").trim() ? "Açıklama" : "Açıklama ekle"}
+                            </Text>
+                          </Pressable>
+                        ) : null}
                         <Row style={{ flex: 1, flexWrap: "wrap", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
                           {VAT_OPTIONS.map((v) => (
                             <Chip
@@ -1396,7 +1420,22 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                           ))}
                         </Row>
                       </Row>
-                      {noteShown ? (
+                      {kind === "quote" ? (
+                        <MoneyInput
+                          dense
+                          label="İskonto %"
+                          testID={`q-item-disc-${i}`}
+                          suffix="%"
+                          allowNegative
+                          value={it.discount_rate || ""}
+                          editable={canEdit}
+                          onChange={(n) => {
+                            if (!canEdit) return;
+                            patchItem(i, "discount_rate", clampDiscountRate(n));
+                          }}
+                        />
+                      ) : null}
+                      {kind !== "quote" && noteShown ? (
                         <Field
                           dense
                           multiline
@@ -1411,6 +1450,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                       ) : null}
               </View>
             </View>
+            </View>
             );
           })}
           {canEdit ? (
@@ -1422,10 +1462,18 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             />
           ) : null}
           {namedItems(items).length ? (
-            <Row style={{ justifyContent: "space-between" }}>
-              <Text style={{ fontWeight: "800" }}>Toplam (KDV Dahil)</Text>
-              <Text style={{ fontWeight: "800", color: colors.primary }}>{fmtMoney(totals.grandTotal)}</Text>
-            </Row>
+            <>
+              {kind === "quote" && totals.lineDiscount > 0 ? (
+                <Row style={{ justifyContent: "space-between" }}>
+                  <Muted>Satır iskontoları</Muted>
+                  <Text testID="q-line-discount" style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.lineDiscount)}</Text>
+                </Row>
+              ) : null}
+              <Row style={{ justifyContent: "space-between" }}>
+                <Text style={{ fontWeight: "800" }}>Toplam (KDV Dahil)</Text>
+                <Text testID="q-grand-total" style={{ fontWeight: "800", color: colors.primary }}>{fmtMoney(totals.grandTotal)}</Text>
+              </Row>
+            </>
           ) : null}
         </Card>
       ) : null}
