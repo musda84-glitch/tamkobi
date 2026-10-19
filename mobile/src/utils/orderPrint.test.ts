@@ -179,6 +179,39 @@ describe("orderPrint", () => {
     }
   });
 
+  it("keeps relative product and logo urls on the media base and honors show_images", () => {
+    const doc = {
+      ...order,
+      items: [{ ...order.items[0], product_id: "p1", thumbnail_url: "/api/files/products/a.jpg" }],
+    };
+    const company = { name: "Matek", logo_url: "/api/files/brand/logo.png" };
+    const shown = orderFormHtml(doc, company, {
+      mediaBase: "https://tamkobi.com",
+      template: mergePrintTemplate({ show_images: true, show_logo: true }),
+    });
+    expect(shown).toContain("https://tamkobi.com/api/files/products/a.jpg");
+    expect(shown).toContain("https://tamkobi.com/api/files/brand/logo.png");
+    expect(shown).toContain("<img");
+    const bare = orderFormHtml({
+      ...order,
+      items: [{ ...order.items[0], thumbnail_url: "photo.jpg" }],
+    }, { name: "Matek" }, { mediaBase: "https://tamkobi.com/" });
+    expect(bare).toContain("https://tamkobi.com/api/files/photo.jpg");
+    const hidden = orderFormHtml(doc, company, {
+      mediaBase: "https://tamkobi.com",
+      template: mergePrintTemplate({ show_images: false, show_logo: true }),
+    });
+    expect(hidden).not.toContain("/api/files/products/a.jpg");
+    expect(hidden).toContain("https://tamkobi.com/api/files/brand/logo.png");
+    const omitted = orderFormHtml(doc, company, {
+      mediaBase: "https://tamkobi.com",
+      omitRemoteImages: true,
+      template: mergePrintTemplate({ show_images: true, show_logo: true }),
+    });
+    expect(omitted).not.toContain("<img");
+    expect(omitted).not.toContain("/api/files/");
+  });
+
   it("names pdf files after the order number", () => {
     expect(orderPdfFilename(order)).toBe("11573451170.pdf");
     expect(cargoLabelFilename(order)).toBe("kargo-11573451170.pdf");
