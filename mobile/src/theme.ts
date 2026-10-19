@@ -9,6 +9,7 @@ export const colors = {
   indigo: "#4F46E5",
   secondary: "#0F172A",
   ink: "#020617",
+  success: "#059669",
   warning: "#F59E0B",
   danger: "#E11D48",
   background: "#F8FAFC",
