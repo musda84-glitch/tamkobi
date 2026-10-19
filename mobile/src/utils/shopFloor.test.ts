@@ -1,6 +1,7 @@
 import {
   employeeHasSystemUser,
   employeeLabel,
+  filterByKpi,
   finishOverPlan,
   finishQtyError,
   groupWorkOrdersByStation,
@@ -11,11 +12,13 @@ import {
   operatorStationLock,
   operatorStationLockMessage,
   partitionWorkOrders,
+  pausedForLabel,
   readyCount,
   runningCount,
   shopFloorCardBorder,
   shopFloorOperators,
   shopFloorStationSections,
+  sortWorkOrdersByStatus,
   todayDoneCount,
   woCardKey,
   workOrderFinishPlan,
@@ -128,6 +131,52 @@ describe("finishQtyError", () => {
     expect(finishQtyError(2, 1, 2)).toBeNull();
     expect(finishOverPlan(2, 1, 2)).toBe(true);
     expect(finishOverPlan(1, 0, 2)).toBe(false);
+  });
+});
+
+describe("sortWorkOrdersByStatus", () => {
+  it("orders in_progress, paused, ready and keeps ties stable", () => {
+    const rows = [
+      wo({ id: "r1", status: "ready" }),
+      wo({ id: "p", status: "paused" }),
+      wo({ id: "ip", status: "in_progress" }),
+      wo({ id: "r2", status: "ready" }),
+    ];
+    expect(sortWorkOrdersByStatus(rows).map((w) => w.id)).toEqual(["ip", "p", "r1", "r2"]);
+    expect(rows.map((w) => w.id)).toEqual(["r1", "p", "ip", "r2"]);
+  });
+});
+
+describe("pausedForLabel", () => {
+  const now = new Date("2026-10-19T12:00:00Z");
+
+  it("formats minutes and hours", () => {
+    expect(pausedForLabel("2026-10-19T11:48:00Z", now)).toBe("12 dk");
+    expect(pausedForLabel(new Date(now.getTime() - 72 * 60000).toISOString(), now)).toBe("1 sa 12 dk");
+  });
+
+  it("returns empty for null or invalid", () => {
+    expect(pausedForLabel(null, now)).toBe("");
+    expect(pausedForLabel("", now)).toBe("");
+    expect(pausedForLabel("not-a-date", now)).toBe("");
+  });
+});
+
+describe("filterByKpi", () => {
+  const rows: WorkOrder[] = [
+    wo({ id: "r", status: "ready" }),
+    wo({ id: "ip", status: "in_progress" }),
+    wo({ id: "p", status: "paused" }),
+    wo({ id: "d1", status: "done", finished_at: "2026-10-19T10:00:00Z" }),
+    wo({ id: "d0", status: "done", finished_at: "2026-10-18T10:00:00Z" }),
+    wo({ id: "w", status: "waiting" }),
+  ];
+
+  it("filters active, ready and today's done", () => {
+    expect(filterByKpi(rows, "active").map((w) => w.id)).toEqual(["ip", "p"]);
+    expect(filterByKpi(rows, "ready").map((w) => w.id)).toEqual(["r"]);
+    expect(filterByKpi(rows, "done", "2026-10-19").map((w) => w.id)).toEqual(["d1"]);
+    expect(filterByKpi(rows, null).map((w) => w.id)).toEqual(["r", "ip", "p", "d1", "d0", "w"]);
   });
 });
 
