@@ -77,6 +77,8 @@ export type BankAccount = {
   month_out?: number | null;
   unmatched_count?: number | null;
   is_customer_card_pool?: boolean;
+  /** Yalnız bu hesapta görünen logo. Yoksa şirket bank_logos kullanılır. */
+  logo_url?: string | null;
 };
 
 export type BankTx = {

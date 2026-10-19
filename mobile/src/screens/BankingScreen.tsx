@@ -105,7 +105,7 @@ function bankingTabFromParam(raw?: string | string[] | null): BankingTab | null 
 }
 
 export function BankingScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, activeCompany } = useAuth();
   const params = useLocalSearchParams<{ tab?: string | string[]; account_id?: string | string[]; account?: string | string[]; tx?: string | string[] }>();
   const firstParam = (value?: string | string[]) => (Array.isArray(value) ? value[0] : value) || "";
   const focusAccountId = firstParam(params.account_id);
@@ -333,7 +333,7 @@ export function BankingScreen() {
                   {GROUP_SHORT[g.key] || g.label} · {g.items.length}
                 </Text>
                 {g.items.map((a) => {
-                  const brand = resolveBankBrand(a);
+                  const brand = resolveBankBrand(a, activeCompany, client.baseUrl);
                   const id = idOf(a);
                   const meta = [accountMaskedRef(a), a.is_integrated ? "entegre" : ""].filter(Boolean).join(" · ");
                   const badge = integrationBadge(a);
