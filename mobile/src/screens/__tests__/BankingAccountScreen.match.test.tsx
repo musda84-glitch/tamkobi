@@ -11,6 +11,7 @@ const { createRoot } = require("react-dom/client") as {
 
 let allowBank = true;
 let allowExp = true;
+const routeParams: { id: string; name?: string } = { id: "acc-1" };
 
 const mockAuth = {
   client: { baseUrl: "https://api.test", token: "tok" },
@@ -31,7 +32,7 @@ jest.mock("expo-router", () => {
         return typeof cleanup === "function" ? cleanup : undefined;
       }, [effect]);
     },
-    useLocalSearchParams: () => ({ id: "acc-1" }),
+    useLocalSearchParams: () => routeParams,
     router: { push: jest.fn(), back: jest.fn(), navigate: jest.fn(), replace: jest.fn() },
   };
 });
@@ -173,6 +174,17 @@ function postsTo(part: string) {
   return (post as unknown as jest.Mock).mock.calls.filter((call) => String(call[1] || "").includes(part));
 }
 
+function getsTo(part: string) {
+  return (get as unknown as jest.Mock).mock.calls.filter((call) => String(call[1] || "").includes(part));
+}
+
+function countTestId(node: unknown, id: string): number {
+  if (!node || typeof node !== "object") return 0;
+  const el = node as { getAttribute?: (name: string) => string | null; childNodes?: unknown[] };
+  const own = el.getAttribute?.("data-testid") === id ? 1 : 0;
+  return own + (el.childNodes || []).reduce<number>((sum, child) => sum + countTestId(child, id), 0);
+}
+
 afterAll(() => {
   const g = globalThis as { document?: unknown; window?: unknown; IS_REACT_ACT_ENVIRONMENT?: unknown; __miniDom?: unknown };
   delete g.document;
@@ -189,14 +201,19 @@ describe("BankingAccountScreen match actions", () => {
   beforeEach(() => {
     allowBank = true;
     allowExp = true;
+    routeParams.id = "acc-1";
+    routeParams.name = "";
     account = integratedAccount();
     txs = movementRows();
+    jest.useRealTimers();
     (get as unknown as jest.Mock).mockReset();
     (post as unknown as jest.Mock).mockReset();
     (Alert.alert as jest.Mock).mockReset();
     (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
       if (path === "/banking/accounts") return [account];
-      if (path === "/banking/transactions") return txs;
+      if (path.startsWith("/banking/accounts/") && path.endsWith("/transactions")) {
+        return { items: txs, total: txs.length, has_more: false };
+      }
       return [];
     });
     (post as unknown as jest.Mock).mockResolvedValue({});
@@ -206,6 +223,8 @@ describe("BankingAccountScreen match actions", () => {
   });
 
   afterEach(async () => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
     await act(async () => { root.unmount(); });
     container.parentNode?.removeChild(container);
   });
@@ -336,5 +355,193 @@ describe("BankingAccountScreen match actions", () => {
     expect(textOf(findByTestId(container, "bank-month-in"))).toBe("—");
     expect(textOf(findByTestId(container, "bank-month-out"))).toBe("—");
     expect(textOf(findByTestId(container, "bank-last-sync"))).toContain("—");
+    expect(findByTestId(container, "bank-tx-more")).toBeNull();
+  });
+
+  it("shows the route name while the account request is pending and never the missing-account error", async () => {
+    jest.useFakeTimers();
+    routeParams.name = "Kuveyt Vadesiz";
+    (get as unknown as jest.Mock).mockImplementation(() => new Promise(() => undefined));
+    await show();
+    const text = textOf(container);
+    expect(text).toContain("Yükleniyor…");
+    expect(text).toContain("Kuveyt Vadesiz");
+    expect(text).not.toContain("Hesap bulunamadı.");
+  });
+
+  it("shows account-not-found only after the account list succeeds without this id", async () => {
+    let releaseTx: (value: unknown) => void = () => undefined;
+    (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
+      if (path === "/banking/accounts") return [{ id: "other", account_name: "Başka hesap", current_balance: 9 }];
+      return new Promise((resolve) => { releaseTx = resolve; });
+    });
+    try {
+      await show();
+      expect(textOf(container)).toContain("Hesap bulunamadı.");
+      expect(textOf(container)).not.toContain("Başka hesap");
+      expect(textOf(container)).not.toContain("Yükleniyor…");
+    } finally {
+      releaseTx({ items: [], total: 0, has_more: false });
+      await flush();
+    }
+    expect(textOf(container)).toContain("Hesap bulunamadı.");
+  });
+
+  it("shows a retry when the account list is rejected and requests it again", async () => {
+    (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
+      if (path === "/banking/accounts") throw {};
+      return { items: [], total: 0, has_more: false };
+    });
+    await show();
+    expect(textOf(container)).toContain("Hesap yüklenemedi");
+    expect(textOf(container)).not.toContain("Hesap bulunamadı.");
+    expect(findByTestId(container, "bank-detail-retry")).toBeTruthy();
+    const before = getsTo("/banking/accounts").length;
+    await pressId(container, "bank-detail-retry");
+    await flush();
+    expect(getsTo("/banking/accounts").length).toBeGreaterThan(before);
+  });
+
+  it("turns a 20s account stall into an error with retry", async () => {
+    jest.useFakeTimers();
+    routeParams.name = "Kuveyt Vadesiz";
+    (get as unknown as jest.Mock).mockImplementation(() => new Promise(() => undefined));
+    await act(async () => { root.render(React.createElement(BankingAccountScreen)); });
+    await act(async () => { await Promise.resolve(); });
+    expect(textOf(container)).toContain("Yükleniyor…");
+    expect(textOf(container)).not.toContain("Hesap yüklenemedi");
+    await act(async () => { jest.advanceTimersByTime(19_000); });
+    expect(textOf(container)).not.toContain("Hesap yüklenemedi");
+    await act(async () => { jest.advanceTimersByTime(1_000); });
+    await flush();
+    expect(textOf(container)).toContain("Hesap yüklenemedi");
+    expect(textOf(container)).not.toContain("Hesap bulunamadı.");
+    expect(findByTestId(container, "bank-detail-retry")).toBeTruthy();
+    const before = getsTo("/banking/accounts").length;
+    await pressId(container, "bank-detail-retry");
+    expect(getsTo("/banking/accounts").length).toBeGreaterThan(before);
+  });
+
+  it("draws the account header and menu while movements are still loading", async () => {
+    jest.useFakeTimers();
+    let releaseTx: (value: unknown) => void = () => undefined;
+    (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
+      if (path === "/banking/accounts") return [account];
+      return new Promise((resolve) => { releaseTx = resolve; });
+    });
+    try {
+      await show();
+      const text = textOf(container);
+      expect(text).toContain("Vadesiz TL");
+      expect(text).toContain("Bakiye");
+      expect(text).toContain("Yükleniyor…");
+      expect(text).not.toContain("Hesap bulunamadı.");
+      expect(findByTestId(container, "bank-account-more")).toBeTruthy();
+    } finally {
+      releaseTx({ items: txs, total: txs.length, has_more: false });
+      await flush();
+    }
+  });
+
+  it("keeps the account header when movements fail and retries that request", async () => {
+    (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
+      if (path === "/banking/accounts") return [account];
+      if (String(path).endsWith("/transactions")) throw {};
+      return [];
+    });
+    await show();
+    const text = textOf(container);
+    expect(text).toContain("Vadesiz TL");
+    expect(text).toContain("Bakiye");
+    expect(text).toContain("Hareketler yüklenemedi");
+    expect(text).not.toContain("Hesap bulunamadı.");
+    expect(findByTestId(container, "bank-tx-retry")).toBeTruthy();
+    const before = getsTo("/transactions").length;
+    await pressId(container, "bank-tx-retry");
+    await flush();
+    expect(getsTo("/transactions").length).toBeGreaterThan(before);
+  });
+
+  it("requests the first movement page with an encoded account id", async () => {
+    routeParams.id = "acc/1 2";
+    account = integratedAccount({ id: "acc/1 2" });
+    await show();
+    const calls = getsTo("/transactions");
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0][1]).toBe("/banking/accounts/acc%2F1%202/transactions");
+    expect(calls[0][2]).toEqual({ page_size: 50, page: 1 });
+  });
+
+  it("sends chip filters to the server and reloads from page 1", async () => {
+    const inflow = { id: "tx-in", source: "manual", type: "inflow", amount: 4, description: "Giren havale", date: "2026-10-02" };
+    const outflow = { id: "tx-out", source: "manual", type: "outflow", amount: 6, description: "Çıkan havale", date: "2026-10-01" };
+    const unmatched = { id: "tx-open", source: "bank_sync", match_status: "unmatched", type: "inflow", amount: 8, description: "Eşleşmemiş havale", date: "2026-09-30" };
+    (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string, query?: { type?: string; matched?: string }) => {
+      if (path === "/banking/accounts") return [account];
+      if (!String(path).endsWith("/transactions")) return [];
+      if (query?.type === "inflow") return { items: [inflow], total: 1, has_more: false };
+      if (query?.type === "outflow") return { items: [outflow], total: 1, has_more: false };
+      if (query?.matched === "no") return { items: [unmatched], total: 1, has_more: false };
+      return { items: [inflow, outflow], total: 2, has_more: false };
+    });
+    await show();
+    expect(textOf(container)).toContain("Giren havale");
+    expect(textOf(container)).toContain("Çıkan havale");
+
+    await pressId(container, "bank-filter-in");
+    await flush();
+    const inflowCall = getsTo("/transactions").at(-1);
+    expect(inflowCall?.[2]).toEqual({ page_size: 50, page: 1, type: "inflow" });
+    expect(textOf(container)).toContain("Giren havale");
+    expect(textOf(container)).not.toContain("Çıkan havale");
+
+    await pressId(container, "bank-filter-out");
+    await flush();
+    expect(getsTo("/transactions").at(-1)?.[2]).toEqual({ page_size: 50, page: 1, type: "outflow" });
+    expect(textOf(container)).toContain("Çıkan havale");
+    expect(textOf(container)).not.toContain("Giren havale");
+
+    await pressId(container, "bank-filter-unmatched");
+    await flush();
+    expect(getsTo("/transactions").at(-1)?.[2]).toEqual({ page_size: 50, page: 1, matched: "no" });
+    expect(textOf(container)).toContain("Eşleşmemiş havale");
+
+    await pressId(container, "bank-filter-all");
+    await flush();
+    expect(getsTo("/transactions").at(-1)?.[2]).toEqual({ page_size: 50, page: 1 });
+  });
+
+  it("appends the next page once per id and hides the button when nothing remains", async () => {
+    const page1 = [
+      { id: "tx-a", source: "manual", type: "inflow", amount: 1, description: "Birinci", date: "2026-10-02" },
+      { id: "tx-b", source: "manual", type: "outflow", amount: 2, description: "Ikinci", date: "2026-10-01" },
+    ];
+    const page2 = [
+      { id: "tx-b", source: "manual", type: "outflow", amount: 2, description: "Ikinci kopya", date: "2026-10-01" },
+      { id: "tx-c", source: "manual", type: "inflow", amount: 3, description: "Ucuncu", date: "2026-09-30" },
+    ];
+    (get as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string, query?: { page?: number }) => {
+      if (path === "/banking/accounts") return [account];
+      if (!String(path).endsWith("/transactions")) return [];
+      if (query?.page === 2) return { items: page2, total: 3, has_more: false, page: 2 };
+      return { items: page1, total: 3, has_more: true, page: 1 };
+    });
+    await show();
+    expect(textOf(container)).toContain("3 hareket");
+    expect(findByTestId(container, "bank-tx-more")).toBeTruthy();
+    expect(textOf(findByTestId(container, "bank-tx-more"))).toContain("Daha fazla");
+    expect(countTestId(container, "bank-tx-row-tx-b")).toBe(1);
+    await pressId(container, "bank-tx-more");
+    await flush();
+    const next = getsTo("/transactions").find((call) => call[2]?.page === 2);
+    expect(next?.[1]).toBe("/banking/accounts/acc-1/transactions");
+    expect(next?.[2]).toEqual({ page_size: 50, page: 2 });
+    expect(textOf(container)).toContain("Ucuncu");
+    expect(textOf(container)).toContain("Ikinci");
+    expect(textOf(container)).not.toContain("Ikinci kopya");
+    expect(countTestId(container, "bank-tx-row-tx-a")).toBe(1);
+    expect(countTestId(container, "bank-tx-row-tx-b")).toBe(1);
+    expect(countTestId(container, "bank-tx-row-tx-c")).toBe(1);
+    expect(findByTestId(container, "bank-tx-more")).toBeNull();
   });
 });
