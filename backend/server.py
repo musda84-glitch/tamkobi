@@ -24468,7 +24468,7 @@ async def generate_payroll(req: Dict[str, Any], user: Any = Depends(get_current_
     employee_id = req.get("employee_id")
     q = {"company_id": company_id, "status": "active"}
     if employee_id:
-        q = {"_id": employee_id}
+        q = {"_id": employee_id, "company_id": company_id}
     employees = await db.employees.find(q).to_list(100)
     company = await db.companies.find_one({"_id": company_id}) or {}
 
