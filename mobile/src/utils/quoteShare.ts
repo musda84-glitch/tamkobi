@@ -5,6 +5,7 @@ import { normalizeApiBase } from "../api/url";
 import { htmlToPdfFile, paperPrintSize, printHtmlNative, sharePdfFile } from "./nativePrint";
 import { openPrintHtml, printPageSize, type PrintCompany } from "./orderPrint";
 import {
+  embedPrintImages,
   enrichPrintCompany,
   loadContactBalance,
   loadPrintProducts,
@@ -24,12 +25,25 @@ async function quotePrintParts(quote: QuoteDoc, company?: PrintCompany | null, c
   const products = await loadPrintProducts(client, quote, printCompany);
   const contactBalance = await loadContactBalance(client, printCompany, quote);
   const paper = printPageSize(template.paper);
-  const body = quoteFormHtml(quote, printCompany, {
+  const mediaBase = client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined;
+  let body = quoteFormHtml(quote, printCompany, {
     template,
     products,
-    mediaBase: client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined,
+    mediaBase,
     contactBalance,
   });
+  if (Platform.OS !== "web") {
+    try {
+      body = await embedPrintImages(body, mediaBase, client?.token);
+    } catch {
+      body = quoteFormHtml(quote, printCompany, {
+        template: { ...template, show_images: false },
+        products: {},
+        contactBalance,
+        omitRemoteImages: true,
+      });
+    }
+  }
   const title = `Teklif ${quote.quote_number || ""}`.trim();
   return { printCompany, body, title, paper, html: quotePrintDocument(title, body, paper) };
 }

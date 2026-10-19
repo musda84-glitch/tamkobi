@@ -30,6 +30,7 @@ import {
   type PrintProduct,
   type PrintTemplate,
 } from "./orderPrint";
+import { absolutizeLabelUrl } from "./labelMedia";
 import { shouldUseIntegratorPdf } from "./printIntegratorPdf";
 
 export type CargoLabelMeta = {
@@ -142,6 +143,203 @@ export async function loadPrintProducts(
   }
 }
 
+const PRINT_IMAGE_LIMIT = 40;
+const PRINT_IMAGE_TIMEOUT_MS = 4000;
+
+export type EmbedPrintImagesOpts = {
+  timeoutMs?: number;
+  limit?: number;
+};
+
+const IMG_TAG = /<img\b[^>]*?\bsrc=(["'])([^"']+)\1[^>]*>/gi;
+
+function imgTagPattern(): RegExp {
+  return new RegExp(IMG_TAG.source, "gi");
+}
+
+function decodeHtmlAttr(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+/** /api/files önizlemesi. Sorgu varsa dokunulmaz. */
+function withPrintFilePreview(abs: string): string {
+  if (!/^https?:\/\//i.test(abs)) return abs;
+  try {
+    const u = new URL(abs);
+    if (!u.pathname.includes("/api/files/")) return abs;
+    if ([...u.searchParams.keys()].length > 0) return abs;
+    u.searchParams.set("w", "128");
+    u.searchParams.set("fmt", "jpg");
+    return u.toString();
+  } catch {
+    return abs;
+  }
+}
+
+function preparePrintImageUrl(raw: string, mediaBase?: string | null): string {
+  const decoded = decodeHtmlAttr(String(raw || "").trim());
+  const abs = absolutizeLabelUrl(decoded, mediaBase);
+  if (!abs) return "";
+  if (/^data:/i.test(abs)) return abs;
+  return withPrintFilePreview(abs);
+}
+
+function printImageRequest(
+  absUrl: string,
+  mediaBase?: string | null,
+  token?: string | null,
+  signal?: AbortSignal,
+): { url: string; init: RequestInit } {
+  const headers: Record<string, string> = { Accept: "image/jpeg,image/png,image/webp,image/*,*/*" };
+  let url = absUrl;
+  if (mediaBase && /^https?:\/\//i.test(absUrl)) {
+    try {
+      const parsed = new URL(absUrl);
+      const origin = new URL(normalizeApiBase(mediaBase));
+      if (parsed.host === origin.host && parsed.pathname.startsWith("/api/")) {
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const path = `${parsed.pathname.slice(4)}${parsed.search}`;
+        const target = requestTarget(mediaBase, path);
+        url = target.url;
+        if (target.proxiedBase) headers[API_BASE_HEADER] = target.proxiedBase;
+      }
+    } catch {
+      /* keep absolute url */
+    }
+  }
+  return { url, init: { headers, signal } };
+}
+
+function sniffImageMime(bytes: Uint8Array): string {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) return "image/webp";
+  return "";
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const Buf = (globalThis as { Buffer?: { from: (b: Uint8Array) => { toString: (enc: string) => string } } }).Buffer;
+  if (Buf) return Buf.from(bytes).toString("base64");
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function imageMime(type: string, bytes: Uint8Array): string | null {
+  const t = type.split(";")[0].trim().toLowerCase();
+  if (t === "image/jpg") return "image/jpeg";
+  if (t.startsWith("image/")) return t;
+  const sniffed = sniffImageMime(bytes);
+  if (sniffed) return sniffed;
+  if (!t || t === "application/octet-stream") return "image/jpeg";
+  return null;
+}
+
+async function blobToDataUrl(blob: Blob, headerType = ""): Promise<string | null> {
+  if (blob.size === 0) return null;
+  if (typeof FileReader !== "undefined") {
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === "string") resolve(reader.result);
+          else reject(new Error("data"));
+        };
+        reader.onerror = () => reject(reader.error || new Error("read"));
+        reader.readAsDataURL(blob);
+      });
+      if (data.startsWith("data:image/")) return data;
+    } catch {
+      /* arrayBuffer */
+    }
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (!bytes.byteLength) return null;
+  const mime = imageMime(blob.type || headerType, bytes);
+  if (!mime) return null;
+  return `data:${mime};base64,${bytesToBase64(bytes)}`;
+}
+
+async function fetchPrintImageDataUrl(
+  absUrl: string,
+  mediaBase: string | null | undefined,
+  token: string | null | undefined,
+  timeoutMs: number,
+): Promise<string | null> {
+  if (!/^https?:\/\//i.test(absUrl)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const { url, init } = printImageRequest(absUrl, mediaBase, token, ctrl.signal);
+    const res = await fetch(url, init);
+    if (!res.ok) return null;
+    const headerType = res.headers?.get?.("content-type") || "";
+    const blob = typeof res.blob === "function"
+      ? await res.blob()
+      : new Blob([new Uint8Array(await res.arrayBuffer())], { type: headerType });
+    return await blobToDataUrl(blob, headerType);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Native HTML'de uzak görsel bırakmaz. Tekil src'ler data URL olur;
+ * çevrilemeyen veya süre aşan <img> etiketi çıkarılır (hücre kalır).
+ * En fazla `limit` görsel istenir; her biri `timeoutMs` ile kesilir.
+ */
+export async function embedPrintImages(
+  html: string,
+  mediaBase?: string | null,
+  token?: string | null,
+  opts?: EmbedPrintImagesOpts,
+): Promise<string> {
+  const src = String(html || "");
+  if (!src.includes("<img")) return src;
+  const matches = [...src.matchAll(imgTagPattern())];
+  if (!matches.length) return src;
+  const limit = Math.max(0, opts?.limit ?? PRINT_IMAGE_LIMIT);
+  const timeoutMs = Math.max(0, opts?.timeoutMs ?? PRINT_IMAGE_TIMEOUT_MS);
+  const mapped = new Map<string, string | null>();
+  const pending: { raw: string; prepared: string }[] = [];
+  const seen = new Set<string>();
+  for (const match of matches) {
+    const raw = match[2];
+    if (!raw || seen.has(raw)) continue;
+    seen.add(raw);
+    const prepared = preparePrintImageUrl(raw, mediaBase);
+    if (/^data:image\//i.test(prepared)) {
+      mapped.set(raw, prepared);
+      continue;
+    }
+    pending.push({ raw, prepared });
+  }
+  await Promise.all(pending.slice(0, limit).map(async (job) => {
+    mapped.set(job.raw, await fetchPrintImageDataUrl(job.prepared, mediaBase, token, timeoutMs));
+  }));
+  const out = src.replace(imgTagPattern(), (full, _quote, url: string) => {
+    const data = mapped.get(url);
+    if (data && data.startsWith("data:image/")) {
+      const at = full.indexOf(url);
+      if (at < 0) return "";
+      return full.slice(0, at) + data + full.slice(at + url.length);
+    }
+    return "";
+  });
+  return out.replace(imgTagPattern(), (full, _quote, url: string) => (/^https?:/i.test(url) ? "" : full));
+}
+
 async function printHtmlDocument(
   title: string,
   bodyHtml: string,
@@ -152,8 +350,8 @@ async function printHtmlDocument(
   const document = printDocumentHtml(title, bodyHtml, page, paper);
   const size = page === "thermal" ? THERMAL_LABEL_PX : paperPrintSize(paper);
   if (Platform.OS === "web" && openPrintHtml(title, bodyHtml, { page, paper })) return true;
-  // A4 forms: prefer PDF share on native (Print.printAsync + remote imgs often hangs on Android).
-  // Thermal labels: keep printer dialog first (small HTML, no remote images).
+  // A4: PDF paylaşımı önce. Native HTML'de görseller data URL; uzak <img> printAsync'i bekletmesin.
+  // Thermal etiket: yazıcı diyaloğu önce (küçük HTML).
   const preferPdf = Platform.OS !== "web" && page === "a4";
   if (preferPdf) {
     try {
@@ -175,6 +373,24 @@ async function printHtmlDocument(
   return false;
 }
 
+function imagelessBusinessHtml(
+  doc: Order,
+  printCompany: PrintCompany | null,
+  template: PrintTemplate,
+  docType: PrintDocType,
+  contactBalance: number | null,
+  paymentPlan?: PrintPaymentRow[] | null,
+): string {
+  return orderFormHtml(doc, printCompany, {
+    template: { ...template, show_images: false },
+    products: {},
+    docType,
+    contactBalance,
+    paymentPlan,
+    omitRemoteImages: true,
+  });
+}
+
 export async function printBusinessForm(
   doc: Order,
   company?: PrintCompany | null,
@@ -184,21 +400,40 @@ export async function printBusinessForm(
 ): Promise<boolean> {
   const printCompany = await enrichPrintCompany(client, company);
   const template = await loadPrintTemplate(client, printCompany, docType);
-  const omitRemoteImages = Platform.OS !== "web";
-  const products = omitRemoteImages ? {} : await loadPrintProducts(client, doc, printCompany);
   const contactBalance = isOrderQuoteType(docType)
     ? await loadContactBalance(client, printCompany, doc)
     : null;
   const paper = printPageSize(template.paper);
-  const html = orderFormHtml(doc, printCompany, {
-    template: { ...template, show_images: omitRemoteImages ? false : template.show_images },
-    products,
-    mediaBase: omitRemoteImages ? undefined : (client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined),
-    docType,
-    contactBalance,
-    paymentPlan: extras?.paymentPlan,
-    omitRemoteImages,
-  });
+  const mediaBase = client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined;
+  const paymentPlan = extras?.paymentPlan;
+  let html: string;
+  if (Platform.OS === "web") {
+    const products = await loadPrintProducts(client, doc, printCompany);
+    html = orderFormHtml(doc, printCompany, {
+      template,
+      products,
+      mediaBase,
+      docType,
+      contactBalance,
+      paymentPlan,
+    });
+  } else {
+    try {
+      const products = await loadPrintProducts(client, doc, printCompany);
+      const raw = orderFormHtml(doc, printCompany, {
+        template,
+        products,
+        mediaBase,
+        docType,
+        contactBalance,
+        paymentPlan,
+        omitRemoteImages: false,
+      });
+      html = await embedPrintImages(raw, mediaBase, client?.token);
+    } catch {
+      html = imagelessBusinessHtml(doc, printCompany, template, docType, contactBalance, paymentPlan);
+    }
+  }
   const label = formTitle(docType, doc);
   const filename = `${safePrintFilename(printDocFileBase(docType, doc), docType)}.pdf`;
   if (await printHtmlDocument(label, html, "a4", filename, paper)) return true;
