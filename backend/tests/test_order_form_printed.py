@@ -1,4 +1,5 @@
 """mark-form-printed endpoint sets form_printed_at on orders."""
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
 
@@ -7,17 +8,18 @@ def test_mark_form_printed_sets_timestamp():
     import server
 
     db = MagicMock()
-    db.orders.update_many = AsyncMock()
+    db.orders.update_many = AsyncMock(return_value=SimpleNamespace(matched_count=2, modified_count=2))
+    user = {"company_ids": ["co_a"], "active_company_id": "co_a"}
 
     async def run():
         with patch.object(server, "db", db):
-            out = await server.mark_form_printed({"ids": ["ord_a", "ord_b"]})
+            out = await server.mark_form_printed({"ids": ["ord_a", "ord_b"]}, user)
             assert out["status"] == "success"
             assert out["count"] == 2
             assert out.get("form_printed_at")
             db.orders.update_many.assert_awaited()
             args = db.orders.update_many.await_args[0]
-            assert args[0] == {"_id": {"$in": ["ord_a", "ord_b"]}}
+            assert args[0] == {"_id": {"$in": ["ord_a", "ord_b"]}, "company_id": "co_a"}
             assert "form_printed_at" in args[1]["$set"]
 
     asyncio.run(run())

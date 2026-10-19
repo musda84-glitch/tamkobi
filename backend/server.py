@@ -8091,7 +8091,7 @@ BULK_FLAGS_CHUNK = 200
 
 
 @api_router.post("/products/bulk-flags")
-async def bulk_product_flags(req: Dict[str, Any]):
+async def bulk_product_flags(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Toplu B2B / stok takibi bayrağı güncellemesi (parça parça, büyük seçimler için)."""
     ids = [str(i) for i in (req.get("ids") or []) if i]
     if not ids:
@@ -8105,15 +8105,13 @@ async def bulk_product_flags(req: Dict[str, Any]):
         patch["track_stock"] = bool(req.get("track_stock"))
     if not patch:
         raise HTTPException(status_code=400, detail="Güncellenecek alan yok (show_in_b2b / track_stock).")
-    company_id = req.get("company_id")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     stamp = datetime.now(timezone.utc).isoformat()
     patch = {**patch, "updated_at": stamp}
     matched = 0
     modified = 0
     for part in chunk_list(ids, BULK_FLAGS_CHUNK):
-        q: Dict[str, Any] = {"_id": {"$in": part}}
-        if company_id:
-            q["company_id"] = company_id
+        q: Dict[str, Any] = {"_id": {"$in": part}, "company_id": company_id}
         result = await db.products.update_many(q, {"$set": patch})
         matched += int(getattr(result, "matched_count", 0) or 0)
         modified += int(getattr(result, "modified_count", 0) or 0)
@@ -19803,22 +19801,30 @@ async def bulk_delete_orders(req: Dict[str, Any], user: dict = Depends(get_curre
     return {"status": "success", "deleted": deleted, "message": f"{deleted} sipariş silindi."}
 
 @api_router.post("/orders/mark-labels-printed")
-async def mark_labels_printed(req: Dict[str, Any]):
+async def mark_labels_printed(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     ids = req.get("ids") or []
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     now = datetime.now(timezone.utc).isoformat()
-    await db.orders.update_many({"_id": {"$in": ids}}, {"$set": {"label_printed_at": now}})
-    return {"status": "success", "count": len(ids)}
+    result = await db.orders.update_many(
+        {"_id": {"$in": ids}, "company_id": company_id},
+        {"$set": {"label_printed_at": now}},
+    )
+    return {"status": "success", "count": int(getattr(result, "matched_count", 0) or 0)}
 
 
 @api_router.post("/orders/mark-form-printed")
-async def mark_form_printed(req: Dict[str, Any]):
+async def mark_form_printed(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Sipariş formu yazdırıldığında form_printed_at işaretlenir (UI yeşil/mor 'yazdırıldı')."""
     ids = [i for i in (req.get("ids") or []) if i]
     if not ids:
         raise HTTPException(status_code=400, detail="Sipariş seçilmedi.")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     now = datetime.now(timezone.utc).isoformat()
-    await db.orders.update_many({"_id": {"$in": ids}}, {"$set": {"form_printed_at": now}})
-    return {"status": "success", "count": len(ids), "form_printed_at": now}
+    result = await db.orders.update_many(
+        {"_id": {"$in": ids}, "company_id": company_id},
+        {"$set": {"form_printed_at": now}},
+    )
+    return {"status": "success", "count": int(getattr(result, "matched_count", 0) or 0), "form_printed_at": now}
 
 
 async def _resolve_order_cargo_label(order_id: str):
