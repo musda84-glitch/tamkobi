@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
@@ -8,10 +7,9 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { operatorStationLock, operatorStationLockMessage, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
+import { operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
-import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { formatTrQty } from "../utils/money";
 import { QuantityInput } from "../components/MoneyInput";
 import { useLivePoll } from "../hooks/useLivePoll";
@@ -21,6 +19,26 @@ import NoCompanyNotice from "../components/NoCompanyNotice";
 const woId = (w) => String(w?.id || w?._id || "");
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
+
+function WoStepBar({ w }) {
+  const count = Number(w?.step_count);
+  const parts = Number.isFinite(count) && count > 1 ? count : 1;
+  const current = Number(w?.step_no);
+  return (
+    <div className="flex gap-1" data-testid={`wo-stepbar-${w.order_code}-${w.step_no}`}>
+      {Array.from({ length: parts }, (_, i) => {
+        const n = i + 1;
+        const here = parts > 1 && n === current;
+        return (
+          <span
+            key={n}
+            className={`flex-1 rounded-full ${parts === 1 ? "h-1 bg-slate-200" : here ? "h-1.5 bg-slate-800" : "h-1.5 bg-slate-200"}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 export default function ShopFloorPage() {
   const { activeCompany } = useAuth();
@@ -42,8 +60,6 @@ export default function ShopFloorPage() {
   const [finishing, setFinishing] = useState(null);
   const [fin, setFin] = useState({ produced_qty: 0, scrap_qty: 0, notes: "" });
   const [trashBusy, setTrashBusy] = useState(false);
-  const [perf, setPerf] = useState(null);
-  const [showPerf, setShowPerf] = useState(false);
   const [duties, setDuties] = useState([]);
   const [dutyBusyId, setDutyBusyId] = useState(null);
   const [trashTarget, setTrashTarget] = useState(null);
@@ -51,11 +67,9 @@ export default function ShopFloorPage() {
   const [trashReqErr, setTrashReqErr] = useState("");
   const [pausePolicy, setPausePolicy] = useState({ allowed: true, phase: "mesai", reason: null, deadline: null });
   const [loadError, setLoadError] = useState("");
-  const loadPerf = useCallback(() => {
-    if (!companyId) return Promise.resolve();
-    return axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {});
-  }, [companyId]);
-  useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [detailOpen, setDetailOpen] = useState({});
+  const [now, setNow] = useState(() => new Date());
 
   const loadPausePolicy = useCallback(async (opName) => {
     if (!opName) {
@@ -126,6 +140,10 @@ export default function ShopFloorPage() {
       })
       .catch(() => {});
   }, [companyId]);
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(t);
+  }, []);
 
   const requestOperator = (name) => {
     if (!name) { setOperator(""); setPendingEmp(null); setPin(""); setUnlockErr(""); return; }
@@ -188,6 +206,16 @@ export default function ShopFloorPage() {
   const active = wos.filter((w) => w.status !== "done" && w.status !== "waiting");
   const waiting = wos.filter((w) => w.status === "waiting");
   const done = wos.filter((w) => w.status === "done");
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const doneToday = done.filter((w) => (w.finished_at || "").startsWith(todayKey));
+  const readyCount = wos.filter((w) => w.status === "ready").length;
+  const activeCount = wos.filter((w) => w.status === "in_progress" || w.status === "paused").length;
+  const passesFilter = (w) => {
+    if (statusFilter === "ready") return w.status === "ready";
+    if (statusFilter === "active") return w.status === "in_progress" || w.status === "paused";
+    if (statusFilter === "done") return false;
+    return true;
+  };
   const trashCompleted = async () => {
     if (!done.length || trashBusy) return;
     if (!window.confirm(`${done.length} tamamlanan iş emri çöp kutusuna taşınsın mı? 30 gün içinde Geri Dönüşüm’den geri getirilebilir.`)) return;
@@ -199,7 +227,6 @@ export default function ShopFloorPage() {
       });
       toast.success(r.data?.message || "Tamamlananlar çöpe taşındı.");
       load();
-      loadPerf();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Çöpe taşınamadı.");
     } finally {
@@ -208,7 +235,14 @@ export default function ShopFloorPage() {
   };
   const mine = active.filter((w) => w.operator_name === operator || w.assigned_name === operator);
   const openDuties = openAssignedDuties(duties);
-  const arrangeWos = (list) => (groupSameStation ? groupWorkOrdersByStation(list) : list);
+  const arrangeWos = (list) => {
+    const rows = Array.isArray(list) ? list : [];
+    if (!groupSameStation) return sortWorkOrdersByStatus(rows);
+    return shopFloorStationSections(groupWorkOrdersByStation(rows))
+      .flatMap((sec) => sortWorkOrdersByStatus(sec.items));
+  };
+  const mineShown = mine.filter(passesFilter);
+  const activeRest = active.filter((w) => !mine.includes(w) && passesFilter(w));
 
   const toggleGroupSameStation = async (on) => {
     setGroupSameStation(on);
@@ -230,24 +264,25 @@ export default function ShopFloorPage() {
 
   const renderWoGrid = (list, extraClass = "") => {
     if (!list.length) return null;
+    const arranged = arrangeWos(list);
     if (!groupSameStation) {
       return (
-        <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 ${extraClass}`}>
-          {list.map((w) => <Card key={w.id} w={w} />)}
+        <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch ${extraClass}`}>
+          {arranged.map((w) => <Card key={w.id} w={w} />)}
         </div>
       );
     }
     return (
       <div className={`space-y-4 ${extraClass}`} data-testid="shopfloor-station-groups">
         {!companyId && <NoCompanyNotice />}
-        {shopFloorStationSections(arrangeWos(list)).map((sec) => (
+        {shopFloorStationSections(arranged).map((sec) => (
           <div key={sec.key} data-testid={`shopfloor-station-group-${sec.key}`}>
             <div className="flex items-center gap-2 mb-2">
               <ArrowDownUp className="w-3.5 h-3.5 text-slate-400" />
               <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{sec.label}</h3>
               <span className="text-[10px] font-semibold text-slate-400">{sec.items.length}</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch">
               {sec.items.map((w) => <Card key={w.id} w={w} />)}
             </div>
           </div>
@@ -310,27 +345,50 @@ export default function ShopFloorPage() {
   };
 
   const pauseAllowed = !!pausePolicy?.allowed;
+  const toggleDetail = (w) => {
+    const id = `${w.order_code}-${w.step_no}`;
+    setDetailOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
   const Card = ({ w }) => {
     const [l, c] = STATUS[w.status] || STATUS.waiting;
     const actions = shopFloorCardActions(w.status, pauseAllowed);
+    const needsOperator = !operator;
     const stationLock = (actions.start || actions.resume)
       ? operatorStationLock(lockWos, operator, w.station, w.id || w._id)
       : null;
     const stationLockMsg = stationLock ? operatorStationLockMessage(stationLock, operator) : "";
-    const pauseTitle = actions.pauseEnabled
-      ? `Duraklat (${shopFloorPausePhaseLabel(pausePolicy?.phase)})`
-      : (pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz");
+    const startBlocked = needsOperator || !!stationLock;
+    const pauseOn = !needsOperator && actions.pauseEnabled;
+    const pauseTitle = needsOperator
+      ? "Önce operatör seçin"
+      : (actions.pauseEnabled
+        ? `Duraklat (${shopFloorPausePhaseLabel(pausePolicy?.phase)})`
+        : (pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"));
+    const materials = Array.isArray(w.materials) ? w.materials : [];
+    const hasNotes = !!w.notes;
+    const hasDetail = materials.length > 0 || hasNotes;
+    const detailId = `${w.order_code}-${w.step_no}`;
+    const showDetail = !!detailOpen[detailId];
+    const pausedLabel = w.status === "paused" ? pausedForLabel(w.paused_at, now) : "";
+    const trashDisabled = needsOperator || !!w.trash_request_pending;
     return (
-    <div className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${shopFloorCardBorder(w.status)}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
+    <div className={`bg-white rounded-2xl border-2 p-4 h-full flex flex-col gap-3 ${shopFloorCardBorder(w.status)}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
       <div className="flex justify-between items-start gap-2">
-        <div className="min-w-0"><div className="font-mono text-xs text-slate-400">{w.order_code} • Adım {w.step_no}/{w.step_count}</div><div className="font-bold text-slate-900 text-base leading-tight truncate">{w.step_name}</div><div className="text-sm text-slate-600 flex items-center gap-1 truncate"><Package className="w-3.5 h-3.5" /> {w.product_name}</div></div>
+        <div className="min-w-0">
+          <div className="font-mono text-xs text-slate-400">{w.order_code} • Adım {w.step_no}/{w.step_count}</div>
+          <div className="font-bold text-slate-900 text-base leading-tight line-clamp-2" title={w.step_name || ""}>{w.step_name}</div>
+          <div className="text-sm text-slate-600 flex items-start gap-1 min-w-0">
+            <Package className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span className="line-clamp-2" title={w.product_name || ""}>{w.product_name}</span>
+          </div>
+        </div>
         <div className="flex items-center gap-1 shrink-0">
           {actions.pause && (
             <button
               type="button"
-              onClick={() => actions.pauseEnabled && act(w, "pause")}
-              disabled={!actions.pauseEnabled}
-              className={`p-1.5 rounded-lg border ${actions.pauseEnabled ? "text-orange-600 hover:bg-orange-50 border-orange-200" : "text-slate-300 border-slate-200 cursor-not-allowed"}`}
+              onClick={() => { if (pauseOn) act(w, "pause"); }}
+              disabled={!pauseOn}
+              className={`p-1.5 rounded-lg border ${pauseOn ? "text-orange-600 hover:bg-orange-50 border-orange-200" : "text-slate-300 border-slate-200 cursor-not-allowed"}`}
               title={pauseTitle}
               data-testid={`wo-pause-icon-${w.order_code}-${w.step_no}`}
             >
@@ -340,10 +398,10 @@ export default function ShopFloorPage() {
           {w.status !== "done" && (
             <button
               type="button"
-              onClick={() => openTrashRequest(w)}
-              disabled={!!w.trash_request_pending}
-              className={`p-1.5 rounded-lg ${w.trash_request_pending ? "text-amber-500 bg-amber-50 cursor-default" : "text-slate-400 hover:text-rose-600 hover:bg-rose-50"}`}
-              title={w.trash_request_pending ? "Silme onayı bekleniyor" : "Yönetici onayına gönder (sil)"}
+              onClick={() => { if (!needsOperator) openTrashRequest(w); }}
+              disabled={trashDisabled}
+              className={`p-1.5 rounded-lg ${!needsOperator && w.trash_request_pending ? "text-amber-500 bg-amber-50 cursor-default" : trashDisabled ? "text-slate-300 cursor-not-allowed" : "text-slate-400 hover:text-rose-600 hover:bg-rose-50"}`}
+              title={needsOperator ? "Önce operatör seçin" : (w.trash_request_pending ? "Silme onayı bekleniyor" : "Yönetici onayına gönder (sil)")}
               data-testid={`wo-trash-${w.order_code}-${w.step_no}`}
             >
               <Trash2 className="w-4 h-4" />
@@ -357,6 +415,13 @@ export default function ShopFloorPage() {
           ) : null}
         </div>
       </div>
+      <WoStepBar w={w} />
+      {pausedLabel ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-orange-800" data-testid={`wo-paused-for-${w.order_code}-${w.step_no}`}>
+          <span>⏸ {pausedLabel} duraklatıldı</span>
+          <span>{w.auto_paused ? "Otomatik (mesai dışı)" : "Elle"}</span>
+        </div>
+      ) : null}
       <div className="text-xs bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 space-y-0.5" data-testid={`wo-meta-${w.order_code}-${w.step_no}`}>
         <div className="flex items-center gap-1.5 text-slate-600"><MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span>İstasyon: <span className="font-semibold text-slate-900">{w.station || "—"}</span></span></div>
         <div className="flex flex-col gap-0.5 text-slate-600 min-w-0 max-w-full overflow-hidden">
@@ -369,40 +434,6 @@ export default function ShopFloorPage() {
           ) : null}
         </div>
       </div>
-      {(w.materials || []).length > 0 && (
-        <div className="text-xs border border-slate-100 rounded-xl px-2.5 py-2 space-y-1" data-testid={`wo-materials-${w.order_code}-${w.step_no}`}>
-          <div className="font-semibold text-slate-700">Hammaddeler</div>
-          <ul className="space-y-0.5">
-            {w.materials.map((m, i) => {
-              const stockNote = String(m.stock_note || m.note || "").trim();
-              const pname = String(m.product_name || "").trim();
-              const noteIsExtra = !!(
-                stockNote
-                && stockNote.toLocaleLowerCase("tr") !== pname.toLocaleLowerCase("tr")
-              );
-              return (
-              <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600" data-testid={`wo-mat-row-${w.order_code}-${w.step_no}-${i}`}>
-                <span className="min-w-0">
-                  {stockNote ? (
-                    <>
-                      <span className="font-semibold text-slate-900 whitespace-pre-wrap break-words" data-testid={`wo-mat-note-${w.order_code}-${w.step_no}-${i}`}>
-                        {stockNote}
-                      </span>
-                      {noteIsExtra && pname ? (
-                        <span className="block text-[10px] text-slate-500 truncate" title={pname}>{pname}</span>
-                      ) : null}
-                    </>
-                  ) : (
-                    pname || "Hammadde"
-                  )}
-                </span>
-                <span className="shrink-0 font-semibold text-slate-900 self-start">{formatTrQty(m.needed)} {m.unit}</span>
-              </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
       {Array.isArray(w.images) && w.images.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap" data-testid={`wo-images-${w.order_code}-${w.step_no}`}>
           {w.images.slice(0, 8).map((url) => (
@@ -423,18 +454,74 @@ export default function ShopFloorPage() {
           );
         })()}
         {w.duration_min > 0 && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Hedef {w.duration_min} dk</span>}
-        {w.elapsed_min != null && <span className={`flex items-center gap-1 font-semibold ${w.duration_min && w.elapsed_min > w.duration_min ? "text-rose-600" : "text-amber-700"}`}><Clock className="w-3.5 h-3.5" /> {w.elapsed_min} dk geçti</span>}
+        {w.elapsed_min != null && (
+          <span className={`flex items-center gap-1 font-semibold ${w.duration_min && w.elapsed_min > w.duration_min ? "text-rose-600" : "text-amber-700"}`}>
+            <Clock className="w-3.5 h-3.5" /> {w.status === "paused" ? `çalışılan ${w.elapsed_min} dk` : `${w.elapsed_min} dk geçti`}
+          </span>
+        )}
         {(w.operator_name || w.assigned_name) && <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> {w.operator_name || w.assigned_name}</span>}
         {w.planned_date && <span>Plan: {w.planned_date}</span>}
       </div>
-      {w.notes && <div className="text-xs bg-slate-50 rounded-lg p-2 text-slate-600">{w.notes}</div>}
-      <div className="grid grid-cols-2 gap-2">
+      {hasDetail && (
+        <div>
+          <button
+            type="button"
+            onClick={() => toggleDetail(w)}
+            aria-expanded={showDetail}
+            className="text-xs font-bold text-slate-600 hover:text-slate-900"
+            data-testid={`wo-detail-toggle-${w.order_code}-${w.step_no}`}
+          >
+            Detay
+          </button>
+          {showDetail && (
+            <div className="mt-2 space-y-2">
+              {materials.length > 0 && (
+                <div className="text-xs border border-slate-100 rounded-xl px-2.5 py-2 space-y-1" data-testid={`wo-materials-${w.order_code}-${w.step_no}`}>
+                  <div className="font-semibold text-slate-700">Hammaddeler</div>
+                  <ul className="space-y-0.5">
+                    {materials.map((m, i) => {
+                      const stockNote = String(m.stock_note || m.note || "").trim();
+                      const pname = String(m.product_name || "").trim();
+                      const noteIsExtra = !!(
+                        stockNote
+                        && stockNote.toLocaleLowerCase("tr") !== pname.toLocaleLowerCase("tr")
+                      );
+                      return (
+                      <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600" data-testid={`wo-mat-row-${w.order_code}-${w.step_no}-${i}`}>
+                        <span className="min-w-0">
+                          {stockNote ? (
+                            <>
+                              <span className="font-semibold text-slate-900 whitespace-pre-wrap break-words" data-testid={`wo-mat-note-${w.order_code}-${w.step_no}-${i}`}>
+                                {stockNote}
+                              </span>
+                              {noteIsExtra && pname ? (
+                                <span className="block text-[10px] text-slate-500 truncate" title={pname}>{pname}</span>
+                              ) : null}
+                            </>
+                          ) : (
+                            pname || "Hammadde"
+                          )}
+                        </span>
+                        <span className="shrink-0 font-semibold text-slate-900 self-start">{formatTrQty(m.needed)} {m.unit}</span>
+                      </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+              {hasNotes && <div className="text-xs bg-slate-50 rounded-lg p-2 text-slate-600">{w.notes}</div>}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2 mt-auto">
         {actions.start && (
           <button
-            onClick={() => !stationLock && act(w, "start")}
-            disabled={!!stationLock}
-            title={stationLockMsg || undefined}
-            className={`col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base ${stationLock ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            type="button"
+            onClick={() => { if (!startBlocked) act(w, "start"); }}
+            disabled={startBlocked}
+            title={needsOperator ? "Önce operatör seçin" : (stationLockMsg || undefined)}
+            className={`col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base ${startBlocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
             data-testid={`wo-start-${w.order_code}-${w.step_no}`}
           >
             <Play className="w-5 h-5" /> Başla
@@ -442,10 +529,11 @@ export default function ShopFloorPage() {
         )}
         {actions.pause && (
           <button
-            onClick={() => actions.pauseEnabled && act(w, "pause")}
-            disabled={!actions.pauseEnabled}
+            type="button"
+            onClick={() => { if (pauseOn) act(w, "pause"); }}
+            disabled={!pauseOn}
             title={pauseTitle}
-            className={`flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-base ${actions.pauseEnabled ? "bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-500/30" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}
+            className={`flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-base ${pauseOn ? "bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-500/30" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}
             data-testid={`wo-pause-${w.order_code}-${w.step_no}`}
           >
             <Pause className="w-5 h-5" /> Duraklat
@@ -453,45 +541,71 @@ export default function ShopFloorPage() {
         )}
         {actions.resume && (
           <button
-            onClick={() => !stationLock && act(w, "start")}
-            disabled={!!stationLock}
-            title={stationLockMsg || undefined}
-            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${stationLock ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            type="button"
+            onClick={() => { if (!startBlocked) act(w, "start"); }}
+            disabled={startBlocked}
+            title={needsOperator ? "Önce operatör seçin" : (stationLockMsg || undefined)}
+            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${startBlocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
             data-testid={`wo-resume-${w.order_code}-${w.step_no}`}
           >
             <Play className="w-5 h-5" /> Devam
           </button>
         )}
         {actions.finish && (
-          <button onClick={() => openFinish(w)} className="flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold" data-testid={`wo-finish-${w.order_code}-${w.step_no}`}>
+          <button
+            type="button"
+            onClick={() => { if (!needsOperator) openFinish(w); }}
+            disabled={needsOperator}
+            title={needsOperator ? "Önce operatör seçin" : undefined}
+            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${needsOperator ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-slate-900 hover:bg-slate-800 text-white"}`}
+            data-testid={`wo-finish-${w.order_code}-${w.step_no}`}
+          >
             <CheckCircle2 className="w-5 h-5" /> Bitir
           </button>
         )}
+        {needsOperator && w.status !== "done" ? (
+          <div className="col-span-2 text-center text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5" data-testid={`wo-need-operator-${w.order_code}-${w.step_no}`}>
+            Önce operatör seçin
+          </div>
+        ) : null}
         {stationLockMsg ? (
           <div className="col-span-2 text-center text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5" data-testid={`wo-station-lock-${w.order_code}-${w.step_no}`}>
             {stationLockMsg}
           </div>
         ) : null}
-        {w.status === "waiting" && actions.start && !stationLock && (
+        {operator && w.status === "waiting" && actions.start && !stationLock && (
           <div className="col-span-2 text-center text-[11px] text-slate-400 -mt-1">Önceki adım bitmeden de başlatılabilir</div>
         )}
         {w.status === "done" && <div className="col-span-2 text-center text-xs text-emerald-700 py-2 font-semibold">{w.produced_qty} üretildi{w.scrap_qty ? `, ${w.scrap_qty} fire` : ""} • {w.operator_name}</div>}
       </div>
     </div>); };
 
+  const operatorSelect = (
+    <select value={pendingEmp ? pendingEmp.full_name : operator} onChange={(e) => requestOperator(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[180px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
+  );
+  const statClass = (on, tone) => (on ? tone : "border-slate-200 bg-white");
+
   return (
     <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto p-4 sm:p-6" : "space-y-3"} data-testid="shopfloor-page">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <select value={pendingEmp ? pendingEmp.full_name : operator} onChange={(e) => requestOperator(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[180px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
+          {operator ? operatorSelect : null}
           <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
           <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
           <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
         </div>
       </div>
-      {!kiosk && <ProductionAiAdvisor companyId={companyId} compact />}
-      {!operator && <div className="bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Operatör seçin ve şifrenizi girin.</div>}
+      {!operator && (
+        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-4 sm:px-6 sm:py-5 space-y-2 shadow-sm" data-testid="shopfloor-no-operator">
+          <div className="flex items-center gap-2 text-amber-950">
+            <KeyRound className="w-5 h-5 text-amber-700" />
+            <h2 className="text-lg font-bold">Operatör seç ve PIN gir</h2>
+          </div>
+          <p className="text-sm text-amber-800">Başla / Devam / Bitir operatör girişinden sonra açılır</p>
+          {operatorSelect}
+        </div>
+      )}
       {operator && !pauseAllowed && (
         <div className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] text-slate-700" data-testid="shopfloor-pause-blocked">
           Duraklat kapalı: {pausePolicy?.reason || "Mesai / mola / fazla mesai dışında."}
@@ -520,27 +634,36 @@ export default function ShopFloorPage() {
         <span className="font-semibold text-slate-800 text-xs whitespace-nowrap">Aynı istasyonu peşi sıra işle</span>
       </label>
       <div className="grid grid-cols-3 gap-2 text-center" data-testid="shopfloor-stats">
-        {[
-          ["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"],
-          ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"],
-          ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"],
-        ].map(([l, v, c]) => (
-          <div key={l} className="bg-white border rounded-xl px-2 py-1.5">
-            <div className="text-[9px] uppercase font-semibold text-slate-400 leading-none">{l}</div>
-            <div className={`text-lg font-black leading-tight ${c}`}>{v}</div>
-          </div>
-        ))}
-      </div>
-      <div className="bg-white border rounded-2xl p-3" data-testid="shopfloor-performance">
-        <button onClick={() => setShowPerf(!showPerf)} className="w-full flex items-center justify-between text-sm font-bold text-slate-800" data-testid="shopfloor-perf-toggle"><span>Bugünkü Performans — operatör / istasyon ({perf?.total_done || 0} adım tamamlandı)</span><span className="text-xs text-slate-400">{showPerf ? "Gizle" : "Göster"}</span></button>
-        {showPerf && perf && (
-          <div className="grid md:grid-cols-2 gap-3 mt-3 text-xs">
-            {[["Operatörler", perf.operators], ["İstasyonlar", perf.stations]].map(([t, list]) => (
-              <div key={t}><div className="font-semibold text-slate-500 mb-1">{t}</div>
-                <table className="w-full"><thead className="text-slate-400 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Ad</th><th className="text-right py-1">Adım</th><th className="text-right py-1">Üretim</th><th className="text-right py-1">Fire %</th><th className="text-right py-1">Ort. dk</th><th className="text-right py-1">Hedef Aşımı</th></tr></thead>
-                  <tbody className="divide-y">{list.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Bugün tamamlanan adım yok.</td></tr>}{list.map((r) => <tr key={r.name} data-testid={`perf-row-${r.name}`}><td className="py-1 font-semibold">{r.name}</td><td className="py-1 text-right">{r.done}</td><td className="py-1 text-right font-bold">{r.produced}</td><td className={`py-1 text-right font-semibold ${r.scrap_rate > 5 ? "text-rose-600" : "text-slate-600"}`}>%{r.scrap_rate}</td><td className="py-1 text-right">{r.avg_min ?? "-"}</td><td className={`py-1 text-right ${r.over_target ? "text-rose-600 font-bold" : ""}`}>{r.over_target}</td></tr>)}</tbody></table></div>))}
-          </div>
-        )}
+        <button
+          type="button"
+          aria-pressed={statusFilter === "ready"}
+          onClick={() => setStatusFilter((cur) => (cur === "ready" ? null : "ready"))}
+          className={`border-2 rounded-xl px-2 py-1.5 ${statClass(statusFilter === "ready", "border-blue-500 bg-blue-50")}`}
+          data-testid="shopfloor-stat-ready"
+        >
+          <div className="text-[9px] uppercase font-semibold text-slate-400 leading-none">Hazır</div>
+          <div className="text-lg font-black leading-tight text-blue-600">{readyCount}</div>
+        </button>
+        <button
+          type="button"
+          aria-pressed={statusFilter === "active"}
+          onClick={() => setStatusFilter((cur) => (cur === "active" ? null : "active"))}
+          className={`border-2 rounded-xl px-2 py-1.5 ${statClass(statusFilter === "active", "border-amber-500 bg-amber-50")}`}
+          data-testid="shopfloor-stat-active"
+        >
+          <div className="text-[9px] uppercase font-semibold text-slate-400 leading-none">Devam Eden</div>
+          <div className="text-lg font-black leading-tight text-amber-600">{activeCount}</div>
+        </button>
+        <button
+          type="button"
+          aria-pressed={statusFilter === "done"}
+          onClick={() => setStatusFilter((cur) => (cur === "done" ? null : "done"))}
+          className={`border-2 rounded-xl px-2 py-1.5 ${statClass(statusFilter === "done", "border-emerald-500 bg-emerald-50")}`}
+          data-testid="shopfloor-stat-done"
+        >
+          <div className="text-[9px] uppercase font-semibold text-slate-400 leading-none">Bugün Biten</div>
+          <div className="text-lg font-black leading-tight text-emerald-600">{doneToday.length}</div>
+        </button>
       </div>
       {openDuties.length > 0 && (
         <div data-testid="shopfloor-duties">
@@ -560,12 +683,20 @@ export default function ShopFloorPage() {
           </div>
         </div>
       )}
-      {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2>{renderWoGrid(mine)}</div>}
-      <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
+      {statusFilter !== "done" && mineShown.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mineShown.length})</h2>{renderWoGrid(mineShown)}</div>}
+      {statusFilter !== "done" && (
+      <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({statusFilter ? mineShown.length + activeRest.length : active.length})</h2>
         {loadError ? <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center text-sm font-semibold text-rose-800" data-testid="shopfloor-load-error">{loadError}</div> : null}
-        {!loadError && active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
-        {renderWoGrid(active.filter((w) => !mine.includes(w)))}</div>
-      {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2>{renderWoGrid(waiting)}</div>}
+        {!loadError && !statusFilter && active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
+        {renderWoGrid(activeRest)}</div>
+      )}
+      {!statusFilter && waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2>{renderWoGrid(waiting)}</div>}
+      {statusFilter === "done" && (
+        <div>
+          <h2 className="text-sm font-bold text-slate-700 mb-2">Bugün Biten ({doneToday.length})</h2>
+          {renderWoGrid(doneToday)}
+        </div>
+      )}
       {done.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <button

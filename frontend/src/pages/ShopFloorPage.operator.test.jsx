@@ -15,12 +15,11 @@ jest.mock("axios", () => {
   };
   return { __esModule: true, default: impl, ...impl };
 });
-jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
+jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), message: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
   useAuth: () => ({ activeCompany: { id: "c1" } }),
 }));
-jest.mock("../components/ProductionAiAdvisor", () => ({ ProductionAiAdvisor: () => null }));
 jest.mock("../components/AssignedDutyCard", () => ({ AssignedDutyCard: () => null }));
 jest.mock("../utils/HoverImageThumb", () => ({ HoverImageThumb: () => null }));
 
@@ -35,21 +34,26 @@ let host;
 let quiet;
 let root;
 
-beforeEach(() => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  quiet = jest.spyOn(console, "error").mockImplementation(() => {});
+function mockGets(workOrders, { group = false } = {}) {
   axios.get.mockImplementation((url) => {
     const u = String(url);
     if (u.includes("/personnel/employees")) return Promise.resolve({ data: EMPS });
-    if (u.includes("/production/work-orders/performance")) return Promise.resolve({ data: { total_done: 0, operators: [], stations: [] } });
     if (u.includes("/production/work-orders/pause-policy")) return Promise.resolve({ data: { allowed: true, phase: "mesai" } });
-    if (u.includes("/production/work-orders/shopfloor-settings")) return Promise.resolve({ data: { group_same_station: false } });
+    if (u.includes("/production/work-orders/shopfloor-settings")) return Promise.resolve({ data: { group_same_station: group } });
     if (u.includes("/production/work-orders/stations")) return Promise.resolve({ data: [] });
-    if (u.includes("/production/work-orders")) return Promise.resolve({ data: [] });
+    if (u.includes("/production/work-orders")) return Promise.resolve({ data: workOrders });
     if (u.includes("/personnel/me")) return Promise.resolve({ data: { tasks: [] } });
+    if (u.includes("/work-parks")) return Promise.resolve({ data: { parks: [] } });
     return Promise.resolve({ data: [] });
   });
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  quiet = jest.spyOn(console, "error").mockImplementation(() => {});
+  mockGets([]);
 });
 
 afterEach(() => {
@@ -61,16 +65,63 @@ afterEach(() => {
   host.remove();
 });
 
+async function flush(times = 8) {
+  for (let i = 0; i < times; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await act(async () => { await Promise.resolve(); });
+  }
+}
+
 async function renderPage() {
   root = createRoot(host);
   await act(async () => {
     root.render(<ShopFloorPage />);
   });
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
+  await flush();
   return root;
+}
+
+function setNativeValue(el, value) {
+  const proto = el.tagName === "SELECT" ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+  el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+}
+
+function wo(partial) {
+  return {
+    step_no: 1,
+    step_count: 1,
+    step_name: "Adım",
+    product_name: "Ürün",
+    status: "ready",
+    station: "CNC",
+    unit: "Adet",
+    planned_quantity: 1,
+    materials: [],
+    ...partial,
+    id: partial.id || partial.order_code,
+  };
+}
+
+function cardIds() {
+  return [...host.querySelectorAll('[data-testid^="wo-card-"]')].map((el) => el.getAttribute("data-testid"));
+}
+
+async function loginAsMuhammed() {
+  axios.post.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("shopfloor-unlock")) return Promise.resolve({ data: { operator_name: "Muhammed ASLAN" } });
+    return Promise.resolve({ data: { message: "ok" } });
+  });
+  const sel = host.querySelector('[data-testid="shopfloor-operator"]');
+  await act(async () => { setNativeValue(sel, "Muhammed ASLAN"); });
+  const pin = host.querySelector('[data-testid="shopfloor-pin-input"]');
+  expect(pin).not.toBeNull();
+  await act(async () => { setNativeValue(pin, "1234"); });
+  const submit = host.querySelector('[data-testid="shopfloor-pin-submit"]');
+  expect(submit.disabled).toBe(false);
+  await act(async () => { submit.click(); });
+  await flush();
 }
 
 test("operator select hides personnel without a system user", async () => {
@@ -91,7 +142,6 @@ test("work order load failure shows permission message instead of an empty list"
   axios.get.mockImplementation((url) => {
     const u = String(url);
     if (u.includes("/personnel/employees")) return Promise.resolve({ data: EMPS });
-    if (u.includes("/production/work-orders/performance")) return Promise.resolve({ data: { total_done: 0 } });
     if (u.includes("/production/work-orders/pause-policy")) return Promise.resolve({ data: { allowed: true, phase: "mesai" } });
     if (u.includes("/production/work-orders/shopfloor-settings")) return Promise.resolve({ data: { group_same_station: false } });
     if (u.includes("/production/work-orders/stations")) return Promise.resolve({ data: [] });
@@ -107,4 +157,207 @@ test("work order load failure shows permission message instead of an empty list"
   expect(err).not.toBeNull();
   expect(err.textContent).toBe("Yetkiniz yok / yüklenemedi");
   expect(host.querySelector('[data-testid="shopfloor-empty"]')).toBeNull();
+});
+
+test("does not render shop floor performance or the production AI advisor", async () => {
+  await renderPage();
+  const urls = axios.get.mock.calls.map((call) => String(call[0]));
+  expect(urls.some((url) => url.includes("/performance"))).toBe(false);
+  expect(host.querySelector('[data-testid="shopfloor-performance"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-perf-toggle"]')).toBeNull();
+  expect(host.querySelector('[data-testid="production-ai-advisor"]')).toBeNull();
+  const gate = host.querySelector('[data-testid="shopfloor-no-operator"]');
+  expect(gate).not.toBeNull();
+  expect(gate.textContent).toContain("Operatör seç ve PIN gir");
+  expect(gate.textContent).toContain("Başla / Devam / Bitir operatör girişinden sonra açılır");
+  expect(gate.querySelector('[data-testid="shopfloor-operator"]')).not.toBeNull();
+});
+
+test("keeps actions closed until the operator enters a PIN", async () => {
+  mockGets([
+    wo({ id: "r", order_code: "URT-R", status: "ready", step_no: 1 }),
+    wo({
+      id: "p",
+      order_code: "URT-P",
+      status: "paused",
+      step_no: 2,
+      paused_at: new Date(Date.now() - 12 * 60000).toISOString(),
+      auto_paused: false,
+      elapsed_min: 6,
+    }),
+    wo({ id: "i", order_code: "URT-I", status: "in_progress", step_no: 3, elapsed_min: 4 }),
+  ]);
+  await renderPage();
+  for (const id of ["wo-start-URT-R-1", "wo-resume-URT-P-2", "wo-finish-URT-P-2", "wo-pause-URT-I-3", "wo-pause-icon-URT-I-3", "wo-finish-URT-I-3", "wo-trash-URT-R-1", "wo-trash-URT-P-2", "wo-trash-URT-I-3"]) {
+    expect(host.querySelector(`[data-testid="${id}"]`).disabled).toBe(true);
+  }
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-R-1"]').textContent).toBe("Önce operatör seçin");
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-P-2"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-I-3"]')).not.toBeNull();
+
+  await loginAsMuhammed();
+  expect(host.querySelector('[data-testid="shopfloor-no-operator"]')).toBeNull();
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-R-1"]')).toBeNull();
+  for (const id of ["wo-start-URT-R-1", "wo-resume-URT-P-2", "wo-finish-URT-P-2", "wo-pause-URT-I-3", "wo-pause-icon-URT-I-3", "wo-finish-URT-I-3", "wo-trash-URT-R-1"]) {
+    expect(host.querySelector(`[data-testid="${id}"]`).disabled).toBe(false);
+  }
+  axios.post.mockClear();
+  await act(async () => {
+    host.querySelector('[data-testid="wo-start-URT-R-1"]').click();
+  });
+  await flush();
+  const startCall = axios.post.mock.calls.find((call) => String(call[0]).includes("/start"));
+  expect(startCall).toBeTruthy();
+  expect(startCall[1].operator_name).toBe("Muhammed ASLAN");
+});
+
+test("stat buttons filter active cards and toggle off", async () => {
+  const today = new Date().toISOString();
+  mockGets([
+    wo({ id: "r", order_code: "URT-R", status: "ready" }),
+    wo({ id: "p", order_code: "URT-P", status: "paused", step_no: 2 }),
+    wo({ id: "i", order_code: "URT-I", status: "in_progress", step_no: 3 }),
+    wo({ id: "w", order_code: "URT-W", status: "waiting", step_no: 4 }),
+    wo({ id: "d", order_code: "URT-D", status: "done", step_no: 1, finished_at: today, produced_qty: 1 }),
+    wo({ id: "o", order_code: "URT-O", status: "done", step_no: 1, finished_at: "2000-01-01T00:00:00.000Z", produced_qty: 1 }),
+  ]);
+  await renderPage();
+  const activeBtn = () => host.querySelector('[data-testid="shopfloor-stat-active"]');
+  expect(activeBtn().getAttribute("aria-pressed")).toBe("false");
+  expect(activeBtn().textContent).toContain("2");
+  await act(async () => { activeBtn().click(); });
+  expect(activeBtn().getAttribute("aria-pressed")).toBe("true");
+  expect(activeBtn().className).toMatch(/border-amber/);
+  expect(activeBtn().className).toMatch(/bg-amber/);
+  expect(host.querySelector('[data-testid="shopfloor-stat-ready"]').getAttribute("aria-pressed")).toBe("false");
+  expect(new Set(cardIds())).toEqual(new Set(["wo-card-URT-I-3", "wo-card-URT-P-2"]));
+  await act(async () => { activeBtn().click(); });
+  expect(activeBtn().getAttribute("aria-pressed")).toBe("false");
+  expect(activeBtn().className).not.toMatch(/bg-amber/);
+  expect(new Set(cardIds())).toEqual(new Set(["wo-card-URT-I-3", "wo-card-URT-P-2", "wo-card-URT-R-1", "wo-card-URT-W-4"]));
+
+  const doneBtn = host.querySelector('[data-testid="shopfloor-stat-done"]');
+  await act(async () => { doneBtn.click(); });
+  expect(doneBtn.getAttribute("aria-pressed")).toBe("true");
+  expect(cardIds()).toEqual(["wo-card-URT-D-1"]);
+});
+
+test("sorts paused ahead of ready, and keeps station groups when grouping is on", async () => {
+  const rows = [
+    wo({ id: "p", order_code: "URT-P", status: "paused", station: "Delik", step_no: 1 }),
+    wo({ id: "r", order_code: "URT-R", status: "ready", station: "Kesim", step_no: 1 }),
+    wo({ id: "i", order_code: "URT-I", status: "in_progress", station: "Kesim", step_no: 2, step_count: 2 }),
+  ];
+  mockGets(rows, { group: false });
+  await renderPage();
+  expect(cardIds()).toEqual(["wo-card-URT-I-2", "wo-card-URT-P-1", "wo-card-URT-R-1"]);
+  expect(host.querySelector('[data-testid="shopfloor-station-groups"]')).toBeNull();
+
+  if (root) {
+    act(() => { root.unmount(); });
+    root = null;
+  }
+  host.innerHTML = "";
+  localStorage.setItem("nx_group_same_station", "1");
+  mockGets(rows, { group: true });
+  await renderPage();
+  expect(host.querySelector('[data-testid="shopfloor-group-same-station"]').checked).toBe(true);
+  const delik = host.querySelector('[data-testid="shopfloor-station-group-delik"]');
+  const kesim = host.querySelector('[data-testid="shopfloor-station-group-kesim"]');
+  expect(delik).not.toBeNull();
+  expect(kesim).not.toBeNull();
+  expect(delik.compareDocumentPosition(kesim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect([...delik.querySelectorAll('[data-testid^="wo-card-"]')].map((el) => el.getAttribute("data-testid"))).toEqual(["wo-card-URT-P-1"]);
+  expect([...kesim.querySelectorAll('[data-testid^="wo-card-"]')].map((el) => el.getAttribute("data-testid"))).toEqual(["wo-card-URT-I-2", "wo-card-URT-R-1"]);
+});
+
+test("shows how long a card has been paused and who paused it", async () => {
+  mockGets([
+    wo({
+      id: "pa",
+      order_code: "URT-PA",
+      status: "paused",
+      paused_at: new Date(Date.now() - 12 * 60000).toISOString(),
+      auto_paused: true,
+      elapsed_min: 9,
+    }),
+    wo({
+      id: "pe",
+      order_code: "URT-PE",
+      status: "paused",
+      step_no: 2,
+      paused_at: new Date(Date.now() - 72 * 60000).toISOString(),
+      auto_paused: false,
+      elapsed_min: 20,
+    }),
+    wo({ id: "px", order_code: "URT-PX", status: "paused", step_no: 3, paused_at: null, elapsed_min: 4 }),
+    wo({ id: "i", order_code: "URT-I", status: "in_progress", step_no: 4, elapsed_min: 4 }),
+  ]);
+  await renderPage();
+  const auto = host.querySelector('[data-testid="wo-paused-for-URT-PA-1"]');
+  expect(auto.textContent).toContain("12 dk duraklatıldı");
+  expect(auto.textContent).toContain("Otomatik (mesai dışı)");
+  expect(host.querySelector('[data-testid="wo-card-URT-PA-1"]').textContent).toContain("çalışılan 9 dk");
+  const manual = host.querySelector('[data-testid="wo-paused-for-URT-PE-2"]');
+  expect(manual.textContent).toContain("1 sa 12 dk duraklatıldı");
+  expect(manual.textContent).toContain("Elle");
+  expect(host.querySelector('[data-testid="wo-card-URT-PE-2"]').textContent).toContain("çalışılan 20 dk");
+  expect(host.querySelector('[data-testid="wo-paused-for-URT-PX-3"]')).toBeNull();
+  expect(host.querySelector('[data-testid="wo-card-URT-I-4"]').textContent).toContain("4 dk geçti");
+  expect(host.querySelector('[data-testid="wo-card-URT-I-4"]').textContent).not.toContain("çalışılan");
+});
+
+test("hides materials until Detay is opened and clamps long step names", async () => {
+  const stepName = "Panel kenar bantlama ve ölçülendirme adımı";
+  mockGets([
+    wo({
+      id: "long",
+      order_code: "URT-LONG",
+      status: "ready",
+      step_no: 2,
+      step_count: 4,
+      step_name: stepName,
+      product_name: "Safir meşe kapak takımı",
+      notes: "sipariş notu",
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 2, unit: "Adet" }],
+    }),
+    wo({ id: "one", order_code: "URT-ONE", status: "ready", step_no: 1, step_count: 1, step_name: "Tek" }),
+  ]);
+  await renderPage();
+  expect(host.querySelector('[data-testid="wo-materials-URT-LONG-2"]')).toBeNull();
+  expect(host.querySelector('[data-testid="wo-card-URT-LONG-2"]').textContent).not.toContain("sipariş notu");
+  expect(host.querySelector('[data-testid="wo-meta-URT-LONG-2"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="wo-detail-toggle-URT-LONG-2"]').click();
+  });
+  expect(host.querySelector('[data-testid="wo-materials-URT-LONG-2"]').textContent).toContain("MDF");
+  expect(host.querySelector('[data-testid="wo-card-URT-LONG-2"]').textContent).toContain("sipariş notu");
+  const card = host.querySelector('[data-testid="wo-card-URT-LONG-2"]');
+  const title = [...card.querySelectorAll(".line-clamp-2")].find((el) => el.textContent === stepName);
+  expect(title).toBeTruthy();
+  expect(title.className).toMatch(/line-clamp-2/);
+  expect(title.getAttribute("title")).toBe(stepName);
+  expect(card.className).toMatch(/h-full/);
+  expect(card.className).toMatch(/flex-col/);
+  expect(host.querySelector('[data-testid="wo-start-URT-LONG-2"]').parentElement.className).toMatch(/mt-auto/);
+  expect(card.parentElement.className).toMatch(/items-stretch/);
+  expect(host.querySelector('[data-testid="wo-stepbar-URT-LONG-2"]').children).toHaveLength(4);
+  expect(host.querySelector('[data-testid="wo-stepbar-URT-LONG-2"]').children[0].className).not.toMatch(/bg-slate-800/);
+  expect(host.querySelector('[data-testid="wo-stepbar-URT-LONG-2"]').children[1].className).toMatch(/bg-slate-800/);
+  expect(host.querySelector('[data-testid="wo-stepbar-URT-ONE-1"]').children).toHaveLength(1);
+  expect(host.querySelector('[data-testid="wo-detail-toggle-URT-ONE-1"]')).toBeNull();
+});
+
+test("tablet mode opens and closes without performance or AI", async () => {
+  await renderPage();
+  const kiosk = () => host.querySelector('[data-testid="shopfloor-kiosk"]');
+  expect(kiosk().textContent).toContain("Tablet Modu");
+  await act(async () => { kiosk().click(); });
+  expect(host.querySelector('[data-testid="shopfloor-page"]').className).toContain("fixed");
+  expect(kiosk().textContent).toContain("Çık");
+  expect(host.querySelector('[data-testid="shopfloor-performance"]')).toBeNull();
+  expect(host.querySelector('[data-testid="production-ai-advisor"]')).toBeNull();
+  await act(async () => { kiosk().click(); });
+  expect(kiosk().textContent).toContain("Tablet Modu");
+  expect(host.querySelector('[data-testid="shopfloor-page"]').className).not.toContain("fixed");
 });

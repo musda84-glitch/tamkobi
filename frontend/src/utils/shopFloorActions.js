@@ -126,6 +126,37 @@ export function shopFloorCardBorder(status) {
   return "border-slate-200";
 }
 
+/** Atölye kart sırası: in_progress → paused → ready → diğerleri. Eşitlikte giriş sırası korunur. */
+export function sortWorkOrdersByStatus(list) {
+  const rank = (status) => {
+    const s = String(status || "").trim().toLowerCase();
+    if (s === "in_progress") return 0;
+    if (s === "paused") return 1;
+    if (s === "ready") return 2;
+    return 3;
+  };
+  return (Array.isArray(list) ? list : []).map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const diff = rank(a.item?.status) - rank(b.item?.status);
+      return diff !== 0 ? diff : a.index - b.index;
+    })
+    .map(({ item }) => item);
+}
+
+/** paused_at → "12 dk" / "1 sa 12 dk". Yok veya geçersizse "". */
+export function pausedForLabel(pausedAt, now = new Date()) {
+  if (pausedAt == null || pausedAt === "") return "";
+  const start = new Date(pausedAt).getTime();
+  if (!Number.isFinite(start)) return "";
+  const end = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!Number.isFinite(end) || end < start) return "";
+  const totalMin = Math.floor((end - start) / 60000);
+  if (totalMin < 60) return `${totalMin} dk`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return `${hours} sa ${mins} dk`;
+}
+
 /** Sistem kullanıcısı (create-user) açılmış personel — atölye operatör listesi. */
 export function employeeHasSystemUser(emp) {
   if (!emp) return false;

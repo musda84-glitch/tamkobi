@@ -1,4 +1,4 @@
-import { employeeHasSystemUser, operatorStationLock, operatorStationLockMessage, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "./shopFloorActions";
+import { employeeHasSystemUser, operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan } from "./shopFloorActions";
 
 describe("workOrderFinishPlan", () => {
   test("uses material needed for material-linked step", () => {
@@ -142,6 +142,48 @@ describe("shopFloorCardActions", () => {
     expect(shopFloorCardBorder("in_progress")).toMatch(/amber/);
     expect(shopFloorCardBorder("paused")).toMatch(/orange/);
     expect(shopFloorCardBorder("ready")).toMatch(/blue/);
+  });
+});
+
+describe("sortWorkOrdersByStatus", () => {
+  test("orders in_progress, paused, then ready and keeps ties in input order", () => {
+    const readyA = { id: "a", status: "ready" };
+    const paused = { id: "b", status: "paused" };
+    const running = { id: "c", status: "in_progress" };
+    const readyB = { id: "d", status: "ready" };
+    const input = [readyA, paused, running, readyB];
+    expect(sortWorkOrdersByStatus(input)).toEqual([running, paused, readyA, readyB]);
+    expect(input.map((row) => row.id)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  test("keeps equal statuses in their original order", () => {
+    const rows = [
+      { id: "r1", status: "ready" },
+      { id: "p2", status: "paused" },
+      { id: "r2", status: "ready" },
+      { id: "p1", status: "paused" },
+      { id: "w", status: "waiting" },
+    ];
+    expect(sortWorkOrdersByStatus(rows).map((row) => row.id)).toEqual(["p2", "p1", "r1", "r2", "w"]);
+  });
+});
+
+describe("pausedForLabel", () => {
+  const now = new Date("2026-10-19T10:00:00.000Z");
+
+  test("formats minutes and hours", () => {
+    expect(pausedForLabel("2026-10-19T09:48:00.000Z", now)).toBe("12 dk");
+    expect(pausedForLabel(new Date("2026-10-19T08:48:00.000Z"), now)).toBe("1 sa 12 dk");
+    expect(pausedForLabel("2026-10-19T09:00:00.000Z", now)).toBe("1 sa 0 dk");
+    expect(pausedForLabel("2026-10-19T09:01:00.000Z", now)).toBe("59 dk");
+  });
+
+  test("returns empty when paused_at is missing or invalid", () => {
+    expect(pausedForLabel(null, now)).toBe("");
+    expect(pausedForLabel(undefined, now)).toBe("");
+    expect(pausedForLabel("", now)).toBe("");
+    expect(pausedForLabel("geçersiz", now)).toBe("");
+    expect(pausedForLabel("2026-10-19T11:00:00.000Z", now)).toBe("");
   });
 });
 
