@@ -4251,9 +4251,8 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
     user = await _current_user(request)
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Fazla mesai atamak için yönetici yetkisi gerekir.")
-    emp = await _db.employees.find_one({"_id": req.get("employee_id")})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Personel bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(_db, "employees", req.get("employee_id"), user, not_found="Personel bulunamadı.")
+    tenant_access.assert_same_company(user, emp, not_found="Personel bulunamadı.")
     company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = merge_schedule(company, emp)
     start_t = (req.get("start_time") or req.get("start") or "").strip()
@@ -4275,7 +4274,7 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
     except ValueError:
         raise HTTPException(status_code=400, detail="Geçersiz tarih.")
     note = (req.get("note") or "").strip()[:200]
-    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date, "company_id": emp["company_id"]}) or {}
     patch = {
         "assigned_overtime_hours": hours,
         "assigned_overtime_by": str(user.get("_id") or user.get("id") or ""),

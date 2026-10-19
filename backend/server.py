@@ -16557,10 +16557,9 @@ async def list_leaves(company_id: Optional[str] = None, employee_id: Optional[st
     return clean_docs(await db.leave_requests.find(q).sort("created_at", -1).to_list(500))
 
 @api_router.post("/personnel/leaves")
-async def create_leave(req: Dict[str, Any]):
-    emp = await db.employees.find_one({"_id": req.get("employee_id")})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+async def create_leave(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    emp = await tenant_access.get_tenant_doc(db, "employees", req.get("employee_id"), user, not_found="Çalışan bulunamadı.")
+    tenant_access.assert_same_company(user, emp, not_found="Çalışan bulunamadı.")
     start = datetime.strptime(req["start_date"], "%Y-%m-%d")
     end = datetime.strptime(req["end_date"], "%Y-%m-%d")
     if end < start:
@@ -16568,7 +16567,7 @@ async def create_leave(req: Dict[str, Any]):
     days = float(req.get("days") or ((end - start).days + 1))
     leave_type = req.get("type", "annual")
     if leave_type == "annual":
-        existing = await db.leave_requests.find({"employee_id": emp["_id"]}).to_list(500)
+        existing = await db.leave_requests.find({"employee_id": emp["_id"], "company_id": emp["company_id"]}).to_list(500)
         bal = attendance.compute_leave_balance(emp, existing)
         if days > bal["available"] + 1e-9:
             raise HTTPException(
@@ -16834,11 +16833,11 @@ async def list_bonuses(company_id: Optional[str] = None, period: Optional[str] =
     return clean_docs(await db.bonus_payments.find(q).sort("created_at", -1).to_list(500))
 
 @api_router.post("/personnel/bonuses")
-async def create_bonus(req: Dict[str, Any], request: Request):
+async def create_bonus(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    emp = await tenant_access.get_tenant_doc(db, "employees", req.get("employee_id"), user, not_found="Çalışan bulunamadı.")
+    tenant_access.assert_same_company(user, emp, not_found="Çalışan bulunamadı.")
+
     async def _do():
-        emp = await db.employees.find_one({"_id": req.get("employee_id")})
-        if not emp:
-            raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
         amount = float(req.get("amount", 0))
         if amount <= 0:
             raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
@@ -16859,6 +16858,9 @@ async def create_bonus(req: Dict[str, Any], request: Request):
         async def _body(cx: finance_txn.CompensatingTxn):
             nonlocal account_name, status_val
             if partner_id:
+                partner = await db.partners.find_one({"_id": partner_id, "company_id": emp["company_id"]})
+                if not partner:
+                    raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
                 pname = await partner_pay.withdraw(
                     db, emp["company_id"], partner_id, amount,
                     f"{emp['full_name']} - {period} {labels[b_type]}", today,
@@ -16871,13 +16873,13 @@ async def create_bonus(req: Dict[str, Any], request: Request):
 
                 cx.push("partner", _undo_p)
             elif account_id:
-                acc = await db.bank_accounts.find_one({"_id": account_id})
+                acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": emp["company_id"]})
                 if not acc:
                     raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
                 await bank_guard.assert_manual_allowed(db, account_id)
-                await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+                await db.bank_accounts.update_one({"_id": account_id, "company_id": emp["company_id"]}, {"$inc": {"current_balance": -amount}})
                 cx.push("acc", lambda: db.bank_accounts.update_one(
-                    {"_id": account_id}, {"$inc": {"current_balance": amount}},
+                    {"_id": account_id, "company_id": emp["company_id"]}, {"$inc": {"current_balance": amount}},
                 ))
                 tx_doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
                           "type": "outflow", "category": f"Personel {labels[b_type]} (Gayri Resmi)", "amount": amount, "currency": "TRY",
@@ -16913,10 +16915,9 @@ async def create_bonus(req: Dict[str, Any], request: Request):
 
         return await txn.run(_body)
 
-    emp_probe = await db.employees.find_one({"_id": req.get("employee_id")}, {"company_id": 1})
     return await idempotency.run(
         db,
-        (emp_probe or {}).get("company_id") or req.get("company_id") or "",
+        emp["company_id"],
         request,
         "personnel/bonuses",
         _do,
@@ -16928,7 +16929,7 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
     rec = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
     if rec.get("status") == "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş kayıt düzenlenemez.")
-    emp = await db.employees.find_one({"_id": rec.get("employee_id")})
+    emp = await db.employees.find_one({"_id": rec.get("employee_id"), "company_id": rec["company_id"]})
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
     upd: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
@@ -16964,14 +16965,17 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
     period = upd.get("period") or rec.get("period")
     paying = bool(partner_id or account_id)
     if partner_id:
+        partner = await db.partners.find_one({"_id": partner_id, "company_id": emp["company_id"]})
+        if not partner:
+            raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
         pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {label}", today, extra=linked_moves.link_fields("personnel_bonus", bonus_id))
         upd.update({"partner_id": partner_id, "account_id": None, "account_name": f"{pname} (Ortak)", "status": "paid", "date": today, "paid_at": today})
     elif account_id:
-        acc = await db.bank_accounts.find_one({"_id": account_id})
+        acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": emp["company_id"]})
         if not acc:
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
         await bank_guard.assert_manual_allowed(db, account_id)
-        await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+        await db.bank_accounts.update_one({"_id": account_id, "company_id": emp["company_id"]}, {"$inc": {"current_balance": -amount}})
         tx_doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "account_id": account_id, "account_name": acc.get("account_name"),
                   "type": "outflow", "category": f"Personel {label} (Gayri Resmi)", "amount": amount, "currency": "TRY",
                   "description": f"{emp['full_name']} - {period} {label}",
@@ -16981,7 +16985,7 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
         upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid", "date": today, "paid_at": today})
         try:
             bal = await account_balance.recalc_account_balance(db, account_id)
-            await db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+            await db.bank_accounts.update_one({"_id": account_id, "company_id": emp["company_id"]}, {"$set": {"current_balance": bal}})
         except Exception:
             logging.getLogger(__name__).exception("Prim güncelleme kasa recalc: %s", account_id)
     if paying:
@@ -17811,10 +17815,9 @@ async def geo_attendance(req: Dict[str, Any], request: Request):
     return {**res, "distance_m": (res["record"].get(f"geo_{req.get('action')}") or {}).get("distance_m")}
 
 @api_router.post("/personnel/attendance")
-async def upsert_attendance(req: Dict[str, Any]):
-    emp = await db.employees.find_one({"_id": req.get("employee_id")})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+async def upsert_attendance(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    emp = await tenant_access.get_tenant_doc(db, "employees", req.get("employee_id"), user, not_found="Çalışan bulunamadı.")
+    tenant_access.assert_same_company(user, emp, not_found="Çalışan bulunamadı.")
     sched = attendance.merge_schedule(await db.companies.find_one({"_id": emp["company_id"]}) or {}, emp)
     action = req.get("action")
     now_hm = attendance.now_hm(sched)
@@ -17836,7 +17839,7 @@ async def upsert_attendance(req: Dict[str, Any]):
         else:
             await attendance.rehome_early_checkout(emp, today, sched)
             date = today
-    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date, "company_id": emp["company_id"]}) or {}
     rec = await attendance.apply_day(emp, date, patch, source=req.get("source") or "manager", confirmed=False if action or patch else None)
     round_info = attendance.apply_manager_time_edit_round(existing, rec, attendance._now(), action if action in ("check_in", "check_out") else None)
     edit = round_info.get("edit")
@@ -17848,7 +17851,7 @@ async def upsert_attendance(req: Dict[str, Any]):
         rec["employee_confirmed_at"] = attendance._now() if auto else None
         rec["message"] = attendance.manager_time_edit_result_message(round_info)
         await db.attendance.update_one(
-            {"employee_id": emp["_id"], "date": date},
+            {"employee_id": emp["_id"], "date": date, "company_id": emp["company_id"]},
             {"$set": {
                 "manager_time_edit": edit,
                 "manager_time_edit_rounds": rec["manager_time_edit_rounds"],
@@ -21115,7 +21118,8 @@ async def list_warehouses(company_id: Optional[str] = None, user: dict = Depends
     return clean_docs(warehouses)
 
 @api_router.post("/warehouses")
-async def create_warehouse(wh: Warehouse):
+async def create_warehouse(wh: Warehouse, user: dict = Depends(get_current_user)):
+    wh.company_id = tenant_access.resolve_company_id(user, wh.company_id)
     doc = wh.to_mongo()
     await db.warehouses.insert_one(doc)
     return clean_doc(doc)
@@ -21127,14 +21131,25 @@ async def list_warehouse_transfers(company_id: Optional[str] = None, user: dict 
     return clean_docs(transfers)
 
 @api_router.post("/warehouses/transfer")
-async def create_warehouse_transfer(transfer: WarehouseTransfer):
+async def create_warehouse_transfer(transfer: WarehouseTransfer, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, transfer.company_id)
+    transfer.company_id = cid
+    product = await db.products.find_one({"_id": transfer.product_id, "company_id": cid})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    for wh_id in (transfer.source_warehouse_id, transfer.target_warehouse_id):
+        if not wh_id:
+            continue
+        wh_doc = await db.warehouses.find_one({"_id": wh_id})
+        if wh_doc and wh_doc.get("company_id") != cid:
+            raise HTTPException(status_code=404, detail="Depo bulunamadı.")
     if not transfer.transfer_number:
         transfer.transfer_number = f"TRF-{datetime.now().strftime('%Y%m')}-{str(uuid.uuid4().int)[:6]}"
     doc = transfer.to_mongo()
     await db.warehouse_transfers.insert_one(doc)
 
     await db.products.update_one(
-        {"_id": transfer.product_id},
+        {"_id": transfer.product_id, "company_id": cid},
         {"$set": {"warehouse_id": transfer.target_warehouse_id}}
     )
 
@@ -21182,9 +21197,14 @@ def _recipe_costs(recipe: Dict[str, Any]) -> Dict[str, Any]:
     tq = float(recipe.get("target_quantity", 1) or 1)
     return {"material_cost": round(mat, 2), "total_estimated_cost": total, "unit_cost": round(total / tq, 2)}
 
-async def _fill_material_costs(materials: List[Dict[str, Any]]):
+async def _fill_material_costs(materials: List[Dict[str, Any]], company_id: Optional[str] = None):
     for m in materials:
-        p = await db.products.find_one({"_id": m.get("product_id")}) if m.get("product_id") else None
+        if not m.get("product_id"):
+            continue
+        q = {"_id": m["product_id"]}
+        if company_id:
+            q["company_id"] = company_id
+        p = await db.products.find_one(q)
         if p:
             m.setdefault("unit", p.get("unit", "Adet"))
             m.setdefault("product_name", p.get("name"))
@@ -21293,14 +21313,19 @@ async def get_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/production/recipes")
-async def create_recipe(recipe: Recipe):
+async def create_recipe(recipe: Recipe, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, recipe.company_id)
+    recipe.company_id = cid
+    finished = await db.products.find_one({"_id": recipe.finished_product_id, "company_id": cid})
+    if not finished:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
     if not recipe.code:
         recipe.code = f"BOM-{str(uuid.uuid4().int)[:6]}"
     doc = _normalize_recipe_steps_payload(recipe.to_mongo())
-    await _fill_material_costs(doc["materials"])
+    await _fill_material_costs(doc["materials"], doc.get("company_id"))
     doc.update(_recipe_costs(doc))
     await db.recipes.insert_one(doc)
-    await db.products.update_one({"_id": recipe.finished_product_id}, {"$set": {"has_recipe": True}})
+    await db.products.update_one({"_id": recipe.finished_product_id, "company_id": cid}, {"$set": {"has_recipe": True}})
     return clean_doc(doc)
 
 
@@ -21441,7 +21466,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         doc = _normalize_recipe_steps_payload(opr.recipe_mongo_doc(payload))
-        await _fill_material_costs(doc.get("materials") or [])
+        await _fill_material_costs(doc.get("materials") or [], doc.get("company_id"))
         doc.update(_recipe_costs(doc))
         await db.recipes.insert_one(doc)
         if doc.get("finished_product_id") and not str(doc["finished_product_id"]).startswith("order-line-"):
@@ -21517,7 +21542,7 @@ async def copy_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
         "copied_from": recipe_id,
         "is_active": True,
     })
-    await _fill_material_costs(doc.get("materials") or [])
+    await _fill_material_costs(doc.get("materials") or [], doc.get("company_id"))
     doc.update(_recipe_costs(doc))
     await db.recipes.insert_one(doc)
     if doc.get("finished_product_id"):
@@ -21536,7 +21561,7 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any], user: dict = Depend
     if "steps" in allowed or "materials" in allowed:
         allowed = _normalize_recipe_steps_payload(dict(allowed))
     merged = {**r, **allowed}
-    await _fill_material_costs(merged.get("materials", []))
+    await _fill_material_costs(merged.get("materials", []), merged.get("company_id"))
     merged.update(_recipe_costs(merged))
     merged.pop("_id", None)
     await db.recipes.update_one({"_id": recipe_id}, {"$set": merged})
