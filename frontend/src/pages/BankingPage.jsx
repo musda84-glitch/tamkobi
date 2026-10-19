@@ -1051,14 +1051,20 @@ export default function BankingPage() {
                 })
               );
               const actionHeadCls = "sticky right-0 z-10 bg-slate-50 shrink-0 w-auto whitespace-nowrap px-1 py-2 text-right";
+              const userColCls = showAccountCol
+                ? "hidden xl:table-cell xl:table-column"
+                : "hidden lg:table-cell lg:table-column";
+              const userCellCls = showAccountCol
+                ? "hidden xl:table-cell"
+                : "hidden lg:table-cell";
               const table = (
-              <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600" style={{ minWidth: showAccountCol ? "calc(51rem + 300px)" : "calc(42rem + 300px)" }}>
+              <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600">
                 <colgroup>
                   <col style={{ width: "6rem" }} />
                   {showAccountCol ? <col style={{ width: "9rem" }} /> : null}
                   <col style={{ width: "8.5rem" }} />
                   <col />
-                  <col className="hidden lg:table-column" style={{ width: "8rem" }} />
+                  <col className={userColCls} style={{ width: "8rem" }} />
                   <col style={{ width: "8.5rem" }} />
                   <col style={{ width: "11rem" }} />
                 </colgroup>
@@ -1068,7 +1074,7 @@ export default function BankingPage() {
                     {showAccountCol ? <th className="px-1 py-2 whitespace-normal">Hesap</th> : null}
                     <th className="px-1 py-2 whitespace-normal">Kategori</th>
                     <th className="px-2 py-2 min-w-0">Açıklama / Cari</th>
-                    <th className="px-2 py-2 hidden lg:table-cell whitespace-normal">Kullanıcı</th>
+                    <th className={`px-2 py-2 whitespace-normal ${userCellCls}`}>Kullanıcı</th>
                     <th className="px-1 py-2 text-right whitespace-nowrap">Tutar</th>
                     <th className={actionHeadCls}>İşlem</th>
                   </tr>
@@ -1117,7 +1123,7 @@ export default function BankingPage() {
                               {tx.source === "bank_match" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                             </div>
                           </td>
-                          <td className="px-2 py-1.5 text-slate-600 hidden lg:table-cell whitespace-normal break-words" data-testid={`tx-actor-${id}`} title={userFull || undefined}>
+                          <td className={`px-2 py-1.5 text-slate-600 whitespace-normal break-words ${userCellCls}`} data-testid={`tx-actor-${id}`} title={userFull || undefined}>
                             {txUserColumnLabel(tx) || <span className="text-slate-300">—</span>}
                           </td>
                           <td className={`px-1 py-1.5 text-right font-bold whitespace-nowrap ${bankAmountCls(tx)}`} title={bankAmount(tx)}>
@@ -1145,7 +1151,7 @@ export default function BankingPage() {
                     table={table}
                     cardsTestId="bank-tx-cards"
                     tableWrapTestId="bank-tx-table-wrap"
-                    tableWrapClassName="hidden md:block w-full min-w-0 overflow-x-auto max-md:overflow-x-auto"
+                    tableWrapClassName="hidden md:block w-full min-w-0 max-md:overflow-x-auto"
                   />
                   {listHasMore && (
                     <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">

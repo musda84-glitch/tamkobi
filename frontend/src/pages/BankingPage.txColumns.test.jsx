@@ -153,9 +153,27 @@ function headerLabels() {
 
 const REM_PX = 16;
 const TABLE_PX = 1180;
+const NARROW_PX = 926;
+const NARROW_DESC_PX = 220;
+
+function colNodes() {
+  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
+}
+
+/** 926px bütçesi: xl'e kadar gizli Kullanıcı sütunu yer kaplamaz. */
+function narrowRemSum() {
+  return colNodes()
+    .filter((col) => {
+      const width = String(col.style.width || "");
+      if (!width.endsWith("rem")) return false;
+      const cls = col.className || "";
+      return !(cls.includes("hidden") && cls.includes("xl:table-cell") && !cls.includes("lg:table-cell"));
+    })
+    .reduce((sum, col) => sum + Number.parseFloat(col.style.width), 0);
+}
 
 function fixedRemSum() {
-  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')]
+  return colNodes()
     .map((col) => String(col.style.width || ""))
     .filter((width) => width.endsWith("rem"))
     .reduce((sum, width) => sum + Number.parseFloat(width), 0);
@@ -166,7 +184,7 @@ function descriptionRoomPx() {
 }
 
 function remWidths() {
-  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')]
+  return colNodes()
     .map((col) => String(col.style.width || ""))
     .filter((width) => width.endsWith("rem"))
     .map((width) => Number.parseFloat(width));
@@ -197,6 +215,20 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(headerLabels()).toContain("Hesap");
   expect(remWidths()).toEqual([6, 9, 8.5, 8, 8.5, 11]);
   expect(descriptionRoomPx()).toBeGreaterThanOrEqual(300);
+  const userCol = colNodes().find((col) => (col.className || "").includes("hidden"));
+  const userThAll = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Kullanıcı");
+  expect(userCol.className).toContain("hidden");
+  expect(userCol.className).toContain("xl:table-cell");
+  expect(userThAll.className).toContain("hidden");
+  expect(userThAll.className).toContain("xl:table-cell");
+  expect(host.querySelector('[data-testid="tx-actor-tx_open"]').className).toContain("xl:table-cell");
+  expect(narrowRemSum() * REM_PX + NARROW_DESC_PX).toBeLessThanOrEqual(NARROW_PX);
+  expect(NARROW_PX - narrowRemSum() * REM_PX).toBeGreaterThanOrEqual(NARROW_DESC_PX);
+  const wideTable = host.querySelector('[data-testid="bank-tx-table-wrap"] table');
+  expect(wideTable.style.minWidth || "").not.toMatch(/51rem|42rem/);
+  if (String(wideTable.style.minWidth || "").endsWith("px")) {
+    expect(Number.parseFloat(wideTable.style.minWidth)).toBeLessThanOrEqual(NARROW_PX);
+  }
   const accountCell = host.querySelector('[data-testid="tx-account-tx_open"]');
   expect(accountCell.textContent).toBe("Kuveyt Türk · Vadesiz TL Uzun Hesap Adı");
   expect(accountCell.className).not.toContain("truncate");
@@ -234,7 +266,9 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(actionTh.className).toContain("bg-slate-50");
   expect(descriptionRoomPx()).toBeGreaterThanOrEqual(300);
   expect(remWidths()).toEqual([6, 8.5, 8, 8.5, 11]);
-  const cols = [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
+  expect(narrowRemSum() * REM_PX + NARROW_DESC_PX).toBeLessThanOrEqual(NARROW_PX);
+  expect(NARROW_PX - narrowRemSum() * REM_PX).toBeGreaterThanOrEqual(NARROW_DESC_PX);
+  const cols = colNodes();
   expect(cols[0].style.width).toBe("6rem");
   expect(cols[cols.length - 1].style.width).toBe("11rem");
   const selectedAmount = amountCell("tx_open");
