@@ -122,6 +122,56 @@ describe("workDocs", () => {
     expect(q.items[0].vat_rate).toBe(10);
   });
 
+  it("keeps a written 0% VAT and defaults to 20 only when the rate is empty", () => {
+    expect(emptyItem().vat_rate).toBe(20);
+    expect(workItemFromProduct({ name: "İstisna", sale_price: 10, vat_rate: 0 }).vat_rate).toBe(0);
+    expect(workItemFromProduct({ name: "Ekmek", sale_price: 10, vat_rate: 10 }).vat_rate).toBe(10);
+    expect(workItemFromProduct({ name: "Yok", sale_price: 10 }).vat_rate).toBe(20);
+    expect(workItemFromProduct({ name: "Yok", sale_price: 10, vat_rate: undefined }).vat_rate).toBe(20);
+    expect(workItemFromProduct({ name: "Yok", sale_price: 10, vat_rate: null }).vat_rate).toBe(20);
+    expect(workItemFromProduct({ name: "Yok", sale_price: 10, vat_rate: "" }).vat_rate).toBe(20);
+    expect(workItemFromProduct({ name: "İlaç", sale_price: 10, vat_rate: "1" }).vat_rate).toBe(1);
+    expect(workItemFromProduct({ name: "İstisna", sale_price: 10, vat_rate: "0" }).vat_rate).toBe(0);
+
+    const zero = { ...emptyItem(), name: "İstisna", quantity: 2, unit_price: 50, vat_rate: 0 };
+    expect(workItemPersistFields(zero).vat_rate).toBe(0);
+    const missing = { ...emptyItem(), name: "Boş" };
+    Reflect.deleteProperty(missing, "vat_rate");
+    expect(workItemPersistFields(missing).vat_rate).toBe(20);
+    expect(quoteLineProductPayload({ name: "İstisna", unit_price: 10, vat_rate: 0, unit: "Adet" }, "c", "I-1").vat_rate).toBe(0);
+    const noVat = { name: "Boş", unit_price: 10, vat_rate: 20, unit: "Adet" };
+    Reflect.deleteProperty(noVat, "vat_rate");
+    expect(quoteLineProductPayload(noVat, "c", "B-1").vat_rate).toBe(20);
+
+    const onlyZero = workItemTotals([zero]);
+    expect(onlyZero.vat).toBe(0);
+    expect(onlyZero.subtotal).toBe(100);
+    expect(onlyZero.grandTotal).toBe(100);
+    const mixed = workItemTotals([
+      { name: "İstisna", quantity: 1, unit_price: 100, vat_rate: 0, unit: "Adet" },
+      { name: "Kapı", quantity: 1, unit_price: 100, vat_rate: 20, unit: "Adet" },
+    ]);
+    expect(mixed.subtotal).toBe(200);
+    expect(mixed.vat).toBe(20);
+    expect(mixed.grandTotal).toBe(220);
+    const hydrated = hydrateWorkItem(zero);
+    expect(hydrated.vat_rate).toBe(0);
+    expect(workItemTotals([hydrated]).vat).toBe(0);
+    const inclZero = workItemTotals([{ ...zero, quantity: 1, unit_price: 80, price_includes_vat: true }]);
+    expect(inclZero.vat).toBe(0);
+    expect(inclZero.subtotal).toBe(80);
+    expect(inclZero.grandTotal).toBe(80);
+    expect(workItemLineGross(zero)).toBe(100);
+    expect(workItemPriceFromGross({ quantity: 1, vat_rate: 0 }, 100)).toBe(100);
+
+    const survey = surveyPayload("comp", {
+      contact_id: "c1", contact_name: "Acme", address: "", survey_date: "2026-10-19", notes: "", location_url: "",
+    }, [zero]);
+    expect(survey.measurements[0].vat_rate).toBe(0);
+    const saved = quotePayload("comp", { contact_id: "c1", contact_name: "Acme", title: "T", valid_until: "", notes: "" }, [zero]);
+    expect(saved.items[0].vat_rate).toBe(0);
+  });
+
   it("totals quote lines with VAT", () => {
     const t = workItemTotals([
       { name: "Kapı", quantity: 2, unit_price: 100, vat_rate: 20, unit: "Adet" },
