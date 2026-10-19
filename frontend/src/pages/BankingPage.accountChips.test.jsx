@@ -8,6 +8,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import BankingPage from "./BankingPage";
 import { formatTrAmount } from "../utils/money";
+import { displayBankLogoSrc } from "../utils/bankLogo";
 
 const authState = {
   activeCompany: { id: "c1" },
@@ -494,10 +495,10 @@ test("logo sırası override, bank_logos ve svg; hata zinciri monogramda biter",
   const card = host.querySelector('[data-testid="bank-card-acc_is"]');
   expect(card.textContent).not.toContain(iban.replace(/\s+/g, ""));
   let img = card.querySelector("img");
-  expect(img.getAttribute("src")).toBe("/api/files/override.png");
+  expect(img.getAttribute("src")).toBe(displayBankLogoSrc("/api/files/override.png"));
   await act(async () => { fireEvent.error(img); });
   img = card.querySelector("img");
-  expect(img.getAttribute("src")).toBe("/api/files/bank-0064.png");
+  expect(img.getAttribute("src")).toBe(displayBankLogoSrc("/api/files/bank-0064.png"));
   await act(async () => { fireEvent.error(img); });
   img = card.querySelector("img");
   expect(img.getAttribute("src")).toBe("/bank-logos/0064.svg");
@@ -559,4 +560,34 @@ test("düzenleme modalı svg ve büyük dosyayı istemcide reddeder", async () =
   const only = host.querySelector('[data-testid="bank-logo-only-account"]');
   await act(async () => { only.click(); });
   expect(only.checked).toBe(true);
+  expect(host.querySelector('[data-testid="bank-logo-note"]').textContent).toBe("Bu logo yalnız bu hesapta kullanılır");
+});
+
+test("banka logosu şirkete yazılırken fiyat ondalığı korunur", async () => {
+  authState.activeCompany = {
+    id: "c1",
+    price_decimals: 4,
+    bank_logos: { "0205": "/api/files/keep.png" },
+  };
+  axios.post.mockResolvedValueOnce({ data: { url: "/api/files/new-logo.png" } });
+  const details = [];
+  const onCompany = (event) => details.push(event.detail);
+  window.addEventListener("tamkobi-company-updated", onCompany);
+  try {
+    await openBankEdit({
+      id: "acc_is",
+      type: "bank",
+      bank_name: "Türkiye İş Bankası",
+      account_name: "Ticari",
+      iban: "TR33 0006 4000 0011 2345 6789 01",
+      current_balance: 10,
+    });
+    await pickLogo(new File([new Uint8Array([1, 2, 3])], "logo.png", { type: "image/png" }));
+    expect(details).toHaveLength(1);
+    expect(details[0].price_decimals).toBe(4);
+    expect(details[0].bank_logos["0064"]).toBe("/api/files/new-logo.png");
+    expect(details[0].bank_logos["0205"]).toBe("/api/files/keep.png");
+  } finally {
+    window.removeEventListener("tamkobi-company-updated", onCompany);
+  }
 });

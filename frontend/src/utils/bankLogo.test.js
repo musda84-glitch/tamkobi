@@ -65,6 +65,29 @@ test("bilinmeyen bankada şirket logosu kullanılır, yerleşik svg eklenmez", (
   expect(info.code).toBe("9999");
 });
 
+test("IBAN kodu TR_BANKS'te yokken şirket logosu önce bank_logos[ibanKodu] ile bulunur", () => {
+  const company = {
+    bank_logos: {
+      9999: "/api/files/iban-9999.png",
+      "0064": "/api/files/name-0064.png",
+    },
+  };
+  const info = bankLogoInfo(
+    { iban: UNKNOWN_IBAN, bank_name: "Türkiye İş Bankası" },
+    company,
+  );
+  expect(bankCodeFromIban(UNKNOWN_IBAN)).toBe("9999");
+  expect(info.src).toBe("/api/files/iban-9999.png");
+  expect(info.fallbackSrc).toEqual(["/api/files/name-0064.png", "/bank-logos/0064.svg"]);
+
+  const namedOnly = bankLogoInfo(
+    { iban: UNKNOWN_IBAN, bank_name: "Türkiye İş Bankası" },
+    { bank_logos: { "0064": "/api/files/name-0064.png" } },
+  );
+  expect(namedOnly.src).toBe("/api/files/name-0064.png");
+  expect(namedOnly.fallbackSrc).toEqual(["/bank-logos/0064.svg"]);
+});
+
 test("IBAN yokken banka adından kod bulunur; Ziraat Katılım 0010 değildir", () => {
   expect(bankLogoInfo({ bank_name: "Türkiye İş Bankası" }).code).toBe("0064");
   expect(bankLogoInfo({ bank_name: "Kuveyt Türk Katılım" }).code).toBe("0205");

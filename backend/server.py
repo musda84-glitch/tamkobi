@@ -12155,23 +12155,17 @@ def _bank_code_from_iban(iban: Optional[str]) -> Optional[str]:
     return code
 
 
-def _bank_logo_media_type(data: bytes, filename: str, declared: Optional[str]) -> str:
+def _bank_logo_media_type(data: bytes) -> str:
     """İçerik imzası kazanır. Başlık veya .png uzantısı SVG/GIF/HEIC/PDF'i geçirmez."""
-    hinted = _sniff_upload_content_type(filename or "", declared)
     sniffed = image_opt._sniff_type(data or b"", "")
-    if sniffed in _BANK_LOGO_MIME:
-        return sniffed
-    if hinted in _BANK_LOGO_MIME:
-        return ""
-    return ""
+    return sniffed if sniffed in _BANK_LOGO_MIME else ""
 
 
-async def _bank_logo_context(account_id: str, user: dict, scope: str):
-    """Hesabı kiracıdan al. company_id hesabın kendisinden gelir; istek company_id'si yok sayılır."""
+def _bank_logo_context(acc: dict, scope: str):
+    """Scope ve banka kodu. company_id hesabın kendisinden gelir; istek company_id'si yok sayılır."""
     scope_name = str(scope or "").strip().lower()
     if scope_name not in ("bank", "account"):
         raise HTTPException(status_code=400, detail="scope bank veya account olmalı.")
-    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
     company_id = str(acc.get("company_id") or "").strip()
     if not company_id:
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
@@ -12224,11 +12218,12 @@ async def upload_bank_account_logo(
     user: dict = Depends(get_current_user),
 ):
     """Banka logosu. scope=bank → companies.bank_logos[kod]; scope=account → bu hesabın logo_url."""
-    acc, company_id, scope_name, code = await _bank_logo_context(account_id, user, scope)
+    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    acc, company_id, scope_name, code = _bank_logo_context(acc, scope)
     data = await file.read()
     if len(data) > _BANK_LOGO_MAX_BYTES:
         raise HTTPException(status_code=400, detail="Logo en fazla 512 KB olabilir.")
-    content_type = _bank_logo_media_type(data, file.filename or "", file.content_type)
+    content_type = _bank_logo_media_type(data)
     if content_type not in _BANK_LOGO_MIME:
         raise HTTPException(status_code=400, detail="Yalnız PNG, JPEG veya WEBP yükleyebilirsiniz.")
     thumb = image_opt.make_thumbnail(data, content_type, file.filename or "", max_edge=128)
@@ -12258,7 +12253,8 @@ async def delete_bank_account_logo(
     user: dict = Depends(get_current_user),
 ):
     """scope=bank bank_logos.kod alanını, scope=account logo_url alanını kaldırır."""
-    _acc, company_id, scope_name, code = await _bank_logo_context(account_id, user, scope)
+    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    _acc, company_id, scope_name, code = _bank_logo_context(acc, scope)
     if scope_name == "bank":
         await db.companies.update_one({"_id": company_id}, {"$unset": {f"bank_logos.{code}": ""}})
     else:

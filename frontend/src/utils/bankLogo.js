@@ -129,7 +129,10 @@ export function bankLogoInfo(acc, company) {
   const logos = company && company.bank_logos && typeof company.bank_logos === "object" ? company.bank_logos : null;
   const sources = [];
   pushLogoSource(sources, acc.logo_url);
-  if (code && logos) pushLogoSource(sources, logos[code]);
+  if (logos) {
+    if (ibanCode) pushLogoSource(sources, logos[ibanCode]);
+    if (known) pushLogoSource(sources, logos[known]);
+  }
   if (known) pushLogoSource(sources, `/bank-logos/${known}.svg`);
   if (!sources.length) return null;
   const meta = known ? TR_BANKS[known] : null;

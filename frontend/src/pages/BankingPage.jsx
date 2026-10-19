@@ -641,7 +641,7 @@ export default function BankingPage() {
     if (url) next[code] = url;
     else delete next[code];
     window.dispatchEvent(new CustomEvent("tamkobi-company-updated", {
-      detail: { id: companyKey, bank_logos: next },
+      detail: { id: companyKey, bank_logos: next, price_decimals: activeCompany?.price_decimals },
     }));
   };
 
@@ -867,9 +867,11 @@ export default function BankingPage() {
   const logoSrc = logoSources[logoAttempt] || "";
   const logoCode = editingBankLogo ? bankCodeFromIban(editingAccount.iban) : null;
   const logoBankName = (logoCode && TR_BANKS[logoCode]?.short) || editingAccount?.bank_name || "Banka";
-  const logoNote = logoCode
-    ? `Bu logo ${logoBankName} (${logoCode}) bankasının tüm hesaplarında kullanılır`
-    : "Bu hesabın IBAN'ından banka kodu çıkarılamadı. Logo yalnız bu hesaba yüklenebilir.";
+  const logoNote = logoOnlyAccount
+    ? "Bu logo yalnız bu hesapta kullanılır"
+    : logoCode
+      ? `Bu logo ${logoBankName} (${logoCode}) bankasının tüm hesaplarında kullanılır`
+      : "Bu hesabın IBAN'ından banka kodu çıkarılamadı. Logo yalnız bu hesaba yüklenebilir.";
 
   return (
     <div className="space-y-6" data-testid="banking-page">
