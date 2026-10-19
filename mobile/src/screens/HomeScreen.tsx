@@ -1,14 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, ScrollView, View, useWindowDimensions } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
 import type { ActionTile } from "../components/ActionTiles";
 import { HomeOverviewPage } from "../components/home/HomeOverviewPage";
+import { HomePanels, type HomePanelProps } from "../components/home/HomePanels";
 import { HomeTilesPage } from "../components/home/HomeTilesPage";
-import { Screen } from "../components/kit";
+import { Badge, Card, Muted, Row, Screen } from "../components/kit";
 import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, ManagerSummary, Notification, Overview } from "../types";
@@ -41,7 +42,7 @@ import {
   visibleNotifications,
 } from "../utils/notifications";
 import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
-import { splitNotificationsTile, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
+import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
 
 export function HomeScreen() {
   const { client, companyId, user, license, activeCompany, baseUrl } = useAuth();
@@ -256,29 +257,48 @@ export function HomeScreen() {
       showRefresh={showRefresh}
       refreshing={refreshing}
       onRefresh={load}
-      showApprovals={showApprovals}
-      client={client}
-      companyId={companyId}
-      onBadgesChanged={refreshBadges}
-      showMessages={showMessages}
-      notifications={notifications}
-      notes={notes}
-      clearingNotes={clearingNotes}
-      onOpenAllNotes={() => { if (notifications) goHref(notifications.href); }}
-      onOpenNote={(n) => { void openNotification(n); }}
-      onDeleteNote={(n) => { void deleteNotification(n); }}
-      onClearNotes={() => { void clearAllNotifications(); }}
-      onMarkAllRead={() => { void markAllRead(); }}
-      showFinance={showFinance}
-      stats={stats}
-      overview={overview}
     />
   );
+
+  const panelProps: HomePanelProps = {
+    showApprovals,
+    client,
+    companyId,
+    onBadgesChanged: refreshBadges,
+    showMessages,
+    notifications,
+    notes,
+    clearingNotes,
+    onOpenAllNotes: () => { if (notifications) goHref(notifications.href); },
+    onOpenNote: (n) => { void openNotification(n); },
+    onDeleteNote: (n) => { void deleteNotification(n); },
+    onClearNotes: () => { void clearAllNotifications(); },
+    onMarkAllRead: () => { void markAllRead(); },
+  };
 
   if (!showFinance) {
     return (
       <Screen onRefresh={load} refreshing={refreshing}>
         {tilesPage}
+        <HomePanels {...panelProps} />
+        <Card>
+          <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü işler</Text>
+          {!overview?.tasks?.length ? <Muted>Bekleyen görev yok.</Muted> : overview.tasks.map((t) => {
+            const href = resolveMobilePath(t.path);
+            const row = (
+              <Row style={{ justifyContent: "space-between", paddingVertical: 6 }}>
+                <Text style={{ color: colors.text, flex: 1 }}>{t.label}{t.extra ? ` · ${t.extra}` : ""}</Text>
+                <Badge label={String(t.count)} tone={t.count ? "amber" : "slate"} />
+              </Row>
+            );
+            if (!href) return <View key={t.key}>{row}</View>;
+            return (
+              <Pressable key={t.key} onPress={() => goHref(href)} testID={`home-task-${t.key}`}>
+                {row}
+              </Pressable>
+            );
+          })}
+        </Card>
       </Screen>
     );
   }
@@ -323,6 +343,7 @@ export function HomeScreen() {
               stats={stats}
               overview={overview}
               manager={manager}
+              {...panelProps}
             />
           </Screen>
         </View>

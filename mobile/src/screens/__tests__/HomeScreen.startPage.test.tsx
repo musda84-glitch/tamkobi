@@ -28,7 +28,12 @@ jest.mock("expo-router", () => {
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("../../components/ManagerApprovalsPanel", () => ({ ManagerApprovalsPanel: () => null }));
 jest.mock("../../components/StaffMessagesPanel", () => ({ StaffMessagesPanel: () => null }));
-jest.mock("../../components/NotificationsPanel", () => ({ NotificationsPanel: () => null }));
+jest.mock("../../components/NotificationsPanel", () => {
+  const ReactLib = require("react") as typeof import("react");
+  return {
+    NotificationsPanel: () => ReactLib.createElement("div", { "data-testid": "home-notifications-panel" }),
+  };
+});
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
   getItem: jest.fn(async () => null),
@@ -244,8 +249,12 @@ describe("HomeScreen start page", () => {
     const pager = findByTestId(container, "home-pager");
     expect(pager.__pager?.contentOffset?.x).toBe(WIDTH);
     expect(pager.scrollTo).toHaveBeenCalledWith({ x: WIDTH, y: 0, animated: false });
-    expect(findByTestId(container, "home-page-tiles")).toBeTruthy();
-    expect(findByTestId(container, "home-quick-menu")).toBeTruthy();
+    const tiles = findByTestId(container, "home-page-tiles");
+    const overviewPage = findByTestId(container, "home-page-overview");
+    expect(tiles).toBeTruthy();
+    expect(findByTestId(tiles, "home-quick-menu")).toBeTruthy();
+    expect(findTestIdPrefix(tiles, "home-notifications-")).toBeNull();
+    expect(findTestIdPrefix(overviewPage, "home-notifications-")).toBeTruthy();
     expect(reactProps(findByTestId(container, "home-pager-dot-1"))?.style?.width).toBe(16);
     await act(async () => {
       pager.__pager?.onMomentumScrollEnd?.({ nativeEvent: { contentOffset: { x: 0 } } });
@@ -258,6 +267,9 @@ describe("HomeScreen start page", () => {
     await show();
     expect(findByTestId(container, "home-pager")).toBeNull();
     expect(findByTestId(container, "home-quick-menu")).toBeTruthy();
+    expect(findTestIdPrefix(container, "home-notifications-")).toBeTruthy();
+    expect(findTestIdPrefix(container, "home-task-")).toBeTruthy();
+    expect(textOf(container)).toContain("Bugünkü işler");
     expect(storageKeys().some((key) => key.includes("start_page"))).toBe(false);
     expect(paths().some((path) => path.includes("manager-summary"))).toBe(false);
 
@@ -272,7 +284,20 @@ describe("HomeScreen start page", () => {
     await show();
     expect(findByTestId(container, "home-pager")).toBeNull();
     expect(findByTestId(container, "home-quick-menu")).toBeTruthy();
+    expect(findTestIdPrefix(container, "home-notifications-")).toBeTruthy();
+    expect(textOf(container)).toContain("Bugünkü işler");
     expect(storageKeys().some((key) => key.includes("start_page"))).toBe(false);
     expect(paths().some((path) => path.includes("manager-summary"))).toBe(false);
   });
 });
+
+function findTestIdPrefix(node: any, prefix: string): any {
+  if (!node) return null;
+  const id = node.getAttribute?.("data-testid");
+  if (typeof id === "string" && id.startsWith(prefix)) return node;
+  for (const child of node.childNodes || []) {
+    const hit = findTestIdPrefix(child, prefix);
+    if (hit) return hit;
+  }
+  return null;
+}
