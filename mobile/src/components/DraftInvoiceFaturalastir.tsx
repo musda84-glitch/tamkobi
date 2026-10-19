@@ -14,6 +14,8 @@ export function DraftInvoiceFaturalastir({
   onIssued,
   onError,
   testID,
+  title = "Taslağı Faturalaştır",
+  color,
 }: {
   invoice: Invoice;
   allowed: boolean;
@@ -21,6 +23,8 @@ export function DraftInvoiceFaturalastir({
   onIssued?: (message: string) => void;
   onError?: (message: string) => void;
   testID?: string;
+  title?: string;
+  color?: string;
 }) {
   const { client } = useAuth();
   const [sending, setSending] = useState(false);
@@ -49,8 +53,9 @@ export function DraftInvoiceFaturalastir({
 
   return (
     <PrimaryButton
-      title="Taslağı Faturalaştır"
+      title={title}
       testID={tid}
+      color={color}
       loading={busy || sending}
       onPress={approve}
     />
