@@ -120,8 +120,9 @@ function confirmDelete(name: string, onYes: () => void) {
 }
 
 export function ProductFormScreen({ productId }: { productId?: string }) {
-  const { client, companyId, can, activeCompany } = useAuth();
+  const { client, companyId, can, activeCompany, feature } = useAuth();
   const canEdit = can("/stock", "edit");
+  const showPrices = feature("view_prices");
   const isNew = !productId;
   const [draft, setDraft] = useState<ProductDraft>(emptyProductDraft());
   const [photos, setPhotos] = useState<string[]>([]);
@@ -676,7 +677,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         subtitle="Ürün etiketi · ağ yazıcısı"
         busy={tcpBusy}
         error={tcpError}
-        allowPrice={draft.sale_price !== "" && draft.sale_price != null}
+        allowPrice={showPrices && draft.sale_price !== "" && draft.sale_price != null}
         testID="stock-tcp-sheet"
         printerHost={labelPrinter.host}
         printerPort={labelPrinter.port}
@@ -698,8 +699,8 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
                 name: draft.name,
                 sku: draft.sku,
                 barcode: draft.barcode || draft.sku,
-                price: Number(draft.sale_price) || null,
-                includePrice: opts.includePrice,
+                price: showPrices ? (Number(draft.sale_price) || null) : null,
+                includePrice: showPrices && opts.includePrice,
               },
             });
             setMessage(`Etiket basıldı (${copies} adet, ${settings.host}:${settings.port}).`);
@@ -730,7 +731,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
                 image_url: photos[0],
               },
               copies,
-              includePrice: opts.includePrice,
+              includePrice: showPrices && opts.includePrice,
             }], mode, activeCompany);
             if (!ok) {
               const msg = mode === "pdf" ? "PDF paylaşılamadı." : "Etiket yazdırılamadı.";
