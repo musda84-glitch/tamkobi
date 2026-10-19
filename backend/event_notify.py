@@ -844,13 +844,7 @@ async def present_prefs(doc: dict, *, with_usage: bool = False) -> dict:
 
 async def app_link(path: str = "") -> str:
     """Uygulama (app.tamkobi.com) mutlak link — asla localhost üretmez."""
-    base = await public_url.public_base_url_for(_db, "app")
-    p = str(path or "").strip()
-    if not p:
-        return base
-    if not p.startswith("/"):
-        p = "/" + p
-    return f"{base}{p}"
+    return await public_url.public_link(_db, path or "", "app")
 
 
 def _safe_link(absolute: str) -> str:
