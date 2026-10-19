@@ -16,7 +16,7 @@ import platform_mail
 import platform_store as store
 import saas
 
-router = APIRouter(prefix="/api/platform/admin-v1", tags=["platform-admin-v1"])
+router = APIRouter(prefix="/api", tags=["platform-admin-v1"])
 
 # Uzun parçalar alt dizgi. "pan" kart numarasıdır; "plan" / "company" düşmesin.
 _DROP_SUBSTR = (
@@ -70,7 +70,8 @@ def _item(item: Any) -> dict:
 async def _auth(request: Request, scope: str) -> Tuple[dict, Dict[str, Any]]:
     """platform_v1._authenticate ile aynı devir; audit öneki admin_v1.
 
-    Kapsam doğru olsa bile kind platform_admin değilse 403 (plan D).
+    Kapsam doğru olsa bile kind platform_admin değilse veya anahtar bir
+    instance'a bağlıysa 403 (plan D).
     """
     key_doc, payload = await platform_auth.authenticate(
         request,
@@ -78,6 +79,8 @@ async def _auth(request: Request, scope: str) -> Tuple[dict, Dict[str, Any]]:
         audit_prefix="admin_v1",
     )
     if key_doc.get("kind") != store.KEY_KIND_PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+    if str(key_doc.get("instance_id") or "").strip():
         raise HTTPException(status_code=403, detail="Kapsam yetersiz")
     return key_doc, payload
 
@@ -89,7 +92,7 @@ def _window(rows: List[Any], limit: int, offset: int) -> Tuple[List[Any], int]:
     return rows[offset:offset + limit], total
 
 
-@router.get("/companies")
+@router.get("/platform/admin-v1/companies")
 async def admin_v1_companies(
     request: Request,
     limit: int = Query(50, ge=1, le=200),
@@ -106,7 +109,7 @@ async def admin_v1_companies(
     return _page(items, limit, offset, total)
 
 
-@router.get("/companies/{company_id}")
+@router.get("/platform/admin-v1/companies/{company_id}")
 async def admin_v1_company(company_id: str, request: Request):
     await _auth(request, store.SCOPE_ADMIN_COMPANIES_READ)
     row = await saas.company_detail(company_id, include_users=False)
@@ -115,7 +118,7 @@ async def admin_v1_company(company_id: str, request: Request):
     return _item(row)
 
 
-@router.get("/companies/{company_id}/users")
+@router.get("/platform/admin-v1/companies/{company_id}/users")
 async def admin_v1_company_users(
     company_id: str,
     request: Request,
@@ -130,7 +133,7 @@ async def admin_v1_company_users(
     return _page(page, limit, offset, total)
 
 
-@router.get("/plans")
+@router.get("/platform/admin-v1/plans")
 async def admin_v1_plans(request: Request):
     await _auth(request, store.SCOPE_ADMIN_LICENSES_READ)
     plans = await saas.list_plans({})
@@ -138,7 +141,7 @@ async def admin_v1_plans(request: Request):
     return _item({"plans": plans, "catalog": catalog})
 
 
-@router.get("/api-keys")
+@router.get("/platform/admin-v1/api-keys")
 async def admin_v1_api_keys(
     request: Request,
     product_id: Optional[str] = Query(None),
@@ -152,7 +155,7 @@ async def admin_v1_api_keys(
     return _page(page, limit, offset, total)
 
 
-@router.get("/integrators")
+@router.get("/platform/admin-v1/integrators")
 async def admin_v1_integrators(
     request: Request,
     include_instances: bool = Query(False),
@@ -166,7 +169,7 @@ async def admin_v1_integrators(
     return _item(item)
 
 
-@router.get("/audit")
+@router.get("/platform/admin-v1/audit")
 async def admin_v1_audit(
     request: Request,
     action: Optional[str] = Query(None),
@@ -189,17 +192,32 @@ async def admin_v1_audit(
     return _redact({"items": items, "limit": limit, "next_cursor": next_cursor})
 
 
-@router.get("/mail/status")
+def _mail_server_public(row: dict) -> dict:
+    out = platform_mail._public_server(row)
+    out.pop("password_enc", None)
+    return out
+
+
+def _mail_box_public(row: dict) -> dict:
+    """_public_box aynen kalır; admin-v1 üyelik ve sır alanlarını yanıtta taşımaz."""
+    out = platform_mail._public_box(row)
+    out.pop("password_enc", None)
+    out.pop("allowed_user_ids", None)
+    out.pop("allow_all_admins", None)
+    return out
+
+
+@router.get("/platform/admin-v1/mail/status")
 async def admin_v1_mail_status(request: Request):
     """Posta özeti. SMTP/IMAP açılmaz, mektup gönderilmez."""
     await _auth(request, store.SCOPE_ADMIN_MAIL_READ)
     db = platform_mail._db if platform_mail._db is not None else saas._db
     servers = [
-        platform_mail._public_server(row)
+        _mail_server_public(row)
         for row in await db.platform_mail_servers.find({}).sort("created_at", 1).to_list(100)
     ]
     boxes = [
-        platform_mail._public_box(row)
+        _mail_box_public(row)
         for row in await db.platform_mailboxes.find({}).sort("created_at", 1).to_list(200)
     ]
     default_from = next(
@@ -209,7 +227,7 @@ async def admin_v1_mail_status(request: Request):
     return _item({"servers": servers, "mailboxes": boxes, "default_from": default_from})
 
 
-@router.get("/system/health")
+@router.get("/platform/admin-v1/system/health")
 async def admin_v1_system_health(request: Request):
     """Sürüm damgası. Veritabanı sorgusu yok."""
     await _auth(request, store.SCOPE_ADMIN_SYSTEM_READ)

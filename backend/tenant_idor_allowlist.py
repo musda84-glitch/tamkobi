@@ -64,6 +64,9 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("GET", "/saas/companies/{company_id}/notify-prefs"),
     ("PUT", "/saas/companies/{company_id}/notify-prefs"),
     ("GET", "/saas/companies/{company_id}/notify-mail-log"),
+    # Platform admin-v1 — şirket oturumu yok; HMAC platform_admin anahtarı.
+    ("GET", "/platform/admin-v1/companies/{company_id}"),
+    ("GET", "/platform/admin-v1/companies/{company_id}/users"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -83,4 +86,6 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("GET", "/saas/companies/{company_id}/notify-prefs"): "Süper-admin platform firma bildirimi; require_super_admin",
     ("PUT", "/saas/companies/{company_id}/notify-prefs"): "Süper-admin platform firma bildirimi; require_super_admin",
     ("GET", "/saas/companies/{company_id}/notify-mail-log"): "Süper-admin olay e-posta logu; require_super_admin",
+    ("GET", "/platform/admin-v1/companies/{company_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("GET", "/platform/admin-v1/companies/{company_id}/users"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
 }

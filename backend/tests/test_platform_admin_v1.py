@@ -381,6 +381,33 @@ def test_kind_rules(db):
     asyncio.run(run())
 
 
+def test_platform_admin_key_with_instance_id_is_forbidden(db):
+    async def plant():
+        await store.ensure_seeded()
+        tam = next(p for p in await store.list_products() if p["code"] == "tamkobi")
+        await db.platform_api_keys.insert_one({
+            "_id": "pk_bound_admin",
+            "product_id": tam["id"],
+            "instance_id": "comp_bound",
+            "name": "bound-admin",
+            "kind": "platform_admin",
+            "scopes": ["admin.system:read"],
+            "ip_allowlist": [],
+            "secret_enc": "enc:bound-admin-secret",
+            "secret_hash": "not-used",
+            "revoked_at": None,
+            "expires_at": None,
+            "grace_until": None,
+        })
+
+    asyncio.run(plant())
+    response, _, _ = _get(
+        _client(), "bound-admin-secret", "pk_bound_admin", "/api/platform/admin-v1/system/health",
+    )
+    assert response.status_code == 403
+    assert _detail(response) == "Kapsam yetersiz"
+
+
 def test_product_key_with_admin_scope_in_db_is_forbidden(db):
     async def plant():
         await store.ensure_seeded()
@@ -590,6 +617,8 @@ def test_users_plans_keys_integrators_mail_health(db):
             "is_default": True,
             "is_active": True,
             "password_enc": "LEAK-PASSWORD-ENC",
+            "allowed_user_ids": ["usr_root"],
+            "allow_all_admins": True,
             "created_at": "2026-01-02T00:00:00+00:00",
         })
 
@@ -665,7 +694,13 @@ def test_users_plans_keys_integrators_mail_health(db):
     assert mitem["default_from"] == "destek@example.com"
     assert mitem["servers"][0]["has_password"] is True
     assert "password_enc" not in mitem["servers"][0]
-    assert mitem["mailboxes"][0]["has_password"] is True
+    box = mitem["mailboxes"][0]
+    assert box["has_password"] is True
+    assert "password_enc" not in box
+    assert "allowed_user_ids" not in box
+    assert "allow_all_admins" not in box
+    assert "usr_root" not in mail.text
+    assert "LEAK-PASSWORD-ENC" not in mail.text
 
     health, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/system/health")
     assert health.status_code == 200, health.text
