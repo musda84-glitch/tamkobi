@@ -306,12 +306,22 @@ export type Order = {
   } | null;
 };
 
+export type ProductVariant = {
+  name?: string;
+  sku?: string | null;
+  barcode?: string | null;
+  price?: number | null;
+  sale_price?: number | null;
+  purchase_price?: number | null;
+};
+
 export type Product = {
   id?: string;
   _id?: string;
   name: string;
   sku?: string;
   barcode?: string;
+  variants?: ProductVariant[];
   sale_price?: number;
   vat_rate?: number;
   stock_quantity?: number;

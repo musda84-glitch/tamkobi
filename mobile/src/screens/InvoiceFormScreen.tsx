@@ -15,9 +15,12 @@ import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
 import {
-  addProductToItems,
+  commitProductLine,
   computeLine,
   emptyLine,
+  invoiceBarcodeFeedback,
+  invoiceBarcodeMiss,
+  matchProductVariant,
   removeInvoiceItem,
   type InvoiceLine,
   VAT_OPTIONS,
@@ -27,8 +30,8 @@ import {
   applyLineNameDraft,
   fetchLineProductHits,
   fillInvoiceLineFromProduct,
-  findCatalogByScan,
   findCatalogProduct,
+  findInvoiceProductByScan,
   lineBarcodeLookupRequest,
   lineProductDetailRequest,
   lineProductNeedsHydrate,
@@ -286,19 +289,32 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     }
   };
 
-  const addProduct = (p: Product) => {
-    setDraft((d) => ({ ...d, items: addProductToItems(d.items, p as unknown as Record<string, unknown>, d.invoice_type, defaultVat) }));
+  const addProduct = (p: Product, scanCode?: string) => {
+    const code = String(scanCode || "").trim();
+    setDraft((d) => {
+      const result = commitProductLine(d.items, p as unknown as Record<string, unknown>, d.invoice_type, {
+        exportInvoice: d.trade_kind === "export" || d.e_type === "e_export",
+        scanCode: code || undefined,
+      });
+      if (code) {
+        setMessage(invoiceBarcodeFeedback(result));
+        setError(null);
+      }
+      return { ...d, items: result.items };
+    });
     setProdQ("");
   };
 
   const lookupBarcode = async (code: string) => {
-    const local = products.find((p) => p.barcode === code || p.sku === code);
-    if (local) { addProduct(local); return; }
+    const c = String(code || "").trim();
+    const local = findInvoiceProductByScan(productsRef.current, c);
+    if (local) { addProduct(local, c); return; }
     try {
-      const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(code)}`, { company_id: companyId });
-      addProduct(p);
-    } catch (err) {
-      setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+      const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(c)}`, { company_id: companyId });
+      addProduct(p, c);
+    } catch {
+      setMessage(null);
+      setError(invoiceBarcodeMiss(c));
     }
   };
 
@@ -326,30 +342,46 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     }
   };
 
-  const pickLineProduct = async (index: number, hit: LineProductHit | Product) => {
+  const pickLineProduct = async (index: number, hit: LineProductHit | Product, scanCode?: string) => {
     const full = await resolveLineProduct(hit);
+    const code = String(scanCode || "").trim();
+    const variant = code ? matchProductVariant(full, code) : undefined;
     setProducts((prev) => (idOf(full) && prev.some((x) => idOf(x) === idOf(full)) ? prev : [...prev, full]));
     setDraft((d) => ({
       ...d,
-      items: d.items.map((it, i) => (i === index ? fillInvoiceLineFromProduct(it, full, d.invoice_type) : it)),
+      items: d.items.map((it, i) => (
+        i === index
+          ? fillInvoiceLineFromProduct(it, full, d.invoice_type, {
+            exportInvoice: d.trade_kind === "export" || d.e_type === "e_export",
+            variant,
+          })
+          : it
+      )),
     }));
+    if (code) {
+      const name = variant ? `${full.name} - ${variant.name || ""}` : full.name;
+      setMessage(`${name} eklendi`);
+      setError(null);
+    }
   };
 
   const applyBarcodeToLine = async (code: string) => {
     const index = scanLine;
     setScanLine(null);
     if (index == null) return;
-    const local = findCatalogByScan(productsRef.current, code);
+    const c = String(code || "").trim();
+    const local = findInvoiceProductByScan(productsRef.current, c);
     if (local) {
-      await pickLineProduct(index, local);
+      await pickLineProduct(index, local, c);
       return;
     }
     try {
-      const req = lineBarcodeLookupRequest(companyId, code);
+      const req = lineBarcodeLookupRequest(companyId, c);
       const p = await get<Product>(client, req.path, req.query);
-      await pickLineProduct(index, p);
-    } catch (err) {
-      setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+      await pickLineProduct(index, p, c);
+    } catch {
+      setMessage(null);
+      setError(invoiceBarcodeMiss(c));
     }
   };
 
@@ -674,7 +706,12 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
         </Row>
         <Field label="Ürün ara ve ekle" testID="inv-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU / barkod" />
         {prodHits.map((p) => (
-          <ProductPickRow key={idOf(p)} product={p} onPress={() => addProduct(p)} />
+          <ProductPickRow
+            key={idOf(p)}
+            product={p}
+            priceType={draft.invoice_type === "purchase" ? "purchase" : "sales"}
+            onPress={() => addProduct(p)}
+          />
         ))}
         {draft.items.map((it, idx) => (
           <View

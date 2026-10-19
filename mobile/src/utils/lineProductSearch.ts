@@ -1,5 +1,5 @@
 import type { Product } from "../types";
-import { computeLine, lineFromProduct, type InvoiceLine } from "./documentLines";
+import { computeLine, lineFromProduct, type InvoiceLine, type ProductVariantRef } from "./documentLines";
 import { asList, filterProducts } from "./productDisplay";
 import { fmtMoney, idOf } from "./money";
 import { workItemFromProduct, type WorkItem } from "./workDocs";
@@ -71,6 +71,23 @@ export function findCatalogByScan<T extends Pick<Product, "barcode" | "sku">>(
   const c = String(code || "").trim();
   if (!c) return undefined;
   return (catalog || []).find((p) => String(p.barcode || "").trim() === c || String(p.sku || "").trim() === c);
+}
+
+/** Fatura barkodu: ürün barkodu/SKU ve varyant barkodu/SKU. */
+export function findInvoiceProductByScan<T extends {
+  barcode?: string | null;
+  sku?: string | null;
+  variants?: Array<{ barcode?: string | null; sku?: string | null } | null> | null;
+}>(
+  catalog: T[] | null | undefined,
+  code: string,
+): T | undefined {
+  const c = String(code || "").trim();
+  if (!c) return undefined;
+  return (catalog || []).find((p) => {
+    if (String(p.barcode || "").trim() === c || String(p.sku || "").trim() === c) return true;
+    return (p.variants || []).some((v) => String(v?.barcode || "").trim() === c || String(v?.sku || "").trim() === c);
+  });
 }
 
 export function mergeLineProductHits(
@@ -166,10 +183,13 @@ export function fillInvoiceLineFromProduct(
   item: InvoiceLine,
   prod: LineProductHit | Product,
   invoiceType = "sales",
+  opts?: { exportInvoice?: boolean; variant?: ProductVariantRef | null },
 ): InvoiceLine {
   const line = lineFromProduct(prod as unknown as Record<string, unknown>, {
     invoiceType,
     quantity: Number(item.quantity) || 1,
+    exportInvoice: !!opts?.exportInvoice,
+    variant: opts?.variant,
   });
   return computeLine(
     {
