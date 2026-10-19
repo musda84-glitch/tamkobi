@@ -7,27 +7,42 @@ import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { connectedMapChannels, pickMapChannel } from "../utils/productMappingChannels";
 
-export const ProductMappingPanel = ({ companyId }) => {
+export const ProductMappingPanel = ({ companyId, integrations: integrationsProp }) => {
   const [maps, setMaps] = useState([]);
   const [unmapped, setUnmapped] = useState([]);
   const [products, setProducts] = useState([]);
-  const [integrations, setIntegrations] = useState([]);
+  const [loadedIntegrations, setLoadedIntegrations] = useState([]);
   const [form, setForm] = useState({ channel: "", marketplace_sku: "", product_id: "" });
+  const integrationsProvided = integrationsProp !== undefined;
+  const integrations = integrationsProvided ? integrationsProp : loadedIntegrations;
 
-  const channels = useMemo(() => connectedMapChannels(integrations), [integrations]);
+  const channels = useMemo(
+    () => connectedMapChannels(integrations, [
+      ...(unmapped || []).map((row) => row?.channel),
+      ...(maps || []).map((row) => row?.channel),
+    ]),
+    [integrations, unmapped, maps],
+  );
 
   const load = useCallback(async () => {
-    const [m, u, p, integ] = await Promise.all([
+    const requests = [
       axios.get(`${API_URL}/integrations/ecommerce/mappings?company_id=${companyId}`),
       axios.get(`${API_URL}/integrations/ecommerce/unmapped?company_id=${companyId}`),
       axios.get(`${API_URL}/products?company_id=${companyId}`),
-      axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`).catch(() => ({ data: [] })),
-    ]);
+    ];
+    if (!integrationsProvided) {
+      requests.push(
+        axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`).catch(() => ({ data: [] })),
+      );
+    }
+    const [m, u, p, integ] = await Promise.all(requests);
     setMaps(m.data);
     setUnmapped(u.data);
     setProducts(p.data);
-    setIntegrations(Array.isArray(integ.data) ? integ.data : []);
-  }, [companyId]);
+    if (!integrationsProvided) {
+      setLoadedIntegrations(Array.isArray(integ?.data) ? integ.data : []);
+    }
+  }, [companyId, integrationsProvided]);
 
   useEffect(() => {
     load().catch(() => toast.error("Eşleştirmeler yüklenemedi."));

@@ -379,7 +379,7 @@ export default function EcommercePage() {
       )}
       <div className="pt-4 border-t border-slate-200">
         <h2 className="text-base font-bold text-slate-900 mb-3">Ürün Eşleştirme (Pazaryeri SKU ↔ Stok Kartı)</h2>
-        <ProductMappingPanel companyId={activeCompanyId(activeCompany)} />
+        <ProductMappingPanel companyId={activeCompanyId(activeCompany)} integrations={integrations} />
       </div>
     </div>
   );
