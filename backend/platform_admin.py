@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from client_ip import request_ip
 import platform_store as store
 import saas
 
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/api", tags=["platform-admin"])
 
 
 def _ip(request: Request) -> str:
-    return (request.client.host if request.client else "") or ""
+    return request_ip(request)
 
 
 def _actor(admin: dict) -> str:

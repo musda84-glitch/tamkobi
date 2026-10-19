@@ -7,6 +7,7 @@ from typing import Any, Dict, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 
+from client_ip import request_ip
 import platform_store as store
 
 router = APIRouter(prefix="/api/platform/v1", tags=["platform-v1"])
@@ -39,7 +40,7 @@ async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict,
     if not doc or not secret:
         raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş anahtar")
 
-    ip = (request.client.host if request.client else "") or ""
+    ip = request_ip(request)
     if not await store.check_ip_rate_limit(ip):
         raise HTTPException(status_code=429, detail="IP dakika limiti aşıldı")
 
