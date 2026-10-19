@@ -140,6 +140,10 @@ def test_portal_orders_middleware_allow_list(monkeypatch):
     monkeypatch.setattr(company_audit, "safe_prepare", _noop)
     monkeypatch.setattr(company_audit, "safe_commit", _noop)
     monkeypatch.setattr(rbac, "_db", _DB())
+    # Tam koşuda başka testler rbac._license_guard ve addons içini MagicMock bırakabiliyor.
+    import addons
+    monkeypatch.setattr(rbac, "_license_guard", _noop)
+    monkeypatch.setattr(addons, "guard_request", _noop)
 
     state = {"user": _user(), "role": _role(features={"portal_orders": True})}
 
