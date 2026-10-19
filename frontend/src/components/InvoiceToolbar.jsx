@@ -4,6 +4,7 @@ import { ExportButtons } from "./ExportButtons";
 import { InvoicesBulkMenu } from "./InvoicesBulkMenu";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { MoneyInput } from "./MoneyInput";
+import { MobileFilterField, MobileFilterSheet, mobileChipClass, mobileChipRowClass, mobileFilterFieldClass } from "./MobileFilterSheet";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { invoicesForDisplay } from "../utils/invoiceStatus";
 
@@ -90,33 +91,125 @@ export const InvoiceToolbar = ({ f, setF, count, total, hidePay = false, rows = 
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const setPreset = (p) => { const [from, to] = presetRange(p); setF((s) => ({ ...s, preset: p, from, to })); };
   const active = Object.keys(DEFAULT_FILTERS).filter((k) => k !== "sort" && f[k] !== DEFAULT_FILTERS[k]).length;
+  const clearFilters = () => setF({ ...DEFAULT_FILTERS, sort: f.sort });
   const sel = "bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3 space-y-2" data-testid="invoice-toolbar">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input value={f.q} onChange={(e) => set("q", e.target.value)} placeholder="Fatura no, cari, VKN veya not ara…" className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none" data-testid="inv-search" />
-          {f.q && <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="inv-search-clear"><X className="w-3.5 h-3.5" /></button>}
-        </div>
-        {!hidePay && <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-0.5" data-testid="inv-pay-filter">
-          {PAY.map(([k, l]) => <button key={k} onClick={() => set("pay", k)} className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition ${f.pay === k ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-800"}`} data-testid={`inv-pay-${k}`}>{l}</button>)}
-        </div>}
-        <select value={f.etype} onChange={(e) => set("etype", e.target.value)} className={sel} data-testid="inv-etype-filter">{ETYPE.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-        <div className="flex items-center gap-1 text-xs text-slate-600"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" /><select value={f.sort} onChange={(e) => set("sort", e.target.value)} className={sel} data-testid="inv-sort">{SORT_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+  const cls = (variant) => (variant === "sheet" ? mobileFilterFieldClass : sel);
+  const renderSearch = (variant) => (
+    <div className={variant === "mobile" ? "relative flex-1 min-w-0" : "relative flex-1 min-w-[220px]"}>
+      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+      <input
+        value={f.q}
+        onChange={(e) => set("q", e.target.value)}
+        placeholder="Fatura no, cari, VKN veya not ara…"
+        className={variant === "mobile"
+          ? "w-full h-11 min-w-0 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+          : "w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 outline-none"}
+        data-testid="inv-search"
+      />
+      {f.q && <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="inv-search-clear"><X className="w-3.5 h-3.5" /></button>}
+    </div>
+  );
+  const renderPay = (variant) => {
+    if (hidePay) return null;
+    const chips = variant === "chips";
+    return (
+      <div className={chips ? mobileChipRowClass : "flex items-center gap-1 bg-slate-100 rounded-xl p-0.5"} data-testid="inv-pay-filter">
+        {PAY.map(([k, l]) => (
+          <button
+            key={k}
+            type={chips ? "button" : undefined}
+            onClick={() => set("pay", k)}
+            className={chips
+              ? mobileChipClass(f.pay === k)
+              : `px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition ${f.pay === k ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-800"}`}
+            data-testid={`inv-pay-${k}`}
+          >
+            {l}
+          </button>
+        ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
+    );
+  };
+  const renderEtype = (variant) => {
+    const node = (
+      <select value={f.etype} onChange={(e) => set("etype", e.target.value)} className={cls(variant)} data-testid="inv-etype-filter">
+        {ETYPE.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    );
+    return variant === "sheet" ? <MobileFilterField label="Belge">{node}</MobileFilterField> : node;
+  };
+  const renderSort = (variant) => {
+    const select = (
+      <select value={f.sort} onChange={(e) => set("sort", e.target.value)} className={cls(variant)} data-testid="inv-sort">
+        {SORT_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    );
+    if (variant === "sheet") return <MobileFilterField label="Sıralama">{select}</MobileFilterField>;
+    return <div className="flex items-center gap-1 text-xs text-slate-600"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />{select}</div>;
+  };
+  const renderPreset = (variant) => {
+    const node = (
+      <select value={f.preset} onChange={(e) => setPreset(e.target.value)} className={cls(variant)} data-testid="inv-date-preset">
+        {PRESETS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    );
+    return variant === "sheet" ? <MobileFilterField label="Tarih">{node}</MobileFilterField> : node;
+  };
+  const renderFrom = (variant) => (
+    <input type="date" value={f.from} onChange={(e) => setF((s) => ({ ...s, from: e.target.value, preset: "" }))} className={cls(variant)} data-testid="inv-date-from" />
+  );
+  const renderTo = (variant) => (
+    <input type="date" value={f.to} onChange={(e) => setF((s) => ({ ...s, to: e.target.value, preset: "" }))} className={cls(variant)} data-testid="inv-date-to" />
+  );
+  const renderMin = (variant) => (
+    <MoneyInput value={f.min} onChange={(n) => set("min", n ?? "")} placeholder="Min ₺" className={variant === "sheet" ? mobileFilterFieldClass : `${sel} w-24`} data-testid="inv-min" />
+  );
+  const renderMax = (variant) => (
+    <MoneyInput value={f.max} onChange={(n) => set("max", n ?? "")} placeholder="Max ₺" className={variant === "sheet" ? mobileFilterFieldClass : `${sel} w-24`} data-testid="inv-max" />
+  );
+  const renderSummary = () => (
+    <div className="ml-auto flex items-center gap-3 text-slate-500">
+      {onBulkAction && <InvoicesBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
+      <ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} loadRows={loadRows} />
+      <div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b>{draftCount != null && approvedCount != null && <span data-testid="inv-status-counts"> · Taslak <b className="text-slate-900">{draftCount}</b> · Onaylı <b className="text-slate-900">{approvedCount}</b></span>}</div>
+    </div>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3" data-testid="invoice-toolbar">
+      <div data-layout="desktop" className="hidden sm:flex flex-wrap items-center gap-2">
+        {renderSearch("inline")}
+        {renderPay("inline")}
+        {renderEtype("inline")}
+        {renderSort("inline")}
+      </div>
+      <div data-layout="desktop" className="hidden sm:flex flex-wrap items-center gap-2 text-xs sm:mt-2">
         <CalendarDays className="w-3.5 h-3.5 text-slate-400" />
-        <select value={f.preset} onChange={(e) => setPreset(e.target.value)} className={sel} data-testid="inv-date-preset">{PRESETS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-        <input type="date" value={f.from} onChange={(e) => setF((s) => ({ ...s, from: e.target.value, preset: "" }))} className={sel} data-testid="inv-date-from" /><span className="text-slate-400">–</span>
-        <input type="date" value={f.to} onChange={(e) => setF((s) => ({ ...s, to: e.target.value, preset: "" }))} className={sel} data-testid="inv-date-to" />
-        <MoneyInput value={f.min} onChange={(n) => set("min", n ?? "")} placeholder="Min ₺" className={`${sel} w-24`} data-testid="inv-min" />
-        <MoneyInput value={f.max} onChange={(n) => set("max", n ?? "")} placeholder="Max ₺" className={`${sel} w-24`} data-testid="inv-max" />
-        {active > 0 && <button onClick={() => setF({ ...DEFAULT_FILTERS, sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
-        <div className="ml-auto flex items-center gap-3 text-slate-500">
-          {onBulkAction && <InvoicesBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
-          <ExportButtons rows={rows} columns={INV_COLS} filename={hidePay ? "irsaliyeler" : "faturalar"} title={hidePay ? "İrsaliye Listesi" : "Fatura Listesi"} loadRows={loadRows} />
-          <div data-testid="inv-result-summary"><b className="text-slate-900">{count}</b> belge · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b>{draftCount != null && approvedCount != null && <span data-testid="inv-status-counts"> · Taslak <b className="text-slate-900">{draftCount}</b> · Onaylı <b className="text-slate-900">{approvedCount}</b></span>}</div>
+        {renderPreset("inline")}
+        {renderFrom("inline")}
+        <span className="text-slate-400">–</span>
+        {renderTo("inline")}
+        {renderMin("inline")}
+        {renderMax("inline")}
+        {active > 0 && <button onClick={clearFilters} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="inv-filters-clear">Filtreleri temizle ({active})</button>}
+        {renderSummary()}
+      </div>
+      <div data-layout="mobile" className="sm:hidden space-y-2">
+        <div className="flex items-center gap-2">
+          {renderSearch("mobile")}
+          <MobileFilterSheet activeCount={active} onClear={clearFilters}>
+            {renderEtype("sheet")}
+            {renderSort("sheet")}
+            {renderPreset("sheet")}
+            <MobileFilterField label="Başlangıç">{renderFrom("sheet")}</MobileFilterField>
+            <MobileFilterField label="Bitiş">{renderTo("sheet")}</MobileFilterField>
+            <MobileFilterField label="Min ₺">{renderMin("sheet")}</MobileFilterField>
+            <MobileFilterField label="Max ₺">{renderMax("sheet")}</MobileFilterField>
+          </MobileFilterSheet>
+        </div>
+        {renderPay("chips")}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {renderSummary()}
         </div>
       </div>
     </div>
