@@ -14,22 +14,25 @@ Base path: `/api/platform/v1/` (her host üzerinden çağrılabilir).
 | `X-Platform-Nonce` | Rastgele (tekrar kullanılamaz, ~10 dk) |
 | `X-Platform-Signature` | `hex(HMAC-SHA256(secret, "{ts}\\n{nonce}\\n{METHOD}\\n{path}\\n{sha256_hex(body)}"))` |
 
-## Doğrulama sırası (401 / 429)
+## Doğrulama sırası (401 / 403 / 429)
 
 1. Eksik başlıklar → **401**
 2. Timestamp kayması (±300 sn dışı) → **401**
 3. Anahtar yok / iptal / süresi dolmuş / grace geçmiş → **401**
 4. IP başına dakika limiti (300) → **429** *(imza öncesi)*
-5. İmza hatalı / hex değil / yanlış uzunluk → **401**
-6. Scope eksik → **403**
-7. Tekrarlanan nonce → **401**
-8. Anahtar başına dakika limiti (120) → **429** *(yalnızca geçerli imzadan sonra)*
+5. IP izin listesi (anahtarda tanımlıysa) → **403** *(imza öncesi)*
+6. İmza hatalı / hex değil / yanlış uzunluk → **401**
+7. Scope eksik → **403**
+8. Tekrarlanan nonce → **401**
+9. Anahtar başına dakika limiti (120) → **429** *(yalnızca geçerli imzadan sonra)*
 
-Geçersiz imzalı istekler anahtar kotasını yakmaz; IP kotası yine de artar.
+Geçersiz imzalı istekler anahtar kotasını yakmaz; IP kotası yine de artar. İzin listesi reddi de imzadan önce olur: nonce tüketilmez, anahtar kotası artmaz.
 
 ## Anahtar kapsamı
 
 Varsayılan scope’lar: `license:verify`, `heartbeat`, `usage:write`. Boş scope ile anahtar oluşturulamaz.
+
+`ip_allowlist`: isteğe bağlı IP veya CIDR listesi. Boş ya da alan yoksa her adres kabul edilir. Doluysa istek IP’si listedeki bir ağda olmalıdır; aksi halde **403**. Oluşturma isteğinde verilir, rotasyon yeni anahtara kopyalanır. Tek adres `/32` (IPv4) veya `/128` (IPv6) olarak saklanır.
 
 | Anahtar | Erişim |
 |---------|--------|
