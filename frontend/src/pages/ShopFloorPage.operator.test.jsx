@@ -34,13 +34,13 @@ let host;
 let quiet;
 let root;
 
-function mockGets(workOrders, { group = false } = {}) {
+function mockGets(workOrders, { group = false, stations = [] } = {}) {
   axios.get.mockImplementation((url) => {
     const u = String(url);
     if (u.includes("/personnel/employees")) return Promise.resolve({ data: EMPS });
     if (u.includes("/production/work-orders/pause-policy")) return Promise.resolve({ data: { allowed: true, phase: "mesai" } });
     if (u.includes("/production/work-orders/shopfloor-settings")) return Promise.resolve({ data: { group_same_station: group } });
-    if (u.includes("/production/work-orders/stations")) return Promise.resolve({ data: [] });
+    if (u.includes("/production/work-orders/stations")) return Promise.resolve({ data: stations });
     if (u.includes("/production/work-orders")) return Promise.resolve({ data: workOrders });
     if (u.includes("/personnel/me")) return Promise.resolve({ data: { tasks: [] } });
     if (u.includes("/work-parks")) return Promise.resolve({ data: { parks: [] } });
@@ -242,6 +242,18 @@ test("stat buttons filter active cards and toggle off", async () => {
   expect(cardIds()).toEqual(["wo-card-URT-D-1"]);
 });
 
+function stationGroupEls() {
+  const wrap = host.querySelector('[data-testid="shopfloor-station-groups"]');
+  if (!wrap) return [];
+  return [...wrap.children].filter((el) => (el.getAttribute("data-testid") || "").startsWith("shopfloor-station-group-"));
+}
+
+function groupCardIds(key) {
+  const group = host.querySelector(`[data-testid="shopfloor-station-group-${key}"]`);
+  if (!group) return [];
+  return [...group.querySelectorAll('[data-testid^="wo-card-"]')].map((el) => el.getAttribute("data-testid"));
+}
+
 test("sorts paused ahead of ready, and keeps station groups when grouping is on", async () => {
   const rows = [
     wo({ id: "p", order_code: "URT-P", status: "paused", station: "Delik", step_no: 1 }),
@@ -250,8 +262,11 @@ test("sorts paused ahead of ready, and keeps station groups when grouping is on"
   ];
   mockGets(rows, { group: false });
   await renderPage();
-  expect(cardIds()).toEqual(["wo-card-URT-I-2", "wo-card-URT-P-1", "wo-card-URT-R-1"]);
-  expect(host.querySelector('[data-testid="shopfloor-station-groups"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-group-same-station"]').checked).toBe(false);
+  expect(host.querySelector('[data-testid="shopfloor-station-groups"]')).not.toBeNull();
+  expect(groupCardIds("delik")).toEqual(["wo-card-URT-P-1"]);
+  expect(groupCardIds("kesim")).toEqual(["wo-card-URT-I-2", "wo-card-URT-R-1"]);
+  expect(cardIds()).toEqual(["wo-card-URT-P-1", "wo-card-URT-I-2", "wo-card-URT-R-1"]);
 
   if (root) {
     act(() => { root.unmount(); });
@@ -269,6 +284,96 @@ test("sorts paused ahead of ready, and keeps station groups when grouping is on"
   expect(delik.compareDocumentPosition(kesim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect([...delik.querySelectorAll('[data-testid^="wo-card-"]')].map((el) => el.getAttribute("data-testid"))).toEqual(["wo-card-URT-P-1"]);
   expect([...kesim.querySelectorAll('[data-testid^="wo-card-"]')].map((el) => el.getAttribute("data-testid"))).toEqual(["wo-card-URT-I-2", "wo-card-URT-R-1"]);
+});
+
+function twoStationRows() {
+  return [
+    wo({ id: "kr", order_code: "URT-KR", status: "ready", station: "KESİM", step_no: 1 }),
+    wo({ id: "kp", order_code: "URT-KP", status: "paused", station: "KESİM", step_no: 2 }),
+    wo({ id: "pr", order_code: "URT-PR", status: "ready", station: "PVC BANTLAMA", step_no: 1 }),
+    wo({ id: "pi", order_code: "URT-PI", status: "in_progress", station: "PVC BANTLAMA", step_no: 2 }),
+  ];
+}
+
+function expectKesimPvcGroups() {
+  const groups = stationGroupEls();
+  expect(host.querySelector('[data-testid="shopfloor-station-groups"]')).not.toBeNull();
+  expect(groups).toHaveLength(2);
+  expect(groups.map((el) => el.querySelector("h3").textContent)).toEqual(["KESİM", "PVC BANTLAMA"]);
+  expect(host.querySelector('[data-testid="shopfloor-station-group-count-kesim"]').textContent).toBe("2");
+  expect(host.querySelector('[data-testid="shopfloor-station-group-count-pvc bantlama"]').textContent).toBe("2");
+  expect(groupCardIds("kesim")).toEqual(["wo-card-URT-KP-2", "wo-card-URT-KR-1"]);
+  expect(groupCardIds("pvc bantlama")).toEqual(["wo-card-URT-PI-2", "wo-card-URT-PR-1"]);
+}
+
+test("groups open work orders by station when all stations is selected and grouping is off", async () => {
+  mockGets(twoStationRows(), { group: false });
+  await renderPage();
+  expect(host.querySelector('[data-testid="shopfloor-station"]').value).toBe("");
+  expect(host.querySelector('[data-testid="shopfloor-group-same-station"]').checked).toBe(false);
+  expectKesimPvcGroups();
+  expect(host.textContent).toContain("Açık İş Emirleri (4)");
+
+  await act(async () => { host.querySelector('[data-testid="shopfloor-kiosk"]').click(); });
+  expect(host.querySelector('[data-testid="shopfloor-page"]').className).toContain("fixed");
+  expectKesimPvcGroups();
+});
+
+test("keeps the same station groups when same-station ordering is on", async () => {
+  localStorage.setItem("nx_group_same_station", "1");
+  mockGets(twoStationRows(), { group: true });
+  await renderPage();
+  expect(host.querySelector('[data-testid="shopfloor-group-same-station"]').checked).toBe(true);
+  expectKesimPvcGroups();
+});
+
+test("single station filter renders a flat status-sorted grid without group headers", async () => {
+  localStorage.setItem("nx_station", "KESİM");
+  mockGets([
+    wo({ id: "kr", order_code: "URT-KR", status: "ready", station: "KESİM", step_no: 1 }),
+    wo({ id: "kp", order_code: "URT-KP", status: "paused", station: "KESİM", step_no: 2 }),
+    wo({ id: "ki", order_code: "URT-KI", status: "in_progress", station: "KESİM", step_no: 3 }),
+  ], { group: false, stations: ["KESİM"] });
+  await renderPage();
+  expect(host.querySelector('[data-testid="shopfloor-station"]').value).toBe("KESİM");
+  expect(host.querySelector('[data-testid="shopfloor-station-groups"]')).toBeNull();
+  expect(host.querySelector('[data-testid^="shopfloor-station-group-"]')).toBeNull();
+  expect(cardIds()).toEqual(["wo-card-URT-KI-3", "wo-card-URT-KP-2", "wo-card-URT-KR-1"]);
+});
+
+test("stationless work orders are last under İstasyonsuz", async () => {
+  mockGets([
+    wo({ id: "n1", order_code: "URT-N1", status: "ready", station: "", step_no: 1 }),
+    wo({ id: "k", order_code: "URT-K", status: "ready", station: "KESİM", step_no: 1 }),
+    wo({ id: "n2", order_code: "URT-N2", status: "in_progress", station: null, step_no: 2 }),
+    wo({ id: "p", order_code: "URT-P", status: "paused", station: "PVC BANTLAMA", step_no: 1 }),
+  ], { group: false });
+  await renderPage();
+  const groups = stationGroupEls();
+  expect(groups.map((el) => el.querySelector("h3").textContent)).toEqual(["KESİM", "PVC BANTLAMA", "İstasyonsuz"]);
+  expect(groups[groups.length - 1].getAttribute("data-testid")).toBe("shopfloor-station-group-_none");
+  expect(host.querySelector('[data-testid="shopfloor-station-group-count-_none"]').textContent).toBe("2");
+  expect(groupCardIds("_none")).toEqual(["wo-card-URT-N2-2", "wo-card-URT-N1-1"]);
+  expect(host.textContent).not.toContain("İstasyon yok");
+});
+
+test("active status filter drops empty station groups", async () => {
+  mockGets([
+    ...twoStationRows(),
+    wo({ id: "dr", order_code: "URT-DR", status: "ready", station: "DELİK", step_no: 1 }),
+  ], { group: false });
+  await renderPage();
+  const activeBtn = host.querySelector('[data-testid="shopfloor-stat-active"]');
+  await act(async () => { activeBtn.click(); });
+  expect(activeBtn.getAttribute("aria-pressed")).toBe("true");
+  const groups = stationGroupEls();
+  expect(groups.map((el) => el.querySelector("h3").textContent)).toEqual(["KESİM", "PVC BANTLAMA"]);
+  expect(host.querySelector('[data-testid="shopfloor-station-group-delik"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-station-group-count-kesim"]').textContent).toBe("1");
+  expect(host.querySelector('[data-testid="shopfloor-station-group-count-pvc bantlama"]').textContent).toBe("1");
+  expect(groupCardIds("kesim")).toEqual(["wo-card-URT-KP-2"]);
+  expect(groupCardIds("pvc bantlama")).toEqual(["wo-card-URT-PI-2"]);
+  expect(new Set(cardIds())).toEqual(new Set(["wo-card-URT-KP-2", "wo-card-URT-PI-2"]));
 });
 
 test("shows how long a card has been paused and who paused it", async () => {

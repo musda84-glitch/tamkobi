@@ -49,4 +49,20 @@ describe("recipeStationOrder", () => {
     expect(grouped.map((w) => w.step_no)).toEqual([1, 3, 2]);
     expect(shopFloorStationSections(grouped).map((s) => s.label)).toEqual(["HOLZHER", "OMAKSAN"]);
   });
+
+  test("shopFloorStationSections labels empty station İstasyonsuz and keeps it last", () => {
+    const wos = [
+      { id: "a", station: "KESİM", step_no: 1 },
+      { id: "b", station: "", step_no: 2 },
+      { id: "c", station: "PVC BANTLAMA", step_no: 3 },
+      { id: "d", station: null, step_no: 4 },
+    ];
+    const sections = shopFloorStationSections(groupWorkOrdersByStation(wos));
+    expect(sections.map((s) => s.label)).toEqual(["KESİM", "PVC BANTLAMA", "İstasyonsuz"]);
+    expect(sections.map((s) => s.key)).toEqual(["kesim", "pvc bantlama", "_none"]);
+    const last = sections[sections.length - 1];
+    expect(last.key).toBe("_none");
+    expect(last.label).toBe("İstasyonsuz");
+    expect(last.items.map((w) => w.id)).toEqual(["b", "d"]);
+  });
 });

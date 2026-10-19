@@ -98,7 +98,7 @@ export function shopFloorStationSections(wos) {
   const sections = [];
   for (const w of wos || []) {
     const key = stationKey(w?.station) || "_none";
-    const label = String(w?.station || "").trim() || "İstasyon yok";
+    const label = String(w?.station || "").trim() || "İstasyonsuz";
     const last = sections[sections.length - 1];
     if (!last || last.key !== key) sections.push({ key, label, items: [w] });
     else last.items.push(w);
