@@ -13,6 +13,7 @@ import {
   type NotificationLook,
 } from "../utils/notifications";
 import { QUICK_TONE_COLORS } from "../utils/quickMenu";
+import { Row } from "./kit";
 import { SwipeRevealRow } from "./SwipeRevealRow";
 
 /**
@@ -84,7 +85,7 @@ export function NotificationsPanel({
           >
             <Ionicons name="notifications" size={16} color="#fff" />
           </View>
-          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1 }}>Bildirimler</Text>
+          <Text numberOfLines={1} style={{ fontWeight: "800", color: colors.text, fontSize: 13, flexShrink: 0 }}>Bildirimler</Text>
           {unread ? (
             <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.danger }}>
               <Text testID="home-notifications-unread" style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>
@@ -92,52 +93,57 @@ export function NotificationsPanel({
               </Text>
             </View>
           ) : null}
+          <View style={{ flex: 1 }} />
           <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "800" }}>Tümü</Text>
           <Ionicons name="chevron-forward" size={14} color={tone.fg} />
         </Pressable>
-        {onMarkAllRead ? (
-          <Pressable
-            testID="home-notifications-read-all"
-            onPress={onMarkAllRead}
-            disabled={!unread}
-            accessibilityRole="button"
-            accessibilityLabel="Tümünü okundu işaretle"
-            style={({ pressed }) => ({
-              paddingHorizontal: 8,
-              paddingVertical: 5,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: unread ? colors.primary : tone.border,
-              backgroundColor: unread ? "#fff" : "transparent",
-              opacity: !unread ? 0.45 : pressed ? 0.7 : 1,
-            })}
-          >
-            <Text style={{ color: unread ? colors.primary : colors.muted, fontSize: 10, fontWeight: "800" }}>Okundu</Text>
-          </Pressable>
-        ) : null}
-        {onClearAll ? (
-          <Pressable
-            testID="home-notifications-clear-all"
-            onPress={onClearAll}
-            disabled={!canClear}
-            accessibilityRole="button"
-            accessibilityLabel="Tümünü sil"
-            style={({ pressed }) => ({
-              paddingHorizontal: 8,
-              paddingVertical: 5,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: canClear ? colors.danger : tone.border,
-              backgroundColor: canClear ? "#fff" : "transparent",
-              opacity: !canClear ? 0.45 : pressed ? 0.7 : 1,
-            })}
-          >
-            <Text style={{ color: canClear ? colors.danger : colors.muted, fontSize: 10, fontWeight: "800" }}>
-              {clearing ? "Siliniyor…" : "Tümünü sil"}
-            </Text>
-          </Pressable>
-        ) : null}
       </View>
+      {onMarkAllRead || onClearAll ? (
+        <Row style={{ justifyContent: "flex-end", gap: 6 }}>
+          {onMarkAllRead ? (
+            <Pressable
+              testID="home-notifications-read-all"
+              onPress={onMarkAllRead}
+              disabled={!unread}
+              accessibilityRole="button"
+              accessibilityLabel="Tümünü okundu işaretle"
+              style={({ pressed }) => ({
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: unread ? colors.primary : tone.border,
+                backgroundColor: unread ? "#fff" : "transparent",
+                opacity: !unread ? 0.45 : pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ color: unread ? colors.primary : colors.muted, fontSize: 10, fontWeight: "800" }}>Okundu</Text>
+            </Pressable>
+          ) : null}
+          {onClearAll ? (
+            <Pressable
+              testID="home-notifications-clear-all"
+              onPress={onClearAll}
+              disabled={!canClear}
+              accessibilityRole="button"
+              accessibilityLabel="Tümünü sil"
+              style={({ pressed }) => ({
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: canClear ? colors.danger : tone.border,
+                backgroundColor: canClear ? "#fff" : "transparent",
+                opacity: !canClear ? 0.45 : pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ color: canClear ? colors.danger : colors.muted, fontSize: 10, fontWeight: "800" }}>
+                {clearing ? "Siliniyor…" : "Tümünü sil"}
+              </Text>
+            </Pressable>
+          ) : null}
+        </Row>
+      ) : null}
 
       {!items.length ? (
         <View style={{ backgroundColor: colors.surface, borderRadius: 14, paddingVertical: 14, alignItems: "center" }}>

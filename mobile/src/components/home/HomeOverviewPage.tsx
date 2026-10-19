@@ -42,9 +42,9 @@ function summaryBlock<K extends "production" | "projects">(
   return value;
 }
 
-function MiniStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function MiniStat({ label, value, tone, testID }: { label: string; value: string; tone?: string; testID?: string }) {
   return (
-    <View style={{ flex: 1, minWidth: 0, backgroundColor: colors.slate50, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 8 }}>
+    <View testID={testID} style={{ flex: 1, minWidth: 0, backgroundColor: colors.slate50, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 8 }}>
       <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted }} numberOfLines={1}>{trUpper(label)}</Text>
       <Text style={{ fontSize: 16, fontWeight: "800", color: tone || colors.text }} numberOfLines={1}>{value}</Text>
     </View>
@@ -209,9 +209,9 @@ export function HomeOverviewPage({
       </Card>
 
       {production || projects ? (
-        <View testID="home-overview-manager" style={{ flexDirection: "row", gap: 8 }}>
+        <View testID="home-overview-manager" style={{ flexDirection: "column", gap: 8 }}>
           {production ? (
-            <Pressable testID="home-overview-production" onPress={() => goHref("/production")} style={{ flex: 1, minWidth: 0 }}>
+            <Pressable testID="home-overview-production" onPress={() => goHref("/production")} style={{ width: "100%" }}>
               <Card>
                 <Row style={{ justifyContent: "space-between" }}>
                   <Text style={{ fontWeight: "800", color: colors.text }}>Üretim</Text>
@@ -220,13 +220,13 @@ export function HomeOverviewPage({
                 <View style={{ flexDirection: "row", gap: 6 }}>
                   <MiniStat label="Açık" value={countOrDash(production.open)} tone={colors.indigo} />
                   <MiniStat label="Geciken" value={countOrDash(production.late)} tone={finite(production.late) && production.late > 0 ? colors.danger : colors.text} />
-                  <MiniStat label="Bu ay" value={countOrDash(production.completed_this_month)} tone={colors.primary} />
+                  <MiniStat label="Bu ay biten" value={countOrDash(production.completed_this_month)} tone={colors.primary} />
                 </View>
               </Card>
             </Pressable>
           ) : null}
           {projects ? (
-            <Pressable testID="home-overview-projects" onPress={() => goHref("/projects")} style={{ flex: 1, minWidth: 0 }}>
+            <Pressable testID="home-overview-projects" onPress={() => goHref("/projects")} style={{ width: "100%" }}>
               <Card>
                 <Row style={{ justifyContent: "space-between" }}>
                   <Text style={{ fontWeight: "800", color: colors.text }}>Projeler</Text>
@@ -235,10 +235,8 @@ export function HomeOverviewPage({
                 <View style={{ flexDirection: "row", gap: 6 }}>
                   <MiniStat label="Aktif" value={countOrDash(projects.active)} tone="#1D4ED8" />
                   <MiniStat label="Geciken" value={countOrDash(projects.overdue)} tone={finite(projects.overdue) && projects.overdue > 0 ? colors.danger : colors.text} />
+                  <MiniStat testID="home-overview-budget" label="Bütçe" value={budgetPct(projects.cost_total, projects.budget_total)} />
                 </View>
-                <Text testID="home-overview-budget" style={{ fontSize: 12, fontWeight: "800", color: colors.text }}>
-                  Bütçe {budgetPct(projects.cost_total, projects.budget_total)}
-                </Text>
               </Card>
             </Pressable>
           ) : null}
