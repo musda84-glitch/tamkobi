@@ -1,4 +1,5 @@
 import {
+  accountCardLabels,
   accountDisplayLabel,
   accountTypeLabel,
   duplicateRefMessage,
@@ -27,6 +28,24 @@ test("etiket banka adı, hesap adı ve son 4 hane; tam IBAN yok", () => {
   expect(label).toBe("Kuveyt Türk · Vadesiz TL Hesabı · …1234 · entegre");
   expect(label).not.toContain(IBAN);
   expect(maskedRef(IBAN)).toBe("…1234");
+});
+
+test("kart etiketi banka önekini temizler, maske ayrı kalır", () => {
+  const labels = accountCardLabels({
+    bank_name: "Türkiye İş Bankası",
+    account_name: "Türkiye İş Bankası Ticari Vadesiz TL Hesabı",
+    masked_ref: "…1326",
+    type: "bank",
+  });
+  expect(labels.bank).toBe("İş Bankası");
+  expect(labels.name).toBe("Ticari Vadesiz TL Hesabı");
+  expect(labels.ref).toBe("…1326");
+  expect(accountDisplayLabel({
+    bank_name: "Türkiye İş Bankası",
+    account_name: "Türkiye İş Bankası Ticari Vadesiz TL Hesabı",
+    masked_ref: "…1326",
+    type: "bank",
+  })).toBe("Türkiye İş Bankası · Türkiye İş Bankası Ticari Vadesiz TL Hesabı · …1326");
 });
 
 test("uyarı metni banka adı ve son 4 hane", () => {

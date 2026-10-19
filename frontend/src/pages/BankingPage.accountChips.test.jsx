@@ -69,6 +69,12 @@ jest.mock("../hooks/useInfiniteRows", () => ({
   useInfiniteRows: (rows) => ({ visible: rows || [], hasMore: false, sentinelRef: { current: null } }),
 }));
 
+const fireEvent = {
+  error(node) {
+    node.dispatchEvent(new Event("error", { bubbles: false }));
+  },
+};
+
 const ACC_BANK = {
   id: "acc_bank",
   type: "bank",
@@ -76,6 +82,7 @@ const ACC_BANK = {
   account_name: "Vadesiz",
   current_balance: 6716.58,
   unmatched_count: 12,
+  masked_ref: "…1326",
 };
 const ACC_LOCKED = {
   id: "acc_locked",
@@ -94,6 +101,13 @@ const ACC_CASH = {
   bank_name: "Merkez",
   account_name: "Kasa",
   current_balance: 80,
+};
+const ACC_POS = {
+  id: "acc_pos",
+  type: "pos",
+  bank_name: "Mağaza",
+  account_name: "POS",
+  current_balance: 25,
 };
 
 let host;
@@ -116,7 +130,7 @@ beforeEach(() => {
   confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
   axios.get.mockImplementation((url) => {
     const u = String(url);
-    if (u.includes("/banking/accounts")) return Promise.resolve({ data: [ACC_BANK, ACC_LOCKED, ACC_CASH] });
+    if (u.includes("/banking/accounts")) return Promise.resolve({ data: [ACC_BANK, ACC_LOCKED, ACC_CASH, ACC_POS] });
     if (u.includes("/banking/partners/summary")) return Promise.resolve({ data: { partner_count: 0, total_cash_net: 0 } });
     return Promise.resolve({ data: [] });
   });
@@ -147,6 +161,19 @@ async function waitFor(predicate, { tries = 40 } = {}) {
     // eslint-disable-next-line no-await-in-loop
     await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
   }
+}
+
+async function renderAccounts(accounts, needle = "Kuveyt") {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/banking/accounts")) return Promise.resolve({ data: accounts });
+    if (u.includes("/banking/partners/summary")) return Promise.resolve({ data: { partner_count: 0, total_cash_net: 0 } });
+    return Promise.resolve({ data: [] });
+  });
+  root = createRoot(host);
+  await act(async () => { root.render(<BankingPage />); });
+  await waitFor(() => host.textContent?.includes(needle));
+  await flush(4);
 }
 
 async function renderPage() {
@@ -206,9 +233,13 @@ test("çip BankAccountDetailHeader açar ve eşleşmemiş sayısı sunucu değer
   expect(host.querySelector('[data-testid="account-kpi-unmatched-value"]').textContent).toBe("12");
   expect(host.querySelector('[data-testid="tx-filter-unmatched"]').textContent).toBe("Eşleşmemiş (12)");
   expect(host.querySelector('[data-testid="account-unmatched-acc_bank"]').textContent).toContain("12 eşleşmemiş");
+  expect(host.querySelector('[data-testid="account-unmatched-acc_locked"]')).toBeNull();
   const balance = host.querySelector('[data-testid="account-balance-acc_bank"]');
   expect(balance.className).toContain("tabular-nums");
+  expect(balance.className).toContain("whitespace-nowrap");
   expect(balance.textContent).toContain(formatTrAmount(6716.58));
+  expect(host.querySelector('[data-testid="bank-card-acc_bank"]').className).toContain("border-emerald-500");
+  expect(host.querySelector('[data-testid="bank-card-acc_bank"]').className).toContain("ring-emerald-100");
 });
 
 test("çip menüsünden düzenle, sil, açılış bakiyesi ve ekstre erişilir", async () => {
@@ -285,4 +316,83 @@ test("detay başlığı menüsü düzenle, açılış ve sil aksiyonlarını aç
   expect(locked.getAttribute("title")).toBe("Entegre hesap silinemez");
   await act(async () => { locked.click(); });
   expect(confirmSpy).not.toHaveBeenCalled();
+});
+
+test("kart ızgarası eşit sütun, maske kesilmez, kasa ve POS ikonludur", async () => {
+  await renderPage();
+  const row = host.querySelector('[data-testid="account-chip-row"]');
+  expect(row.className).toContain("grid");
+  expect(row.className).toContain("grid-cols-2");
+  expect(row.className).toContain("lg:grid-cols-3");
+  expect(row.className).toContain("2xl:grid-cols-4");
+  expect(row.className).toContain("gap-2.5");
+  expect(host.querySelector('[data-testid="account-group-members-bank"]').className).toContain("contents");
+  const card = host.querySelector('[data-testid="bank-card-acc_bank"]');
+  expect(card.className).toContain("h-full");
+  expect(card.className).toContain("min-w-0");
+  const mask = [...card.querySelectorAll("span")].find((node) => node.textContent.includes("…1326"));
+  expect(mask).toBeTruthy();
+  expect(mask.className).not.toMatch(/truncate/);
+  expect(mask.className).toContain("shrink-0");
+  expect(mask.textContent).toContain("· …1326");
+  expect(card.textContent).not.toMatch(/TR\d{10,}/);
+
+  ["acc_cash", "acc_pos"].forEach((id) => {
+    const tile = host.querySelector(`[data-testid="bank-card-${id}"]`);
+    expect(tile.querySelector("img")).toBeNull();
+    expect(tile.querySelector("svg")).toBeTruthy();
+  });
+
+  const menu = host.querySelector('[data-testid="account-card-menu-acc_bank"]');
+  expect(menu).toBeTruthy();
+  expect(menu.tagName).toBe("BUTTON");
+  expect(menu.getAttribute("tabindex")).not.toBe("-1");
+  expect(card.innerHTML).toContain("group-hover:opacity-100");
+  expect(card.innerHTML).toContain("group-focus-within:opacity-100");
+  expect(card.innerHTML).toContain("[@media(hover:none)]:opacity-100");
+  await act(async () => { menu.focus(); });
+  expect(document.activeElement).toBe(menu);
+});
+
+test("logo yüklenemezse monogram görünür, negatif bakiye kırmızıdır", async () => {
+  const iban = "TR33 0006 4000 0011 2345 6789 01";
+  await renderAccounts([
+    {
+      id: "acc_is",
+      type: "bank",
+      bank_name: "Türkiye İş Bankası",
+      account_name: "Türkiye İş Bankası Ticari Vadesiz TL Hesabı",
+      iban,
+      current_balance: 10,
+      unmatched_count: 0,
+    },
+    {
+      id: "acc_neg",
+      type: "bank",
+      bank_name: "Akbank",
+      account_name: "Vadesiz",
+      current_balance: -1250.4,
+      unmatched_count: 0,
+    },
+  ], "Ticari");
+
+  const card = host.querySelector('[data-testid="bank-card-acc_is"]');
+  expect(card.textContent).toContain("İş Bankası");
+  expect(card.textContent).toContain("Ticari Vadesiz TL Hesabı");
+  expect(card.textContent).not.toContain(iban);
+  expect(card.textContent).not.toContain(iban.replace(/\s+/g, ""));
+  expect(card.getAttribute("title") || "").not.toContain("TR33");
+  const img = card.querySelector("img");
+  expect(img).toBeTruthy();
+  expect(img.getAttribute("src")).toBe("/bank-logos/0064.svg");
+  expect(img.getAttribute("alt")).toBe("İş Bankası");
+  await act(async () => { fireEvent.error(img); });
+  expect(card.querySelector("img")).toBeNull();
+  expect(card.textContent).toMatch(/Tİ|İB/);
+
+  const negative = host.querySelector('[data-testid="account-balance-acc_neg"]');
+  expect(negative.className).toContain("text-rose-600");
+  expect(negative.className).toContain("tabular-nums");
+  expect(host.querySelector('[data-testid="account-unmatched-acc_is"]')).toBeNull();
+  expect(host.querySelector('[data-testid="account-unmatched-acc_neg"]')).toBeNull();
 });
