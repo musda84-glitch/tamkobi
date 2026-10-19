@@ -213,7 +213,7 @@ async def invoice_share_link(
     ttl_sec = int(ttl_hours) * 3600
     token = signed_links.make_doc_share_token(invoice_id, k, ttl_sec=ttl_sec)
     import public_url as pu
-    base = await pu.public_base_url_for(_db, "app", request=request)
+    base = await pu.public_link(_db, "", context="app", request=request)
     url = signed_links.build_doc_share_url(base, f"/api/invoices/{invoice_id}/pdf", token)
     return {"url": url, "token": token, "expires_in": ttl_sec, "invoice_id": invoice_id}
 

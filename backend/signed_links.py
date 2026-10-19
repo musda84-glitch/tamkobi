@@ -76,5 +76,9 @@ def is_signed_public_doc(path: str, method: str, token: Optional[str]) -> bool:
 
 def build_doc_share_url(base: str, path: str, token: str) -> str:
     root = (base or "").rstrip("/")
+    if root:
+        import public_url as pu
+        if pu.is_invalid_public_base(root):
+            root = pu.public_link_sync("")
     p = path if path.startswith("/") else f"/{path}"
     return f"{root}{p}?t={quote(token, safe='')}"

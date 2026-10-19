@@ -2542,10 +2542,13 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Reque
     email = req.get("email") or (contact or {}).get("email")
     approval = q.get("approval") or {}
     token = approval.get("token") or uuid.uuid4().hex
-    base = await _public_base_url(request, req.get("base_url") or "", context="app")
-    link = f"{base}/teklif/{token}"
+    import public_url as pu
+    explicit_base = req.get("base_url") or ""
+    base = await pu.public_link(db, "", context="app", explicit=explicit_base, request=request)
+    link = await pu.public_link(db, f"/teklif/{token}", context="app", explicit=explicit_base, request=request)
     total = f"{q.get('grand_total', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ (KDV dahil) tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
+    draft = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ (KDV dahil) tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
+    message = (await pu.rewrite_outbound_doc_text(db, draft)).strip()
     if link not in message:
         message = f"{message}\n{link}"
     results: Dict[str, Any] = {}
@@ -3254,9 +3257,12 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any], request: R
     email = req.get("email") or (contact or {}).get("email")
     tracking = p.get("tracking") or {}
     token = tracking.get("token") or uuid.uuid4().hex
-    base = await _public_base_url(request, req.get("base_url") or "", context="app")
-    link = f"{base}/proje/{token}"
-    message = (req.get("message") or f"Sayın {p.get('contact_name') or 'müşterimiz'}, {company.get('name') or 'firmamız'} olarak {p.get('project_number')} — {p.get('name')} projenizin güncel durumunu bu linkten takip edebilirsiniz (giriş gerekmez): {link}").strip()
+    import public_url as pu
+    explicit_base = req.get("base_url") or ""
+    base = await pu.public_link(db, "", context="app", explicit=explicit_base, request=request)
+    link = await pu.public_link(db, f"/proje/{token}", context="app", explicit=explicit_base, request=request)
+    draft = (req.get("message") or f"Sayın {p.get('contact_name') or 'müşterimiz'}, {company.get('name') or 'firmamız'} olarak {p.get('project_number')} — {p.get('name')} projenizin güncel durumunu bu linkten takip edebilirsiniz (giriş gerekmez): {link}").strip()
+    message = (await pu.rewrite_outbound_doc_text(db, draft)).strip()
     if link not in message:
         message = f"{message}\n{link}"
     html = f"<p>{message.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Proje Durumunu Görüntüle</a></p>"
@@ -5124,13 +5130,17 @@ async def create_statement_link(contact_id: str, req: Dict[str, Any], request: R
             {"_id": contact_id},
             {"$set": {"statement_share": {"token": token, "created_at": datetime.now(timezone.utc).isoformat()}}},
         )
-    base = await _public_base_url(request, req.get("base_url") or "", context="app")
-    link = f"{base}/ekstre/{token}"
+    import public_url as pu
+    explicit_base = req.get("base_url") or ""
+    link = await pu.public_link(db, f"/ekstre/{token}", context="app", explicit=explicit_base, request=request)
+    pdf_url = await pu.public_link(
+        db, f"/api/public/statements/{token}/pdf", context="app", explicit=explicit_base, request=request,
+    )
     return {
         "status": "success",
         "token": token,
         "link": link,
-        "pdf_url": f"{base}/api/public/statements/{token}/pdf",
+        "pdf_url": pdf_url,
     }
 
 
@@ -5399,8 +5409,8 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
         "_id": token, "contact_id": c["_id"], "company_id": c["company_id"], "email": to,
         "expires_at": (now + timedelta(hours=1)).isoformat(), "used_at": None, "created_at": now.isoformat(),
     })
-    base = await _public_base_url(request, context="b2b")
-    link = f"{base}/b2b/sifre/{token}" if base else f"/b2b/sifre/{token}"
+    import public_url as pu
+    link = await pu.public_link(db, f"/b2b/sifre/{token}", context="b2b", request=request)
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
     mail_status, mail_detail = "failed", "Gönderilemedi."
     try:
