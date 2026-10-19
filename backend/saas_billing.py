@@ -221,12 +221,17 @@ async def stripe_webhook(request: Request):
     return {"status": "ok"}
 
 
-@router.get("/system/payments")
-async def list_payments(_: dict = Depends(saas.require_super_admin)):
-    rows = [_clean(t) for t in await _db.payment_transactions.find({}).sort("created_at", -1).to_list(300)]
+async def payment_rows(limit: int = 300) -> Dict[str, Any]:
+    """Son ödemeler (en fazla limit) + şirket adı. total_paid yalnızca payment_status=paid."""
+    rows = [_clean(t) for t in await _db.payment_transactions.find({}).sort("created_at", -1).to_list(limit)]
     names = {c["_id"]: c.get("name") for c in await _db.companies.find({}, {"name": 1}).to_list(1000)}
     paid = [r for r in rows if r["payment_status"] == "paid"]
     return {"items": [{**r, "company_name": names.get(r["company_id"], r["company_id"])} for r in rows], "total_paid": round(sum(float(r["amount"]) for r in paid), 2), "paid_count": len(paid)}
+
+
+@router.get("/system/payments")
+async def list_payments(_: dict = Depends(saas.require_super_admin)):
+    return await payment_rows()
 
 
 # ---------------- Platform settings ----------------

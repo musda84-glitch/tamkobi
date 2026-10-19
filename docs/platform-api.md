@@ -49,7 +49,7 @@ Anahtar belgesinde `kind` alanı vardır: `product` (varsayılan) veya `platform
 | `kind` | Kural |
 |--------|--------|
 | `product` | v1 kapsamları (`license:verify`, `heartbeat`, `usage:write`, `platform:all`, `help:read`, …). `admin.` ile başlayan kapsam **verilemez**. |
-| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca `admin.*:read` yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. |
+| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca `admin.*:read` yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. |
 
 `admin.*` kapsamı şirket anahtarına (plan D dahil) oluşturulurken de istek anında da reddedilir. Doğrudan veritabanına yazılmış `kind=product` + `admin.*` anahtarı admin-v1’de **403** döner.
 
@@ -97,7 +97,7 @@ Kimlik doğrulama her uçta `platform_auth.authenticate(..., audit_prefix="admin
 
 Sayfalı listeler: `limit` varsayılan 50, `1..200` (aşarsa **422**), `offset` `>= 0`. Zarf: `{"items", "limit", "offset", "total"}`. Audit zarfı: `{"items", "limit", "next_cursor"}`. Tekil uçlar: `{"item": {…}}`.
 
-**Sır temizliği.** Yanıtın son katmanında anahtar adında `password`, `password_hash`, `_enc`, `secret`, `totp`, `recovery`, `token`, `api_key`, `card`, `pan`, `cvv`, `iban_enc`, `smtp_pass` geçen alanlar düşer. `has_password` ve diğer `has_*` boolean alanları kalır. `pan` kart numarası parçasıdır; `plan` / `company` alanları kalır.
+**Sır temizliği.** Yanıtın son katmanında anahtar adında `password`, `password_hash`, `_enc`, `secret`, `totp`, `recovery`, `token`, `api_key`, `card`, `pan`, `cvv`, `iban_enc`, `smtp_pass` geçen alanlar düşer. `has_password` ve diğer `has_*` boolean alanları kalır. `pan` kart numarası parçasıdır; `plan` / `company` alanları kalır. `pin` aynı parça kuralındadır (`pin`, `pin_hash`, `punch_pin` düşer; `shipping`, `pinned`, `company` kalır).
 
 **Kararlı sözleşme.** Bu bölümdeki yollar, kapsamlar, zarf anahtarları ve hata kodları sabittir. Yanıta alan eklemek serbesttir; alan silmek veya yeniden adlandırmak yasaktır.
 
@@ -173,6 +173,48 @@ Kapsam: `admin.system:read`. `read_stamp()` içinden `version` ve `git_sha`, art
 
 ```json
 {"item": {"status": "healthy", "version": "2.0.2", "git_sha": "abcdef"}}
+```
+
+### GET `/api/platform/admin-v1/overview`
+
+Kapsam: `admin.overview:read`. Parametre yok, sayfalama yok. `saas.overview_stats()` — `/system/overview` ile aynı gövde. `expiring` en fazla 10, `recent` en fazla 5.
+
+```json
+{"item": {"companies": 1, "users": 2, "platform_admins": 1, "by_status": {"active": 1}, "by_plan": {"Profesyonel": 1}, "mrr": 100.0, "module_usage": {}, "expiring": [], "pending_requests": 0, "open_tickets": 0, "recent": []}}
+```
+
+### GET `/api/platform/admin-v1/quotas`
+
+Kapsam: `admin.quotas:read`. Parametreler: `limit`, `offset`, isteğe bağlı `q` (şirket adında, `casefold`). `saas.quota_rows()`; sıralama ve satır alanları `/system/quotas` ile aynı. Zarf `items` + `plans` (plan listesi süzülmez).
+
+```json
+{"items": [{"id": "comp_…", "name": "Ada", "plan_id": "plan_pro", "plan_name": "Profesyonel", "user_count": 1}], "limit": 50, "offset": 0, "total": 1, "plans": [{"id": "plan_pro", "name": "Profesyonel", "user_limit": 0}]}
+```
+
+### GET `/api/platform/admin-v1/upgrade-requests`
+
+Kapsam: `admin.requests:read`. Parametreler: `status` (yalnızca `pending` / `approved` / `rejected`; başka değer **400** `Geçersiz durum.`), `company_id` (sorgu parametresi, path değil), `limit`, `offset`. `saas.upgrade_request_rows` (en fazla 200, `created_at` azalan). `/system/upgrade-requests` `company_id` kabul etmez. Kayıttaki `token` / `password` ve diğer sır alanları son katman `_redact` ile düşer.
+
+```json
+{"items": [{"id": "ur_…", "company_id": "comp_…", "status": "pending", "plan_id": "plan_pro"}], "limit": 50, "offset": 0, "total": 1}
+```
+
+### GET `/api/platform/admin-v1/payments`
+
+Kapsam: `admin.payments:read`. Parametreler: `status`, `payment_status`, `company_id`, `limit`, `offset`. `saas_billing.payment_rows` en fazla 300 satır (`/system/payments` ile aynı pencere); `total` bu pencereyi aşmaz. Süzgeç `items` ve `total` ile birlikte `total_paid` / `paid_count` hesabına uygulanır (sayfa dilimi uygulanmaz). `total_paid` yalnızca `payment_status=paid` satırların tutar toplamıdır.
+
+Her satır beyaz listeden geçer: `id`, `provider`, `company_id`, `company_name`, `plan_id`, `plan_name`, `period`, `product_type`, `pack_id`, `credits`, `amount`, `currency`, `status`, `payment_status`, `applied`, `applied_at`, `paid_at`, `created_at`, `updated_at`, `invoice_id`, `invoice_number`, `payment_type`, `failed_reason_code`, `failed_reason_msg`, `paytr_error`, `invoice_mail_status` (`invoice_mail.status`). `session_id` ve `merchant_oid` dönmez: `GET /api/payments/status/{session_id}` oturumsuz çağrılabiliyor ve ödemeyi işliyor. Kart alanları (`card*`, `pan`, `cvv`) beyaz listede yoktur; `_redact` de düşürür. Bu uç Stripe/PayTR çağırmaz, mail/SMS göndermez.
+
+```json
+{"items": [{"id": "…", "provider": "paytr", "company_id": "comp_…", "company_name": "Ada", "amount": 100, "currency": "try", "status": "completed", "payment_status": "paid", "invoice_mail_status": "sent"}], "limit": 50, "offset": 0, "total": 1, "total_paid": 100.0, "paid_count": 1}
+```
+
+### GET `/api/platform/admin-v1/platform-users`
+
+Kapsam: `admin.platform_users:read` (şirket personeli için olan `admin.users:read` ayrıdır). Parametreler: `q` (ad, e-posta veya kullanıcı numarası), `limit`, `offset`. `saas.platform_user_rows(q, assign_numbers=false)`: `user_numbers.ensure_user_number` çağrılmaz, eksik `user_number` `null` döner. Yanıt yalnızca sayfa zarfıdır; `companies` haritası ve `roles` listesi dönmez. Satır `saas._user_row` beyaz listesidir. `/system/users` `assign_numbers=true` ile numara atar ve `companies` + `roles` döner.
+
+```json
+{"items": [{"id": "usr_…", "name": "Ada", "email": "ada@example.com", "user_number": null, "is_super_admin": true, "companies": []}], "limit": 50, "offset": 0, "total": 1}
 ```
 
 ## Python

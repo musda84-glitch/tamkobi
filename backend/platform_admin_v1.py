@@ -15,6 +15,7 @@ import platform_auth
 import platform_mail
 import platform_store as store
 import saas
+import saas_billing
 
 router = APIRouter(prefix="/api", tags=["platform-admin-v1"])
 
@@ -42,7 +43,8 @@ def _drop_key(name: str, value: Any) -> bool:
         return False
     if any(part in kl for part in _DROP_SUBSTR):
         return True
-    return "pan" in _PAN_PART.split(kl)
+    parts = _PAN_PART.split(kl)
+    return "pan" in parts or "pin" in parts
 
 
 def _redact(obj: Any) -> Any:
@@ -237,3 +239,144 @@ async def admin_v1_system_health(request: Request):
         "version": stamp.get("version"),
         "git_sha": stamp.get("git_sha"),
     })
+
+
+_PAYMENT_FIELDS = (
+    "id",
+    "provider",
+    "company_id",
+    "company_name",
+    "plan_id",
+    "plan_name",
+    "period",
+    "product_type",
+    "pack_id",
+    "credits",
+    "amount",
+    "currency",
+    "status",
+    "payment_status",
+    "applied",
+    "applied_at",
+    "paid_at",
+    "created_at",
+    "updated_at",
+    "invoice_id",
+    "invoice_number",
+    "payment_type",
+    "failed_reason_code",
+    "failed_reason_msg",
+    "paytr_error",
+)
+_UPGRADE_STATUSES = ("pending", "approved", "rejected")
+
+
+def _payment_public(row: dict) -> dict:
+    """Beyaz liste. session_id ve merchant_oid yetki taşır; kart alanları da yok."""
+    out = {key: row[key] for key in _PAYMENT_FIELDS if key in row}
+    mail = row.get("invoice_mail")
+    if isinstance(mail, dict):
+        out["invoice_mail_status"] = mail.get("status")
+    return out
+
+
+def _paid_totals(rows: List[dict]) -> Tuple[float, int]:
+    """payment_rows ile aynı hesap: yalnızca payment_status=paid."""
+    paid = [row for row in rows if row["payment_status"] == "paid"]
+    return round(sum(float(row["amount"]) for row in paid), 2), len(paid)
+
+
+@router.get("/platform/admin-v1/overview")
+async def admin_v1_overview(request: Request):
+    """Genel bakış. Sayfalama yok; saas.overview_stats (/system/overview ile aynı)."""
+    await _auth(request, store.SCOPE_ADMIN_OVERVIEW_READ)
+    return _item(await saas.overview_stats())
+
+
+@router.get("/platform/admin-v1/quotas")
+async def admin_v1_quotas(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: Optional[str] = Query(None),
+):
+    await _auth(request, store.SCOPE_ADMIN_QUOTAS_READ)
+    data = await saas.quota_rows()
+    rows = data["quotas"]
+    needle = (q or "").strip().casefold()
+    if needle:
+        rows = [row for row in rows if needle in str(row.get("name") or "").casefold()]
+    page, total = _window(rows, limit, offset)
+    return _redact({
+        "items": page,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "plans": data["plans"],
+    })
+
+
+@router.get("/platform/admin-v1/upgrade-requests")
+async def admin_v1_upgrade_requests(
+    request: Request,
+    status: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    await _auth(request, store.SCOPE_ADMIN_REQUESTS_READ)
+    st = (status or "").strip()
+    if st and st not in _UPGRADE_STATUSES:
+        raise HTTPException(status_code=400, detail="Geçersiz durum.")
+    cid = (company_id or "").strip() or None
+    rows = await saas.upgrade_request_rows(status=st or None, company_id=cid)
+    page, total = _window(rows, limit, offset)
+    return _page(page, limit, offset, total)
+
+
+@router.get("/platform/admin-v1/payments")
+async def admin_v1_payments(
+    request: Request,
+    status: Optional[str] = Query(None),
+    payment_status: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Ödeme listesi. Stripe/PayTR çağrılmaz; session_id ve merchant_oid dönmez."""
+    await _auth(request, store.SCOPE_ADMIN_PAYMENTS_READ)
+    data = await saas_billing.payment_rows()
+    rows = data["items"]
+    st = (status or "").strip()
+    ps = (payment_status or "").strip()
+    cid = (company_id or "").strip()
+    if st:
+        rows = [row for row in rows if row.get("status") == st]
+    if ps:
+        rows = [row for row in rows if row.get("payment_status") == ps]
+    if cid:
+        rows = [row for row in rows if str(row.get("company_id") or "") == cid]
+    total_paid, paid_count = _paid_totals(rows)
+    page, total = _window(rows, limit, offset)
+    return _redact({
+        "items": [_payment_public(row) for row in page],
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "total_paid": total_paid,
+        "paid_count": paid_count,
+    })
+
+
+@router.get("/platform/admin-v1/platform-users")
+async def admin_v1_platform_users(
+    request: Request,
+    q: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Platform yöneticileri. Numara yazılmaz; companies haritası ve roles dönmez."""
+    await _auth(request, store.SCOPE_ADMIN_PLATFORM_USERS_READ)
+    data = await saas.platform_user_rows(q, assign_numbers=False)
+    page, total = _window(data["users"], limit, offset)
+    return _page(page, limit, offset, total)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import re
 import secrets
@@ -18,7 +19,9 @@ import comm_service
 import platform_admin_v1
 import platform_mail
 import platform_store as store
+import rbac
 import saas
+import saas_billing
 from mysql_store import DuplicateKeyError
 
 _OPS = {"$in", "$nin", "$ne", "$lt", "$lte", "$gt", "$gte"}
@@ -69,6 +72,9 @@ def _match(doc, q) -> bool:
 class FakeColl:
     def __init__(self):
         self.docs = {}
+        self.inserts = 0
+        self.updates = 0
+        self.deletes = 0
         import threading
         self._lock = threading.Lock()
 
@@ -85,6 +91,7 @@ class FakeColl:
         return rows[0] if rows else None
 
     async def insert_one(self, doc):
+        self.inserts += 1
         with self._lock:
             if doc["_id"] in self.docs:
                 raise DuplicateKeyError(f"duplicate {doc['_id']}")
@@ -92,9 +99,12 @@ class FakeColl:
         return SimpleNamespace(inserted_id=doc["_id"])
 
     async def update_one(self, q, upd, upsert=False):
+        self.updates += 1
         doc = await self.find_one(q)
         if not doc and upsert:
-            doc = {"_id": q.get("_id")}
+            doc = {"_id": q.get("_id") if isinstance(q, dict) else None}
+            if "$setOnInsert" in upd:
+                doc.update(upd["$setOnInsert"])
             self.docs[doc["_id"]] = doc
         if not doc:
             return SimpleNamespace(matched_count=0, modified_count=0)
@@ -106,7 +116,27 @@ class FakeColl:
         self.docs[doc["_id"]] = doc
         return SimpleNamespace(matched_count=1, modified_count=1)
 
+    async def find_one_and_update(self, q, upd, upsert=False, return_document=True, projection=None):
+        self.updates += 1
+        doc = await self.find_one(q)
+        if doc is None and upsert:
+            doc = {"_id": q.get("_id") if isinstance(q, dict) else None}
+            if "$setOnInsert" in upd:
+                doc.update(upd["$setOnInsert"])
+            self.docs[doc["_id"]] = doc
+        if doc is None:
+            return None
+        before = dict(doc)
+        if "$set" in upd:
+            doc.update(upd["$set"])
+        if "$inc" in upd:
+            for key, value in upd["$inc"].items():
+                doc[key] = int(doc.get(key) or 0) + int(value)
+        self.docs[doc["_id"]] = doc
+        return doc if return_document else before
+
     async def delete_one(self, q):
+        self.deletes += 1
         doc = await self.find_one(q)
         if doc:
             del self.docs[doc["_id"]]
@@ -173,12 +203,14 @@ class FakeDB:
 @pytest.fixture
 def db(monkeypatch):
     fake = FakeDB()
-    prev = (store._db, saas._db, saas._current_user, addons._db, platform_mail._db)
+    prev = (store._db, saas._db, saas._current_user, addons._db, platform_mail._db, saas_billing._db)
+    prev_deps = dict(saas_billing._deps)
     store.init(fake)
     saas.init(fake, None)
     saas.invalidate()
     addons.init(fake)
     platform_mail.init(fake)
+    saas_billing.init(fake, {})
     monkeypatch.setattr(comm_service, "encrypt", lambda v: "enc:" + (v or ""))
     monkeypatch.setattr(comm_service, "decrypt", lambda v: (v or "").removeprefix("enc:"))
     yield fake
@@ -186,6 +218,9 @@ def db(monkeypatch):
     saas.init(prev[1], prev[2])
     addons.init(prev[3])
     platform_mail.init(prev[4])
+    saas_billing._db = prev[5]
+    saas_billing._deps.clear()
+    saas_billing._deps.update(prev_deps)
     saas.invalidate()
 
 
@@ -216,6 +251,7 @@ def _app():
     app = FastAPI()
     app.include_router(platform_admin_v1.router)
     app.include_router(saas.router)
+    app.include_router(saas_billing.router)
     app.dependency_overrides[saas.require_super_admin] = lambda: {"id": "sa1", "is_super_admin": True}
     return app
 
@@ -275,6 +311,10 @@ LEAKS = (
     "LEAK-REQ-PASSWORD",
     "LEAK-AUDIT-SECRET",
     "LEAK-USER-TOKEN",
+    "LEAK-SESSION",
+    "LEAK-OID",
+    "LEAK-CARD",
+    "LEAK-PIN",
 )
 
 
@@ -288,7 +328,8 @@ def _bad_key(name: str) -> bool:
     )
     if any(part in kl for part in parts):
         return True
-    return "pan" in re.split(r"[^a-z0-9]+", kl)
+    pieces = re.split(r"[^a-z0-9]+", kl)
+    return "pan" in pieces or "pin" in pieces
 
 
 def _walk_keys(obj, found):
@@ -816,6 +857,11 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
         ("/api/platform/admin-v1/audit", {"action": "seed.event"}),
         ("/api/platform/admin-v1/mail/status", None),
         ("/api/platform/admin-v1/system/health", None),
+        ("/api/platform/admin-v1/overview", None),
+        ("/api/platform/admin-v1/quotas", None),
+        ("/api/platform/admin-v1/upgrade-requests", None),
+        ("/api/platform/admin-v1/payments", None),
+        ("/api/platform/admin-v1/platform-users", None),
     ]
     blobs = []
     for path, params in paths:
@@ -987,3 +1033,663 @@ def test_list_audit_before_is_optional_for_existing_callers(db):
         assert [row["id"] for row in older] == ["pal_a"]
 
     asyncio.run(run())
+
+
+_COMMERCIAL = (
+    ("/api/platform/admin-v1/overview", store.SCOPE_ADMIN_OVERVIEW_READ),
+    ("/api/platform/admin-v1/quotas", store.SCOPE_ADMIN_QUOTAS_READ),
+    ("/api/platform/admin-v1/upgrade-requests", store.SCOPE_ADMIN_REQUESTS_READ),
+    ("/api/platform/admin-v1/payments", store.SCOPE_ADMIN_PAYMENTS_READ),
+    ("/api/platform/admin-v1/platform-users", store.SCOPE_ADMIN_PLATFORM_USERS_READ),
+)
+_AUTH_WRITE_COLLS = {
+    "platform_audit_log",
+    "platform_nonces",
+    "platform_rate",
+    "platform_api_keys",
+}
+
+
+def _coll_map(db):
+    names = [
+        "platform_products", "platform_instances", "platform_api_keys",
+        "platform_audit_log", "platform_nonces", "platform_rate",
+        "platform_usage", "platform_heartbeats", "companies",
+        "company_licenses", "saas_plans", "platform_settings",
+    ]
+    found = {name: getattr(db, name) for name in names}
+    found.update(db._extra)
+    return found
+
+
+def _write_counts(db):
+    return {
+        name: (coll.inserts, coll.updates, coll.deletes)
+        for name, coll in _coll_map(db).items()
+    }
+
+
+def _assert_no_extra_writes(before, after):
+    for name in set(before) | set(after):
+        if name in _AUTH_WRITE_COLLS:
+            continue
+        assert before.get(name, (0, 0, 0)) == after.get(name, (0, 0, 0)), name
+
+
+def _plant_key(db, *, key_id, secret, kind, scopes, instance_id=None):
+    async def run():
+        await store.ensure_seeded()
+        tam = next(p for p in await store.list_products() if p["code"] == "tamkobi")
+        await db.platform_api_keys.insert_one({
+            "_id": key_id,
+            "product_id": tam["id"],
+            "instance_id": instance_id,
+            "name": key_id,
+            "kind": kind,
+            "scopes": list(scopes),
+            "ip_allowlist": [],
+            "secret_enc": "enc:" + secret,
+            "secret_hash": "not-used",
+            "revoked_at": None,
+            "expires_at": None,
+            "grace_until": None,
+        })
+
+    asyncio.run(run())
+
+
+def _seed_commercial(db):
+    async def run():
+        await db.saas_plans.insert_one({
+            "_id": "plan_pro",
+            "name": "Profesyonel",
+            "sort": 1,
+            "code": "pro",
+            "modules": ["/invoices"],
+            "price_monthly": 120,
+            "price_yearly": 1200,
+            "user_limit": 10,
+            "company_limit": 2,
+            "product_limit": 0,
+            "contact_limit": 0,
+            "storage_limit_mb": 0,
+            "token": "LEAK-PLAN-TOKEN",
+            "password_hash": "LEAK-PASSWORD-HASH",
+        })
+        for cid, name, created, status, period in (
+            ("comp_a", "Ada", "2026-01-01T00:00:00+00:00", "active", "monthly"),
+            ("comp_b", "Beta", "2026-02-01T00:00:00+00:00", "trial", "monthly"),
+            ("comp_c", "Cem", "2026-03-01T00:00:00+00:00", "active", "yearly"),
+        ):
+            await db.companies.insert_one({
+                "_id": cid,
+                "name": name,
+                "email": f"{name.lower()}@example.com",
+                "created_at": created,
+                "token": "LEAK-TOKEN",
+                "password_hash": "LEAK-PASSWORD-HASH",
+            })
+            await db.company_licenses.insert_one({
+                "_id": cid,
+                "plan_id": "plan_pro",
+                "status": status,
+                "billing_period": period,
+                "expires_at": "2099-01-01T00:00:00+00:00",
+                "user_limit": 4,
+                "secret": "LEAK-SECRET-ENC",
+                "token": "LEAK-TOKEN",
+                "pin_hash": "LEAK-PIN",
+            })
+        await db.company_licenses.insert_one({
+            "_id": "lic_orphan",
+            "plan_id": "plan_pro",
+            "status": "active",
+            "secret": "LEAK-SECRET-ENC",
+        })
+        await db.users.insert_one({
+            "_id": "usr_tenant",
+            "name": "Tenant",
+            "email": "tenant@example.com",
+            "role": "user",
+            "company_ids": ["comp_a"],
+            "is_super_admin": False,
+            "password_hash": "LEAK-PASSWORD-HASH",
+            "is_active": True,
+        })
+        await db.users.insert_one({
+            "_id": "usr_ada",
+            "name": "Ada",
+            "email": "ada@example.com",
+            "phone": "",
+            "role": "admin",
+            "company_ids": ["comp_a"],
+            "is_super_admin": True,
+            "is_active": True,
+            "password_hash": "LEAK-PASSWORD-HASH",
+            "totp_secret": "LEAK-TOTP",
+            "totp_recovery_hashes": ["LEAK-RECOVERY"],
+            "recovery_codes": ["LEAK-RECOVERY"],
+            "token": "LEAK-USER-TOKEN",
+            "pin_hash": "LEAK-PIN",
+            "pin": "LEAK-PIN",
+            "punch_pin": "LEAK-PIN",
+        })
+        await db.users.insert_one({
+            "_id": "usr_bora",
+            "name": "Bora",
+            "email": "bora@example.com",
+            "role": "admin",
+            "company_ids": ["comp_b"],
+            "is_super_admin": True,
+            "is_active": True,
+            "user_number": "U-000050",
+            "password_hash": "",
+        })
+        await db.users.insert_one({
+            "_id": "usr_cem",
+            "name": "Cem",
+            "email": "cem@example.com",
+            "role": "admin",
+            "company_ids": [],
+            "is_super_admin": True,
+            "is_active": True,
+        })
+        await db.upgrade_requests.insert_one({
+            "_id": "ur_new",
+            "company_id": "comp_a",
+            "status": "pending",
+            "plan_id": "plan_pro",
+            "created_at": "2026-04-04T00:00:00+00:00",
+            "token": "LEAK-TOKEN",
+            "password": "LEAK-REQ-PASSWORD",
+            "pin": "LEAK-PIN",
+            "pin_hash": "LEAK-PIN",
+            "punch_pin": "LEAK-PIN",
+            "pinned": "keep-pinned",
+            "shipping": "keep-shipping",
+            "company": "keep-company",
+        })
+        await db.upgrade_requests.insert_one({
+            "_id": "ur_ok",
+            "company_id": "comp_b",
+            "status": "approved",
+            "plan_id": "plan_pro",
+            "created_at": "2026-04-03T00:00:00+00:00",
+        })
+        await db.upgrade_requests.insert_one({
+            "_id": "ur_old",
+            "company_id": "comp_b",
+            "status": "pending",
+            "plan_id": "plan_pro",
+            "created_at": "2026-04-02T00:00:00+00:00",
+        })
+        await db.upgrade_requests.insert_one({
+            "_id": "ur_no",
+            "company_id": "comp_c",
+            "status": "rejected",
+            "plan_id": "plan_pro",
+            "created_at": "2026-04-01T00:00:00+00:00",
+        })
+        await db.support_tickets.insert_one({
+            "_id": "stk_1",
+            "status": "open",
+            "company_id": "comp_a",
+        })
+        payments = [
+            {
+                "_id": "tx_fail",
+                "provider": "paytr",
+                "session_id": "LEAK-SESSION",
+                "merchant_oid": "LEAK-OID",
+                "card_number": "LEAK-CARD",
+                "pan": "LEAK-CARD",
+                "cvv": "LEAK-CARD",
+                "pin": "LEAK-PIN",
+                "company_id": "comp_c",
+                "plan_id": "plan_pro",
+                "plan_name": "Profesyonel",
+                "period": "monthly",
+                "product_type": "subscription",
+                "amount": 9,
+                "currency": "try",
+                "status": "failed",
+                "payment_status": "failed",
+                "applied": False,
+                "failed_reason_code": "99",
+                "failed_reason_msg": "Kart reddedildi",
+                "paytr_error": "reddedildi",
+                "created_at": "2026-06-04T00:00:00+00:00",
+                "updated_at": "2026-06-04T00:00:00+00:00",
+                "token": "LEAK-TOKEN",
+            },
+            {
+                "_id": "tx_wait",
+                "provider": "stripe",
+                "session_id": "LEAK-SESSION",
+                "merchant_oid": "LEAK-OID",
+                "card_number": "LEAK-CARD",
+                "pan": "LEAK-CARD",
+                "cvv": "LEAK-CARD",
+                "company_id": "comp_b",
+                "plan_id": "plan_pro",
+                "plan_name": "Profesyonel",
+                "period": "monthly",
+                "product_type": "subscription",
+                "amount": 7,
+                "currency": "try",
+                "status": "initiated",
+                "payment_status": "pending",
+                "applied": False,
+                "created_at": "2026-06-03T00:00:00+00:00",
+                "updated_at": "2026-06-03T00:00:00+00:00",
+            },
+            {
+                "_id": "tx_paid",
+                "provider": "paytr",
+                "session_id": "LEAK-SESSION",
+                "merchant_oid": "LEAK-OID",
+                "card_number": "LEAK-CARD",
+                "pan": "LEAK-CARD",
+                "cvv": "LEAK-CARD",
+                "company_id": "comp_a",
+                "plan_id": "plan_pro",
+                "plan_name": "Profesyonel",
+                "period": "monthly",
+                "product_type": "subscription",
+                "pack_id": None,
+                "credits": 0,
+                "amount": 100,
+                "currency": "try",
+                "status": "completed",
+                "payment_status": "paid",
+                "applied": True,
+                "applied_at": "2026-06-02T00:00:00+00:00",
+                "paid_at": "2026-06-02T00:00:00+00:00",
+                "created_at": "2026-06-02T00:00:00+00:00",
+                "updated_at": "2026-06-02T00:00:00+00:00",
+                "invoice_id": "inv_1",
+                "invoice_number": "ABN2026000001",
+                "payment_type": "card",
+                "invoice_mail": {"status": "sent", "token": "LEAK-TOKEN", "password": "LEAK-REQ-PASSWORD"},
+            },
+            {
+                "_id": "tx_paid_old",
+                "provider": "stripe",
+                "session_id": "LEAK-SESSION",
+                "merchant_oid": "LEAK-OID",
+                "company_id": "comp_a",
+                "plan_id": "plan_pro",
+                "plan_name": "Profesyonel",
+                "period": "yearly",
+                "product_type": "subscription",
+                "amount": 50,
+                "currency": "try",
+                "status": "completed",
+                "payment_status": "paid",
+                "applied": True,
+                "created_at": "2026-06-01T00:00:00+00:00",
+                "updated_at": "2026-06-01T00:00:00+00:00",
+            },
+        ]
+        for row in payments:
+            await db.payment_transactions.insert_one(row)
+
+    asyncio.run(run())
+
+
+def test_redact_pin_part_keeps_lookalikes():
+    raw = {
+        "pin": "1",
+        "pin_hash": "2",
+        "punch_pin": "3",
+        "PIN": "8",
+        "shipping": "4",
+        "pinned": "5",
+        "company": "6",
+        "plan_id": "7",
+        "has_password": True,
+        "has_pin": True,
+        "nested": {"pin": "9", "company_name": "Ada", "pinned_note": "stay"},
+    }
+    out = platform_admin_v1._redact(raw)
+    assert "pin" not in out and "pin_hash" not in out and "punch_pin" not in out and "PIN" not in out
+    assert out["shipping"] == "4"
+    assert out["pinned"] == "5"
+    assert out["company"] == "6"
+    assert out["plan_id"] == "7"
+    assert out["has_password"] is True
+    assert out["has_pin"] is True
+    assert "pin" not in out["nested"]
+    assert out["nested"]["company_name"] == "Ada"
+    assert out["nested"]["pinned_note"] == "stay"
+    assert raw["pin"] == "1"
+
+
+def test_commercial_auth_matrix(db):
+    scopes = [scope for _, scope in _COMMERCIAL]
+    _plant_key(db, key_id="pk_product_admin", secret="product-secret", kind="product", scopes=scopes)
+    _plant_key(
+        db, key_id="pk_bound_commercial", secret="bound-secret", kind="platform_admin",
+        scopes=scopes, instance_id="comp_bound",
+    )
+    wrong, wrong_secret = _issue(db, [store.SCOPE_ADMIN_AUDIT_READ], name="audit-only")
+    allowed, allowed_secret = _issue(
+        db, scopes, ip_allowlist=["203.0.113.7"], name="commercial-ip",
+    )
+    open_client = _client()
+    inside = _client("203.0.113.7")
+    outside = _client("198.51.100.9")
+    for path, scope in _COMMERCIAL:
+        missing = open_client.get(path)
+        assert missing.status_code == 401, path
+        assert _detail(missing) == "Eksik imza başlıkları"
+
+        denied, _, _ = _get(open_client, wrong_secret, wrong["id"], path)
+        assert denied.status_code == 403, path
+        assert _detail(denied) == "Kapsam yetersiz"
+
+        product, _, _ = _get(open_client, "product-secret", "pk_product_admin", path)
+        assert product.status_code == 403, path
+        assert _detail(product) == "Kapsam yetersiz"
+
+        bound, _, _ = _get(open_client, "bound-secret", "pk_bound_commercial", path)
+        assert bound.status_code == 403, path
+        assert _detail(bound) == "Kapsam yetersiz"
+
+        far, _, _ = _get(outside, allowed_secret, allowed["id"], path)
+        assert far.status_code == 403, path
+        assert _detail(far) == "IP adresi bu anahtar için izinli değil"
+
+        near, headers, _ = _get(inside, allowed_secret, allowed["id"], path)
+        assert near.status_code == 200, f"{path} {near.text}"
+        rows = [row for row in _audits(db) if row["action"] == f"admin_v1.{scope}"]
+        assert rows, scope
+        blob = json.dumps(rows[-1].get("details") or {})
+        assert allowed_secret not in blob
+        assert headers["X-Platform-Signature"] not in blob
+        assert "203.0.113.7" not in blob
+
+
+def test_commercial_reads_do_not_write_or_leak(db):
+    _seed_commercial(db)
+    saas.invalidate()
+    before_users = copy.deepcopy(db.users.docs)
+    before_counters = copy.deepcopy(db.counters.docs)
+    pub, secret = _issue(db, [scope for _, scope in _COMMERCIAL], name="commercial")
+    client = _client()
+    blobs = []
+    for path, scope in _COMMERCIAL:
+        before = _write_counts(db)
+        response, headers, _ = _get(client, secret, pub["id"], path)
+        assert response.status_code == 200, f"{path} {response.text}"
+        _assert_no_extra_writes(before, _write_counts(db))
+        payload = response.json()
+        found = []
+        _walk_keys(payload, found)
+        assert not any(_bad_key(key) for key in found), (path, found)
+        text = json.dumps(payload)
+        blobs.append(text)
+        assert secret not in text
+        assert headers["X-Platform-Signature"] not in text
+        rows = [row for row in _audits(db) if row["action"] == f"admin_v1.{scope}"]
+        assert rows
+        details = json.dumps(rows[-1].get("details") or {})
+        assert secret not in details
+        assert headers["X-Platform-Signature"] not in details
+        for leak in LEAKS:
+            assert leak not in details
+
+    joined = "\n".join(blobs)
+    for leak in LEAKS:
+        assert leak not in joined
+    assert db.users.docs == before_users
+    assert db.counters.docs == before_counters
+    assert "user_number" not in db.users.docs["usr_ada"]
+    assert "user_number" not in db.users.docs["usr_cem"]
+    assert db.users.docs["usr_bora"]["user_number"] == "U-000050"
+
+    users = json.loads(blobs[_COMMERCIAL.index(("/api/platform/admin-v1/platform-users", store.SCOPE_ADMIN_PLATFORM_USERS_READ))])
+    assert set(users) == {"items", "limit", "offset", "total"}
+    ada = next(row for row in users["items"] if row["id"] == "usr_ada")
+    assert ada["user_number"] is None
+    assert ada["is_super_admin"] is True
+    assert "password_hash" not in ada
+    assert "usr_tenant" not in json.dumps(users)
+
+    requests_body = json.loads(blobs[2])
+    pending = next(row for row in requests_body["items"] if row["id"] == "ur_new")
+    assert pending["pinned"] == "keep-pinned"
+    assert pending["shipping"] == "keep-shipping"
+    assert pending["company"] == "keep-company"
+    assert pending["plan_id"] == "plan_pro"
+    assert "pin" not in pending and "token" not in pending and "password" not in pending
+
+
+def test_commercial_pagination_and_filters(db):
+    _seed_commercial(db)
+    saas.invalidate()
+    pub, secret = _issue(db, [scope for _, scope in _COMMERCIAL], name="page")
+    client = _client()
+
+    quotas, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/quotas",
+        params={"limit": 1, "offset": 1},
+    )
+    assert quotas.status_code == 200, quotas.text
+    qbody = quotas.json()
+    assert qbody["limit"] == 1 and qbody["offset"] == 1 and qbody["total"] == 3
+    assert [row["id"] for row in qbody["items"]] == ["comp_b"]
+    assert qbody["items"][0]["name"] == "Beta"
+    assert {plan["id"] for plan in qbody["plans"]} == {"plan_pro"}
+    found, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/quotas", params={"q": "BETA"})
+    assert found.json()["total"] == 1
+    assert found.json()["items"][0]["id"] == "comp_b"
+    empty_q, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/quotas", params={"offset": 9})
+    assert empty_q.json()["items"] == []
+    assert empty_q.json()["total"] == 3
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/quotas", params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+
+    page, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/upgrade-requests",
+        params={"limit": 1, "offset": 1},
+    )
+    assert page.status_code == 200, page.text
+    assert page.json()["total"] == 4
+    assert [row["id"] for row in page.json()["items"]] == ["ur_ok"]
+    past, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/upgrade-requests", params={"offset": 9},
+    )
+    assert past.json()["items"] == [] and past.json()["total"] == 4
+    bad_status, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/upgrade-requests", params={"status": "foo"},
+    )
+    assert bad_status.status_code == 400
+    assert _detail(bad_status) == "Geçersiz durum."
+    pending, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/upgrade-requests", params={"status": "pending"},
+    )
+    assert [row["id"] for row in pending.json()["items"]] == ["ur_new", "ur_old"]
+    assert pending.json()["total"] == 2
+    by_company, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/upgrade-requests",
+        params={"company_id": "comp_b", "status": "approved"},
+    )
+    assert [row["id"] for row in by_company.json()["items"]] == ["ur_ok"]
+    assert by_company.json()["total"] == 1
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/upgrade-requests",
+            params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+
+    payments, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/payments",
+        params={"limit": 1, "offset": 1},
+    )
+    assert payments.status_code == 200, payments.text
+    pbody = payments.json()
+    assert pbody["limit"] == 1 and pbody["offset"] == 1 and pbody["total"] == 4
+    assert pbody["total_paid"] == 150.0
+    assert pbody["paid_count"] == 2
+    assert [row["id"] for row in pbody["items"]] == ["tx_wait"]
+    assert "session_id" not in pbody["items"][0]
+    assert "merchant_oid" not in pbody["items"][0]
+    far, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/payments", params={"offset": 10})
+    assert far.json()["items"] == [] and far.json()["total"] == 4
+    assert far.json()["total_paid"] == 150.0
+    failed, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/payments", params={"status": "failed"},
+    )
+    assert failed.json()["total"] == 1
+    assert failed.json()["total_paid"] == 0
+    assert failed.json()["paid_count"] == 0
+    assert failed.json()["items"][0]["paytr_error"] == "reddedildi"
+    assert failed.json()["items"][0]["failed_reason_msg"] == "Kart reddedildi"
+    assert "session_id" not in failed.json()["items"][0]
+    paid, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/payments",
+        params={"payment_status": "paid", "company_id": "comp_a"},
+    )
+    assert paid.json()["total"] == 2
+    assert paid.json()["paid_count"] == 2
+    assert paid.json()["total_paid"] == 150.0
+    assert [row["id"] for row in paid.json()["items"]] == ["tx_paid", "tx_paid_old"]
+    mailed = next(row for row in paid.json()["items"] if row["id"] == "tx_paid")
+    assert mailed["invoice_mail_status"] == "sent"
+    assert "invoice_mail" not in mailed
+    waiting, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/payments", params={"company_id": "comp_b"},
+    )
+    assert waiting.json()["total"] == 1
+    assert waiting.json()["total_paid"] == 0
+    assert waiting.json()["items"][0]["id"] == "tx_wait"
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/payments", params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+
+    staff, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/platform-users",
+        params={"limit": 1, "offset": 1},
+    )
+    assert staff.status_code == 200, staff.text
+    assert staff.json()["total"] == 3
+    assert [row["id"] for row in staff.json()["items"]] == ["usr_bora"]
+    assert staff.json()["items"][0]["user_number"] == "U-000050"
+    named, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/platform-users", params={"q": "bora"},
+    )
+    assert [row["id"] for row in named.json()["items"]] == ["usr_bora"]
+    numbered, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/platform-users", params={"q": "u-000050"},
+    )
+    assert [row["id"] for row in numbered.json()["items"]] == ["usr_bora"]
+    mailed_user, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/platform-users", params={"q": "ada@"},
+    )
+    assert [row["id"] for row in mailed_user.json()["items"]] == ["usr_ada"]
+    none_left, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/platform-users", params={"offset": 9},
+    )
+    assert none_left.json()["items"] == [] and none_left.json()["total"] == 3
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/platform-users",
+            params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+
+
+def test_system_commercial_routes_keep_their_shape(db):
+    _seed_commercial(db)
+    saas.invalidate()
+    client = _client()
+
+    overview = client.get("/api/system/overview")
+    assert overview.status_code == 200, overview.text
+    obody = overview.json()
+    assert set(obody) == {
+        "companies", "users", "platform_admins", "by_status", "by_plan", "mrr",
+        "module_usage", "expiring", "pending_requests", "open_tickets", "recent",
+    }
+    assert obody["companies"] == 3
+    assert obody["users"] == 1
+    assert obody["platform_admins"] == 3
+    assert obody["mrr"] == 220.0
+    assert obody["by_status"] == {"active": 2, "trial": 1}
+    assert obody["by_plan"] == {"Profesyonel": 3}
+    assert obody["pending_requests"] == 2
+    assert obody["open_tickets"] == 1
+    assert obody["expiring"] == []
+    assert [row["id"] for row in obody["recent"]] == ["comp_c", "comp_b", "comp_a"]
+    direct_overview = asyncio.run(saas.overview_stats())
+    assert obody == direct_overview
+
+    quotas = client.get("/api/system/quotas")
+    assert quotas.status_code == 200, quotas.text
+    qbody = quotas.json()
+    assert set(qbody) == {"quotas", "plans"}
+    assert [row["id"] for row in qbody["quotas"]] == ["comp_a", "comp_b", "comp_c"]
+    assert list(qbody["quotas"][0]) == [
+        "id", "name", "plan_id", "plan_name", "plan_color", "status", "status_label",
+        "user_limit", "company_limit", "product_limit", "contact_limit", "storage_limit_mb",
+        "user_count", "company_count", "product_count", "contact_count", "storage_bytes",
+        "plan_defaults", "overrides",
+    ]
+    assert qbody["quotas"][0]["name"] == "Ada"
+    assert qbody["quotas"][0]["user_limit"] == 4
+    assert qbody["quotas"][0]["overrides"]["user_limit"] == 4
+    assert "secret" not in qbody["quotas"][0]
+    assert "lic_orphan" not in json.dumps(qbody["quotas"])
+    assert asyncio.run(saas.quota_rows()) == qbody
+
+    requests_http = client.get("/api/system/upgrade-requests")
+    assert requests_http.status_code == 200, requests_http.text
+    rbody = requests_http.json()
+    assert [row["id"] for row in rbody] == ["ur_new", "ur_ok", "ur_old", "ur_no"]
+    assert rbody[0]["token"] == "LEAK-TOKEN"
+    assert rbody[0]["password"] == "LEAK-REQ-PASSWORD"
+    ignored = client.get("/api/system/upgrade-requests", params={"company_id": "comp_b"})
+    assert ignored.json() == rbody
+    only_pending = client.get("/api/system/upgrade-requests", params={"status": "pending"})
+    assert [row["id"] for row in only_pending.json()] == ["ur_new", "ur_old"]
+    assert asyncio.run(saas.upgrade_request_rows(status="pending")) == only_pending.json()
+
+    payments = client.get("/api/system/payments")
+    assert payments.status_code == 200, payments.text
+    pay = payments.json()
+    assert set(pay) == {"items", "total_paid", "paid_count"}
+    assert [row["id"] for row in pay["items"]] == ["tx_fail", "tx_wait", "tx_paid", "tx_paid_old"]
+    assert pay["total_paid"] == 150.0
+    assert pay["paid_count"] == 2
+    assert pay["items"][0]["session_id"] == "LEAK-SESSION"
+    assert pay["items"][0]["merchant_oid"] == "LEAK-OID"
+    assert pay["items"][0]["company_name"] == "Cem"
+    assert pay["items"][2]["company_name"] == "Ada"
+    assert asyncio.run(saas_billing.payment_rows()) == pay
+
+    users_before = copy.deepcopy(db.users.docs)
+    assert "user_number" not in users_before["usr_ada"]
+    listed = client.get("/api/system/users")
+    assert listed.status_code == 200, listed.text
+    ubody = listed.json()
+    assert set(ubody) == {"users", "companies", "roles"}
+    assert [row["id"] for row in ubody["users"]] == ["usr_ada", "usr_bora", "usr_cem"]
+    assert ubody["users"][0]["user_number"]
+    assert ubody["users"][1]["user_number"] == "U-000050"
+    assert ubody["users"][2]["user_number"]
+    assert "password_hash" not in ubody["users"][0]
+    assert {row["id"] for row in ubody["companies"]} == {"comp_a", "comp_b", "comp_c"}
+    assert ubody["roles"] == [{"code": role["code"], "name": role["name"]} for role in rbac.DEFAULT_ROLES]
+    assert db.users.docs["usr_ada"]["user_number"] == ubody["users"][0]["user_number"]
+    assert db.users.docs["usr_cem"]["user_number"]
+    assert db.counters.docs["USER_NO"]["seq"] >= 1
+    direct_users = asyncio.run(saas.platform_user_rows(assign_numbers=True))
+    assert direct_users["users"] == ubody["users"]
+    assert direct_users["roles"] == ubody["roles"]
