@@ -17009,13 +17009,23 @@ async def list_mappings(company_id: Optional[str] = None, user: dict = Depends(g
 @api_router.post("/integrations/ecommerce/mappings")
 async def create_mapping(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
-    product = await db.products.find_one({"_id": req.get("product_id")})
+    product_id = req.get("product_id")
+    product = await db.products.find_one({"_id": product_id, "company_id": company_id})
     if not product:
         raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
     channel = (req.get("channel") or "").lower()
     ext_sku = (req.get("marketplace_sku") or "").strip()
     if not channel or not ext_sku:
         raise HTTPException(status_code=400, detail="Pazaryeri ve pazaryeri SKU/barkod zorunludur.")
+    variant_id = req.get("variant_id")
+    if variant_id not in (None, ""):
+        known = {
+            v.get("variant_id")
+            for v in (product.get("variants") or [])
+            if isinstance(v, dict)
+        }
+        if variant_id not in known:
+            raise HTTPException(status_code=404, detail="Varyant bulunamadı.")
     doc = {"company_id": company_id, "channel": channel, "marketplace_sku": ext_sku, "marketplace_product_id": req.get("marketplace_product_id", ""),
            "product_id": product["_id"], "product_name": product["name"], "sku": product.get("sku"), "variant_id": req.get("variant_id"), "sync_stock": bool(req.get("sync_stock", True)),
            "sync_price": bool(req.get("sync_price", True)), "updated_at": datetime.now(timezone.utc).isoformat()}
@@ -17025,8 +17035,8 @@ async def create_mapping(req: Dict[str, Any], user: dict = Depends(get_current_u
 
 @api_router.delete("/integrations/ecommerce/mappings/{mapping_id}")
 async def delete_mapping(mapping_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "marketplace_mappings", mapping_id, user, not_found="Eşleştirme bulunamadı.")
-    await db.marketplace_mappings.delete_one({"_id": mapping_id})
+    doc = await tenant_access.get_tenant_doc(db, "marketplace_mappings", mapping_id, user, not_found="Eşleştirme bulunamadı.")
+    await db.marketplace_mappings.delete_one({"_id": mapping_id, "company_id": doc.get("company_id")})
     return {"status": "success"}
 
 @api_router.get("/integrations/ecommerce/unmapped")
@@ -19646,12 +19656,15 @@ async def create_products_from_marketplace_bulk(req: Dict[str, Any], user: Any =
     }
 
 @api_router.post("/marketplace/product-match")
-async def match_marketplace_product(req: Dict[str, Any]):
+async def match_marketplace_product(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     alias = str(req.get("alias") or "").strip()
-    p = await db.products.find_one({"_id": req.get("product_id")})
-    if not p or not alias:
+    if not alias:
         raise HTTPException(status_code=400, detail="Ürün ve pazaryeri barkod/SKU gerekli.")
-    await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    p = await db.products.find_one({"_id": req.get("product_id"), "company_id": company_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
+    await db.products.update_one({"_id": p["_id"], "company_id": company_id}, {"$addToSet": {"marketplace_aliases": alias}})
     return {"status": "success", "message": f"'{alias}' → {p.get('name')} eşleştirildi. Kârlılık ve stok düşümü bu ürün üzerinden hesaplanır."}
 
 
