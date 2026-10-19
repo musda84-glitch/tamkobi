@@ -1,5 +1,7 @@
 /** Hesap türü ve görünen etiket. Tam IBAN/hesap no yazılmaz. */
 
+import { bankShortName } from "./bankLogo";
+
 export const ACCOUNT_TYPE_LABELS = {
   bank: "Banka hesabı",
   cash_box: "Kasa",
@@ -68,6 +70,51 @@ export function accountDisplayLabel(account, opts = {}) {
   if (ref) parts.push(ref);
   if (integrated) parts.push("entegre");
   return parts.join(" · ") || name || bank || "Hesap";
+}
+
+function foldTr(value) {
+  return String(value || "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i")
+    .replace(/ş/g, "s")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Baştaki banka adı / kısa ad ve onu izleyen " · " ayracı. */
+function stripLeadingBank(value, prefix) {
+  const src = String(value || "").trim();
+  const pre = String(prefix || "").trim();
+  if (!src || !pre) return src;
+  const head = src.slice(0, pre.length);
+  if (foldTr(head) !== foldTr(pre)) return src;
+  const rest = src.slice(pre.length);
+  if (rest && !/^[\s·]/.test(rest)) return src;
+  return rest.replace(/^(?:\s*·\s*)+/u, "").trim();
+}
+
+/**
+ * Kartın üç satırı. accountDisplayLabel değişmez.
+ * bank: kısa ad ya da bank_name. name: önek temizlenmiş hesap adı.
+ */
+export function accountCardLabels(account) {
+  if (!account) return { bank: "", name: "", ref: "" };
+  const short = bankShortName(account) || "";
+  const bankName = String(account.bank_name || "").trim();
+  const bank = short || bankName;
+  const prefixes = [...new Set([bankName, short, bank].map((item) => String(item || "").trim()).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  let name = String(account.account_name || "").trim();
+  prefixes.forEach((prefix) => {
+    name = stripLeadingBank(name, prefix);
+  });
+  name = name.replace(/^(?:\s*·\s*)+/u, "").trim();
+  if (!name) name = accountTypeLabel(account.type);
+  return { bank, name, ref: accountMaskedRef(account) };
 }
 
 export function duplicateRefMessage(noun, accounts, masked) {
