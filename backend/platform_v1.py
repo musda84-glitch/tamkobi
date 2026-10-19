@@ -1,18 +1,14 @@
 """Sunucudan sunucuya Platform API: /api/platform/v1/* (HMAC imza, JWT/CORS yok)."""
 from __future__ import annotations
 
-import json
-import time
 from typing import Any, Dict, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 
-from client_ip import request_ip
+import platform_auth
 import platform_store as store
 
 router = APIRouter(prefix="/api/platform/v1", tags=["platform-v1"])
-
-MAX_SKEW_SEC = 300
 
 SCOPE_VERIFY = "license:verify"
 SCOPE_HEARTBEAT = "heartbeat"
@@ -20,64 +16,19 @@ SCOPE_USAGE = "usage:write"
 SCOPE_HELP = "help:read"
 
 
-async def _authenticate(request: Request, *, required_scope: str) -> Tuple[dict, Dict[str, Any]]:
-    """Sıra: başlıklar → timestamp → anahtar → IP limiti → İMZA → scope → nonce → anahtar kotası."""
-    key_id = (request.headers.get("X-Platform-Key") or "").strip()
-    ts = (request.headers.get("X-Platform-Timestamp") or "").strip()
-    nonce = (request.headers.get("X-Platform-Nonce") or "").strip()
-    sig = (request.headers.get("X-Platform-Signature") or "").strip()
-    if not key_id or not ts or not nonce or not sig:
-        raise HTTPException(status_code=401, detail="Eksik imza başlıkları")
-
-    try:
-        ts_i = int(ts)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Geçersiz timestamp")
-    if abs(int(time.time()) - ts_i) > MAX_SKEW_SEC:
-        raise HTTPException(status_code=401, detail="Timestamp kayması çok büyük")
-
-    doc, secret = await store.resolve_key_for_auth(key_id)
-    if not doc or not secret:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş anahtar")
-
-    ip = request_ip(request)
-    if not await store.check_ip_rate_limit(ip):
-        raise HTTPException(status_code=429, detail="IP dakika limiti aşıldı")
-
-    body = await request.body()
-    path = request.url.path
-    method = request.method
-    if not store.verify_signature(secret, ts, nonce, method, path, body, sig):
-        raise HTTPException(status_code=401, detail="İmza doğrulanamadı")
-
-    scopes = doc.get("scopes") or []
-    if required_scope not in scopes:
-        if not (required_scope == SCOPE_HELP and store.SCOPE_PLATFORM_ALL in scopes):
-            raise HTTPException(status_code=403, detail="Kapsam yetersiz")
-
-    if not await store.check_and_store_nonce(key_id, nonce):
-        raise HTTPException(status_code=401, detail="Tekrarlanan nonce")
-
-    if not await store.check_rate_limit(key_id):
-        raise HTTPException(status_code=429, detail="Dakika limiti aşıldı")
-
-    await store.touch_last_used(key_id, ip)
-    await store.write_audit(
-        actor_type="api_key",
-        actor_id=key_id,
-        ip=ip,
-        action=f"v1.{required_scope}",
-        target_type="api_key",
-        target_id=key_id,
-        details={"path": path},
+async def _authenticate(
+    request: Request,
+    *,
+    required_scope: str,
+    also_accept_scopes: tuple = (),
+) -> Tuple[dict, Dict[str, Any]]:
+    """HMAC doğrulamasını platform_auth.authenticate'e devreder. Dönüş: (key_doc, payload)."""
+    return await platform_auth.authenticate(
+        request,
+        required_scope=required_scope,
+        also_accept_scopes=also_accept_scopes,
+        audit_prefix="v1",
     )
-    try:
-        payload = json.loads(body.decode("utf-8") or "{}") if body else {}
-    except Exception:
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    return doc, payload
 
 
 @router.post("/licenses/verify")
@@ -133,7 +84,11 @@ async def v1_help_list(request: Request):
     """TamEticaret / diğer ürünler: yayınlanmış yardım içerikleri (HMAC, help:read)."""
     import help_center
 
-    await _authenticate(request, required_scope=SCOPE_HELP)
+    await _authenticate(
+        request,
+        required_scope=SCOPE_HELP,
+        also_accept_scopes=(store.SCOPE_PLATFORM_ALL,),
+    )
     qp = request.query_params
     product = (qp.get("product") or help_center.PRODUCT_TAMKOBI).strip()
     rows = await help_center.fetch_published(
@@ -155,7 +110,11 @@ async def v1_help_list(request: Request):
 async def v1_help_get(slug: str, request: Request):
     import help_center
 
-    await _authenticate(request, required_scope=SCOPE_HELP)
+    await _authenticate(
+        request,
+        required_scope=SCOPE_HELP,
+        also_accept_scopes=(store.SCOPE_PLATFORM_ALL,),
+    )
     product = (request.query_params.get("product") or help_center.PRODUCT_TAMKOBI).strip()
     doc = await help_center.fetch_by_slug(slug, product=product)
     return help_center.public_article(doc, include_body=True)
@@ -165,7 +124,11 @@ async def v1_help_get(slug: str, request: Request):
 async def v1_help_search(request: Request):
     import help_center
 
-    _key, payload = await _authenticate(request, required_scope=SCOPE_HELP)
+    _key, payload = await _authenticate(
+        request,
+        required_scope=SCOPE_HELP,
+        also_accept_scopes=(store.SCOPE_PLATFORM_ALL,),
+    )
     product = str(payload.get("product") or help_center.PRODUCT_TAMKOBI).strip()
     rows = await help_center.fetch_published(
         product=product,

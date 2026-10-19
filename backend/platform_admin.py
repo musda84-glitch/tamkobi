@@ -111,6 +111,7 @@ async def admin_create_key(
             scopes=req.get("scopes"),
             instance_id=req.get("instance_id"),
             expires_at=req.get("expires_at"),
+            ip_allowlist=req.get("ip_allowlist"),
             actor_id=_actor(admin),
             ip=_ip(request),
         )

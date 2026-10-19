@@ -275,15 +275,19 @@ async def create_api_key(
     scopes: Optional[List[str]] = None,
     instance_id: Optional[str] = None,
     expires_at: Optional[str] = None,
+    ip_allowlist: Optional[List[str]] = None,
     actor_id: str,
     ip: str = "",
 ) -> Tuple[dict, str]:
     """Returns (public_row_without_secret, plaintext_secret once)."""
+    from platform_auth import normalize_ip_allowlist
+
     await ensure_seeded()
     prod = await _get_product_doc(product_id)
     if not prod:
         raise ValueError("Ürün bulunamadı")
     sc = _normalize_scopes(scopes)
+    allow = normalize_ip_allowlist(ip_allowlist)
     secret = _new_secret()
     kid = _key_id()
     doc = {
@@ -292,6 +296,7 @@ async def create_api_key(
         "instance_id": instance_id,
         "name": (name or kid).strip(),
         "scopes": sc,
+        "ip_allowlist": allow,
         "secret_enc": comm_service.encrypt(secret),
         "secret_hash": _sha256_hex(secret),
         "created_by": actor_id,
@@ -307,7 +312,7 @@ async def create_api_key(
     await write_audit(
         actor_type="superadmin", actor_id=actor_id, ip=ip,
         action="api_key.create", target_type="api_key", target_id=kid,
-        details={"product_id": prod["_id"], "name": doc["name"], "scopes": sc},
+        details={"product_id": prod["_id"], "name": doc["name"], "scopes": sc, "ip_allowlist": allow},
     )
     return _public_key(doc), secret
 
@@ -320,6 +325,7 @@ def _public_key(doc: dict) -> dict:
         "instance_id": doc.get("instance_id"),
         "name": doc.get("name"),
         "scopes": doc.get("scopes") or [],
+        "ip_allowlist": doc.get("ip_allowlist") or [],
         "created_by": doc.get("created_by"),
         "created_at": doc.get("created_at"),
         "last_used_at": doc.get("last_used_at"),
@@ -351,6 +357,7 @@ async def rotate_api_key(key_id: str, *, actor_id: str, ip: str = "") -> Tuple[d
         scopes=old.get("scopes"),
         instance_id=old.get("instance_id"),
         expires_at=old.get("expires_at"),
+        ip_allowlist=old.get("ip_allowlist"),
         actor_id=actor_id,
         ip=ip,
     )
@@ -572,20 +579,50 @@ async def check_ip_rate_limit(ip: str) -> bool:
 
 
 async def _bump_rate(bucket: str, limit: int, *, key_id: str = "") -> bool:
-    doc = await _db.platform_rate.find_one({"_id": bucket})
-    count = int((doc or {}).get("count") or 0)
-    if count >= limit:
-        return False
-    await _db.platform_rate.update_one(
-        {"_id": bucket},
-        {"$inc": {"count": 1}, "$set": {
+    """Sayacı limitin altındayken bir artır. Dolu sayaç artmaz.
+
+    update_one_atomic varsa sıfır satır eklenir (çakışma yutulur) ve
+    ``count < limit`` koşulu satır kilidi altında artar. İki uvicorn
+    süreci aynı kovayı paylaşsa da limit aşılmaz. Koleksiyonda
+    update_one_atomic yoksa (test sahte koleksiyonları) eski
+    find_one + update_one yolu kullanılır.
+    """
+    coll = _db.platform_rate
+    expires = (_now() + timedelta(seconds=RATE_TTL_SEC)).isoformat()
+    atomic = getattr(coll, "update_one_atomic", None)
+    if atomic is None:
+        doc = await coll.find_one({"_id": bucket})
+        count = int((doc or {}).get("count") or 0)
+        if count >= limit:
+            return False
+        await coll.update_one(
+            {"_id": bucket},
+            {"$inc": {"count": 1}, "$set": {
+                "key_id": key_id,
+                "updated_at": _now_iso(),
+                "expires_at": expires,
+            }},
+            upsert=True,
+        )
+        return True
+    try:
+        await coll.insert_one({
+            "_id": bucket,
+            "count": 0,
             "key_id": key_id,
+            "updated_at": _now_iso(),
+            "expires_at": expires,
+        })
+    except DuplicateKeyError:
+        pass
+    res = await atomic(
+        {"_id": bucket, "count": {"$lt": limit}},
+        {"$inc": {"count": 1}, "$set": {
             "updated_at": _now_iso(),
             "expires_at": (_now() + timedelta(seconds=RATE_TTL_SEC)).isoformat(),
         }},
-        upsert=True,
     )
-    return True
+    return int(getattr(res, "matched_count", 0) or 0) == 1
 
 
 def sign_payload(secret: str, ts: str, nonce: str, method: str, path: str, body: bytes) -> str:
