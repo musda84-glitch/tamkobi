@@ -5,6 +5,7 @@ import { newTaskId, normalizeProjectTasks, type Employee, type ProjectTask } fro
 import { productImage } from "./productDisplay";
 import { isCompletedProjectStatus, type ProjectStage } from "./projectStages";
 import { selectedProjectPhotoUrls, type StagePhoto } from "./stagePhotos";
+import { productVatRate } from "./documentLines";
 import { approvalPayload, approvalPublicOrigin } from "./quoteApproval";
 
 export type WorkKind = "quote" | "project" | "survey";
@@ -210,7 +211,7 @@ export function workItemFromProduct(prod: {
   _id?: string;
   name?: string;
   sale_price?: number;
-  vat_rate?: number;
+  vat_rate?: unknown;
   unit?: string;
   type?: string;
   price_includes_vat?: boolean;
@@ -225,7 +226,7 @@ export function workItemFromProduct(prod: {
     product_id: is_service ? "" : idOf(prod),
     name: String(prod.name || ""),
     unit_price: Number(prod.sale_price) || 0,
-    vat_rate: Number(prod.vat_rate) || 20,
+    vat_rate: productVatRate(prod),
     unit: prod.unit || "Adet",
     price_includes_vat: !!prod.price_includes_vat,
     image_url: photo || undefined,
@@ -341,7 +342,7 @@ export function quoteLineProductPayload(
     type: "product",
     category: "Genel",
     unit: it.unit || "Adet",
-    vat_rate: Number(it.vat_rate) || 20,
+    vat_rate: productVatRate({ vat_rate: it.vat_rate }),
     sale_price: Number(it.unit_price) || 0,
     purchase_price: 0,
     stock_quantity: 0,
@@ -667,7 +668,7 @@ export function workItemPersistFields(item: WorkItem): WorkItem {
     quantity: Number(item.quantity) || 1,
     unit: item.unit || "Adet",
     unit_price: Number(item.unit_price) || 0,
-    vat_rate: Number(item.vat_rate) || 20,
+    vat_rate: productVatRate({ vat_rate: item.vat_rate }),
     description: item.description || "",
     is_service,
     product_id: is_service ? "" : String(item.product_id || ""),

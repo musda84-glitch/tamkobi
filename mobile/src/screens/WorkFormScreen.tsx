@@ -25,7 +25,7 @@ import { headerBackOptions } from "../components/StackHeader";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
 import { invoiceListSubtitle } from "../utils/invoiceDraft";
-import { VAT_OPTIONS } from "../utils/documentLines";
+import { productVatRate, VAT_OPTIONS } from "../utils/documentLines";
 import { go } from "../nav";
 import { coordText, DEFAULT_LOCATION_RADIUS_M, mapsLink, normalizeRadiusM } from "../utils/geo";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
@@ -143,7 +143,7 @@ function quoteDraftSig(
       name: it.name || "",
       quantity: Number(it.quantity) || 0,
       unit_price: Number(it.unit_price) || 0,
-      vat_rate: Number(it.vat_rate) || 0,
+      vat_rate: productVatRate({ vat_rate: it.vat_rate }),
       is_service: !!it.is_service,
       description: it.description || "",
       image_url: it.image_url || it.thumbnail_url || "",
@@ -302,7 +302,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         setLinkedProjectId(q.project_id || "");
         const its = (q.items || []).filter((i) => i?.name);
         const nextItems = its.length
-          ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: Number(i.vat_rate) || 20 }))
+          ? its.map((i) => ({ ...emptyItem(), ...i, quantity: Number(i.quantity) || 1, unit_price: Number(i.unit_price) || 0, vat_rate: productVatRate({ vat_rate: i.vat_rate }) }))
           : [emptyItem()];
         setPhotos(workGalleryWithoutLinePhotos(q.images || [], nextItems));
         setItems(nextItems);
