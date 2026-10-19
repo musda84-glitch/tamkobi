@@ -5,7 +5,9 @@ import { RefreshCw } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { formatTrAmount } from "../../utils/money";
 import { accountDisplayLabel, accountTypeLabel, isIban, maskedRef } from "../../utils/accountLabel";
-import { AccountActionsMenu, accountMonogram, relativeSyncLabel } from "./BankAccountList";
+import { AccountActionsMenu, accountMonogram, countOrDash, relativeSyncLabel } from "./BankAccountList";
+
+export { countOrDash };
 
 function hasField(account, key) {
   if (!account || !Object.prototype.hasOwnProperty.call(account, key)) return false;
@@ -16,13 +18,6 @@ function hasField(account, key) {
 function moneyOrDash(account, key) {
   if (!hasField(account, key)) return "—";
   return `${formatTrAmount(account[key])} ₺`;
-}
-
-export function countOrDash(account, key) {
-  if (!hasField(account, key)) return "—";
-  const num = Number(account[key]);
-  if (!Number.isFinite(num)) return "—";
-  return num.toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 }
 
 export function accountDetailSubtitle(account) {

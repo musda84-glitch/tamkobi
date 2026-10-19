@@ -152,10 +152,33 @@ function headerLabels() {
 }
 
 const REM_PX = 16;
-const TABLE_PX = 590;
+const TABLE_PX = 1180;
+const NARROW_PX = 926;
+const NARROW_DESC_PX = 220;
+
+function colNodes() {
+  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
+}
+
+function classTokens(el) {
+  return String(el?.className || "").split(/\s+/).filter(Boolean);
+}
+
+/** 926px bütçesi: 2xl'e kadar gizli Kullanıcı sütunu yer kaplamaz. */
+function narrowRemSum() {
+  return colNodes()
+    .filter((col) => {
+      const width = String(col.style.width || "");
+      if (!width.endsWith("rem")) return false;
+      const tokens = classTokens(col);
+      const hiddenUntil2xl = tokens.includes("hidden") && tokens.includes("2xl:table-cell") && !tokens.includes("lg:table-cell");
+      return !hiddenUntil2xl;
+    })
+    .reduce((sum, col) => sum + Number.parseFloat(col.style.width), 0);
+}
 
 function fixedRemSum() {
-  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')]
+  return colNodes()
     .map((col) => String(col.style.width || ""))
     .filter((width) => width.endsWith("rem"))
     .reduce((sum, width) => sum + Number.parseFloat(width), 0);
@@ -166,7 +189,7 @@ function descriptionRoomPx() {
 }
 
 function remWidths() {
-  return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')]
+  return colNodes()
     .map((col) => String(col.style.width || ""))
     .filter((width) => width.endsWith("rem"))
     .map((width) => Number.parseFloat(width));
@@ -195,12 +218,40 @@ async function openBankAccount() {
 test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmeleri görünür", async () => {
   await renderPage();
   expect(headerLabels()).toContain("Hesap");
-  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(160);
-  expect(remWidths()[0]).toBeGreaterThanOrEqual(5.25);
-  expect(remWidths()[remWidths().length - 2]).toBeGreaterThanOrEqual(6.25);
+  expect(remWidths()).toEqual([6, 9, 8.5, 8, 8.5, 11]);
+  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(300);
+  const userCol = colNodes().find((col) => (col.className || "").includes("hidden"));
+  const userThAll = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Kullanıcı");
+  const userTdAll = host.querySelector('[data-testid="tx-actor-tx_open"]');
+  for (const el of [userCol, userThAll, userTdAll]) {
+    expect(el.className).toContain("hidden");
+    expect(el.className).toContain("2xl:table-cell");
+    expect(classTokens(el)).not.toContain("xl:table-cell");
+  }
+  expect(host.querySelector('[data-testid="bank-tx-table-wrap"] table').className).toContain("max-xl:min-w-[calc(43rem+200px)]");
+  expect(narrowRemSum() * REM_PX + NARROW_DESC_PX).toBeLessThanOrEqual(NARROW_PX);
+  expect(NARROW_PX - narrowRemSum() * REM_PX).toBeGreaterThanOrEqual(NARROW_DESC_PX);
+  const wideTable = host.querySelector('[data-testid="bank-tx-table-wrap"] table');
+  expect(wideTable.style.minWidth || "").not.toMatch(/51rem|42rem/);
+  if (String(wideTable.style.minWidth || "").endsWith("px")) {
+    expect(Number.parseFloat(wideTable.style.minWidth)).toBeLessThanOrEqual(NARROW_PX);
+  }
+  const accountCell = host.querySelector('[data-testid="tx-account-tx_open"]');
+  expect(accountCell.textContent).toBe("Kuveyt Türk · Vadesiz TL Uzun Hesap Adı");
+  expect(accountCell.className).not.toContain("truncate");
+  expect(accountCell.className).not.toContain("max-w-[4.25rem]");
+  expect(accountCell.querySelector(".truncate")).toBeNull();
+  const accountHead = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Hesap");
+  expect(accountHead.className).not.toContain("truncate");
+  expect(accountHead.className).not.toContain("max-w-[4.25rem]");
+  const categoryCell = [...host.querySelector('[data-testid="tx-row-tx_open"]').querySelectorAll("td")][2];
+  expect(categoryCell.textContent).toContain("Giriş");
+  expect(categoryCell.querySelector(".truncate")).toBeNull();
+  expect(host.querySelector('[data-testid="tx-date-tx_open"]').className).toContain("whitespace-nowrap");
   const tumuAmount = amountCell("tx_open");
   expect(tumuAmount.getAttribute("title")).toBe(tumuAmount.textContent.trim());
-  expect(tumuAmount.className).toContain("overflow-hidden");
+  expect(tumuAmount.className).toContain("whitespace-nowrap");
+  expect(tumuAmount.className).not.toContain("overflow-hidden");
   expect(host.querySelector('[data-testid="tx-filter-unmatched"]').textContent).toBe("Eşleşmemiş (1)");
 
   await openBankAccount();
@@ -220,25 +271,33 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(actionTh.className).toContain("right-0");
   expect(actionTh.className).toContain("whitespace-nowrap");
   expect(actionTh.className).toContain("bg-slate-50");
-  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(200);
-  const cols = [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
-  expect(Number.parseFloat(cols[0].style.width)).toBeGreaterThanOrEqual(5.25);
-  expect(remWidths()[remWidths().length - 2]).toBeGreaterThanOrEqual(6.25);
-  expect(cols[cols.length - 1].style.width).toBe("8.25rem");
+  expect(descriptionRoomPx()).toBeGreaterThanOrEqual(300);
+  expect(remWidths()).toEqual([6, 8.5, 8, 8.5, 11]);
+  expect(narrowRemSum() * REM_PX + NARROW_DESC_PX).toBeLessThanOrEqual(NARROW_PX);
+  expect(NARROW_PX - narrowRemSum() * REM_PX).toBeGreaterThanOrEqual(NARROW_DESC_PX);
+  const cols = colNodes();
+  expect(cols[0].style.width).toBe("6rem");
+  expect(cols[cols.length - 1].style.width).toBe("11rem");
   const selectedAmount = amountCell("tx_open");
   expect(selectedAmount.getAttribute("title")).toBe(selectedAmount.textContent.trim());
-  expect(selectedAmount.className).toContain("overflow-hidden");
+  expect(selectedAmount.className).toContain("whitespace-nowrap");
+  expect(selectedAmount.className).not.toContain("overflow-hidden");
   const userTh = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Kullanıcı");
   expect(userTh.className).toContain("hidden");
-  expect(userTh.className).toContain("xl:table-cell");
+  expect(userTh.className).toContain("lg:table-cell");
+  expect(userTh.className).not.toContain("xl:table-cell");
   expect(host.querySelector('[data-testid="tx-filter-unmatched"]').textContent).toBe("Eşleşmemiş (12)");
   expect(host.querySelector('[data-testid="account-kpi-unmatched-value"]').textContent).toBe("12");
   expect(host.querySelector('[data-testid="account-detail-subtitle"]').textContent).not.toContain("IBAN");
   const table = host.querySelector('[data-testid="bank-tx-table-wrap"] table');
   expect(table.className).toContain("table-fixed");
-  expect(table.className).not.toContain("min-w-[");
+  expect(table.className).toContain("max-xl:min-w-[calc(42rem+200px)]");
+  expect(classTokens(table).some((token) => token.startsWith("min-w-["))).toBe(false);
   const wrap = host.querySelector('[data-testid="bank-tx-table-wrap"]');
   expect(wrap.className).toContain("max-md:overflow-x-auto");
+  expect(wrap.className).toContain("max-xl:overflow-x-auto");
+  expect(classTokens(wrap)).not.toContain("overflow-x-auto");
+  expect(classTokens(wrap)).not.toContain("md:overflow-x-auto");
   expect(wrap.className).not.toContain("md:block overflow-x-auto");
 
   const name = host.querySelector('[data-testid="bank-card-acc_bank"] .line-clamp-2');
