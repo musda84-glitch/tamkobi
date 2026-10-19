@@ -275,8 +275,7 @@ async def customer_close(ticket_id: str, request: Request):
     return public_ticket(await _db.support_tickets.find_one({"_id": ticket_id}), staff=False)
 
 
-@router.get("/system/support-tickets")
-async def admin_list(status: Optional[str] = None, company_id: Optional[str] = None, q: Optional[str] = None, _: dict = Depends(saas.require_super_admin)):
+async def admin_ticket_rows(status: Optional[str] = None, company_id: Optional[str] = None, q: Optional[str] = None) -> List[dict]:
     filt: Dict[str, Any] = {}
     if status:
         filt["status"] = status
@@ -286,7 +285,17 @@ async def admin_list(status: Optional[str] = None, company_id: Optional[str] = N
     needle = (q or "").strip().lower()
     if needle:
         rows = [r for r in rows if needle in f"{r.get('number')} {r.get('subject')} {r.get('company_name')} {r.get('created_by_email')}".lower()]
-    counts = {k: await _db.support_tickets.count_documents({"status": k}) for k in STATUSES}
+    return rows
+
+
+async def ticket_counts() -> Dict[str, int]:
+    return {k: await _db.support_tickets.count_documents({"status": k}) for k in STATUSES}
+
+
+@router.get("/system/support-tickets")
+async def admin_list(status: Optional[str] = None, company_id: Optional[str] = None, q: Optional[str] = None, _: dict = Depends(saas.require_super_admin)):
+    rows = await admin_ticket_rows(status=status, company_id=company_id, q=q)
+    counts = await ticket_counts()
     return {"tickets": [public_ticket(r, staff=True, include_messages=False) for r in rows], "counts": counts, "open_count": counts["open"] + counts["in_progress"] + counts["waiting_customer"], **meta()}
 
 

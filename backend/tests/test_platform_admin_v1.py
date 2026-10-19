@@ -16,12 +16,17 @@ from fastapi.testclient import TestClient
 
 import addons
 import comm_service
+import company_sms
+import mail_service
 import platform_admin_v1
 import platform_mail
+import platform_sms
 import platform_store as store
 import rbac
 import saas
 import saas_billing
+import support_tickets
+import tenant_idor_allowlist as allowlist
 from mysql_store import DuplicateKeyError
 
 _OPS = {"$in", "$nin", "$ne", "$lt", "$lte", "$gt", "$gte"}
@@ -205,12 +210,16 @@ def db(monkeypatch):
     fake = FakeDB()
     prev = (store._db, saas._db, saas._current_user, addons._db, platform_mail._db, saas_billing._db)
     prev_deps = dict(saas_billing._deps)
+    prev_sms = platform_sms._db
+    prev_tickets = (support_tickets._db, support_tickets._current_user)
     store.init(fake)
     saas.init(fake, None)
     saas.invalidate()
     addons.init(fake)
     platform_mail.init(fake)
     saas_billing.init(fake, {})
+    platform_sms.init(fake)
+    support_tickets.init(fake, prev_tickets[1])
     monkeypatch.setattr(comm_service, "encrypt", lambda v: "enc:" + (v or ""))
     monkeypatch.setattr(comm_service, "decrypt", lambda v: (v or "").removeprefix("enc:"))
     yield fake
@@ -221,6 +230,8 @@ def db(monkeypatch):
     saas_billing._db = prev[5]
     saas_billing._deps.clear()
     saas_billing._deps.update(prev_deps)
+    platform_sms.init(prev_sms)
+    support_tickets.init(prev_tickets[0], prev_tickets[1])
     saas.invalidate()
 
 
@@ -252,6 +263,8 @@ def _app():
     app.include_router(platform_admin_v1.router)
     app.include_router(saas.router)
     app.include_router(saas_billing.router)
+    app.include_router(platform_sms.router)
+    app.include_router(support_tickets.router)
     app.dependency_overrides[saas.require_super_admin] = lambda: {"id": "sa1", "is_super_admin": True}
     return app
 
@@ -315,12 +328,16 @@ LEAKS = (
     "LEAK-OID",
     "LEAK-CARD",
     "LEAK-PIN",
+    "LEAK-RESET-TOKEN",
+    "LEAK-RESET-LINK",
+    "LEAK-TICKET-TOKEN",
+    "LEAK-TICKET-SECRET",
 )
 
 
 def _bad_key(name: str) -> bool:
     kl = str(name).lower()
-    if kl == "has_password" or kl.startswith("has_"):
+    if kl in ("has_password", "password_unreadable") or kl.startswith("has_"):
         return False
     parts = (
         "password", "password_hash", "_enc", "secret", "totp", "recovery",
@@ -862,6 +879,11 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
         ("/api/platform/admin-v1/upgrade-requests", None),
         ("/api/platform/admin-v1/payments", None),
         ("/api/platform/admin-v1/platform-users", None),
+        ("/api/platform/admin-v1/sms/settings", None),
+        ("/api/platform/admin-v1/sms/logs", None),
+        ("/api/platform/admin-v1/sms/failed-resets", None),
+        ("/api/platform/admin-v1/companies/comp_sec/sms", None),
+        ("/api/platform/admin-v1/support/tickets", None),
     ]
     blobs = []
     for path, params in paths:
@@ -1693,3 +1715,697 @@ def test_system_commercial_routes_keep_their_shape(db):
     direct_users = asyncio.run(saas.platform_user_rows(assign_numbers=True))
     assert direct_users["users"] == ubody["users"]
     assert direct_users["roles"] == ubody["roles"]
+
+
+_ADMIN_ALLOW_REASON = (
+    "Platform yönetim API'si; HMAC platform_admin anahtarı "
+    "(kind=platform_admin, admin.* kapsamı), şirket oturumu yok"
+)
+_SMS_SUPPORT = (
+    ("/api/platform/admin-v1/sms/settings", store.SCOPE_ADMIN_SMS_READ),
+    ("/api/platform/admin-v1/sms/logs", store.SCOPE_ADMIN_SMS_READ),
+    ("/api/platform/admin-v1/sms/failed-resets", store.SCOPE_ADMIN_SMS_READ),
+    ("/api/platform/admin-v1/companies/comp_a/sms", store.SCOPE_ADMIN_SMS_READ),
+    ("/api/platform/admin-v1/support/tickets", store.SCOPE_ADMIN_SUPPORT_READ),
+    ("/api/platform/admin-v1/support/tickets/stk_open", store.SCOPE_ADMIN_SUPPORT_READ),
+)
+_RAW_PHONE = "+905551112233"
+_RESET_MESSAGE = "Sifre sifirlama https://app.example/sifre-sifirla?t=LEAK-RESET-LINK"
+_LOG_KEYS = {
+    "id", "company_id", "context", "provider", "status", "detail", "code",
+    "job_id", "contact_name", "created_at", "phone_masked", "message", "message_redacted",
+}
+
+
+def _seed_sms_support(db):
+    async def run():
+        for cid, name in (("comp_a", "Ada"), ("comp_b", "Beta"), ("comp_c", "Cem")):
+            await db.companies.insert_one({"_id": cid, "name": name, "created_at": "2026-01-01T00:00:00+00:00"})
+        await db.platform_settings.insert_one({
+            "_id": "platform_sms",
+            "provider": "netgsm",
+            "usercode": "user1",
+            "password_enc": "LEAK-PASSWORD-ENC",
+            "msgheader": "TAMKOBI",
+            "is_active": True,
+            "verified": True,
+            "verified_at": "2026-01-01T00:00:00+00:00",
+            "verify_message": "OK",
+            "last_test_at": None,
+            "updated_at": "2026-01-02T00:00:00+00:00",
+            "token": "LEAK-TOKEN",
+            "password": "LEAK-REQ-PASSWORD",
+        })
+        await db.sms_settings.insert_one({
+            "_id": "sms_comp_a",
+            "company_id": "comp_a",
+            "provider": "netgsm",
+            "usercode": "cuser",
+            "password_enc": "LEAK-PASSWORD-ENC",
+            "is_active": True,
+            "verified": True,
+            "token": "LEAK-TOKEN",
+        })
+        logs = [
+            {
+                "_id": "sms_ann",
+                "company_id": "comp_a",
+                "phone": "+905559998877",
+                "message": "Planli duyuru",
+                "context": "announcement",
+                "ref_id": None,
+                "contact_name": "Ada",
+                "provider": "netgsm",
+                "status": "sent",
+                "detail": "OK",
+                "code": "00",
+                "job_id": "job-ann",
+                "source": "platform",
+                "created_at": "2026-05-04T00:00:00+00:00",
+            },
+            {
+                "_id": "sms_reset",
+                "company_id": "comp_a",
+                "phone": _RAW_PHONE,
+                "message": _RESET_MESSAGE,
+                "context": "erp_reset",
+                "ref_id": "LEAK-RESET-TOKEN",
+                "contact_name": "Ada",
+                "provider": "netgsm",
+                "status": "sent",
+                "detail": "OK",
+                "code": "00",
+                "job_id": "job-reset",
+                "source": "platform",
+                "created_at": "2026-05-03T00:00:00+00:00",
+                "password_enc": "LEAK-PASSWORD-ENC",
+                "token": "LEAK-TICKET-TOKEN",
+            },
+            {
+                "_id": "sms_unknown",
+                "company_id": "comp_a",
+                "phone": _RAW_PHONE,
+                "message": "gizli https://app.example/sifre-sifirla?t=LEAK-RESET-LINK",
+                "context": "custom_alert",
+                "ref_id": "LEAK-RESET-TOKEN",
+                "contact_name": "Ada",
+                "provider": "netgsm",
+                "status": "failed",
+                "detail": "operator",
+                "code": "30",
+                "job_id": "job-unknown",
+                "source": "platform",
+                "created_at": "2026-05-02T00:00:00+00:00",
+            },
+            {
+                "_id": "sms_maint",
+                "company_id": "comp_b",
+                "phone": "+905550000111",
+                "message": "Bakim penceresi",
+                "context": "maintenance",
+                "provider": "netgsm",
+                "status": "failed",
+                "detail": "operator",
+                "code": "30",
+                "job_id": "job-maint",
+                "contact_name": "Beta",
+                "source": "platform",
+                "created_at": "2026-05-01T00:00:00+00:00",
+            },
+            {
+                "_id": "sms_event",
+                "company_id": "comp_b",
+                "phone": "+905550000222",
+                "message": "Olay bildirimi",
+                "context": "event_notify",
+                "provider": "netgsm",
+                "status": "sent",
+                "detail": "OK",
+                "code": "00",
+                "job_id": "job-event",
+                "contact_name": "Beta",
+                "source": "platform",
+                "created_at": "2026-04-30T00:00:00+00:00",
+            },
+            {
+                "_id": "sms_test",
+                "company_id": "comp_a",
+                "phone": "+905550000333",
+                "message": "Test metni",
+                "context": "platform_test",
+                "provider": "netgsm",
+                "status": "sent",
+                "detail": "OK",
+                "code": "00",
+                "job_id": "job-test",
+                "contact_name": "Ada",
+                "source": "platform",
+                "created_at": "2026-04-29T00:00:00+00:00",
+            },
+            {
+                "_id": "sms_co",
+                "company_id": "comp_a",
+                "phone": _RAW_PHONE,
+                "message": "LEAK-RESET-LINK",
+                "context": "announcement",
+                "ref_id": "LEAK-RESET-TOKEN",
+                "status": "failed",
+                "source": "company",
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "password_enc": "LEAK-PASSWORD-ENC",
+            },
+        ]
+        for row in logs:
+            await db.sms_logs.insert_one(row)
+        await db.password_resets.insert_one({
+            "_id": "pr_full_id_123456",
+            "token": "LEAK-TOKEN",
+            "phone": _RAW_PHONE,
+            "email": "ada@example.com",
+            "sms_failed": True,
+            "mail_failed": False,
+            "sms_error": "operator down",
+            "company_id": "comp_a",
+            "created_at": "2026-05-03T00:00:00+00:00",
+            "channel": "sms",
+            "reset_link": "https://app.example/sifre-sifirla?t=LEAK-RESET-LINK",
+        })
+        await db.password_resets.insert_one({
+            "_id": "pr_mail_fail",
+            "token": "LEAK-TOKEN",
+            "phone": "",
+            "email": "bora@example.com",
+            "sms_failed": False,
+            "mail_failed": True,
+            "mail_error": "mailbox down",
+            "company_id": "comp_b",
+            "created_at": "2026-05-02T00:00:00+00:00",
+            "channel": "email",
+        })
+        await db.password_resets.insert_one({
+            "_id": "pr_ok",
+            "token": "LEAK-TOKEN",
+            "phone": _RAW_PHONE,
+            "email": "ada@example.com",
+            "sms_failed": False,
+            "mail_failed": False,
+            "created_at": "2026-05-04T00:00:00+00:00",
+        })
+        await db.support_tickets.insert_one({
+            "_id": "stk_open",
+            "number": "DST-2026-0001",
+            "company_id": "comp_a",
+            "company_name": "Ada",
+            "subject": "Yazici bozuk",
+            "category": "teknik",
+            "priority": "high",
+            "status": "open",
+            "created_by_email": "ada@example.com",
+            "created_at": "2026-06-01T00:00:00+00:00",
+            "updated_at": "2026-06-05T00:00:00+00:00",
+            "token": "LEAK-TOKEN",
+            "password": "LEAK-REQ-PASSWORD",
+            "messages": [
+                {
+                    "id": "m1",
+                    "body": "Yazici kagit yemiyor",
+                    "is_internal": False,
+                    "is_staff": False,
+                    "token": "LEAK-TICKET-TOKEN",
+                    "secret": "LEAK-TICKET-SECRET",
+                    "attachments": [{
+                        "url": "/api/files/shot1",
+                        "filename": "ekran.png",
+                        "content_type": "image/png",
+                        "size": 1200,
+                        "token": "LEAK-TICKET-TOKEN",
+                    }],
+                },
+                {
+                    "id": "m2",
+                    "body": "ic not",
+                    "is_internal": True,
+                    "is_staff": True,
+                    "secret": "LEAK-TICKET-SECRET",
+                },
+            ],
+        })
+        await db.support_tickets.insert_one({
+            "_id": "stk_prog",
+            "number": "DST-2026-0002",
+            "company_id": "comp_b",
+            "company_name": "Beta",
+            "subject": "Beta faturasi",
+            "category": "fatura",
+            "priority": "normal",
+            "status": "in_progress",
+            "created_by_email": "bora@example.com",
+            "updated_at": "2026-06-04T00:00:00+00:00",
+            "messages": [{"id": "m3", "body": "fatura", "is_internal": False}],
+        })
+        await db.support_tickets.insert_one({
+            "_id": "stk_wait",
+            "number": "DST-2026-0003",
+            "company_id": "comp_a",
+            "company_name": "Ada",
+            "subject": "Bekleyen konu",
+            "status": "waiting_customer",
+            "created_by_email": "ada@example.com",
+            "updated_at": "2026-06-03T00:00:00+00:00",
+            "messages": [],
+        })
+        await db.support_tickets.insert_one({
+            "_id": "stk_res",
+            "number": "DST-2026-0004",
+            "company_id": "comp_c",
+            "company_name": "Cem",
+            "subject": "Cozuldu",
+            "status": "resolved",
+            "created_by_email": "cem@example.com",
+            "updated_at": "2026-06-02T00:00:00+00:00",
+            "messages": [],
+        })
+        await db.support_tickets.insert_one({
+            "_id": "stk_closed",
+            "number": "DST-2026-0005",
+            "company_id": "comp_c",
+            "company_name": "Cem",
+            "subject": "Kapali kayit",
+            "status": "closed",
+            "created_by_email": "cem@example.com",
+            "updated_at": "2026-06-01T00:00:00+00:00",
+            "messages": [],
+        })
+
+    asyncio.run(run())
+
+
+def test_sms_support_allowlist_reasons():
+    pairs = (
+        ("GET", "/platform/admin-v1/companies/{company_id}/sms"),
+        ("GET", "/platform/admin-v1/support/tickets/{ticket_id}"),
+    )
+    for pair in pairs:
+        assert pair in allowlist.TENANT_IDOR_ALLOWLIST
+        assert allowlist.ALLOWLIST_REASONS[pair] == _ADMIN_ALLOW_REASON
+
+
+def test_sms_support_auth_matrix(db):
+    _seed_sms_support(db)
+    scopes = [store.SCOPE_ADMIN_SMS_READ, store.SCOPE_ADMIN_SUPPORT_READ]
+    _plant_key(db, key_id="pk_product_sms", secret="product-secret", kind="product", scopes=scopes)
+    _plant_key(
+        db, key_id="pk_bound_sms", secret="bound-secret", kind="platform_admin",
+        scopes=scopes, instance_id="comp_bound",
+    )
+    sms_key, sms_secret = _issue(db, [store.SCOPE_ADMIN_SMS_READ], name="sms-only")
+    support_key, support_secret = _issue(db, [store.SCOPE_ADMIN_SUPPORT_READ], name="support-only")
+    allowed, allowed_secret = _issue(db, scopes, ip_allowlist=["203.0.113.7"], name="sms-support-ip")
+    open_client = _client()
+    inside = _client("203.0.113.7")
+    outside = _client("198.51.100.9")
+    for path, scope in _SMS_SUPPORT:
+        missing = open_client.get(path)
+        assert missing.status_code == 401, path
+        assert _detail(missing) == "Eksik imza başlıkları"
+
+        if scope == store.SCOPE_ADMIN_SMS_READ:
+            wrong_secret, wrong_id = support_secret, support_key["id"]
+        else:
+            wrong_secret, wrong_id = sms_secret, sms_key["id"]
+        denied, _, _ = _get(open_client, wrong_secret, wrong_id, path)
+        assert denied.status_code == 403, path
+        assert _detail(denied) == "Kapsam yetersiz"
+
+        product, _, _ = _get(open_client, "product-secret", "pk_product_sms", path)
+        assert product.status_code == 403, path
+        assert _detail(product) == "Kapsam yetersiz"
+
+        bound, _, _ = _get(open_client, "bound-secret", "pk_bound_sms", path)
+        assert bound.status_code == 403, path
+        assert _detail(bound) == "Kapsam yetersiz"
+
+        far, _, _ = _get(outside, allowed_secret, allowed["id"], path)
+        assert far.status_code == 403, path
+        assert _detail(far) == "IP adresi bu anahtar için izinli değil"
+
+        near, headers, _ = _get(inside, allowed_secret, allowed["id"], path)
+        assert near.status_code == 200, f"{path} {near.text}"
+        rows = [row for row in _audits(db) if row["action"] == f"admin_v1.{scope}" and row.get("details", {}).get("path") == path]
+        assert rows, scope
+        blob = json.dumps(rows[-1].get("details") or {})
+        assert allowed_secret not in blob
+        assert headers["X-Platform-Signature"] not in blob
+        assert "203.0.113.7" not in blob
+        assert _RAW_PHONE not in blob
+
+
+def test_sms_support_reads_do_not_write_or_leak(db, monkeypatch):
+    _seed_sms_support(db)
+    hit = []
+
+    def _forbid(name):
+        async def inner(*args, **kwargs):
+            hit.append(name)
+            raise AssertionError(name)
+        return inner
+
+    monkeypatch.setattr(comm_service, "sms_balance", _forbid("sms_balance"))
+    monkeypatch.setattr(comm_service, "sms_send", _forbid("sms_send"))
+    monkeypatch.setattr(platform_sms, "send_platform_sms", _forbid("send_platform_sms"))
+    monkeypatch.setattr(platform_sms, "notify_companies_sms", _forbid("notify_companies_sms"))
+    monkeypatch.setattr(mail_service, "send_mail", _forbid("send_mail"))
+    sms_decrypts = {"n": 0}
+
+    def _decrypt(value):
+        if value == "LEAK-PASSWORD-ENC":
+            sms_decrypts["n"] += 1
+        return (value or "").removeprefix("enc:")
+
+    monkeypatch.setattr(comm_service, "decrypt", _decrypt)
+    before_ticket = copy.deepcopy(db.support_tickets.docs["stk_open"])
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_SMS_READ, store.SCOPE_ADMIN_SUPPORT_READ], name="sms-support")
+    client = _client()
+    blobs = []
+    for path, scope in _SMS_SUPPORT:
+        before = _write_counts(db)
+        response, headers, _ = _get(client, secret, pub["id"], path)
+        assert response.status_code == 200, f"{path} {response.text}"
+        _assert_no_extra_writes(before, _write_counts(db))
+        payload = response.json()
+        found = []
+        _walk_keys(payload, found)
+        assert not any(_bad_key(key) for key in found), (path, [key for key in found if _bad_key(key)])
+        text = json.dumps(payload)
+        blobs.append(text)
+        assert secret not in text
+        assert headers["X-Platform-Signature"] not in text
+        assert _RAW_PHONE not in text
+        assert "905551112233" not in text
+        rows = [row for row in _audits(db) if row["action"] == f"admin_v1.{scope}"]
+        assert rows
+        details = json.dumps(rows[-1].get("details") or {})
+        assert secret not in details
+        assert headers["X-Platform-Signature"] not in details
+        assert _RAW_PHONE not in details
+        for leak in LEAKS:
+            assert leak not in details
+
+    joined = "\n".join(blobs)
+    for leak in LEAKS:
+        assert leak not in joined
+    assert hit == []
+    assert sms_decrypts["n"] == 1
+    assert db.support_tickets.docs["stk_open"] == before_ticket
+
+    settings = json.loads(blobs[0])["item"]
+    assert settings["has_password"] is True
+    assert settings["password_unreadable"] is False
+    assert settings["usercode"] == "user1"
+    assert "password_enc" not in settings
+
+    logs = json.loads(blobs[1])
+    by_id = {row["id"]: row for row in logs["items"]}
+    assert set(by_id) == {"sms_ann", "sms_reset", "sms_unknown", "sms_maint", "sms_event", "sms_test"}
+    assert "sms_co" not in by_id
+    for row in by_id.values():
+        assert set(row) == _LOG_KEYS
+        assert "phone" not in row
+        assert "ref_id" not in row
+    assert by_id["sms_ann"]["message"] == "Planli duyuru"
+    assert by_id["sms_ann"]["message_redacted"] is False
+    assert by_id["sms_ann"]["phone_masked"] == "•••8877"
+    assert by_id["sms_maint"]["message"] == "Bakim penceresi"
+    assert by_id["sms_maint"]["message_redacted"] is False
+    assert by_id["sms_event"]["message"] == "Olay bildirimi"
+    assert by_id["sms_event"]["message_redacted"] is False
+    assert by_id["sms_test"]["message"] == "Test metni"
+    assert by_id["sms_test"]["message_redacted"] is False
+    assert by_id["sms_reset"]["message"] is None
+    assert by_id["sms_reset"]["message_redacted"] is True
+    assert by_id["sms_reset"]["phone_masked"] == "•••2233"
+    assert by_id["sms_unknown"]["message"] is None
+    assert by_id["sms_unknown"]["message_redacted"] is True
+    assert logs["summary"] == {"sent": 4, "failed": 2}
+
+    company = json.loads(blobs[3])["item"]
+    direct_company = asyncio.run(company_sms.company_sms_summary(db, "comp_a"))
+    assert company == direct_company
+    assert company["connected"] is True
+    assert company["operator"] == "Netgsm"
+    assert company["provider"] == "netgsm"
+    assert company["error_count"] == 2
+    assert company["last_sent_at"] == "2026-07-01T00:00:00+00:00"
+    assert company["readonly"] is True
+    assert company["company_id"] == "comp_a"
+
+    listed = json.loads(blobs[4])
+    opened = next(row for row in listed["items"] if row["id"] == "stk_open")
+    assert "messages" not in opened
+    assert opened["message_count"] == 2
+    assert "token" not in opened
+    assert "password" not in opened
+
+    detail = json.loads(blobs[5])
+    assert detail["id"] == "stk_open"
+    assert len(detail["messages"]) == 2
+    assert detail["messages"][1]["is_internal"] is True
+    attachment = detail["messages"][0]["attachments"][0]
+    assert set(attachment) == {"url", "filename", "content_type", "size"}
+    assert attachment["url"] == "/api/files/shot1"
+    assert "token" not in detail["messages"][0]
+    assert "secret" not in detail["messages"][0]
+    assert db.support_tickets.docs["stk_open"] == before_ticket
+
+    def _raise(value):
+        if value == "LEAK-PASSWORD-ENC":
+            raise RuntimeError("decrypt-failed-marker")
+        return (value or "").removeprefix("enc:")
+
+    monkeypatch.setattr(comm_service, "decrypt", _raise)
+    before = _write_counts(db)
+    unread, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/sms/settings")
+    assert unread.status_code == 200, unread.text
+    _assert_no_extra_writes(before, _write_counts(db))
+    assert hit == []
+    item = unread.json()["item"]
+    assert item["has_password"] is False
+    assert item["password_unreadable"] is True
+    assert "LEAK-PASSWORD-ENC" not in unread.text
+    assert "decrypt-failed-marker" not in unread.text
+
+
+def test_sms_support_pagination_and_filters(db):
+    _seed_sms_support(db)
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_SMS_READ, store.SCOPE_ADMIN_SUPPORT_READ], name="page")
+    client = _client()
+
+    first, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/logs", params={"limit": 2},
+    )
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["limit"] == 2
+    assert [row["id"] for row in body["items"]] == ["sms_ann", "sms_reset"]
+    assert body["next_cursor"] == "2026-05-03T00:00:00+00:00"
+    assert body["summary"] == {"sent": 4, "failed": 2}
+    second, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/logs",
+        params={"limit": 2, "before": body["next_cursor"]},
+    )
+    assert [row["id"] for row in second.json()["items"]] == ["sms_unknown", "sms_maint"]
+    assert second.json()["next_cursor"] == "2026-05-01T00:00:00+00:00"
+    assert second.json()["summary"] == {"sent": 4, "failed": 2}
+    third, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/logs",
+        params={"limit": 2, "before": second.json()["next_cursor"]},
+    )
+    assert [row["id"] for row in third.json()["items"]] == ["sms_event", "sms_test"]
+    assert third.json()["next_cursor"] is None
+    seen = [row["id"] for row in first.json()["items"] + second.json()["items"] + third.json()["items"]]
+    assert seen == ["sms_ann", "sms_reset", "sms_unknown", "sms_maint", "sms_event", "sms_test"]
+    assert len(seen) == len(set(seen))
+
+    sent, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/logs", params={"status": "sent"},
+    )
+    assert [row["id"] for row in sent.json()["items"]] == ["sms_ann", "sms_reset", "sms_event", "sms_test"]
+    assert sent.json()["summary"] == {"sent": 4, "failed": 2}
+    only_maint, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/logs",
+        params={"status": "failed", "context": "maintenance"},
+    )
+    assert [row["id"] for row in only_maint.json()["items"]] == ["sms_maint"]
+    assert only_maint.json()["next_cursor"] is None
+    announce, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/logs", params={"context": "announcement"},
+    )
+    assert [row["id"] for row in announce.json()["items"]] == ["sms_ann"]
+    assert announce.json()["items"][0]["message"] == "Planli duyuru"
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/sms/logs", params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+
+    resets, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/sms/failed-resets", params={"limit": 1},
+    )
+    assert resets.status_code == 200, resets.text
+    assert resets.json()["total"] == 1
+    assert resets.json()["items"][0]["id"] == "pr_full_…"
+    assert resets.json()["items"][0]["phone_masked"] == "•••2233"
+    assert resets.json()["items"][0]["email_masked"] == "ad•••@example.com"
+    assert "token" not in resets.json()["items"][0]
+    assert _RAW_PHONE not in resets.text
+    both, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/sms/failed-resets")
+    assert both.json()["total"] == 2
+    assert [row["id"] for row in both.json()["items"]] == ["pr_full_…", "pr_mail_…"]
+    assert both.json()["items"][1]["email_masked"] == "bo•••@example.com"
+    assert "pr_ok" not in both.text
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/sms/failed-resets",
+            params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+
+    missing_co, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/companies/nope/sms")
+    assert missing_co.status_code == 404
+    assert _detail(missing_co) == "Şirket bulunamadı."
+
+    page, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/support/tickets",
+        params={"limit": 1, "offset": 1},
+    )
+    assert page.status_code == 200, page.text
+    assert page.json()["limit"] == 1 and page.json()["offset"] == 1 and page.json()["total"] == 5
+    assert [row["id"] for row in page.json()["items"]] == ["stk_prog"]
+    assert page.json()["counts"] == {
+        "open": 1, "in_progress": 1, "waiting_customer": 1, "resolved": 1, "closed": 1,
+    }
+    assert page.json()["open_count"] == 3
+    assert "statuses" in page.json() and "categories" in page.json() and "priorities" in page.json()
+    past, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/support/tickets", params={"offset": 9},
+    )
+    assert past.json()["items"] == [] and past.json()["total"] == 5
+    bad_status, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/support/tickets", params={"status": "foo"},
+    )
+    assert bad_status.status_code == 400
+    assert _detail(bad_status) == "Geçersiz durum."
+    opened, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/support/tickets",
+        params={"status": "open", "company_id": "comp_a", "q": "YAZICI"},
+    )
+    assert [row["id"] for row in opened.json()["items"]] == ["stk_open"]
+    assert opened.json()["total"] == 1
+    assert opened.json()["counts"]["closed"] == 1
+    closed, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/support/tickets",
+        params={"company_id": "comp_c", "status": "closed"},
+    )
+    assert [row["id"] for row in closed.json()["items"]] == ["stk_closed"]
+    named, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/support/tickets", params={"q": "ada@"},
+    )
+    assert [row["id"] for row in named.json()["items"]] == ["stk_open", "stk_wait"]
+    for bad_limit in (0, 201):
+        rejected, _, _ = _get(
+            client, secret, pub["id"], "/api/platform/admin-v1/support/tickets",
+            params={"limit": bad_limit},
+        )
+        assert rejected.status_code == 422
+    missing_tk, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/support/tickets/nope")
+    assert missing_tk.status_code == 404
+    assert _detail(missing_tk) == "Destek talebi bulunamadı."
+
+
+def test_system_sms_and_support_routes_keep_their_shape(db):
+    _seed_sms_support(db)
+    client = _client()
+
+    settings = client.get("/api/system/sms")
+    assert settings.status_code == 200, settings.text
+    direct_settings = asyncio.run(platform_sms.load_settings())
+    assert settings.json() == platform_sms._public_view(direct_settings)
+    assert settings.json()["has_password"] is True
+    assert settings.json()["password_unreadable"] is False
+    assert "password_enc" not in settings.json()
+    assert "LEAK-PASSWORD-ENC" not in settings.text
+
+    logs = client.get("/api/system/sms/logs")
+    assert logs.status_code == 200, logs.text
+    raw_rows = asyncio.run(platform_sms.platform_sms_log_rows(100))
+    expect_logs = []
+    for row in raw_rows:
+        copied = dict(row)
+        copied["id"] = copied.pop("_id", None)
+        expect_logs.append(copied)
+    assert logs.json() == {"items": expect_logs, "total": len(expect_logs)}
+    reset = next(row for row in logs.json()["items"] if row["id"] == "sms_reset")
+    assert reset["ref_id"] == "LEAK-RESET-TOKEN"
+    assert reset["phone"] == _RAW_PHONE
+    assert reset["message"] == _RESET_MESSAGE
+    assert "sms_co" not in {row["id"] for row in logs.json()["items"]}
+    ignored = client.get(
+        "/api/system/sms/logs",
+        params={"status": "failed", "context": "nope", "before": "1999-01-01T00:00:00+00:00"},
+    )
+    assert ignored.json() == logs.json()
+    one = client.get("/api/system/sms/logs", params={"limit": 1})
+    assert one.json()["total"] == 1
+    assert one.json()["items"][0]["id"] == "sms_ann"
+    assert one.json()["items"][0]["phone"] == "+905559998877"
+    zero = client.get("/api/system/sms/logs", params={"limit": 0})
+    assert zero.json()["total"] == 6
+
+    failed = client.get("/api/system/password-resets/failed")
+    assert failed.status_code == 200, failed.text
+    assert failed.json() == asyncio.run(platform_sms.failed_reset_rows(40))
+    assert [row["id"] for row in failed.json()["items"]] == ["pr_full_…", "pr_mail_…"]
+    assert failed.json()["items"][0]["phone_masked"] == "•••2233"
+    assert "LEAK-TOKEN" not in failed.text
+    assert "LEAK-RESET-LINK" not in failed.text
+    assert _RAW_PHONE not in failed.text
+    assert client.get("/api/system/password-resets/failed", params={"limit": 1}).json()["total"] == 1
+    assert client.get("/api/system/password-resets/failed", params={"limit": 0}).json()["total"] == 2
+
+    company = client.get("/api/system/companies/comp_a/sms")
+    assert company.status_code == 200, company.text
+    assert company.json() == asyncio.run(company_sms.company_sms_summary(db, "comp_a"))
+    assert "password_enc" not in company.json()
+    missing = client.get("/api/system/companies/nope/sms")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Şirket bulunamadı."
+
+    listed = client.get("/api/system/support-tickets")
+    assert listed.status_code == 200, listed.text
+    rows = asyncio.run(support_tickets.admin_ticket_rows())
+    counts = asyncio.run(support_tickets.ticket_counts())
+    expect = {
+        "tickets": [support_tickets.public_ticket(row, staff=True, include_messages=False) for row in rows],
+        "counts": counts,
+        "open_count": counts["open"] + counts["in_progress"] + counts["waiting_customer"],
+        **support_tickets.meta(),
+    }
+    assert listed.json() == expect
+    assert listed.json()["tickets"][0]["id"] == "stk_open"
+    assert listed.json()["tickets"][0]["token"] == "LEAK-TOKEN"
+    assert "messages" not in listed.json()["tickets"][0]
+    assert listed.json()["tickets"][0]["message_count"] == 2
+    filtered = client.get("/api/system/support-tickets", params={"status": "open", "q": "yazici"})
+    filtered_rows = asyncio.run(support_tickets.admin_ticket_rows(status="open", q="yazici"))
+    assert [row["id"] for row in filtered.json()["tickets"]] == ["stk_open"]
+    assert len(filtered_rows) == 1
+
+    detail = client.get("/api/system/support-tickets/stk_open")
+    assert detail.status_code == 200, detail.text
+    assert detail.json() == support_tickets.public_ticket(db.support_tickets.docs["stk_open"], staff=True)
+    assert detail.json()["messages"][0]["token"] == "LEAK-TICKET-TOKEN"
+    assert detail.json()["messages"][0]["secret"] == "LEAK-TICKET-SECRET"
+    assert detail.json()["messages"][0]["attachments"][0]["token"] == "LEAK-TICKET-TOKEN"
+    missing_tk = client.get("/api/system/support-tickets/nope")
+    assert missing_tk.status_code == 404
+    assert missing_tk.json()["detail"] == "Destek talebi bulunamadı."

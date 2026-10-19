@@ -395,9 +395,33 @@ async def platform_sms_send_test(req: Dict[str, Any], _: dict = Depends(saas.req
     return {**result, "detail": msg, "message": msg}
 
 
+async def platform_sms_log_rows(
+    limit: int,
+    *,
+    before: Optional[str] = None,
+    status: Optional[str] = None,
+    context: Optional[str] = None,
+) -> list:
+    """source=platform SMS günlükleri, created_at azalan.
+
+    before verilirse created_at o andan küçük olanlar (hariç).
+    """
+    q: Dict[str, Any] = {"source": "platform"}
+    before_s = str(before).strip() if before else ""
+    if before_s:
+        q["created_at"] = {"$lt": before_s}
+    status_s = str(status).strip() if status else ""
+    if status_s:
+        q["status"] = status_s
+    context_s = str(context).strip() if context else ""
+    if context_s:
+        q["context"] = context_s
+    return await _db.sms_logs.find(q).sort("created_at", -1).to_list(int(limit))
+
+
 @router.get("/system/sms/logs")
 async def platform_sms_logs(limit: int = 100, _: dict = Depends(saas.require_super_admin)):
-    rows = await _db.sms_logs.find({"source": "platform"}).sort("created_at", -1).to_list(min(max(int(limit or 100), 1), 300))
+    rows = await platform_sms_log_rows(min(max(int(limit or 100), 1), 300))
     out = []
     for r in rows:
         d = dict(r)
@@ -406,8 +430,7 @@ async def platform_sms_logs(limit: int = 100, _: dict = Depends(saas.require_sup
     return {"items": out, "total": len(out)}
 
 
-@router.get("/system/password-resets/failed")
-async def list_failed_password_resets(limit: int = 40, _: dict = Depends(saas.require_super_admin)):
+async def failed_reset_rows(limit: int = 40) -> dict:
     """Son başarısız şifre sıfırlama denemeleri (SMS/e-posta hata logu)."""
     lim = min(max(int(limit or 40), 1), 300)
     rows = await _db.password_resets.find({
@@ -429,6 +452,11 @@ async def list_failed_password_resets(limit: int = 40, _: dict = Depends(saas.re
             "mail_failed": bool(r.get("mail_failed")),
         })
     return {"items": items, "total": len(items)}
+
+
+@router.get("/system/password-resets/failed")
+async def list_failed_password_resets(limit: int = 40, _: dict = Depends(saas.require_super_admin)):
+    return await failed_reset_rows(limit)
 
 
 def password_reset_mask_phone(phone: str) -> str:
