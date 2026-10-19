@@ -40,16 +40,15 @@ export function PosPinPad({
     onSubmit?.(pin);
   };
   useEffect(() => {
+    if (!onExit) return undefined;
     const onKey = (event) => {
       if (event.key !== "Escape") return;
-      const dismiss = onExit || onCancel;
-      if (!dismiss) return;
       event.preventDefault();
-      dismiss();
+      onExit();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel, onExit]);
+  }, [onExit]);
   const titleId = `${testId}-title`;
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/70 flex items-center justify-center p-4" data-testid={testId}>

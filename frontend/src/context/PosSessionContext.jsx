@@ -234,17 +234,6 @@ export function PosSessionProvider({ children }) {
     navigate("/panel");
   }, [navigate]);
 
-  useEffect(() => {
-    if (!needsLogin) return undefined;
-    const onEsc = (event) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      leaveLoginGate();
-    };
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [leaveLoginGate, needsLogin]);
-
   const value = {
     session,
     rules: session?.rules || rules,
@@ -275,7 +264,7 @@ export function PosSessionProvider({ children }) {
         <PosPinPad
           title={needsLogin ? "Kasiyer girişi" : switching ? "Kasiyer değişimi" : "Ekran kilitli"}
           hint={noPinCashiers
-            ? "Tanımlı kasiyer (PIN'li) yok."
+            ? "PIN, Hızlı Satış Kuralları'ndan tanımlanır."
             : needsLogin || switching
               ? "Önce kasiyeri seçin, sonra 4-6 haneli PIN yazın."
               : `${session?.cashier_name || "Kasiyer"} PIN'i ile kilidi açın.`}

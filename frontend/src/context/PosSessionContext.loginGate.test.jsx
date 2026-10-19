@@ -5,8 +5,8 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
 import axios from "axios";
-import { MemoryRouter, useLocation } from "react-router-dom";
-import { PosSessionProvider } from "./PosSessionContext";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import { PosSessionProvider, usePosSession } from "./PosSessionContext";
 import { PosPinPad } from "../components/PosPinPad";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,7 +26,24 @@ jest.mock("./AuthContext", () => ({
 
 function Where() {
   const loc = useLocation();
-  return <div data-testid="where">{`${loc.pathname}${loc.search}`}</div>;
+  const nav = useNavigate();
+  return (
+    <>
+      <div data-testid="where">{`${loc.pathname}${loc.search}`}</div>
+      <button type="button" data-testid="hist-back" onClick={() => nav(-1)}>geri</button>
+    </>
+  );
+}
+
+function GateActions() {
+  const { switchCashier, requestAction } = usePosSession();
+  return (
+    <>
+      <Where />
+      <button type="button" data-testid="do-switch" onClick={() => switchCashier()}>değiştir</button>
+      <button type="button" data-testid="do-approve" onClick={() => requestAction("cancel_cart", {})}>onay</button>
+    </>
+  );
 }
 
 let host;
@@ -64,13 +81,17 @@ function where() {
   return host.querySelector("[data-testid='where']").textContent;
 }
 
+function countText(needle) {
+  return host.textContent.split(needle).length - 1;
+}
+
 async function pressEscape() {
   await act(async () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   });
 }
 
-async function renderGate(path, { session, cashiers }) {
+async function renderGate(path, { session, cashiers, actions = false }) {
   if (root) {
     act(() => { root.unmount(); });
     root = null;
@@ -83,12 +104,13 @@ async function renderGate(path, { session, cashiers }) {
     if (u.includes("/pos/cashiers")) return Promise.resolve({ data: cashiers });
     return Promise.resolve({ data: [] });
   });
+  const Body = actions ? GateActions : Where;
   root = createRoot(host);
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
         <PosSessionProvider>
-          <Where />
+          <Body />
         </PosSessionProvider>
       </MemoryRouter>,
     );
@@ -117,6 +139,9 @@ test("giriş kapısında çıkış düğmesi ve Escape /panel'e döner", async (
   await renderGate("/hizli-satis", { session: {}, cashiers: [PIN_CASHIER] });
   await pressEscape();
   expect(where()).toBe("/panel");
+  await act(async () => { host.querySelector("[data-testid='hist-back']").click(); });
+  await flush();
+  expect(where()).toBe("/hizli-satis");
 });
 
 test("PIN'li kasiyer yokken kurulum bağlantısı görünür ve giriş pasiftir", async () => {
@@ -127,6 +152,7 @@ test("PIN'li kasiyer yokken kurulum bağlantısı görünür ve giriş pasiftir"
   const box = host.querySelector("[data-testid='pos-no-cashiers']");
   expect(box).not.toBeNull();
   expect(box.textContent).toContain("Tanımlı kasiyer (PIN'li) yok");
+  expect(countText("Tanımlı kasiyer (PIN'li) yok")).toBe(1);
   const link = box.querySelector("a");
   expect(link).not.toBeNull();
   expect(link.getAttribute("href")).toBe("/settings?tab=pos_rules");
@@ -254,7 +280,58 @@ test("aktif kasiyerin çıkış kilidi panele serbest dönüş vermez", async ()
   expect(host.querySelector("[data-testid='pos-unlock-pad']")).toBeNull();
 });
 
-test("PosPinPad Escape onExit'i, yoksa onCancel'ı çağırır", async () => {
+test("kasiyer değişimi ve yönetici onayında Escape kapıyı kapatmaz", async () => {
+  const session = {
+    cashier_user_id: "u1",
+    cashier_name: "Ayşe",
+    locked: false,
+    rules: { can_exit: true },
+    last_activity: new Date().toISOString(),
+    idle_timeout_sec: 600,
+  };
+  await renderGate("/hizli-satis", { session, cashiers: [PIN_CASHIER], actions: true });
+  expect(host.querySelector("[data-testid='pos-login-pad']")).toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-exit']")).toBeNull();
+  await act(async () => { host.querySelector("[data-testid='do-switch']").click(); });
+  await flush();
+  expect(host.querySelector("[data-testid='pos-switch-pad']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-cancel']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-exit']")).toBeNull();
+  await pressEscape();
+  expect(host.querySelector("[data-testid='pos-switch-pad']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-cancel']")).not.toBeNull();
+  expect(where()).toBe("/hizli-satis");
+  await act(async () => { host.querySelector("[data-testid='pos-pin-cancel']").click(); });
+  await flush();
+  expect(host.querySelector("[data-testid='pos-switch-pad']")).toBeNull();
+  expect(host.querySelector("[data-testid='pos-unlock-pad']")).not.toBeNull();
+
+  axios.post.mockImplementation((url) => {
+    if (String(url).includes("/pos/approvals")) {
+      return Promise.resolve({ data: { status: "pending_approval", request_id: "r1", message: "Onay gerekli" } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  await renderGate("/hizli-satis", {
+    session,
+    cashiers: [{ ...PIN_CASHIER, pos_rules: { can_approve: true } }],
+    actions: true,
+  });
+  await act(async () => { host.querySelector("[data-testid='do-approve']").click(); });
+  await flush();
+  expect(host.querySelector("[data-testid='pos-manager-pin']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-cancel']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-exit']")).toBeNull();
+  await pressEscape();
+  expect(host.querySelector("[data-testid='pos-manager-pin']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='pos-pin-cancel']")).not.toBeNull();
+  expect(where()).toBe("/hizli-satis");
+  await act(async () => { host.querySelector("[data-testid='pos-pin-cancel']").click(); });
+  await flush();
+  expect(host.querySelector("[data-testid='pos-manager-pin']")).toBeNull();
+});
+
+test("PosPinPad Escape yalnız onExit varken dinler", async () => {
   const onExit = jest.fn();
   const onCancel = jest.fn();
   root = createRoot(host);
@@ -281,8 +358,9 @@ test("PosPinPad Escape onExit'i, yoksa onCancel'ı çağırır", async () => {
   });
   expect(host.querySelector("[data-testid='pos-pin-exit']")).toBeNull();
   await pressEscape();
-  expect(onCancel).toHaveBeenCalledTimes(1);
+  expect(onCancel).not.toHaveBeenCalled();
   expect(onExit).not.toHaveBeenCalled();
+  expect(host.querySelector("[data-testid='pos-pin-cancel']")).not.toBeNull();
 
   onCancel.mockClear();
   await act(async () => {
