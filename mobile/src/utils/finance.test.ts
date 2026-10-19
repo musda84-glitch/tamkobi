@@ -43,6 +43,8 @@ import {
   partnerOptionLabel,
   partnerSummaryCardMeta,
   partnerCardCashFlow,
+  isPartnerLedgerType,
+  partnerTxPayload,
   partnerCardTone,
   partnerInitials,
   filterPartnerTxs,
@@ -492,5 +494,46 @@ describe("finance drafts", () => {
     expect(flow.display).toBeCloseTo(716189.78, 2);
     expect(flow.badge).toBe("Ortak alacaklı");
     expect(flow.color).toBe("#059669");
+  });
+
+  it("isPartnerLedgerType is true for credit and debit only among cash slips", () => {
+    expect(isPartnerLedgerType("credit")).toBe(true);
+    expect(isPartnerLedgerType("debit")).toBe(true);
+    expect(isPartnerLedgerType("capital_in")).toBe(false);
+    expect(isPartnerLedgerType("withdrawal")).toBe(false);
+  });
+
+  it("partnerTxPayload clears account_id on ledger slips", () => {
+    expect(partnerTxPayload({
+      partner_id: "p1",
+      type: "debit",
+      amount: "250",
+      account_id: "acc-1",
+      description: "düzeltme",
+      company_id: "co-1",
+    })).toEqual({
+      partner_id: "p1",
+      type: "debit",
+      amount: 250,
+      account_id: null,
+      description: "düzeltme",
+      company_id: "co-1",
+    });
+    expect(partnerTxPayload({
+      partner_id: "p1",
+      type: "capital_in",
+      amount: 1500,
+      account_id: "kasa",
+      description: "sermaye",
+      company_id: "co-1",
+    })).toEqual({
+      partner_id: "p1",
+      type: "capital_in",
+      amount: 1500,
+      account_id: "kasa",
+      description: "sermaye",
+      company_id: "co-1",
+    });
+    expect(partnerBalanceMeta(1200).badge).toBe("Ortak borçlu");
   });
 });

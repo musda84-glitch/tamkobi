@@ -1,28 +1,28 @@
 import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput } from "../components/MoneyInput";
-import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, StatRows } from "../components/kit";
+import { Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row } from "../components/kit";
 import { PartnerAvatar } from "../components/PartnerAvatar";
+import { PartnerDetail } from "../components/PartnerDetail";
+import { PartnerTxSheet } from "../components/PartnerTxSheet";
 import { useLiveRefresh } from "../live/useLiveRefresh";
+import { go } from "../nav";
 import { colors } from "../theme";
 import {
   emptyProjectExpenseDraft,
   expenseCalc,
   expenseCategoryGroups,
   expensePayload,
-  filterPartnerTxs,
+  partnerBalanceMeta,
   partnerCardCashFlow,
   partnerCardTone,
   partnerSummaryCardMeta,
-  partnerTxEffect,
-  partnerTxLabel,
-  partnerTxSign,
-  sortBankTransactions,
   validateExpenseDraft,
   type BankAccount,
   type ExpenseCategory,
@@ -31,119 +31,10 @@ import {
   type PartnerSummary,
   type PartnerTx,
 } from "../utils/finance";
-import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
-
-function PartnerCard({
-  partner,
-  open,
-  docked,
-  txs,
-  canExp,
-  onToggle,
-  onExpense,
-}: {
-  partner: Partner;
-  open: boolean;
-  docked?: boolean;
-  txs: PartnerTx[];
-  canExp: boolean;
-  onToggle: () => void;
-  onExpense: () => void;
-}) {
-  const { height } = useWindowDimensions();
-  const pid = idOf(partner);
-  const tone = partnerCardTone(pid || partner.name || "");
-  const mine = filterPartnerTxs(txs, pid);
-  const moves = open ? (
-    <View testID={`partner-moves-${pid}`} style={{ borderTopWidth: 1, borderTopColor: tone.border, paddingTop: 8, gap: 4 }}>
-      <Text style={{ fontWeight: "800", color: tone.label }}>Hareketler</Text>
-      {!mine.length ? (
-        <Muted>Hareket yok.</Muted>
-      ) : mine.slice(0, 40).map((tx) => (
-        <ListRow
-          key={idOf(tx)}
-          testID={`partner-tx-${idOf(tx)}`}
-          title={partnerTxLabel(tx)}
-          titleColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
-          subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
-          right={`${partnerTxSign(tx.type, tx)}${fmtMoney(tx.amount)}`}
-          rightColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
-        />
-      ))}
-    </View>
-  ) : null;
-
-  return (
-    <View
-      testID={`partner-card-${partner.name}`}
-      style={{
-        backgroundColor: tone.bg,
-        borderColor: open ? tone.accent : tone.border,
-        borderWidth: 1,
-        borderRadius: 16,
-        padding: 14,
-        gap: 8,
-        maxHeight: docked ? Math.round(height * 0.52) : undefined,
-      }}
-    >
-      <Pressable
-        onPress={onToggle}
-        testID={`partner-card-toggle-${partner.name}`}
-        style={{ gap: 8 }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <PartnerAvatar
-            name={partner.name}
-            photoUrl={partner.photo_url}
-            tone={tone}
-            size={56}
-            testID={`partner-avatar-${pid}`}
-          />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ fontWeight: "800", color: tone.label }}>{partner.name}</Text>
-            <Muted>{[partner.email, partner.phone, `%${partner.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
-          </View>
-        </View>
-        {(() => {
-          const flow = partnerCardCashFlow(partner, txs, pid);
-          return (
-            <>
-              <Text style={{ fontSize: 20, fontWeight: "800", color: flow.color }} testID={`partner-balance-${pid}`}>
-                {fmtMoney(flow.display)}
-              </Text>
-              <Text style={{ fontSize: 12, fontWeight: "800", color: flow.color }} testID={`partner-badge-${pid}`}>
-                {flow.badge}
-              </Text>
-              <Muted testID={`partner-flow-${pid}`}>
-                {flow.receivedLabel} {fmtMoney(flow.giris)} · {flow.paidLabel} {fmtMoney(Math.abs(flow.cikis))}
-              </Muted>
-            </>
-          );
-        })()}
-      </Pressable>
-      {canExp ? (
-        <PrimaryButton
-          title="Masraf ekle"
-          onPress={onExpense}
-          color={colors.danger}
-          testID={`partner-expense-btn-${pid}`}
-        />
-      ) : null}
-      {open && docked ? (
-        <ScrollView
-          nestedScrollEnabled
-          keyboardShouldPersistTaps="handled"
-          style={{ maxHeight: Math.round(height * 0.28) }}
-        >
-          {moves}
-        </ScrollView>
-      ) : moves}
-    </View>
-  );
-}
+import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function BankingPartnersPanel({
-  accounts: _accounts,
+  accounts,
   onChanged,
   onSelectedDock,
 }: {
@@ -152,6 +43,7 @@ export function BankingPartnersPanel({
   onSelectedDock?: (node: React.ReactNode | null) => void;
 }) {
   const { client, companyId, can } = useAuth();
+  const canEdit = can("/banking", "edit");
   const canExp = can("/expenses", "edit");
   const [partners, setPartners] = useState<Partner[]>([]);
   const [summary, setSummary] = useState<PartnerSummary | null>(null);
@@ -159,6 +51,7 @@ export function BankingPartnersPanel({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [openPartner, setOpenPartner] = useState<string | null>(null);
+  const [txOpen, setTxOpen] = useState(false);
   const [expOpen, setExpOpen] = useState(false);
   const [expBusy, setExpBusy] = useState(false);
   const [expPartner, setExpPartner] = useState<{ id: string; name: string } | null>(null);
@@ -195,24 +88,14 @@ export function BankingPartnersPanel({
   }, [canExp, client, companyId]);
 
   const selected = partners.find((p) => idOf(p) === openPartner) || null;
-  const listed = selected ? partners.filter((p) => idOf(p) !== openPartner) : partners;
+
+  useEffect(() => {
+    if (openPartner && !partners.some((p) => idOf(p) === openPartner)) setOpenPartner(null);
+  }, [partners, openPartner]);
 
   useLayoutEffect(() => {
-    if (!onSelectedDock) return;
-    onSelectedDock(selected ? (
-      <View testID="partners-selected-dock">
-        <PartnerCard
-          partner={selected}
-          open
-          docked
-          txs={txs}
-          canExp={canExp}
-          onToggle={() => setOpenPartner(null)}
-          onExpense={() => openPartnerExpense(idOf(selected), selected.name || "Ortak")}
-        />
-      </View>
-    ) : null);
-  }, [onSelectedDock, selected, txs, canExp, openPartnerExpense]);
+    onSelectedDock?.(null);
+  }, [onSelectedDock, openPartner]);
 
   useEffect(() => () => onSelectedDock?.(null), [onSelectedDock]);
 
@@ -236,57 +119,131 @@ export function BankingPartnersPanel({
     }
   };
 
+  const afterChange = async (text?: string) => {
+    if (text) {
+      setMessage(text);
+      setError(null);
+    }
+    await load();
+    onChanged();
+  };
+
+  const card = summary ? partnerSummaryCardMeta(summary) : null;
+  const received = summary
+    ? (summary.total_cash_in != null ? summary.total_cash_in : (summary.total_capital_in || 0))
+    : 0;
+  const paid = summary
+    ? (summary.total_cash_out != null ? summary.total_cash_out : (summary.total_withdrawn || 0))
+    : 0;
+
   return (
     <View testID="partners-panel" style={{ gap: 16 }}>
-      <Muted>Ortak bakiyesi ve hareketler (giriş/çıkış). Ortak ekleme ve maaş web panelinden yapılır.</Muted>
       <ErrorBanner message={error} />
-      {message ? <Muted>{message}</Muted> : null}
-      {summary ? (() => {
-        const card = partnerSummaryCardMeta(summary);
-        return (
-          <StatRows
-            testID="partners-summary"
-            items={[
-              { key: "balance", label: card.badge, value: fmtMoney(card.display), valueColor: card.color },
-              { key: "capital", label: `Toplam ${card.receivedLabel}`, value: fmtMoney(card.fromCash ? card.cashIn : summary.total_capital_in) },
-              { key: "withdrawn", label: `Toplam ${card.paidLabel}`, value: fmtMoney(card.fromCash ? card.cashOut : summary.total_withdrawn) },
-            ]}
-          />
-        );
-      })() : null}
+      {!selected && message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
 
-      {!partners.length ? (
-        <Empty icon="people-outline" title="Henüz ortak yok" hint="Ortak eklemek için web panelini kullanın." />
-      ) : listed.map((p) => {
-        const pid = idOf(p);
-        return (
-          <PartnerCard
-            key={pid}
-            partner={p}
-            open={false}
+      {selected ? (
+        <View testID="partners-selected-dock">
+          <PartnerDetail
+            partner={selected}
+            accounts={accounts}
             txs={txs}
-            canExp={canExp}
-            onToggle={() => setOpenPartner(pid)}
-            onExpense={() => openPartnerExpense(pid, p.name || "Ortak")}
+            partners={partners}
+            onBack={() => setOpenPartner(null)}
+            onExpense={() => openPartnerExpense(idOf(selected), selected.name || "Ortak")}
+            onChanged={() => afterChange()}
+            onMessage={setMessage}
           />
-        );
-      })}
-
-      {!openPartner ? (
+        </View>
+      ) : (
         <>
-          <Text style={{ fontWeight: "800", color: colors.text }}>Ortak hareketleri</Text>
-          {!txs.length ? <Muted>Hareket yok.</Muted> : sortBankTransactions(txs).slice(0, 40).map((tx) => (
-            <ListRow
-              key={idOf(tx)}
-              title={`${partnerTxLabel(tx)} · ${tx.partner_name || ""}`}
-              titleColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
-              subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
-              right={`${partnerTxSign(tx.type, tx)}${fmtMoney(tx.amount)}`}
-              rightColor={partnerTxEffect(tx).side === "giris" ? colors.primary : colors.danger}
-            />
-          ))}
+          {card ? (
+            <View
+              testID="partners-summary"
+              style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: 14, gap: 10 }}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+                <Text style={{ color: colors.muted, fontWeight: "700" }}>Toplam aldığı</Text>
+                <Text style={{ color: "#059669", fontWeight: "800" }}>{fmtMoney(received)}</Text>
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+                <Text style={{ color: colors.muted, fontWeight: "700" }}>Toplam ödediği</Text>
+                <Text style={{ color: "#E11D48", fontWeight: "800" }}>{fmtMoney(paid)}</Text>
+              </View>
+              <View
+                testID="partners-summary-net"
+                style={{ borderRadius: 12, padding: 10, backgroundColor: "#F8FAFC", flexDirection: "row", justifyContent: "space-between", gap: 8 }}
+              >
+                <Text style={{ color: card.color, fontWeight: "800" }}>{`NET · ${card.label}`}</Text>
+                <Text style={{ color: card.color, fontWeight: "800" }}>{fmtMoney(card.display)}</Text>
+              </View>
+            </View>
+          ) : null}
+
+          <Text style={{ fontWeight: "800", color: colors.text }}>{`ORTAKLAR · ${partners.length}`}</Text>
+          {!partners.length ? (
+            <Empty icon="people-outline" title="Henüz ortak yok" hint="Ortak eklemek için web panelini kullanın." />
+          ) : partners.map((partner) => {
+            const pid = idOf(partner);
+            const tone = partnerCardTone(pid || partner.name || "");
+            const flow = partnerCardCashFlow(partner, txs, pid);
+            const meta = partnerBalanceMeta(partner.balance);
+            return (
+              <Pressable
+                key={pid}
+                testID={`partner-row-${pid}`}
+                onPress={() => setOpenPartner(pid)}
+                style={{
+                  backgroundColor: "#fff",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: 14,
+                  padding: 12,
+                }}
+              >
+                <View testID={`partner-card-${partner.name}`} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <View testID={`partner-card-toggle-${partner.name}`} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <PartnerAvatar
+                      name={partner.name}
+                      photoUrl={partner.photo_url}
+                      tone={tone}
+                      size={44}
+                      testID={`partner-avatar-${pid}`}
+                    />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontWeight: "800", color: colors.text }}>{partner.name}</Text>
+                      <Text testID={`partner-flow-${pid}`} style={{ color: colors.muted, fontSize: 12 }}>
+                        {`${flow.receivedLabel} ${fmtMoney(flow.giris)} · ${flow.paidLabel} ${fmtMoney(flow.cikis)}`}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text testID={`partner-balance-${pid}`} style={{ fontWeight: "800", color: meta.color }}>{fmtMoney(meta.display)}</Text>
+                    <Text testID={`partner-badge-${pid}`} style={{ fontSize: 11, fontWeight: "800", color: meta.color }}>{meta.badge}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+                </View>
+              </Pressable>
+            );
+          })}
+
+          {canEdit ? (
+            <Row>
+              <PrimaryButton title="Para Giriş / Çıkış" onPress={() => setTxOpen(true)} color={colors.indigo} testID="partner-cash-btn" />
+              <PrimaryButton title="Virman" onPress={() => go("BankingVirman")} color={colors.secondary} testID="partner-virman-btn" />
+            </Row>
+          ) : null}
         </>
-      ) : null}
+      )}
+
+      <PartnerTxSheet
+        visible={txOpen && !selected}
+        onClose={() => setTxOpen(false)}
+        partners={partners}
+        accounts={accounts}
+        lockPartner={false}
+        lockType={false}
+        onSaved={(text) => afterChange(text)}
+      />
 
       <B2BSheet
         visible={expOpen}
