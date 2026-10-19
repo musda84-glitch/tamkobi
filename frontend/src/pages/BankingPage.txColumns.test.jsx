@@ -160,14 +160,19 @@ function colNodes() {
   return [...host.querySelectorAll('[data-testid="bank-tx-table-wrap"] colgroup col')];
 }
 
-/** 926px bütçesi: xl'e kadar gizli Kullanıcı sütunu yer kaplamaz. */
+function classTokens(el) {
+  return String(el?.className || "").split(/\s+/).filter(Boolean);
+}
+
+/** 926px bütçesi: 2xl'e kadar gizli Kullanıcı sütunu yer kaplamaz. */
 function narrowRemSum() {
   return colNodes()
     .filter((col) => {
       const width = String(col.style.width || "");
       if (!width.endsWith("rem")) return false;
-      const cls = col.className || "";
-      return !(cls.includes("hidden") && cls.includes("xl:table-cell") && !cls.includes("lg:table-cell"));
+      const tokens = classTokens(col);
+      const hiddenUntil2xl = tokens.includes("hidden") && tokens.includes("2xl:table-cell") && !tokens.includes("lg:table-cell");
+      return !hiddenUntil2xl;
     })
     .reduce((sum, col) => sum + Number.parseFloat(col.style.width), 0);
 }
@@ -217,11 +222,13 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(descriptionRoomPx()).toBeGreaterThanOrEqual(300);
   const userCol = colNodes().find((col) => (col.className || "").includes("hidden"));
   const userThAll = [...host.querySelectorAll("thead th")].find((th) => th.textContent.trim() === "Kullanıcı");
-  expect(userCol.className).toContain("hidden");
-  expect(userCol.className).toContain("xl:table-cell");
-  expect(userThAll.className).toContain("hidden");
-  expect(userThAll.className).toContain("xl:table-cell");
-  expect(host.querySelector('[data-testid="tx-actor-tx_open"]').className).toContain("xl:table-cell");
+  const userTdAll = host.querySelector('[data-testid="tx-actor-tx_open"]');
+  for (const el of [userCol, userThAll, userTdAll]) {
+    expect(el.className).toContain("hidden");
+    expect(el.className).toContain("2xl:table-cell");
+    expect(classTokens(el)).not.toContain("xl:table-cell");
+  }
+  expect(host.querySelector('[data-testid="bank-tx-table-wrap"] table').className).toContain("max-xl:min-w-[calc(43rem+200px)]");
   expect(narrowRemSum() * REM_PX + NARROW_DESC_PX).toBeLessThanOrEqual(NARROW_PX);
   expect(NARROW_PX - narrowRemSum() * REM_PX).toBeGreaterThanOrEqual(NARROW_DESC_PX);
   const wideTable = host.querySelector('[data-testid="bank-tx-table-wrap"] table');
@@ -284,9 +291,13 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(host.querySelector('[data-testid="account-detail-subtitle"]').textContent).not.toContain("IBAN");
   const table = host.querySelector('[data-testid="bank-tx-table-wrap"] table');
   expect(table.className).toContain("table-fixed");
-  expect(table.className).not.toContain("min-w-[");
+  expect(table.className).toContain("max-xl:min-w-[calc(42rem+200px)]");
+  expect(classTokens(table).some((token) => token.startsWith("min-w-["))).toBe(false);
   const wrap = host.querySelector('[data-testid="bank-tx-table-wrap"]');
   expect(wrap.className).toContain("max-md:overflow-x-auto");
+  expect(wrap.className).toContain("max-xl:overflow-x-auto");
+  expect(classTokens(wrap)).not.toContain("overflow-x-auto");
+  expect(classTokens(wrap)).not.toContain("md:overflow-x-auto");
   expect(wrap.className).not.toContain("md:block overflow-x-auto");
 
   const name = host.querySelector('[data-testid="bank-card-acc_bank"] .line-clamp-2');

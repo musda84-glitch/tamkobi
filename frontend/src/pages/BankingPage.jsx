@@ -1052,13 +1052,16 @@ export default function BankingPage() {
               );
               const actionHeadCls = "sticky right-0 z-10 bg-slate-50 shrink-0 w-auto whitespace-nowrap px-1 py-2 text-right";
               const userColCls = showAccountCol
-                ? "hidden xl:table-cell xl:table-column"
+                ? "hidden 2xl:table-cell 2xl:table-column"
                 : "hidden lg:table-cell lg:table-column";
               const userCellCls = showAccountCol
-                ? "hidden xl:table-cell"
+                ? "hidden 2xl:table-cell"
                 : "hidden lg:table-cell";
+              const tableMinCls = showAccountCol
+                ? "max-xl:min-w-[calc(43rem+200px)]"
+                : "max-xl:min-w-[calc(42rem+200px)]";
               const table = (
-              <table className="w-full table-fixed min-w-0 text-left text-xs text-slate-600">
+              <table className={`w-full table-fixed min-w-0 text-left text-xs text-slate-600 ${tableMinCls}`}>
                 <colgroup>
                   <col style={{ width: "6rem" }} />
                   {showAccountCol ? <col style={{ width: "9rem" }} /> : null}
@@ -1151,7 +1154,7 @@ export default function BankingPage() {
                     table={table}
                     cardsTestId="bank-tx-cards"
                     tableWrapTestId="bank-tx-table-wrap"
-                    tableWrapClassName="hidden md:block w-full min-w-0 max-md:overflow-x-auto"
+                    tableWrapClassName="hidden md:block w-full min-w-0 max-md:overflow-x-auto max-xl:overflow-x-auto"
                   />
                   {listHasMore && (
                     <div ref={listSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
