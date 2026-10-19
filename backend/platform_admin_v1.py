@@ -11,11 +11,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from build_stamp import read_stamp
+import company_sms
+import password_reset
 import platform_auth
 import platform_mail
+import platform_sms
 import platform_store as store
 import saas
 import saas_billing
+import support_tickets
 
 router = APIRouter(prefix="/api", tags=["platform-admin-v1"])
 
@@ -380,3 +384,139 @@ async def admin_v1_platform_users(
     data = await saas.platform_user_rows(q, assign_numbers=False)
     page, total = _window(data["users"], limit, offset)
     return _page(page, limit, offset, total)
+
+
+_SMS_MESSAGE_CONTEXTS = frozenset({
+    "announcement",
+    "maintenance",
+    "event_notify",
+    "platform_test",
+})
+
+
+def _sms_log_public(row: dict) -> dict:
+    """Beyaz liste. ref_id sıfırlama token'ı olabilir; ham telefon dönmez.
+
+    message yalnızca duyuru / bakım / olay / test bağlamlarında kalır.
+    """
+    context = row.get("context")
+    show_message = context in _SMS_MESSAGE_CONTEXTS
+    return {
+        "id": row.get("id", row.get("_id")),
+        "company_id": row.get("company_id"),
+        "context": context,
+        "provider": row.get("provider"),
+        "status": row.get("status"),
+        "detail": row.get("detail"),
+        "code": row.get("code"),
+        "job_id": row.get("job_id"),
+        "contact_name": row.get("contact_name"),
+        "created_at": row.get("created_at"),
+        "phone_masked": password_reset.mask_phone(row.get("phone")),
+        "message": row.get("message") if show_message else None,
+        "message_redacted": not show_message,
+    }
+
+
+@router.get("/platform/admin-v1/sms/settings")
+async def admin_v1_sms_settings(request: Request):
+    """Platform SMS ayar özeti. Sağlayıcıya istek yok, bakiye sorgusu yok."""
+    await _auth(request, store.SCOPE_ADMIN_SMS_READ)
+    view = platform_sms._public_view(await platform_sms.load_settings())
+    body = _item(view)
+    # Ortak redact anahtar adındaki "password" yüzünden bu boolean'ı düşürür; sır değildir.
+    flag = view.get("password_unreadable")
+    if isinstance(flag, bool) and isinstance(body.get("item"), dict):
+        body["item"]["password_unreadable"] = flag
+    return body
+
+
+@router.get("/platform/admin-v1/sms/logs")
+async def admin_v1_sms_logs(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    before: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    context: Optional[str] = Query(None),
+):
+    """Platform SMS günlüğü. Gönderim yok; özet yalnızca sms_logs sayımıdır."""
+    await _auth(request, store.SCOPE_ADMIN_SMS_READ)
+    rows = await platform_sms.platform_sms_log_rows(
+        limit + 1,
+        before=(before or "").strip() or None,
+        status=(status or "").strip() or None,
+        context=(context or "").strip() or None,
+    )
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    items = [_sms_log_public(row) for row in page]
+    next_cursor = items[-1].get("created_at") if has_more and items else None
+    sent_n = await platform_sms._db.sms_logs.count_documents({"source": "platform", "status": "sent"})
+    failed_n = await platform_sms._db.sms_logs.count_documents({"source": "platform", "status": "failed"})
+    return _redact({
+        "items": items,
+        "limit": limit,
+        "next_cursor": next_cursor,
+        "summary": {"sent": sent_n, "failed": failed_n},
+    })
+
+
+@router.get("/platform/admin-v1/sms/failed-resets")
+async def admin_v1_failed_resets(
+    request: Request,
+    limit: int = Query(40, ge=1, le=200),
+):
+    await _auth(request, store.SCOPE_ADMIN_SMS_READ)
+    return _redact(await platform_sms.failed_reset_rows(limit))
+
+
+@router.get("/platform/admin-v1/companies/{company_id}/sms")
+async def admin_v1_company_sms(company_id: str, request: Request):
+    """Şirket SMS özeti. Şifre çözülmez, sağlayıcıya istek yok."""
+    await _auth(request, store.SCOPE_ADMIN_SMS_READ)
+    if not await saas._db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return _item(await company_sms.company_sms_summary(saas._db, company_id))
+
+
+@router.get("/platform/admin-v1/support/tickets")
+async def admin_v1_support_tickets(
+    request: Request,
+    status: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    await _auth(request, store.SCOPE_ADMIN_SUPPORT_READ)
+    st = (status or "").strip()
+    if st and st not in support_tickets.STATUSES:
+        raise HTTPException(status_code=400, detail="Geçersiz durum.")
+    cid = (company_id or "").strip() or None
+    rows = await support_tickets.admin_ticket_rows(status=st or None, company_id=cid, q=q)
+    counts = await support_tickets.ticket_counts()
+    open_count = counts["open"] + counts["in_progress"] + counts["waiting_customer"]
+    page, total = _window(rows, limit, offset)
+    items = [
+        support_tickets.public_ticket(row, staff=True, include_messages=False)
+        for row in page
+    ]
+    return _redact({
+        "items": items,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "counts": counts,
+        "open_count": open_count,
+        **support_tickets.meta(),
+    })
+
+
+@router.get("/platform/admin-v1/support/tickets/{ticket_id}")
+async def admin_v1_support_ticket(ticket_id: str, request: Request):
+    """Talep okuma. Okundu, atama ve durum alanları yazılmaz."""
+    await _auth(request, store.SCOPE_ADMIN_SUPPORT_READ)
+    doc = await support_tickets._db.support_tickets.find_one({"_id": ticket_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Destek talebi bulunamadı.")
+    return _redact(support_tickets.public_ticket(doc, staff=True))

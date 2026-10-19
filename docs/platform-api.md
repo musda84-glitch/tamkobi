@@ -49,7 +49,7 @@ Anahtar belgesinde `kind` alanı vardır: `product` (varsayılan) veya `platform
 | `kind` | Kural |
 |--------|--------|
 | `product` | v1 kapsamları (`license:verify`, `heartbeat`, `usage:write`, `platform:all`, `help:read`, …). `admin.` ile başlayan kapsam **verilemez**. |
-| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca `admin.*:read` yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. |
+| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca `admin.*:read` yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. |
 
 `admin.*` kapsamı şirket anahtarına (plan D dahil) oluşturulurken de istek anında da reddedilir. Doğrudan veritabanına yazılmış `kind=product` + `admin.*` anahtarı admin-v1’de **403** döner.
 
@@ -91,7 +91,7 @@ Kayıtta `key_id` ve `product_id` saklanır.
 
 ## admin-v1 (salt okunur)
 
-Base path: `/api/platform/admin-v1/`. Yönetim paneli (ileride ayrı uygulama) bu uçları imzalı `kind=platform_admin` anahtarıyla okur. Tümü **GET** ve yan etkisizdir: mail/SMS gönderilmez, SMTP/IMAP açılmaz, kart verisi dönmez. `authenticate` kendi audit, nonce ve `last_used` kayıtlarını yazar; bunun dışında yazma yoktur.
+Base path: `/api/platform/admin-v1/`. Yönetim paneli (ileride ayrı uygulama) bu uçları imzalı `kind=platform_admin` anahtarıyla okur. Tümü **GET** ve yan etkisizdir: mail/SMS gönderilmez, SMTP/IMAP açılmaz, SMS sağlayıcısına bağlanılmaz, kart verisi dönmez. `authenticate` kendi audit, nonce ve `last_used` kayıtlarını yazar; bunun dışında yazma yoktur.
 
 Kimlik doğrulama her uçta `platform_auth.authenticate(..., audit_prefix="admin_v1")` sırasını kullanır (401 / 403 / 429 aynı metinler). Başarı audit eylemi `admin_v1.<kapsam>` olur (ör. `admin_v1.admin.companies:read`). Ayrıntıda sır, imza veya IP izin listesi yoktur. Anahtar `kind` değeri `platform_admin` değilse, kapsam doğru olsa bile **403** `Kapsam yetersiz`.
 
@@ -101,7 +101,7 @@ Sayfalı listeler: `limit` varsayılan 50, `1..200` (aşarsa **422**), `offset` 
 
 **Kararlı sözleşme.** Bu bölümdeki yollar, kapsamlar, zarf anahtarları ve hata kodları sabittir. Yanıta alan eklemek serbesttir; alan silmek veya yeniden adlandırmak yasaktır.
 
-Ortak hatalar: **401** eksik/bozuk imza, geçersiz anahtar, tekrarlanan nonce; **403** kapsam yetersiz veya IP izin listesi; **404** şirket yok (`Şirket bulunamadı.`); **422** `limit` / `offset`; **429** IP veya anahtar dakika limiti.
+Ortak hatalar: **401** eksik/bozuk imza, geçersiz anahtar, tekrarlanan nonce; **403** kapsam yetersiz veya IP izin listesi; **404** şirket yok (`Şirket bulunamadı.`) veya destek talebi yok (`Destek talebi bulunamadı.`); **422** `limit` / `offset`; **429** IP veya anahtar dakika limiti.
 
 ### GET `/api/platform/admin-v1/companies`
 
@@ -215,6 +215,60 @@ Kapsam: `admin.platform_users:read` (şirket personeli için olan `admin.users:r
 
 ```json
 {"items": [{"id": "usr_…", "name": "Ada", "email": "ada@example.com", "user_number": null, "is_super_admin": true, "companies": []}], "limit": 50, "offset": 0, "total": 1}
+```
+
+### GET `/api/platform/admin-v1/sms/settings`
+
+Kapsam: `admin.sms:read`. `platform_sms._public_view(await load_settings())` — `/system/sms` ile aynı gövde. `password_enc` yok. `has_password` ve `password_unreadable` boolean kalır. Bu uç şifreyi yanıta koymaz.
+
+Bakiye ucu yoktur. `/system/sms/balance` kayıtlı şifreyi çözüp sağlayıcıya dış istek atar; admin-v1 bunu çağırmaz. SMS kredisi bu API’de yalnızca `sms/logs` yanıtındaki `summary` sayılarıdır.
+
+```json
+{"item": {"provider": "netgsm", "usercode": "user1", "msgheader": "TAMKOBI", "is_active": true, "has_password": true, "password_unreadable": false}}
+```
+
+### GET `/api/platform/admin-v1/sms/logs`
+
+Kapsam: `admin.sms:read`. Parametreler: `limit` (varsayılan 50, `1..200`), `before` (`created_at` ISO, hariç), `status`, `context`. `platform_sms_log_rows` `source=platform` ve `created_at` azalan. Sonraki sayfa varsa `next_cursor` son satırın `created_at` değeridir (`/audit` ile aynı imleç).
+
+Her satır beyaz listedendir: `id`, `company_id`, `context`, `provider`, `status`, `detail`, `code`, `job_id`, `contact_name`, `created_at`, `phone_masked`, `message`, `message_redacted`. Ham `phone` ve `ref_id` dönmez. `ref_id` şifre sıfırlama SMS’inde düz sıfırlama token’ıdır (`context=erp_reset`). `message` yalnızca `context` ∈ `announcement`, `maintenance`, `event_notify`, `platform_test` ise döner; diğer her bağlamda (`erp_reset` ve bilinmeyenler dahil) `message` null ve `message_redacted` true olur. `phone_masked` son dört hanedir.
+
+`summary` sayfadan bağımsızdır: `{"sent", "failed"}`, `count_documents` ile `source=platform`. Sağlayıcıya bakiye sorulmaz.
+
+```json
+{"items": [{"id": "sms_…", "context": "announcement", "status": "sent", "phone_masked": "•••8877", "message": "Planlı duyuru", "message_redacted": false, "created_at": "2026-05-04T00:00:00+00:00"}], "limit": 50, "next_cursor": null, "summary": {"sent": 1, "failed": 0}}
+```
+
+### GET `/api/platform/admin-v1/sms/failed-resets`
+
+Kapsam: `admin.sms:read`. Parametre: `limit` (varsayılan 40, `1..200`). `platform_sms.failed_reset_rows` — `/system/password-resets/failed` ile aynı satırlar (`phone_masked`, `email_masked`, kısaltılmış `id`). Token ve sıfırlama bağlantısı dönmez. `total` dönen satır sayısıdır (limit ile sınırlı).
+
+```json
+{"items": [{"id": "pr_full_…", "channel": "sms", "phone_masked": "•••2233", "email_masked": "ad•••@example.com", "sms_failed": true, "mail_failed": false}], "total": 1}
+```
+
+### GET `/api/platform/admin-v1/companies/{company_id}/sms`
+
+Kapsam: `admin.sms:read`. Şirket yoksa **404** `Şirket bulunamadı.`. Sonra `company_sms.company_sms_summary` — `/system/companies/{company_id}/sms` ile aynı gövde (bağlı mı, operatör, son kayıt zamanı, hata sayısı, `readonly`). Şifre ve sağlayıcı çağrısı yok.
+
+```json
+{"item": {"company_id": "comp_…", "connected": true, "operator": "Netgsm", "provider": "netgsm", "last_sent_at": "2026-05-04T00:00:00+00:00", "error_count": 0, "readonly": true}}
+```
+
+### GET `/api/platform/admin-v1/support/tickets`
+
+Kapsam: `admin.support:read`. Parametreler: `status` (`support_tickets.STATUSES` dışı **400** `Geçersiz durum.`), `company_id` (sorgu parametresi; verilmezse şirket süzgeci yok), `q`, `limit`, `offset`. `admin_ticket_rows` en fazla 300 satır (`/system/support-tickets` ile aynı pencere, `updated_at` azalan) sonra `_window`. Satır `public_ticket(..., staff=true, include_messages=false)`. `counts` ve `open_count` süzgeçten bağımsızdır. Yanıta `meta()` (`statuses`, `categories`, `priorities`) eklenir. Okuma sırasında talep güncellenmez.
+
+```json
+{"items": [{"id": "stk_…", "status": "open", "company_id": "comp_…", "subject": "Yazıcı", "message_count": 1}], "limit": 50, "offset": 0, "total": 1, "counts": {"open": 1, "in_progress": 0, "waiting_customer": 0, "resolved": 0, "closed": 0}, "open_count": 1}
+```
+
+### GET `/api/platform/admin-v1/support/tickets/{ticket_id}`
+
+Kapsam: `admin.support:read`. `find_one` + `public_ticket(doc, staff=true)` — `/system/support-tickets/{ticket_id}` ile aynı gövde, ardından `_redact`. Yoksa **404** `Destek talebi bulunamadı.`. Mesajlar döner. Ekler yalnızca `/api/files/…` `url`, `filename`, `content_type`, `size`. Okundu, atama veya durum yazılmaz.
+
+```json
+{"id": "stk_…", "status": "open", "messages": [{"body": "…", "attachments": [{"url": "/api/files/shot", "filename": "ekran.png", "content_type": "image/png", "size": 1200}]}]}
 ```
 
 ## Python
