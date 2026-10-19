@@ -86,18 +86,62 @@ export function bankFromName(name) {
   return null;
 }
 
-export function bankLogoInfo(acc) {
+/** `/api/files` yollarını aynı kökten çözer. Statik `/bank-logos` olduğu gibi kalır. */
+export function displayBankLogoSrc(src) {
+  const raw = String(src || "").trim();
+  if (!raw) return "";
+  if (/^(https?:|data:|blob:)/i.test(raw)) return raw;
+  if (raw.startsWith("/bank-logos/") || raw.startsWith("bank-logos/")) {
+    return raw.startsWith("/") ? raw : `/${raw}`;
+  }
+  const path = raw.startsWith("/") ? raw : (raw.startsWith("api/") ? `/${raw}` : raw);
+  if (!path.startsWith("/api/")) return path;
+  const base = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
+  if (!base) return path;
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    try {
+      const backend = new URL(base, window.location.origin);
+      const pageHost = window.location.hostname;
+      const backendLoopback = backend.hostname === "127.0.0.1" || backend.hostname === "localhost";
+      const pageLoopback = pageHost === "127.0.0.1" || pageHost === "localhost";
+      if (backendLoopback && !pageLoopback) return path;
+      if (backend.origin === window.location.origin) return path;
+    } catch {
+      /* geçersiz taban adres */
+    }
+  }
+  return `${base}${path}`;
+}
+
+function pushLogoSource(list, src) {
+  const value = String(src || "").trim();
+  if (!value || list.includes(value)) return;
+  list.push(value);
+}
+
+/** src sırası: hesap logo_url → şirket bank_logos[kod] → /bank-logos/{kod}.svg. fallbackSrc kalanlar. */
+export function bankLogoInfo(acc, company) {
   if (!acc) return null;
   const ibanCode = bankCodeFromIban(acc.iban);
   const nameCode = bankFromName(acc.bank_name);
-  const code = (ibanCode && TR_BANKS[ibanCode] ? ibanCode : null) || (nameCode && TR_BANKS[nameCode] ? nameCode : null);
-  if (!code) return null;
-  const meta = TR_BANKS[code];
+  const known = (ibanCode && TR_BANKS[ibanCode] ? ibanCode : null) || (nameCode && TR_BANKS[nameCode] ? nameCode : null);
+  const code = known || ibanCode || null;
+  const logos = company && company.bank_logos && typeof company.bank_logos === "object" ? company.bank_logos : null;
+  const sources = [];
+  pushLogoSource(sources, acc.logo_url);
+  if (logos) {
+    if (ibanCode) pushLogoSource(sources, logos[ibanCode]);
+    if (known) pushLogoSource(sources, logos[known]);
+  }
+  if (known) pushLogoSource(sources, `/bank-logos/${known}.svg`);
+  if (!sources.length) return null;
+  const meta = known ? TR_BANKS[known] : null;
   return {
-    code,
-    short: meta.short,
-    color: meta.color || MONOGRAM_FALLBACK,
-    src: `/bank-logos/${code}.svg`,
+    code: known || code,
+    short: meta?.short || "",
+    color: meta?.color || MONOGRAM_FALLBACK,
+    src: sources[0],
+    fallbackSrc: sources.slice(1),
   };
 }
 

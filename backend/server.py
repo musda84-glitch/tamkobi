@@ -12163,6 +12163,134 @@ async def update_bank_account(account_id: str, req: Dict[str, Any], user: dict =
     return clean_doc(updated)
 
 
+_BANK_LOGO_MIME = frozenset({"image/png", "image/jpeg", "image/webp"})
+_BANK_LOGO_MAX_BYTES = 512 * 1024
+
+
+def _bank_code_from_iban(iban: Optional[str]) -> Optional[str]:
+    """TR + 2 kontrol + 5 hane banka kodu → kayıt anahtarı (ör. 00064 → 0064).
+
+    IBAN'ın tamamı loglanmaz ve yanıtta dönmez.
+    """
+    token = re.sub(r"\s+", "", str(iban or "")).upper()
+    if not re.fullmatch(r"TR\d{24}", token):
+        return None
+    code = token[4:9][-4:]
+    if len(code) != 4 or not code.isdigit():
+        return None
+    return code
+
+
+def _bank_logo_media_type(data: bytes) -> str:
+    """İçerik imzası kazanır. Başlık veya .png uzantısı SVG/GIF/HEIC/PDF'i geçirmez."""
+    sniffed = image_opt._sniff_type(data or b"", "")
+    return sniffed if sniffed in _BANK_LOGO_MIME else ""
+
+
+def _bank_logo_context(acc: dict, scope: str):
+    """Scope ve banka kodu. company_id hesabın kendisinden gelir; istek company_id'si yok sayılır."""
+    scope_name = str(scope or "").strip().lower()
+    if scope_name not in ("bank", "account"):
+        raise HTTPException(status_code=400, detail="scope bank veya account olmalı.")
+    company_id = str(acc.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+    code = _bank_code_from_iban(acc.get("iban"))
+    if scope_name == "bank" and not code:
+        raise HTTPException(status_code=400, detail="Bu hesabın IBAN'ından banka kodu çıkarılamadı.")
+    return acc, company_id, scope_name, code
+
+
+async def _store_company_image(company_id: str, data: bytes, content_type: str, ext: str, filename: str, original_size: int) -> str:
+    """Mevcut şirket dosya alanı: object_path + put_object + db.files. entity=company."""
+    await saas.check_storage_limit(company_id, len(data))
+    try:
+        import storage_manager
+        await storage_manager.ensure_account_folders(company_id)
+        path = storage_manager.object_path(company_id, "company", ext)
+        area_key = storage_manager.area_for_entity("company")
+    except Exception:
+        path = f"{APP_NAME}/company/{company_id}/{uuid.uuid4()}.{ext}"
+        area_key = "company"
+    try:
+        result = put_object(path, data, content_type)
+    except Exception as e:
+        logger.error(f"Bank logo upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
+    file_doc = {
+        "_id": str(uuid.uuid4()),
+        "storage_path": result["path"],
+        "original_filename": filename,
+        "content_type": content_type,
+        "size": len(data),
+        "original_size": original_size,
+        "optimized": True,
+        "company_id": company_id,
+        "entity": "company",
+        "entity_id": company_id,
+        "area_key": area_key,
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.files.insert_one(file_doc)
+    return f"/api/files/{result['path']}"
+
+
+@api_router.post("/banking/accounts/{account_id}/logo")
+async def upload_bank_account_logo(
+    account_id: str,
+    file: UploadFile = File(...),
+    scope: str = Query(""),
+    user: dict = Depends(get_current_user),
+):
+    """Banka logosu. scope=bank → companies.bank_logos[kod]; scope=account → bu hesabın logo_url."""
+    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    acc, company_id, scope_name, code = _bank_logo_context(acc, scope)
+    data = await file.read()
+    if len(data) > _BANK_LOGO_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Logo en fazla 512 KB olabilir.")
+    content_type = _bank_logo_media_type(data)
+    if content_type not in _BANK_LOGO_MIME:
+        raise HTTPException(status_code=400, detail="Yalnız PNG, JPEG veya WEBP yükleyebilirsiniz.")
+    thumb = image_opt.make_thumbnail(data, content_type, file.filename or "", max_edge=128)
+    if thumb is None:
+        raise HTTPException(status_code=400, detail="Logo işlenemedi. PNG, JPEG veya WEBP yükleyin.")
+    url = await _store_company_image(
+        company_id, thumb.data, thumb.content_type, thumb.ext, file.filename or "", thumb.original_size,
+    )
+    if scope_name == "bank":
+        updated = await db.companies.update_one({"_id": company_id}, {"$set": {f"bank_logos.{code}": url}})
+        if getattr(updated, "matched_count", 1) == 0:
+            raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    else:
+        updated = await db.bank_accounts.update_one(
+            {"_id": account_id, "company_id": company_id},
+            {"$set": {"logo_url": url, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+        if getattr(updated, "matched_count", 1) == 0:
+            raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+    return {"url": url, "scope": scope_name, "bank_code": code, "content_type": thumb.content_type, "size": len(thumb.data)}
+
+
+@api_router.delete("/banking/accounts/{account_id}/logo")
+async def delete_bank_account_logo(
+    account_id: str,
+    scope: str = Query(""),
+    user: dict = Depends(get_current_user),
+):
+    """scope=bank bank_logos.kod alanını, scope=account logo_url alanını kaldırır."""
+    acc = await tenant_access.get_tenant_doc(db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    _acc, company_id, scope_name, code = _bank_logo_context(acc, scope)
+    if scope_name == "bank":
+        await db.companies.update_one({"_id": company_id}, {"$unset": {f"bank_logos.{code}": ""}})
+    else:
+        await db.bank_accounts.update_one(
+            {"_id": account_id, "company_id": company_id},
+            {"$unset": {"logo_url": ""}},
+        )
+    return {"status": "success", "scope": scope_name, "bank_code": code}
+
+
 def _opening_body(body: Any) -> Dict[str, Any]:
     return body if isinstance(body, dict) else {}
 

@@ -52,7 +52,8 @@ import {
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 import { BankSummaryStrip } from "../components/banking/BankSummaryStrip";
-import { BankAccountList } from "../components/banking/BankAccountList";
+import { BankAccountList, accountMonogram } from "../components/banking/BankAccountList";
+import { TR_BANKS, bankCodeFromIban, bankLogoInfo, displayBankLogoSrc } from "../utils/bankLogo";
 import { BankAccountDetailHeader, countOrDash } from "../components/banking/BankAccountDetailHeader";
 import { TxMatchActions } from "../components/banking/TxMatchActions";
 import { TxDetailPanel } from "../components/banking/TxDetailPanel";
@@ -95,6 +96,24 @@ const txAccountLabel = (tx, accounts) => {
   }
   return one(tx?.account_id, tx?.account_name) || "—";
 };
+
+const BANK_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const BANK_LOGO_MAX_BYTES = 512 * 1024;
+
+function bankLogoFileError(file) {
+  if (!file) return "Dosya seçin.";
+  const type = String(file.type || "").split(";")[0].trim().toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  const banned = type === "image/svg+xml" || name.endsWith(".svg")
+    || type === "image/gif" || name.endsWith(".gif")
+    || type === "image/heic" || type === "image/heif" || name.endsWith(".heic") || name.endsWith(".heif")
+    || type === "application/pdf" || name.endsWith(".pdf");
+  if (banned || (type && !BANK_LOGO_TYPES.has(type)) || (!type && !/\.(png|jpe?g|webp)$/.test(name))) {
+    return "Yalnız PNG, JPEG veya WEBP yükleyebilirsiniz.";
+  }
+  if (file.size > BANK_LOGO_MAX_BYTES) return "Logo en fazla 512 KB olabilir.";
+  return "";
+}
 
 const emptyAccountForm = {
   type: "bank",
@@ -157,7 +176,7 @@ function mergeMatchedTx(prev, matchedTx) {
 }
 
 export default function BankingPage() {
-  const { activeCompany, addonOn, user, can } = useAuth();
+  const { activeCompany, addonOn, user, can, reloadSession } = useAuth();
   const canEditBanking = typeof can === "function" && can("/banking", "edit");
   const canRepairBalances = Boolean(user?.is_super_admin) || ["admin", "owner"].includes(String(user?.role || "").toLowerCase());
   const [searchParams] = useSearchParams();
@@ -191,6 +210,9 @@ export default function BankingPage() {
   // Modals
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
+  const [logoOnlyAccount, setLogoOnlyAccount] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoAttempt, setLogoAttempt] = useState(0);
   const [showVirmanModal, setShowVirmanModal] = useState(searchParams.get("action") === "virman");
   const [cardMenuId, setCardMenuId] = useState(null);
   const [unmatchedOnly, setUnmatchedOnly] = useState(false);
@@ -602,7 +624,90 @@ export default function BankingPage() {
       okc_api_url: acc.okc_api_url || "",
       okc_api_key: acc.okc_api_key || "",
     });
+    setLogoOnlyAccount(false);
+    setLogoAttempt(0);
     setShowAddAccountModal(true);
+  };
+
+  const refreshAfterLogo = async () => {
+    await bumpCashData();
+    if (typeof reloadSession === "function") await reloadSession();
+  };
+
+  const patchCompanyBankLogo = (code, url) => {
+    const companyKey = activeCompany?.id || activeCompany?._id;
+    if (!companyKey || !code) return;
+    const next = { ...(activeCompany?.bank_logos || {}) };
+    if (url) next[code] = url;
+    else delete next[code];
+    window.dispatchEvent(new CustomEvent("tamkobi-company-updated", {
+      detail: { id: companyKey, bank_logos: next, price_decimals: activeCompany?.price_decimals },
+    }));
+  };
+
+  const handleBankLogoFile = async (event) => {
+    const input = event.target;
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!editingAccount || newAccount.type !== "bank") return;
+    const invalid = bankLogoFileError(file);
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
+    const code = bankCodeFromIban(editingAccount.iban);
+    const scope = logoOnlyAccount ? "account" : "bank";
+    if (scope === "bank" && !code) {
+      toast.error("Bu hesabın IBAN'ından banka kodu çıkarılamadı.");
+      return;
+    }
+    const id = editingAccount.id || editingAccount._id;
+    const body = new FormData();
+    body.append("file", file);
+    setLogoBusy(true);
+    try {
+      const res = await axios.post(`${API_URL}/banking/accounts/${id}/logo?scope=${scope}`, body);
+      const url = res.data?.url || "";
+      if (scope === "account") {
+        setEditingAccount((prev) => (prev ? { ...prev, logo_url: url } : prev));
+      } else {
+        patchCompanyBankLogo(code, url);
+      }
+      setLogoAttempt(0);
+      toast.success(scope === "account" ? "Hesap logosu güncellendi." : "Banka logosu güncellendi.");
+      await refreshAfterLogo();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Logo yüklenemedi.");
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
+  const handleBankLogoRemove = async () => {
+    if (!editingAccount || newAccount.type !== "bank") return;
+    const code = bankCodeFromIban(editingAccount.iban);
+    const scope = logoOnlyAccount ? "account" : "bank";
+    if (scope === "bank" && !code) {
+      toast.error("Bu hesabın IBAN'ından banka kodu çıkarılamadı.");
+      return;
+    }
+    const id = editingAccount.id || editingAccount._id;
+    setLogoBusy(true);
+    try {
+      await axios.delete(`${API_URL}/banking/accounts/${id}/logo?scope=${scope}`);
+      if (scope === "account") {
+        setEditingAccount((prev) => (prev ? { ...prev, logo_url: "" } : prev));
+      } else {
+        patchCompanyBankLogo(code, "");
+      }
+      setLogoAttempt(0);
+      toast.success("Logo kaldırıldı.");
+      await refreshAfterLogo();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Logo kaldırılamadı.");
+    } finally {
+      setLogoBusy(false);
+    }
   };
 
   const handleDeleteAccount = async (acc, e) => {
@@ -754,6 +859,20 @@ export default function BankingPage() {
     }
   };
 
+  const editingBankLogo = !!(showAddAccountModal && editingAccount && newAccount.type === "bank");
+  const logoInfo = editingBankLogo ? bankLogoInfo(editingAccount, activeCompany) : null;
+  const logoSources = logoInfo ? [logoInfo.src, ...(logoInfo.fallbackSrc || [])].filter(Boolean) : [];
+  const logoSourceKey = logoSources.join("\n");
+  useEffect(() => { setLogoAttempt(0); }, [logoSourceKey]);
+  const logoSrc = logoSources[logoAttempt] || "";
+  const logoCode = editingBankLogo ? bankCodeFromIban(editingAccount.iban) : null;
+  const logoBankName = (logoCode && TR_BANKS[logoCode]?.short) || editingAccount?.bank_name || "Banka";
+  const logoNote = logoOnlyAccount
+    ? "Bu logo yalnız bu hesapta kullanılır"
+    : logoCode
+      ? `Bu logo ${logoBankName} (${logoCode}) bankasının tüm hesaplarında kullanılır`
+      : "Bu hesabın IBAN'ından banka kodu çıkarılamadı. Logo yalnız bu hesaba yüklenebilir.";
+
   return (
     <div className="space-y-6" data-testid="banking-page">
       {!companyId && <NoCompanyNotice />}
@@ -835,6 +954,7 @@ export default function BankingPage() {
             selectedGroup={selectedGroup}
             selectedAccountId={selectedAccountId}
             cardMenuId={cardMenuId}
+            company={activeCompany}
             onToggleGroup={(type) => {
               setSelectedGroup((cur) => (cur === type ? null : type));
               setSelectedAccountId(null);
@@ -1537,6 +1657,62 @@ export default function BankingPage() {
                 {editingAccount && <p className="text-[10px] text-slate-400 mt-1">Bakiye hareketlerle değişir; düzeltmede değiştirilmez.</p>}
               </div>
               </>
+              )}
+              {editingBankLogo && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <span className="w-12 h-12 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center shrink-0">
+                      {logoSrc ? (
+                        <img
+                          key={logoSrc}
+                          src={displayBankLogoSrc(logoSrc)}
+                          alt={logoInfo?.short || logoBankName}
+                          className="w-full h-full object-contain"
+                          onError={() => setLogoAttempt((n) => n + 1)}
+                        />
+                      ) : (
+                        <span
+                          className="w-full h-full text-[11px] font-bold text-white flex items-center justify-center"
+                          style={{ backgroundColor: logoInfo?.color || "#64748b" }}
+                        >
+                          {accountMonogram(editingAccount)}
+                        </span>
+                      )}
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <label className={`px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold ${logoBusy ? "opacity-50 pointer-events-none" : "cursor-pointer hover:bg-slate-100"}`}>
+                        Logo yükle
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          className="hidden"
+                          data-testid="bank-logo-upload"
+                          disabled={logoBusy}
+                          onChange={handleBankLogoFile}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleBankLogoRemove}
+                        disabled={logoBusy}
+                        className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-rose-700 bg-white disabled:opacity-50"
+                        data-testid="bank-logo-remove"
+                      >
+                        Kaldır
+                      </button>
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={logoOnlyAccount}
+                      onChange={(e) => setLogoOnlyAccount(e.target.checked)}
+                      data-testid="bank-logo-only-account"
+                    />
+                    Sadece bu hesap
+                  </label>
+                  <p className="text-[11px] text-slate-500" data-testid="bank-logo-note">{logoNote}</p>
+                </div>
               )}
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button
