@@ -5,29 +5,51 @@ import { toast } from "sonner";
 import { Link2, Trash2, Plus, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
-import { connectedMapChannels, pickMapChannel } from "../utils/productMappingChannels";
+import { connectedMapChannels, isMappableChannel, mapChannelKey, pickMapChannel } from "../utils/productMappingChannels";
 
-export const ProductMappingPanel = ({ companyId }) => {
+export const ProductMappingPanel = ({ companyId, integrations: integrationsProp }) => {
   const [maps, setMaps] = useState([]);
   const [unmapped, setUnmapped] = useState([]);
   const [products, setProducts] = useState([]);
-  const [integrations, setIntegrations] = useState([]);
+  const [loadedIntegrations, setLoadedIntegrations] = useState([]);
   const [form, setForm] = useState({ channel: "", marketplace_sku: "", product_id: "" });
+  const integrationsProvided = integrationsProp !== undefined;
+  const integrations = integrationsProvided ? integrationsProp : loadedIntegrations;
 
-  const channels = useMemo(() => connectedMapChannels(integrations), [integrations]);
+  const channels = useMemo(
+    () => connectedMapChannels(integrations, [
+      ...(unmapped || []).map((row) => row?.channel),
+      ...(maps || []).map((row) => row?.channel),
+    ]),
+    [integrations, unmapped, maps],
+  );
+
+  const mappableUnmapped = useMemo(
+    () => (unmapped || [])
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => isMappableChannel(row?.channel)),
+    [unmapped],
+  );
 
   const load = useCallback(async () => {
-    const [m, u, p, integ] = await Promise.all([
+    const requests = [
       axios.get(`${API_URL}/integrations/ecommerce/mappings?company_id=${companyId}`),
       axios.get(`${API_URL}/integrations/ecommerce/unmapped?company_id=${companyId}`),
       axios.get(`${API_URL}/products?company_id=${companyId}`),
-      axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`).catch(() => ({ data: [] })),
-    ]);
+    ];
+    if (!integrationsProvided) {
+      requests.push(
+        axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`).catch(() => ({ data: [] })),
+      );
+    }
+    const [m, u, p, integ] = await Promise.all(requests);
     setMaps(m.data);
     setUnmapped(u.data);
     setProducts(p.data);
-    setIntegrations(Array.isArray(integ.data) ? integ.data : []);
-  }, [companyId]);
+    if (!integrationsProvided) {
+      setLoadedIntegrations(Array.isArray(integ?.data) ? integ.data : []);
+    }
+  }, [companyId, integrationsProvided]);
 
   useEffect(() => {
     load().catch(() => toast.error("Eşleştirmeler yüklenemedi."));
@@ -42,14 +64,15 @@ export const ProductMappingPanel = ({ companyId }) => {
 
   const save = async (e) => {
     e.preventDefault();
-    if (!form.channel) {
+    const channel = mapChannelKey(form.channel);
+    if (!channels.some((c) => c.channel === channel)) {
       toast.error("Önce E-Ticaret sayfasından bir pazaryeri ekleyin.");
       return;
     }
     try {
-      await axios.post(`${API_URL}/integrations/ecommerce/mappings`, { company_id: companyId, ...form });
+      await axios.post(`${API_URL}/integrations/ecommerce/mappings`, { company_id: companyId, ...form, channel });
       toast.success("Ürün eşleştirildi.");
-      setForm({ ...form, marketplace_sku: "", product_id: "" });
+      setForm({ ...form, channel, marketplace_sku: "", product_id: "" });
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Eşleştirilemedi.");
@@ -119,19 +142,27 @@ export const ProductMappingPanel = ({ companyId }) => {
           <Plus className="w-4 h-4" /> Eşleştir
         </button>
       </form>
-      {unmapped.length > 0 && (
+      {mappableUnmapped.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4" data-testid="unmapped-list">
           <div className="font-bold text-amber-800 flex items-center gap-1 mb-2">
-            <AlertTriangle className="w-4 h-4" /> Eşleşmemiş pazaryeri ürünleri ({unmapped.length})
+            <AlertTriangle className="w-4 h-4" /> Eşleşmemiş pazaryeri ürünleri ({mappableUnmapped.length})
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {unmapped.map((u, i) => (
+            {mappableUnmapped.map(({ row: u, index }) => (
               <button
-                key={i}
+                key={index}
                 type="button"
-                onClick={() => setForm({ ...form, channel: u.channel, marketplace_sku: u.marketplace_sku })}
+                onClick={() => {
+                  const key = mapChannelKey(u.channel);
+                  const listed = channels.some((c) => c.channel === key);
+                  setForm((prev) => ({
+                    ...prev,
+                    marketplace_sku: u.marketplace_sku,
+                    ...(listed ? { channel: key } : {}),
+                  }));
+                }}
                 className="bg-white border border-amber-200 rounded-lg px-2 py-1 hover:border-emerald-500"
-                data-testid={`unmapped-${i}`}
+                data-testid={`unmapped-${index}`}
               >
                 <b className="uppercase text-[10px] text-slate-500">{u.channel}</b> {u.marketplace_sku}{" "}
                 <span className="text-slate-500">• {u.product_name}</span>
