@@ -31,9 +31,10 @@ import { defaultLabelPrinter, printProductLabel, resolveLabelPrinter, saveLabelP
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
 export function StockScreen() {
-  const { client, companyId, can, activeCompany } = useAuth();
+  const { client, companyId, can, activeCompany, feature } = useAuth();
   const canEdit = can("/stock", "edit");
   const canInvoice = can("/invoices", "edit");
+  const showPrices = feature("view_prices");
   const params = useLocalSearchParams<{ scan?: string | string[] }>();
   const [rows, setRows] = useState<Product[]>([]);
   const [cats, setCats] = useState<ProductCategory[]>([]);
@@ -213,6 +214,8 @@ export function StockScreen() {
 
   const filtered = useMemo(() => visibleRows(matched, shown), [matched, shown]);
   const hasMore = !hit && shown < matched.length;
+  const movePurchase = showPrices && movesFor ? lastPurchaseLabel(movesFor, fmtMoney) : "";
+  const moveSale = showPrices && movesFor ? lastSaleLabel(movesFor, fmtMoney) : "";
 
   useEffect(() => {
     setShown(LIST_INITIAL_ROWS);
@@ -273,7 +276,7 @@ export function StockScreen() {
                 leading={<ProductThumb uri={p.thumbnail_url || productImage(p)} />}
                 title={name}
                 titleLines={2}
-                subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), fmtMoney(p.sale_price))].filter(Boolean).join(" · ")}
+                subtitle={[qty, stockRowSubtitle(p, productTypeTr(p.type), showPrices ? fmtMoney(p.sale_price) : "")].filter(Boolean).join(" · ")}
                 right={stockRightLabel(p)}
                 rightColor={qtyTone === "red" ? colors.danger : qtyTone === "amber" ? colors.warning : colors.text}
                 rightTestID={`stock-qty-${idOf(p)}`}
@@ -311,22 +314,22 @@ export function StockScreen() {
         <B2BSheet
           visible
           title="Stok hareketleri"
-          subtitle={[listRowText(movesFor.name), lastPurchaseLabel(movesFor, fmtMoney), lastSaleLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ") || undefined}
+          subtitle={[listRowText(movesFor.name), movePurchase, moveSale].filter(Boolean).join(" · ") || undefined}
           onClose={() => setMovesFor(null)}
           testID="stock-moves-sheet"
         >
           {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
           {!movesBusy && !moves.length ? (
             <Muted testID="stock-moves-empty">
-              {[lastPurchaseLabel(movesFor, fmtMoney), lastSaleLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ")
-                ? `${[lastPurchaseLabel(movesFor, fmtMoney), lastSaleLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ")}. Fatura/sipariş satırı henüz düşmedi.`
+              {[movePurchase, moveSale].filter(Boolean).join(" · ")
+                ? `${[movePurchase, moveSale].filter(Boolean).join(" · ")}. Fatura/sipariş satırı henüz düşmedi.`
                 : "Fatura, sipariş veya sayım hareketi bulunamadı."}
             </Muted>
           ) : null}
           {moves.map((m, i) => {
             const change = moveChange(m);
             const price = Number((m as { unit_price?: number }).unit_price);
-            const priceTxt = Number.isFinite(price) && price > 0 ? fmtMoney(price) : "";
+            const priceTxt = showPrices && Number.isFinite(price) && price > 0 ? fmtMoney(price) : "";
             return (
               <ListRow
                 key={idOf(m) || i}
@@ -344,7 +347,7 @@ export function StockScreen() {
           subtitle={printFor ? listRowText(printFor.name) : undefined}
           busy={printBusy}
           error={printError}
-          allowPrice={printFor?.sale_price != null}
+          allowPrice={showPrices && printFor?.sale_price != null}
           testID="stock-list-label-sheet"
           printerHost={labelPrinter.host}
           printerPort={labelPrinter.port}
@@ -367,8 +370,8 @@ export function StockScreen() {
                   name: printFor.name,
                   sku: printFor.sku,
                   barcode: printFor.barcode || printFor.sku,
-                  price: printFor.sale_price ?? null,
-                  includePrice: opts.includePrice,
+                  price: showPrices ? (printFor.sale_price ?? null) : null,
+                  includePrice: showPrices && opts.includePrice,
                 },
               });
               setError(null);
@@ -390,7 +393,7 @@ export function StockScreen() {
               const ok = await printProductLabelsPdf(client, companyId, [{
                 product: printFor,
                 copies,
-                includePrice: opts.includePrice,
+                includePrice: showPrices && opts.includePrice,
               }], mode, activeCompany);
               if (!ok) {
                 const msg = mode === "pdf" ? "PDF paylaşılamadı." : "Etiket yazdırılamadı.";
