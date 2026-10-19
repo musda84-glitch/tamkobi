@@ -11,6 +11,9 @@ import {
   terminalIdFromStorage,
 } from "../utils/posCashier";
 
+/** Firma Ayarları → Hızlı Satış Kuralları; kasiyer PIN'i PosRulesPanel'de atanır. */
+const CASHIER_SETUP_HREF = "/settings?tab=pos_rules";
+
 const PosSessionContext = createContext({
   session: null,
   rules: null,
@@ -47,6 +50,7 @@ export function PosSessionProvider({ children }) {
   const [shift, setShift] = useState(null);
   const [heldCarts, setHeldCarts] = useState([]);
   const [cashiers, setCashiers] = useState([]);
+  const [cashiersLoaded, setCashiersLoaded] = useState(false);
   const [canApprove, setCanApprove] = useState(false);
   const [gate, setGate] = useState(null);
   const [pinErr, setPinErr] = useState("");
@@ -81,12 +85,19 @@ export function PosSessionProvider({ children }) {
   }, [applyPayload, authenticated, companyId, headers, terminalId]);
 
   const loadCashiers = useCallback(async () => {
-    if (!companyId) return;
+    if (!companyId) {
+      setCashiers([]);
+      setCashiersLoaded(false);
+      return;
+    }
+    setCashiersLoaded(false);
     try {
       const { data } = await axios.get(`${API_URL}/pos/cashiers`, { params: { company_id: companyId } });
       setCashiers(Array.isArray(data) ? data : []);
     } catch {
       setCashiers([]);
+    } finally {
+      setCashiersLoaded(true);
     }
   }, [companyId]);
 
@@ -216,6 +227,12 @@ export function PosSessionProvider({ children }) {
   const idleLocked = !!(session?.cashier_user_id && sessionIsIdle(session, Date.now(), session.idle_timeout_sec || 120));
   const needsUnlock = onPosPage && authenticated && !!session?.cashier_user_id && !session?.ended_at && (session.locked || idleLocked || switching);
   const showLock = needsLogin || needsUnlock;
+  const pickingCashier = needsLogin || switching;
+  const pinCashiers = pickingCashier ? cashiers.filter((c) => c.has_cashier_pin) : undefined;
+  const noPinCashiers = !!(pickingCashier && cashiersLoaded && pinCashiers.length === 0);
+  const leaveLoginGate = useCallback(() => {
+    navigate("/panel");
+  }, [navigate]);
 
   const value = {
     session,
@@ -246,10 +263,15 @@ export function PosSessionProvider({ children }) {
       {showLock && (
         <PosPinPad
           title={needsLogin ? "Kasiyer girişi" : switching ? "Kasiyer değişimi" : "Ekran kilitli"}
-          hint={needsLogin || switching
-            ? "Önce kasiyeri seçin, sonra 4-6 haneli PIN yazın."
-            : `${session?.cashier_name || "Kasiyer"} PIN'i ile kilidi açın.`}
-          cashiers={(needsLogin || switching) ? cashiers.filter((c) => c.has_cashier_pin) : undefined}
+          hint={noPinCashiers
+            ? "PIN, Hızlı Satış Kuralları'ndan tanımlanır."
+            : needsLogin || switching
+              ? "Önce kasiyeri seçin, sonra 4-6 haneli PIN yazın."
+              : `${session?.cashier_name || "Kasiyer"} PIN'i ile kilidi açın.`}
+          cashiers={pickingCashier ? (cashiersLoaded ? pinCashiers : undefined) : undefined}
+          noCashiers={noPinCashiers}
+          emptyHint={noPinCashiers ? "Tanımlı kasiyer (PIN'li) yok" : undefined}
+          setupHref={noPinCashiers ? CASHIER_SETUP_HREF : undefined}
           selectedId={pickedId}
           onSelect={(c) => setPickedId(c?.id || "")}
           onSubmit={async (pin) => {
@@ -268,7 +290,8 @@ export function PosSessionProvider({ children }) {
             }
           }}
           onCancel={switching ? () => setSwitching(false) : undefined}
-          busy={busy}
+          onExit={needsLogin ? leaveLoginGate : undefined}
+          busy={busy || (pickingCashier && !cashiersLoaded)}
           error={pinErr}
           testId={needsLogin ? "pos-login-pad" : switching ? "pos-switch-pad" : "pos-unlock-pad"}
         />
