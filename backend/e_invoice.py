@@ -1270,25 +1270,24 @@ async def issue_invoice(
     })
 
 
-async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any]:
+async def create_from_order(order_id: str, req: Dict[str, Any], user: dict) -> Dict[str, Any]:
     convert = _deps.get("convert_order")
     if not convert:
         raise HTTPException(status_code=500, detail="Sipariş→fatura dönüştürücü yapılandırılmamış.")
-    order = await _db.orders.find_one({"_id": order_id})
-    if not order:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    order = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    tenant_access.assert_same_company(user, order, not_found="Sipariş bulunamadı.")
     company_id = (req.get("company_id") or "").strip()
     if company_id and order.get("company_id") and order.get("company_id") != company_id:
         raise HTTPException(status_code=403, detail="Sipariş bu firmaya ait değil.")
+    if not company_id:
+        company_id = str(order.get("company_id") or "").strip()
     inv_id = order.get("invoice_id")
     if not inv_id:
         converted = await convert(order_id, {"e_type": req.get("e_type") or "e_archive"})
         inv_id = converted.get("invoice_id")
         if not inv_id:
             raise HTTPException(status_code=400, detail=converted.get("message") or "Sipariş faturaya dönüştürülemedi.")
-    inv_q = {"_id": inv_id}
-    if company_id:
-        inv_q["company_id"] = company_id
+    inv_q = {"_id": inv_id, "company_id": company_id or order.get("company_id")}
     inv = await _db.invoices.find_one(inv_q)
     if inv and inv.get("status") == "draft" and inv.get("invoice_type") != "dispatch" and inv.get("e_type") != "e_dispatch":
         raise HTTPException(status_code=409, detail="Önce Faturalaştırın")
@@ -1372,13 +1371,15 @@ async def api_integrator_credits(company_id: Optional[str] = None, user: dict = 
 
 
 @router.post("/e-invoice/create")
-async def api_create_einvoice(payload: InvoiceCreateRequest):
+async def api_create_einvoice(payload: InvoiceCreateRequest, user: dict = Depends(_user_dep)):
     """Body: { invoice_id?, order_id?, company_id?, e_type?, scenario?: TICARI|TEMEL }"""
     invoice_id = (payload.invoice_id or "").strip()
     order_id = (payload.order_id or "").strip()
     company_id = (payload.company_id or "").strip()
     if not invoice_id and not order_id:
         raise HTTPException(status_code=400, detail="invoice_id veya order_id gerekli.")
+    if company_id:
+        company_id = tenant_access.resolve_company_id(user, company_id)
     req = {
         "invoice_id": invoice_id,
         "order_id": order_id,
@@ -1391,16 +1392,29 @@ async def api_create_einvoice(payload: InvoiceCreateRequest):
     }
     try:
         if invoice_id:
-            inv_q = {"_id": invoice_id}
-            if company_id:
-                inv_q["company_id"] = company_id
-            inv = await _db.invoices.find_one(inv_q)
-            if inv and company_id and inv.get("company_id") and inv.get("company_id") != company_id:
+            inv = await tenant_access.get_tenant_doc(
+                _db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.",
+            )
+            tenant_access.assert_same_company(user, inv, not_found="Fatura bulunamadı.")
+            if company_id and inv.get("company_id") and inv.get("company_id") != company_id:
                 raise HTTPException(status_code=403, detail="Fatura bu firmaya ait değil.")
-            if inv and inv.get("status") == "draft" and inv.get("invoice_type") != "dispatch" and inv.get("e_type") != "e_dispatch":
+            if inv.get("status") == "draft" and inv.get("invoice_type") != "dispatch" and inv.get("e_type") != "e_dispatch":
                 raise HTTPException(status_code=409, detail="Önce Faturalaştırın")
+            req["company_id"] = inv.get("company_id")
+            company_id = req["company_id"]
+            if order_id:
+                order = await tenant_access.get_tenant_doc(
+                    _db, "orders", order_id, user, not_found="Sipariş bulunamadı.",
+                )
+                tenant_access.assert_same_company(user, inv, order, not_found="Sipariş bulunamadı.")
         if order_id and not invoice_id:
-            return await create_from_order(order_id, req)
+            order = await tenant_access.get_tenant_doc(
+                _db, "orders", order_id, user, not_found="Sipariş bulunamadı.",
+            )
+            tenant_access.assert_same_company(user, order, not_found="Sipariş bulunamadı.")
+            if not (company_id and order.get("company_id") and order.get("company_id") != company_id):
+                req["company_id"] = order.get("company_id")
+            return await create_from_order(order_id, req, user)
         result = await issue_invoice(
             invoice_id,
             e_type=payload.e_type,

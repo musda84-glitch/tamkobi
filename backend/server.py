@@ -8209,10 +8209,14 @@ async def list_stock_lots(
 
 
 @api_router.post("/stock-lots")
-async def create_stock_lot(req: Dict[str, Any]):
-    product = await db.products.find_one({"_id": req.get("product_id")})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+async def create_stock_lot(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    requested_company = str(req.get("company_id") or "").strip()
+    if requested_company:
+        tenant_access.resolve_company_id(user, requested_company)
+    product = await tenant_access.get_tenant_doc(
+        db, "products", req.get("product_id"), user, not_found="Ürün bulunamadı.",
+    )
+    tenant_access.assert_same_company(user, product, not_found="Ürün bulunamadı.")
     tracking = req.get("tracking_type") or ("serial" if product.get("track_serial") else "lot")
     qty = float(req.get("quantity") or (1 if tracking == "serial" else 0))
     if qty <= 0:
@@ -8223,6 +8227,15 @@ async def create_stock_lot(req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Seri numarası zorunlu.")
     if tracking == "lot" and not (req.get("lot_number") or "").strip():
         raise HTTPException(status_code=400, detail="Lot / parti numarası zorunlu.")
+    body_warehouse_id = req.get("warehouse_id")
+    if body_warehouse_id:
+        # Kayıt başka şirkete aitse 404. Kayıt yoksa (main_warehouse gibi sabit id) davranış aynı kalır.
+        other_warehouse = await db.warehouses.find_one({
+            "_id": body_warehouse_id,
+            "company_id": {"$ne": product["company_id"]},
+        })
+        if other_warehouse:
+            raise HTTPException(status_code=404, detail="Depo bulunamadı.")
     lot = StockLot(
         company_id=product["company_id"],
         product_id=product["_id"],
@@ -8239,7 +8252,10 @@ async def create_stock_lot(req: Dict[str, Any]):
     doc = lot.to_mongo()
     await db.stock_lots.insert_one(doc)
     # Lot girişi ürün toplam stoğunu da artırır (seri/lot kartı üzerinden)
-    await db.products.update_one({"_id": product["_id"]}, {"$inc": {"stock_quantity": qty}})
+    await db.products.update_one(
+        {"_id": product["_id"], "company_id": product["company_id"]},
+        {"$inc": {"stock_quantity": qty}},
+    )
     await db.stock_movements.insert_one({
         "_id": str(uuid.uuid4()),
         "company_id": product["company_id"],
@@ -9252,15 +9268,19 @@ async def update_product_variants(product_id: str, req: VariantsUpdateRequest, u
     return clean_doc(updated)
 
 @api_router.post("/products/quick-stock-adjust")
-async def quick_stock_adjust(req: Dict[str, Any]):
+async def quick_stock_adjust(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    requested_company = str(req.get("company_id") or "").strip()
+    if requested_company:
+        tenant_access.resolve_company_id(user, requested_company)
     product_id = req.get("product_id")
     variant_id = req.get("variant_id")
     quantity_change = req.get("quantity_change", 0)
     reason = req.get("reason", "Hızlı Sayım / Düzeltme")
 
-    product = await db.products.find_one({"_id": product_id})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    product = await tenant_access.get_tenant_doc(
+        db, "products", product_id, user, not_found="Ürün bulunamadı.",
+    )
+    tenant_access.assert_same_company(user, product, not_found="Ürün bulunamadı.")
     if product.get("track_stock") is False:
         raise HTTPException(status_code=400, detail="Bu ürün için stok takibi kapalı.")
 
@@ -9273,15 +9293,22 @@ async def quick_stock_adjust(req: Dict[str, Any]):
         target["stock"] = max(0, target.get("stock", 0) + quantity_change)
         variant_name = target.get("name")
         new_qty = sum(v.get("stock", 0) for v in variants)
-        await db.products.update_one({"_id": product_id}, {"$set": {"variants": variants, "stock_quantity": new_qty}})
+        await db.products.update_one(
+            {"_id": product_id, "company_id": product["company_id"]},
+            {"$set": {"variants": variants, "stock_quantity": new_qty}},
+        )
         new_variant_stock = target["stock"]
     else:
         new_qty = max(0, product.get("stock_quantity", 0) + quantity_change)
-        await db.products.update_one({"_id": product_id}, {"$set": {"stock_quantity": new_qty}})
+        await db.products.update_one(
+            {"_id": product_id, "company_id": product["company_id"]},
+            {"$set": {"stock_quantity": new_qty}},
+        )
         new_variant_stock = None
 
     await db.stock_movements.insert_one({
         "_id": str(uuid.uuid4()),
+        "company_id": product["company_id"],
         "product_id": product_id,
         "product_name": product.get("name"),
         "variant_id": variant_id,
