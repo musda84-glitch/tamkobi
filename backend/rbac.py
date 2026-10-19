@@ -1348,17 +1348,22 @@ async def create_company_user(req: Dict[str, Any], user: dict = Depends(_user_de
         await _phone_norm.ensure_unique_phone_norm(_db, phone_fields.get("phone_norm"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    employee_id = (req.get("employee_id") or "").strip() or None
+    if employee_id:
+        emp = await _db.employees.find_one({"_id": employee_id, "company_id": company_id})
+        if not emp:
+            raise HTTPException(status_code=404, detail="Personel bulunamadı.")
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
     doc = {"_id": user_id, "email": email, "password_hash": hash_password(pwd), "name": name, "role": role,
            "company_ids": [company_id], "active_company_id": company_id, "is_active": True,
-           "employee_id": req.get("employee_id"), "phone": phone_fields.get("phone") or "",
+           "employee_id": employee_id, "phone": phone_fields.get("phone") or "",
            "phone_norm": phone_fields.get("phone_norm"), "preferences": {},
            "user_number": await user_numbers.next_user_number(_db), "created_at": _now()}
     await _db.users.insert_one(doc)
     await _db.user_invites.delete_many({"company_id": company_id, "email": email, "accepted_at": None})
-    if req.get("employee_id"):
-        await _db.employees.update_one({"_id": req["employee_id"]}, {"$set": {"user_id": user_id, "email": email}})
-    await _notify_role_assigned(company_id, {"full_name": name, "_id": req.get("employee_id"), "user_id": user_id}, role, user_id)
+    if employee_id:
+        await _db.employees.update_one({"_id": employee_id, "company_id": company_id}, {"$set": {"user_id": user_id, "email": email}})
+    await _notify_role_assigned(company_id, {"full_name": name, "_id": employee_id, "user_id": user_id}, role, user_id)
     names = {r["code"]: r["name"] for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
     out = _clean(dict(doc))
     return {**out, "role_name": names.get(role, role), "is_active": True, "message": f"{name} eklendi. {email} ile giriş yapabilir."}
