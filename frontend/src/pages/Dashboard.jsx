@@ -13,6 +13,8 @@ import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { DashboardHero } from "../components/DashboardHero";
 import { DashboardProductionCard } from "../components/DashboardProductionCard";
 import { DashboardProjectsCard } from "../components/DashboardProjectsCard";
+import { DashboardShopFloorPerf } from "../components/DashboardShopFloorPerf";
+import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { useManagerSummary } from "../components/DashboardManagerSection";
 import { useDashboardLayout } from "../hooks/useDashboardLayout";
 import { ClipboardList, ChevronRight } from "lucide-react";
@@ -234,9 +236,17 @@ export default function Dashboard() {
     ),
     overview: <OverviewPanel companyId={companyId} part="collections" />,
     manager: (prodData || projData) ? (
-      <div className={`grid grid-cols-1 gap-4 ${prodData && projData ? "md:grid-cols-2" : ""}`} data-testid="dashboard-manager">
-        {prodData ? <DashboardProductionCard data={prodData} /> : null}
-        {projData ? <DashboardProjectsCard data={projData} /> : null}
+      <div className="space-y-4">
+        <div className={`grid grid-cols-1 gap-4 ${prodData && projData ? "md:grid-cols-2" : ""}`} data-testid="dashboard-manager">
+          {prodData ? <DashboardProductionCard data={prodData} /> : null}
+          {projData ? <DashboardProjectsCard data={projData} /> : null}
+        </div>
+        {prodData ? (
+          <>
+            <ProductionAiAdvisor companyId={companyId} compact />
+            <DashboardShopFloorPerf key={companyId || "none"} companyId={companyId} />
+          </>
+        ) : null}
       </div>
     ) : null,
     decision: null,

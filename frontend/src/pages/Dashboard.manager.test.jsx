@@ -39,6 +39,16 @@ jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
   useAuth: () => mockAuth,
 }));
+jest.mock("../components/ProductionAiAdvisor", () => {
+  const React = require("react");
+  return {
+    ProductionAiAdvisor: ({ companyId, compact }) => React.createElement(
+      "div",
+      { "data-testid": "production-ai-advisor", "data-compact": compact ? "1" : "0" },
+      companyId,
+    ),
+  };
+});
 
 const stats = {
   total_bank_balance: 1,
@@ -131,6 +141,8 @@ test("hides the manager section when the summary is missing or fails", async () 
   expect(summaryCalls().length).toBeGreaterThan(0);
   expect(host.querySelector("[data-testid='dashboard-section-manager']")).toBeNull();
   expect(host.querySelector("[data-testid='dashboard-production-card']")).toBeNull();
+  expect(host.querySelector("[data-testid='production-ai-advisor']")).toBeNull();
+  expect(host.querySelector("[data-testid='dashboard-shopfloor-perf']")).toBeNull();
 
   summary = "error";
   await renderDash();
@@ -147,6 +159,25 @@ test("renders only the production card when projects are absent", async () => {
   await renderDash();
   expect(host.querySelector("[data-testid='dashboard-production-card']")).toBeTruthy();
   expect(host.querySelector("[data-testid='dashboard-projects-card']")).toBeNull();
+  expect(host.querySelector("[data-testid='production-ai-advisor']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='production-ai-advisor']").getAttribute("data-compact")).toBe("1");
+  expect(host.querySelector("[data-testid='dashboard-shopfloor-perf']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='dashboard-shopfloor-perf-toggle']").textContent).toContain("Göster");
+});
+
+test("shows the advisor and shop floor performance only when production data exists", async () => {
+  summary = { production, projects };
+  await renderDash();
+  expect(host.querySelector("[data-testid='dashboard-production-card']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='production-ai-advisor']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='dashboard-shopfloor-perf']")).toBeTruthy();
+
+  summary = { projects };
+  await renderDash();
+  expect(host.querySelector("[data-testid='dashboard-projects-card']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='dashboard-production-card']")).toBeNull();
+  expect(host.querySelector("[data-testid='production-ai-advisor']")).toBeNull();
+  expect(host.querySelector("[data-testid='dashboard-shopfloor-perf']")).toBeNull();
 });
 
 test("hides projects when the user cannot open the module", async () => {
