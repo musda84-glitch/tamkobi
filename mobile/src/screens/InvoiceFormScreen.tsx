@@ -3,24 +3,26 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
+import { ApiHttpError } from "../api/errors";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { DateField } from "../components/DateField";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { InvoiceLineSheet } from "../components/InvoiceLineSheet";
+import { InvoiceProductSheet } from "../components/InvoiceProductSheet";
 import { confirmAction } from "../components/chips";
-import { ProductPickRow } from "../components/ProductPickRow";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MoneyInput } from "../components/MoneyInput";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
 import {
+  addProductToItems,
   canRemoveInvoiceLine,
   commitProductLine,
   computeLine,
   emptyLine,
-  invoiceBarcodeFeedback,
   invoiceBarcodeMiss,
+  lineHasContent,
   matchProductVariant,
   removeInvoiceItem,
   type InvoiceLine,
@@ -66,6 +68,13 @@ import {
   retailContactCreatePayload,
 } from "../utils/barcodeSale";
 import { contactTypeTr } from "../utils/labels";
+import {
+  invoiceProductPageQuery,
+  invoiceScanStrip,
+  productsFromIdsPayload,
+  rememberFrequentInvoiceProducts,
+  upsertProducts,
+} from "../utils/invoiceProductPick";
 import { lineItemImage } from "../utils/productDisplay";
 import { fmtMoney, idOf } from "../utils/money";
 
@@ -134,15 +143,21 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [payAccount, setPayAccount] = useState("");
   const [custQ, setCustQ] = useState("");
-  const [prodQ, setProdQ] = useState("");
   const [quickName, setQuickName] = useState("");
   const [quickTax, setQuickTax] = useState("");
   const [quickPhone, setQuickPhone] = useState("");
   const [gibTax, setGibTax] = useState("");
   const [scan, setScan] = useState(false);
   const [scanLine, setScanLine] = useState<number | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [scanBanner, setScanBanner] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const productsRef = useRef(products);
   productsRef.current = products;
+  const draftRef = useRef(draft);
+  const itemsRef = useRef(draft.items);
+  draftRef.current = draft;
+  itemsRef.current = draft.items;
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -168,20 +183,18 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   const loadLookups = useCallback(async () => {
     try {
-      const [c, p, pr, acc, pars] = await Promise.all([
+      const [c, pr, acc, pars] = await Promise.all([
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }),
-        get<Product[]>(client, "/products", { company_id: companyId, lite: true }),
         get<Project[]>(client, "/projects", { company_id: companyId }).catch(() => []),
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }).catch(() => []),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
       ]);
       setContacts(c || []);
-      setProducts((p || []).filter((x) => x.is_active !== false));
       setProjects(pr || []);
       setAccounts(acc || []);
       setPartners((pars || []).filter((x) => x.is_active !== false));
     } catch (err) {
-      setError(apiErrorMessage(err, "Cari / stok listesi yüklenemedi."));
+      setError(apiErrorMessage(err, "Cari listesi yüklenemedi."));
     }
   }, [client, companyId]);
 
@@ -256,6 +269,28 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     });
   }, [contacts, isNew, preContactId, preContactName]);
 
+  const lineProductKey = useMemo(
+    () => [...new Set(draft.items.map((it) => String(it.product_id || "").trim()).filter(Boolean))].sort().join(","),
+    [draft.items],
+  );
+
+  useEffect(() => {
+    if (!isNew && formStatus !== "ready") return;
+    const missing = lineProductKey.split(",").filter(Boolean).filter((id) => !productsRef.current.some((p) => idOf(p) === id));
+    if (!missing.length) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = await get(client, "/products", { company_id: companyId, lite: 1, ids: missing.join(",") });
+        if (cancelled) return;
+        setProducts((prev) => upsertProducts(prev, productsFromIdsPayload(raw)));
+      } catch {
+        /* satır görseli kart gelince dolar */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [client, companyId, formStatus, isNew, lineProductKey]);
+
   const custHits = useMemo(() => {
     const q = custQ.trim().toLowerCase();
     if (q.length < 2) return [];
@@ -263,14 +298,6 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       .filter((c) => [c.name, c.phone, c.tax_number_or_id, c.city].some((v) => String(v || "").toLowerCase().includes(q)))
       .slice(0, 8);
   }, [contacts, custQ]);
-
-  const prodHits = useMemo(() => {
-    const q = prodQ.trim().toLowerCase();
-    if (q.length < 2) return [];
-    return products
-      .filter((p) => [p.name, p.sku, p.barcode].some((v) => String(v || "").toLowerCase().includes(q)))
-      .slice(0, 8);
-  }, [prodQ, products]);
 
   const projectGroups = useMemo(() => invoiceProjectSelectGroups(projects), [projects]);
   const totals = invoiceTotals(draft);
@@ -322,33 +349,107 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     }
   };
 
-  const addProduct = (p: Product, scanCode?: string) => {
-    const code = String(scanCode || "").trim();
-    setDraft((d) => {
-      const result = commitProductLine(d.items, p as unknown as Record<string, unknown>, d.invoice_type, {
-        exportInvoice: d.trade_kind === "export" || d.e_type === "e_export",
-        scanCode: code || undefined,
-      });
-      if (code) {
-        setMessage(invoiceBarcodeFeedback(result));
-        setError(null);
-      }
-      return { ...d, items: result.items };
+  const rememberProducts = (rows: Product[]) => {
+    setProducts((prev) => upsertProducts(prev, rows));
+    void rememberFrequentInvoiceProducts(companyId, rows);
+  };
+
+  const addScannedProduct = (product: Product, code: string) => {
+    const current = draftRef.current;
+    const result = commitProductLine(itemsRef.current, product as unknown as Record<string, unknown>, current.invoice_type, {
+      exportInvoice: current.trade_kind === "export" || current.e_type === "e_export",
+      scanCode: code,
     });
-    setProdQ("");
+    const next = { ...current, items: result.items };
+    draftRef.current = next;
+    itemsRef.current = result.items;
+    setDraft(next);
+    setScanError(null);
+    setError(null);
+    setScanBanner(invoiceScanStrip(result));
+    rememberProducts([product]);
   };
 
   const lookupBarcode = async (code: string) => {
     const c = String(code || "").trim();
-    const local = findInvoiceProductByScan(productsRef.current, c);
-    if (local) { addProduct(local, c); return; }
+    if (!c) return;
     try {
-      const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(c)}`, { company_id: companyId });
-      addProduct(p, c);
-    } catch {
+      const req = lineBarcodeLookupRequest(companyId, c);
+      const product = await get<Product>(client, req.path, req.query);
+      addScannedProduct(product, c);
+    } catch (err) {
+      const status = err instanceof ApiHttpError ? err.status : 0;
+      const local = status === 404 ? undefined : findInvoiceProductByScan(productsRef.current, c);
+      if (local) {
+        addScannedProduct(local, c);
+        return;
+      }
       setMessage(null);
-      setError(invoiceBarcodeMiss(c));
+      setScanBanner(null);
+      setScanError(invoiceBarcodeMiss(c));
     }
+  };
+
+  const searchInvoiceProducts = useCallback((q: string, page: number) => (
+    get(client, "/products", invoiceProductPageQuery({ companyId, q, page }))
+  ), [client, companyId]);
+
+  const fetchProductsByIds = useCallback((ids: string[]) => (
+    get(client, "/products", { company_id: companyId, lite: 1, ids: ids.join(",") })
+  ), [client, companyId]);
+
+  const addPickedProducts = (picks: Array<{ product: Product; quantity: number }>) => {
+    const current = draftRef.current;
+    let items = itemsRef.current;
+    const exportOn = current.trade_kind === "export" || current.e_type === "e_export";
+    for (const pick of picks) {
+      const qty = Math.max(0, Math.round(Number(pick.quantity) || 0));
+      for (let n = 0; n < qty; n += 1) {
+        items = addProductToItems(items, pick.product as unknown as Record<string, unknown>, current.invoice_type, { exportInvoice: exportOn });
+      }
+    }
+    const next = { ...current, items };
+    draftRef.current = next;
+    itemsRef.current = items;
+    setDraft(next);
+    rememberProducts(picks.map((pick) => pick.product));
+    setPickOpen(false);
+    setScan(false);
+  };
+
+  const openManualLine = (service: boolean) => {
+    const current = draftRef.current;
+    const vat = current.trade_kind === "export" || current.e_type === "e_export" ? 0 : 20;
+    const idx = current.items.findIndex((it) => !lineHasContent(it));
+    let items = current.items;
+    let index = idx;
+    if (idx >= 0) {
+      if (!!current.items[idx].is_service !== service) {
+        items = current.items.map((it, i) => (
+          i === idx ? computeLine({ ...it, is_service: service, product_id: "", vat_rate: vat }) : it
+        ));
+      }
+    } else {
+      items = [...current.items, computeLine(emptyLine({ vat_rate: vat, is_service: service }))];
+      index = items.length - 1;
+    }
+    if (items !== current.items) {
+      const next = { ...current, items };
+      draftRef.current = next;
+      itemsRef.current = items;
+      setDraft(next);
+    }
+    setSheetIndex(index);
+    setPickOpen(false);
+    setScan(false);
+    setScanLine(null);
+  };
+
+  const closePick = () => {
+    setPickOpen(false);
+    setScan(false);
+    setScanBanner(null);
+    setScanError(null);
   };
 
   const loadLineHits = useCallback(
@@ -379,7 +480,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
     const full = await resolveLineProduct(hit);
     const code = String(scanCode || "").trim();
     const variant = code ? matchProductVariant(full, code) : undefined;
-    setProducts((prev) => (idOf(full) && prev.some((x) => idOf(x) === idOf(full)) ? prev : [...prev, full]));
+    setProducts((prev) => upsertProducts(prev, [full]));
     setDraft((d) => {
       const base = sheetIndexRef.current === index && sheetLineRef.current ? sheetLineRef.current : d.items[index];
       const next = fillInvoiceLineFromProduct(base, full, d.invoice_type, {
@@ -836,26 +937,16 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       <SectionTitle
         title={`SATIRLAR · ${draft.items.length}`}
         right={(
-          <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#FFFBEB", borderRadius: 999, borderWidth: 1, borderColor: "#F59E0B" }}>
-            <Pressable testID="inv-add-line" onPress={() => setDraft((d) => ({ ...d, items: [...d.items, computeLine(emptyLine({ vat_rate: defaultVat }))] }))} style={{ paddingHorizontal: 10, paddingVertical: 6 }}>
-              <Text style={{ color: "#B45309", fontWeight: "800" }}>＋ Ürün</Text>
-            </Pressable>
-            <Pressable testID="inv-scan" accessibilityLabel="Barkod" onPress={() => setScan(true)} style={{ paddingHorizontal: 10, paddingVertical: 6 }}>
-              <Text style={{ color: "#B45309", fontWeight: "800" }}>/ Barkod</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            testID="inv-product-open"
+            onPress={() => setPickOpen(true)}
+            style={{ backgroundColor: "#FFFBEB", borderRadius: 999, borderWidth: 1, borderColor: "#F59E0B", paddingHorizontal: 10, paddingVertical: 6 }}
+          >
+            <Text style={{ color: "#B45309", fontWeight: "800" }}>＋ Ürün / Barkod</Text>
+          </Pressable>
         )}
       />
       <Card>
-        <Field label="Ürün ara ve ekle" testID="inv-prod-search" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU / barkod" />
-        {prodHits.map((p) => (
-          <ProductPickRow
-            key={idOf(p)}
-            product={p}
-            priceType={draft.invoice_type === "purchase" ? "purchase" : "sales"}
-            onPress={() => addProduct(p)}
-          />
-        ))}
         {draft.items.map((it, idx) => (
           <View key={idx} style={{ marginTop: idx ? 8 : 0 }}>
             <Pressable
@@ -948,11 +1039,28 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
       <BarcodeScannerModal
         visible={scan || scanLine != null}
+        continuous={scan && scanLine == null}
+        status={scan && scanLine == null ? (scanError || scanBanner) : null}
         onClose={() => { setScan(false); setScanLine(null); }}
         onScan={(code) => {
           if (scanLine != null) void applyBarcodeToLine(code);
           else void lookupBarcode(code);
         }}
+      />
+      <InvoiceProductSheet
+        visible={pickOpen}
+        companyId={companyId}
+        priceType={draft.invoice_type === "purchase" ? "purchase" : "sales"}
+        currency={draft.currency}
+        items={draft.items}
+        notice={scanError ? { tone: "err", text: scanError } : scanBanner ? { tone: "ok", text: scanBanner } : null}
+        search={searchInvoiceProducts}
+        fetchByIds={fetchProductsByIds}
+        onClose={closePick}
+        onAdd={addPickedProducts}
+        onScan={() => { setScanError(null); setScanBanner(null); setScan(true); }}
+        onFreeLine={() => openManualLine(false)}
+        onServiceLine={() => openManualLine(true)}
       />
       {sheetLine ? (
         <InvoiceLineSheet
@@ -976,7 +1084,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
             const full = await resolveLineProduct(hit);
             const code = String(scanCode || "").trim();
             const variant = code ? matchProductVariant(full, code) : undefined;
-            setProducts((prev) => (idOf(full) && prev.some((x) => idOf(x) === idOf(full)) ? prev : [...prev, full]));
+            setProducts((prev) => upsertProducts(prev, [full]));
             return fillInvoiceLineFromProduct(current, full, draft.invoice_type, {
               exportInvoice: draft.trade_kind === "export" || draft.e_type === "e_export",
               variant,

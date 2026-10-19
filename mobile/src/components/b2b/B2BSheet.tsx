@@ -14,6 +14,7 @@ export function B2BSheet({
   header,
   footer,
   testID,
+  showHandle,
 }: {
   visible: boolean;
   title: string;
@@ -23,6 +24,7 @@ export function B2BSheet({
   header?: React.ReactNode;
   footer?: React.ReactNode;
   testID?: string;
+  showHandle?: boolean;
 }) {
   const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll(visible);
   const lift = sheetBottomInset(keyboardHeight, Platform.OS);
@@ -41,6 +43,11 @@ export function B2BSheet({
             testID={testID}
             style={[styles.sheet, { maxHeight: lift > 0 ? "100%" : "92%", paddingBottom: footer ? 10 : 16 }]}
           >
+            {showHandle ? (
+              <View testID={`${testID || "sheet"}-handle`} style={{ alignItems: "center", marginTop: -4, marginBottom: 8 }}>
+                <View style={{ width: 40, height: 4, borderRadius: 999, backgroundColor: "#CBD5E1" }} />
+              </View>
+            ) : null}
             <View style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 10 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>{title}</Text>
