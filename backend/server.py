@@ -25647,6 +25647,7 @@ help_center.init(db, get_current_user)
 onboarding.init(db, get_current_user)
 import platform_admin
 import platform_v1
+import platform_admin_v1
 platform_admin.init(db)
 platform_v1.init(db)
 import user_erase
@@ -25906,6 +25907,7 @@ app.include_router(help_center.router)
 app.include_router(onboarding.router)
 app.include_router(platform_admin.router)
 app.include_router(platform_v1.router)
+app.include_router(platform_admin_v1.router)
 app.include_router(user_erase.router)
 app.include_router(company_reset.router)
 app.include_router(storage_manager.router)
