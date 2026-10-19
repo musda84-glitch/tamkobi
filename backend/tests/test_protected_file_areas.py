@@ -12,7 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 os.environ.setdefault("JWT_SECRET", "test-protected-file-areas-jwt-secret-not-default")
 os.environ.setdefault("TAMKOBI_BACKGROUND_JOBS", "0")
@@ -94,6 +95,49 @@ def test_legacy_visual_entity_paths_stay_open(entity):
 def test_odd_file_path_without_area_stays_public():
     assert rbac.is_public_api_path("/api/files/x/y.jpg", "GET") is True
     assert rbac.is_public_api_path("/api/files/upload", "POST") is False
+
+
+def test_path_without_area_segment_is_not_public():
+    assert rbac.file_public_area("/api/files") is False
+    assert rbac.file_public_area("/api/files/") is False
+    assert rbac.file_public_area("/api/files/../") is False
+    assert rbac.is_public_api_path("/api/files/only.jpg", "GET") is False
+
+
+_OBFUSCATED = (
+    "tamkobi\\accounts\\{cid}\\{area}\\{name}",
+    "tamkobi/accounts/{cid}/%2E/{area}/{name}",
+    "tamkobi/accounts/{cid}/%2E%2E/{area}/{name}",
+    "tamkobi/accounts/{cid}/./{area}/{name}",
+)
+
+
+def _obfuscated(pattern: str, area: str, *, cid: str = "compA", name: str = "x.pdf") -> str:
+    return pattern.format(cid=cid, area=area, name=name)
+
+
+@pytest.mark.parametrize("area", ["expenses", "sales_invoices"])
+@pytest.mark.parametrize("pattern", _OBFUSCATED)
+def test_obfuscated_sensitive_path_is_not_public_and_serve_404(area, pattern, files_db):
+    mem, state = files_db
+    canonical = _storage(area, company="compA", name="x.pdf")
+    _insert_file(mem, canonical, "compA")
+    raw = _obfuscated(pattern, area)
+    assert rbac.is_public_api_path(_api(raw), "GET", None) is False
+    # Router yalnız: middleware 401'inden önce serve_file'ın 404'ü.
+    app = FastAPI()
+    app.include_router(server.api_router)
+    client = TestClient(app)
+    resp = client.get(_api(raw))
+    assert resp.status_code == 404
+    assert state["calls"] == []
+
+
+@pytest.mark.parametrize("pattern", _OBFUSCATED)
+def test_obfuscated_product_path_stays_public(pattern):
+    raw = _obfuscated(pattern, "products", name="x.webp")
+    assert rbac.file_public_area(raw) is True
+    assert rbac.is_public_api_path(_api(raw), "GET", None) is True
 
 
 def test_sensitive_file_valid_share_token_is_public(monkeypatch):

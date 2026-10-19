@@ -3,6 +3,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Callable, Awaitable
+from urllib.parse import unquote
 
 import user_numbers
 import user_company_access as uca
@@ -592,19 +593,35 @@ _LEGACY_PROTECTED_ENTITIES = {
 }
 
 
+def normalized_file_storage_path(path: str) -> str:
+    """İstek yolunu `storage_service._normalized_key` ile aynı depo anahtarına çevir.
+
+    Yüzde çözümü, ters eğik çizgi, baştaki `/api/files/` ve `.` / `..` segmentleri düşer.
+    Boş veya geçersiz sonuç `""` döner (hassas sayılır, nesne okunmaz).
+    """
+    raw = unquote((path or "").split("?", 1)[0]).replace("\\", "/")
+    lowered = raw.lstrip("/")
+    if lowered == "api/files":
+        return ""
+    if lowered.startswith("api/files/"):
+        lowered = lowered[len("api/files/"):]
+    lowered = lowered.strip("/")
+    if not lowered:
+        return ""
+    try:
+        from storage_service import _normalized_key
+        return _normalized_key(lowered)
+    except ValueError:
+        return ""
+
+
 def _file_area_segment(path: str) -> str:
-    """Depo yolundan alan segmenti.
+    """Normalize depo yolundan alan segmenti.
 
     Kanonik: `…/accounts/{cid}/{area}/…`. Eski düzen `{APP}/{entity}/{cid}/…` ise ikinci segment.
-    `/api/files/` öneki varsa düşer. Alan çıkmazsa boş döner (hassas sayılmaz).
+    Alan çıkmazsa boş döner; `file_public_area` bunu hassas sayar.
     """
-    raw = (path or "").split("?", 1)[0]
-    marker = "/api/files/"
-    if marker in raw:
-        raw = raw.split(marker, 1)[1]
-    elif raw.rstrip("/") == "/api/files":
-        return ""
-    parts = [p for p in raw.strip("/").split("/") if p]
+    parts = [p for p in normalized_file_storage_path(path).split("/") if p]
     if not parts:
         return ""
     if "accounts" in parts:
@@ -617,8 +634,13 @@ def _file_area_segment(path: str) -> str:
 
 
 def file_public_area(path: str) -> bool:
-    """True: yol hassas beş alanın dışında; GET/HEAD tokensız kalır."""
+    """True: yol hassas beş alanın dışında; GET/HEAD tokensız kalır.
+
+    Normalize sonrası alan çıkmazsa ya da alan hassas kümedeyse False.
+    """
     segment = _file_area_segment(path)
+    if not segment:
+        return False
     area = _LEGACY_PROTECTED_ENTITIES.get(segment, segment)
     return area not in PROTECTED_FILE_AREAS
 

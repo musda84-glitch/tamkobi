@@ -9142,7 +9142,11 @@ async def serve_file(
     Herkese açık alanlar (ürün görseli, logo, teklif/proje görseli, …) eskisi gibi
     tokensız sunulur. Hassas alanlar (alış/satış faturası, e-belge, gider, destek)
     geçerli imzalı paylaşım (?t=), dosyanın firmasına üye oturum veya süper admin ister.
+    Yol, depolama anahtarıyla aynı şekilde normalize edilir (`./`, `..`, `%2E`, ters eğik çizgi).
     """
+    path = rbac.normalized_file_storage_path(path)
+    if not path:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not rbac.file_public_area(path):
         if record is None:
