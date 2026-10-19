@@ -94,8 +94,6 @@ export function InvoiceDetailScreen() {
   const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [payOpen, setPayOpen] = useState(false);
   const invRef = useRef<Invoice | null>(null);
   const scrollRef = useRef<{ scrollTo?: (opts: { y: number; animated?: boolean }) => void } | null>(null);
   const payY = useRef(0);
@@ -364,7 +362,7 @@ export function InvoiceDetailScreen() {
   const track = String(inv.gib_tracking_id || "").trim();
   const canOpenEditor = canEdit && canEditInvoice(inv) && !isIncomingDispatch(inv);
   const showDispatch = canEdit && inv.invoice_type !== "dispatch" && !draft;
-  const showPay = canEdit && !draft && inv.invoice_type !== "dispatch" && (leftover > 0.01 || payOpen);
+  const showPay = canEdit && !draft && inv.invoice_type !== "dispatch" && leftover > 0.01;
   const printDoc = () => run(async () => {
     await printInvoiceForm(inv, activeCompany, client);
     setMessage(
@@ -392,15 +390,6 @@ export function InvoiceDetailScreen() {
           style={{ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.slate100 }}
         >
           <Ionicons name="print-outline" size={18} color={colors.text} />
-        </Pressable>
-        <Pressable
-          testID="inv-more"
-          accessibilityLabel="Diğer"
-          accessibilityState={{ expanded: moreOpen }}
-          onPress={() => setMoreOpen((v) => !v)}
-          style={{ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.slate100 }}
-        >
-          <Text style={{ fontWeight: "800", fontSize: 18, color: colors.text }}>⋯</Text>
         </Pressable>
       </View>
       <ErrorBanner message={error} />
@@ -435,16 +424,19 @@ export function InvoiceDetailScreen() {
         {inv.project_number ? <Muted>Proje {inv.project_number}</Muted> : null}
       </Card>
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Pressable
-          testID="inv-pay-open"
-          onPress={() => {
-            setPayOpen(true);
-            requestAnimationFrame(() => scrollRef.current?.scrollTo?.({ y: Math.max(0, payY.current - 12), animated: true }));
-          }}
-          style={{ flex: 1, minHeight: 44, borderRadius: 12, backgroundColor: "#F59E0B", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}
-        >
-          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>💳 Ödeme al</Text>
-        </Pressable>
+        {showPay ? (
+          <Pressable
+            testID="inv-pay-open"
+            onPress={() => {
+              const scroll = () => scrollRef.current?.scrollTo?.({ y: Math.max(0, payY.current - 12), animated: true });
+              if (typeof requestAnimationFrame === "function") requestAnimationFrame(scroll);
+              else scroll();
+            }}
+            style={{ flex: 1, minHeight: 44, borderRadius: 12, backgroundColor: "#F59E0B", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>💳 Ödeme al</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={printDoc}
           style={{ flex: 1, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}

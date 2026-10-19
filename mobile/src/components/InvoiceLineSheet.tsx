@@ -325,9 +325,9 @@ export function InvoiceLineSheet({
       ) : null}
 
       <View testID="inv-line-breakdown" style={{ marginTop: 8, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 10, gap: 6, backgroundColor: colors.slate50 }}>
-        <BreakRow label={`${qtyText(priced.quantity)} × ${fmtMoney(priced.unit_price, currency)}`} value="" />
+        <BreakRow label={`${qtyText(priced.quantity)} × ${fmtMoney(priced.unit_price, currency)}`} value={fmtMoney(gross, currency)} />
         {discountAmt > 0 ? (
-          <BreakRow label="İskonto" value={`-${fmtMoney(discountAmt, currency)}`} color={colors.danger} />
+          <BreakRow label={`İskonto %${priced.discount_rate}`} value={`-${fmtMoney(discountAmt, currency)}`} color={colors.danger} />
         ) : null}
         <BreakRow label="KDV matrahı" value={fmtMoney(priced.total, currency)} />
         <BreakRow label={`KDV %${priced.vat_rate}`} value={fmtMoney(priced.vat_amount, currency)} />

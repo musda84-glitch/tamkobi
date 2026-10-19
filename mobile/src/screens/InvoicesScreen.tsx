@@ -14,7 +14,7 @@ import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { dispatchDirFromParam, isIncomingDispatch, splitDispatchLists } from "../utils/despatchShipment";
 import { outgoingMergeIds } from "../utils/dispatchMerge";
-import { canEditInvoice, invoiceListTitle, invoiceRowDangerAction, isIncomingPurchaseInvoice } from "../utils/invoiceDraft";
+import { invoiceListTitle, invoiceRowDangerAction, isIncomingPurchaseInvoice } from "../utils/invoiceDraft";
 import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
 import {
   INVOICE_CHIPS,
@@ -439,7 +439,7 @@ export function InvoicesScreen() {
             const showFaturalastir = canEdit && canFaturalastirDraftInvoice(inv);
             const showIncomingPost = canEdit && isIncomingPurchaseInvoice(inv);
             const openInvoice = () => {
-              const editor = canEdit && !isIncomingDispatch(inv) && (draft || canEditInvoice(inv));
+              const editor = canEdit && draft && !isIncomingDispatch(inv);
               go(editor ? "InvoiceEdit" : "InvoiceDetail", { id: iid });
             };
             const card = (
@@ -448,13 +448,12 @@ export function InvoicesScreen() {
               </Pressable>
             );
             const body = !allowDanger || !danger ? (
-              <Pressable testID={`inv-row-${iid}`} onPress={openInvoice}>{card}</Pressable>
+              <View testID={`inv-row-${iid}`}>{card}</View>
             ) : (
               <SwipeRevealRow
                 rowKey={iid}
                 openKey={openRow}
                 onOpen={setOpenRow}
-                onPress={openInvoice}
                 onDelete={() => actOnInvoice(inv)}
                 deleteLabel={danger === "cancel" ? "İptal" : "Sil"}
                 deleteColor={danger === "cancel" ? colors.warning : colors.danger}

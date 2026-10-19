@@ -28,11 +28,13 @@ jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("../../nav", () => ({ go: jest.fn() }));
 jest.mock("../../utils/orderShare", () => ({ printInvoiceForm: jest.fn(async () => true) }));
 
+let allowEdit = true;
+
 const mockAuth = {
   client: { baseUrl: "https://api.test", token: "tok" },
   companyId: "co-1",
   activeCompany: null,
-  can: () => true,
+  can: (path?: string, level?: string) => (path === "/invoices" && level === "edit" ? allowEdit : true),
   feature: () => true,
 };
 
@@ -149,6 +151,10 @@ function renderDetail() {
 }
 
 describe("InvoiceDetailScreen", () => {
+  beforeEach(() => {
+    allowEdit = true;
+  });
+
   afterEach(() => {
     document.body.innerHTML = "";
     (get as unknown as jest.Mock).mockReset();
@@ -218,5 +224,40 @@ describe("InvoiceDetailScreen", () => {
     const body = (put as unknown as jest.Mock).mock.calls[0][2] as { items: Array<{ vat_rate?: number }> };
     expect(body.items[0].vat_rate).toBe(10);
     root.unmount();
+  });
+
+  it("shows payment only when an editable invoice still has a balance", async () => {
+    const load = (doc: Record<string, unknown>) => {
+      (get as unknown as jest.Mock).mockImplementation((_client: unknown, path: string) => {
+        if (path === "/invoices/inv-1") return Promise.resolve(doc);
+        return Promise.resolve([]);
+      });
+    };
+    const expectPayHidden = async (doc: Record<string, unknown>) => {
+      load(doc);
+      const view = renderDetail();
+      await settle();
+      expect(findByTestId(view.container, "inv-pay-open")).toBeNull();
+      expect(findByTestId(view.container, "inv-payment-card")).toBeNull();
+      expect(findByTestId(view.container, "inv-more")).toBeNull();
+      view.root.unmount();
+    };
+
+    await expectPayHidden(invoice);
+    await expectPayHidden({ ...invoice, status: "approved", invoice_type: "dispatch", grand_total: 120, paid_amount: 0 });
+    allowEdit = false;
+    await expectPayHidden({ ...invoice, status: "approved", grand_total: 120, paid_amount: 0 });
+    allowEdit = true;
+    await expectPayHidden({ ...invoice, status: "approved", grand_total: 120, paid_amount: 120 });
+
+    load({ ...invoice, status: "approved", grand_total: 120, paid_amount: 0 });
+    const open = renderDetail();
+    await settle();
+    expect(findByTestId(open.container, "inv-more")).toBeNull();
+    expect(findByTestId(open.container, "inv-pay-open")).toBeTruthy();
+    await press(open.container, "inv-pay-open");
+    expect(findByTestId(open.container, "inv-payment-card")).toBeTruthy();
+    expect(findByTestId(open.container, "inv-record-payment")).toBeTruthy();
+    open.root.unmount();
   });
 });

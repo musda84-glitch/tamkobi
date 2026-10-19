@@ -1,7 +1,7 @@
 import "../../test/domSetup";
 import React, { act } from "react";
 import { Alert } from "react-native";
-import { get, post } from "../../api/client";
+import { get, post, put } from "../../api/client";
 import { ApiHttpError } from "../../api/errors";
 import { findByTestId, reactProps, removeTestNavigator, textOf } from "../../test/domSetup";
 import { InvoiceFormScreen } from "../InvoiceFormScreen";
@@ -113,6 +113,7 @@ describe("InvoiceFormScreen", () => {
     document.body.innerHTML = "";
     (get as unknown as jest.Mock).mockReset();
     (post as unknown as jest.Mock).mockReset();
+    (put as unknown as jest.Mock).mockReset();
     (Alert.alert as jest.Mock).mockReset();
   });
 
@@ -176,6 +177,33 @@ describe("InvoiceFormScreen", () => {
     expect(post).not.toHaveBeenCalled();
     await press(container, "issue-invoice-btn");
     expect((Alert.alert as jest.Mock).mock.calls.at(-1)?.[0]).toBe("Fatura kes");
+    root.unmount();
+  });
+
+  it("calls approve once when saving an already approved invoice", async () => {
+    (get as unknown as jest.Mock).mockImplementation((_client: unknown, path: string) => {
+      if (String(path).startsWith("/invoices/")) {
+        return Promise.resolve({
+          id: "inv-9",
+          status: "approved",
+          invoice_type: "sales",
+          e_type: "paper",
+          contact_id: "c1",
+          contact_name: "Acme",
+          items: [{ name: "Kalem", quantity: 1, unit_price: 10, vat_rate: 20 }],
+        });
+      }
+      return Promise.resolve([]);
+    });
+    (put as unknown as jest.Mock).mockResolvedValue({ id: "inv-9", status: "approved" });
+    (post as unknown as jest.Mock).mockResolvedValue({ status: "success", message: "Fatura zaten onaylı." });
+    const { container, root } = renderForm("inv-9");
+    await settle();
+    expect(textOf(container)).toContain("Kaydet & Onayla");
+    await press(container, "save-invoice-btn");
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith(mockAuth.client, "/invoices/inv-9/approve");
     root.unmount();
   });
 });

@@ -160,10 +160,13 @@ describe("InvoiceLineSheet", () => {
       line: line({ quantity: 10, unit_price: 950, discount_rate: 5, vat_rate: 20 }),
     });
     const text = textOf(view.container);
+    expect(text).toContain("9.500,00");
     expect(text).toContain("9.025,00");
     expect(text).toContain("1.805,00");
     expect(text).toContain("10.830,00");
-    expect(text).toContain("İskonto");
+    expect(text).toContain("İskonto %5");
+    expect(text).not.toContain("Açıklama");
+    expect(findByTestId(view.container, "inv-item-disc-amount")).toBeNull();
     view.root.unmount();
   });
 
