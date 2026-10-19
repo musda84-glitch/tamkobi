@@ -237,7 +237,9 @@ export default function ShopFloorPage() {
   const openDuties = openAssignedDuties(duties);
   const arrangeWos = (list) => {
     const rows = Array.isArray(list) ? list : [];
-    if (!groupSameStation) return sortWorkOrdersByStatus(rows);
+    // Görünüm gruplaması "Tüm istasyonlar" (boş filtre) iken her zaman açık.
+    // groupSameStation yalnız backend peşi sıra sıralamasıdır.
+    if (station) return sortWorkOrdersByStatus(rows);
     return shopFloorStationSections(groupWorkOrdersByStation(rows))
       .flatMap((sec) => sortWorkOrdersByStatus(sec.items));
   };
@@ -265,7 +267,8 @@ export default function ShopFloorPage() {
   const renderWoGrid = (list, extraClass = "") => {
     if (!list.length) return null;
     const arranged = arrangeWos(list);
-    if (!groupSameStation) {
+    const sections = station ? [] : shopFloorStationSections(arranged);
+    if (sections.length <= 1) {
       return (
         <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch ${extraClass}`}>
           {arranged.map((w) => <Card key={w.id} w={w} />)}
@@ -275,12 +278,12 @@ export default function ShopFloorPage() {
     return (
       <div className={`space-y-4 ${extraClass}`} data-testid="shopfloor-station-groups">
         {!companyId && <NoCompanyNotice />}
-        {shopFloorStationSections(arranged).map((sec) => (
+        {sections.map((sec) => (
           <div key={sec.key} data-testid={`shopfloor-station-group-${sec.key}`}>
             <div className="flex items-center gap-2 mb-2">
               <ArrowDownUp className="w-3.5 h-3.5 text-slate-400" />
               <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{sec.label}</h3>
-              <span className="text-[10px] font-semibold text-slate-400">{sec.items.length}</span>
+              <span className="text-[10px] font-semibold text-slate-400" data-testid={`shopfloor-station-group-count-${sec.key}`}>{sec.items.length}</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch">
               {sec.items.map((w) => <Card key={w.id} w={w} />)}
