@@ -142,9 +142,6 @@ function WoCard({
           <Badge label={woStatusTr(w.status)} tone={woStatusTone(w.status)} />
         </View>
       </Row>
-      {!operator ? (
-        <Text testID={`wo-need-operator-${key}`} style={{ fontSize: 12, fontWeight: "700", color: "#B45309" }}>Önce operatör seçin</Text>
-      ) : null}
       <View
         testID={`wo-meta-${key}`}
         style={{ backgroundColor: "#F8FAFC", borderWidth: 1, borderColor: "#F1F5F9", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, gap: 2 }}
@@ -267,7 +264,7 @@ function WoCard({
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
             {w.status === "paused" && startLocked ? <Muted>{stationLockMsg}</Muted> : null}
-            {w.status === "in_progress" && pauseAllowed === false && pauseHint ? (
+            {w.status === "in_progress" && !!operator && pauseAllowed === false && pauseHint ? (
               <Muted>{pauseHint}</Muted>
             ) : null}
           </View>
@@ -282,6 +279,9 @@ function WoCard({
           {w.scrap_qty ? `, ${w.scrap_qty} fire` : ""}
           {w.operator_name ? ` · ${w.operator_name}` : ""}
         </Muted>
+      ) : null}
+      {!operator ? (
+        <Text testID={`wo-need-operator-${key}`} style={{ fontSize: 11, fontWeight: "700", color: "#B45309", textAlign: "center" }}>Önce operatör seçin</Text>
       ) : null}
     </Card>
   );
@@ -813,7 +813,7 @@ export function AtolyeScreen() {
 
       <View
         testID="shopfloor-kpis"
-        style={{ backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: radius.lg, padding: spacing.sm, gap: 6 }}
+        style={{ flexDirection: "row", gap: 8 }}
       >
         {kpiItems.map((item) => {
           const selected = kpi === item.key;
@@ -825,21 +825,21 @@ export function AtolyeScreen() {
               accessibilityState={{ selected }}
               onPress={() => setKpi((cur) => (cur === item.key ? null : item.key))}
               style={{
-                minHeight: 44,
-                flexDirection: "row",
+                flex: 1,
+                minHeight: 64,
                 alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                paddingHorizontal: 10,
-                paddingVertical: 8,
+                justifyContent: "center",
+                gap: 2,
+                paddingHorizontal: 6,
+                paddingVertical: 10,
                 borderRadius: radius.md,
                 borderWidth: 2,
-                borderColor: selected ? "#F59E0B" : "transparent",
-                backgroundColor: selected ? colors.amber50 : "transparent",
+                borderColor: selected ? "#F59E0B" : colors.border,
+                backgroundColor: selected ? colors.amber50 : colors.surface,
               }}
             >
-              <Text style={{ flex: 1, fontSize: 11, fontWeight: "700", color: colors.muted }}>{trUpper(item.label)}</Text>
-              <Text style={{ fontSize: 15, fontWeight: "800", color: item.valueColor }}>{item.value}</Text>
+              <Text style={{ fontSize: 10, fontWeight: "700", color: colors.muted, textAlign: "center" }} numberOfLines={2}>{trUpper(item.label)}</Text>
+              <Text style={{ fontSize: 22, fontWeight: "800", color: item.valueColor, textAlign: "center" }}>{item.value}</Text>
             </Pressable>
           );
         })}

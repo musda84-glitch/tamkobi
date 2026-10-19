@@ -351,6 +351,18 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
       "wo-need-operator-other-run",
       "wo-need-operator-wait-1",
     ]);
+    const runCard = findByTestId(container, "wo-card-other-run");
+    const runIds = allTestIds(runCard);
+    expect(textOf(runCard).split("Önce operatör seçin").length - 1).toBe(1);
+    expect(runIds.indexOf("wo-finish-other-run")).toBeGreaterThanOrEqual(0);
+    expect(runIds.indexOf("wo-finish-other-run")).toBeLessThan(runIds.indexOf("wo-need-operator-other-run"));
+    expect(reactProps(findByTestId(runCard, "wo-need-operator-other-run"))?.style?.textAlign).toBe("center");
+    const kpis = findByTestId(container, "shopfloor-kpis");
+    expect(reactProps(kpis)?.style?.flexDirection).toBe("row");
+    expect(reactProps(kpis)?.style?.gap).toBe(8);
+    for (const id of ["shopfloor-kpi-ready", "shopfloor-kpi-active", "shopfloor-kpi-done"]) {
+      expect(reactProps(findByTestId(kpis, id))?.style?.flex).toBe(1);
+    }
 
     await clickId("wo-trash-mine-ready");
     await clickId("wo-start-mine-ready");
