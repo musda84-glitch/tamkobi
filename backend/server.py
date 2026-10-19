@@ -9130,9 +9130,31 @@ def _file_thumb_fmt(fmt: Optional[str]) -> str:
 
 
 @api_router.get("/files/{path:path}")
-async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280), fmt: Optional[str] = Query(None)):
-    """Dosya sunumu. w=64|128|320 küçültür. fmt=jpg|png|webp (e-posta JPEG/PNG)."""
+async def serve_file(
+    path: str,
+    request: Request,
+    w: Optional[int] = Query(None, ge=16, le=1280),
+    fmt: Optional[str] = Query(None),
+    t: Optional[str] = Query(None),
+):
+    """Dosya sunumu. w=64|128|320 küçültür. fmt=jpg|png|webp (e-posta JPEG/PNG).
+
+    Herkese açık alanlar (ürün görseli, logo, teklif/proje görseli, …) eskisi gibi
+    tokensız sunulur. Hassas alanlar (alış/satış faturası, e-belge, gider, destek)
+    geçerli imzalı paylaşım (?t=), dosyanın firmasına üye oturum veya süper admin ister.
+    """
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not rbac.file_public_area(path):
+        if record is None:
+            raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+        import signed_links
+        if not signed_links.verify_doc_share_token(path, "files", t):
+            try:
+                user = await get_current_user(request)
+            except HTTPException:
+                user = None
+            if not tenant_access.user_may_access_company(user, record.get("company_id")):
+                raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     # Önce cache: hit olursa orijinali storage'dan hiç okuma
     thumb_fmt = _file_thumb_fmt(fmt) if (w or (fmt or "").strip()) else "webp"
     edge = int(w) if w else (1280 if (fmt or "").strip() else 0)

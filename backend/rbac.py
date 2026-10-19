@@ -571,21 +571,71 @@ PUBLIC_API_ALLOWLIST = (
     "/api/mail/webhooks/ses",
 )
 
-# Yalnızca GET/HEAD ile tokensız (yükleme / silme oturum ister)
-_PUBLIC_GET_PREFIXES = ("/api/files/",)
+# Mali / gizli depolama alanları. Görsel alanlar (ürün, logo, teklif, proje, …) tokensız kalır.
+PROTECTED_FILE_AREAS = frozenset({
+    "purchase_invoices",
+    "sales_invoices",
+    "edocs",
+    "expenses",
+    "support",
+})
+
+# Eski düz yol `{APP}/{entity}/{cid}/…` entity adını aynı beş alanın anahtarına çevirir.
+_LEGACY_PROTECTED_ENTITIES = {
+    "purchase_invoice": "purchase_invoices",
+    "sales_invoice": "sales_invoices",
+    "expense": "expenses",
+    "edoc": "edocs",
+    "e_invoice": "edocs",
+    "einvoice": "edocs",
+    "support_ticket": "support",
+}
+
+
+def _file_area_segment(path: str) -> str:
+    """Depo yolundan alan segmenti.
+
+    Kanonik: `…/accounts/{cid}/{area}/…`. Eski düzen `{APP}/{entity}/{cid}/…` ise ikinci segment.
+    `/api/files/` öneki varsa düşer. Alan çıkmazsa boş döner (hassas sayılmaz).
+    """
+    raw = (path or "").split("?", 1)[0]
+    marker = "/api/files/"
+    if marker in raw:
+        raw = raw.split(marker, 1)[1]
+    elif raw.rstrip("/") == "/api/files":
+        return ""
+    parts = [p for p in raw.strip("/").split("/") if p]
+    if not parts:
+        return ""
+    if "accounts" in parts:
+        i = parts.index("accounts")
+        if i + 2 < len(parts):
+            return parts[i + 2]
+    if len(parts) >= 2:
+        return parts[1]
+    return ""
+
+
+def file_public_area(path: str) -> bool:
+    """True: yol hassas beş alanın dışında; GET/HEAD tokensız kalır."""
+    segment = _file_area_segment(path)
+    area = _LEGACY_PROTECTED_ENTITIES.get(segment, segment)
+    return area not in PROTECTED_FILE_AREAS
 
 
 def is_public_api_path(path: str, method: str = "GET", query_t: Optional[str] = None) -> bool:
     """Allowlist: tokensız erişime açık /api yolları (tek kaynak).
 
-    Fatura PDF/XML için yalnızca GET + geçerli imza (?t=) kabul edilir.
+    Herkese açık dosya alanları GET/HEAD ile tokensızdır. Hassas dosya alanları ve
+    fatura PDF/XML için yalnızca GET + geçerli imza (?t=) kabul edilir.
     """
     if not path:
         return False
     p = path.split("?", 1)[0]
     method_u = (method or "GET").upper()
-    if any(p == pref.rstrip("/") or p.startswith(pref) for pref in _PUBLIC_GET_PREFIXES):
-        return method_u in ("GET", "HEAD")
+    if (p == "/api/files" or p.startswith("/api/files/")) and method_u in ("GET", "HEAD"):
+        if file_public_area(p):
+            return True
     # İmzalı belge: allowlist'te sabit yol yok; geçerli HMAC zorunlu
     try:
         import signed_links
