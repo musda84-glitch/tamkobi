@@ -5,6 +5,7 @@ import type { DashboardStats, ManagerSummary, Overview, User } from "../../types
 import { salesChangeText } from "../../utils/dashboard";
 import { fmtMoney } from "../../utils/money";
 import { goHref } from "../../nav";
+import type { QuickTile } from "../../utils/quickMenu";
 import { HomeOverviewPage } from "./HomeOverviewPage";
 
 const { createRoot } = require("react-dom/client") as {
@@ -14,6 +15,18 @@ const { createRoot } = require("react-dom/client") as {
 jest.mock("../../nav", () => ({ goHref: jest.fn() }));
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("expo-router", () => ({ router: { push: jest.fn(), navigate: jest.fn() } }));
+jest.mock("../ManagerApprovalsPanel", () => {
+  const ReactLib = require("react") as typeof import("react");
+  return { ManagerApprovalsPanel: () => ReactLib.createElement("div", { "data-testid": "home-approvals" }) };
+});
+jest.mock("../StaffMessagesPanel", () => {
+  const ReactLib = require("react") as typeof import("react");
+  return { StaffMessagesPanel: () => ReactLib.createElement("div", { "data-testid": "home-messages-panel" }) };
+});
+jest.mock("../NotificationsPanel", () => {
+  const ReactLib = require("react") as typeof import("react");
+  return { NotificationsPanel: () => ReactLib.createElement("div", { "data-testid": "home-notifications-panel" }) };
+});
 
 jest.mock("react-native", () => {
   const ReactLib = require("react") as typeof import("react");
@@ -114,6 +127,19 @@ async function renderPage(props: Partial<React.ComponentProps<typeof HomeOvervie
       stats,
       overview,
       manager,
+      showApprovals: false,
+      client: { baseUrl: "https://api.test", token: "tok" },
+      companyId: "cid-1",
+      onBadgesChanged: () => {},
+      showMessages: false,
+      notifications: null,
+      notes: [],
+      clearingNotes: false,
+      onOpenAllNotes: () => {},
+      onOpenNote: () => {},
+      onDeleteNote: () => {},
+      onClearNotes: () => {},
+      onMarkAllRead: () => {},
       ...props,
     }));
   });
@@ -231,4 +257,66 @@ describe("HomeOverviewPage", () => {
     expect(textOf(view.container)).not.toContain("Tahsil edilecek");
     await view.unmount();
   });
+
+  it("shows KDV ödenecek with the fixture days-left hint", async () => {
+    const view = await renderPage();
+    const vat = textOf(findByTestId(view.container, "home-overview-kpi-vat"));
+    expect(vat).toContain(fmtMoney(overview.vat.payable));
+    expect(vat).toContain("8 gün");
+    const vatCard = findByTestId(view.container, "home-overview-kpi-vat");
+    const siblings = (vatCard.parentNode?.childNodes || []).filter((node: any) =>
+      String(node.getAttribute?.("data-testid") || "").startsWith("home-overview-kpi-"));
+    expect(siblings.length).toBeLessThanOrEqual(2);
+    const profitRow = findByTestId(view.container, "home-overview-kpi-profit").parentNode;
+    const payRow = findByTestId(view.container, "home-overview-kpi-pay").parentNode;
+    expect(profitRow).toBe(payRow);
+    expect(vatCard.parentNode).not.toBe(profitRow);
+    await view.unmount();
+  });
+
+  it("puts notifications, approvals and messages in home-overview-panels", async () => {
+    const notifications = {
+      id: "notifications",
+      label: "Bildirimler",
+      path: "/",
+      href: "/notifications",
+      icon: "notifications",
+      tone: "rose",
+      always: true,
+    } as QuickTile;
+    const shown = await renderPage({ showApprovals: true, showMessages: true, notifications });
+    const panels = findByTestId(shown.container, "home-overview-panels");
+    expect(findByTestId(panels, "home-notifications-panel")).toBeTruthy();
+    expect(findByTestId(panels, "home-approvals")).toBeTruthy();
+    expect(findByTestId(panels, "home-messages-panel")).toBeTruthy();
+    const ids = collectTestIds(findByTestId(shown.container, "home-overview"));
+    const at = (id: string) => ids.indexOf(id);
+    expect(at("home-overview-tasks")).toBeGreaterThanOrEqual(0);
+    expect(at("home-overview-tasks")).toBeLessThan(at("home-overview-panels"));
+    expect(at("home-overview-panels")).toBeLessThan(at("home-overview-sales"));
+    expect(at("home-overview-sales")).toBeLessThan(at("home-overview-kpis"));
+    expect(at("home-overview-kpis")).toBeLessThan(at("home-overview-collections"));
+    expect(at("home-overview-payments")).toBeLessThan(at("home-overview-stock"));
+    expect(at("home-overview-stock")).toBeLessThan(at("home-overview-manager"));
+    await shown.unmount();
+
+    const hidden = await renderPage({ showApprovals: false, showMessages: false, notifications: null });
+    const hiddenPanels = findByTestId(hidden.container, "home-overview-panels");
+    expect(findByTestId(hiddenPanels, "home-notifications-panel")).toBeNull();
+    expect(findByTestId(hiddenPanels, "home-approvals")).toBeNull();
+    expect(findByTestId(hiddenPanels, "home-messages-panel")).toBeNull();
+    await hidden.unmount();
+  });
 });
+
+function collectTestIds(node: any): string[] {
+  const out: string[] = [];
+  const walk = (current: any) => {
+    if (!current) return;
+    const id = current.getAttribute?.("data-testid");
+    if (id) out.push(id);
+    for (const child of current.childNodes || []) walk(child);
+  };
+  walk(node);
+  return out;
+}

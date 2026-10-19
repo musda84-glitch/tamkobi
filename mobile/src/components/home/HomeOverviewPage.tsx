@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import { HomeHeaderTitle } from "../HomeHeaderTitle";
+import { HomePanels, type HomePanelProps } from "./HomePanels";
 import { Card, Muted, Row } from "../kit";
 import { goHref } from "../../nav";
 import { colors } from "../../theme";
@@ -97,6 +98,19 @@ export function HomeOverviewPage({
   stats,
   overview,
   manager,
+  showApprovals,
+  client,
+  companyId,
+  onBadgesChanged,
+  showMessages,
+  notifications,
+  notes,
+  clearingNotes,
+  onOpenAllNotes,
+  onOpenNote,
+  onDeleteNote,
+  onClearNotes,
+  onMarkAllRead,
 }: {
   userName?: string | null;
   companyName?: string | null;
@@ -105,7 +119,7 @@ export function HomeOverviewPage({
   stats: DashboardStats | null;
   overview: Overview | null;
   manager: ManagerSummary | null;
-}) {
+} & HomePanelProps) {
   const sales = monthlySalesRow(stats, overview);
   const change = salesChangeText(stats?.sales_change_pct);
   const monthCount = overview?.invoices?.outgoing?.month;
@@ -140,21 +154,13 @@ export function HomeOverviewPage({
       hint: profit?.hint ?? (finite(stats?.monthly_expenses) ? `Gider ${fmtMoney(stats.monthly_expenses)}` : "Gider —"),
       valueColor: loss ? colors.danger : colors.text,
     },
+    { key: "vat", label: "KDV ödenecek", value: moneyOrDash(overview?.vat?.payable), hint: `${overview?.vat?.days_left ?? "—"} gün` },
   ];
+  const kpiRows = Array.from({ length: Math.ceil(kpis.length / 2) }, (_, index) => kpis.slice(index * 2, index * 2 + 2));
 
   return (
     <View testID="home-overview" accessibilityLabel="Genel Bakış" style={{ gap: 12 }}>
       <HomeHeaderTitle name={userName} company={companyName} logoUrl={logoUrl} />
-
-      <Card testID="home-overview-sales" style={{ backgroundColor: colors.indigo50, borderColor: "#C7D2FE" }}>
-        <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, letterSpacing: 0.3 }}>{trUpper(sales.label)}</Text>
-        <Text testID="home-overview-sales-value" style={{ fontSize: 28, fontWeight: "800", color: "#1E1B4B" }}>{sales.value}</Text>
-        <Muted>Kesilen satış faturaları (taslak ve iptal hariç)</Muted>
-        <Muted testID="home-overview-sales-meta">{invoiceText} · {change || "—"}</Muted>
-        <Text testID="home-overview-today" style={{ color: colors.indigo, fontWeight: "700", fontSize: 12 }}>
-          Bugün {moneyOrDash(stats?.today_sales)}
-        </Text>
-      </Card>
 
       <Card testID="home-overview-tasks">
         <Text style={{ fontSize: 11, fontWeight: "800", letterSpacing: 0.4, color: colors.muted }}>{trUpper("Bugün yapılacaklar")}</Text>
@@ -179,8 +185,36 @@ export function HomeOverviewPage({
         })}
       </Card>
 
+      <View testID="home-overview-panels">
+        <HomePanels
+          showApprovals={showApprovals}
+          client={client}
+          companyId={companyId}
+          onBadgesChanged={onBadgesChanged}
+          showMessages={showMessages}
+          notifications={notifications}
+          notes={notes}
+          clearingNotes={clearingNotes}
+          onOpenAllNotes={onOpenAllNotes}
+          onOpenNote={onOpenNote}
+          onDeleteNote={onDeleteNote}
+          onClearNotes={onClearNotes}
+          onMarkAllRead={onMarkAllRead}
+        />
+      </View>
+
+      <Card testID="home-overview-sales" style={{ backgroundColor: colors.indigo50, borderColor: "#C7D2FE" }}>
+        <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, letterSpacing: 0.3 }}>{trUpper(sales.label)}</Text>
+        <Text testID="home-overview-sales-value" style={{ fontSize: 28, fontWeight: "800", color: "#1E1B4B" }}>{sales.value}</Text>
+        <Muted>Kesilen satış faturaları (taslak ve iptal hariç)</Muted>
+        <Muted testID="home-overview-sales-meta">{invoiceText} · {change || "—"}</Muted>
+        <Text testID="home-overview-today" style={{ color: colors.indigo, fontWeight: "700", fontSize: 12 }}>
+          Bugün {moneyOrDash(stats?.today_sales)}
+        </Text>
+      </Card>
+
       <View testID="home-overview-kpis" style={{ gap: 8 }}>
-        {[kpis.slice(0, 2), kpis.slice(2)].map((row) => (
+        {kpiRows.map((row) => (
           <View key={row.map((item) => item.key).join("-")} style={{ flexDirection: "row", gap: 8 }}>
             {row.map((item) => (
               <Card key={item.key} testID={`home-overview-kpi-${item.key}`} style={{ flex: 1, minWidth: 0 }}>
