@@ -44,6 +44,7 @@ const mockAuth = {
   companyId: "co-1",
   activeCompany: { id: "co-1", name: "TamKobi" },
   can: () => true,
+  feature: () => true,
 };
 
 jest.mock("../../auth/AuthContext", () => ({
