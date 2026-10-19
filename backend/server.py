@@ -477,7 +477,7 @@ async def _platform_admin_audit_middleware(request: Request, call_next):
             await _pstore.write_audit(
                 actor_type="superadmin",
                 actor_id=actor,
-                ip=(request.client.host if request.client else "") or "",
+                ip=request_ip(request),
                 action=f"{method.lower()} {path}",
                 target_type="api",
                 target_id=path,

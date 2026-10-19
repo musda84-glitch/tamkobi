@@ -119,7 +119,7 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         await _pstore.write_audit(
             actor_type="superadmin",
             actor_id=str(admin.get("id") or admin.get("_id") or admin.get("email") or ""),
-            ip=(request.client.host if request.client else "") or "",
+            ip=request_ip(request),
             action="impersonate.enter",
             target_type="company",
             target_id=company_id,
@@ -238,7 +238,7 @@ async def impersonate_exit(request: Request, response: Response):
         await _pstore.write_audit(
             actor_type="superadmin",
             actor_id=sa_sub,
-            ip=(request.client.host if request.client else "") or "",
+            ip=request_ip(request),
             action="impersonate.exit",
             target_type="session",
             target_id="",
