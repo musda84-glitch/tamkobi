@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
-import { connectedMapChannels, pickMapChannel } from "./productMappingChannels";
+import { NON_MARKETPLACE_CHANNELS, connectedMapChannels, isMappableChannel, pickMapChannel } from "./productMappingChannels";
 
 describe("productMappingChannels", () => {
   it("lists every added integration, including inactive, plus unique extra channel codes", () => {
@@ -22,6 +22,18 @@ describe("productMappingChannels", () => {
     expect(connectedMapChannels([{ channel: "ciceksepeti" }])).toEqual([
       { channel: "ciceksepeti", label: "Çiçeksepeti" },
     ]);
+  });
+
+  it("isMappableChannel uses the same lowercase key and skips b2b, manual, saha", () => {
+    expect([...NON_MARKETPLACE_CHANNELS].sort()).toEqual(["b2b", "manual", "saha"]);
+    expect(isMappableChannel("  Hepsiburada ")).toBe(true);
+    expect(isMappableChannel("n11")).toBe(true);
+    expect(isMappableChannel("manual")).toBe(false);
+    expect(isMappableChannel("MANUAL")).toBe(false);
+    expect(isMappableChannel("b2b")).toBe(false);
+    expect(isMappableChannel(" Saha ")).toBe(false);
+    expect(isMappableChannel("")).toBe(false);
+    expect(isMappableChannel(null)).toBe(false);
   });
 
   it("pickMapChannel keeps current when still available", () => {

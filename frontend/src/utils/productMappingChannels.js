@@ -1,7 +1,20 @@
 import { channelTr } from "./labels";
 
 /** Sipariş kaynağı olup pazaryeri olmayan kanallar eşleştirme listesine girmez. */
-const NON_MARKETPLACE_CHANNELS = new Set(["b2b", "manual", "saha"]);
+export const NON_MARKETPLACE_CHANNELS = new Set(["b2b", "manual", "saha"]);
+
+/** Kanal kodu: küçük harf ve kırpılmış. Nesne ve boş değer boş anahtar döner. */
+export function mapChannelKey(code) {
+  if (typeof code === "number" && Number.isFinite(code)) return String(code).trim();
+  if (typeof code !== "string") return "";
+  return code.toLowerCase().trim();
+}
+
+/** Pazaryeri eşleştirmesine girebilen kanal (b2b, manual, saha ve boş hariç). */
+export function isMappableChannel(code) {
+  const key = mapChannelKey(code);
+  return Boolean(key) && !NON_MARKETPLACE_CHANNELS.has(key);
+}
 
 /**
  * Ürün eşleştirme formu: şirkete eklenmiş tüm e-ticaret kanalları.
@@ -22,14 +35,13 @@ export function connectedMapChannels(integrations, extraChannels) {
     });
   };
   for (const ch of integrations || []) {
-    const key = String(ch?.channel || "").toLowerCase().trim();
+    const key = mapChannelKey(ch?.channel);
     if (!key) continue;
     push(key, ch?.channel_name || channelTr(key) || key);
   }
   for (const code of extraChannels || []) {
-    if (code == null || (typeof code !== "string" && typeof code !== "number")) continue;
-    const key = String(code).toLowerCase().trim();
-    if (!key || NON_MARKETPLACE_CHANNELS.has(key)) continue;
+    if (!isMappableChannel(code)) continue;
+    const key = mapChannelKey(code);
     push(key, channelTr(key) || key);
   }
   return out;
@@ -39,7 +51,7 @@ export function connectedMapChannels(integrations, extraChannels) {
 export function pickMapChannel(current, channels) {
   const list = Array.isArray(channels) ? channels : [];
   if (!list.length) return "";
-  const cur = String(current || "").toLowerCase().trim();
+  const cur = mapChannelKey(current);
   if (cur && list.some((c) => c.channel === cur)) return cur;
   return list[0].channel;
 }

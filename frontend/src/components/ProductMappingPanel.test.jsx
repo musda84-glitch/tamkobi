@@ -141,6 +141,48 @@ test("eşleşmemiş ürün düğmesi listedeki kanalı seçer ve kaydeder", asyn
   );
 });
 
+test("büyük harfli eşleşmemiş kanal seçilir, manual satır liste dışı kanala yazılmaz", async () => {
+  routeGet({
+    integrations: [
+      { channel: "trendyol", channel_name: "Trendyol", is_active: false },
+    ],
+    unmapped: [
+      { channel: "manual", marketplace_sku: "M-1", product_name: "Elle" },
+      { channel: "Hepsiburada", marketplace_sku: "HB-2", product_name: "Kupa" },
+    ],
+  });
+  await renderPanel(<ProductMappingPanel companyId={COMPANY} />);
+  const select = host.querySelector('[data-testid="map-channel-select"]');
+  expect(select.value).toBe("trendyol");
+
+  const buttons = [...host.querySelectorAll('button[data-testid^="unmapped-"]')];
+  const manualBtn = buttons.find((node) => node.textContent.includes("M-1"));
+  if (manualBtn) {
+    await act(async () => { manualBtn.click(); });
+    const shown = host.querySelector('[data-testid="map-channel-select"]').value;
+    expect(optionValues()).toContain(shown);
+    await act(async () => {
+      host.querySelector('[data-testid="map-save-btn"]').click();
+    });
+    expect(axios.post.mock.calls.at(-1)[1].channel).toBe(shown);
+  } else {
+    expect(host.textContent).not.toContain("M-1");
+  }
+
+  const hb = [...host.querySelectorAll('button[data-testid^="unmapped-"]')].find((node) => node.textContent.includes("HB-2"));
+  expect(hb).toBeTruthy();
+  await act(async () => { hb.click(); });
+  expect(host.querySelector('[data-testid="map-channel-select"]').value).toBe("hepsiburada");
+
+  await act(async () => {
+    host.querySelector('[data-testid="map-save-btn"]').click();
+  });
+  const posted = axios.post.mock.calls.at(-1)[1];
+  expect(posted.company_id).toBe(COMPANY);
+  expect(posted.channel).toBe("hepsiburada");
+  expect(posted.channel).toBe(host.querySelector('[data-testid="map-channel-select"]').value);
+});
+
 test("prop ile verilen entegrasyonlar değişince seçenekler güncellenir", async () => {
   routeGet({
     integrations: [{ channel: "amazon", channel_name: "Amazon", is_active: true }],
