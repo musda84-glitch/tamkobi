@@ -300,9 +300,10 @@ test("hesap seçiliyken Hesap sütunu gizlenir ve İşlem eşleştirme düğmele
   expect(classTokens(wrap)).not.toContain("md:overflow-x-auto");
   expect(wrap.className).not.toContain("md:block overflow-x-auto");
 
-  const name = host.querySelector('[data-testid="bank-card-acc_bank"] .line-clamp-2');
+  const name = host.querySelector('[data-testid="bank-card-acc_bank"] [title="Kuveyt Türk · Vadesiz TL Uzun Hesap Adı"]');
   expect(name).toBeTruthy();
-  expect(name.getAttribute("title")).toBe("Kuveyt Türk · Vadesiz TL Uzun Hesap Adı");
+  expect(name.className).toContain("truncate");
+  expect(name.className).not.toContain("line-clamp-2");
   expect(host.querySelector('[data-testid="tx-row-tx_open"] [data-testid="tx-match-btn-tx_open"]')).toBeTruthy();
 });
 

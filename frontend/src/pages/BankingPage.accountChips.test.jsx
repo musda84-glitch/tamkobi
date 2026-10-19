@@ -335,6 +335,9 @@ test("kart ızgarası eşit sütun, maske kesilmez, kasa ve POS ikonludur", asyn
   expect(mask.className).not.toMatch(/truncate/);
   expect(mask.className).toContain("shrink-0");
   expect(mask.textContent).toContain("· …1326");
+  const accountName = [...card.querySelectorAll("span")].find((node) => node.getAttribute("title") && node.textContent.includes("Vadesiz"));
+  expect(accountName.className).toContain("truncate");
+  expect(accountName.className).not.toContain("line-clamp-2");
   expect(card.textContent).not.toMatch(/TR\d{10,}/);
 
   ["acc_cash", "acc_pos"].forEach((id) => {
@@ -347,11 +350,80 @@ test("kart ızgarası eşit sütun, maske kesilmez, kasa ve POS ikonludur", asyn
   expect(menu).toBeTruthy();
   expect(menu.tagName).toBe("BUTTON");
   expect(menu.getAttribute("tabindex")).not.toBe("-1");
-  expect(card.innerHTML).toContain("group-hover:opacity-100");
-  expect(card.innerHTML).toContain("group-focus-within:opacity-100");
-  expect(card.innerHTML).toContain("[@media(hover:none)]:opacity-100");
+  expect(menu.className).toContain("group-hover:opacity-100");
+  expect(menu.className).toContain("group-focus-within:opacity-100");
+  expect(menu.className).toContain("[@media(hover:none)]:opacity-100");
+  expect(host.querySelector('[data-testid="account-balance-acc_bank"]').className).toContain("pr-6");
   await act(async () => { menu.focus(); });
   expect(document.activeElement).toBe(menu);
+});
+
+function absoluteCorner(node) {
+  let el = node;
+  while (el) {
+    const cls = typeof el.className === "string" ? el.className : "";
+    if (cls.includes("absolute") && cls.includes("top-0") && cls.includes("right-0")) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+test("müşteri kartı havuzu aksiyonları bakiyenin altında ayrı satırdadır", async () => {
+  await renderAccounts([{
+    id: "acc_pool",
+    type: "credit_card",
+    card_owner: "customer",
+    is_customer_card_pool: true,
+    bank_name: "Müşteri Kartları",
+    account_name: "Havuz",
+    current_balance: 50,
+  }], "Havuz");
+
+  const card = host.querySelector('[data-testid="bank-card-acc_pool"]');
+  const balance = host.querySelector('[data-testid="pool-balance-acc_pool"]');
+  const stmt = host.querySelector('[data-testid="card-stmt-btn-acc_pool"]');
+  const edit = host.querySelector('[data-testid="edit-account-acc_pool"]');
+  const remove = host.querySelector('[data-testid="delete-account-acc_pool"]');
+  expect(stmt?.textContent).toContain("Ekstre Aktar (AI)");
+  expect(balance.contains(stmt)).toBe(false);
+  expect(balance.contains(edit)).toBe(false);
+  expect(balance.contains(remove)).toBe(false);
+  expect(absoluteCorner(stmt)).toBeNull();
+  expect(absoluteCorner(edit)).toBeNull();
+  expect(absoluteCorner(remove)).toBeNull();
+  expect(balance.className).not.toContain("pr-6");
+  const row = stmt.parentElement;
+  expect(row.className).toContain("flex");
+  expect(row.className).toContain("justify-end");
+  expect(row.className).toContain("gap-1");
+  expect(row.className).toContain("mt-1");
+  expect(row.contains(edit)).toBe(true);
+  expect(row.contains(remove)).toBe(true);
+  expect(row.className).toContain("group-hover:opacity-100");
+  expect(row.className).toContain("group-focus-within:opacity-100");
+  expect(row.className).toContain("[@media(hover:none)]:opacity-100");
+
+  await act(async () => { stmt.click(); });
+  await flush(2);
+  expect(host.querySelector('[data-testid="stmt-import-open"]').textContent).toBe("acc_pool");
+  expect(host.querySelector('[data-testid="bank-account-detail-header"]')).toBeNull();
+  expect(card.className).not.toContain("border-emerald-500");
+
+  await act(async () => { edit.click(); });
+  await flush(2);
+  expect(host.querySelector('[data-testid="add-account-modal"]').textContent).toContain("Hesabı Düzelt");
+  expect(host.querySelector('[data-testid="customer-card-pool-hint"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="bank-account-detail-header"]')).toBeNull();
+  const cancel = [...host.querySelector('[data-testid="add-account-modal"]').querySelectorAll("button")]
+    .find((btn) => btn.textContent.trim() === "İptal");
+  await act(async () => { cancel.click(); });
+  await flush(2);
+
+  await act(async () => { remove.click(); });
+  await flush(1);
+  expect(confirmSpy).toHaveBeenCalled();
+  expect(host.querySelector('[data-testid="bank-account-detail-header"]')).toBeNull();
+  expect(host.querySelector('[data-testid="bank-card-acc_pool"]').className).not.toContain("border-emerald-500");
 });
 
 test("logo yüklenemezse monogram görünür, negatif bakiye kırmızıdır", async () => {

@@ -220,15 +220,16 @@ function AccountChip({
           onSelect(accId);
         }
       }}
-      className={`group relative flex h-full min-w-0 w-full items-start gap-2 rounded-xl border bg-white px-2.5 py-2 text-left transition [container-type:inline-size] ${selected ? "border-emerald-500 ring-2 ring-emerald-100" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"} ${menuOpen ? "z-20" : ""}`}
+      className={`group relative flex flex-col h-full min-w-0 w-full rounded-xl border bg-white px-2.5 py-2 text-left transition [container-type:inline-size] ${selected ? "border-emerald-500 ring-2 ring-emerald-100" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"} ${menuOpen ? "z-20" : ""}`}
       data-testid={`bank-card-${accId}`}
       title={masked ? `${label} · ${accountTypeLabel(acc.type)} · ${masked}` : label}
     >
+      <div className="flex min-w-0 items-start gap-2">
       <BankLogoBadge acc={acc} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[11px] font-semibold text-slate-500">{bank}</div>
         <div className="flex items-baseline gap-1 min-w-0">
-          <span className="min-w-0 flex-1 truncate line-clamp-2 text-xs font-bold text-slate-900" title={label}>{name}</span>
+          <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-900" title={label}>{name}</span>
           {masked ? (
             <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-slate-500">· {masked}</span>
           ) : null}
@@ -268,13 +269,13 @@ function AccountChip({
       </div>
       <div className="relative shrink-0 pl-1 text-right">
         <div
-          className={`pr-6 text-[12px] font-bold tabular-nums whitespace-nowrap ${balanceNegative ? "text-rose-600" : "text-slate-900"}`}
+          className={`${showMenu ? "pr-6" : ""} text-[12px] font-bold tabular-nums whitespace-nowrap ${balanceNegative ? "text-rose-600" : "text-slate-900"}`}
           data-testid={acc.is_customer_card_pool ? `pool-balance-${accId}` : `account-balance-${accId}`}
         >
           {money(acc.is_customer_card_pool ? 0 : acc.current_balance)} ₺
         </div>
         {showUnmatched && (
-          <div className="mt-1 pr-6">
+          <div className={`mt-1 ${showMenu ? "pr-6" : ""}`}>
             <span className="inline-flex text-[10px] font-semibold text-amber-800 bg-orange-50 border border-orange-200 rounded-full px-1.5 py-0.5 whitespace-nowrap" data-testid={`account-unmatched-${accId}`}>
               {unmatchedLabel} eşleşmemiş
             </span>
@@ -283,14 +284,14 @@ function AccountChip({
         {isCard && acc.card_limit ? (
           <span className="sr-only">{`Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺`}{acc.last_statement?.due_date ? ` · Son ödeme ${fmtDate(acc.last_statement.due_date)}` : ""}</span>
         ) : null}
-        <div className={`absolute top-0 right-0 ${menuReveal(menuOpen)}`}>
-          {showMenu ? (
+        {showMenu && (
+          <div className={`absolute top-0 right-0 ${menuReveal(menuOpen)}`}>
             <span className="inline-flex shrink-0" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
               <div className="relative" data-testid={`account-card-menu-wrap-${accId}`}>
                 <button
                   type="button"
                   onClick={() => onToggleMenu(accId)}
-                  className="p-1 rounded-full text-slate-400 hover:text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+                  className={`p-1 rounded-full text-slate-400 hover:text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 ${menuReveal(menuOpen)}`}
                   title="Hesap menüsü"
                   aria-label="Hesap menüsü"
                   aria-expanded={menuOpen}
@@ -334,21 +335,27 @@ function AccountChip({
                 )}
               </div>
             </span>
-          ) : (
-            <span className="inline-flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-              {isCard && (
-                <CardStatementButton acc={acc} onStatement={onStatement} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" />
-              )}
-              <EditAccountButton acc={acc} onEdit={onEdit} className="p-1 rounded-full text-slate-400 hover:text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">
-                <Pencil className="w-3.5 h-3.5" />
-              </EditAccountButton>
-              <DeleteAccountButton acc={acc} onDelete={onDelete} className="p-1 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">
-                <Trash2 className="w-3.5 h-3.5" />
-              </DeleteAccountButton>
-            </span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
+      </div>
+      {!showMenu && (
+        <div
+          className={`mt-1 flex justify-end gap-1 ${menuReveal(menuOpen)}`}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {isCard && (
+            <CardStatementButton acc={acc} onStatement={onStatement} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" />
+          )}
+          <EditAccountButton acc={acc} onEdit={onEdit} className="p-1 rounded-full text-slate-400 hover:text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">
+            <Pencil className="w-3.5 h-3.5" />
+          </EditAccountButton>
+          <DeleteAccountButton acc={acc} onDelete={onDelete} className="p-1 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300">
+            <Trash2 className="w-3.5 h-3.5" />
+          </DeleteAccountButton>
+        </div>
+      )}
     </div>
   );
 }
