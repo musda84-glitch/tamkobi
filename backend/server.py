@@ -25696,6 +25696,8 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = None, user: dict 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 company_audit.init(db, get_current_user)
+import tenant_db
+tenant_db.init(db, get_current_user)
 pos_cashier.init(db, get_current_user, {"do_return": _pos_do_return, "do_cancel_sale": _pos_do_cancel_sale})
 desktop_release.init(get_current_user)
 saas.init(db, get_current_user)

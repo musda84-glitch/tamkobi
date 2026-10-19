@@ -895,6 +895,79 @@ COLLECTIONS = {
         "keys": ("_id", "collection", "company_id", "doc_id", "deleted_at"),
         "refs": (),
     },
+    # --- Kodda kullanılan, kataloğa sonradan giren koleksiyonlar ---
+    "cheques": {
+        "scope": SCOPE_TENANT,
+        "description": "Alınan ve verilen çek / senet portföyü.",
+        "keys": ("_id", "company_id", "number", "instrument", "direction", "status", "contact_id", "amount", "due_date", "serial_no"),
+        "refs": ("companies._id", "contacts._id"),
+    },
+    "company_events": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket değişiklik kanalı (SSE). Yük yalnız tür ve id taşır.",
+        "keys": ("_id", "company_id", "type", "id", "created_at"),
+        "refs": ("companies._id",),
+    },
+    "leave_year_archives": {
+        "scope": SCOPE_TENANT,
+        "description": "Kapanan yıllık izin dönemi arşivi.",
+        "keys": ("_id", "company_id", "employee_id", "year", "annual", "used", "remaining", "carry_over", "archived_at"),
+        "refs": ("companies._id", "employees._id"),
+    },
+    "personnel_movements": {
+        "scope": SCOPE_TENANT,
+        "description": "Personel ödeme satırları (maaş, avans, prim, masraf).",
+        "keys": ("_id", "company_id", "employee_id", "period", "kind", "amount", "status", "receipt_id", "date"),
+        "refs": ("companies._id", "employees._id", "personnel_receipts._id"),
+    },
+    "personnel_receipts": {
+        "scope": SCOPE_TENANT,
+        "description": "Personel ödeme fişi: satır toplamı ve kalan.",
+        "keys": ("_id", "company_id", "employee_id", "period", "date", "lines", "total", "status"),
+        "refs": ("companies._id", "employees._id"),
+    },
+    "work_order_trash_requests": {
+        "scope": SCOPE_TENANT,
+        "description": "Atölye iş emri silme talebi. Yönetici onayına kadar bekler.",
+        "keys": ("_id", "company_id", "work_order_id", "order_id", "status", "requested_by", "reason", "requested_at"),
+        "refs": ("companies._id", "work_orders._id", "production_orders._id"),
+    },
+    "assigned_tasks": {
+        "scope": SCOPE_TENANT,
+        "description": "Personel görevinin çöp / geri yükleme kopyası. company_id personelin şirketinden gelir; asıl görev employees.office_tasks veya projects.tasks içindedir. Kiracı kaydıdır.",
+        "keys": ("_id", "company_id", "employee_id", "source", "project_id", "title", "task", "status"),
+        "refs": ("companies._id", "employees._id", "projects._id"),
+    },
+    "idempotency_keys": {
+        "scope": SCOPE_TENANT,
+        "description": "HTTP Idempotency-Key kaydı. Belge ve benzersiz indeks company_id + anahtar çiftidir; aynı anahtar başka şirkete ait değildir. Kiracı kaydıdır.",
+        "keys": ("_id", "company_id", "key", "endpoint", "status", "response", "created_at"),
+        "refs": ("companies._id",),
+    },
+    "platform_mail_logs": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Platform SMTP gönderim günlüğü. company_id varsa yalnız referanstır; kutu ve sahip YNT'dir.",
+        "keys": ("_id", "mailbox_id", "from_email", "to", "subject", "status", "error", "context", "company_id", "created_at"),
+        "refs": ("platform_mailboxes._id", "companies._id"),
+    },
+    "support_tickets": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Müşteri destek talepleri. company_id hangi firmayı ilgilendirdiğini gösterir; kayıt YNT destek masasına aittir.",
+        "keys": ("_id", "number", "company_id", "subject", "category", "priority", "status", "messages", "created_by_id"),
+        "refs": ("companies._id", "users._id"),
+    },
+    "support_sessions": {
+        "scope": SCOPE_PLATFORM,
+        "description": "YNT destek personelinin firmaya geçici giriş oturumu. company_id hedef firmadır; oturumun sahibi platformdur.",
+        "keys": ("_id", "company_id", "by_email", "target_user_email", "started_at", "expires_at", "status"),
+        "refs": ("companies._id",),
+    },
+    "deletion_confirmations": {
+        "scope": SCOPE_PLATFORM,
+        "description": "YNT'nin açtığı veri silme / şirket sıfırlama onay talebi. company_id hedef firmadır; talebi platform oluşturur.",
+        "keys": ("_id", "company_id", "kind", "subject", "status", "decision", "created_by", "created_at"),
+        "refs": ("companies._id",),
+    },
 }
 
 COLLECTION_NAMES = tuple(sorted(COLLECTIONS))
