@@ -166,6 +166,50 @@ def _stock_rows(html: str):
     return re.findall(r'<tr class="tk-stock-row">.*?</tr>', html, flags=re.S)
 
 
+def _enable_morning_email(db, company_id="c1", *, email=True, cap=None, tenant_email=None):
+    """Platform tercihi: Sabah özeti e-postası. Varsayılan kapalı olduğu için kuyruk testleri açar."""
+    doc = {
+        "_id": f"cnp_{company_id}",
+        "company_id": company_id,
+        "events": {
+            "morning_summary": {"inapp": True, "email": email, "sms": False, "digest": "instant"},
+        },
+    }
+    if cap is not None:
+        doc["daily_email_cap"] = cap
+    prefs = db.company_notify_prefs.docs
+    if isinstance(prefs, dict):
+        prefs[doc["_id"]] = doc
+    else:
+        prefs.append(doc)
+    if tenant_email is None:
+        return
+    tenant = {
+        "_id": f"cnt_{company_id}",
+        "company_id": company_id,
+        "events": {"morning_summary": {"inapp": True, "email": tenant_email}},
+    }
+    stored = db.company_notify_tenant.docs
+    if isinstance(stored, dict):
+        stored[tenant["_id"]] = tenant
+    else:
+        stored.append(tenant)
+
+
+def _summary_settings(company_id="c1", **extra):
+    doc = {
+        "_id": f"ms_{company_id}",
+        "company_id": company_id,
+        "enabled": True,
+        "time": "08:00",
+        "emails": ["a@firma.test"],
+        "whatsapp_numbers": [],
+        "include": {"orders": True, "low_stock": True, "shipments": True, "receivables": True},
+    }
+    doc.update(extra)
+    return doc
+
+
 @pytest.fixture(autouse=True)
 def _restore_bindings():
     saved_deps = dict(pricing._deps)
@@ -400,6 +444,7 @@ def test_send_summary_queues_one_row_per_day_and_skips_smtp():
         wa_calls.append(payload)
         return {"simulated": True}
 
+    _enable_morning_email(db)
     mail = AsyncMock(side_effect=AssertionError("mail account"))
     smtp = AsyncMock(side_effect=AssertionError("smtp"))
     pricing.init(db, {"wa_send": wa_send, "mail_account": mail})
@@ -434,7 +479,8 @@ def test_send_summary_queues_one_row_per_day_and_skips_smtp():
     assert "3.0" not in scheduled["html"]
     manual_row = next(doc for doc in rows if ":m:" in doc["_id"])
     assert manual_row["html"] and manual_row["text"]
-    assert len(wa_calls) == 3
+    assert len(wa_calls) == 2
+    assert second["result"]["whatsapp"] == {"skipped": "already_sent_today"}
     message = wa_calls[0]["message"]
     assert "☀️" in message and "🛒" in message and "📦" in message and "⚠️" in message
     assert "5.208,33 ₺" in message
@@ -448,6 +494,7 @@ def test_send_summary_queues_one_row_per_day_and_skips_smtp():
 def test_flush_morning_summary_sends_html_and_retries():
     db = _db()
     event_notify.init(db, {}, get_current_user=AsyncMock())
+    _enable_morning_email(db)
     send = AsyncMock(side_effect=_ok_send)
 
     async def _ok():
@@ -463,7 +510,7 @@ def test_flush_morning_summary_sends_html_and_retries():
             await event_notify.flush_notify_outbox()
             return queued
 
-    assert _run(_ok()) is True
+    assert _run(_ok()) == "queued"
     assert send.await_count == 1
     call = send.await_args
     assert call.args[0] == ["ops@firma.test"]
@@ -506,11 +553,7 @@ def test_flush_morning_summary_sends_html_and_retries():
 def test_flush_defers_when_email_cap_is_zero():
     db = _db()
     event_notify.init(db, {}, get_current_user=AsyncMock())
-    db.company_notify_prefs.docs["cnp_c1"] = {
-        "_id": "cnp_c1",
-        "company_id": "c1",
-        "daily_email_cap": 0,
-    }
+    _enable_morning_email(db, cap=0)
     send = AsyncMock(side_effect=_ok_send)
 
     async def _go():
@@ -530,3 +573,263 @@ def test_flush_defers_when_email_cap_is_zero():
     row = next(iter(db.notify_outbox.docs.values()))
     assert row["status"] == "deferred"
     assert row.get("next_try_at")
+
+
+def _bind_summary(db):
+    pricing.init(db, {"wa_send": AsyncMock(return_value={"simulated": True})})
+    event_notify.init(db, {}, get_current_user=AsyncMock())
+    db.companies.docs.append({"_id": "c1", "name": "Firma A"})
+    db.morning_summary_settings.docs.append(_summary_settings())
+
+
+def test_morning_summary_defaults_keep_email_off():
+    assert "morning_summary" in event_notify.NEW_EVENTS
+    assert event_notify.EVENT_GROUPS["morning_summary"] == "sales_invoice"
+    assert event_notify.EVENT_LABELS["morning_summary"] == "Sabah özeti"
+    prefs = event_notify.default_prefs("c1")
+    assert prefs["events"]["morning_summary"]["email"] is False
+    assert prefs["events"]["morning_summary"]["inapp"] is True
+    assert event_notify.EVENT_DEFAULT_CHANNEL["morning_summary"] == {
+        "inapp": True, "email": False, "sms": False, "digest": "instant",
+    }
+
+
+def test_send_summary_default_prefs_skips_queue_and_smtp():
+    db = _Mem()
+    _bind_summary(db)
+    send = AsyncMock(side_effect=AssertionError("smtp"))
+
+    async def _go():
+        with patch.object(event_notify.mail_service, "send_mail", send), \
+             patch.object(comm_service, "smtp_send", send):
+            return await pricing.send_summary("c1", manual=False)
+
+    result = _run(_go())
+    send.assert_not_called()
+    assert db.notify_outbox.docs == []
+    assert result["result"]["email"] == {
+        "ok": False,
+        "disabled": True,
+        "error": "Sabah özeti e-postası yönetim panelinde (ynt) kapalı.",
+    }
+
+
+def test_send_summary_tenant_email_off_skips_queue():
+    db = _Mem()
+    _bind_summary(db)
+    _enable_morning_email(db, email=True, tenant_email=False)
+    send = AsyncMock(side_effect=AssertionError("smtp"))
+
+    async def _go():
+        with patch.object(event_notify.mail_service, "send_mail", send):
+            return await pricing.send_summary("c1", manual=False)
+
+    result = _run(_go())
+    send.assert_not_called()
+    assert db.notify_outbox.docs == []
+    assert result["result"]["email"]["disabled"] is True
+    assert result["result"]["email"]["ok"] is False
+
+
+def test_open_platform_and_tenant_queue_one_scheduled_row():
+    db = _Mem()
+    _bind_summary(db)
+    _enable_morning_email(db, email=True, tenant_email=True)
+    day = datetime.now(pricing.TR_TZ).strftime("%Y-%m-%d")
+
+    async def _go():
+        first = await pricing.send_summary("c1", manual=False)
+        second = await pricing.send_summary("c1", manual=False)
+        return first, second
+
+    first, second = _run(_go())
+    rows = [doc for doc in db.notify_outbox.docs if doc.get("event") == "morning_summary"]
+    assert len(rows) == 1
+    assert rows[0]["_id"] == f"out:c1:morning_summary:{day}:s"
+    assert first["result"]["email"]["ok"] is True
+    assert second["result"]["email"] == {"ok": True, "queued": True, "to": ["a@firma.test"]}
+
+
+def test_flush_skips_queued_row_when_ynt_closes_email():
+    db = _db()
+    event_notify.init(db, {}, get_current_user=AsyncMock())
+    _enable_morning_email(db, email=True)
+    send = AsyncMock(side_effect=_ok_send)
+
+    async def _go():
+        with _mail_patch(send):
+            queued = await event_notify.enqueue_morning_summary_email(
+                "c1",
+                emails=["ops@firma.test"],
+                subject="Sabah Özeti",
+                html="<p>bekleyen</p>",
+                text="bekleyen",
+                day="2026-10-18",
+            )
+            db.company_notify_prefs.docs["cnp_c1"]["events"]["morning_summary"]["email"] = False
+            await event_notify.flush_notify_outbox()
+            return queued
+
+    assert _run(_go()) == "queued"
+    send.assert_not_called()
+    assert len(db.notify_outbox.docs) == 1
+    row = next(iter(db.notify_outbox.docs.values()))
+    assert row["status"] == "skipped"
+    assert row["html"] == "<p>bekleyen</p>"
+
+
+def test_scheduled_queue_failure_does_not_stamp_last_sent_day():
+    db = _Mem()
+    _bind_summary(db)
+    db.morning_summary_settings.docs[0]["last_sent_day"] = "2000-01-01"
+    db.morning_summary_settings.docs[0]["whatsapp_numbers"] = ["5551112233"]
+    _enable_morning_email(db, email=True)
+    wa = AsyncMock(return_value={"simulated": True})
+    pricing.init(db, {"wa_send": wa})
+    day = datetime.now(pricing.TR_TZ).strftime("%Y-%m-%d")
+    original = db.notify_outbox.insert_one
+
+    async def boom(_doc):
+        raise RuntimeError("db down")
+
+    async def _go():
+        db.notify_outbox.insert_one = boom
+        failed = await pricing.send_summary("c1", manual=False)
+        after_fail = await db.morning_summary_settings.find_one({"company_id": "c1"})
+        pending_after_fail = list(db.notify_outbox.docs)
+        db.notify_outbox.insert_one = original
+        queued = await pricing.send_summary("c1", manual=False)
+        after_ok = await db.morning_summary_settings.find_one({"company_id": "c1"})
+        db.morning_summary_settings.docs[0]["last_sent_day"] = "2000-01-01"
+        db.notify_outbox.insert_one = boom
+        manual = await pricing.send_summary("c1", manual=True)
+        after_manual = await db.morning_summary_settings.find_one({"company_id": "c1"})
+        return failed, after_fail, pending_after_fail, queued, after_ok, manual, after_manual
+
+    failed, after_fail, pending_after_fail, queued, after_ok, manual, after_manual = _run(_go())
+    assert failed["result"]["email"] == {"ok": False, "error": "Sabah özeti kuyruğa yazılamadı."}
+    assert failed["result"]["whatsapp"][0]["ok"] is True
+    assert failed["result"]["whatsapp"][0]["to"] == "5551112233"
+    assert after_fail.get("last_sent_day") == "2000-01-01"
+    assert pending_after_fail == []
+    assert queued["result"]["email"] == {"ok": True, "queued": True, "to": ["a@firma.test"]}
+    assert after_ok.get("last_sent_day") == day
+    rows = [doc for doc in db.notify_outbox.docs if doc.get("event") == "morning_summary"]
+    assert len(rows) == 1
+    assert rows[0]["_id"] == f"out:c1:morning_summary:{day}:s"
+    assert manual["result"]["email"]["ok"] is False
+    assert after_manual.get("last_sent_day") == day
+
+
+def test_scheduled_email_retries_do_not_repeat_whatsapp_or_logs():
+    db = _Mem()
+    _bind_summary(db)
+    db.morning_summary_settings.docs[0]["whatsapp_numbers"] = ["5551112233"]
+    _enable_morning_email(db, email=True)
+    wa = AsyncMock(return_value={"simulated": True})
+    pricing.init(db, {"wa_send": wa})
+    day = datetime.now(pricing.TR_TZ).strftime("%Y-%m-%d")
+    original = db.notify_outbox.insert_one
+
+    async def boom(_doc):
+        raise RuntimeError("db down")
+
+    async def _go():
+        db.notify_outbox.insert_one = boom
+        failed = []
+        for _ in range(3):
+            failed.append(await pricing.send_summary("c1", manual=False))
+        after_fails = await db.morning_summary_settings.find_one({"company_id": "c1"})
+        logs_mid = list(db.morning_summary_logs.docs)
+        pending = list(db.notify_outbox.docs)
+        db.notify_outbox.insert_one = original
+        queued = await pricing.send_summary("c1", manual=False)
+        after_ok = await db.morning_summary_settings.find_one({"company_id": "c1"})
+        return failed, after_fails, logs_mid, pending, queued, after_ok
+
+    failed, after_fails, logs_mid, pending, queued, after_ok = _run(_go())
+    assert wa.await_count == 1
+    assert failed[0]["result"]["whatsapp"][0]["ok"] is True
+    assert failed[1]["result"]["whatsapp"] == {"skipped": "already_sent_today"}
+    assert failed[2]["result"]["whatsapp"] == {"skipped": "already_sent_today"}
+    assert after_fails.get("last_sent_day") != day
+    assert after_fails.get("whatsapp_sent_day") == day
+    assert after_fails.get("email_retry_count") == 3
+    assert pending == []
+    assert len(logs_mid) == 1
+    assert queued["result"]["email"] == {"ok": True, "queued": True, "to": ["a@firma.test"]}
+    assert queued["result"]["whatsapp"] == {"skipped": "already_sent_today"}
+    assert after_ok.get("last_sent_day") == day
+    assert after_ok.get("email_retry_count") == 0
+    assert wa.await_count == 1
+    rows = [doc for doc in db.notify_outbox.docs if doc.get("event") == "morning_summary"]
+    assert len(rows) == 1
+    assert rows[0]["_id"] == f"out:c1:morning_summary:{day}:s"
+    assert len(db.morning_summary_logs.docs) == 2
+
+
+def test_scheduled_email_retry_stops_after_ten_failures():
+    db = _Mem()
+    _bind_summary(db)
+    db.morning_summary_settings.docs[0]["whatsapp_numbers"] = ["5551112233"]
+    _enable_morning_email(db, email=True)
+    wa = AsyncMock(return_value={"simulated": True})
+    pricing.init(db, {"wa_send": wa})
+    day = datetime.now(pricing.TR_TZ).strftime("%Y-%m-%d")
+    warnings = []
+
+    def _warn(msg, *args, **kwargs):
+        warnings.append((msg, args))
+
+    async def boom(_doc):
+        raise RuntimeError("db down")
+
+    async def _go():
+        db.notify_outbox.insert_one = boom
+        with patch.object(pricing.logger, "warning", _warn):
+            for _ in range(10):
+                await pricing.send_summary("c1", manual=False)
+            after_ten = await db.morning_summary_settings.find_one({"company_id": "c1"})
+            logs = list(db.morning_summary_logs.docs)
+            eleventh = await pricing.send_summary("c1", manual=False)
+            after_eleven = await db.morning_summary_settings.find_one({"company_id": "c1"})
+        return after_ten, logs, eleventh, after_eleven
+
+    after_ten, logs, eleventh, after_eleven = _run(_go())
+    assert wa.await_count == 1
+    assert db.notify_outbox.docs == []
+    assert after_ten.get("last_sent_day") == day
+    assert after_ten.get("email_retry_count") == 10
+    assert len(logs) == 2
+    assert logs[0]["manual"] is False and logs[1]["manual"] is False
+    assert any(args == ("c1", day, 10) for _msg, args in warnings)
+    assert eleventh["result"]["whatsapp"] == {"skipped": "already_sent_today"}
+    assert eleventh["result"]["email"]["ok"] is False
+    assert wa.await_count == 1
+    assert db.notify_outbox.docs == []
+    assert len(db.morning_summary_logs.docs) == 2
+    assert after_eleven.get("last_sent_day") == day
+    assert after_eleven.get("email_retry_count") == 10
+
+
+def test_manual_summary_sends_whatsapp_every_call():
+    db = _Mem()
+    _bind_summary(db)
+    day = datetime.now(pricing.TR_TZ).strftime("%Y-%m-%d")
+    db.morning_summary_settings.docs[0]["emails"] = []
+    db.morning_summary_settings.docs[0]["whatsapp_numbers"] = ["5551112233"]
+    db.morning_summary_settings.docs[0]["whatsapp_sent_day"] = day
+    wa = AsyncMock(return_value={"simulated": True})
+    pricing.init(db, {"wa_send": wa})
+
+    async def _go():
+        first = await pricing.send_summary("c1", manual=True)
+        second = await pricing.send_summary("c1", manual=True)
+        return first, second
+
+    first, second = _run(_go())
+    assert wa.await_count == 2
+    assert first["result"]["whatsapp"][0]["to"] == "5551112233"
+    assert second["result"]["whatsapp"][0]["to"] == "5551112233"
+    assert first["result"]["whatsapp"][0]["ok"] is True
+    assert second["result"]["whatsapp"][0]["ok"] is True

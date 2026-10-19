@@ -19,6 +19,8 @@ _current_user = None
 _deps: Dict[str, Any] = {}
 logger = logging.getLogger("TamKobiERP")
 TR_TZ = timezone(timedelta(hours=3))
+_REAL_DATETIME = datetime
+EMAIL_QUEUE_RETRY_LIMIT = 10
 
 DEFAULT_RULE = {"margin_pct": 30.0, "margin_base": "cost", "include_cargo": True, "include_service_fee": True, "rounding": "0.90", "min_price": 0.0, "max_price": 0.0, "list_price_markup_pct": 0.0}
 
@@ -228,12 +230,47 @@ async def preview_summary(company_id: Optional[str] = None, user: dict = Depends
     return await summary_preview_payload(cid)
 
 
+def _scheduled_email_retries(stored: dict, today: str) -> int:
+    """Bugünkü başarısız zamanlanmış e-posta denemesi. Gün değişince sıfırlanır."""
+    last = stored.get("last_sent") if isinstance(stored, dict) else None
+    if not last:
+        return 0
+    try:
+        ts = _REAL_DATETIME.fromisoformat(str(last).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return 0
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    if ts.astimezone(TR_TZ).strftime("%Y-%m-%d") != today:
+        return 0
+    try:
+        return max(0, int(stored.get("email_retry_count") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
     st = await summary_settings_payload(company_id)
+    stored = await _db.morning_summary_settings.find_one({"company_id": company_id}) or {}
+    today = datetime.now(TR_TZ).strftime("%Y-%m-%d")
+    prior_retries = 0 if manual else _scheduled_email_retries(stored, today)
+    if not manual and prior_retries >= EMAIL_QUEUE_RETRY_LIMIT:
+        return {
+            "status": "success",
+            "message": "Sabah özeti gönderildi.",
+            "result": {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "email": {"ok": False, "error": "Sabah özeti kuyruğa yazılamadı."},
+                "whatsapp": {"skipped": "already_sent_today"},
+            },
+            "text": "",
+        }
     s = await build_summary(company_id)
     comp = await _db.companies.find_one({"_id": company_id}) or {}
     text = render_text(s, comp.get("name") or "TamKobi")
     result: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "email": None, "whatsapp": None}
+    queue_failed = False
+    outcome = None
     if st["emails"]:
         try:
             import event_notify
@@ -245,7 +282,7 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
                 logo = await event_notify._company_logo_abs(raw_logo)
             html_body = morning_summary_email.render_summary_html(s, name, stock_link, logo_url_abs=logo)
             email_text = morning_summary_email.render_summary_text(s, name, stock_link)
-            queued = await event_notify.enqueue_morning_summary_email(
+            outcome = await event_notify.enqueue_morning_summary_email(
                 company_id,
                 emails=st["emails"],
                 subject=f"Sabah Özeti {s['date']} — {name}",
@@ -254,30 +291,64 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
                 day=datetime.now(TR_TZ).strftime("%Y-%m-%d"),
                 manual=manual,
             )
-            if not queued:
+            if outcome == "disabled":
+                result["email"] = {
+                    "ok": False,
+                    "disabled": True,
+                    "error": "Sabah özeti e-postası yönetim panelinde (ynt) kapalı.",
+                }
+            elif outcome in ("queued", "exists"):
+                result["email"] = {"ok": True, "queued": True, "to": list(st["emails"])}
+            else:
+                outcome = "failed"
+                queue_failed = not manual
                 raise RuntimeError("Sabah özeti kuyruğa yazılamadı.")
-            result["email"] = {"ok": True, "queued": True, "to": list(st["emails"])}
         except HTTPException as e:
             if getattr(e, "status_code", None) == 409:
                 logger.warning("mail needs_reauth company=%s context=morning_summary: %s", company_id, e.detail)
             result["email"] = {"ok": False, "error": e.detail}
         except Exception as e:  # noqa: BLE001
             result["email"] = {"ok": False, "error": str(e)[:160]}
+    sent_whatsapp = False
     if st["whatsapp_numbers"]:
-        wa = []
-        for n in st["whatsapp_numbers"]:
-            try:
-                r = await _deps["wa_send"]({"company_id": company_id, "to": n, "message": text})
-                wa.append({"to": n, "ok": True, "simulated": r.get("simulated") if isinstance(r, dict) else None})
-            except HTTPException as e:
-                wa.append({"to": n, "ok": False, "error": e.detail})
-            except Exception as e:  # noqa: BLE001
-                wa.append({"to": n, "ok": False, "error": str(e)[:160]})
-        result["whatsapp"] = wa
+        if not manual and str(stored.get("whatsapp_sent_day") or "") == today:
+            result["whatsapp"] = {"skipped": "already_sent_today"}
+        else:
+            wa = []
+            for n in st["whatsapp_numbers"]:
+                try:
+                    r = await _deps["wa_send"]({"company_id": company_id, "to": n, "message": text})
+                    wa.append({"to": n, "ok": True, "simulated": r.get("simulated") if isinstance(r, dict) else None})
+                except HTTPException as e:
+                    wa.append({"to": n, "ok": False, "error": e.detail})
+                except Exception as e:  # noqa: BLE001
+                    wa.append({"to": n, "ok": False, "error": str(e)[:160]})
+            result["whatsapp"] = wa
+            sent_whatsapp = not manual
     if not st["emails"] and not st["whatsapp_numbers"]:
         result["error"] = "Alıcı tanımlı değil (e-posta veya WhatsApp numarası ekleyin)."
-    await _db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": {"last_sent": result["at"], "last_result": result, "last_sent_day": datetime.now(TR_TZ).strftime("%Y-%m-%d")}}, upsert=True)
-    await _db.morning_summary_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "manual": manual, "text": text, **result})
+    sent_fields = {"last_sent": result["at"], "last_result": result}
+    if sent_whatsapp:
+        sent_fields["whatsapp_sent_day"] = today
+    if outcome in ("queued", "exists", "disabled"):
+        sent_fields["email_retry_count"] = 0
+    if queue_failed:
+        retry_count = prior_retries + 1
+        sent_fields["email_retry_count"] = retry_count
+        if retry_count >= EMAIL_QUEUE_RETRY_LIMIT:
+            sent_fields["last_sent_day"] = today
+            logger.warning(
+                "Sabah özeti e-postası kuyruğa yazılamadı company=%s day=%s deneme=%s",
+                company_id,
+                today,
+                retry_count,
+            )
+    else:
+        sent_fields["last_sent_day"] = today
+    await _db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": sent_fields}, upsert=True)
+    day_closed = (not queue_failed) or sent_fields.get("email_retry_count", 0) >= EMAIL_QUEUE_RETRY_LIMIT
+    if manual or prior_retries == 0 or day_closed:
+        await _db.morning_summary_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "manual": manual, "text": text, **result})
     return {"status": "success" if not result.get("error") else "error", "message": result.get("error") or "Sabah özeti gönderildi.", "result": result, "text": text}
 
 

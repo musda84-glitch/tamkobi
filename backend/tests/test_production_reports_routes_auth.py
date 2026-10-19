@@ -280,6 +280,14 @@ def _seed(db):
          "whatsapp_numbers": ["5559998877"], "include": include, "last_sent": "B-SECRET-SENT",
          "last_result": {"error": "B-SECRET"}, "last_sent_day": "2000-01-01"},
     ])
+    for cid in (COMP_A, COMP_B):
+        db.company_notify_prefs.docs.append({
+            "_id": f"cnp_{cid}",
+            "company_id": cid,
+            "events": {
+                "morning_summary": {"inapp": True, "email": True, "sms": False, "digest": "instant"},
+            },
+        })
     db.recipes.docs.extend([
         {
             "_id": "recA", "company_id": COMP_A, "name": "Reçete A", "target_quantity": 1, "unit": "Adet",
