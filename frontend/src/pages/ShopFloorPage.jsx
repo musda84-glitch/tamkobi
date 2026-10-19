@@ -49,6 +49,8 @@ export default function ShopFloorPage() {
   const [employees, setEmployees] = useState([]);
   const [stations, setStations] = useState([]);
   const [operator, setOperator] = useState("");
+  const [operatorPickerOpen, setOperatorPickerOpen] = useState(false);
+  const [pickedEmp, setPickedEmp] = useState(null);
   const [station, setStation] = useState(() => localStorage.getItem("nx_station") || "");
   const [groupSameStation, setGroupSameStation] = useState(() => localStorage.getItem("nx_group_same_station") === "1");
   const [groupBusy, setGroupBusy] = useState(false);
@@ -152,7 +154,40 @@ export default function ShopFloorPage() {
     if (!emp) return;
     setPendingEmp(emp); setPin(""); setUnlockErr("");
   };
-  const cancelUnlock = () => { setPendingEmp(null); setPin(""); setUnlockErr(""); };
+  const onOperatorPick = (name) => {
+    if (operator && name === operator) {
+      setOperatorPickerOpen(false);
+      setPickedEmp(null);
+      return;
+    }
+    if (!name) {
+      setPickedEmp(null);
+      setOperatorPickerOpen(false);
+      if (!operator) requestOperator("");
+      return;
+    }
+    const emp = employees.find((e) => e.full_name === name);
+    if (!emp) return;
+    setPickedEmp(emp);
+    requestOperator(name);
+  };
+  const openPinModal = () => {
+    if (!pickedEmp) return;
+    requestOperator(pickedEmp.full_name);
+  };
+  const logoutOperator = () => {
+    setOperator("");
+    setPendingEmp(null);
+    setPin("");
+    setUnlockErr("");
+    setPickedEmp(null);
+    setOperatorPickerOpen(false);
+  };
+  const cancelUnlock = () => {
+    setPendingEmp(null); setPin(""); setUnlockErr("");
+    setOperatorPickerOpen(false);
+    if (operator) setPickedEmp(null);
+  };
   const unlockOperator = async (e) => {
     e.preventDefault();
     if (!pendingEmp) return;
@@ -160,6 +195,7 @@ export default function ShopFloorPage() {
     try {
       const r = await axios.post(`${API_URL}/production/work-orders/shopfloor-unlock`, { company_id: companyId, employee_id: pendingEmp.id, password: pin });
       setOperator(r.data.operator_name); setPendingEmp(null); setPin("");
+      setPickedEmp(null); setOperatorPickerOpen(false);
       toast.success(`${r.data.operator_name} olarak giriş yapıldı.`);
     } catch (err) { const msg = err.response?.data?.detail || "Şifre doğrulanamadı."; setUnlockErr(msg); toast.error(msg); setPin(""); }
     finally { setUnlockBusy(false); }
@@ -583,8 +619,9 @@ export default function ShopFloorPage() {
       </div>
     </div>); };
 
+  const operatorSelectValue = pendingEmp ? pendingEmp.full_name : (operator || pickedEmp?.full_name || "");
   const operatorSelect = (
-    <select value={pendingEmp ? pendingEmp.full_name : operator} onChange={(e) => requestOperator(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[180px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
+    <select value={operatorSelectValue} onChange={(e) => onOperatorPick(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[220px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
   );
   const statClass = (on, tone) => (on ? tone : "border-slate-200 bg-white");
 
@@ -593,20 +630,52 @@ export default function ShopFloorPage() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          {operator ? operatorSelect : null}
+          {operator && !operatorPickerOpen ? (
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800" data-testid="shopfloor-operator-chip">
+              <User className="w-4 h-4 shrink-0" />
+              <span>{operator}</span>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={() => setOperatorPickerOpen(true)} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-change">değiştir</button>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={logoutOperator} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-logout">Çıkış</button>
+            </span>
+          ) : null}
+          {operator && operatorPickerOpen ? (
+            <div className="flex items-center gap-2">
+              {operatorSelect}
+              <button type="button" onClick={cancelUnlock} className="px-3 py-2.5 rounded-xl border-2 border-slate-300 bg-white font-semibold text-slate-700" data-testid="shopfloor-operator-change-cancel">Vazgeç</button>
+            </div>
+          ) : null}
           <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
           <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
           <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
         </div>
       </div>
       {!operator && (
-        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-4 sm:px-6 sm:py-5 space-y-2 shadow-sm" data-testid="shopfloor-no-operator">
-          <div className="flex items-center gap-2 text-amber-950">
-            <KeyRound className="w-5 h-5 text-amber-700" />
-            <h2 className="text-lg font-bold">Operatör seç ve PIN gir</h2>
+        <div className="flex flex-col gap-3 rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5" data-testid="shopfloor-no-operator">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white">
+              <User className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-amber-950">Operatör seç ve PIN gir</h2>
+              <p className="text-sm text-amber-800">Başla / Devam / Bitir operatör girişinden sonra açılır.</p>
+            </div>
           </div>
-          <p className="text-sm text-amber-800">Başla / Devam / Bitir operatör girişinden sonra açılır</p>
-          {operatorSelect}
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            {operatorSelect}
+            <button
+              type="button"
+              onClick={openPinModal}
+              disabled={!pickedEmp}
+              title={pickedEmp ? undefined : "Önce operatör seçin"}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 font-bold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-300 disabled:hover:bg-orange-300"
+              data-testid="shopfloor-pin-open"
+            >
+              <KeyRound className="h-4 w-4" />
+              PIN gir
+            </button>
+          </div>
         </div>
       )}
       {operator && !pauseAllowed && (
