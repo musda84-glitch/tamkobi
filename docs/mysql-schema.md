@@ -83,6 +83,14 @@ API başlangıcında yazılan indeksler:
 
 SQL foreign key **yoktur**. Çoğu belgede `doc.company_id` vardır. Kullanıcılar `company_ids[]` + `active_company_id` ile firmalara bağlanır. Sorgular uygulama katmanında `{"company_id": ...}` filtresi ile yapılır; MySQL satır düzeyinde RLS yoktur.
 
+Uygulama sınırı `backend/tenant_scope.py` ve `backend/tenant_db.py` katmanındadır. Bu katman henüz hiçbir rotaya bağlı değildir; mevcut API yanıtları değişmez.
+
+- `TenantDB` koleksiyonu `schema_catalog` kaydına göre seçer. `scope == "tenant"` olanlar `ScopedCollection` olur: okuma ve yazma filtresine `company_id` eklenir, insert şirketi yazar, başka şirketin kimliği `404` (`Kayıt bulunamadı.`) döner. Katalogda olmayan ad da aynı sarmalayıcıya düşer.
+- `users` üyeliği `company_ids` ile, `companies` belgesi `_id` ile okunur. Bu iki koleksiyonun yazması ham `db` üzerinden yapılır. Platform koleksiyonları ile token koleksiyonları (`password_resets`, `b2b_password_resets`, `push_receipts_pending`) süzülmeden geçer.
+- `unscoped(reason)` bilerek kapsam dışına çıkar ve `tenant_guard.escape` yazar (`reason`, `caller`, `kind`). `reason` boş olamaz. Loga filtre, belge, e-posta veya token konmaz.
+- `get_tenant_db` istek dependency'sidir; şirketi `resolve_company_id` seçer ve kapsamı yanıt sonunda bırakır. `for_company(cid, reason)` arka plan işidir (`kind=system`). `from_b2b_contact(contact)` B2B oturumudur (`kind=b2b`). Boş `company_id` ile kapsam kurulmaz.
+- Çalışma zamanı koruması (`check`, `TAMKOBI_TENANT_GUARD`) PR1b'de, statik tarama ve allowlist PR1c'de gelecek. Bu belgede şema DDL'i değişmez.
+
 ---
 
 ## 2. Canlı ortamda görülebilen ekler
@@ -211,11 +219,13 @@ Aşağıdaki listeler `schema_catalog.COLLECTIONS` ile aynıdır. Boş koleksiyo
 
 ### Personel ve üretim
 
-`employees`, `payrolls`, `leave_requests`, `bonus_payments`, `attendance`, `attendance_alerts`, `shift_plans`, `shift_templates`, `recipes`, `production_orders`, `work_orders`.
+`employees`, `payrolls`, `leave_requests`, `leave_year_archives`, `bonus_payments`, `attendance`, `attendance_alerts`, `shift_plans`, `shift_templates`, `personnel_movements`, `personnel_receipts`, `assigned_tasks`, `recipes`, `production_orders`, `work_orders`, `work_order_trash_requests`.
 
 ### Entegrasyon ve iletişim
 
-`integration_configs`, `marketplace_*`, `shopphp_push_logs`, `cargo_configs`, `cargo_shipments`, `cargo_auto_runs`, `sms_settings`, `sms_logs`, `mail_accounts`, `mail_logs`, `whatsapp_settings`, `whatsapp_logs`, `morning_summary_*`, `notifications`, `b2b_password_resets`, `b2b_product_aliases`, `pricing_rules`, `label_templates`.
+`integration_configs`, `marketplace_*`, `shopphp_push_logs`, `cargo_configs`, `cargo_shipments`, `cargo_auto_runs`, `sms_settings`, `sms_logs`, `mail_accounts`, `mail_logs`, `whatsapp_settings`, `whatsapp_logs`, `morning_summary_*`, `notifications`, `company_events`, `idempotency_keys`, `b2b_password_resets`, `b2b_product_aliases`, `pricing_rules`, `label_templates`.
+
+`cheques` çek / senet portföyüdür. Platform kaydı (company_id yalnız referans, sahip YNT): `platform_mail_logs`, `support_tickets`, `support_sessions`, `deletion_confirmations`.
 
 ### Dosya, çöp, migrasyon
 
