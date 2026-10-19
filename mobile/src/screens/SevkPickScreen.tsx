@@ -449,7 +449,7 @@ export function SevkPickScreen() {
       ) : null}
       {session ? (
         <PrimaryButton
-          title="Etiket bas"
+          title="Koli etiketi bas"
           icon="print"
           color={colors.primary}
           testID="sevk-ship-label"
@@ -458,7 +458,7 @@ export function SevkPickScreen() {
       ) : null}
       <LabelPrintSheet
         visible={shipPrint}
-        title="Etiket bas"
+        title="Koli etiketi bas"
         subtitle={session?.order_number || "Koli etiketi"}
         quantityLabel="Koli adedi"
         hint="Her koli için ayrı etiket basılır (sipariş, müşteri, adres, koli x/y, QR)."
