@@ -2,6 +2,7 @@ import { Alert, Platform } from "react-native";
 import { get } from "../api/client";
 import type { ApiClient } from "../api/client";
 import { tryPrintLabelEthernet } from "./ethernetPrinter";
+import { printProductLabel, resolveLabelPrinter } from "./labelPrinter";
 import { embedLabelHtmlImages } from "./labelMedia";
 import { htmlToPdfFile, printHtmlNative } from "./nativePrint";
 import { safePrintFilename } from "./orderPrint";
@@ -223,7 +224,45 @@ export async function printPickProductLabels(
   }
   if (!jobs.length) return { count: 0, ok: false };
 
-  // Ethernet / IP yazıcı yapılandırıldıysa tarayıcı diyaloğu olmadan TSPL gönder
+  // Yazıcılar ekranındaki IP ayarı (LABEL_PRINTER_KEY). Host varsa ürün etiketi TSPL gider;
+  // hata olursa sistem yazıcısına düşülmez.
+  if (opts?.client) {
+    const settings = await resolveLabelPrinter(
+      opts.client,
+      opts.companyId || companyObj?.id || companyObj?._id,
+    );
+    if (String(settings.host || "").trim()) {
+      const groups = new Map<string, { product: (typeof jobs)[number]["product"]; copies: number }>();
+      for (const job of jobs) {
+        const product = job.product;
+        const key = [
+          product.id || product._id || "",
+          product.sku || "",
+          product.barcode || "",
+          product.name || "",
+          String(product.sale_price ?? ""),
+        ].join("\u0001");
+        const group = groups.get(key);
+        if (group) group.copies += 1;
+        else groups.set(key, { product, copies: 1 });
+      }
+      for (const group of groups.values()) {
+        await printProductLabel({
+          settings,
+          copies: group.copies,
+          product: {
+            name: group.product.name,
+            sku: group.product.sku,
+            barcode: group.product.barcode || group.product.sku,
+            price: Number(group.product.sale_price) || null,
+          },
+        });
+      }
+      return { count: jobs.length, ok: true };
+    }
+  }
+
+  // Eski Ethernet anahtarı; host yoksa tarayıcı / PDF yolu aynı kalır.
   try {
     let ethOk = 0;
     for (const job of jobs) {

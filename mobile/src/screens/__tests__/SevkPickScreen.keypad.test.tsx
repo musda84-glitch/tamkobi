@@ -3,7 +3,12 @@ import React, { act } from "react";
 import { get, post } from "../../api/client";
 import { findByTestId, reactProps, removeTestNavigator, textOf } from "../../test/domSetup";
 import { colors } from "../../theme";
+import { printPickProductLabels } from "../../utils/pickLabelPrint";
 import { SevkPickScreen } from "../SevkPickScreen";
+
+jest.mock("../../utils/pickLabelPrint", () => ({
+  printPickProductLabels: jest.fn(async () => ({ count: 1, ok: true })),
+}));
 
 const { createRoot } = require("react-dom/client") as {
   createRoot: (container: unknown) => { render: (node: unknown) => void; unmount: () => void };
@@ -200,6 +205,8 @@ describe("SevkPickScreen keypad", () => {
 
   beforeEach(() => {
     allowEdit = true;
+    (printPickProductLabels as jest.Mock).mockClear();
+    (printPickProductLabels as jest.Mock).mockResolvedValue({ count: 1, ok: true });
     (get as unknown as jest.Mock).mockReset();
     (post as unknown as jest.Mock).mockReset();
     (get as unknown as jest.Mock).mockResolvedValue(session);
@@ -332,6 +339,31 @@ describe("SevkPickScreen keypad", () => {
       picked_qty: 5,
     }));
     expect(findByTestId(container, "sevk-label-0")).toBeTruthy();
+  });
+
+  it("names the box label and sends product labels through printPickProductLabels", async () => {
+    await show();
+    const ship = findByTestId(container, "sevk-ship-label");
+    expect(ship).toBeTruthy();
+    expect(ship.getAttribute("aria-label")).toBe("Koli etiketi bas");
+    expect(textOf(ship)).toBe("Koli etiketi bas");
+    expect(textOf(container)).toContain("Etiket yazdır");
+    expect(findByTestId(container, "sevk-print-labels")).toBeTruthy();
+
+    await pressId(container, "sevk-ship-label");
+    await flush();
+    expect(textOf(container)).toContain("Koli etiketi bas");
+    expect(findByTestId(container, "sevk-ship-sheet")).toBeTruthy();
+
+    await pressId(container, "sevk-print-labels");
+    await flush();
+    expect(printPickProductLabels).toHaveBeenCalledTimes(1);
+    expect(printPickProductLabels).toHaveBeenCalledWith(
+      session.items,
+      null,
+      "SIP-42",
+      expect.objectContaining({ client: mockAuth.client }),
+    );
   });
 
   it("hides the keypad and the button row when the user cannot edit", async () => {
