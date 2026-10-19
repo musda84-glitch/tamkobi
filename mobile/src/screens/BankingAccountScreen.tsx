@@ -113,7 +113,7 @@ function routeParam(value: string | string[] | undefined): string {
 }
 
 export function BankingAccountScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, activeCompany } = useAuth();
   const canEdit = can("/banking", "edit");
   const canExp = can("/expenses", "edit");
   const params = useLocalSearchParams<{ id?: string | string[]; name?: string | string[] }>();
@@ -356,7 +356,7 @@ export function BankingAccountScreen() {
   }
 
   const isCard = normalizeAccountType(acc.type) === "credit_card";
-  const brand = resolveBankBrand(acc);
+  const brand = resolveBankBrand(acc, activeCompany, client.baseUrl);
   const masked = accountMaskedRef(acc);
   const showSync = !!(acc.is_integrated && acc.connection_id && canEdit);
   const live = acc.is_integrated

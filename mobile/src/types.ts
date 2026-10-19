@@ -9,6 +9,8 @@ export type Company = {
   tax_number?: string;
   tax_office?: string;
   logo_url?: string | null;
+  /** IBAN banka kodunun son 4 hanesi → yüklenen logo. Örn. "00064" → "0064". */
+  bank_logos?: Record<string, string>;
   iban?: string;
   bank_name?: string;
   price_decimals?: number;

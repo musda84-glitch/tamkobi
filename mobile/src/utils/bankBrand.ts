@@ -1,4 +1,6 @@
-/** Türk banka / POS marka renkleri + monogram. Resmi logolar kopyalanmaz. */
+/** Türk banka / POS marka renkleri + monogram. Yüklenen PNG/JPG/WebP varsa o gösterilir. */
+
+import { fileUrl } from "../api/url";
 
 export type BankBrand = {
   key: string;
@@ -8,7 +10,12 @@ export type BankBrand = {
   bg: string;
   border: string;
   text: string;
+  logoUri?: string;
 };
+
+type BankLogoCompany = {
+  bank_logos?: Record<string, string | null | undefined> | null;
+} | null | undefined;
 
 const BRANDS: Record<string, BankBrand> = {
   kuveyt: { key: "kuveyt", label: "Kuveyt Türk", initials: "KT", solid: "#009640", bg: "#ECFDF3", border: "#86EFAC", text: "#14532D" },
@@ -113,6 +120,72 @@ export function ibanBankCode(iban?: string | null): string {
   return compact.slice(4, 9);
 }
 
+/** Backend bank_logos anahtarı: 5 haneli IBAN kodunun son 4 hanesi ("00064" → "0064"). */
+export function bankLogoKey(iban?: string | null): string {
+  const code = ibanBankCode(iban);
+  return code.length >= 4 ? code.slice(-4) : "";
+}
+
+function logoPathname(raw: string): string {
+  const value = raw.trim();
+  if (/^https?:/i.test(value)) {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return value.split(/[?#]/)[0];
+    }
+  }
+  return value.split(/[?#]/)[0];
+}
+
+function isSvgLogo(raw: string): boolean {
+  const value = raw.trim();
+  if (!value) return false;
+  if (/^data:image\/svg/i.test(value)) return true;
+  const path = logoPathname(value);
+  return /\.svg$/i.test(path) || /\/bank-logos\//i.test(path);
+}
+
+function isRasterLogo(raw: string): boolean {
+  const value = raw.trim();
+  if (!value || isSvgLogo(value)) return false;
+  const path = logoPathname(value);
+  if (/\.(png|jpe?g|webp)$/i.test(path)) return true;
+  return path.startsWith("/api/files/") || path.startsWith("api/files/") || path.includes("/api/files/");
+}
+
+function companyBankLogo(company: BankLogoCompany, iban?: string | null): string {
+  const key = bankLogoKey(iban);
+  if (!key) return "";
+  const logos = company?.bank_logos;
+  if (!logos || typeof logos !== "object") return "";
+  const value = logos[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function absoluteLogo(raw: string, baseUrl?: string | null): string {
+  const value = raw.trim();
+  if (!isRasterLogo(value)) return "";
+  if (!baseUrl) return value;
+  const absolute = fileUrl(baseUrl, value);
+  return absolute && !isSvgLogo(absolute) ? absolute : "";
+}
+
+function resolveLogoUri(
+  input: { logo_url?: string | null; iban?: string | null } | null | undefined,
+  company: BankLogoCompany,
+  baseUrl?: string | null,
+): string {
+  const override = typeof input?.logo_url === "string" ? input.logo_url.trim() : "";
+  if (isRasterLogo(override)) return absoluteLogo(override, baseUrl);
+  return absoluteLogo(companyBankLogo(company, input?.iban), baseUrl);
+}
+
+function withLogo(brand: BankBrand, logoUri: string): BankBrand {
+  if (!logoUri) return brand;
+  return { ...brand, logoUri };
+}
+
 function matchAlias(haystack: string): string | null {
   const h = ` ${fold(haystack)} `;
   for (const [alias, key] of ALIASES) {
@@ -133,11 +206,13 @@ export function resolveBankBrand(input: {
   account_name?: string | null;
   iban?: string | null;
   integration_provider?: string | null;
-} | null | undefined): BankBrand {
+  logo_url?: string | null;
+} | null | undefined, company?: BankLogoCompany, baseUrl?: string | null): BankBrand {
+  const logoUri = resolveLogoUri(input, company, baseUrl);
   const textKey = matchAlias([input?.bank_name, input?.account_name, input?.integration_provider].filter(Boolean).join(" "));
-  if (textKey && BRANDS[textKey]) return BRANDS[textKey];
+  if (textKey && BRANDS[textKey]) return withLogo(BRANDS[textKey], logoUri);
   const code = IBAN_CODES[ibanBankCode(input?.iban)];
-  if (code && BRANDS[code]) return BRANDS[code];
+  if (code && BRANDS[code]) return withLogo(BRANDS[code], logoUri);
   const other = BRANDS.other;
-  return { ...other, initials: fallbackInitials(input?.bank_name || input?.account_name) };
+  return withLogo({ ...other, initials: fallbackInitials(input?.bank_name || input?.account_name) }, logoUri);
 }
