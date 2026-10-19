@@ -1,10 +1,9 @@
-import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { Pressable, Text } from "react-native";
-import { del, get, post, put } from "../api/client";
+import { Text } from "react-native";
+import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Chip, confirmAction, n } from "../components/chips";
+import { Chip, n } from "../components/chips";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ExpenseScanButtons } from "../components/ExpenseScanButtons";
@@ -19,7 +18,6 @@ import {
   expensePayload,
   expenseProjectSelectGroups,
   paymentTargetGroups,
-  splitPaymentTarget,
   validateExpenseDraft,
   type BankAccount,
   type Expense,
@@ -28,8 +26,9 @@ import {
   type ExpenseProject,
   type Partner,
 } from "../utils/finance";
+import { fetchExpenseById } from "../utils/expenseActions";
 import { applyExpensePrefill, applyExpenseScan } from "../utils/expenseScan";
-import { fmtMoney, idOf, moneySuffix, todayIso } from "../utils/money";
+import { fmtMoney, moneySuffix, todayIso } from "../utils/money";
 import { asWorkList } from "../utils/workDocs";
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
@@ -60,7 +59,6 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [payAcc, setPayAcc] = useState("");
   const [loaded, setLoaded] = useState<Expense | null>(null);
 
   const set = <K extends keyof ExpenseDraft>(key: K, value: ExpenseDraft[K]) => setDraft((d) => ({ ...d, [key]: value }));
@@ -78,20 +76,11 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       setCategories(cats || []);
       setProjects(asWorkList<ExpenseProject>(prjs));
       if (expenseId) {
-        const list = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, q: expenseId });
-        const found = (list.expenses || []).find((e) => idOf(e) === expenseId)
-          || (list.expenses || [])[0];
-        // Prefer exact id match from unfiltered fetch if search by id fails
-        let exp = found && idOf(found) === expenseId ? found : null;
-        if (!exp) {
-          const all = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId });
-          exp = (all.expenses || []).find((e) => idOf(e) === expenseId) || null;
-        }
+        const exp = await fetchExpenseById(client, companyId, expenseId);
         if (!exp) { setError("Masraf bulunamadı."); return; }
         setLoaded(exp);
         setContactLabel(exp.contact_name || "");
         setDraft(draftFromExpense(exp, todayIso()));
-        setPayAcc(exp.account_id || "");
       } else if (prefill.account_id) {
         setDraft((d) => (d.account_id ? d : { ...d, account_id: String(prefill.account_id) }));
       }
@@ -135,41 +124,6 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
     } finally {
       setBusy(false);
     }
-  };
-
-  const payTarget = async () => {
-    if (!expenseId) return;
-    const target = splitPaymentTarget(payAcc);
-    if (!target.account_id && !target.partner_id) { setError("Ödeme için kasa/banka/ortak seçin."); return; }
-    setBusy(true);
-    try {
-      await post(client, `/expenses/${expenseId}/pay`, { account_id: target.account_id, partner_id: target.partner_id });
-      setMessage("Masraf ödendi.");
-      await load();
-      setError(null);
-    } catch (err) {
-      setError(apiErrorMessage(err, "Ödenemedi."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const unpay = () => {
-    if (!expenseId) return;
-    confirmAction("Ödemeyi geri al", "Kasa/banka bakiyesi düzeltilir.", () => {
-      post(client, `/expenses/${expenseId}/unpay`)
-        .then(() => { setMessage("Ödeme geri alındı."); load(); })
-        .catch((err) => setError(apiErrorMessage(err, "İşlem başarısız.")));
-    });
-  };
-
-  const remove = () => {
-    if (!expenseId) return;
-    confirmAction("Masrafı sil", `${loaded?.expense_number || "Bu masraf"} silinsin mi?`, () => {
-      del(client, `/expenses/${expenseId}`)
-        .then(() => router.back())
-        .catch((err) => setError(apiErrorMessage(err, "Silinemedi.")));
-    });
   };
 
   return (
@@ -286,29 +240,6 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         color={colors.danger}
         testID="exp-save"
       />
-      {!isNew && loaded?.payment_status !== "paid" && canEdit ? (
-        <Card>
-          <Text style={{ fontWeight: "800" }}>Öde</Text>
-          <GroupedSelect
-            label="Kasa / banka / kart / ortak"
-            testID="exp-pay-select-edit"
-            value={payAcc}
-            onChange={setPayAcc}
-            emptyLabel="Hesap seçin"
-            groups={paymentTargetGroups(accounts, partners)}
-          />
-          <PrimaryButton title="Masrafı öde" onPress={payTarget} loading={busy} color={colors.primary} testID="exp-pay" />
-        </Card>
-      ) : null}
-      {!isNew && loaded?.payment_status === "paid" && canEdit ? (
-        <PrimaryButton title="Ödemeyi geri al" onPress={unpay} color={colors.secondary} testID="exp-unpay" />
-      ) : null}
-      {!isNew && canEdit ? (
-        <Pressable onPress={remove} testID="exp-delete" style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>
-          <Ionicons name="trash-outline" size={18} color={colors.danger} />
-          <Text style={{ color: colors.danger, fontWeight: "800" }}>Masrafı sil</Text>
-        </Pressable>
-      ) : null}
     </Screen>
   );
 }

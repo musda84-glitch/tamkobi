@@ -1,7 +1,5 @@
-import { ExpenseFormScreen } from "@/screens/ExpenseFormScreen";
-import { useLocalSearchParams } from "expo-router";
+import { ExpenseDetailScreen } from "@/screens/ExpenseDetailScreen";
 
 export default function ExpenseDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  return <ExpenseFormScreen expenseId={id} />;
+  return <ExpenseDetailScreen />;
 }
