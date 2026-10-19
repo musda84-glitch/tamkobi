@@ -175,6 +175,14 @@ export default function ShopFloorPage() {
     if (!pickedEmp) return;
     requestOperator(pickedEmp.full_name);
   };
+  const logoutOperator = () => {
+    setOperator("");
+    setPendingEmp(null);
+    setPin("");
+    setUnlockErr("");
+    setPickedEmp(null);
+    setOperatorPickerOpen(false);
+  };
   const cancelUnlock = () => {
     setPendingEmp(null); setPin(""); setUnlockErr("");
     setOperatorPickerOpen(false);
@@ -625,9 +633,16 @@ export default function ShopFloorPage() {
               <span>{operator}</span>
               <span aria-hidden="true">·</span>
               <button type="button" onClick={() => setOperatorPickerOpen(true)} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-change">değiştir</button>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={logoutOperator} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-logout">Çıkış</button>
             </span>
           ) : null}
-          {operator && operatorPickerOpen ? operatorSelect : null}
+          {operator && operatorPickerOpen ? (
+            <div className="flex items-center gap-2">
+              {operatorSelect}
+              <button type="button" onClick={cancelUnlock} className="px-3 py-2.5 rounded-xl border-2 border-slate-300 bg-white font-semibold text-slate-700" data-testid="shopfloor-operator-change-cancel">Vazgeç</button>
+            </div>
+          ) : null}
           <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
           <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
           <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>

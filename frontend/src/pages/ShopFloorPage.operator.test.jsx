@@ -349,7 +349,9 @@ test("hides materials until Detay is opened and clamps long step names", async (
 });
 
 function clickByText(text) {
-  const btn = [...host.querySelectorAll("button")].find((b) => b.textContent.trim() === text);
+  const modal = host.querySelector('[data-testid="shopfloor-pin-modal"]');
+  const scope = modal || host;
+  const btn = [...scope.querySelectorAll("button")].find((b) => b.textContent.trim() === text);
   expect(btn).toBeTruthy();
   return btn;
 }
@@ -454,6 +456,59 @@ test("operator gate is one row and a verified operator becomes a green chip", as
   expect(host.querySelector('[data-testid="shopfloor-operator-chip"]').textContent).toContain("Yaşar Yıldırım");
   expect(host.querySelector('[data-testid="shopfloor-operator"]')).toBeNull();
   expect(host.querySelector('[data-testid="shopfloor-no-operator"]')).toBeNull();
+});
+
+test("logout clears the operator and change-cancel keeps the current one", async () => {
+  mockGets([
+    wo({ id: "r", order_code: "URT-R", status: "ready", step_no: 1 }),
+    wo({ id: "i", order_code: "URT-I", status: "in_progress", step_no: 3, elapsed_min: 4 }),
+  ]);
+  await renderPage();
+  await loginAsMuhammed();
+  expect(host.querySelector('[data-testid="wo-start-URT-R-1"]').disabled).toBe(false);
+  expect(host.querySelector('[data-testid="wo-pause-URT-I-3"]').disabled).toBe(false);
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-R-1"]')).toBeNull();
+
+  const pauseCalls = () => axios.get.mock.calls.filter((call) => String(call[0]).includes("/production/work-orders/pause-policy")).length;
+  const beforePause = pauseCalls();
+  axios.post.mockClear();
+  await act(async () => { host.querySelector('[data-testid="shopfloor-operator-logout"]').click(); });
+  await flush();
+  expect(host.querySelector('[data-testid="shopfloor-operator-chip"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-operator"]')).not.toBeNull();
+  const gate = host.querySelector('[data-testid="shopfloor-no-operator"]');
+  expect(gate).not.toBeNull();
+  expect(gate.textContent).toContain("Operatör seç ve PIN gir");
+  const pinOpen = gate.querySelector('[data-testid="shopfloor-pin-open"]');
+  expect(pinOpen.disabled).toBe(true);
+  expect(pinOpen.getAttribute("title")).toBe("Önce operatör seçin");
+  expect(host.querySelector('[data-testid="wo-start-URT-R-1"]').disabled).toBe(true);
+  expect(host.querySelector('[data-testid="wo-pause-URT-I-3"]').disabled).toBe(true);
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-R-1"]').textContent).toBe("Önce operatör seçin");
+  expect(host.querySelector('[data-testid="wo-need-operator-URT-I-3"]').textContent).toBe("Önce operatör seçin");
+  expect(axios.post.mock.calls.some((call) => String(call[0]).includes("shopfloor-unlock"))).toBe(false);
+  expect(pauseCalls()).toBe(beforePause);
+
+  await loginAsMuhammed();
+  await act(async () => { host.querySelector('[data-testid="shopfloor-operator-change"]').click(); });
+  expect(host.querySelector('[data-testid="shopfloor-pin-modal"]')).toBeNull();
+  const changeSel = host.querySelector('[data-testid="shopfloor-operator"]');
+  expect(changeSel).not.toBeNull();
+  expect(changeSel.value).toBe("Muhammed ASLAN");
+  await act(async () => { setNativeValue(changeSel, ""); });
+  expect(host.querySelector('[data-testid="shopfloor-operator-chip"]').textContent).toContain("Muhammed ASLAN");
+  expect(host.querySelector('[data-testid="shopfloor-no-operator"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-pin-modal"]')).toBeNull();
+
+  await act(async () => { host.querySelector('[data-testid="shopfloor-operator-change"]').click(); });
+  expect(host.querySelector('[data-testid="shopfloor-operator-change-cancel"]')).not.toBeNull();
+  await act(async () => { host.querySelector('[data-testid="shopfloor-operator-change-cancel"]').click(); });
+  const kept = host.querySelector('[data-testid="shopfloor-operator-chip"]');
+  expect(kept.textContent).toContain("Muhammed ASLAN");
+  expect(kept.textContent).toContain("Çıkış");
+  expect(host.querySelector('[data-testid="shopfloor-operator"]')).toBeNull();
+  expect(host.querySelector('[data-testid="shopfloor-pin-modal"]')).toBeNull();
+  expect(host.querySelector('[data-testid="wo-start-URT-R-1"]').disabled).toBe(false);
 });
 
 test("tablet mode opens and closes without performance or AI", async () => {
