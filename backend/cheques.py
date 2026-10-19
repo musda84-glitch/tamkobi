@@ -140,12 +140,12 @@ async def _post_cari_payment(doc: dict):
 
 
 async def _bank_move(company_id: str, account_id: str, *, inflow: bool, amount: float, category: str, description: str, date: str, cheque_id: str, contact_name=None):
-    acc = await _db.bank_accounts.find_one({"_id": account_id})
+    acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": company_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
     await assert_manual_allowed(_db, account_id)
     change = amount if inflow else -amount
-    await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": change}})
+    await _db.bank_accounts.update_one({"_id": account_id, "company_id": company_id}, {"$inc": {"current_balance": change}})
     # contact_id yok: tahsil/ödeme kasa hareketidir; cari zaten çek girişinde işlendi.
     await _db.bank_transactions.insert_one({
         "_id": str(uuid.uuid4()), "company_id": company_id, "account_id": account_id,
@@ -304,9 +304,11 @@ async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
         if instrument not in ("cheque", "promissory"):
             raise HTTPException(status_code=400, detail="Tür çek veya senet olmalı.")
         contact_id = req.get("contact_id") or old_contact
-        contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
-        if not contact:
+        if not contact_id:
             raise HTTPException(status_code=400, detail="Cari seçin.")
+        contact = await _db.contacts.find_one({"_id": contact_id, "company_id": doc["company_id"]})
+        if not contact:
+            raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         patch.update({
             "amount": amount,
             "direction": direction,
@@ -351,9 +353,11 @@ async def create_cheque(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     amount = round(float(req.get("amount") or 0), 2)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
-    contact = await _db.contacts.find_one({"_id": req["contact_id"]}) if req.get("contact_id") else None
-    if not contact:
+    if not req.get("contact_id"):
         raise HTTPException(status_code=400, detail="Cari seçin.")
+    contact = await _db.contacts.find_one({"_id": req["contact_id"], "company_id": company_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari bulunamadı.")
     due = req.get("due_date") or _today()
     skip_ledger = bool(req.get("skip_ledger") or req.get("from_installment"))
     doc = {
@@ -467,9 +471,11 @@ async def endorse_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depen
     _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Ciro yalnızca alınan çek/senet için.")
-    target = await _db.contacts.find_one({"_id": req.get("contact_id")}) if req.get("contact_id") else None
-    if not target:
+    if not req.get("contact_id"):
         raise HTTPException(status_code=400, detail="Ciro edilecek cariyi seçin.")
+    target = await _db.contacts.find_one({"_id": req.get("contact_id"), "company_id": doc["company_id"]})
+    if not target:
+        raise HTTPException(status_code=404, detail="Cari bulunamadı.")
     if target["_id"] == doc.get("contact_id"):
         raise HTTPException(status_code=400, detail="Aynı cariye ciro edilemez.")
     amount = float(doc["amount"])
