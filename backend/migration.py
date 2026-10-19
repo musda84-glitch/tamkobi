@@ -333,11 +333,16 @@ async def _transform(upload: dict, mapping: Dict[str, Optional[str]]):
 
 
 @router.post("/migration/ai-map")
-async def migration_ai_map(req: Dict[str, Any]):
+async def migration_ai_map(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Claude ile sütun eşlemesi öner (otomatik eşleme yetersiz kaldığında)."""
-    upload = await _db.migration_uploads.find_one({"_id": req.get("upload_id")})
-    if not upload:
-        raise HTTPException(status_code=404, detail="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
+    requested = str(req.get("company_id") or "").strip()
+    if requested:
+        tenant_access.resolve_company_id(user, requested)
+    upload = await tenant_access.get_tenant_doc(
+        _db, "migration_uploads", req.get("upload_id"), user,
+        not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.",
+    )
+    tenant_access.assert_same_company(user, upload, not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
     from ai_service import ai_map_columns
     ent = ENTITIES[upload["entity"]]
     fields = [{"key": f, "label": d[0], "required": d[1]} for f, d in ent["fields"].items()]
@@ -351,10 +356,15 @@ async def migration_ai_map(req: Dict[str, Any]):
 
 
 @router.post("/migration/preview")
-async def migration_preview(req: Dict[str, Any]):
-    upload = await _db.migration_uploads.find_one({"_id": req.get("upload_id")})
-    if not upload:
-        raise HTTPException(status_code=404, detail="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
+async def migration_preview(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    requested = str(req.get("company_id") or "").strip()
+    if requested:
+        tenant_access.resolve_company_id(user, requested)
+    upload = await tenant_access.get_tenant_doc(
+        _db, "migration_uploads", req.get("upload_id"), user,
+        not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.",
+    )
+    tenant_access.assert_same_company(user, upload, not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
     records, errors = await _transform(upload, req.get("mapping") or {})
     valid = [r for r in records if not r["errors"]]
     return {"total": len(records), "valid": len(valid), "invalid": len(errors), "new": sum(1 for r in valid if not r["existing_id"]), "existing": sum(1 for r in valid if r["existing_id"]),
@@ -401,10 +411,15 @@ async def _invoice_doc(company_id: str, data: dict, batch_id: str) -> dict:
 
 
 @router.post("/migration/import")
-async def migration_import(req: Dict[str, Any]):
-    upload = await _db.migration_uploads.find_one({"_id": req.get("upload_id")})
-    if not upload:
-        raise HTTPException(status_code=404, detail="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
+async def migration_import(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    requested = str(req.get("company_id") or "").strip()
+    if requested:
+        tenant_access.resolve_company_id(user, requested)
+    upload = await tenant_access.get_tenant_doc(
+        _db, "migration_uploads", req.get("upload_id"), user,
+        not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.",
+    )
+    tenant_access.assert_same_company(user, upload, not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
     entity, company_id = upload["entity"], upload["company_id"]
     on_dup = req.get("on_duplicate") if req.get("on_duplicate") in ("update", "skip") else "skip"
     records, errors = await _transform(upload, req.get("mapping") or {})
@@ -417,9 +432,12 @@ async def migration_import(req: Dict[str, Any]):
         if r["existing_id"]:
             if on_dup == "skip":
                 batch["skipped"] += 1; continue
-            prev = await coll.find_one({"_id": r["existing_id"]})
+            prev = await coll.find_one({"_id": r["existing_id"], "company_id": company_id})
+            if not prev:
+                batch["skipped"] += 1
+                continue
             upd = {k: v for k, v in r["data"].items() if k not in ("balance", "current_balance", "stock_quantity")} if entity in ("contacts", "bank_accounts", "products") else r["data"]
-            await coll.update_one({"_id": r["existing_id"]}, {"$set": upd})
+            await coll.update_one({"_id": r["existing_id"], "company_id": company_id}, {"$set": upd})
             batch["updated"].append({"id": r["existing_id"], "prev": {k: prev.get(k) for k in upd}})
             continue
         doc = await _invoice_doc(company_id, r["data"], batch["_id"]) if entity == "invoices" else _build_doc(entity, company_id, r["data"], batch["_id"])
