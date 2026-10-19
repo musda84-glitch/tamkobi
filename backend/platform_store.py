@@ -20,6 +20,26 @@ logger = logging.getLogger("tamkobi.platform")
 PRODUCT_TAMKOBI = "tamkobi"
 DEFAULT_SCOPES = ("license:verify", "heartbeat", "usage:write")
 SCOPE_PLATFORM_ALL = "platform:all"
+SCOPE_ADMIN_COMPANIES_READ = "admin.companies:read"
+SCOPE_ADMIN_USERS_READ = "admin.users:read"
+SCOPE_ADMIN_LICENSES_READ = "admin.licenses:read"
+SCOPE_ADMIN_KEYS_READ = "admin.keys:read"
+SCOPE_ADMIN_INTEGRATORS_READ = "admin.integrators:read"
+SCOPE_ADMIN_AUDIT_READ = "admin.audit:read"
+SCOPE_ADMIN_MAIL_READ = "admin.mail:read"
+SCOPE_ADMIN_SYSTEM_READ = "admin.system:read"
+ADMIN_SCOPES = (
+    SCOPE_ADMIN_COMPANIES_READ,
+    SCOPE_ADMIN_USERS_READ,
+    SCOPE_ADMIN_LICENSES_READ,
+    SCOPE_ADMIN_KEYS_READ,
+    SCOPE_ADMIN_INTEGRATORS_READ,
+    SCOPE_ADMIN_AUDIT_READ,
+    SCOPE_ADMIN_MAIL_READ,
+    SCOPE_ADMIN_SYSTEM_READ,
+)
+KEY_KIND_PRODUCT = "product"
+KEY_KIND_PLATFORM_ADMIN = "platform_admin"
 KEY_RATE_LIMIT = 120  # per key per minute
 IP_RATE_LIMIT = 300  # per IP per minute (before signature)
 NONCE_TTL_SEC = 600
@@ -259,12 +279,39 @@ def _key_id() -> str:
     return "pk_" + secrets.token_hex(8)
 
 
-def _normalize_scopes(scopes: Optional[List[str]]) -> List[str]:
+def _scope_list(scopes: Optional[List[str]]) -> List[str]:
+    if not scopes:
+        return []
+    return [str(s).strip() for s in scopes if str(s).strip()]
+
+
+def _canonical_kind(kind: Optional[str]) -> str:
+    """Eski kayıtlarda kind yoksa product. None da product sayılır."""
+    if kind is None:
+        return KEY_KIND_PRODUCT
+    text = str(kind).strip() or KEY_KIND_PRODUCT
+    if text not in (KEY_KIND_PRODUCT, KEY_KIND_PLATFORM_ADMIN):
+        raise ValueError("Geçersiz anahtar türü")
+    return text
+
+
+def _reject_admin_scopes_for_kind(scopes: Optional[List[str]], kind: str) -> None:
+    """admin.* kapsamı şirket (product) anahtarına yazılamaz."""
+    if any(s.startswith("admin.") for s in _scope_list(scopes)) and kind != KEY_KIND_PLATFORM_ADMIN:
+        raise ValueError("Yönetim kapsamları yalnızca platform_admin anahtarlarına verilebilir")
+
+
+def _normalize_scopes(scopes: Optional[List[str]], *, kind: str = KEY_KIND_PRODUCT) -> List[str]:
+    kind = _canonical_kind(kind)
     if scopes is None:
-        return list(DEFAULT_SCOPES)
-    sc = [str(s).strip() for s in scopes if str(s).strip()]
+        sc = list(DEFAULT_SCOPES)
+    else:
+        sc = _scope_list(scopes)
     if not sc:
         raise ValueError("En az bir kapsam gerekli")
+    _reject_admin_scopes_for_kind(sc, kind)
+    if kind == KEY_KIND_PLATFORM_ADMIN and any(s not in ADMIN_SCOPES for s in sc):
+        raise ValueError("platform_admin anahtarı yalnızca yönetim kapsamı alabilir")
     return sc
 
 
@@ -278,15 +325,25 @@ async def create_api_key(
     ip_allowlist: Optional[List[str]] = None,
     actor_id: str,
     ip: str = "",
+    kind: Optional[str] = KEY_KIND_PRODUCT,
 ) -> Tuple[dict, str]:
     """Returns (public_row_without_secret, plaintext_secret once)."""
     from platform_auth import normalize_ip_allowlist
 
+    kind = _canonical_kind(kind)
     await ensure_seeded()
     prod = await _get_product_doc(product_id)
     if not prod:
         raise ValueError("Ürün bulunamadı")
-    sc = _normalize_scopes(scopes)
+    _reject_admin_scopes_for_kind(scopes, kind)
+    if kind == KEY_KIND_PLATFORM_ADMIN:
+        if prod.get("code") != PRODUCT_TAMKOBI:
+            raise ValueError("platform_admin anahtarı yalnızca TamKobi ürününe verilebilir")
+        if str(instance_id or "").strip():
+            raise ValueError("platform_admin anahtarı bir instance'a bağlanamaz")
+        instance_id = None
+    sc = _normalize_scopes(scopes, kind=kind)
+    _reject_admin_scopes_for_kind(sc, kind)
     allow = normalize_ip_allowlist(ip_allowlist)
     secret = _new_secret()
     kid = _key_id()
@@ -295,6 +352,7 @@ async def create_api_key(
         "product_id": prod["_id"],
         "instance_id": instance_id,
         "name": (name or kid).strip(),
+        "kind": kind,
         "scopes": sc,
         "ip_allowlist": allow,
         "secret_enc": comm_service.encrypt(secret),
@@ -324,6 +382,7 @@ def _public_key(doc: dict) -> dict:
         "product_id": doc.get("product_id"),
         "instance_id": doc.get("instance_id"),
         "name": doc.get("name"),
+        "kind": doc.get("kind") or KEY_KIND_PRODUCT,
         "scopes": doc.get("scopes") or [],
         "ip_allowlist": doc.get("ip_allowlist") or [],
         "created_by": doc.get("created_by"),
@@ -360,6 +419,7 @@ async def rotate_api_key(key_id: str, *, actor_id: str, ip: str = "") -> Tuple[d
         ip_allowlist=old.get("ip_allowlist"),
         actor_id=actor_id,
         ip=ip,
+        kind=old.get("kind") or KEY_KIND_PRODUCT,
     )
     grace = (_now() + timedelta(hours=ROTATION_GRACE_HOURS)).isoformat()
     await _db.platform_api_keys.update_one(
@@ -687,7 +747,12 @@ async def list_audit(
     actor_id: Optional[str] = None,
     target_type: Optional[str] = None,
     limit: int = 100,
+    before: Optional[str] = None,
 ) -> List[dict]:
+    """at alanına göre yeniden eskiye. before verilirse o ISO andan öncekiler (hariç).
+
+    before yokken mevcut çağıranların süzgeci değişmez.
+    """
     q: Dict[str, Any] = {}
     if action:
         q["action"] = action
@@ -695,6 +760,8 @@ async def list_audit(
         q["actor_id"] = actor_id
     if target_type:
         q["target_type"] = target_type
+    if before:
+        q["at"] = {"$lt": str(before)}
     rows = await _db.platform_audit_log.find(q).sort("at", -1).to_list(min(limit, 500))
     return [{**r, "id": r["_id"]} for r in rows]
 

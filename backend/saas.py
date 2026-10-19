@@ -1076,18 +1076,29 @@ async def company_sms_readonly_summary(company_id: str, _: dict = Depends(requir
     return await company_sms.company_sms_summary(_db, company_id)
 
 
-@router.get("/system/companies/{company_id}")
-async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
-    c = await _db.companies.find_one({"_id": company_id})
-    if not c:
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    row = await _company_row(c)
+async def company_staff(company_id: str, admin_brief: Optional[dict] = None) -> list:
+    """Şirket personeli: list_company_members(include_platform=False) + ana yönetici yedeklemesi.
+
+    admin_brief verilirse get_company'deki row["admin"] nesnesi kullanılır (aynı kayıt).
+    """
     members = await list_company_members(company_id, include_platform=False)
+    if admin_brief is None:
+        admin_brief = _member_brief(await resolve_company_admin(company_id))
     # Platform yöneticileri koltuk sayılmaz; yalnızca şirket personeli.
     # Ana yönetici e-posta yedeklemesiyle bulunduysa listede yoksa ekle.
-    if row.get("admin") and row["admin"]["id"] not in {m["id"] for m in members}:
-        members = [row["admin"], *members]
-    row["users"] = members
+    if admin_brief and admin_brief["id"] not in {m["id"] for m in members}:
+        members = [admin_brief, *members]
+    return members
+
+
+async def company_detail(company_id: str, include_users: bool = True) -> Optional[dict]:
+    """get_company birleştirmesi. include_users=False ise users alanı hiç yazılmaz."""
+    c = await _db.companies.find_one({"_id": company_id})
+    if not c:
+        return None
+    row = await _company_row(c)
+    if include_users:
+        row["users"] = await company_staff(company_id, row.get("admin"))
     row["requests"] = [_clean(r) for r in await _db.upgrade_requests.find({"company_id": company_id}).sort("created_at", -1).to_list(20)]
     row["quota_usage"] = await quota_usage(company_id)
     # Detayda lisans geneli kota (kardeş şirketler dahil) ile üyelik sayılarını güncelle.
@@ -1099,6 +1110,14 @@ async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
             "contact_count": qu.get("contact_count") or row["membership"].get("contact_count") or 0,
             "storage_bytes": qu.get("storage_bytes") or row["membership"].get("storage_bytes") or 0,
         }
+    return row
+
+
+@router.get("/system/companies/{company_id}")
+async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
+    row = await company_detail(company_id, include_users=True)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     return row
 
 

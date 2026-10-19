@@ -114,6 +114,7 @@ async def admin_create_key(
             ip_allowlist=req.get("ip_allowlist"),
             actor_id=_actor(admin),
             ip=_ip(request),
+            kind=req.get("kind"),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
