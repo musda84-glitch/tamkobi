@@ -34,6 +34,37 @@ test("geçersiz veya kısa IBAN null", () => {
   expect(bankLogoInfo({ iban: "TR123" })).toBeNull();
 });
 
+test("öncelik hesap logosu, şirket bank_logos, sonra yerleşik svg", () => {
+  const company = { bank_logos: { "0064": "/api/files/bank-0064.png", "0205": "/api/files/kuveyt.png" } };
+  const override = bankLogoInfo(
+    { iban: ISBANK_IBAN, logo_url: "/api/files/acc.png", bank_name: "Türkiye İş Bankası" },
+    company,
+  );
+  expect(override.src).toBe("/api/files/acc.png");
+  expect(override.fallbackSrc).toEqual(["/api/files/bank-0064.png", "/bank-logos/0064.svg"]);
+  expect(override.code).toBe("0064");
+
+  const shared = bankLogoInfo({ iban: ISBANK_IBAN, bank_name: "Türkiye İş Bankası" }, company);
+  expect(shared.src).toBe("/api/files/bank-0064.png");
+  expect(shared.fallbackSrc).toEqual(["/bank-logos/0064.svg"]);
+
+  const builtin = bankLogoInfo({ iban: ISBANK_IBAN }, {});
+  expect(builtin.src).toBe("/bank-logos/0064.svg");
+  expect(builtin.fallbackSrc).toEqual([]);
+});
+
+test("logo adresi yoksa monograma düşülecek bilgi null kalır", () => {
+  expect(bankLogoInfo({ iban: UNKNOWN_IBAN }, { bank_logos: {} })).toBeNull();
+  expect(bankLogoInfo({ logo_url: "  " })).toBeNull();
+});
+
+test("bilinmeyen bankada şirket logosu kullanılır, yerleşik svg eklenmez", () => {
+  const info = bankLogoInfo({ iban: UNKNOWN_IBAN }, { bank_logos: { 9999: "/api/files/x.png" } });
+  expect(info.src).toBe("/api/files/x.png");
+  expect(info.fallbackSrc).toEqual([]);
+  expect(info.code).toBe("9999");
+});
+
 test("IBAN yokken banka adından kod bulunur; Ziraat Katılım 0010 değildir", () => {
   expect(bankLogoInfo({ bank_name: "Türkiye İş Bankası" }).code).toBe("0064");
   expect(bankLogoInfo({ bank_name: "Kuveyt Türk Katılım" }).code).toBe("0205");

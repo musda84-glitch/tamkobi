@@ -5,8 +5,16 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
 import axios from "axios";
+import { toast } from "sonner";
 import BankingPage from "./BankingPage";
 import { formatTrAmount } from "../utils/money";
+
+const authState = {
+  activeCompany: { id: "c1" },
+  addonOn: () => true,
+  can: (path, action) => path === "/banking" && action === "edit",
+  reloadSession: async () => {},
+};
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,11 +30,7 @@ jest.mock("axios", () => {
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
-  useAuth: () => ({
-    activeCompany: { id: "c1" },
-    addonOn: () => true,
-    can: (path, action) => path === "/banking" && action === "edit",
-  }),
+  useAuth: () => authState,
 }));
 jest.mock("react-router-dom", () => ({
   useSearchParams: () => [new URLSearchParams(), jest.fn()],
@@ -124,6 +128,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  authState.activeCompany = { id: "c1" };
+  authState.reloadSession = jest.fn(async () => {});
   host = document.createElement("div");
   document.body.appendChild(host);
   quiet = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -467,4 +473,90 @@ test("logo yüklenemezse monogram görünür, negatif bakiye kırmızıdır", as
   expect(negative.className).toContain("tabular-nums");
   expect(host.querySelector('[data-testid="account-unmatched-acc_is"]')).toBeNull();
   expect(host.querySelector('[data-testid="account-unmatched-acc_neg"]')).toBeNull();
+});
+
+test("logo sırası override, bank_logos ve svg; hata zinciri monogramda biter", async () => {
+  const iban = "TR33 0006 4000 0011 2345 6789 01";
+  authState.activeCompany = {
+    id: "c1",
+    bank_logos: { "0064": "/api/files/bank-0064.png" },
+  };
+  await renderAccounts([{
+    id: "acc_is",
+    type: "bank",
+    bank_name: "Türkiye İş Bankası",
+    account_name: "Ticari",
+    iban,
+    logo_url: "/api/files/override.png",
+    current_balance: 10,
+  }], "Ticari");
+
+  const card = host.querySelector('[data-testid="bank-card-acc_is"]');
+  expect(card.textContent).not.toContain(iban.replace(/\s+/g, ""));
+  let img = card.querySelector("img");
+  expect(img.getAttribute("src")).toBe("/api/files/override.png");
+  await act(async () => { fireEvent.error(img); });
+  img = card.querySelector("img");
+  expect(img.getAttribute("src")).toBe("/api/files/bank-0064.png");
+  await act(async () => { fireEvent.error(img); });
+  img = card.querySelector("img");
+  expect(img.getAttribute("src")).toBe("/bank-logos/0064.svg");
+  await act(async () => { fireEvent.error(img); });
+  expect(card.querySelector("img")).toBeNull();
+  expect(card.textContent).toMatch(/Tİ|İB/);
+});
+
+async function openBankEdit(account) {
+  await renderAccounts([account], account.account_name);
+  await click(`[data-testid="account-card-menu-${account.id}"]`);
+  await act(async () => { host.querySelector(`[data-testid="edit-account-${account.id}"]`).click(); });
+  await flush(2);
+}
+
+async function pickLogo(file) {
+  const input = host.querySelector('[data-testid="bank-logo-upload"]');
+  expect(input).toBeTruthy();
+  await act(async () => {
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await flush(3);
+}
+
+test("düzenleme modalı svg ve büyük dosyayı istemcide reddeder", async () => {
+  const iban = "TR33 0006 4000 0011 2345 6789 01";
+  toast.error.mockClear();
+  axios.post.mockClear();
+  await openBankEdit({
+    id: "acc_is",
+    type: "bank",
+    bank_name: "Türkiye İş Bankası",
+    account_name: "Ticari",
+    iban,
+    current_balance: 10,
+  });
+  const note = host.querySelector('[data-testid="bank-logo-note"]');
+  expect(note.textContent).toBe("Bu logo İş Bankası (0064) bankasının tüm hesaplarında kullanılır");
+  expect(note.textContent).not.toContain(iban.replace(/\s+/g, ""));
+  const input = host.querySelector('[data-testid="bank-logo-upload"]');
+  expect(input.getAttribute("accept")).toBe("image/png,image/jpeg,image/webp");
+  expect(host.querySelector('[data-testid="bank-logo-remove"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="bank-logo-only-account"]')).toBeTruthy();
+
+  await pickLogo(new File(["<svg xmlns='http://www.w3.org/2000/svg'></svg>"], "logo.svg", { type: "image/svg+xml" }));
+  expect(toast.error).toHaveBeenCalled();
+  expect(axios.post.mock.calls.some((call) => String(call[0]).includes("/logo"))).toBe(false);
+
+  toast.error.mockClear();
+  await pickLogo(new File(["<svg></svg>"], "logo.png", { type: "image/svg+xml" }));
+  expect(toast.error).toHaveBeenCalled();
+
+  toast.error.mockClear();
+  await pickLogo(new File([new Uint8Array(512 * 1024 + 1)], "big.png", { type: "image/png" }));
+  expect(toast.error).toHaveBeenCalled();
+  expect(axios.post.mock.calls.some((call) => String(call[0]).includes("/logo"))).toBe(false);
+
+  const only = host.querySelector('[data-testid="bank-logo-only-account"]');
+  await act(async () => { only.click(); });
+  expect(only.checked).toBe(true);
 });

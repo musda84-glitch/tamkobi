@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { CreditCard, History, Link2, MoreVertical, Pencil, Store, Trash2, Wallet } from "lucide-react";
 import { fmtDate, formatTrAmount } from "../../utils/money";
 import { accountCardLabels, accountDisplayLabel, accountTypeLabel } from "../../utils/accountLabel";
-import { MONOGRAM_FALLBACK, bankLogoInfo } from "../../utils/bankLogo";
+import { MONOGRAM_FALLBACK, bankLogoInfo, displayBankLogoSrc } from "../../utils/bankLogo";
 import { openingEligible } from "../../utils/openingBalance";
 import { canUploadBankStatement } from "../../utils/bankStatementUpload";
 
@@ -91,15 +91,20 @@ function CardStatementButton({ acc, onStatement, className }) {
   );
 }
 
-function BankLogoBadge({ acc }) {
-  const info = bankLogoInfo(acc);
-  const [brokenSrc, setBrokenSrc] = useState("");
-  const broken = !!(info && brokenSrc === info.src);
+function BankLogoBadge({ acc, company }) {
+  const info = bankLogoInfo(acc, company);
+  const sources = info ? [info.src, ...(Array.isArray(info.fallbackSrc) ? info.fallbackSrc : [])].filter(Boolean) : [];
+  const sourceKey = sources.join("\n");
+  const [index, setIndex] = useState(0);
+  useEffect(() => { setIndex(0); }, [sourceKey]);
+  const src = sources[index] || "";
+  const showImage = !!src;
   const type = String(acc?.type || "");
   const isCash = type === "cash_box";
   const isPos = type === "pos" || type === "okc_pos";
   const isCard = type === "credit_card";
   const frame = "relative shrink-0 w-9 h-9 rounded-xl border flex items-center justify-center";
+  const advance = () => setIndex((i) => i + 1);
 
   if (isCash) {
     return (
@@ -112,12 +117,13 @@ function BankLogoBadge({ acc }) {
     return (
       <span className={`${frame} bg-purple-50 text-purple-700 border-purple-100`} aria-hidden>
         <Store className="w-4 h-4" />
-        {info && !broken && (
+        {info && showImage && (
           <img
-            src={info.src}
+            key={src}
+            src={displayBankLogoSrc(src)}
             alt=""
             loading="lazy"
-            onError={() => setBrokenSrc(info.src)}
+            onError={advance}
             className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-sm bg-white object-contain ring-1 ring-white"
           />
         )}
@@ -131,14 +137,15 @@ function BankLogoBadge({ acc }) {
       </span>
     );
   }
-  if (info && !broken) {
+  if (info && showImage) {
     return (
       <span className={`${frame} bg-white border-slate-200 overflow-hidden`}>
         <img
-          src={info.src}
+          key={src}
+          src={displayBankLogoSrc(src)}
           alt={info.short}
           loading="lazy"
-          onError={() => setBrokenSrc(info.src)}
+          onError={advance}
           className="w-full h-full object-contain"
         />
       </span>
@@ -169,6 +176,7 @@ function tabCls(active) {
 
 function AccountChip({
   acc,
+  company,
   selected,
   menuOpen,
   onSelect,
@@ -225,7 +233,7 @@ function AccountChip({
       title={masked ? `${label} · ${accountTypeLabel(acc.type)} · ${masked}` : label}
     >
       <div className="flex min-w-0 items-start gap-2">
-      <BankLogoBadge acc={acc} />
+      <BankLogoBadge acc={acc} company={company} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[11px] font-semibold text-slate-500">{bank}</div>
         <div className="flex items-baseline gap-1 min-w-0">
@@ -367,6 +375,7 @@ export function BankAccountList({
   selectedGroup = null,
   selectedAccountId = null,
   cardMenuId = null,
+  company = null,
   onToggleGroup,
   onSelectAccount,
   onToggleMenu,
@@ -426,6 +435,7 @@ export function BankAccountList({
                 <AccountChip
                   key={accId}
                   acc={acc}
+                  company={company}
                   selected={selectedAccountId === accId}
                   menuOpen={cardMenuId === accId}
                   {...chipProps}
