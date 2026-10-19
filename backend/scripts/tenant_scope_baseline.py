@@ -179,7 +179,15 @@ def main(argv=None):
             print("temiz")
         return 1 if failed else 0
 
-    _print_summary(scan(root))
+    try:
+        _print_summary(scan(root))
+        sys.stdout.flush()
+    except BrokenPipeError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except OSError:
+            pass
+        return 0
     return 0
 
 

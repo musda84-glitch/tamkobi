@@ -6,6 +6,8 @@ Hata metninde yalnız anahtar vardır: dosya, fonksiyon, koleksiyon, op, adet.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -155,6 +157,57 @@ class Box:
     assert baseline_counts(found)[("mod_case.py", "run", "orders", "find")] == 4
 
 
+def test_local_db_and_collection_aliases(tmp_path):
+    found = _scan(tmp_path, """
+def run(db, _db, c, x, name):
+    store = db or _db
+    store.expenses.find({"_id": x})
+    store.expenses.find({"company_id": c})
+    plain = db
+    plain.orders.find({"company_id": c})
+    plain.orders.find({"_id": x})
+    getattr(store, name).find({})
+    hop1 = db
+    hop2 = hop1
+    hop3 = hop2
+    hop3.orders.find({"company_id": c})
+    hop4 = hop3
+    hop4.orders.find({"company_id": c})
+
+def run2(db, c, x, name):
+    coll = db.invoices
+    coll.find_one({"_id": x})
+    coll.find_one({"company_id": c})
+    named = db["invoices"]
+    named.find_one({"_id": x})
+    dyn = db[name]
+    dyn.find({})
+
+def run3(db, other, x):
+    coll = db.invoices
+    coll.find_one({"_id": x})
+    coll = other
+    coll.find_one({"company_id": x})
+    store = db
+    store = other
+    store.orders.find({"company_id": x})
+""")
+    statuses = [(item.function, item.collection, item.op, item.status) for item in found]
+    assert statuses == [
+        ("run", "expenses", "find", "missing"),
+        ("run", "expenses", "find", "ok"),
+        ("run", "orders", "find", "ok"),
+        ("run", "orders", "find", "missing"),
+        ("run", "", "find", "dynamic"),
+        ("run", "orders", "find", "ok"),
+        ("run2", "invoices", "find_one", "missing"),
+        ("run2", "invoices", "find_one", "ok"),
+        ("run2", "invoices", "find_one", "missing"),
+        ("run2", "", "find", "dynamic"),
+        ("run3", "invoices", "find_one", "missing"),
+    ]
+
+
 def test_alias_depth_and_module_level(tmp_path):
     found = _scan(tmp_path, """
 db.orders.find({})
@@ -300,3 +353,31 @@ def test_check_exit_codes(tmp_path):
 def test_check_committed_baseline():
     mod = _script()
     assert mod.main(["--check"]) == 0
+
+
+def test_summary_swallows_broken_pipe(tmp_path):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "mod_case.py").write_text(
+        'def run(db, x):\n    db.orders.find({"_id": x})\n',
+        encoding="utf-8",
+    )
+    script = (
+        "import importlib.util, os, sys\n"
+        "r, w = os.pipe()\n"
+        "os.close(r)\n"
+        "os.dup2(w, sys.stdout.fileno())\n"
+        "os.close(w)\n"
+        f"spec = importlib.util.spec_from_file_location('baseline_pipe', {str(_SCRIPT)!r})\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        f"raise SystemExit(mod.main(['--root', {str(tree)!r}]))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert b"BrokenPipeError" not in proc.stderr
+    assert b"Exception ignored" not in proc.stderr

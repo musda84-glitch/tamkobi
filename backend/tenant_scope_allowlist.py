@@ -225,6 +225,7 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # demo.py
     ('demo.py', 'tag_legacy_seed', 'partner_transactions', 'update_many'): 1,
     # dispatch_invoice.py
+    ('dispatch_invoice.py', '_claim_dispatch', 'invoices', 'update_one'): 1,
     ('dispatch_invoice.py', '_release_one', 'invoices', 'update_one'): 1,
     ('dispatch_invoice.py', 'find_existing_invoice_for_dispatch', 'invoices', 'find_one'): 2,
     ('dispatch_invoice.py', 'find_existing_invoice_for_dispatch', 'orders', 'find_one'): 1,
@@ -336,6 +337,9 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('expenses.py', 'delete_expense', 'partner_transactions', 'find_one'): 1,
     ('expenses.py', 'record_card_spend', 'contacts', 'find_one'): 1,
     ('expenses.py', 'record_card_spend', 'expenses', 'insert_one'): 1,
+    ('expenses.py', 'run_recurring_for_company', 'expenses', 'find_one'): 1,
+    ('expenses.py', 'run_recurring_for_company', 'expenses', 'insert_one'): 1,
+    ('expenses.py', 'run_recurring_for_company', 'expenses', 'update_one'): 4,
     ('expenses.py', 'update_expense', 'contacts', 'find_one'): 1,
     ('expenses.py', 'update_expense', 'employees', 'find_one'): 1,
     ('expenses.py', 'update_expense', 'expenses', 'find_one'): 1,
@@ -361,6 +365,7 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # gib_credits.py
     ('gib_credits.py', 'account_credits', 'gib_credit_ledger', 'find'): 1,
     # idempotency.py
+    ('idempotency.py', '_reclaim_stale_in_progress', 'idempotency_keys', 'update_one'): 1,
     ('idempotency.py', '_try_insert', 'idempotency_keys', 'insert_one'): 1,
     ('idempotency.py', 'abandon', 'idempotency_keys', 'delete_one'): 1,
     ('idempotency.py', 'begin', 'idempotency_keys', 'delete_one'): 1,

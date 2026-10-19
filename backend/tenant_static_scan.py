@@ -9,6 +9,9 @@ aynı op kümesini izler: sorgu op'larında 1. argüman (distinct'te sorgu
 2. argüman), insert'te doküman, replace_one'da sorgu ve doküman,
 aggregate'te ilk aşama $match, changed_since'te company_id argümanı,
 upsert=True update'te $set / $setOnInsert içindeki company_id.
+Fonksiyon içinde tek atama: X = db ifadesi ya da X = db or db ise X db adıdır;
+X = db.koleksiyon ya da db["sabit"] ise sonraki X.op o koleksiyondur.
+Yeniden atamada takma ad düşer. Ad takibi en fazla 3 adımdır.
 """
 from __future__ import annotations
 
@@ -458,7 +461,7 @@ def _walk_expr(node, ctx):
             _walk_expr(arg, ctx)
         for kw in node.keywords:
             _walk_expr(kw.value, ctx)
-        kind = _classify_call(node)
+        kind = _classify_call(node, ctx)
         if kind is not None:
             _record_call(node, kind, ctx)
         return
@@ -561,29 +564,91 @@ def _ends_db(node):
     return False
 
 
-def _classify_call(node):
+def _classify_call(node, ctx):
     func = node.func
     if not isinstance(func, ast.Attribute) or func.attr not in _OPS:
         return None
     op = func.attr
     base = func.value
-    if isinstance(base, ast.Attribute) and _ends_db(base.value):
+    pos = ctx.seq[0] + 1
+    if isinstance(base, ast.Attribute) and _is_db_expr(base.value, ctx, pos, 0):
         return ("named", base.attr, op)
-    if isinstance(base, ast.Subscript) and _ends_db(base.value):
+    if isinstance(base, ast.Subscript) and _is_db_expr(base.value, ctx, pos, 0):
         key = _const_str(base.slice)
         if key is None:
             return ("dynamic", "", op)
         return ("named", key, op)
-    if isinstance(base, ast.Call) and _is_getattr_db(base):
+    if isinstance(base, ast.Call) and _is_getattr_db(base, ctx, pos):
         return ("dynamic", "", op)
+    if isinstance(base, ast.Name):
+        coll = _collection_expr(base, ctx, pos, 0)
+        if coll is None:
+            return None
+        if coll == "":
+            return ("dynamic", "", op)
+        return ("named", coll, op)
     return None
 
 
-def _is_getattr_db(node):
+def _is_getattr_db(node, ctx, pos):
     func = node.func
     if isinstance(func, ast.Name) and func.id == "getattr":
-        return bool(node.args) and _ends_db(node.args[0])
+        return bool(node.args) and _is_db_expr(node.args[0], ctx, pos, 0)
     return False
+
+
+def _alias_expr(name, ctx, pos):
+    """Tek atamanın ifadesi. Yeniden atamada veya expr yoksa None."""
+    if ctx.root().assign_counts.get(name, 0) != 1:
+        return None
+    found = _lookup(name, ctx, pos, 0)
+    if found[0] != "expr" or found[1] is None:
+        return None
+    return found[1], found[2]
+
+
+def _is_db_expr(node, ctx, pos, depth):
+    if _ends_db(node):
+        return True
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        return all(_ends_db(value) for value in node.values)
+    if isinstance(node, ast.Name):
+        return _is_db_name(node.id, ctx, pos, depth + 1)
+    return False
+
+
+def _is_db_name(name, ctx, pos, depth):
+    if depth > _MAX_STEPS:
+        return False
+    got = _alias_expr(name, ctx, pos)
+    if got is None:
+        return False
+    expr, assign_pos = got
+    return _is_db_expr(expr, ctx, assign_pos, depth)
+
+
+def _collection_expr(node, ctx, pos, depth):
+    """Koleksiyon adı, dinamik alt kümede '', takma ad değilse None."""
+    if isinstance(node, ast.Name):
+        if _ends_db(node):
+            return None
+        return _collection_name(node.id, ctx, pos, depth + 1)
+    if isinstance(node, ast.Attribute) and _is_db_expr(node.value, ctx, pos, depth):
+        return node.attr
+    if isinstance(node, ast.Subscript) and _is_db_expr(node.value, ctx, pos, depth):
+        key = _const_str(node.slice)
+        return "" if key is None else key
+    return None
+
+
+def _collection_name(name, ctx, pos, depth):
+    if depth > _MAX_STEPS:
+        return None
+    got = _alias_expr(name, ctx, pos)
+    if got is None:
+        return None
+    expr, assign_pos = got
+    return _collection_expr(expr, ctx, assign_pos, depth)
 
 
 def _record_call(node, kind, ctx):
