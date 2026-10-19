@@ -1,17 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Platform, Pressable, Text } from "react-native";
+import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
+import { ApiHttpError } from "../api/errors";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
 import { DraftInvoiceFaturalastir } from "../components/DraftInvoiceFaturalastir";
 import { IncomingInvoiceFaturalastir } from "../components/IncomingInvoiceFaturalastir";
 import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { GroupedSelect } from "../components/GroupedSelect";
-import { MoneyInput, QuantityInput } from "../components/MoneyInput";
-import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { InvoiceLineSheet } from "../components/InvoiceLineSheet";
+import { MoneyInput } from "../components/MoneyInput";
+import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { useLiveRefresh } from "../live/useLiveRefresh";
 import { go } from "../nav";
@@ -21,7 +22,7 @@ import { splitPaymentTarget } from "../utils/contactDraft";
 import type { EfaturaOnayPayload } from "../utils/efaturaOnay";
 import { canFaturalastirDraftInvoice, issueInvoiceFromOnay } from "../utils/invoiceFaturalastir";
 import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
-import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
+import { canRemoveInvoiceLine, hydrateLine, matchProductVariant, type InvoiceLine } from "../utils/documentLines";
 import {
   canCancelInvoice,
   canDeleteInvoice,
@@ -38,7 +39,15 @@ import {
   type GdMode,
 } from "../utils/invoiceDraft";
 import { askInvoiceDatePrompt, INVOICE_DATE_PROMPT, shouldAskInvoiceDatePrompt } from "../utils/invoiceDocDate";
-import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
+import { eTypeTr, invoiceTypeTr } from "../utils/labels";
+import { invoiceListBadge } from "../utils/invoiceListPage";
+import {
+  fetchLineProductHits,
+  fillInvoiceLineFromProduct,
+  lineProductDetailRequest,
+  lineProductNeedsHydrate,
+  type LineProductHit,
+} from "../utils/lineProductSearch";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 import { printInvoiceForm } from "../utils/orderShare";
@@ -82,8 +91,12 @@ export function InvoiceDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<"loading" | "ready" | "notfound" | "error">("loading");
   const [openRow, setOpenRow] = useState<string | null>(null);
-  const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string | number; unit_price: string | number; vat_rate: number } | null>(null);
+  const [editIndex, setEditIndex] = useState<number | null>(null);
+  const invRef = useRef<Invoice | null>(null);
+  const scrollRef = useRef<{ scrollTo?: (opts: { y: number; animated?: boolean }) => void } | null>(null);
+  const payY = useRef(0);
   const [gdMode, setGdMode] = useState<GdMode>("amount");
   const [gdValue, setGdValue] = useState<string | number>("");
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
@@ -112,8 +125,19 @@ export function InvoiceDetailScreen() {
       const left = remainingAmount(data);
       setPayAmount(left ? String(left) : "");
       setError(null);
+      invRef.current = data;
+      setStatus("ready");
     } catch (err) {
+      const missing = err instanceof ApiHttpError && err.status === 404;
+      if (missing) {
+        invRef.current = null;
+        setInv(null);
+        setStatus("notfound");
+        setError(null);
+        return;
+      }
       setError(apiErrorMessage(err, "Fatura yüklenemedi."));
+      if (!invRef.current) setStatus("error");
     }
   }, [client, id]);
 
@@ -190,7 +214,36 @@ export function InvoiceDetailScreen() {
     }
   };
 
-  if (!inv) return <Screen><ErrorBanner message={error || "Fatura bulunamadı."} /></Screen>;
+  if (status === "loading") {
+    return (
+      <Screen onRefresh={load}>
+        <View testID="inv-detail-loading" style={{ gap: 8 }}>
+          <View style={{ height: 28, width: 160, borderRadius: 8, backgroundColor: "#E2E8F0" }} />
+          <View style={{ height: 120, borderRadius: 16, backgroundColor: "#E2E8F0" }} />
+          <Muted>Yükleniyor…</Muted>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (status === "notfound") {
+    return (
+      <Screen onRefresh={load}>
+        <View testID="inv-detail-notfound">
+          <ErrorBanner message="Fatura bulunamadı." />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (status === "error" || !inv) {
+    return (
+      <Screen onRefresh={load}>
+        <ErrorBanner message={error || "Fatura yüklenemedi."} />
+        <PrimaryButton title="Tekrar dene" onPress={() => { void load(); }} testID="inv-detail-retry" color={colors.primary} />
+      </Screen>
+    );
+  }
 
   const issued = isGibIssued(inv);
   const leftover = remainingAmount(inv);
@@ -205,7 +258,7 @@ export function InvoiceDetailScreen() {
     run(async () => {
       await put(client, `/invoices/${id}`, invoiceDipPayload(next.map((it) => hydrateLine(it)), gdMode, gdNum));
       setMessage(okMsg);
-      setEditLine(null);
+      setEditIndex(null);
       setOpenRow(null);
     }, "Kalemler kaydedilemedi.");
 
@@ -240,14 +293,29 @@ export function InvoiceDetailScreen() {
 
   const openItemEdit = (index: number) => {
     if (!itemsEditable) { blockedItems(); return; }
-    const it = lines[index] || {};
     setOpenRow(null);
-    setEditLine({
-      index,
-      name: String(it.product_name || it.name || ""),
-      quantity: String(it.quantity ?? 1),
-      unit_price: String(it.unit_price ?? 0),
-      vat_rate: Number(it.vat_rate) || 0,
+    setEditIndex(index);
+  };
+
+  const loadLineHits = async (q: string) => fetchLineProductHits({
+    search: (path, query) => get(client, path, query),
+    companyId,
+    query: q,
+  });
+
+  const resolveDetailProduct = async (hit: LineProductHit | Product, current: InvoiceLine, scanCode?: string) => {
+    let prod = hit as Product;
+    if (lineProductNeedsHydrate(prod) && idOf(prod)) {
+      try {
+        prod = await get<Product>(client, lineProductDetailRequest(idOf(prod)).path);
+      } catch {
+        /* keep the hit */
+      }
+    }
+    const variant = scanCode ? matchProductVariant(prod, scanCode) : undefined;
+    return fillInvoiceLineFromProduct(current, prod, inv.invoice_type || "sales", {
+      exportInvoice: inv.trade_kind === "export" || inv.e_type === "e_export",
+      variant,
     });
   };
 
@@ -263,25 +331,6 @@ export function InvoiceDetailScreen() {
     confirmAction("Kalemi sil", `${label} satırı silinsin mi?`, () => {
       persistItems(lines.filter((_, i) => i !== index));
     });
-  };
-
-  const saveItemEdit = () => {
-    if (!editLine || !itemsEditable) return;
-    const qty = Number(String(editLine.quantity).replace(",", "."));
-    const price = Number(String(editLine.unit_price).replace(",", "."));
-    if (!editLine.name.trim()) { setError("Kalem adı gerekli."); return; }
-    if (!(qty > 0) || !(price >= 0)) { setError("Miktar ve fiyat geçerli olmalı."); return; }
-    persistItems(lines.map((it, i) => {
-      if (i !== editLine.index) return it;
-      return computeLine(hydrateLine({
-        ...it,
-        name: editLine.name.trim(),
-        product_name: editLine.name.trim(),
-        quantity: qty,
-        unit_price: price,
-        vat_rate: editLine.vat_rate,
-      }));
-    }));
   };
 
   const remove = () => {
@@ -308,90 +357,147 @@ export function InvoiceDetailScreen() {
     );
   };
 
+  const gibBadge = invoiceListBadge(inv);
+  const ettn = String(inv.gib_uuid || "").trim();
+  const track = String(inv.gib_tracking_id || "").trim();
+  const canOpenEditor = canEdit && canEditInvoice(inv) && !isIncomingDispatch(inv);
+  const showDispatch = canEdit && inv.invoice_type !== "dispatch" && !draft;
+  const showPay = canEdit && !draft && inv.invoice_type !== "dispatch" && leftover > 0.01;
+  const printDoc = () => run(async () => {
+    await printInvoiceForm(inv, activeCompany, client);
+    setMessage(
+      shouldUseIntegratorPdf("invoice", inv)
+        ? `${integratorPdfKindLabel(inv)} PDF yazdırmaya / paylaşıma gönderildi.`
+        : inv.invoice_type === "dispatch"
+          ? "İrsaliye yazdırmaya gönderildi."
+          : "Fatura yazdırmaya gönderildi.",
+    );
+  }, "Yazdırılamadı.");
+  const editedRaw = editIndex != null ? lines[editIndex] : null;
+  const editedLine = editedRaw ? hydrateLine(editedRaw as Partial<InvoiceLine>) : null;
+  const editedCatalog = editedRaw ? (catalog[String(editedRaw.product_id || "")] || null) : null;
+
   return (
-    <Screen onRefresh={load}>
-      <H1>{inv.invoice_number || "Fatura"}</H1>
-      <Muted>{inv.contact_name} · {fmtDate(inv.issue_date)}</Muted>
+    <Screen onRefresh={load} scrollRef={scrollRef}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <H1>{inv.invoice_number || "Fatura"}</H1>
+        </View>
+        <Pressable
+          testID="inv-print"
+          accessibilityLabel={shouldUseIntegratorPdf("invoice", inv) ? `${integratorPdfKindLabel(inv)} yazdır` : "Yazdır"}
+          onPress={printDoc}
+          style={{ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.slate100 }}
+        >
+          <Ionicons name="print-outline" size={18} color={colors.text} />
+        </Pressable>
+      </View>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
-      <Row style={{ flexWrap: "wrap", gap: 8 }}>
-        <PrimaryButton
-          title={shouldUseIntegratorPdf("invoice", inv) ? `${integratorPdfKindLabel(inv)} yazdır` : "Yazdır"}
-          testID="inv-print"
-          color={colors.slate800}
-          loading={busy}
-          onPress={() => run(async () => {
-            await printInvoiceForm(inv, activeCompany, client);
-            setMessage(
-              shouldUseIntegratorPdf("invoice", inv)
-                ? `${integratorPdfKindLabel(inv)} PDF yazdırmaya / paylaşıma gönderildi.`
-                : inv.invoice_type === "dispatch"
-                  ? "İrsaliye yazdırmaya gönderildi."
-                  : "Fatura yazdırmaya gönderildi.",
-            );
-          }, "Yazdırılamadı.")}
-        />
-        {canEdit && canEditInvoice(inv) && !isIncomingDispatch(inv) ? (
-          <PrimaryButton
-            title={draft ? "Taslağı düzenle" : "Düzenle"}
-            testID="inv-edit"
-            color={colors.primary}
-            onPress={() => go("InvoiceEdit", { id })}
-          />
-        ) : null}
-      </Row>
       <Card>
-        <Row style={{ flexWrap: "wrap" }}>
-          <Badge label={invoiceTypeTr(inv.invoice_type)} tone="indigo" />
-          <Badge label={eTypeTr(inv.e_type)} tone="slate" />
-          <Badge label={statusTr(inv.status)} tone={draft ? "amber" : "green"} />
-          {inv.payment_status ? <Badge label={statusTr(inv.payment_status)} tone={inv.payment_status === "paid" ? "green" : "amber"} /> : null}
-          {inv.trade_kind ? <Badge label={tradeKindTr(inv.trade_kind)} tone="indigo" /> : null}
-        </Row>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }} testID="inv-header-total">{showPrices ? fmtMoney(totals.grandTotal, inv.currency) : "—"}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ flex: 1, color: colors.muted, fontWeight: "700" }}>{`${fmtDate(inv.issue_date)} · ${eTypeTr(inv.e_type)} · ${invoiceTypeTr(inv.invoice_type)}`}</Text>
+          {gibBadge ? (
+            <View style={{ borderRadius: 999, backgroundColor: gibBadge.bg, paddingHorizontal: 8, paddingVertical: 3 }}>
+              <Text style={{ color: gibBadge.fg, fontWeight: "800", fontSize: 11 }}>{gibBadge.label}</Text>
+            </View>
+          ) : null}
+        </View>
+        <Text style={{ fontWeight: "800", fontSize: 16, color: colors.text, marginTop: 6 }}>{inv.contact_name || "Cari yok"}</Text>
+        <Text style={{ fontSize: 28, fontWeight: "800", color: colors.text, marginTop: 4 }} testID="inv-header-total">{showPrices ? fmtMoney(totals.grandTotal, inv.currency) : "—"}</Text>
         {showPrices ? (
-          <Muted>Ödenen {fmtMoney(inv.paid_amount, inv.currency)} · kalan {fmtMoney(leftover, inv.currency)} · vade {fmtDate(inv.due_date)}</Muted>
+          <Text style={{ color: colors.muted, fontWeight: "700", marginTop: 4 }}>
+            {`Ödenen ${fmtMoney(inv.paid_amount, inv.currency)} · `}
+            <Text style={{ color: colors.danger, fontWeight: "800" }}>{`kalan ${fmtMoney(leftover, inv.currency)}`}</Text>
+            {` · vade ${fmtDate(inv.due_date)}`}
+          </Text>
         ) : (
           <Muted>Vade {fmtDate(inv.due_date)}</Muted>
         )}
-        {inv.e_type === "paper" || inv.einvoice_state === "paper" ? (
-          <Muted>Kağıt fatura — GİB e-belgesi değil</Muted>
-        ) : inv.gib_status ? (
-          <Muted>GİB: {inv.gib_status}{inv.gib_tracking_id ? ` · ${inv.gib_tracking_id}` : ""}</Muted>
+        {ettn || track ? (
+          <Muted>
+            {ettn ? `ETTN ${ettn}` : ""}
+            {ettn && track ? " · " : ""}
+            {track ? `GİB takip no ${track}` : ""}
+          </Muted>
         ) : null}
         {inv.project_number ? <Muted>Proje {inv.project_number}</Muted> : null}
       </Card>
-
-      {canEdit ? <Muted>Kalemi düzenlemek veya silmek için satırı sola kaydırın.</Muted> : null}
-      {lines.map((it, i) => {
-        const row = (
-          <ListRow
-            title={String(it.product_name || it.name || "Kalem")}
-            subtitle={showPrices
-              ? `${it.quantity} ${String(it.unit || "")} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}${it.discount_rate ? ` · %${it.discount_rate} isk.` : ""}`
-              : `${it.quantity} ${String(it.unit || "")}${it.vat_rate != null ? ` · KDV %${it.vat_rate}` : ""}`}
-            right={showPrices ? fmtMoney(it.total_incl || it.total, inv.currency) : undefined}
-            image={lineItemImage(it as Record<string, unknown>, catalog)}
-          />
-        );
-        if (!canEdit) return <React.Fragment key={i}>{row}</React.Fragment>;
-        return (
-          <SwipeRevealRow
-            key={i}
-            rowKey={String(i)}
-            openKey={openRow}
-            onOpen={setOpenRow}
-            onEdit={() => openItemEdit(i)}
-            onDelete={() => removeItem(i)}
-            testID={`inv-item-${i}`}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {showPay ? (
+          <Pressable
+            testID="inv-pay-open"
+            onPress={() => {
+              const scroll = () => scrollRef.current?.scrollTo?.({ y: Math.max(0, payY.current - 12), animated: true });
+              if (typeof requestAnimationFrame === "function") requestAnimationFrame(scroll);
+              else scroll();
+            }}
+            style={{ flex: 1, minHeight: 44, borderRadius: 12, backgroundColor: "#F59E0B", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}
           >
-            {row}
-          </SwipeRevealRow>
-        );
-      })}
+            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>💳 Ödeme al</Text>
+          </Pressable>
+        ) : null}
+        <Pressable
+          onPress={printDoc}
+          style={{ flex: 1, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}
+        >
+          <Text style={{ color: colors.text, fontWeight: "800", fontSize: 12 }}>PDF / Paylaş</Text>
+        </Pressable>
+        {showDispatch ? (
+          <Pressable
+            testID="inv-create-dispatch"
+            onPress={() => run(async () => {
+              const r = await post<{ dispatch?: Invoice; message?: string; status?: string }>(client, `/invoices/${id}/create-dispatch`);
+              setMessage(r.message || "İrsaliye oluşturuldu.");
+              const did = idOf(r.dispatch);
+              if (did) go("InvoiceDetail", { id: did });
+            }, "İrsaliye oluşturulamadı.")}
+            style={{ flex: 1, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}
+          >
+            <Text style={{ color: colors.text, fontWeight: "800", fontSize: 12 }}>İrsaliye</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {canOpenEditor ? (
+        <Pressable testID="inv-edit" onPress={() => go("InvoiceEdit", { id })} style={{ alignSelf: "flex-start", paddingVertical: 4 }}>
+          <Text style={{ color: colors.primary, fontWeight: "800" }}>{draft ? "Taslağı düzenle" : "Düzenle"}</Text>
+        </Pressable>
+      ) : null}
+
+      <Card>
+        <Text style={{ fontWeight: "800", color: colors.muted, fontSize: 11 }}>{`SATIRLAR · ${lines.length}`}</Text>
+        {lines.map((it, i) => {
+          const row = (
+            <ListRow
+              title={String(it.product_name || it.name || "Kalem")}
+              subtitle={showPrices
+                ? `${it.quantity} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}`
+                : `${it.quantity} ${String(it.unit || "")}${it.vat_rate != null ? ` · KDV %${it.vat_rate}` : ""}`}
+              right={showPrices ? fmtMoney(it.total_incl || it.total, inv.currency) : undefined}
+              image={lineItemImage(it as Record<string, unknown>, catalog)}
+              onPress={itemsEditable ? () => openItemEdit(i) : undefined}
+            />
+          );
+          if (!canEdit) return <View key={i} testID={`inv-item-${i}`}>{row}</View>;
+          return (
+            <SwipeRevealRow
+              key={i}
+              rowKey={String(i)}
+              openKey={openRow}
+              onOpen={setOpenRow}
+              onEdit={() => openItemEdit(i)}
+              onDelete={() => removeItem(i)}
+              onPress={itemsEditable ? () => openItemEdit(i) : undefined}
+              testID={`inv-item-${i}`}
+            >
+              {row}
+            </SwipeRevealRow>
+          );
+        })}
+      </Card>
 
       <Card testID="inv-dip-totals">
-        <Text style={{ fontWeight: "800", color: colors.text }}>Dip toplamlar</Text>
+        <Text style={{ fontWeight: "800", color: colors.muted, fontSize: 11 }}>TOPLAMLAR</Text>
         <Row style={{ justifyContent: "space-between" }}><Muted>Mal / hizmet</Muted><Text style={{ fontWeight: "700" }}>{fmtMoney(totals.itemsSum, inv.currency)}</Text></Row>
         {totals.lineDiscount > 0 ? (
           <Row style={{ justifyContent: "space-between" }}><Muted>Satır iskontoları</Muted><Text style={{ fontWeight: "700", color: colors.danger }}>-{fmtMoney(totals.lineDiscount, inv.currency)}</Text></Row>
@@ -577,9 +683,9 @@ export function InvoiceDetailScreen() {
         </Card>
       ) : null}
 
-      {canEdit && leftover > 0.01 && !draft && inv.invoice_type !== "dispatch" ? (
-        <Card>
-          <Text style={{ fontWeight: "800", color: colors.text }}>Tahsilat / ödeme</Text>
+      {showPay ? (
+        <Card testID="inv-payment-card" onLayout={(e) => { payY.current = e.nativeEvent.layout.y; }}>
+          <Text style={{ fontWeight: "800", color: colors.muted, fontSize: 11 }}>ÖDEME KAYDET</Text>
           <MoneyInput label="Tutar" testID="inv-pay-amount" value={payAmount} onChange={(n) => setPayAmount(n ?? "")} />
           {accounts.length || partners.length ? (
             <GroupedSelect
@@ -615,7 +721,7 @@ export function InvoiceDetailScreen() {
 
       {canEdit && !draft && !isIncomingDispatch(inv) ? (
         <Card>
-          <Text style={{ fontWeight: "800", color: colors.text }}>Kesilmiş belgede düzenlenebilir</Text>
+          <Text style={{ fontWeight: "800", color: colors.muted, fontSize: 11 }}>VADE VE NOT</Text>
           <Field label="Vade tarihi" testID="inv-due-edit" value={dueDate} onChangeText={setDueDate} placeholder="YYYY-MM-DD" />
           <Field label="Not" testID="inv-notes-edit" value={notes} onChangeText={setNotes} />
           <PrimaryButton
@@ -631,21 +737,6 @@ export function InvoiceDetailScreen() {
         </Card>
       ) : null}
 
-      {canEdit && inv.invoice_type !== "dispatch" && !draft ? (
-        <PrimaryButton
-          title="İrsaliye oluştur"
-          testID="inv-create-dispatch"
-          color={colors.indigo}
-          loading={busy}
-          onPress={() => run(async () => {
-            const r = await post<{ dispatch?: Invoice; message?: string; status?: string }>(client, `/invoices/${id}/create-dispatch`);
-            setMessage(r.message || "İrsaliye oluşturuldu.");
-            const did = idOf(r.dispatch);
-            if (did) go("InvoiceDetail", { id: did });
-          }, "İrsaliye oluşturulamadı.")}
-        />
-      ) : null}
-
       {canEdit && canCancelInvoice(inv) ? (
         <Pressable onPress={cancel} testID="inv-cancel" style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>
           <Ionicons name="close-circle-outline" size={18} color={colors.warning} />
@@ -659,47 +750,44 @@ export function InvoiceDetailScreen() {
         </Pressable>
       ) : null}
 
-        {inv.notes ? (
-        <Card>
-          <Text style={{ fontWeight: "800", color: colors.text }}>Not</Text>
-          <Muted>{inv.notes}</Muted>
-        </Card>
+      {!canEdit || draft || isIncomingDispatch(inv) ? (
+        inv.notes ? (
+          <Card>
+            <Text style={{ fontWeight: "800", color: colors.muted, fontSize: 11 }}>VADE VE NOT</Text>
+            <Muted>Vade {fmtDate(inv.due_date)}</Muted>
+            <Muted>{inv.notes}</Muted>
+          </Card>
+        ) : null
       ) : null}
 
-      <B2BSheet
-        visible={!!editLine}
-        title="Kalemi düzenle"
-        subtitle={inv.invoice_number}
-        onClose={() => setEditLine(null)}
-        testID="inv-item-edit"
-      >
-        <Field label="Ad" testID="inv-item-name" value={editLine?.name || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, name: v } : cur))} />
-        <QuantityInput
-          label="Miktar"
-          testID="inv-item-qty"
-          value={editLine?.quantity || ""}
-          onChange={(n) => { if (n != null) setEditLine((cur) => (cur ? { ...cur, quantity: n } : cur)); }}
+      {editedLine ? (
+        <InvoiceLineSheet
+          key={`detail-line-${editIndex}`}
+          visible={editIndex != null}
+          index={editIndex ?? 0}
+          count={lines.length}
+          line={editedLine}
+          currency={inv.currency || "TRY"}
+          tradeKind={inv.trade_kind}
+          allowDelete={editIndex != null && canRemoveInvoiceLine(lines, editIndex)}
+          editable={itemsEditable}
+          imageUri={lineItemImage((editedRaw || {}) as Record<string, unknown>, catalog)}
+          stockQty={editedCatalog?.stock_quantity}
+          productUnit={String(editedCatalog?.unit || editedLine.unit || "")}
+          loadHits={loadLineHits}
+          resolveProduct={resolveDetailProduct}
+          busy={busy}
+          onClose={() => setEditIndex(null)}
+          onSave={(next) => {
+            if (editIndex == null || !itemsEditable) return;
+            persistItems(lines.map((it, i) => (i === editIndex ? next : it)));
+          }}
+          onDelete={() => {
+            if (editIndex == null || !itemsEditable) return;
+            persistItems(lines.filter((_, i) => i !== editIndex));
+          }}
         />
-        <MoneyInput
-          label="Birim fiyat"
-          testID="inv-item-price"
-          value={editLine?.unit_price || ""}
-          onChange={(n) => { if (n != null) setEditLine((cur) => (cur ? { ...cur, unit_price: n } : cur)); }}
-        />
-        <Muted>KDV</Muted>
-        <Row>
-          {VAT_OPTIONS.map((v) => (
-            <Chip
-              key={v}
-              label={`%${v}`}
-              active={editLine?.vat_rate === v}
-              onPress={() => setEditLine((cur) => (cur ? { ...cur, vat_rate: v } : cur))}
-              testID={`inv-item-vat-${v}`}
-            />
-          ))}
-        </Row>
-        <PrimaryButton title={busy ? "Kaydediliyor…" : "Kalemi kaydet"} onPress={saveItemEdit} loading={busy} color={colors.primary} testID="inv-item-save" />
-      </B2BSheet>
+      ) : null}
 
       <ElektronikFaturaOnayModal
         visible={efaturaOpen}

@@ -12,7 +12,7 @@ import { Empty, ErrorBanner, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
-import { dispatchDirFromParam, splitDispatchLists } from "../utils/despatchShipment";
+import { dispatchDirFromParam, isIncomingDispatch, splitDispatchLists } from "../utils/despatchShipment";
 import { outgoingMergeIds } from "../utils/dispatchMerge";
 import { invoiceListTitle, invoiceRowDangerAction, isIncomingPurchaseInvoice } from "../utils/invoiceDraft";
 import { canFaturalastirDraftInvoice } from "../utils/invoiceFaturalastir";
@@ -438,15 +438,22 @@ export function InvoicesScreen() {
             const draft = String(inv.status || "") === "draft";
             const showFaturalastir = canEdit && canFaturalastirDraftInvoice(inv);
             const showIncomingPost = canEdit && isIncomingPurchaseInvoice(inv);
-            const card = <InvoiceCard inv={inv} draft={draft} />;
+            const openInvoice = () => {
+              const editor = canEdit && draft && !isIncomingDispatch(inv);
+              go(editor ? "InvoiceEdit" : "InvoiceDetail", { id: iid });
+            };
+            const card = (
+              <Pressable testID={`inv-open-${iid}`} onPress={openInvoice}>
+                <InvoiceCard inv={inv} draft={draft} />
+              </Pressable>
+            );
             const body = !allowDanger || !danger ? (
-              <Pressable testID={`inv-row-${iid}`} onPress={() => go("InvoiceDetail", { id: iid })}>{card}</Pressable>
+              <View testID={`inv-row-${iid}`}>{card}</View>
             ) : (
               <SwipeRevealRow
                 rowKey={iid}
                 openKey={openRow}
                 onOpen={setOpenRow}
-                onPress={() => go("InvoiceDetail", { id: iid })}
                 onDelete={() => actOnInvoice(inv)}
                 deleteLabel={danger === "cancel" ? "İptal" : "Sil"}
                 deleteColor={danger === "cancel" ? colors.warning : colors.danger}

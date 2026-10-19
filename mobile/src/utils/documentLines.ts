@@ -322,3 +322,20 @@ export function removeInvoiceItem(items: InvoiceLine[], index: number, defaultVa
   const next = items.filter((_, i) => i !== index);
   return next.length ? next : [computeLine(emptyLine({ vat_rate: defaultVat }))];
 }
+
+export function lineHasContent(item?: { name?: unknown; product_name?: unknown; product_id?: unknown } | null): boolean {
+  if (!item) return false;
+  return !!(String(item.product_id || "").trim() || String(item.name || "").trim() || String(item.product_name || "").trim());
+}
+
+/** Son dolu satır silinmez; boş fazladan satır, listede başka satır varsa silinebilir. */
+export function canRemoveInvoiceLine(
+  items: Array<{ name?: unknown; product_name?: unknown; product_id?: unknown }>,
+  index: number,
+): boolean {
+  if (index < 0 || index >= items.length) return false;
+  if (!lineHasContent(items[index])) return items.length > 1;
+  let filled = 0;
+  for (const item of items) if (lineHasContent(item)) filled += 1;
+  return filled > 1;
+}
