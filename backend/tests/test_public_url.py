@@ -4,6 +4,9 @@ from __future__ import annotations
 import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
+
+import pytest
 
 import public_url as pu
 
@@ -377,6 +380,78 @@ def test_forwarded_loopback_and_evil_host_fall_back():
     assert outs == ["https://app.tamkobi.com/proje/x"] * 3
     for out in outs:
         _no_loopback(out)
+
+
+_FORWARDED_BYPASS_HOSTS = (
+    "evil.com?.tamkobi.com",
+    "evil.com#.tamkobi.com",
+    "evil.com@app.tamkobi.com",
+    "evil.com;.tamkobi.com",
+    "evil.com%2F.tamkobi.com",
+    "evil-tamkobi.com",
+    "tamkobi.com.evil.com",
+    "app_tamkobi.com",
+    "app.tamkobi.com:8443",
+    "[::1]",
+    "127.0.0.1",
+    "x.localhost",
+)
+
+
+@pytest.mark.parametrize("host", _FORWARDED_BYPASS_HOSTS)
+def test_forwarded_host_bypass_uses_app_root(host):
+    fake_db = _loopback_db()
+    req = _Req({
+        "host": "127.0.0.1:8000",
+        "x-forwarded-host": host,
+        "x-forwarded-proto": "https",
+    })
+
+    async def run():
+        with patch.dict(os.environ, {"PUBLIC_APP_URL": "", "PUBLIC_APP_HOST_URL": ""}, clear=False):
+            return await pu.public_link(fake_db, "/teklif/T?t=1", request=req)
+
+    out = asyncio.run(run())
+    assert out == "https://app.tamkobi.com/teklif/T?t=1"
+    assert urlparse(out).hostname == "app.tamkobi.com"
+    assert req.base_url_reads == 0
+
+
+def test_forwarded_https_allowed_host_keeps_query_path():
+    fake_db = _loopback_db()
+    req = _Req({
+        "host": "127.0.0.1:8000",
+        "x-forwarded-host": "cdn.tamkobi.com",
+        "x-forwarded-proto": "https",
+    })
+
+    async def run():
+        with patch.dict(os.environ, {"PUBLIC_APP_URL": "", "PUBLIC_APP_HOST_URL": ""}, clear=False):
+            return await pu.public_link(fake_db, "/teklif/T?t=1", request=req)
+
+    out = asyncio.run(run())
+    assert out == "https://cdn.tamkobi.com/teklif/T?t=1"
+    assert urlparse(out).hostname == "cdn.tamkobi.com"
+    assert req.base_url_reads == 0
+
+
+def test_forwarded_http_proto_falls_back_to_app_root():
+    fake_db = _loopback_db()
+    req = _Req({
+        "host": "127.0.0.1:8000",
+        "x-forwarded-host": "cdn.tamkobi.com",
+        "x-forwarded-proto": "http",
+    })
+
+    async def run():
+        with patch.dict(os.environ, {"PUBLIC_APP_URL": "", "PUBLIC_APP_HOST_URL": ""}, clear=False):
+            return await pu.public_link(fake_db, "/teklif/T?t=1", request=req)
+
+    out = asyncio.run(run())
+    assert out == "https://app.tamkobi.com/teklif/T?t=1"
+    assert urlparse(out).hostname == "app.tamkobi.com"
+    assert "cdn.tamkobi.com" not in out
+    assert req.base_url_reads == 0
 
 
 def test_forwarded_allowed_host_is_last_resort():

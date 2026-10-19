@@ -179,34 +179,32 @@ def _request_header(request: Any, name: str) -> str:
     return ""
 
 
+# Katı DNS etiketi. ?, #, @, ;, %, _, boşluk, /, \, köşeli parantez ve port yok.
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _is_strict_dns_host(hostname: str) -> bool:
+    """Etiketler nokta ile ayrılır; toplam uzunluk en fazla 253."""
+    host = (hostname or "").strip().lower()
+    if not host or len(host) > 253:
+        return False
+    labels = host.split(".")
+    return all(_DNS_LABEL_RE.fullmatch(label) for label in labels)
+
+
 def _forwarded_host_token(raw: str):
-    """İlk X-Forwarded-Host değeri → (hostname, host[:port])."""
-    first = (raw or "").split(",")[0].strip()
-    if not first or any(ch in first for ch in " \t\r\n/\\"):
-        return "", ""
-    if first.startswith("["):
-        end = first.find("]")
-        if end <= 1:
-            return "", ""
-        hostname = first[1:end]
-        rest = first[end + 1:]
-        if rest and not re.fullmatch(r":\d{1,5}", rest):
-            return "", ""
-        return hostname, first
-    if first.count(":") == 1:
-        hostname, port = first.rsplit(":", 1)
-        if port.isdigit():
-            return hostname, first
-    if ":" in first:
+    """İlk X-Forwarded-Host değeri. Yalnız katı DNS adı; port gelirse reddedilir."""
+    first = (raw or "").split(",")[0].strip().lower()
+    if not _is_strict_dns_host(first):
         return "", ""
     return first, first
 
 
 def _host_on_public_root(hostname: str, root: str) -> bool:
-    """İzinli liste: {kök} ve *.{kök}. Loopback reddedilir."""
-    host = (hostname or "").strip().lower().rstrip(".")
-    root_l = (root or "").strip().lower().rstrip(".")
-    if not host or not root_l:
+    """İzinli liste: {kök} ve *.{kök}. Loopback ve katı olmayan adlar reddedilir."""
+    host = (hostname or "").strip().lower()
+    root_l = (root or "").strip().lower()
+    if not _is_strict_dns_host(host) or not _is_strict_dns_host(root_l):
         return False
     if host in _INVALID_HOSTS or host.endswith(".localhost"):
         return False
@@ -216,18 +214,40 @@ def _host_on_public_root(hostname: str, root: str) -> bool:
 
 
 def _forwarded_app_base(request: Any, root: str) -> str:
-    """X-Forwarded-Host + X-Forwarded-Proto, yalnız izinli ve loopback olmayan host."""
+    """X-Forwarded-Host + https. Host başlığı ve request.base_url okunmaz.
+
+    normalize sonrası urlparse tekrar ayrıştırılır. hostname izinli değilse
+    veya kullanıcı, parola, port, sorgu, parça ya da path doluysa reddedilir.
+    """
     raw_host = _request_header(request, "x-forwarded-host") or _request_header(request, "X-Forwarded-Host")
     raw_proto = _request_header(request, "x-forwarded-proto") or _request_header(request, "X-Forwarded-Proto")
     if not raw_host or not raw_proto:
         return ""
     proto = raw_proto.split(",")[0].strip().lower()
-    if proto not in ("http", "https"):
+    if proto != "https":
         return ""
     hostname, host_token = _forwarded_host_token(raw_host)
-    if not _host_on_public_root(hostname, root):
+    if not hostname or not host_token or not _host_on_public_root(hostname, root):
         return ""
-    return normalize_public_base(f"{proto}://{host_token}")
+    candidate = normalize_public_base(f"{proto}://{host_token}")
+    if not candidate:
+        return ""
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return ""
+    if (
+        parsed.username
+        or parsed.password
+        or parsed.port
+        or parsed.query
+        or parsed.fragment
+        or parsed.path
+        or (parsed.scheme or "").lower() != "https"
+        or not _host_on_public_root(parsed.hostname or "", root)
+    ):
+        return ""
+    return candidate
 
 
 def _app_direct_sources_invalid(explicit: Optional[str], platform_public_url: Optional[str]) -> bool:
