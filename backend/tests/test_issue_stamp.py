@@ -40,6 +40,7 @@ class TestApplyIssueStamp:
             out = await e_invoice.apply_issue_stamp(
                 "inv_st",
                 inv,
+                company_id="c1",
                 stamp_now=True,
                 issue_date="2026-10-09",
                 issue_time="22:56:00",
@@ -53,7 +54,7 @@ class TestApplyIssueStamp:
 
     def test_stamp_now_without_client_uses_istanbul(self):
         fake_db = MagicMock()
-        inv = {"_id": "inv_st2", "status": "draft", "issue_date": "2020-01-01"}
+        inv = {"_id": "inv_st2", "company_id": "c1", "status": "draft", "issue_date": "2020-01-01"}
         fake_db.invoices.update_one = AsyncMock()
         fake_db.invoices.find_one = AsyncMock(side_effect=lambda q: {**inv, **fake_db._patch})
 
@@ -65,7 +66,7 @@ class TestApplyIssueStamp:
         e_invoice.init(fake_db)
 
         async def _run():
-            out = await e_invoice.apply_issue_stamp("inv_st2", inv, stamp_now=True)
+            out = await e_invoice.apply_issue_stamp("inv_st2", inv, company_id="c1", stamp_now=True)
             assert out["issue_date"]
             assert out["issue_time"]
             assert len(out["issue_time"]) == 8
@@ -84,7 +85,7 @@ class TestApplyIssueStamp:
 
         async def _run():
             with pytest.raises(HTTPException) as ei:
-                await e_invoice.apply_issue_stamp("inv_lock", inv, stamp_now=True)
+                await e_invoice.apply_issue_stamp("inv_lock", inv, company_id="c1", stamp_now=True)
             assert ei.value.status_code == 400
 
         asyncio.get_event_loop().run_until_complete(_run())

@@ -303,7 +303,7 @@ def test_fetch_integrator_pdf_reraises_provider_error(caplog):
     with caplog.at_level(logging.WARNING):
         with patch("e_invoice.isnet.download_invoice_pdf", dl):
             with pytest.raises(HTTPException) as ei:
-                _run(e_invoice.fetch_integrator_pdf("inv_pdf_err"))
+                _run(e_invoice.fetch_integrator_pdf("inv_pdf_err", company_id="c1"))
     assert ei.value.status_code == 502
     assert "Entegratör belgesi alınamadı" in ei.value.detail
     assert "401" in ei.value.detail

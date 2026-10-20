@@ -62,8 +62,47 @@ test("receipt copy layout is receipt-only", () => {
   expect(printPageCss("invoice", "A4")).not.toContain("display: flex !important");
   expect(a5).toContain("size: A5");
   expect(a5).not.toContain("min-height: 248mm");
+  expect(a4).not.toContain("248mm");
   expect(printPageCss("invoice", "A4")).not.toContain(".receipt-half");
   expect(printPageCss("order", "A4")).not.toContain(".receipt-cut");
+});
+
+test("receipt print uses portrait pages, fixed halves and unwrapped columns", () => {
+  const a5 = printPageCss("receipt", "A5");
+  const a4 = printPageCss("receipt", "A4");
+  expect(a5).toContain("size: A5 portrait");
+  expect(a5).toMatch(/@page \{ size: A5 portrait; margin: \d+mm; \}/);
+  expect(a4).toMatch(/@page \{ size: A4 portrait; margin: 0; \}/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*height:\s*148\.5mm/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*max-height:\s*148\.5mm/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*overflow:\s*hidden/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*box-sizing:\s*border-box/);
+  expect(a4).not.toContain("248mm");
+  expect(a4).not.toContain("justify-content: space-between");
+  expect(a4).not.toMatch(/height:\s*297mm/);
+  expect(a5).not.toContain("248mm");
+  expect(a4).toContain("table-layout: fixed");
+  expect(a4).toContain("white-space: nowrap");
+  expect(a4).toContain("-webkit-line-clamp: 2");
+  expect(a4).toContain("-webkit-box-orient: vertical");
+  expect(a5).toContain("table-layout: fixed");
+  expect(a5).toContain("white-space: nowrap");
+  expect(a5).toContain("-webkit-line-clamp: 2");
+  expect(a4).not.toContain("word-break: break-word");
+  expect(a4).not.toContain("overflow-wrap: anywhere");
+  expect(printPageCss("invoice", "A4")).toContain("@page { size: A4; margin: 10mm; }");
+  expect(printPageCss("invoice", "A4")).not.toContain("portrait");
+  expect(printPageCss("order", "A4")).not.toContain("148.5mm");
+  expect(printPageCss("dispatch", "A5")).toContain("@page { size: A5; margin: 10mm; }");
+  expect(printPageCss("dispatch", "A5")).not.toContain("portrait");
+});
+
+test("invoice order quote and dispatch print css stay byte-identical", () => {
+  const dir = path.join(__dirname, "__fixtures__");
+  for (const [doc, paper] of [["invoice", "A4"], ["order", "A4"], ["quote", "A4"], ["dispatch", "A5"]]) {
+    const expected = fs.readFileSync(path.join(dir, `${doc}-${paper}.css`), "utf8");
+    expect(printPageCss(doc, paper)).toBe(expected);
+  }
 });
 
 test("screen print entry installs the shared rules and drops the absolute sheet", () => {

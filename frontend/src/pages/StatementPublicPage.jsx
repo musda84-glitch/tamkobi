@@ -1,16 +1,19 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useParams } from "react-router-dom";
-import { Loader2, Building2, AlertTriangle, FileDown } from "lucide-react";
+import { Loader2, Building2, AlertTriangle, FileDown, Printer } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { StatementTxList } from "../components/StatementTxList";
+import { StatementPrint } from "../components/StatementShare";
 
 export default function StatementPublicPage() {
   const { token } = useParams();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [printOpen, setPrintOpen] = useState(false);
+  const [live, setLive] = useState(null);
   useEffect(() => {
     axios.get(`${API_URL}/public/statements/${token}`)
       .then((r) => setData(r.data))
@@ -35,9 +38,14 @@ export default function StatementPublicPage() {
               <div className="text-xs text-slate-400 truncate">{c.phone} {c.email && `• ${c.email}`}</div>
             </div>
           </div>
-          <a href={`${API_URL}/public/statements/${token}/pdf`} className="shrink-0 inline-flex items-center gap-1.5 bg-white text-slate-900 text-xs font-bold px-3 py-2 rounded-xl" data-testid="public-statement-pdf">
-            <FileDown className="w-4 h-4" /> PDF
-          </a>
+          <div className="flex items-center gap-2 shrink-0">
+            <button type="button" onClick={() => setPrintOpen(true)} className="inline-flex items-center gap-1.5 bg-white text-slate-900 text-xs font-bold px-3 py-2 rounded-xl" data-testid="public-statement-print">
+              <Printer className="w-4 h-4" /> Ekstre Yazdır
+            </button>
+            <a href={`${API_URL}/public/statements/${token}/pdf`} className="inline-flex items-center gap-1.5 bg-white text-slate-900 text-xs font-bold px-3 py-2 rounded-xl" data-testid="public-statement-pdf">
+              <FileDown className="w-4 h-4" /> PDF
+            </a>
+          </div>
         </div>
         <div className="bg-white rounded-2xl shadow-sm p-5 sm:p-8 space-y-4">
           <div className="flex flex-wrap justify-between gap-3">
@@ -58,8 +66,19 @@ export default function StatementPublicPage() {
             tableTestId="public-statement-table"
             rowTestId={(_r, i) => `public-statement-row-${i}`}
             cellPad="py-2 px-2"
+            onViewChange={(viewRows, totals) => setLive({ rows: viewRows, totals })}
           />
           {data.issued_at && <p className="text-[11px] text-slate-400">Oluşturulma: {fmtDate(data.issued_at)}. Bu sayfa yalnızca görüntülemedir.</p>}
+          {printOpen && (
+            <StatementPrint
+              contact={{ ...who, name: who.name || "Müşterimiz", currency: ccy, balance: bal }}
+              company={c}
+              rows={rows}
+              viewRows={live?.rows}
+              viewTotals={live?.totals}
+              onClose={() => setPrintOpen(false)}
+            />
+          )}
         </div>
       </div>
     </div>

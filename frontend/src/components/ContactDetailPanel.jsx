@@ -34,7 +34,7 @@ import { ContactPayMenu } from "./ContactPayMenu";
 import { classifyTestPayment, navigation, postBankForm } from "./VposSettingsPanel";
 import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
-import { StatementTxList } from "./StatementTxList";
+import { StatementTxList, StatementViewProvider } from "./StatementTxList";
 import { TxMobileCard, TxResponsiveList, TxTypeBadge, TX_WRAP_CLASS } from "./TxMobileCard";
 import { shareStatementLink } from "../utils/statementShare";
 import {
@@ -1422,12 +1422,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 </div>
                 <button type="button" onClick={() => setStatementView(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
               </div>
-              <StatementShareBar contact={c} rows={statementView.rows} companyId={c.company_id} />
-              <StatementTxList
-                rows={statementView.rows}
-                currency={c.currency || "TRY"}
-                tableTestId="detail-statement-table"
-              />
+              <StatementViewProvider>
+                <StatementShareBar contact={c} rows={statementView.rows} companyId={c.company_id} />
+                <StatementTxList
+                  rows={statementView.rows}
+                  currency={c.currency || "TRY"}
+                  tableTestId="detail-statement-table"
+                />
+              </StatementViewProvider>
             </div>
           </div>
         )}

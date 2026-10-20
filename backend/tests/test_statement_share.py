@@ -47,6 +47,76 @@ def test_statement_rows_cheques_follow_detail_and_skip_linked():
     assert all(r["doc"] != "Alınan Çek • SN1" for r in rows)
 
 
+def test_statement_rows_gib_fields_do_not_change_balance_or_leak_ettn():
+    base = {
+        "invoice_number": "SF-1",
+        "invoice_type": "sales",
+        "grand_total": 80,
+        "issue_date": "2026-05-01",
+        "status": "issued",
+    }
+    plain = ss.statement_rows([dict(base)], [{"type": "inflow", "amount": 30, "date": "2026-05-02", "account_name": "Kasa"}])
+    cases = [
+        ("sent", "e_invoice", "sent"),
+        ("accepted", "e_invoice", "sent"),
+        ("received", "e_archive", "sent"),
+        ("draft", "e_archive", "none"),
+        ("", "e_invoice", "none"),
+        ("queued", "e_invoice", "pending"),
+        ("pending", "e_invoice", "pending"),
+        ("error", "e_invoice", "error"),
+        ("paper", "paper", "paper"),
+        ("sent", "paper", "paper"),
+    ]
+    for state, e_type, gib in cases:
+        inv = dict(base, einvoice_state=state, e_type=e_type, gib_uuid="ettn-secret", gib_status="Gizli durum")
+        rows = ss.statement_rows([inv], [{"type": "inflow", "amount": 30, "date": "2026-05-02", "account_name": "Kasa"}])
+        assert rows[0]["gib"] == gib
+        assert rows[0]["e_type"] == e_type
+        assert rows[0]["balance"] == plain[0]["balance"] == 80
+        assert rows[1]["balance"] == plain[1]["balance"] == 50
+        assert "gib" not in rows[1] and "e_type" not in rows[1]
+        assert "gib_uuid" not in rows[0] and "gib_status" not in rows[0]
+        blob = str(rows)
+        assert "ettn-secret" not in blob and "Gizli durum" not in blob
+        view = ss.public_statement_view({"name": "Ada"}, {"name": "TamKobi"}, rows)
+        invoice = view["rows"][0]
+        payment = view["rows"][1]
+        assert set(invoice) == {"date", "doc", "debit", "credit", "balance", "kind", "gib", "e_type"}
+        assert invoice["gib"] == gib and invoice["balance"] == 80
+        assert set(payment) == {"date", "doc", "debit", "credit", "balance", "kind"}
+        assert "ettn-secret" not in str(view) and "Gizli durum" not in str(view)
+    missing = ss.statement_rows([dict(base)], [])
+    assert missing[0]["gib"] == "none" and missing[0]["e_type"] == ""
+    assert missing[0]["balance"] == 80
+
+
+def test_public_statement_row_drops_foreign_ids():
+    view = ss.public_statement_view(
+        {"_id": "cnt", "company_id": "co", "name": "Hatice"},
+        {"_id": "co", "name": "TamKobi"},
+        [{
+            "date": "2026-01-02",
+            "doc": "SF • Satış Faturası",
+            "debit": 10,
+            "credit": 0,
+            "balance": 10,
+            "kind": "invoice",
+            "gib": "sent",
+            "e_type": "e_invoice",
+            "gib_uuid": "ettn-secret",
+            "gib_status": "İletildi",
+            "company_id": "co-other",
+            "_id": "inv-secret",
+        }],
+    )
+    row = view["rows"][0]
+    assert row["gib"] == "sent" and row["e_type"] == "e_invoice" and row["balance"] == 10
+    blob = str(view)
+    assert "ettn-secret" not in blob and "inv-secret" not in blob and "co-other" not in blob
+    assert "cnt" not in blob
+
+
 def test_public_statement_hides_internal_ids():
     view = ss.public_statement_view(
         {"_id": "cnt", "company_id": "co", "name": "Hatice", "balance": 10, "tax_number_or_id": "111"},

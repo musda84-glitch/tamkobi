@@ -140,5 +140,14 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
 };
 
 export const PreviewOrderBtn = ({ onClick, orderNumber }) => (
-  <button type="button" onClick={onClick} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 text-slate-700 text-[11px] font-semibold hover:bg-slate-50" data-testid={`b2b-order-preview-btn-${orderNumber}`}><Eye className="w-3 h-3" /> Önizle</button>
+  <button
+    type="button"
+    onClick={onClick}
+    className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 shrink-0"
+    data-testid={`b2b-order-preview-btn-${orderNumber}`}
+    aria-label="Önizle"
+    title="Önizle"
+  >
+    <Eye className="w-3.5 h-3.5" />
+  </button>
 );

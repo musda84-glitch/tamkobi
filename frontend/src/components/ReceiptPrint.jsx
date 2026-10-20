@@ -1,11 +1,29 @@
-import React, { useState } from "react";
+import React, { useEffect, useLayoutEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { X, Printer } from "lucide-react";
 import { fmtMoney, fmtDate } from "../utils/money";
 import { printPageCss } from "../utils/printPageCss";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { amountInWords } from "../utils/amountInWords";
+import {
+  measureReceiptProbe,
+  receiptCopyPages,
+  receiptDensity,
+  receiptFitsHalf,
+  receiptHalfOverflows,
+} from "../utils/receiptLayout";
 
 const DASH = "—";
+
+const CHEQUE_COLS = [
+  { key: "kind", label: "Tür", width: "8%" },
+  { key: "no", label: "No", title: "Çek/Senet No", width: "11%" },
+  { key: "bank", label: "Banka/Şube", width: "16%" },
+  { key: "account", label: "Hesap/IBAN", title: "Hesap No/IBAN", width: "17%" },
+  { key: "drawer", label: "Keşideci", width: "24%" },
+  { key: "due", label: "Vade", width: "10%" },
+  { key: "amount", label: "Tutar", width: "14%" },
+];
 
 function filled(value) {
   const text = String(value ?? "").trim();
@@ -39,15 +57,8 @@ function copyLabel(index) {
   return index === 0 ? "Asıl Nüsha" : `${index + 1}. Nüsha`;
 }
 
-function copyPages(count) {
-  const n = Math.min(5, Math.max(1, Number(count) || 1));
-  const pages = [];
-  for (let i = 0; i < n; i += 2) {
-    const page = [i];
-    if (i + 1 < n) page.push(i + 1);
-    pages.push(page);
-  }
-  return pages;
+function receiptRowCount(items) {
+  return Array.isArray(items) ? items.length : 0;
 }
 
 function receiptMeta(tx) {
@@ -73,9 +84,13 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
   const total = chequeItems ? sumAmounts(chequeItems) : (Number(tx.amount) || 0);
   const partyName = contact?.name || tx.contact_name || tx.target_account_name || DASH;
   const docNo = (tx.id || tx._id || "").slice(0, 8).toUpperCase();
+  const companyAddress = `${company?.address || ""} ${company?.city || ""}`.trim();
+  const partyAddress = `${contact?.address || ""} ${contact?.city || ""}`.trim();
+  const partyPhone = String(contact?.phone || "").trim();
+  const partyMeta = `VKN/TCKN: ${contact?.tax_number_or_id || DASH}${partyPhone ? ` • ${partyPhone}` : ""}`;
   return (
-    <div className="border-2 border-slate-900 rounded-lg p-4 space-y-3">
-      <div className="flex justify-between items-start gap-3 border-b-2 border-slate-900 pb-3">
+    <div className="receipt-card border-2 border-slate-900 rounded-lg p-4 space-y-3">
+      <div className="receipt-head flex justify-between items-start gap-3 border-b-2 border-slate-900 pb-3">
         <div className="flex items-start gap-2 min-w-0">
           {company?.logo_url && (
             <img
@@ -87,26 +102,26 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
             />
           )}
           <div className="min-w-0">
-            <div className="text-sm font-black leading-tight">{company?.name}</div>
-            <div className="text-slate-500">{company?.address} {company?.city}</div>
-            <div className="text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number} • {company?.phone}</div>
+            <div className="receipt-company-name text-sm font-black leading-tight">{company?.name}</div>
+            <div className="receipt-clamp-2 text-slate-500" title={companyAddress}>{company?.address} {company?.city}</div>
+            <div className="receipt-company-meta text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number} • {company?.phone}</div>
           </div>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-base font-black uppercase leading-tight">{meta.titleUpper}</div>
+          <div className="receipt-title text-base font-black uppercase leading-tight">{meta.titleUpper}</div>
           <div className="font-mono">No: MKB-{docNo}</div>
           <div className="text-slate-500">Tarih: {fmtDate(tx.date)}</div>
           <div className="mt-1 inline-block border border-slate-900 px-1.5 py-0.5 text-[10px] font-bold tracking-wide" data-testid={`receipt-copy-badge-${copyIndex}`}>{copyLabel(copyIndex)}</div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
+      <div className="receipt-party grid grid-cols-2 gap-4">
+        <div className="min-w-0">
           <div className="text-[10px] uppercase text-slate-400 font-bold">{meta.partyLabel}</div>
           <div className="font-bold text-sm">{partyName}</div>
-          <div className="text-slate-500">VKN/TCKN: {contact?.tax_number_or_id || DASH}</div>
-          <div className="text-slate-500">{contact?.address} {contact?.city}</div>
+          <div className="receipt-party-meta text-slate-500">{partyMeta}</div>
+          <div className="receipt-clamp-2 text-slate-500" title={partyAddress}>{contact?.address} {contact?.city}</div>
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-[10px] uppercase text-slate-400 font-bold">{meta.isTransfer ? "Hesap" : "Ödeme Şekli"}</div>
           <div className="font-semibold">{tx.account_name}</div>
           <div className="text-slate-500">{tx.category}{tx.target_account_name ? ` → ${tx.target_account_name}` : ""}</div>
@@ -116,37 +131,42 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
         <>
           <table className="receipt-cheque-table w-full border border-slate-300 text-[10px]" data-testid={copyIndex === 0 ? "receipt-cheque-table" : undefined}>
             <colgroup>
-              <col style={{ width: "8%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "16%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "14%" }} />
+              {CHEQUE_COLS.map((col) => <col key={col.key} style={{ width: col.width }} />)}
             </colgroup>
             <thead>
               <tr className="bg-slate-100">
-                <th className="text-left p-1 border-b border-slate-300">Tür</th>
-                <th className="text-left p-1 border-b border-slate-300">Çek/Senet No</th>
-                <th className="text-left p-1 border-b border-slate-300">Banka/Şube</th>
-                <th className="text-left p-1 border-b border-slate-300">Hesap No/IBAN</th>
-                <th className="text-left p-1 border-b border-slate-300">Keşideci</th>
-                <th className="text-left p-1 border-b border-slate-300">Vade</th>
-                <th className="text-right p-1 border-b border-slate-300">Tutar</th>
+                {CHEQUE_COLS.map((col) => (
+                  <th
+                    key={col.key}
+                    title={col.title || col.label}
+                    className={`receipt-th p-1 border-b border-slate-300 ${col.key === "amount" ? "text-right" : "text-left"}`}
+                  >
+                    {col.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {chequeItems.map((ch, idx) => (
-                <tr key={ch.id || ch._id || `${chequeNo(ch)}-${idx}`} className="receipt-row">
-                  <td className="p-1 border-b border-slate-200 break-words">{instrumentLabel(ch)}</td>
-                  <td className="p-1 border-b border-slate-200 break-words">{chequeNo(ch)}</td>
-                  <td className="p-1 border-b border-slate-200 break-words">{bankBranch(ch)}</td>
-                  <td className="p-1 border-b border-slate-200 break-words">{filled(ch.account_no)}</td>
-                  <td className="p-1 border-b border-slate-200 break-words">{filled(ch.drawer_name)}</td>
-                  <td className="p-1 border-b border-slate-200 break-words">{ch.due_date ? fmtDate(ch.due_date) : DASH}</td>
-                  <td className="p-1 border-b border-slate-200 text-right font-bold break-words">{money(ch.amount)}</td>
-                </tr>
-              ))}
+              {chequeItems.map((ch, idx) => {
+                const no = chequeNo(ch);
+                const account = filled(ch.account_no);
+                const drawer = filled(ch.drawer_name);
+                const due = ch.due_date ? fmtDate(ch.due_date) : DASH;
+                const amount = money(ch.amount);
+                return (
+                  <tr key={ch.id || ch._id || `${no}-${idx}`} className="receipt-row">
+                    <td className="receipt-col-kind p-1 border-b border-slate-200">{instrumentLabel(ch)}</td>
+                    <td className="receipt-col-no receipt-col-nowrap p-1 border-b border-slate-200" title={no}>{no}</td>
+                    <td className="receipt-col-bank p-1 border-b border-slate-200">{bankBranch(ch)}</td>
+                    <td className="receipt-col-account p-1 border-b border-slate-200" title={account}>{account}</td>
+                    <td className="receipt-col-drawer p-1 border-b border-slate-200">
+                      <span className="receipt-clamp" title={drawer}>{drawer}</span>
+                    </td>
+                    <td className="receipt-col-due receipt-col-nowrap p-1 border-b border-slate-200" title={due}>{due}</td>
+                    <td className="receipt-col-amount receipt-col-nowrap p-1 border-b border-slate-200 text-right font-bold" title={amount}>{amount}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <div className="receipt-total flex justify-between items-center bg-slate-900 text-white px-2 py-1.5 font-bold" data-testid={copyIndex === 0 ? "receipt-doc-count" : undefined}>
@@ -177,13 +197,13 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
         </table>
       )}
       <div className="font-semibold" data-testid={copyIndex === 0 ? "receipt-amount-words" : undefined}>{amountInWords(total, ccy)}</div>
-      <div className="grid grid-cols-2 gap-8 pt-4">
+      <div className="receipt-signs grid grid-cols-2 gap-8 pt-4">
         <div className="text-center">
-          <div className="border-b border-slate-400 h-10" />
+          <div className="receipt-sign border-b border-slate-400 h-6" />
           <div className="text-slate-500 mt-1">{meta.isCollection ? "Teslim Eden" : "Teslim Alan"} (Kaşe / İmza)</div>
         </div>
         <div className="text-center">
-          <div className="border-b border-slate-400 h-10" />
+          <div className="receipt-sign border-b border-slate-400 h-6" />
           <div className="text-slate-500 mt-1">{meta.isCollection ? "Teslim Alan" : "Teslim Eden"} — {company?.name}</div>
         </div>
       </div>
@@ -193,10 +213,40 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
 
 export const ReceiptPrint = ({ tx, contact, company, onClose, items }) => {
   const [copies, setCopies] = useState(1);
+  const [measuredPx, setMeasuredPx] = useState(0);
   const meta = receiptMeta(tx);
+  const rowCount = receiptRowCount(items);
+  const density = receiptDensity(rowCount);
   const paper = copies >= 2 ? "A4" : "A5";
-  const pages = copyPages(copies);
-  const wide = Array.isArray(items) && items.length > 0;
+  const fitsHalf = receiptFitsHalf(rowCount, measuredPx);
+  const pages = receiptCopyPages(copies, { fitsHalf });
+  const wide = rowCount > 0;
+
+  useLayoutEffect(() => {
+    if ((Number(copies) || 1) < 2) {
+      setMeasuredPx((prev) => (prev === 0 ? prev : 0));
+      return;
+    }
+    const half = document.querySelector("#print-area [data-testid=receipt-copy-0]");
+    const px = measureReceiptProbe(half);
+    const next = receiptHalfOverflows(px) ? px : 0;
+    setMeasuredPx((prev) => (prev === next ? prev : next));
+  }, [copies, rowCount, items, company, contact, tx]);
+
+  useEffect(() => {
+    const onBeforePrint = () => {
+      if ((Number(copies) || 1) < 2) return;
+      const half = document.querySelector("#print-area [data-testid=receipt-copy-0]");
+      const px = measureReceiptProbe(half);
+      if (!receiptHalfOverflows(px)) return;
+      flushSync(() => {
+        setMeasuredPx((prev) => (prev === px ? prev : px));
+      });
+    };
+    window.addEventListener("beforeprint", onBeforePrint);
+    return () => window.removeEventListener("beforeprint", onBeforePrint);
+  }, [copies]);
+
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-center justify-center p-4">
       <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? "max-w-4xl" : "max-w-xl"}`} data-testid="receipt-print-modal">
@@ -220,7 +270,7 @@ export const ReceiptPrint = ({ tx, contact, company, onClose, items }) => {
           </div>
         </div>
         <style data-testid="receipt-print-style">{printPageCss("receipt", paper)}</style>
-        <div id="print-area" data-doc-type="receipt" data-paper={paper} className="p-4 text-xs text-slate-900 overflow-x-auto">
+        <div id="print-area" data-doc-type="receipt" data-paper={paper} data-density={density} className="p-4 text-xs text-slate-900 overflow-x-auto">
           {pages.map((page, pageIndex) => (
             <section
               key={page[0]}
@@ -233,7 +283,7 @@ export const ReceiptPrint = ({ tx, contact, company, onClose, items }) => {
                   {idx === 1 && (
                     <div className="receipt-cut receipt-print-only" data-testid="receipt-cut" aria-hidden="true">✂ kesiniz</div>
                   )}
-                  <article className={`receipt-half${copyIndex > 0 ? " receipt-print-only" : ""}`} data-testid={`receipt-copy-${copyIndex}`}>
+                  <article className={`receipt-half receipt-density-${density}${copyIndex > 0 ? " receipt-print-only" : ""}`} data-testid={`receipt-copy-${copyIndex}`} data-density={density}>
                     <ReceiptBody tx={tx} contact={contact} company={company} items={items} copyIndex={copyIndex} />
                   </article>
                 </React.Fragment>

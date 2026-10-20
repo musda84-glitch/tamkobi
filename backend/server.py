@@ -6316,15 +6316,11 @@ def _b2b_statement_dead(doc: dict) -> bool:
 
 
 def _b2b_public_statement_row(row: dict) -> dict:
-    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok."""
-    return {
-        "date": row.get("date") or "",
-        "doc": row.get("doc") or "",
-        "debit": row.get("debit") or 0,
-        "credit": row.get("credit") or 0,
-        "balance": row.get("balance") or 0,
-        "kind": row.get("kind") or "",
-    }
+    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok.
+
+    Fatura satırında ek olarak gib ve e_type. ETTN / gib_status dışarı çıkmaz.
+    """
+    return statement_share.public_statement_row(row)
 
 
 async def _b2b_portal_statement(contact: dict, invoices: List[dict]) -> Dict[str, Any]:
@@ -7335,7 +7331,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             "cheque_id": ch["_id"],
             "cheque_kind": "portfolio",
             "receipt_group_id": ch.get("receipt_group_id"),
-            "date": ch.get("issue_date") or ch.get("due_date") or "",
+            "date": cheques._istanbul_day(ch.get("created_at")) or (ch.get("issue_date") or ""),
             "created_at": ch.get("created_at"),
             "virtual": True,
         })

@@ -237,8 +237,8 @@ def api():
     db.users.docs.append(_user("user-sa", [], "", superadmin=True))
     _seed(db)
 
-    async def _refresh(invoice_id):
-        inv = await e_invoice._db.invoices.find_one({"_id": invoice_id}) or {}
+    async def _refresh(invoice_id, *, company_id=""):
+        inv = await e_invoice._db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or {}
         return {"updated": False, "verified": False, "invoice": inv}
 
     fetch = AsyncMock(return_value=REMOTE_XML)
@@ -309,8 +309,8 @@ def test_route_signatures_load_tenant_doc():
     assert "_require_einvoice_access" in xml_src
     assert "ubl_export.invoice_xml_payload" in xml_src
     assert "ubl_export.invoice_xml(" not in xml_src
-    assert list(inspect.signature(e_invoice.refresh_one_invoice_status).parameters) == ["invoice_id"]
-    assert list(inspect.signature(e_invoice.resolve_gib_document_url).parameters) == ["invoice_id"]
+    assert list(inspect.signature(e_invoice.refresh_one_invoice_status).parameters) == ["invoice_id", "company_id"]
+    assert list(inspect.signature(e_invoice.resolve_gib_document_url).parameters) == ["invoice_id", "company_id"]
     assert "api_refresh_einvoice_status" not in inspect.getsource(e_invoice.refresh_outbound_statuses)
     assert "api_einvoice_status" not in inspect.getsource(e_invoice.outbound_status_loop)
 

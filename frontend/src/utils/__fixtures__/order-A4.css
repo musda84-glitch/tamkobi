@@ -1,0 +1,76 @@
+@page { size: A4; margin: 10mm; }
+@media print {
+  :root {
+    --print-page-margin: 10mm;
+    --print-content-pad: 8mm;
+  }
+  html, body {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  html, body, #root, .min-h-screen, .h-screen, .fixed, #print-area, .print-sheet,
+  #print-area[data-doc-type="order"] {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+  .fixed {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  body * { visibility: hidden; }
+  #print-area, #print-area * { visibility: visible !important; }
+  /* visibility:hidden still reserves layout. Drop every box that is not the
+     sheet and not an ancestor of it, so a hidden shell cannot mint a blank page. */
+  body :not(:has(#print-area)):not(#print-area):not(#print-area *) {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+  }
+  #print-area {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 8mm !important;
+    box-sizing: border-box !important;
+    break-after: auto !important;
+    page-break-after: auto !important;
+    overflow: visible !important;
+  }
+  :last-child { break-after: auto; page-break-after: auto; }
+  #print-area > :last-child,
+  #print-area :last-child {
+    break-after: auto !important;
+    page-break-after: auto !important;
+    margin-bottom: 0 !important;
+  }
+  #print-area .print-sheet-pad {
+    padding: 0 !important;
+  }
+  #print-area .print-footer:empty,
+  .print-footer:empty {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+  .no-print { display: none !important; }
+}

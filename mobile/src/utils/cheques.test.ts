@@ -1,7 +1,12 @@
 import {
+  CHEQUE_DIRECTIONS,
   CHEQUE_FILTERS,
+  CHEQUE_INSTRUMENTS,
+  CHEQUE_KINDS,
+  applyChequeKind,
   applyChequePrefill,
   chequeAction,
+  chequeKindOf,
   chequeReturnContact,
   chequeLedgerLocked,
   chequePayload,
@@ -62,9 +67,44 @@ describe("cheques", () => {
     d.contact_id = "c1";
     expect(validateChequeDraft(d)).toBe("Tutar sıfırdan büyük olmalı.");
     d.amount = "1500,50";
+    d.due_date = "2026-09-18";
     expect(validateChequeDraft(d)).toBeNull();
     expect(validateChequeDraft({ ...d, due_date: "18.09.2026" })).toMatch(/Vade/);
-    expect(validateChequeDraft({ ...d, issue_date: "2026-09-20" })).toMatch(/keşide/);
+    expect(validateChequeDraft({ ...d, issue_date: "2026-09-20", due_date: "2026-09-18" })).toMatch(/keşide/);
+  });
+
+  it("maps the four kinds onto direction and instrument", () => {
+    expect(CHEQUE_DIRECTIONS.map((d) => d.key)).toEqual(["received", "issued"]);
+    expect(CHEQUE_INSTRUMENTS.map((i) => i.key)).toEqual(["cheque", "promissory"]);
+    expect(CHEQUE_KINDS.map((k) => [k.key, k.direction, k.instrument, k.label])).toEqual([
+      ["received_cheque", "received", "cheque", "Alınan çek"],
+      ["received_promissory", "received", "promissory", "Alınan senet"],
+      ["issued_cheque", "issued", "cheque", "Verilen çek"],
+      ["issued_promissory", "issued", "promissory", "Verilen senet"],
+    ]);
+    const blank = emptyChequeDraft("2026-10-20");
+    expect(chequeKindOf(blank)).toBe("received_cheque");
+    expect(applyChequeKind(blank, "issued_promissory")).toMatchObject({ direction: "issued", instrument: "promissory" });
+    expect(chequeKindOf(applyChequeKind(blank, "issued_cheque"))).toBe("issued_cheque");
+    expect(applyChequeKind(blank, "unknown")).toEqual(blank);
+    expect(blank.issue_date).toBe("");
+    expect(blank.due_date).toBe("");
+  });
+
+  it("accepts an empty issue date, requires due date, and skips the order check", () => {
+    const d = { ...emptyChequeDraft("2026-10-20"), contact_id: "c1", amount: "10", due_date: "2026-10-21" };
+    expect(validateChequeDraft(d)).toBeNull();
+    expect(validateChequeDraft({ ...d, due_date: "" })).toMatch(/Vade/);
+    expect(validateChequeDraft({ ...d, issue_date: "2026-10-22", due_date: "2026-10-21" })).toMatch(/keşide/);
+    expect(validateChequeDraft({ ...d, issue_date: "2026-10-01" })).toBeNull();
+  });
+
+  it("omits a blank issue date from the payload", () => {
+    const d = { ...emptyChequeDraft("2026-10-20"), contact_id: "c1", amount: "10", due_date: "2026-10-21", issue_date: "" };
+    const body = chequePayload(d, "comp1");
+    expect(body).not.toHaveProperty("issue_date");
+    expect(body.due_date).toBe("2026-10-21");
+    expect(chequePayload({ ...d, issue_date: "2026-10-01" }, "comp1").issue_date).toBe("2026-10-01");
   });
 
   it("builds the create payload the API expects", () => {

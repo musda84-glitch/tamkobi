@@ -93,6 +93,27 @@ export const CHEQUE_INSTRUMENTS = [
   { key: "promissory", label: "Senet" },
 ] as const;
 
+/** Tek segment: yön × tür. Draft hâlâ direction + instrument taşır. */
+export const CHEQUE_KINDS = [
+  { key: "received_cheque", direction: "received", instrument: "cheque", label: "Alınan çek" },
+  { key: "received_promissory", direction: "received", instrument: "promissory", label: "Alınan senet" },
+  { key: "issued_cheque", direction: "issued", instrument: "cheque", label: "Verilen çek" },
+  { key: "issued_promissory", direction: "issued", instrument: "promissory", label: "Verilen senet" },
+] as const;
+
+export type ChequeKindKey = (typeof CHEQUE_KINDS)[number]["key"];
+
+export function chequeKindOf(draft: Pick<ChequeDraft, "direction" | "instrument">): ChequeKindKey {
+  const hit = CHEQUE_KINDS.find((item) => item.direction === draft.direction && item.instrument === draft.instrument);
+  return hit?.key ?? "received_cheque";
+}
+
+export function applyChequeKind<T extends Pick<ChequeDraft, "direction" | "instrument">>(draft: T, key: string): T {
+  const hit = CHEQUE_KINDS.find((item) => item.key === key);
+  if (!hit) return draft;
+  return { ...draft, direction: hit.direction, instrument: hit.instrument };
+}
+
 export type ChequeDraft = {
   direction: "received" | "issued";
   instrument: "cheque" | "promissory";
@@ -110,14 +131,16 @@ export type ChequeDraft = {
 };
 
 export function emptyChequeDraft(today: string): ChequeDraft {
+  // İmza aynı kalsın. Keşide ve vade boş başlar; kayıt tarihi formda ayrıca gösterilir.
+  void today;
   return {
     direction: "received",
     instrument: "cheque",
     contact_id: "",
     contact_name: "",
     amount: "",
-    issue_date: today,
-    due_date: today,
+    issue_date: "",
+    due_date: "",
     serial_no: "",
     bank_name: "",
     bank_branch: "",
@@ -190,7 +213,8 @@ export function validateChequeDraft(d: ChequeDraft): string | null {
   if (!(num(d.amount) > 0)) return "Tutar sıfırdan büyük olmalı.";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.due_date)) return "Vade YYYY-AA-GG olmalı.";
   if (d.issue_date && !/^\d{4}-\d{2}-\d{2}$/.test(d.issue_date)) return "Keşide tarihi YYYY-AA-GG olmalı.";
-  if (d.due_date < d.issue_date) return "Vade, keşide tarihinden önce olamaz.";
+  // Boş keşide sunucunun bugün varsayılanına bırakılır; karşılaştırma yapılmaz.
+  if (d.issue_date && d.due_date < d.issue_date) return "Vade, keşide tarihinden önce olamaz.";
   return null;
 }
 
@@ -227,13 +251,15 @@ export function chequeReceiptLabel(row: Pick<Cheque, "direction">): string {
 }
 
 export function chequePayload(d: ChequeDraft, companyId: string) {
+  const issue = String(d.issue_date || "").trim();
   return {
     company_id: companyId,
     direction: d.direction,
     instrument: d.instrument,
     contact_id: d.contact_id,
     amount: num(d.amount),
-    issue_date: d.issue_date,
+    // Boş string falsy olduğu için POST /cheques zaten bugüne düşer; alanı hiç gönderme.
+    ...(issue ? { issue_date: issue } : {}),
     due_date: d.due_date,
     serial_no: d.serial_no.trim(),
     bank_name: d.bank_name.trim(),
