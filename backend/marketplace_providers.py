@@ -705,8 +705,8 @@ _TR_FOLD = str.maketrans({
 })
 _TRANSFER_HINTS = ("havale", "eft", "wire transfer", "banka havalesi")
 _CARD_HINTS = ("paytr", "kredi kart", "taksit", "sanal pos", "iyzico", "payu", "param pos")
-_PAID_HINTS = ("odendi", "paid", "tahsil edildi")
-_PENDING_HINTS = ("bekliyor", "beklemede", "pending", "onay bek", "odenmedi", "odenmemis")
+_PAID_HINTS = ("odendi", "paid", "tahsil edildi", "onaylandi", "odeme onaylandi", "odeme alindi")
+_PENDING_HINTS = ("bekliyor", "beklemede", "pending", "onay bek", "odenmedi", "odenmemis", "unpaid")
 _BANK_NOISE = ("bankasi", "banka", "bbva", "katilim", "bank")
 
 
@@ -738,11 +738,20 @@ def shopphp_payment_type(method: Any, bank_name: Any = "") -> str:
     return "other"
 
 
+def _hint_in_payment_text(text: str, hint: str) -> bool:
+    """Tek kelime ipucu sözcük olarak eşleşir; 'paid' 'unpaid' içinde onay sayılmaz."""
+    if not text or not hint:
+        return False
+    if " " in hint:
+        return hint in text
+    return hint in text.split()
+
+
 def shopphp_payment_text_pending(odeme_durum: Any) -> bool:
     text = _fold_tr(odeme_durum)
     if not text:
         return False
-    return any(hint in text for hint in _PENDING_HINTS)
+    return any(_hint_in_payment_text(text, hint) for hint in _PENDING_HINTS)
 
 
 def shopphp_payment_confirmed(odeme_durum: Any, durum_no: Any = "") -> bool:
@@ -754,7 +763,7 @@ def shopphp_payment_confirmed(odeme_durum: Any, durum_no: Any = "") -> bool:
     text = _fold_tr(odeme_durum)
     if not text:
         return False
-    return any(hint in text for hint in _PAID_HINTS)
+    return any(_hint_in_payment_text(text, hint) for hint in _PAID_HINTS)
 
 
 def shopphp_order_amounts(

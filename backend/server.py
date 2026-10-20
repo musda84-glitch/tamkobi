@@ -17402,12 +17402,24 @@ async def _sync_draft_invoice_items(order: dict, items: list) -> None:
     inv_rows = order_items_to_invoice_items(items)
     await _fill_stock_codes(order.get("company_id"), inv_rows)
     inv_items = [it.model_dump() for it in _invoice_item_models(inv_rows)]
-    totals = invoice_document_totals(inv_items)
+    # Belgede kayıtlı genel iskontoyu yeniden hesaplamaya taşı. Tutarlar
+    # satır brütüyle, iskonto alanı eski değerle kalmasın.
+    try:
+        gd_rate = float(invoice.get("general_discount_rate") or 0)
+    except (TypeError, ValueError):
+        gd_rate = 0.0
+    try:
+        gd_amt = float(invoice.get("general_discount_amount") or 0)
+    except (TypeError, ValueError):
+        gd_amt = 0.0
+    totals = invoice_document_totals(inv_items, gd_rate, gd_amt)
     await db.invoices.update_one({"_id": invoice["_id"]}, {"$set": {
         "items": inv_items,
         "subtotal": totals["subtotal"],
         "vat_total": totals["vat_total"],
         "discount_total": totals["discount_total"],
+        "general_discount_amount": float(totals.get("general_discount_amount") or 0),
+        "general_discount_rate": gd_rate,
         "grand_total": totals["grand_total"],
     }})
 
@@ -18269,7 +18281,13 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
             if not merged.get("invoice_id") and not merged.get("is_invoiced"):
                 await _attach_draft_invoice_on_intake(merged, source="marketplace")
-            await _try_shopphp_settlement(merged)
+            # Yalnızca bekleyen → onaylı geçişi. Bu değişiklikten önce "Ödendi"
+            # kalmış, tx_id'siz siparişlere geriye dönük hakediş yazılmaz.
+            if (
+                not _marketplace_settlement_payment_ready(existing)
+                and _marketplace_settlement_payment_ready(merged)
+            ):
+                await _try_shopphp_settlement(merged)
             updated += 1
             continue
         d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
@@ -18297,9 +18315,14 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 payload = _apply_stock_matches_to_order(payload, match_idx)
                 payload = marketplace_providers.normalize_marketplace_order_prices(payload)
                 await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
-                if not existing.get("contact_id"):
-                    await _ensure_order_contact({**existing, **payload})
-                await _try_shopphp_settlement({**existing, **payload})
+                merged = {**existing, **payload}
+                if not merged.get("contact_id"):
+                    await _ensure_order_contact(merged)
+                if (
+                    not _marketplace_settlement_payment_ready(existing)
+                    and _marketplace_settlement_payment_ready(merged)
+                ):
+                    await _try_shopphp_settlement(merged)
                 updated += 1
     return {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
 
@@ -18728,6 +18751,24 @@ async def _match_havale_account(order: dict, cfg: Optional[dict]) -> Optional[di
     return marketplace_providers.pick_havale_bank_account(rows, bank)
 
 
+def _shopphp_invoice_blocks_settlement(invoice: dict) -> bool:
+    """ShopPHP faturası ödenmiş veya iptal/iade ise hakediş yazılmaz. Diğer kanallar bunu kullanmaz."""
+    if not invoice:
+        return True
+    if is_cancelled_invoice(invoice):
+        return True
+    status = str(invoice.get("status") or "").strip().lower()
+    if status in ("returned", "refunded", "iade"):
+        return True
+    if str(invoice.get("payment_status") or "").strip().lower() == "paid":
+        return True
+    try:
+        paid_amount = float(invoice.get("paid_amount") or 0)
+    except (TypeError, ValueError):
+        paid_amount = 0.0
+    return paid_amount > 0.005
+
+
 async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
     """Kanal için hakediş hesabı seçiliyse: net tutar hesaba tahsilat, müşteri carisine ödeme, kesinti pazaryeri carisine."""
     channel = (order.get("channel") or "").lower()
@@ -18738,6 +18779,8 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
     if not _marketplace_settlement_payment_ready(order):
         return None
     if not invoice or not invoice.get("_id"):
+        return None
+    if channel == "shopphp" and _shopphp_invoice_blocks_settlement(invoice):
         return None
     cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
     kind = _shopphp_payment_kind(order) if channel == "shopphp" else "channel"

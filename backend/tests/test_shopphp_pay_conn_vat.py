@@ -139,6 +139,9 @@ def test_explicit_discount_fields_win_and_paid_status_confirms_card():
     assert mp.shopphp_payment_confirmed("Ödendi", "2") is True
     assert mp.shopphp_payment_confirmed("Ödendi", "1") is False
     assert mp.shopphp_payment_confirmed("Ödeme Onay Bekliyor", "2") is False
+    assert mp.shopphp_payment_confirmed("Ödeme Onaylandı", "2") is True
+    assert mp.shopphp_payment_confirmed("Onaylandı", "2") is True
+    assert mp.shopphp_payment_confirmed("unpaid", "2") is False
     assert mp.shopphp_payment_confirmed("", "2") is False
 
 
