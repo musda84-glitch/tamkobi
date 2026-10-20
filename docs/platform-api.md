@@ -49,7 +49,7 @@ Anahtar belgesinde `kind` alanı vardır: `product` (varsayılan) veya `platform
 | `kind` | Kural |
 |--------|--------|
 | `product` | v1 kapsamları (`license:verify`, `heartbeat`, `usage:write`, `platform:all`, `help:read`, …). `admin.` ile başlayan kapsam **verilemez**. |
-| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca `admin.*:read` yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. |
+| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. |
 
 `admin.*` kapsamı şirket anahtarına (plan D dahil) oluşturulurken de istek anında da reddedilir. Doğrudan veritabanına yazılmış `kind=product` + `admin.*` anahtarı admin-v1’de **403** döner.
 
@@ -270,6 +270,59 @@ Kapsam: `admin.support:read`. `find_one` + `public_ticket(doc, staff=true)` — 
 ```json
 {"id": "stk_…", "status": "open", "messages": [{"body": "…", "attachments": [{"url": "/api/files/shot", "filename": "ekran.png", "content_type": "image/png", "size": 1200}]}]}
 ```
+
+## admin-v1 yazma (A4)
+
+Base path salt okunur uçlarla aynıdır: `/api/platform/admin-v1/`. Kimlik doğrulama `platform_auth.authenticate(..., audit_prefix="admin_v1")` sırasıdır; ardından `kind=platform_admin` ve boş `instance_id` gerekir. `:read` anahtarı yazma ucunda **403** `Kapsam yetersiz` döner. Yanlış `:write` kapsamı da **403** döner. Mail ve SMS gönderilmez.
+
+**Idempotency-Key zorunlu.** Başlık yoksa **400** `Idempotency-Key gerekli`. Kayıt ad alanı `platform_admin:<key_id>` dir; bir şirket kimliği varsayılmaz. Uç kimliği `METHOD path#sha256(canonical_json(gövde))[:16]` olur.
+
+- Aynı anahtar + aynı gövde: kayıtlı yanıt döner. İkinci iş yazılmaz, ikinci `admin_v1.write.*` audit’i yazılmaz.
+- Aynı anahtar + farklı gövde: **409** `Idempotency-Key farklı istekle kullanıldı`.
+
+Doğrulama yazmadan önce yapılır. **400** ve **404** hedef koleksiyonlara ve `idempotency_keys` kaydına yazmaz; yalnızca `authenticate` erişim audit’i (veya IP reddi audit’i) kalır. Beyaz liste dışı anahtar **400** `Desteklenmeyen alan: <ad>`. Boş gövde **400**.
+
+Başarılı yazmadan sonra `platform_audit_log` kaydı: `actor_type=api_key`, `actor_id` anahtar kimliği, `ip` `request_ip`, `action=admin_v1.write.<op>`, `details` yalnızca `fields` (sıralı değişen alan adları) ve `idempotency`. Değer, not metni, `base_url`, gövde, imza, nonce, Idempotency-Key ve secret `details` içine girmez. Doğrulama hatasında ve **404**’te bu yazma audit’i yoktur.
+
+Yanıtlar `{"item": …}` zarfındadır; son katman sır alanlarını düşürür.
+
+### PUT `/api/platform/admin-v1/companies/{company_id}/license`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.license.update`. İzinli alanlar: `plan_id`, `status`, `trial_ends_at`, `expires_at`, `extend_days`, `billing_period`, `notes`. `user_limit`, `company_limit`, `product_limit`, `contact_limit`, `storage_limit_mb` ve `module_overrides` bu uçta yoktur (modül için ayrı uç).
+
+`status` `saas.STATUSES` içinden (`trial`, `active`, `suspended`, `expired`, `cancelled`); değilse **400** `Geçersiz durum.`. `plan_id` `saas_plans` içinde yoksa **400** `Geçersiz paket.`. `extend_days` tamsayı `1..3650`. `trial_ends_at` / `expires_at` ISO tarih ya da `null`. `billing_period` `monthly` veya `yearly`. `notes` metin, en çok 2000 karakter. Şirket yoksa **404** `Şirket bulunamadı.`. Yanıt `effective(company_id)`.
+
+`/system/companies/{id}/license` limitler ve `module_overrides` dahil eski alanları kabul etmeye devam eder. Sıkı doğrulama yalnızca admin-v1 katmanındadır.
+
+### POST `/api/platform/admin-v1/companies/{company_id}/modules/{module_key:path}`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.module.toggle`. Gövde `{"enabled": bool}`; alan zorunlu ve gerçek boolean olmalı (dize `"true"` **400**). Bilinmeyen veya çekirdek modül **400** `Bilinmeyen ya da çekirdek modül.`. Şirket yoksa **404** `Şirket bulunamadı.`. `/ai-advisor` açılıp kapanınca `addon_overrides["ai.advisor"]` aynı şekilde güncellenir. `/system` ucu `bool()` ile dönüştürmeye devam eder ve şirket varlığı aramaz.
+
+### POST `/api/platform/admin-v1/companies/{company_id}/activation`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.activation`. Gövde `{"active": bool}`; zorunlu ve boolean. `false` lisansı `suspended` yapar, `true` deneme süresi duruyorsa `trial` aksi halde `active` döndürür. Askıya alma silme değildir; veri silinmez. Şirket yoksa **404** `Şirket bulunamadı.`. `/system` ucu `active` verilmezse `true` saymaya devam eder.
+
+### PUT `/api/platform/admin-v1/upgrade-requests/{req_id}`
+
+Kapsam: `admin.requests:write`. Audit: `admin_v1.write.upgrade_request.resolve`. Gövde: `status` zorunlu ve `approved` | `rejected` | `pending` (varsayılan `approved` yoktur). `note` metin, en çok 1000 karakter. `apply` boolean, varsayılan `true`. Talep yoksa **404** `Talep bulunamadı.`. Onay ve `apply` paketi lisansa yazar. Bildirim yalnızca uygulama içidir (`notify.insert_notification`); mail ve SMS gönderilmez. Talep zaten aynı `status` ise ikinci çağrı lisansı yeniden yazmaz ve ikinci bildirim üretmez; mevcut kayıt döner. `/system` ucu `status` verilmezse `approved` varsayar.
+
+### PUT `/api/platform/admin-v1/integrators/products/{product_id}`
+
+Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.product.update`. İzinli alanlar: `name` (boş olmayan metin, en çok 200), `status`, `base_url` (`http`/`https`, en çok 500 karakter). `code` ve `kind` **400** `Desteklenmeyen alan`. Ürün kodu değişikliği ve tamkobi kuralı `/platform/admin` ucunda kalır. Ürün yoksa **404** `Ürün bulunamadı`. `store.update_product` `actor_id` olarak anahtar kimliğini kullanır.
+
+### A5'e kalanlar
+
+Bu yazma yüzeyinde yoktur:
+
+- kimliğe bürünme ve oturum açma
+- şirket, kullanıcı, ürün veya anahtar silme
+- şifre sıfırlama gönderimi, şifre ve 2FA sıfırlama
+- kullanıcı oluşturma ve düzenleme
+- API anahtarı oluşturma, döndürme ve iptal
+- `ip_allowlist` düzenleme
+- SMS ve mail ayarları ile şifreleri
+- plan oluşturma, plan düzenleme ve modül fiyatları
+- şirket oluşturma ve üst şirket (parent) değişikliği
 
 ## Python
 

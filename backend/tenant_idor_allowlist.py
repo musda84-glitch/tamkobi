@@ -69,6 +69,11 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("GET", "/platform/admin-v1/companies/{company_id}/users"),
     ("GET", "/platform/admin-v1/companies/{company_id}/sms"),
     ("GET", "/platform/admin-v1/support/tickets/{ticket_id}"),
+    ("PUT", "/platform/admin-v1/companies/{company_id}/license"),
+    ("POST", "/platform/admin-v1/companies/{company_id}/modules/{module_key:path}"),
+    ("POST", "/platform/admin-v1/companies/{company_id}/activation"),
+    ("PUT", "/platform/admin-v1/upgrade-requests/{req_id}"),
+    ("PUT", "/platform/admin-v1/integrators/products/{product_id}"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -92,4 +97,9 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("GET", "/platform/admin-v1/companies/{company_id}/users"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("GET", "/platform/admin-v1/companies/{company_id}/sms"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("GET", "/platform/admin-v1/support/tickets/{ticket_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("PUT", "/platform/admin-v1/companies/{company_id}/license"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/companies/{company_id}/modules/{module_key:path}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/companies/{company_id}/activation"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("PUT", "/platform/admin-v1/upgrade-requests/{req_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("PUT", "/platform/admin-v1/integrators/products/{product_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
 }
