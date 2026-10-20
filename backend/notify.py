@@ -553,8 +553,10 @@ def infer_notification_target(note: Optional[Dict[str, Any]]) -> Dict[str, str]:
 
 
 def present_notification(note: Dict[str, Any]) -> Dict[str, Any]:
-    """Liste yanıtına target ekler; saklanan belgeyi değiştirmez."""
+    """Liste yanıtına target ekler. Cihaz damgasını çıkarır; saklanan belge değişmez."""
     out = dict(note or {})
+    out.pop("pushed_device_ids", None)
+    out.pop("pushed_at", None)
     out["target"] = infer_notification_target(out)
     return out
 
@@ -1021,6 +1023,11 @@ def collect_dispatch_tokens(user_tokens: Iterable[str], company_tokens: Iterable
 UNREAD_PUSH_LIMIT = 12
 
 
+def push_device_id(raw: Any) -> str:
+    """Cihaz kimliği. Boşluk kırpılır, kayıtla aynı 80 karakter sınırında tutulur."""
+    return str(raw or "").strip()[:80]
+
+
 def pick_unread_for_push(
     rows: Iterable[Dict[str, Any]],
     user: Optional[Dict[str, Any]],
@@ -1052,7 +1059,7 @@ async def upsert_push_token(
         "company_id": company_id,
         "token": token,
         "platform": (platform or "")[:20],
-        "device_id": (device_id or "")[:80],
+        "device_id": push_device_id(device_id),
         "updated_at": now,
     }
     if should_replay:
@@ -1357,17 +1364,98 @@ async def check_push_receipts(db, *, limit: int = PUSH_RECEIPT_BATCH) -> Dict[st
     return {"checked": len(ids), "cleared": cleared, "expired": expired_n, "dropped_tokens": dropped}
 
 
+def pushed_device_ids_of(note: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(note, dict):
+        return []
+    raw = note.get("pushed_device_ids")
+    if not isinstance(raw, list):
+        return []
+    return _unique_device_ids(raw)
+
+
+def _unique_device_ids(values: Iterable[Any]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for item in values or []:
+        device_id = push_device_id(item)
+        if not device_id or device_id in seen:
+            continue
+        seen.add(device_id)
+        out.append(device_id)
+    return out
+
+
+def _ok_message_indexes(messages: List[Dict[str, Any]], tickets: Iterable[Any]) -> List[int]:
+    """Expo status=ok ticket'larının mesaj sırası. Hata ve ticketsiz gönderim başarılı sayılmaz."""
+    ticket_list = list(tickets or [])
+    indexes: List[int] = []
+    for i, msg in enumerate(messages or []):
+        if not isinstance(msg, dict):
+            continue
+        if i >= len(ticket_list) or not isinstance(ticket_list[i], dict):
+            continue
+        if str(ticket_list[i].get("status") or "") != "ok":
+            continue
+        if not str(msg.get("to") or "").strip():
+            continue
+        indexes.append(i)
+    return indexes
+
+
+def _device_ids_for_tokens(rows: Iterable[Dict[str, Any]], tokens: Iterable[str]) -> List[str]:
+    wanted = {str(token or "").strip() for token in tokens if str(token or "").strip()}
+    if not wanted:
+        return []
+    found: List[Any] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        token = str(row.get("token") or "").strip()
+        if token in wanted:
+            found.append(row.get("device_id"))
+    return _unique_device_ids(found)
+
+
+async def _stamp_pushed_devices(db, note: Dict[str, Any], device_ids: Iterable[str]) -> None:
+    """Başarılı push sonrası bildirime cihaz listesini ve zamanı yazar.
+
+    Yazma tek update_one ile $addToSet kullanır; eşzamanlı damgalar birbirini silmez.
+    """
+    fresh = _unique_device_ids(device_ids)
+    note_id = str((note or {}).get("_id") or (note or {}).get("id") or "").strip()
+    company_id = str((note or {}).get("company_id") or "").strip()
+    if not fresh or not note_id or not company_id or getattr(db, "notifications", None) is None:
+        return
+    merged = _unique_device_ids([*pushed_device_ids_of(note), *fresh])
+    now = datetime.now(timezone.utc).isoformat()
+    note["pushed_device_ids"] = merged
+    note["pushed_at"] = now
+    try:
+        await db.notifications.update_one(
+            {"_id": note_id, "company_id": company_id},
+            {"$addToSet": {"pushed_device_ids": {"$each": fresh}}, "$set": {"pushed_at": now}},
+        )
+    except Exception:
+        logger.warning("push device stamp failed")
+
+
 async def replay_unread_to_token(
     db,
     *,
     user: Optional[Dict[str, Any]],
     company_id: str,
     token: str,
+    device_id: str = "",
     limit: int = UNREAD_PUSH_LIMIT,
 ) -> Dict[str, Any]:
-    """Kayıtlı telefon ilk kez bağlanınca, paneldeki okunmamışları da push et."""
+    """Kayıtlı telefon ilk kez bağlanınca, paneldeki okunmamışları da push et.
+
+    Aynı device_id bu bildirime daha önce başarılı gittiyse kayıt atlanır.
+    Yeni cihaz okunmamışları almaya devam eder.
+    """
     if not is_expo_push_token(token) or not company_id:
         return {"sent": 0}
+    device = push_device_id(device_id)
     rows = await db.notifications.find({
         "company_id": company_id,
         "is_read": {"$ne": True},
@@ -1376,13 +1464,23 @@ async def replay_unread_to_token(
     actor = str((user or {}).get("id") or (user or {}).get("_id") or "").strip()
     clean_token = str(token or "").strip()
     messages: List[Dict[str, Any]] = []
+    selected: List[Dict[str, Any]] = []
     for note in notes:
-        messages.extend(expo_push_messages([clean_token], note, {clean_token: actor}))
+        if device and device in pushed_device_ids_of(note):
+            continue
+        built = expo_push_messages([clean_token], note, {clean_token: actor})
+        for msg in built:
+            messages.append(msg)
+            selected.append(note)
     if not messages:
         return {"sent": 0, "count": 0}
     result = await send_expo_push(messages)
     await _finish_push_delivery(db, messages, result)
-    return {"sent": int(result.get("sent") or 0), "count": len(notes)}
+    if device:
+        for index in _ok_message_indexes(messages, result.get("tickets") or []):
+            if index < len(selected):
+                await _stamp_pushed_devices(db, selected[index], [device])
+    return {"sent": int(result.get("sent") or 0), "count": len(selected)}
 
 
 async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
@@ -1418,7 +1516,13 @@ async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
         )
         return {"sent": 0}
     result = await send_expo_push(messages)
-    return await _finish_push_delivery(db, messages, result)
+    finished = await _finish_push_delivery(db, messages, result)
+    ok_indexes = _ok_message_indexes(messages, result.get("tickets") or [])
+    ok_tokens = [str(messages[i].get("to") or "") for i in ok_indexes]
+    device_ids = _device_ids_for_tokens(list(user_rows) + list(company_rows), ok_tokens)
+    if device_ids:
+        await _stamp_pushed_devices(db, note, device_ids)
+    return finished
 
 
 async def insert_notification(db, doc: Dict[str, Any]) -> Dict[str, Any]:

@@ -22,7 +22,10 @@ function newestFirst(rows: Notification[]): Notification[] {
   return [...rows].sort((a, b) => time(b) - time(a));
 }
 
-/** İlk açılışta okunmamışları telefona yansıt; sonra yalnız yeni gelenleri göster. */
+/**
+ * İlk açılışta okunmamışları telefona yansıt; sonra yalnız yeni gelenleri göster.
+ * FCM'in seen listesine yazdığı kimlik, tohumlanmamış turda da yeniden sunulmaz.
+ */
 export function planLocalPush(
   rows: Notification[] | null | undefined,
   seenIds: string[],
@@ -33,19 +36,12 @@ export function planLocalPush(
   const seen = new Set((seenIds || []).filter(Boolean));
   const ids = unread.map(notificationKey);
   const cap = Math.max(0, Math.floor(Number(limit) || 0));
-  if (!seeded) {
-    return {
-      alerts: newestFirst(unread).slice(0, cap),
-      nextSeen: [...new Set([...(seenIds || []), ...ids])].slice(-LOCAL_PUSH_SEEN_LIMIT),
-      seeded: true,
-    };
-  }
   const alerts = newestFirst(unread.filter((n) => !seen.has(notificationKey(n)))).slice(0, cap);
-  return {
-    alerts,
-    nextSeen: [...new Set([...(seenIds || []), ...ids])].slice(-LOCAL_PUSH_SEEN_LIMIT),
-    seeded: true,
-  };
+  const nextSeen = [...new Set([...(seenIds || []), ...ids])].slice(-LOCAL_PUSH_SEEN_LIMIT);
+  if (!seeded) {
+    return { alerts, nextSeen, seeded: true };
+  }
+  return { alerts, nextSeen, seeded: true };
 }
 
 export function localPushContent(n: Notification): {

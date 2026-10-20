@@ -221,7 +221,7 @@ class TestIssueInvoiceSimulated:
 
         async def _run():
             with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
-                paper = await e_invoice.issue_invoice("inv_sim", e_type="paper")
+                paper = await e_invoice.issue_invoice("inv_sim", company_id="c1", e_type="paper")
                 assert paper["einvoice_state"] == "paper"
                 paper_sets = [
                     c.args[1]["$set"]
@@ -232,7 +232,7 @@ class TestIssueInvoiceSimulated:
                 assert paper_sets[-1]["einvoice_state"] == "paper"
                 assert paper_sets[-1]["status"] == "approved"
                 inv["e_type"] = "e_archive"
-                sim = await e_invoice.issue_invoice("inv_sim", e_type="auto", scenario="TICARI")
+                sim = await e_invoice.issue_invoice("inv_sim", company_id="c1", e_type="auto", scenario="TICARI")
                 assert sim["einvoice_state"] == "sent"
                 assert sim["tracking_id"]
                 assert sim["provider"] == "simulated"
@@ -274,7 +274,7 @@ class TestIssueInvoiceSimulated:
         async def _run():
             with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
                 # İstemci yanlışlıkla e_archive gönderse bile GİB kaydı e_invoice zorlar
-                out = await e_invoice.issue_invoice("inv_vkn", e_type="e_archive")
+                out = await e_invoice.issue_invoice("inv_vkn", company_id="c1", e_type="e_archive")
                 assert out["e_type"] == "e_invoice"
                 assert "E-Fatura" in out["message"]
                 # invoice e_type güncellemesi
@@ -320,7 +320,7 @@ class TestIssueInvoiceSimulated:
                     AsyncMock(return_value={"suggested_e_type": "e_archive", "is_e_invoice_user": False, "alias": None}),
                 ) as lookup:
                     with pytest.raises(HTTPException) as exc:
-                        await e_invoice.issue_invoice("inv_force", e_type="e_invoice", scenario="TEMEL")
+                        await e_invoice.issue_invoice("inv_force", company_id="c1", e_type="e_invoice", scenario="TEMEL")
                     lookup.assert_awaited()
                 assert exc.value.status_code == 409
                 assert exc.value.detail == "Alıcı e-Fatura mükellefi değil, e-Arşiv kesilmeli"
@@ -352,7 +352,7 @@ class TestIssueInvoiceSimulated:
         async def _run():
             with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
                 with pytest.raises(HTTPException) as e:
-                    await e_invoice.issue_invoice("inv_isnet", e_type="e_archive")
+                    await e_invoice.issue_invoice("inv_isnet", company_id="c1", e_type="e_archive")
                 assert e.value.status_code == 400
                 assert "yapılandırılmamış" in e.value.detail.lower() or "simüle" in e.value.detail.lower()
 
@@ -583,7 +583,7 @@ class TestIsnetOfficialInvoiceNumber:
             ), patch.object(e_invoice.isnet, "send_document", AsyncMock(return_value=sent)), patch.object(
                 e_invoice, "store_outgoing_xml", AsyncMock()
             ), patch("n11faturam.build_ubl", return_value=("<Invoice/>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "UUU2026999464749")):
-                out = await e_invoice.issue_invoice("inv_uuu", e_type="e_invoice", scenario="TEMEL")
+                out = await e_invoice.issue_invoice("inv_uuu", company_id="c1", e_type="e_invoice", scenario="TEMEL")
             assert out["invoice_number"] == "UUU2026999464749"
             assert out["gib_invoice_id"] == "UUU2026999464749"
             sets = [c.args[1]["$set"] for c in fake_db.invoices.update_one.await_args_list if "$set" in (c.args[1] if c.args else {})]
@@ -656,7 +656,7 @@ class TestIsnetOfficialInvoiceNumber:
             ), patch.object(e_invoice.isnet, "send_document", AsyncMock(return_value=sent)), patch.object(
                 e_invoice, "store_outgoing_xml", AsyncMock()
             ), patch("n11faturam.build_ubl", return_value=("<Invoice/>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "U052026000000071")):
-                out = await e_invoice.issue_invoice("inv_cred", e_type="e_invoice", scenario="TEMEL")
+                out = await e_invoice.issue_invoice("inv_cred", company_id="c1", e_type="e_invoice", scenario="TEMEL")
             assert out["status"] == "success"
             assert out["invoice_number"] == "U052026000000071"
             assert out.get("gib_credits_left") is None
@@ -708,7 +708,7 @@ class TestIsnetOfficialInvoiceNumber:
             ), patch.object(e_invoice.isnet, "send_document", AsyncMock(return_value=sent)), patch.object(
                 e_invoice, "store_outgoing_xml", AsyncMock()
             ), patch("n11faturam.build_ubl", return_value=("<Invoice/>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "TKB2026000000103")):
-                out = await e_invoice.issue_invoice("inv_tkb", e_type="e_archive")
+                out = await e_invoice.issue_invoice("inv_tkb", company_id="c1", e_type="e_archive")
             assert out["invoice_number"] == "NX2026000000103"
             assert out.get("gib_invoice_id") in (None, "")
             sets = [c.args[1]["$set"] for c in fake_db.invoices.update_one.await_args_list if c.args and "$set" in c.args[1]]
@@ -757,7 +757,7 @@ class TestMukellefGate:
         async def _run():
             with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as lookup:
                 with pytest.raises(HTTPException) as exc:
-                    await e_invoice.issue_invoice("inv_ph", e_type="e_invoice", scenario="TEMEL")
+                    await e_invoice.issue_invoice("inv_ph", company_id="c1", e_type="e_invoice", scenario="TEMEL")
                 lookup.assert_not_awaited()
             assert exc.value.status_code == 409
             assert exc.value.detail == "Alıcı e-Fatura mükellefi değil, e-Arşiv kesilmeli"
@@ -775,7 +775,7 @@ class TestMukellefGate:
 
         async def _run():
             with pytest.raises(HTTPException) as exc:
-                await e_invoice.issue_invoice("inv_rep", e_type="e_invoice", scenario="TICARI")
+                await e_invoice.issue_invoice("inv_rep", company_id="c1", e_type="e_invoice", scenario="TICARI")
             assert exc.value.status_code == 409
 
         asyncio.get_event_loop().run_until_complete(_run())
@@ -799,7 +799,7 @@ class TestMukellefGate:
                     "alias": None,
                 }),
             ):
-                out = await e_invoice.issue_invoice("inv_auto", e_type="auto")
+                out = await e_invoice.issue_invoice("inv_auto", company_id="c1", e_type="auto")
             assert out["e_type"] == "e_archive"
             assert out["scenario"] == "EARSIVFATURA"
 
@@ -827,7 +827,7 @@ class TestMukellefGate:
                     "alias": "urn:mail:gibpk@firma",
                 }),
             ):
-                out = await e_invoice.issue_invoice("inv_temel", e_type="e_invoice", scenario="TEMEL")
+                out = await e_invoice.issue_invoice("inv_temel", company_id="c1", e_type="e_invoice", scenario="TEMEL")
             assert out["e_type"] == "e_invoice"
             assert out["scenario"] == "TEMELFATURA"
             passed_contact = built.await_args.args[2]
@@ -856,7 +856,7 @@ class TestMukellefGate:
                     "alias": "urn:mail:pk@firma",
                 }),
             ):
-                out = await e_invoice.issue_invoice("inv_iade", e_type="e_invoice", scenario="TICARI")
+                out = await e_invoice.issue_invoice("inv_iade", company_id="c1", e_type="e_invoice", scenario="TICARI")
             assert out["e_type"] == "e_invoice"
             assert out["scenario"] == "TEMELFATURA"
 
@@ -878,7 +878,7 @@ class TestMukellefGate:
                 AsyncMock(side_effect=HTTPException(status_code=502, detail="İşNet SOAP GİB sorgusu başarısız.")),
             ):
                 with pytest.raises(HTTPException) as exc:
-                    await e_invoice.issue_invoice("inv_502", e_type="e_invoice", scenario="TEMEL")
+                    await e_invoice.issue_invoice("inv_502", company_id="c1", e_type="e_invoice", scenario="TEMEL")
             assert exc.value.status_code == 502
             assert "e-Fatura" not in str(exc.value.detail) or "başarısız" in str(exc.value.detail).lower()
 

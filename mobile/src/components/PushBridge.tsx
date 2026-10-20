@@ -8,7 +8,7 @@ import type { Notification } from "../types";
 import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { visibleNotifications } from "../utils/notifications";
 import { guardedNotificationHref } from "../utils/push";
-import { askPushPermission, enablePushHandler, registerDevicePush, syncLocalPhoneAlerts } from "../utils/pushRegister";
+import { askPushPermission, enablePushHandler, registerDevicePush, rememberPresentedNotificationIds, rememberReceivedNotification, syncLocalPhoneAlerts } from "../utils/pushRegister";
 
 const POLL_MS = 30000;
 
@@ -63,11 +63,16 @@ export function PushBridge() {
         clearInterval(timer);
       };
     }
-    registerDevicePush(client).catch(() => { /* FCM yoksa yerel kanal çalışır */ });
+    // FCM yoksa yerel kanal çalışır; kayıt bitmeden alert kararı verilmez.
+    const registration = registerDevicePush(client).catch(() => ({ status: "unavailable" as const }));
 
     let cancelled = false;
     const pullPhoneAlerts = async () => {
       try {
+        await registration;
+        if (cancelled) return;
+        await rememberPresentedNotificationIds();
+        if (cancelled) return;
         const list = await get<Notification[]>(client, "/notifications", { company_id: companyId });
         if (cancelled) return;
         await syncLocalPhoneAlerts(visibleNotifications(list || [], user));
@@ -98,9 +103,15 @@ export function PushBridge() {
           goHref(href);
         };
         const tap = Notifications.addNotificationResponseReceivedListener(open);
-        const received = Notifications.addNotificationReceivedListener(() => {
+        const received = Notifications.addNotificationReceivedListener((event) => {
+          void rememberReceivedNotification(event).catch(() => { /* seen yazılamadı */ });
           refresh();
         });
+        try {
+          await rememberPresentedNotificationIds();
+        } catch {
+          /* tray yok */
+        }
         remove = () => {
           tap.remove();
           received.remove();

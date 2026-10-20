@@ -306,7 +306,7 @@ def test_issue_archive_and_dispatch_are_400_and_unassigned_stays_simulated(_rest
         e_invoice.init(_issue_db(inv=inv, contact=contact, company=company, settings=qnb_settings), {"password_fn": lambda s: SECRET})
         with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock(return_value={"suggested_e_type": e_type, "is_e_invoice_user": e_type == "e_invoice", "alias": None})):
             with pytest.raises(HTTPException) as exc:
-                await e_invoice.issue_invoice("inv_q", e_type=e_type)
+                await e_invoice.issue_invoice("inv_q", company_id="c1", e_type=e_type)
         assert exc.value.status_code == 400
         assert exc.value.detail == qnb_efinans.UNSUPPORTED_DETAIL
 
@@ -332,7 +332,7 @@ def test_issue_archive_and_dispatch_are_400_and_unassigned_stays_simulated(_rest
     with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock(return_value={"suggested_e_type": "e_invoice", "is_e_invoice_user": True, "alias": "urn:mail:pk@x"})), patch.object(
         e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")
     ), patch.object(qnb_efinans, "send_document", AsyncMock()) as qnb_send:
-        out = _run(e_invoice.issue_invoice("inv_sim", e_type="e_invoice", scenario="TEMEL"))
+        out = _run(e_invoice.issue_invoice("inv_sim", company_id="c1", e_type="e_invoice", scenario="TEMEL"))
     qnb_send.assert_not_called()
     assert str(out.get("tracking_id") or "").startswith("GIB-")
     assert out.get("einvoice_state") == "sent"
@@ -374,7 +374,7 @@ def test_issue_qnb_einvoice_keeps_processing_and_oid(_restore_einvoice_db):
     ) as qnb_send, patch.object(
         e_invoice.isnet, "build_ubl", return_value=("<Invoice/>", sent["ettn"], sent["invoice_id"])
     ), patch.object(e_invoice.n11faturam, "send_document", AsyncMock()) as n11_send:
-        out = _run(e_invoice.issue_invoice("inv_live", e_type="e_invoice", scenario="TEMEL"))
+        out = _run(e_invoice.issue_invoice("inv_live", company_id="c1", e_type="e_invoice", scenario="TEMEL"))
     qnb_send.assert_awaited()
     n11_send.assert_not_called()
     assert out["einvoice_state"] == "pending"

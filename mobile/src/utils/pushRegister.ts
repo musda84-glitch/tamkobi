@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { del, post, type ApiClient } from "../api/client";
 import { IOS_PUSH_PERMISSION, isExpoPushToken, isPushPermissionGranted, PUSH_CHANNEL, PUSH_SOUND, PUSH_SOUND_ANDROID, shouldAskPushOnOpen } from "./push";
-import { localPushContent, planLocalPush } from "./pushLocal";
+import { LOCAL_PUSH_SEEN_LIMIT, localPushContent, notificationKey, planLocalPush } from "./pushLocal";
 import { getStableDeviceId } from "./punchAuth";
 import type { Notification } from "../types";
 
@@ -166,6 +166,7 @@ export async function registerDevicePush(client: ApiClient): Promise<PushResult>
       platform: Platform.OS,
       device_id: deviceId,
     });
+    // Başarılı yazım hata anahtarını siler. syncLocalPhoneAlerts bunu uzak kanal sayar ve alert sunmaz.
     await persistPushResult(got);
     return got;
   } catch (err) {
@@ -199,14 +200,85 @@ export async function saveLocalPushState(seen: string[], seeded: boolean): Promi
   if (seeded) await AsyncStorage.setItem(SEEDED_KEY, "1");
 }
 
+let seenQueue: Promise<unknown> = Promise.resolve();
+const presentedLocalIds = new Set<string>();
+
+function enqueueSeen<T>(job: () => Promise<T>): Promise<T> {
+  const run = seenQueue.then(job, job);
+  seenQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+export function notificationIdFromPushData(data: unknown): string {
+  if (!data || typeof data !== "object") return "";
+  return String((data as Record<string, unknown>).notification_id || "").trim();
+}
+
+async function mergeSeenIds(ids: Array<string | null | undefined>): Promise<void> {
+  const incoming = ids.map((id) => String(id || "").trim()).filter(Boolean);
+  if (!incoming.length) return;
+  const state = await loadLocalPushState();
+  const nextSeen = [...new Set([...state.seen, ...incoming])].slice(-LOCAL_PUSH_SEEN_LIMIT);
+  await saveLocalPushState(nextSeen, state.seeded);
+}
+
+type PresentedNote = {
+  request?: { identifier?: string; content?: { data?: unknown } };
+};
+
+async function absorbPresentedNotificationIds(): Promise<void> {
+  const Notifications = await nativeNotifications();
+  const read = Notifications?.getPresentedNotificationsAsync;
+  if (typeof read !== "function") return;
+  try {
+    const presented = await read();
+    const ids = (presented || []).map((item: PresentedNote) => notificationIdFromPushData(item?.request?.content?.data));
+    await mergeSeenIds(ids);
+  } catch {
+    /* tray okunamadı */
+  }
+}
+
+/** FCM veya tray'deki data.notification_id seen listesine yazılır. */
+export async function rememberNotificationIds(ids: Array<string | null | undefined>): Promise<void> {
+  return enqueueSeen(() => mergeSeenIds(ids));
+}
+
+export async function rememberPresentedNotificationIds(): Promise<void> {
+  return enqueueSeen(() => absorbPresentedNotificationIds());
+}
+
+type ReceivedPush = {
+  request?: { content?: { data?: unknown } };
+  notification?: { request?: { content?: { data?: unknown } } };
+};
+
+export async function rememberReceivedNotification(event: ReceivedPush | null | undefined): Promise<void> {
+  const data = event?.request?.content?.data ?? event?.notification?.request?.content?.data;
+  const id = notificationIdFromPushData(data);
+  if (!id) return;
+  await rememberNotificationIds([id]);
+}
+
+/** Expo token duruyor ve son kayıt hatasızsa sunucu push'u alıyordur. */
+export async function isRemotePushActive(): Promise<boolean> {
+  const token = String((await getStoredPushToken()) || "").trim();
+  if (!isExpoPushToken(token)) return false;
+  const last = await readPushLastError();
+  return !last;
+}
+
 /** Sunulan bildirimler, rozet ve yerel "görüldü" durumu. Ağ hatasından bağımsız. */
 export async function clearDevicePushState(): Promise<void> {
-  try {
-    await saveLocalPushState([], false);
-    await AsyncStorage.removeItem(SEEDED_KEY);
-  } catch {
-    /* depolama yoksa çıkış sürer */
-  }
+  presentedLocalIds.clear();
+  await enqueueSeen(async () => {
+    try {
+      await saveLocalPushState([], false);
+      await AsyncStorage.removeItem(SEEDED_KEY);
+    } catch {
+      /* depolama yoksa çıkış sürer */
+    }
+  });
   const Notifications = await nativeNotifications();
   if (!Notifications) return;
   try {
@@ -225,6 +297,24 @@ export async function clearDevicePushState(): Promise<void> {
   }
 }
 
+async function alreadyPresented(notificationId: string, identifier: string): Promise<boolean> {
+  if (!notificationId) return false;
+  if (presentedLocalIds.has(notificationId)) return true;
+  const Notifications = await nativeNotifications();
+  const read = Notifications?.getPresentedNotificationsAsync;
+  if (typeof read !== "function") return false;
+  try {
+    const presented = await read();
+    return (presented || []).some((item: PresentedNote) => {
+      const dataId = notificationIdFromPushData(item?.request?.content?.data);
+      const requestId = String(item?.request?.identifier || "");
+      return dataId === notificationId || (identifier !== "" && requestId === identifier);
+    });
+  } catch {
+    return false;
+  }
+}
+
 export async function presentLocalNotification(note: {
   title: string;
   body?: string;
@@ -234,8 +324,12 @@ export async function presentLocalNotification(note: {
   if (perm !== "ok") return false;
   const Notifications = await nativeNotifications();
   if (!Notifications?.scheduleNotificationAsync) return false;
+  const notificationId = notificationIdFromPushData(note.data);
+  const identifier = notificationId ? `tk-${notificationId}` : "";
   try {
+    if (await alreadyPresented(notificationId, identifier)) return false;
     await Notifications.scheduleNotificationAsync({
+      ...(identifier ? { identifier } : {}),
       content: {
         title: note.title || "TamKobi",
         body: note.body || "",
@@ -245,6 +339,7 @@ export async function presentLocalNotification(note: {
       },
       trigger: null,
     });
+    if (notificationId) presentedLocalIds.add(notificationId);
     return true;
   } catch {
     return false;
@@ -253,19 +348,28 @@ export async function presentLocalNotification(note: {
 
 export async function presentLocalForNotes(notes: Notification[]): Promise<number> {
   let shown = 0;
+  const batch = new Set<string>();
   for (const note of notes) {
+    const id = notificationKey(note);
+    if (id && batch.has(id)) continue;
     const content = localPushContent(note);
-    if (await presentLocalNotification(content)) shown += 1;
+    if (await presentLocalNotification(content)) {
+      shown += 1;
+      if (id) batch.add(id);
+    }
   }
   return shown;
 }
 
 export async function syncLocalPhoneAlerts(rows: Notification[] | null | undefined): Promise<number> {
-  const state = await loadLocalPushState();
-  const plan = planLocalPush(rows, state.seen, state.seeded);
-  const shown = await presentLocalForNotes(plan.alerts);
-  await saveLocalPushState(plan.nextSeen, plan.seeded);
-  return shown;
+  return enqueueSeen(async () => {
+    await absorbPresentedNotificationIds();
+    const state = await loadLocalPushState();
+    const plan = planLocalPush(rows, state.seen, state.seeded);
+    const shown = (await isRemotePushActive()) ? 0 : await presentLocalForNotes(plan.alerts);
+    await saveLocalPushState(plan.nextSeen, plan.seeded);
+    return shown;
+  });
 }
 
 export async function unregisterDevicePush(client: ApiClient): Promise<void> {

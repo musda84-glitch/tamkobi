@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from unittest.mock import patch
 
 import notify
@@ -221,11 +222,11 @@ class _PushColl:
     async def find_one(self, query=None, *args, **kwargs):
         for doc in self.docs.values():
             if self._match(doc, query or {}):
-                return dict(doc)
+                return copy.deepcopy(doc)
         return None
 
     def find(self, query=None, *args, **kwargs):
-        rows = [dict(doc) for doc in self.docs.values() if self._match(doc, query or {})]
+        rows = [copy.deepcopy(doc) for doc in self.docs.values() if self._match(doc, query or {})]
 
         class Cursor:
             def sort(self, *args, **kwargs):
@@ -261,6 +262,16 @@ class _PushColl:
             return None
         if "$set" in (upd or {}):
             found.update(upd["$set"])
+        if "$addToSet" in (upd or {}):
+            for key, value in upd["$addToSet"].items():
+                current = found.get(key)
+                if not isinstance(current, list):
+                    current = []
+                    found[key] = current
+                items = value.get("$each") if isinstance(value, dict) and "$each" in value else [value]
+                for item in items or []:
+                    if item not in current:
+                        current.append(item)
         return None
 
     async def delete_many(self, query):
@@ -434,3 +445,191 @@ def test_replay_unread_uses_registering_user_id():
     assert captured["messages"][0]["to"] == PER
     assert captured["messages"][0]["data"]["user_id"] == "usr_per"
     assert captured["messages"][0]["data"]["company_id"] == "c1"
+
+
+AGAIN = "ExponentPushToken[sameDeviceNewTok1]"
+FRESH = "ExponentPushToken[newDevicePhone0001]"
+
+
+def _ok_tickets(messages):
+    return {"sent": len(messages), "tickets": [{"status": "ok", "id": f"t{i}"} for i in range(len(messages))], "errors": 0}
+
+
+def test_dispatch_stamps_device_and_replay_skips_same_device():
+    """Başarılı push cihazı yazar. Aynı device_id yeniden kaydolunca o kayıt gitmez; yeni cihaz alır."""
+    db = _PushDB()
+    user = db.add_user("usr_mgr", "manager")
+    db.add_user("usr_per", "personel")
+    captured = {"batches": []}
+
+    async def fake_send(messages):
+        captured["batches"].append(list(messages))
+        return _ok_tickets(messages)
+
+    async def go():
+        await upsert_push_token(
+            db, user_id="usr_mgr", company_id="c1", token=MGR, device_id=" phone-a ",
+        )
+        await upsert_push_token(
+            db, user_id="usr_per", company_id="c1", token=PER, device_id="phone-per",
+        )
+        pushed = notification_doc(
+            "c1", "order_new", "Yeni sipariş", "WEB",
+            link="/orders", ref_type="order", ref_id="ord-1",
+        )
+        hidden = {**notification_doc("c1", "order_new", "Okundu", "eski"), "is_read": True}
+        db.notifications.docs[pushed["_id"]] = pushed
+        db.notifications.docs[hidden["_id"]] = hidden
+        with patch.object(notify, "send_expo_push", fake_send):
+            await notify.dispatch_push(db, pushed)
+            stored = await db.notifications.find_one({"_id": pushed["_id"]})
+            assert stored["pushed_device_ids"] == ["phone-a"]
+            assert stored["pushed_at"]
+            missed = notification_doc("c1", "order_new", "Token yokken", "kaçan")
+            db.notifications.docs[missed["_id"]] = missed
+            await remove_push_token(db, MGR, "usr_mgr")
+            again = await upsert_push_token(
+                db, user_id="usr_mgr", company_id="c1", token=AGAIN, device_id="phone-a",
+            )
+            assert again["replay"] is True
+            replay = await replay_unread_to_token(
+                db, user=user, company_id="c1", token=AGAIN, device_id="phone-a",
+            )
+            fresh = await upsert_push_token(
+                db, user_id="usr_mgr", company_id="c1", token=FRESH, device_id="phone-b",
+            )
+            assert fresh["replay"] is True
+            replay_new = await replay_unread_to_token(
+                db, user=user, company_id="c1", token=FRESH, device_id="phone-b",
+            )
+            return stored, replay, replay_new, missed["_id"]
+
+    stored, replay, replay_new, missed_id = _run(go())
+    assert stored["pushed_device_ids"] == ["phone-a"]
+    assert replay["sent"] == 1
+    same_device = captured["batches"][1]
+    assert [m["data"]["notification_id"] for m in same_device] == [missed_id]
+    assert same_device[0]["to"] == AGAIN
+    assert same_device[0]["data"]["user_id"] == "usr_mgr"
+    assert same_device[0]["data"]["company_id"] == "c1"
+    assert PER not in {m["to"] for batch in captured["batches"] for m in batch}
+    assert replay_new["sent"] == 2
+    new_device = captured["batches"][2]
+    assert {m["to"] for m in new_device} == {FRESH}
+    assert {m["data"]["user_id"] for m in new_device} == {"usr_mgr"}
+    assert {m["data"]["company_id"] for m in new_device} == {"c1"}
+    titles = {m["title"] for m in new_device}
+    assert titles == {"Yeni sipariş", "Token yokken"}
+    assert "Okundu" not in titles
+    reread = _run(db.notifications.find_one({"_id": stored["_id"]}))
+    assert reread["pushed_device_ids"] == ["phone-a", "phone-b"]
+
+
+def test_error_ticket_does_not_mark_device_pushed():
+    db = _PushDB()
+    user = db.add_user("usr_mgr", "manager")
+
+    async def fake_send(messages):
+        tickets = []
+        for msg in messages:
+            if msg["to"] == ACC:
+                tickets.append({"status": "error", "details": {"error": "InvalidCredentials"}})
+            else:
+                tickets.append({"status": "ok", "id": "ok-1"})
+        return {"sent": len(messages), "tickets": tickets, "errors": 1}
+
+    async def go():
+        await upsert_push_token(db, user_id="usr_mgr", company_id="c1", token=MGR, device_id="phone-ok")
+        await upsert_push_token(db, user_id="usr_mgr", company_id="c1", token=ACC, device_id="phone-bad")
+        note = notification_doc("c1", "order_new", "Yeni sipariş", "WEB")
+        db.notifications.docs[note["_id"]] = note
+        with patch.object(notify, "send_expo_push", fake_send):
+            await notify.dispatch_push(db, note)
+            stored = await db.notifications.find_one({"_id": note["_id"]})
+            await remove_push_token(db, ACC, "usr_mgr")
+            await upsert_push_token(db, user_id="usr_mgr", company_id="c1", token=FRESH, device_id="phone-bad")
+            captured = {}
+
+            async def replay_send(messages):
+                captured["messages"] = list(messages)
+                return _ok_tickets(messages)
+
+            with patch.object(notify, "send_expo_push", replay_send):
+                replay = await replay_unread_to_token(
+                    db, user=user, company_id="c1", token=FRESH, device_id="phone-bad",
+                )
+        return stored, replay, captured
+
+    stored, replay, captured = _run(go())
+    assert stored["pushed_device_ids"] == ["phone-ok"]
+    assert replay["sent"] == 1
+    assert captured["messages"][0]["to"] == FRESH
+    assert "phone-bad" not in stored["pushed_device_ids"]
+
+
+def test_get_notifications_hides_push_device_stamp():
+    """GET /notifications cihaz damgasını döndürmez; veritabanındaki belge durur."""
+    import inspect
+
+    import server
+
+    db = _PushDB()
+    user = db.add_user("usr_mgr", "manager")
+    secret = "dev-secret-9f3a"
+    stamped_at = "2026-10-20T12:00:00+00:00"
+    note = notification_doc("c1", "order_new", "Yeni sipariş", "WEB", link="/orders", ref_type="order", ref_id="ord-9")
+    note["pushed_device_ids"] = [secret]
+    note["pushed_at"] = stamped_at
+    db.notifications.docs[note["_id"]] = note
+    assert "present_notification" in inspect.getsource(server.list_notifications)
+
+    async def listed(unread_only=False):
+        previous = server.db
+        server.db = db
+        try:
+            return await server.list_notifications(user=user, unread_only=unread_only)
+        finally:
+            server.db = previous
+
+    rows = _run(listed())
+    unread = _run(listed(True))
+    for payload in (rows, unread):
+        assert len(payload) == 1
+        row = payload[0]
+        assert row["id"] == note["_id"]
+        assert row["title"] == "Yeni sipariş"
+        assert row["type"] == "order_new"
+        assert row["company_id"] == "c1"
+        assert row["message"] == "WEB"
+        assert row["target"]["type"] == "order"
+        assert "pushed_device_ids" not in row
+        assert "pushed_at" not in row
+        assert secret not in repr(row)
+    stored = db.notifications.docs[note["_id"]]
+    assert stored["pushed_device_ids"] == [secret]
+    assert stored["pushed_at"] == stamped_at
+    assert stored["_id"] == note["_id"]
+
+
+def test_concurrent_stamps_keep_both_device_ids():
+    db = _PushDB()
+    note = notification_doc("c1", "order_new", "Yeni sipariş", "WEB")
+    note["pushed_device_ids"] = ["phone-old"]
+    db.notifications.docs[note["_id"]] = note
+    left = dict(note)
+    right = dict(note)
+    left["pushed_device_ids"] = list(note["pushed_device_ids"])
+    right["pushed_device_ids"] = list(note["pushed_device_ids"])
+
+    async def go():
+        await asyncio.gather(
+            notify._stamp_pushed_devices(db, left, ["phone-a"]),
+            notify._stamp_pushed_devices(db, right, ["phone-b"]),
+        )
+        return await db.notifications.find_one({"_id": note["_id"]})
+
+    stored = _run(go())
+    assert left["pushed_device_ids"] == ["phone-old", "phone-a"]
+    assert right["pushed_device_ids"] == ["phone-old", "phone-b"]
+    assert set(stored["pushed_device_ids"]) == {"phone-old", "phone-a", "phone-b"}
+    assert stored["pushed_at"]

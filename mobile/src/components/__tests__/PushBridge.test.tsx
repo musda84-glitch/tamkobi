@@ -46,6 +46,8 @@ jest.mock("../../utils/pushRegister", () => ({
   askPushPermission: jest.fn(async () => "ok"),
   enablePushHandler: jest.fn(async () => undefined),
   registerDevicePush: jest.fn(async () => ({ status: "ok" })),
+  rememberPresentedNotificationIds: jest.fn(async () => undefined),
+  rememberReceivedNotification: jest.fn(async () => undefined),
   syncLocalPhoneAlerts: jest.fn(async () => 0),
 }));
 jest.mock("react-native", () => ({

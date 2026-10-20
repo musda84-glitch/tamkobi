@@ -719,13 +719,17 @@ async def build_and_store_xml(invoice: dict, company: dict, contact: Optional[di
 async def issue_invoice(
     invoice_id: str,
     *,
+    company_id: str,
     e_type: Optional[str] = None,
     scenario: Optional[str] = None,
     stamp_now: bool = False,
     issue_date: Optional[str] = None,
     issue_time: Optional[str] = None,
 ) -> Dict[str, Any]:
-    inv = await _db.invoices.find_one({"_id": invoice_id})
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     if inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox":
@@ -736,16 +740,15 @@ async def issue_invoice(
     inv = await apply_issue_stamp(
         invoice_id,
         inv,
-        company_id=str(inv.get("company_id") or ""),
+        company_id=cid,
         stamp_now=bool(stamp_now),
         issue_date=issue_date,
         issue_time=issue_time,
     )
 
-    contact_filt = None
-    if inv.get("contact_id") and inv.get("company_id"):
-        contact_filt = {"_id": inv.get("contact_id"), "company_id": inv.get("company_id")}
-    contact = await _db.contacts.find_one(contact_filt) if contact_filt else None
+    contact = None
+    if inv.get("contact_id"):
+        contact = await _db.contacts.find_one({"_id": inv.get("contact_id"), "company_id": cid})
     if inv.get("invoice_type") == "sales" and contact:
         from contact_tax import contact_tax_patch
         tax_patch = contact_tax_patch(
@@ -754,7 +757,10 @@ async def issue_invoice(
             inv.get("contact_tax_office"),
         )
         if tax_patch:
-            await _db.contacts.update_one(contact_filt, {"$set": tax_patch})
+            await _db.contacts.update_one(
+                {"_id": inv.get("contact_id"), "company_id": cid},
+                {"$set": tax_patch},
+            )
             contact = {**contact, **tax_patch}
     requested = e_type if e_type is not None else inv.get("e_type")
     requested_l = (requested or "").strip().lower()
@@ -791,7 +797,7 @@ async def issue_invoice(
             and not usable_tax(choice.get("doc_tax"))
             and inv.get("contact_tax_id") != tax
         ):
-            await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"contact_tax_id": tax}})
+            await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"contact_tax_id": tax}})
             inv = {**inv, "contact_tax_id": tax}
         if not tax or is_placeholder_tax_id(tax):
             gib_meta = _placeholder_mukellef(tax, contact)
@@ -812,7 +818,7 @@ async def issue_invoice(
         ):
             alias_set = gib_meta.get("alias")
             await _db.contacts.update_one(
-                {"_id": contact["_id"]},
+                {"_id": contact["_id"], "company_id": cid},
                 {"$set": {
                     "is_e_invoice_user": bool(gib_meta["is_e_invoice_user"]),
                     "e_invoice_alias": alias_set,
@@ -837,8 +843,8 @@ async def issue_invoice(
         raise HTTPException(status_code=400, detail="Alış e-faturası GİB'den gelir; kesim yalnızca satış belgelerinde yapılır.")
 
     if e_type:
-        await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"e_type": e_type}})
-        refreshed = await _db.invoices.find_one({"_id": invoice_id})
+        await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"e_type": e_type}})
+        refreshed = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
         inv = {**(refreshed or inv or {}), "e_type": e_type}
 
     et = e_type or (inv.get("e_type") if inv else None) or "e_archive"
@@ -900,7 +906,7 @@ async def issue_invoice(
         # Kağıt / matbu GİB'e gitmez. "sent" gerçek e-belge sanılıp kırmızı rozet
         # ve «GİB:» etiketi üretiyordu.
         await _db.invoices.update_one(
-            {"_id": invoice_id},
+            {"_id": invoice_id, "company_id": cid},
             {"$set": {
                 "status": "approved",
                 "gib_status": "Kağıt Fatura (Matbu)",
@@ -918,7 +924,7 @@ async def issue_invoice(
         raise HTTPException(status_code=400, detail=isnet.MODE_REQUIRED_DETAIL)
 
     await _db.invoices.update_one(
-        {"_id": invoice_id},
+        {"_id": invoice_id, "company_id": cid},
         {"$set": {"einvoice_state": "queued", "gib_scenario": scen, "gib_status": "Kuyrukta", "queued_at": _now()}},
     )
     try:
@@ -958,7 +964,7 @@ async def issue_invoice(
     provider = settings.get("provider") or ""
     if provider == "qnb_efinans" and et != "e_invoice":
         await _db.invoices.update_one(
-            {"_id": invoice_id},
+            {"_id": invoice_id, "company_id": cid},
             {"$set": {
                 "einvoice_state": "error",
                 "gib_status": f"Hata: {qnb_efinans.UNSUPPORTED_DETAIL}",
@@ -982,7 +988,7 @@ async def issue_invoice(
             }
             label = labels.get(provider, provider)
             await _db.invoices.update_one(
-                {"_id": invoice_id},
+                {"_id": invoice_id, "company_id": cid},
                 {"$set": {
                     "einvoice_state": "error",
                     "gib_status": f"Hata: {label} yapılandırılmamış",
@@ -1000,7 +1006,7 @@ async def issue_invoice(
             )
         if et == "e_dispatch" and settings.get("e_dispatch_enabled") is False:
             await _db.invoices.update_one(
-                {"_id": invoice_id},
+                {"_id": invoice_id, "company_id": cid},
                 {"$set": {
                     "einvoice_state": "error",
                     "gib_status": "Hata: e-İrsaliye kapalı",
@@ -1032,13 +1038,13 @@ async def issue_invoice(
             )
         except HTTPException as e:
             await _db.invoices.update_one(
-                {"_id": invoice_id},
+                {"_id": invoice_id, "company_id": cid},
                 {"$set": {"einvoice_state": "error", "gib_status": f"Hata: {e.detail}", "gib_error": str(e.detail)[:500], "error_at": _now()}},
             )
             raise
         except Exception as e:
             await _db.invoices.update_one(
-                {"_id": invoice_id},
+                {"_id": invoice_id, "company_id": cid},
                 {"$set": {"einvoice_state": "error", "gib_status": f"Hata: {e}", "gib_error": str(e)[:500], "error_at": _now()}},
             )
             logger.warning(
@@ -1053,7 +1059,7 @@ async def issue_invoice(
         if provider in ("isnet", "isnet_portal"):
             if not isnet.is_ettn_uuid(tracking):
                 await _db.invoices.update_one(
-                    {"_id": invoice_id},
+                    {"_id": invoice_id, "company_id": cid},
                     {"$set": {
                         "einvoice_state": "error",
                         "gib_status": "Hata: İşNet geçerli ETTN (UUID) döndürmedi",
@@ -1069,7 +1075,7 @@ async def issue_invoice(
             tracking = (tracking or (sent.get("invoice_id") or "").strip()).strip()
             if not tracking:
                 await _db.invoices.update_one(
-                    {"_id": invoice_id},
+                    {"_id": invoice_id, "company_id": cid},
                     {"$set": {
                         "einvoice_state": "error",
                         "gib_status": "Hata: Entegratör ETTN/fatura no döndürmedi",
@@ -1141,7 +1147,7 @@ async def issue_invoice(
             if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
                 patch["local_invoice_number"] = inv.get("invoice_number")
             patch["invoice_number"] = gib_no
-        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+        await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
         try:
             archive_inv = {
                 **inv,
@@ -1190,7 +1196,7 @@ async def issue_invoice(
         if et == "e_dispatch":
             msg = f"e-İrsaliye {label} üzerinden İşNet/GİB'e iletildi. ETTN: {tracking}"
             patch_extra = {"dispatch_status": "sent"}
-            await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch_extra})
+            await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch_extra})
         elif provider == "qnb_efinans":
             msg = (
                 f"Fatura QNB eFinans kuyruğuna alındı (işleniyor). ETTN: {tracking}. "
@@ -1225,7 +1231,7 @@ async def issue_invoice(
 
     if et == "e_dispatch":
         await _db.invoices.update_one(
-            {"_id": invoice_id},
+            {"_id": invoice_id, "company_id": cid},
             {"$set": {
                 "einvoice_state": "draft",
                 "gib_status": "Taslak (e-İrsaliye) — İşNet yapılandırın",
@@ -1260,7 +1266,7 @@ async def issue_invoice(
         "issued_at": _now(),
         "buyer_tax_id": buyer["tax_id"],
     }
-    await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+    await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
     if export:
         message = f"e-İhracat faturası GİB sistemine iletildi. ETTN/Takip No: {tracking}"
     elif gib_meta:
@@ -1307,6 +1313,7 @@ async def create_from_order(order_id: str, req: Dict[str, Any], user: dict) -> D
         raise HTTPException(status_code=409, detail="Önce Faturalaştırın")
     result = await issue_invoice(
         inv_id,
+        company_id=inv["company_id"] if inv is not None else "",
         e_type=req.get("e_type"),
         scenario=req.get("scenario"),
         stamp_now=bool(req.get("stamp_now")),
@@ -1431,6 +1438,7 @@ async def api_create_einvoice(payload: InvoiceCreateRequest, user: dict = Depend
             return await create_from_order(order_id, req, user)
         result = await issue_invoice(
             invoice_id,
+            company_id=inv["company_id"],
             e_type=payload.e_type,
             scenario=payload.scenario,
             stamp_now=bool(payload.stamp_now),
@@ -2105,7 +2113,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 age = 99999
             if age > 900 and not inv.get("gib_tracking_id"):
                 await _db.invoices.update_one(
-                    {"_id": inv["_id"]},
+                    {"_id": inv["_id"], "company_id": inv.get("company_id")},
                     {"$set": {"einvoice_state": "error", "gib_status": "Gönderim zaman aşımı", "gib_error": "queued_timeout", "error_at": _now()}},
                 )
                 updated += 1
@@ -2136,7 +2144,10 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             if seller and not inv.get("gib_document_url"):
                 url = n11faturam.document_url(seller, ettn, inv.get("e_type") or "e_archive")
                 if url:
-                    await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
+                    await _db.invoices.update_one(
+                        {"_id": inv["_id"], "company_id": inv.get("company_id")},
+                        {"$set": {"gib_document_url": url}},
+                    )
                     updated += 1
             continue
 
@@ -2243,7 +2254,10 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 patch["gib_process_status"] = info.get("process_status")
 
         if patch:
-            await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": patch})
+            await _db.invoices.update_one(
+                {"_id": inv["_id"], "company_id": inv.get("company_id")},
+                {"$set": patch},
+            )
             updated += 1
 
     return {"checked": checked, "updated": updated}

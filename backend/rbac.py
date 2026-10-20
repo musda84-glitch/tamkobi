@@ -1,9 +1,15 @@
 """Users, roles (module permissions), e-mail invitations and activity log."""
+import hashlib
+import logging
+import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional, Callable, Awaitable
+from typing import Any, Dict, Optional, Callable, Awaitable, Tuple
 from urllib.parse import unquote
+
+logger = logging.getLogger(__name__)
 
 import user_numbers
 import user_company_access as uca
@@ -577,6 +583,18 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/comm/sms/settings", "/settings"), ("/api/comm/sms/verify", "/settings"), ("/api/comm/sms/balance", "/settings"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
+# Yalnız GET/HEAD görünürlük. module_for_path ve mutation_allowed bunu okumaz;
+# /api/e-invoice gibi mutasyon boşlukları bu listede kapanmaz.
+# En uzun önek kazanır: /api/integrations/cargo ve /api/integrations/ecommerce
+# API_MODULE_MAP'te daha uzundur, /settings'e düşmez.
+GET_EXTRA_MODULE_MAP = (
+    ("/api/e-invoice", "/invoices"),
+    ("/api/expense-budgets", "/expenses"),
+    ("/api/marketplace", "/ecommerce"),
+    ("/api/integrations", "/settings"),
+    ("/api/account", "/settings"),
+    ("/api/label-templates", "/stock"),
+)
 # Modül yetkisi (RBAC) kontrolü atlanır — yine de oturum gerekebilir.
 SKIP_PREFIXES = ("/api/auth", "/api/setup", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/version", "/api/mobile", "/api/system", "/api/platform", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/me", "/api/personnel/messages", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/reminder-prefs", "/api/personnel/attendance/geo", "/api/personnel/attendance/early-leave-request", "/api/personnel/attendance/intraday-leave-request", "/api/personnel/leaves/self", "/api/personnel/leaves/me", "/api/personnel/bonuses/self")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute", "/early-leave-cancel")
@@ -934,12 +952,389 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
     return False
 
 
+# Oturum açmış herkesin okuyabildiği GET'ler. Modül view aranmaz.
+# `{param}` tek yol parçasıdır (_portal_template_match). `...` kaydı kökün kendisi
+# ve alt yollarıdır. Uç içinde rol süzmeyen manager-summary, b2b-settings, privacy
+# ve print-templates burada değildir; / veya /settings modülünde kalır.
+# /api/logs diye bir uç yok; istemci logu /api/mobile/logs (SKIP_PREFIXES /api/mobile).
+# robots.txt ve sitemap.xml /api altında değil (seo_router kök); middleware /api
+# dışında erken çıkar. Kayıtlı yol yazılır, ölü /api/robots.txt satırı eklenmez.
+READ_SHARED_GET_ALLOWLIST = (
+    # Aktif şirket başlığı (ad, logo). Üyelik kontrolü middleware'de ayrıca durur.
+    ("GET", "/api/companies/{id}"),
+    # Atölye ekranı bölge seçicisi; ayar yazması değil.
+    ("GET", "/api/companies/{id}/workshop-zones"),
+    # Atölye iş parkı seçicisi.
+    ("GET", "/api/companies/{id}/work-parks"),
+    # Ofis görev tipi seçicisi.
+    ("GET", "/api/companies/{id}/office-task-types"),
+    # Proje aşama seçicisi.
+    ("GET", "/api/companies/{id}/project-stages"),
+    # Pano sayı kabuğu. manager-summary burada yok; / modülünde kalır.
+    ("GET", "/api/dashboard/stats"),
+    # Pano özet kabuğu. ops-alerts / modülünde kalır.
+    ("GET", "/api/dashboard/overview"),
+    # Ana sayfa karo rozetleri.
+    ("GET", "/api/dashboard/tile-badges"),
+    # Ürün formunun birim listesi. reorder-preview /stock'ta kalır.
+    ("GET", "/api/products/units"),
+    # Ürün formunun kategori listesi.
+    ("GET", "/api/products/categories"),
+    # Oturumlu yardım. /api/public/help ve /api/system/help kendi kapılarındadır.
+    ("GET", "/api/help/..."),
+    # Kişisel veri dışa aktarma. Uç, export_personal_data bayrağını da uygular.
+    ("GET", "/api/me/..."),
+    # İlk kurulum sihirbazının kendi ilerlemesi.
+    ("GET", "/api/onboarding/..."),
+    # Fiyat merkezi kural okuması. Sabah özeti /reports modülünde kalır.
+    ("GET", "/api/pricing/..."),
+    # Masaüstü kurulum sürümü; her oturum indirebilsin.
+    ("GET", "/api/desktop/..."),
+    # Adres arama vekili; modül verisi döndürmez.
+    ("GET", "/api/geocode"),
+    # Üst çubuk global arama kabuğu.
+    ("GET", "/api/search"),
+    # Şirket olay akışı (SSE).
+    ("GET", "/api/events/..."),
+    # Bildirim tercihleri. /api/notifications SKIP_PREFIXES içindedir.
+    ("GET", "/api/notify/..."),
+    # SaaS bildirim tercihleri. Uç kendi süper yönetici korumasını uygular.
+    ("GET", "/api/saas/..."),
+    # Hesabın kendi depo klasörü. /api/system/storage SKIP içindedir.
+    ("GET", "/api/storage/..."),
+    # İşlem geçmişi. company_audit kendi feature guard'ını uygular.
+    ("GET", "/api/company-audit/..."),
+    # Site kökü robots. /api öneki yok; middleware bu yola girmez.
+    ("GET", "/robots.txt"),
+    # Site kökü sitemap. /api öneki yok; middleware bu yola girmez.
+    ("GET", "/sitemap.xml"),
+)
+
+# Ürün seçicisi. Personelde /stock FORCE ile none kaldığı için portal satırı şart.
+_CROSS_PRODUCT_MODULES = (
+    "/stock", "/orders", "/quotes", "/invoices", "/hizli-satis",
+    "/production", "/atolye", "/sevk", "/sayim", "/purchase-orders",
+)
+_CROSS_PRODUCT_PORTAL = ("portal_saha", "portal_orders", "portal_pick", "portal_sayim")
+_CROSS_CONTACT_MODULES = (
+    "/contacts", "/orders", "/quotes", "/invoices", "/expenses",
+    "/banking", "/cheques", "/installments", "/projects",
+)
+_CROSS_CONTACT_PORTAL = ("portal_saha", "portal_orders")
+_CROSS_WAREHOUSE_MODULES = (
+    "/warehouses", "/stock", "/sevk", "/sayim", "/orders", "/production", "/hizli-satis",
+)
+_CROSS_BANK_MODULES = (
+    "/banking", "/expenses", "/cheques", "/invoices", "/installments", "/hizli-satis",
+)
+_CROSS_EMPLOYEE_MODULES = ("/personnel", "/projects", "/production", "/atolye", "/vehicles")
+
+# (yöntem, şablon, modüller, personel/portal özellikleri, portal yalnız personelde mi)
+# Ekstre, yaşlandırma, hareket, alış maliyeti ve benzeri alt kaynaklar yok.
+# `{id}` tek segmenttir. Sabit alt kaynaklar çapraz satıra girmez.
+# reorder-preview stokta, flags caride kalır. units ve categories paylaşılan
+# okuma listesindedir; search kendi çapraz satırındadır.
+CROSS_MODULE_VIEW_EXCLUDE = (
+    "/api/products/reorder-preview",
+    "/api/products/units",
+    "/api/products/categories",
+    "/api/contacts/flags",
+)
+CROSS_MODULE_VIEW = (
+    ("GET", "/api/products", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
+    ("GET", "/api/products/{id}", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
+    ("GET", "/api/products/barcode/{code}", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
+    ("GET", "/api/products/{id}/lots", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
+    ("GET", "/api/contacts", _CROSS_CONTACT_MODULES, _CROSS_CONTACT_PORTAL, True),
+    ("GET", "/api/contacts/search", _CROSS_CONTACT_MODULES, _CROSS_CONTACT_PORTAL, True),
+    ("GET", "/api/contacts/{id}", _CROSS_CONTACT_MODULES, _CROSS_CONTACT_PORTAL, True),
+    ("GET", "/api/warehouses", _CROSS_WAREHOUSE_MODULES, (), True),
+    # Ödeme seçicileri. Hareket ve ekstre listeleri yalnız /banking.
+    ("GET", "/api/banking/accounts", _CROSS_BANK_MODULES, (), True),
+    ("GET", "/api/banking/partners", _CROSS_BANK_MODULES, (), True),
+    # Personel seçici. Kart, puantaj ve izin alt yolları yalnız /personnel.
+    ("GET", "/api/personnel/employees", _CROSS_EMPLOYEE_MODULES, (), True),
+    # İstasyon listesi. portal_orders herhangi bir rolde yeter.
+    ("GET", "/api/production/work-orders/stations", ("/atolye", "/production"), ("portal_orders",), False),
+)
+
+_RBAC_GET_ENFORCE_VALUES = ("off", "shadow", "enforce")
+# (route, role, reason) -> son log anı (monotonic). Dakikada bir.
+_RBAC_GET_DENY_LOG_AT: Dict[Tuple[str, str, str], float] = {}
+_RBAC_GET_DENY_LOG_INTERVAL = 60.0
+
+
+def rbac_get_enforce_mode() -> str:
+    """RBAC_GET_ENFORCE: off | shadow | enforce. Boş veya bilinmeyen değer shadow."""
+    raw = str(os.environ.get("RBAC_GET_ENFORCE", "shadow") or "shadow").strip().lower()
+    if raw not in _RBAC_GET_ENFORCE_VALUES:
+        return "shadow"
+    return raw
+
+
+def _view_rule_method(method: str) -> str:
+    """HEAD, GET şablonlarıyla aynı görünürlük kuralına girer."""
+    method_u = str(method or "GET").upper()
+    if method_u == "HEAD":
+        return "GET"
+    return method_u
+
+
+def _view_admin_user(user: Optional[dict]) -> bool:
+    """Süper admin, admin ve owner (normalize). Boş rol admin sayılmaz."""
+    if not user:
+        return False
+    if user.get("is_super_admin"):
+        return True
+    raw = user.get("role")
+    if raw is None or str(raw).strip() == "":
+        return False
+    return normalize_role_code(raw) in _ADMIN_ROLE_CODES
+
+
+def allowlist_template_matches(template: str, path: str) -> bool:
+    """Allowlist şablonu. `...` alt ağacı kapsar; diğerleri _portal_template_match."""
+    raw = (template or "").strip()
+    p = _portal_norm_path(path)
+    if raw.endswith("/..."):
+        base = _portal_norm_path(raw[:-4])
+        return p == base or p.startswith(base + "/")
+    return _portal_template_match(raw, p)
+
+
+def _shared_get_matches(path: str, method: str = "GET") -> bool:
+    if _view_rule_method(method) != "GET":
+        return False
+    p = _portal_norm_path(path)
+    for rule_method, template in READ_SHARED_GET_ALLOWLIST:
+        if rule_method != "GET":
+            continue
+        if allowlist_template_matches(template, p):
+            return True
+    return False
+
+
+def _cross_view_excluded(path: str) -> bool:
+    """Tek segmentte `{id}` ye düşen sabit alt kaynak. Çapraz görünüme girmez."""
+    return _portal_norm_path(path) in CROSS_MODULE_VIEW_EXCLUDE
+
+
+def cross_module_view_matches(path: str, method: str = "GET") -> bool:
+    if _view_rule_method(method) != "GET":
+        return False
+    p = _portal_norm_path(path)
+    if _cross_view_excluded(p):
+        return False
+    for rule_method, template, _modules, _features, _personel_only in CROSS_MODULE_VIEW:
+        if rule_method != "GET":
+            continue
+        if _portal_template_match(template, p):
+            return True
+    return False
+
+
+def module_for_get_path(path: str) -> Optional[str]:
+    """GET/HEAD modülü. API_MODULE_MAP + GET_EXTRA; en uzun önek kazanır."""
+    p = _portal_norm_path(path)
+    best = None
+    for prefix, mod in list(API_MODULE_MAP) + list(GET_EXTRA_MODULE_MAP):
+        if p.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+            best = (prefix, mod)
+    return best[1] if best else None
+
+
+def _view_module_allows(module: Optional[str], perms: Dict[str, str]) -> bool:
+    """Modül view. Atölye ve üretim birbirinin view'ini de kabul eder."""
+    if not module:
+        return False
+    if level_allows(perms.get(module), "view"):
+        return True
+    if module == "/atolye" and level_allows(perms.get("/production"), "view"):
+        return True
+    if module == "/production" and level_allows(perms.get("/atolye"), "view"):
+        return True
+    return False
+
+
+def _cross_view_allows(user: Optional[dict], role: Optional[dict], path: str, method: str) -> bool:
+    if not role:
+        return False
+    p = _portal_norm_path(path)
+    if _cross_view_excluded(p):
+        return False
+    perms = role.get("permissions") or {}
+    feats = role_features(role)
+    personel = bool(user) and normalize_role_code(user.get("role")) == "personel"
+    method_u = _view_rule_method(method)
+    for rule_method, template, modules, features, personel_only in CROSS_MODULE_VIEW:
+        if rule_method != method_u:
+            continue
+        if not _portal_template_match(template, p):
+            continue
+        if any(level_allows(perms.get(mod), "view") for mod in modules):
+            return True
+        if features and (personel or not personel_only) and any(feats.get(key) for key in features):
+            return True
+    return False
+
+
+def get_view_route_bucket(path: str) -> Optional[str]:
+    """GET rotasının karar kovası. None ise fail-closed; route-walk testi bunu yakalar."""
+    p = _portal_norm_path(path)
+    if p.startswith(SKIP_PREFIXES) or is_public_api_path(p, "GET"):
+        return "skip_or_public"
+    if _shared_get_matches(p, "GET"):
+        return "shared_get"
+    if portal_rule_for_path(p, "GET") or portal_orders_operation(p, "GET"):
+        return "portal"
+    if cross_module_view_matches(p, "GET"):
+        return "cross_module"
+    if module_for_get_path(p):
+        return "module"
+    return None
+
+
+def get_view_decision(user: Optional[dict], role: Optional[dict], path: str, method: str = "GET") -> Tuple[str, str]:
+    """GET/HEAD görünürlük kararı. ("allow"|"deny", reason). İstek engellemez.
+
+    Sıra: admin, skip/public, paylaşılan okuma, portal, çapraz modül, modül view, fail-closed.
+    """
+    raw_method = str(method or "GET").upper()
+    method_u = _view_rule_method(raw_method)
+    p = _portal_norm_path(path)
+    if method_u != "GET":
+        return "deny", "not_read"
+    if _view_admin_user(user):
+        if user and user.get("is_super_admin"):
+            return "allow", "super_admin"
+        return "allow", "admin_role"
+    if p.startswith(SKIP_PREFIXES):
+        return "allow", "skip_prefix"
+    if is_public_api_path(p, raw_method):
+        return "allow", "public_api"
+    if user and _shared_get_matches(p, method_u):
+        return "allow", "shared_get"
+    if not user:
+        return "deny", "no_user"
+    if not role:
+        return "deny", "no_role"
+    rule = portal_rule_for_path(p, method_u)
+    if rule and role_features(role).get(rule[1]):
+        return "allow", "portal_rule"
+    if portal_orders_operation(p, method_u) and role_features(role).get("portal_orders"):
+        return "allow", "portal_orders"
+    if _cross_view_allows(user, role, p, method_u):
+        return "allow", "cross_module"
+    module = module_for_get_path(p)
+    if module:
+        if _view_module_allows(module, role.get("permissions") or {}):
+            return "allow", "module_view"
+        return "deny", "module_denied"
+    return "deny", "unmapped"
+
+
+def _short_id_hash(value: Optional[str]) -> str:
+    if value is None or str(value) == "":
+        return ""
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _log_field(value: Optional[str]) -> str:
+    text = str(value or "").replace("\r", "").replace("\n", "")
+    if "?" in text:
+        text = text.split("?", 1)[0]
+    return text[:300]
+
+
+def _route_template(request: Any, path: str) -> str:
+    scope = getattr(request, "scope", None) or {}
+    route = scope.get("route") if isinstance(scope, dict) else None
+    template = getattr(route, "path", None) if route is not None else None
+    if template:
+        return _log_field(template)
+    return _log_field(path)
+
+
+def _log_rbac_get_would_deny(request: Any, user: Optional[dict], role: Optional[dict], path: str, reason: str, company_id: Optional[str]) -> None:
+    """Gölge red. Dakikada bir (route, rol, neden). Token, e-posta, sorgu, gövde, IP yok."""
+    route = _route_template(request, path)
+    role_code = ""
+    if role and role.get("code"):
+        role_code = str(role.get("code"))
+    elif user and user.get("role"):
+        role_code = normalize_role_code(user.get("role"))
+    module = module_for_get_path(path) or ""
+    user_id = ""
+    if user:
+        user_id = str(user.get("id") or user.get("_id") or "")
+    key = (route, role_code, str(reason or ""))
+    now = time.monotonic()
+    last = _RBAC_GET_DENY_LOG_AT.get(key)
+    if last is not None and now - last < _RBAC_GET_DENY_LOG_INTERVAL:
+        return
+    _RBAC_GET_DENY_LOG_AT[key] = now
+    if len(_RBAC_GET_DENY_LOG_AT) > 4000:
+        cutoff = now - _RBAC_GET_DENY_LOG_INTERVAL
+        for old_key, seen in list(_RBAC_GET_DENY_LOG_AT.items()):
+            if seen < cutoff:
+                _RBAC_GET_DENY_LOG_AT.pop(old_key, None)
+    logger.warning(
+        "rbac_get_would_deny method=%s route=%s module=%s reason=%s role=%s user=%s company=%s",
+        _log_field(getattr(request, "method", None) or "GET"),
+        route,
+        _log_field(module),
+        _log_field(reason),
+        _log_field(role_code),
+        _short_id_hash(user_id),
+        _short_id_hash(company_id),
+    )
+
+
+def _log_rbac_get_view_error(request: Any, path: str, exc: BaseException) -> None:
+    """Görünürlük kararı düştü. Yalnız yöntem, rota şablonu ve istisna sınıfı."""
+    logger.warning(
+        "rbac_get_view_error method=%s route=%s error=%s",
+        _log_field(getattr(request, "method", None) or "GET"),
+        _route_template(request, path),
+        _log_field(type(exc).__name__),
+    )
+
+
+async def _shadow_get_view(request: Any, user: Optional[dict], role: Optional[dict], path: str, company_id: Optional[str]):
+    """GET/HEAD view. (engel yanıtı veya None, çözülen rol). off: rolü olduğu gibi geri ver."""
+    mode = rbac_get_enforce_mode()
+    if mode == "off":
+        return None, role
+    view_role = role
+    if user and view_role is None and not _view_admin_user(user):
+        view_role = await role_for(user, company_id)
+    decision, reason = get_view_decision(user, view_role, path, getattr(request, "method", "GET"))
+    if decision != "deny":
+        return None, view_role
+    if mode == "enforce":
+        from fastapi.responses import JSONResponse
+        label = ""
+        if view_role:
+            label = str(view_role.get("name") or view_role.get("code") or "")
+        elif user and user.get("role"):
+            label = normalize_role_code(user.get("role"))
+        module = module_for_get_path(path) or "eşlenmemiş"
+        detail = f"Bu işlem için yetkiniz yok ({label} rolü: {module})."
+        return JSONResponse({"detail": detail}, status_code=403), view_role
+    resolved_company = company_id
+    if not resolved_company and user:
+        resolved_company = user.get("active_company_id")
+    _log_rbac_get_would_deny(request, user, view_role, path, reason, resolved_company)
+    return None, view_role
+
+
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         from fastapi.responses import JSONResponse
 
         path = request.url.path
-        if not path.startswith("/api") or request.method in ("OPTIONS", "HEAD"):
+        # HEAD, GET ile aynı görünürlük dalına girer. OPTIONS (CORS) erken çıkar.
+        if not path.startswith("/api") or request.method == "OPTIONS":
             return await call_next(request)
 
         token = session_token(request)
@@ -1008,6 +1403,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 return addon_block
         except Exception:
             pass
+        role = None
         portal_grant = False
         if user and not user.get("is_super_admin") and normalize_role_code(user.get("role")) != "admin":
             import host_audience as _ha
@@ -1041,11 +1437,37 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                     role = await role_for(user, cid)
                 if role_features(role).get("portal_orders"):
                     portal_grant = True
-        if request.method == "GET" or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
+        view_lookup_failed = False
+        if request.method in ("GET", "HEAD") or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
+            if request.method in ("GET", "HEAD"):
+                try:
+                    blocked, view_role = await _shadow_get_view(request, user, role, path, cid)
+                except Exception as exc:
+                    _log_rbac_get_view_error(request, path, exc)
+                    try:
+                        failed_mode = rbac_get_enforce_mode()
+                    except Exception:
+                        failed_mode = "shadow"
+                    if failed_mode == "enforce":
+                        return JSONResponse({"detail": "Bu işlem için yetkiniz yok."}, status_code=403)
+                    view_lookup_failed = True
+                else:
+                    if view_role is not None:
+                        role = view_role
+                    if blocked is not None:
+                        return blocked
             response = await call_next(request)
             if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
-                role = await role_for(user)
-                if not role_features(role)["view_prices"]:
+                if role is None:
+                    try:
+                        role = await role_for(user)
+                    except Exception:
+                        # Görünürlük kararı düştüyse ikinci sorgu da düşebilir.
+                        # Rol bilinmiyorsa tutarlar maskeli kalır; istek 200 döner.
+                        if not view_lookup_failed:
+                            raise
+                        role = None
+                if role is None or not role_features(role)["view_prices"]:
                     import json as _json
                     body = b"".join([chunk async for chunk in response.body_iterator])
                     try:

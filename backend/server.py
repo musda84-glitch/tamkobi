@@ -2733,17 +2733,18 @@ async def register_push_token(req: Dict[str, Any], request: Request, user: dict 
     token = str(req.get("token") or "").strip()
     try:
         company_id = str(user.get("active_company_id") or req.get("company_id") or "")
+        device_id = str(req.get("device_id") or "")
         out = await _notify.upsert_push_token(
             db,
             user_id=str(user.get("id") or user.get("_id") or ""),
             company_id=company_id,
             token=token,
             platform=str(req.get("platform") or ""),
-            device_id=str(req.get("device_id") or ""),
+            device_id=device_id,
         )
         if out.get("replay"):
             replay = await _notify.replay_unread_to_token(
-                db, user=user, company_id=company_id, token=token,
+                db, user=user, company_id=company_id, token=token, device_id=device_id,
             )
             out["replayed"] = replay.get("sent") or 0
         return out
@@ -9622,7 +9623,7 @@ async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
         await db.invoices.update_one({"_id": doc["_id"]}, {"$set": patch})
         doc = await db.invoices.find_one({"_id": doc["_id"]}) or doc
     try:
-        result = await e_invoice.issue_invoice(doc["_id"], e_type="e_dispatch")
+        result = await e_invoice.issue_invoice(doc["_id"], company_id=doc["company_id"], e_type="e_dispatch")
         refreshed = await db.invoices.find_one({"_id": doc["_id"]}) or doc
         return {"sent": True, "result": result, "dispatch": clean_doc(refreshed)}
     except HTTPException as e:
@@ -11268,6 +11269,7 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
             await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
     return await e_invoice.issue_invoice(
         invoice_id,
+        company_id=inv["company_id"],
         e_type=req.get("e_type"),
         scenario=req.get("scenario"),
         stamp_now=bool(req.get("stamp_now")),
