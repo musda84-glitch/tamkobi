@@ -5,6 +5,7 @@ import { get, post, put } from "../../api/client";
 import { findByTestId, reactProps, removeTestNavigator, textOf } from "../../test/domSetup";
 import { fmtDate, todayIso } from "../../utils/money";
 import { extractChequeFromAsset } from "../../utils/chequeScan";
+import { router } from "expo-router";
 import { ChequeFormScreen } from "../ChequeFormScreen";
 
 const { createRoot } = require("react-dom/client") as {
@@ -311,6 +312,8 @@ describe("ChequeFormScreen", () => {
     expect(textOf(findByTestId(view.container, "cheque-form-header"))).toContain("Portföy / Açık");
     expect(textOf(findByTestId(view.container, "cheque-print-receipt"))).toContain("Tahsilat makbuzu");
     expect(textOf(findByTestId(view.container, "cheque-save"))).toContain("Güncelle");
+    expect(findByTestId(view.container, "cheque-batch-add")).toBeNull();
+    expect(findByTestId(view.container, "cheque-batch-list")).toBeNull();
     await press(view.container, "cheque-save");
     expect(put).toHaveBeenCalledWith(mockAuth.client, "/cheques/ch-open", expect.objectContaining({
       contact_id: "c1",
@@ -338,6 +341,134 @@ describe("ChequeFormScreen", () => {
     expect(findByTestId(view.container, "cheque-contact")).toBeNull();
     expect(textOf(findByTestId(view.container, "cheque-contact-selected"))).toContain("Acme A.Ş.");
     expect(findByTestId(view.container, "cheque-scan-open")).toBeNull();
+    act(() => { view.root.unmount(); });
+  });
+
+  async function chooseContact(container: unknown) {
+    await press(container, "cheque-contact");
+    await press(container, "cheque-contact-option-c1");
+  }
+
+  async function fillOpenCheque(container: unknown, amount: string, serial: string) {
+    await typeInto(container, "cheque-amount", amount);
+    await typeInto(container, "cheque-serial", serial);
+    await pickDueDay(container);
+  }
+
+  it("locks the contact and direction after the first cheque and still allows the instrument to change", async () => {
+    const view = renderForm();
+    await settle();
+    await chooseContact(view.container);
+    await fillOpenCheque(view.container, "100", "A1");
+    await press(view.container, "cheque-batch-add");
+    expect(findByTestId(view.container, "cheque-batch-list")).toBeTruthy();
+    expect(textOf(findByTestId(view.container, "cheque-batch-total"))).toContain("ALINAN ÇEK · Acme A.Ş.");
+    expect(textOf(findByTestId(view.container, "cheque-batch-item-0"))).toContain("elle");
+    await press(view.container, "cheque-batch-add-manual");
+    expect(findByTestId(view.container, "cheque-contact-change")).toBeNull();
+    expect(textOf(findByTestId(view.container, "cheque-contact-selected"))).toContain("Kilitli");
+    expect(reactProps(findByTestId(view.container, "cheque-kind-issued_cheque"))?.accessibilityState?.disabled).toBe(true);
+    expect(reactProps(findByTestId(view.container, "cheque-kind-issued_promissory"))?.accessibilityState?.disabled).toBe(true);
+    await press(view.container, "cheque-kind-issued_cheque");
+    expect(reactProps(findByTestId(view.container, "cheque-kind-received_cheque"))?.accessibilityState?.selected).toBe(true);
+    await press(view.container, "cheque-kind-received_promissory");
+    expect(reactProps(findByTestId(view.container, "cheque-kind-received_promissory"))?.accessibilityState?.selected).toBe(true);
+    expect(findByTestId(view.container, "cheque-bank")).toBeNull();
+    act(() => { view.root.unmount(); });
+  });
+
+  it("posts one cheque on Kaydet and three cheques as one batch", async () => {
+    const view = renderForm();
+    await settle();
+    await chooseContact(view.container);
+    await fillOpenCheque(view.container, "100", "ONE");
+    (router.back as jest.Mock).mockClear();
+    (router.replace as jest.Mock).mockClear();
+    await press(view.container, "cheque-save");
+    expect(post).toHaveBeenCalledWith(mockAuth.client, "/cheques", expect.objectContaining({
+      contact_id: "c1",
+      amount: 100,
+      serial_no: "ONE",
+      company_id: "co-1",
+      direction: "received",
+      instrument: "cheque",
+    }));
+    expect((post as unknown as jest.Mock).mock.calls.some((call) => String(call[1]).includes("/batch"))).toBe(false);
+    expect(router.back).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(textOf(findByTestId(view.container, "cheque-saved"))).toContain("1 çek kaydedildi");
+    expect(textOf(findByTestId(view.container, "cheque-saved"))).toContain("Acme A.Ş.");
+    await press(view.container, "cheque-saved-new");
+    expect(findByTestId(view.container, "cheque-saved")).toBeNull();
+    expect(textOf(findByTestId(view.container, "cheque-form-title"))).toContain("Yeni çek");
+    expect(reactProps(findByTestId(view.container, "cheque-kind-issued_cheque"))?.accessibilityState?.disabled).toBe(false);
+    expect(findByTestId(view.container, "cheque-contact-change")).toBeNull();
+
+    await chooseContact(view.container);
+    await fillOpenCheque(view.container, "100", "A1");
+    await press(view.container, "cheque-batch-add");
+    await press(view.container, "cheque-batch-add-manual");
+    await fillOpenCheque(view.container, "200", "A2");
+    await press(view.container, "cheque-batch-add");
+    await press(view.container, "cheque-batch-add-manual");
+    await press(view.container, "cheque-kind-received_promissory");
+    await fillOpenCheque(view.container, "300", "A3");
+    await press(view.container, "cheque-batch-add");
+    (post as unknown as jest.Mock).mockClear();
+    (post as unknown as jest.Mock).mockResolvedValue({
+      receipt_group_id: "grp-1",
+      total: 600,
+      items: [
+        { id: "n0", amount: 100, due_date: "2026-10-15", contact_id: "c1", contact_name: "Acme A.Ş.", direction: "received", instrument: "cheque", serial_no: "A1", status: "open" },
+        { id: "n1", amount: 200, due_date: "2026-10-15", contact_id: "c1", contact_name: "Acme A.Ş.", direction: "received", instrument: "cheque", serial_no: "A2", status: "open" },
+        { id: "n2", amount: 300, due_date: "2026-10-15", contact_id: "c1", contact_name: "Acme A.Ş.", direction: "received", instrument: "promissory", serial_no: "A3", status: "open" },
+      ],
+    });
+    await press(view.container, "cheque-batch-save");
+    const batchCall = (post as unknown as jest.Mock).mock.calls.find((call) => call[1] === "/cheques/batch");
+    expect(batchCall).toBeTruthy();
+    expect(batchCall[2].company_id).toBe("co-1");
+    expect(batchCall[2].contact_id).toBe("c1");
+    expect(batchCall[2].direction).toBe("received");
+    expect(batchCall[2].items).toHaveLength(3);
+    expect(batchCall[2].items.map((row: { amount: number; serial_no: string; instrument: string }) => [row.amount, row.serial_no, row.instrument])).toEqual([
+      [100, "A1", "cheque"],
+      [200, "A2", "cheque"],
+      [300, "A3", "promissory"],
+    ]);
+    expect(batchCall[2].items[0]).not.toHaveProperty("issue_date");
+    expect(batchCall[2].items[0]).not.toHaveProperty("contact_id");
+    expect(batchCall[2].items[0]).not.toHaveProperty("direction");
+    expect((post as unknown as jest.Mock).mock.calls.some((call) => call[1] === "/cheques")).toBe(false);
+    expect(textOf(findByTestId(view.container, "cheque-saved"))).toContain("3 çek kaydedildi");
+    act(() => { view.root.unmount(); });
+  });
+
+  it("marks the failing batch row and keeps the draft", async () => {
+    (post as unknown as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
+      if (path === "/cheques/batch") throw new Error("Kalem 2: vade, keşide tarihinden önce olamaz.");
+      return { id: "new-1" };
+    });
+    const view = renderForm();
+    await settle();
+    await chooseContact(view.container);
+    await fillOpenCheque(view.container, "100", "A1");
+    await press(view.container, "cheque-batch-add");
+    await press(view.container, "cheque-batch-add-manual");
+    await fillOpenCheque(view.container, "200", "A2");
+    await press(view.container, "cheque-batch-add");
+    await press(view.container, "cheque-batch-add-manual");
+    await fillOpenCheque(view.container, "300", "A3");
+    await press(view.container, "cheque-batch-add");
+    await press(view.container, "cheque-batch-save");
+    expect(post).toHaveBeenCalledWith(mockAuth.client, "/cheques/batch", expect.any(Object));
+    expect(findByTestId(view.container, "cheque-batch-item-0")).toBeTruthy();
+    expect(findByTestId(view.container, "cheque-batch-item-1")).toBeTruthy();
+    expect(findByTestId(view.container, "cheque-batch-item-2")).toBeTruthy();
+    expect(textOf(findByTestId(view.container, "cheque-batch-item-2-error"))).toContain("Kalem 2:");
+    expect(textOf(findByTestId(view.container, "cheque-batch-item-0"))).toContain("A1");
+    expect(textOf(findByTestId(view.container, "cheque-batch-item-2"))).toContain("A3");
+    expect(findByTestId(view.container, "cheque-saved")).toBeNull();
     act(() => { view.root.unmount(); });
   });
 });
