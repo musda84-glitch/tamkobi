@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import saas
 import comm_service
+import password_reset
 from safe_error import (
     looks_like_raw_body,
     mask_sensitive_text,
@@ -419,14 +420,42 @@ async def platform_sms_log_rows(
     return await _db.sms_logs.find(q).sort("created_at", -1).to_list(int(limit))
 
 
+SMS_MESSAGE_CONTEXTS = frozenset({
+    "announcement",
+    "maintenance",
+    "event_notify",
+    "platform_test",
+})
+
+
+def sms_log_public(row: dict) -> dict:
+    """Beyaz liste. ref_id sıfırlama token'ı olabilir; ham telefon dönmez.
+
+    message yalnızca duyuru / bakım / olay / test bağlamlarında kalır.
+    """
+    context = row.get("context")
+    show_message = context in SMS_MESSAGE_CONTEXTS
+    return {
+        "id": row.get("id", row.get("_id")),
+        "company_id": row.get("company_id"),
+        "context": context,
+        "provider": row.get("provider"),
+        "status": row.get("status"),
+        "detail": row.get("detail"),
+        "code": row.get("code"),
+        "job_id": row.get("job_id"),
+        "contact_name": row.get("contact_name"),
+        "created_at": row.get("created_at"),
+        "phone_masked": password_reset.mask_phone(row.get("phone")),
+        "message": row.get("message") if show_message else None,
+        "message_redacted": not show_message,
+    }
+
+
 @router.get("/system/sms/logs")
 async def platform_sms_logs(limit: int = 100, _: dict = Depends(saas.require_super_admin)):
     rows = await platform_sms_log_rows(min(max(int(limit or 100), 1), 300))
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["id"] = d.pop("_id", None)
-        out.append(d)
+    out = [sms_log_public(r) for r in rows]
     return {"items": out, "total": len(out)}
 
 
