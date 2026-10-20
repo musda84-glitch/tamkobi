@@ -7262,6 +7262,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             "source": "cheque",
             "cheque_id": ch["_id"],
             "cheque_kind": "portfolio",
+            "receipt_group_id": ch.get("receipt_group_id"),
             "date": ch.get("issue_date") or ch.get("due_date") or "",
             "created_at": ch.get("created_at"),
             "virtual": True,

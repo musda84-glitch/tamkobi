@@ -115,6 +115,37 @@ function chequesReceipt(list) {
   };
 }
 
+function blankChequeRow(form) {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    amount: "",
+    due_date: form?.due_date || today,
+    serial_no: "",
+    bank_name: "",
+    bank_branch: "",
+    account_no: "",
+    drawer_name: "",
+  };
+}
+
+function chequeRowsTotal(rows) {
+  const sum = (rows || []).reduce((acc, row) => acc + (Number(row?.amount) || 0), 0);
+  return Math.round(sum * 100) / 100;
+}
+
+function ensureChequeRows(form) {
+  if (form?.chequeRows?.length) return form.chequeRows;
+  const row = blankChequeRow(form);
+  if (form?.amount !== "" && form?.amount != null) row.amount = form.amount;
+  return [row];
+}
+
+function withChequeRows(form) {
+  if (!form || (form.method !== "cheque" && form.method !== "promissory")) return form;
+  const chequeRows = ensureChequeRows(form);
+  return { ...form, chequeRows, amount: chequeRowsTotal(chequeRows) };
+}
+
 export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("invoices");
@@ -429,15 +460,38 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     }
     setReceipt(chequesReceipt(rows));
   };
-  const openPaymentReceipt = (p) => {
-    if (p?.source === "cheque" && p.cheque_id) {
-      const ch = (data?.cheques || []).find((row) => String(row.id || row._id) === String(p.cheque_id));
-      if (ch) {
-        setReceipt({ ...p, items: [ch] });
+  const openPaymentReceipt = async (p) => {
+    const fallback = () => {
+      if (p?.source === "cheque" && p.cheque_id) {
+        const ch = (data?.cheques || []).find((row) => String(row.id || row._id) === String(p.cheque_id));
+        if (ch) {
+          setReceipt({ ...p, items: [ch] });
+          return;
+        }
+      }
+      setReceipt(p);
+    };
+    const gid = String(p?.receipt_group_id || "").trim();
+    if (gid) {
+      const local = (data?.cheques || []).filter((row) => String(row.receipt_group_id || "") === gid);
+      if (local.length) {
+        setReceipt(chequesReceipt(local));
         return;
       }
+      try {
+        const res = await axios.get(`${API_URL}/cheques/receipt`, {
+          params: { group_id: gid, company_id: c?.company_id || data?.contact?.company_id || "" },
+        });
+        const rows = Array.isArray(res.data) ? res.data : (res.data?.cheques || res.data?.items || []);
+        if (rows.length) {
+          setReceipt(chequesReceipt(rows));
+          return;
+        }
+      } catch {
+        /* grup gelmezse tek evraka düş */
+      }
     }
-    setReceipt(p);
+    fallback();
   };
   const [accounts, setAccounts] = useState([]);
   const [receiptScanBusy, setReceiptScanBusy] = useState(false);
@@ -460,7 +514,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         toast.error("Makbuzdan tutar okunamadı. Daha net bir fotoğraf deneyin.");
         return;
       }
-      setPayForm((cur) => applyReceiptDraft(cur, draft));
+      setPayForm((cur) => {
+        const next = applyReceiptDraft(cur, draft);
+        if (!next || (next.method !== "cheque" && next.method !== "promissory")) return next;
+        const rows = ensureChequeRows(next).map((row, index) => (
+          index === 0 ? { ...row, amount: next.amount } : row
+        ));
+        return { ...next, chequeRows: rows, amount: chequeRowsTotal(rows) };
+      });
       toast.success(receiptScanHint(draft));
     } catch (err) {
       toast.error(err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı." : "Makbuz okunamadı."));
@@ -478,7 +539,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     try {
       const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`);
       setAccounts(r.data);
-      setPayForm(buildContactPayForm(c, r.data, opts));
+      setPayForm(withChequeRows(buildContactPayForm(c, r.data, opts)));
     } catch { toast.error("Hesaplar yüklenemedi."); }
   };
   const onCollectMenuSelect = (item) => {
@@ -526,7 +587,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const savePay = async (e) => {
     e.preventDefault();
     try {
-      const amount = Number(payForm.amount);
+      const chequePay = payForm.method === "cheque" || payForm.method === "promissory";
+      const chequeRows = chequePay ? ensureChequeRows(payForm) : [];
+      const amount = chequePay ? chequeRowsTotal(chequeRows) : Number(payForm.amount);
       if (!(amount > 0)) { toast.error("Tutar sıfırdan büyük olmalı."); return; }
       if (payForm.method === "ledger") {
         const balanceFix = !!(payForm.balanceFix || payForm.menuId === "balance_fix");
@@ -542,18 +605,49 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             ? (payForm.slip === "credit" ? "Cari bakiye düzeltme (alacak) kaydedildi." : "Cari bakiye düzeltme (borç) kaydedildi.")
             : (payForm.slip === "credit" ? "Alacak fişi kaydedildi." : "Borç fişi kaydedildi."),
         );
-      } else if (payForm.method === "cheque" || payForm.method === "promissory") {
-        await axios.post(`${API_URL}/cheques`, {
-          company_id: c.company_id,
-          contact_id: c.id,
-          instrument: payForm.method === "promissory" ? "promissory" : "cheque",
-          direction: payForm.type === "inflow" ? "received" : "issued",
-          amount,
-          due_date: payForm.due_date,
-          serial_no: payForm.serial_no,
-          bank_name: payForm.bank_name,
-          notes: payForm.description,
-        });
+      } else if (chequePay) {
+        const rows = chequeRows;
+        if (rows.some((row) => !(Number(row.amount) > 0))) {
+          toast.error("Her satırın tutarı sıfırdan büyük olmalı.");
+          return;
+        }
+        const instrument = payForm.method === "promissory" ? "promissory" : "cheque";
+        const direction = payForm.type === "inflow" ? "received" : "issued";
+        if (rows.length >= 2) {
+          const res = await axios.post(`${API_URL}/cheques/batch`, {
+            company_id: c.company_id,
+            contact_id: c.id,
+            direction,
+            notes: payForm.description,
+            items: rows.map((row) => ({
+              instrument,
+              amount: Number(row.amount),
+              due_date: row.due_date,
+              serial_no: row.serial_no,
+              bank_name: row.bank_name,
+              bank_branch: row.bank_branch,
+              account_no: row.account_no,
+              drawer_name: row.drawer_name,
+              notes: row.notes || payForm.description,
+            })),
+          });
+          const saved = res.data?.items || [];
+          if (saved.length) setReceipt(chequesReceipt(saved));
+        } else {
+          const row = rows[0] || {};
+          const res = await axios.post(`${API_URL}/cheques`, {
+            company_id: c.company_id,
+            contact_id: c.id,
+            instrument,
+            direction,
+            amount: row.amount !== "" && row.amount != null ? Number(row.amount) : amount,
+            due_date: row.due_date || payForm.due_date,
+            serial_no: row.serial_no ?? payForm.serial_no,
+            bank_name: row.bank_name ?? payForm.bank_name,
+            notes: payForm.description,
+          });
+          if (res.data && (res.data.id || res.data._id)) setReceipt(chequesReceipt([res.data]));
+        }
         toast.success(payForm.method === "promissory" ? "Senet kaydedildi." : "Çek kaydedildi.");
       } else {
         const target = splitPaymentTarget(payForm.account_id);
@@ -1458,7 +1552,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           const meta = contactPayModalMeta(payForm);
           return (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); })}>
-            <form onSubmit={savePay} className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""}>
+            <form onSubmit={savePay} className={`bg-white rounded-2xl w-full p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto ${payForm.method === "cheque" || payForm.method === "promissory" ? "max-w-lg" : "max-w-md"}`} onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""}>
               <div className="flex justify-between border-b pb-2">
                 <div>
                   <h3 className="text-sm font-bold" data-testid="collect-modal-title">{meta.title}</h3>
@@ -1480,7 +1574,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               {meta.showMethodTabs && (
                 <div className="grid grid-cols-2 gap-1.5">
                   {[["cash", "Nakit / Hesap"], ["cheque", "Çek"], ["promissory", "Senet"], ["ledger", "Borç / Alacak Fişi"]].map(([k, l]) => (
-                    <button key={k} type="button" onClick={() => setPayForm({ ...payForm, method: k })} className={`px-2 py-1.5 rounded-lg border font-semibold ${payForm.method === k ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600"}`} data-testid={`collect-method-${k}`}>{l}</button>
+                    <button key={k} type="button" onClick={() => setPayForm(withChequeRows({ ...payForm, method: k }))} className={`px-2 py-1.5 rounded-lg border font-semibold ${payForm.method === k ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600"}`} data-testid={`collect-method-${k}`}>{l}</button>
                   ))}
                 </div>
               )}
@@ -1499,12 +1593,56 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <p className="text-[10px] text-slate-500" data-testid="collect-ledger-hint">{payForm.balanceFix ? "Cari bakiye düzeltme: tutar otomatik dolduruldu; borç veya alacak fişi seçin. Kasa/banka bakiyesi değişmez." : "Borç fişi cari borcunu artırır, alacak fişi düşürür. Kasa ve banka bakiyesi değişmez. Tahsilat/Ödeme için üstteki butonlarla kasa, banka veya POS seçin."}</p>
               ) : payForm.method === "cheque" || payForm.method === "promissory" ? (
                 <div className="space-y-2">
-                  <p className="text-[10px] text-slate-500">{payForm.type === "inflow" ? "Alınan" : "Verilen"} {payForm.method === "promissory" ? "senet" : "çek"} bu cariye işlenir; tahsil/ödeme vadesinde Çek ve Senetler sekmesinden yapılır.</p>
-                  <div><label className="block font-semibold mb-1">Vade</label><input type="date" value={payForm.due_date || ""} onChange={(e) => setPayForm({ ...payForm, due_date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-due-date" /></div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block font-semibold mb-1">Seri no</label><input value={payForm.serial_no || ""} onChange={(e) => setPayForm({ ...payForm, serial_no: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-serial" /></div>
-                    <div><label className="block font-semibold mb-1">Banka</label><input value={payForm.bank_name || ""} onChange={(e) => setPayForm({ ...payForm, bank_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-bank" /></div>
+                  <p className="text-[10px] text-slate-500">{payForm.type === "inflow" ? "Alınan" : "Verilen"} {payForm.method === "promissory" ? "senet" : "çek"} bu cariye işlenir; tahsil/ödeme vadesinde Çek ve Senetler sekmesinden yapılır. Aynı kayıtta birden fazla evrak tek makbuz olur.</p>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {ensureChequeRows(payForm).map((row, i, rows) => (
+                      <div key={i} className="border border-slate-200 rounded-lg p-2 space-y-2 bg-slate-50" data-testid={`pay-cheque-row-${i}`}>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block font-semibold mb-1">Tutar</label>
+                            <MoneyInput value={row.amount} onChange={(n) => {
+                              const next = rows.map((item, idx) => (idx === i ? { ...item, amount: n ?? "" } : item));
+                              setPayForm({ ...payForm, chequeRows: next, amount: chequeRowsTotal(next) });
+                            }} className="w-full bg-white border rounded-lg p-2 font-bold" data-testid={`pay-cheque-amount-${i}`} />
+                          </div>
+                          <div>
+                            <label className="block font-semibold mb-1">Vade</label>
+                            <input type="date" value={row.due_date || ""} onChange={(e) => {
+                              const next = rows.map((item, idx) => (idx === i ? { ...item, due_date: e.target.value } : item));
+                              setPayForm({ ...payForm, chequeRows: next, amount: chequeRowsTotal(next) });
+                            }} className="w-full bg-white border rounded-lg p-2" data-testid={`pay-cheque-due-${i}`} />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block font-semibold mb-1">Seri no</label>
+                            <input value={row.serial_no || ""} onChange={(e) => {
+                              const next = rows.map((item, idx) => (idx === i ? { ...item, serial_no: e.target.value } : item));
+                              setPayForm({ ...payForm, chequeRows: next, amount: chequeRowsTotal(next) });
+                            }} className="w-full bg-white border rounded-lg p-2" data-testid={`pay-cheque-serial-${i}`} />
+                          </div>
+                          <div>
+                            <label className="block font-semibold mb-1">Banka</label>
+                            <input value={row.bank_name || ""} onChange={(e) => {
+                              const next = rows.map((item, idx) => (idx === i ? { ...item, bank_name: e.target.value } : item));
+                              setPayForm({ ...payForm, chequeRows: next, amount: chequeRowsTotal(next) });
+                            }} className="w-full bg-white border rounded-lg p-2" data-testid={`pay-cheque-bank-${i}`} />
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <button type="button" disabled={rows.length < 2} onClick={() => {
+                            const next = rows.filter((_, idx) => idx !== i);
+                            setPayForm({ ...payForm, chequeRows: next, amount: chequeRowsTotal(next) });
+                          }} className="px-2 py-1 border border-rose-200 text-rose-700 rounded-lg font-semibold disabled:opacity-40" data-testid={`pay-cheque-remove-row-${i}`}>Satırı sil</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
+                  <button type="button" onClick={() => {
+                    const rows = ensureChequeRows(payForm);
+                    const next = [...rows, blankChequeRow({ ...payForm, due_date: rows[rows.length - 1]?.due_date || payForm.due_date })];
+                    setPayForm({ ...payForm, chequeRows: next, amount: chequeRowsTotal(next) });
+                  }} className="px-2 py-1.5 border rounded-lg font-semibold text-sky-800 bg-sky-50 border-sky-200" data-testid="pay-cheque-add-row">{payForm.method === "promissory" ? "Senet ekle" : "Çek ekle"}</button>
                 </div>
               ) : (
                 <>
@@ -1523,7 +1661,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <input ref={receiptCamRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-camera-input" />
                 <input ref={receiptGalRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-gallery-input" />
               </div>
-              <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput value={payForm.amount} onChange={(n) => setPayForm({ ...payForm, amount: n ?? "" })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
+              {payForm.method === "cheque" || payForm.method === "promissory" ? (
+                <div>
+                  <label className="block font-semibold mb-1">Tutar (₺)</label>
+                  <input readOnly tabIndex={-1} value={chequeRowsTotal(ensureChequeRows(payForm)).toFixed(2)} className="w-full bg-slate-100 border rounded-lg p-2 font-bold text-base" data-testid="pay-cheque-total" />
+                </div>
+              ) : (
+                <div><label className="block font-semibold mb-1">Tutar (₺)</label><MoneyInput value={payForm.amount} onChange={(n) => setPayForm({ ...payForm, amount: n ?? "" })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
+              )}
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-desc-input" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">{payForm.method === "ledger" ? "Fişi Kaydet" : "Kaydet"}</button></div>
             </form>

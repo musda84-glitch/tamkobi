@@ -113,6 +113,116 @@ def _instrument(req: Dict[str, Any]) -> str:
     return raw
 
 
+_GROUP_ID_MAX = 64
+
+
+def _normalize_group_id(raw) -> str:
+    """Boşsa yeni uuid. Metin, kırpılmış, en fazla 64 karakter."""
+    if raw is None:
+        return str(uuid.uuid4())
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="receipt_group_id metin olmalı.")
+    gid = raw.strip()
+    if not gid:
+        return str(uuid.uuid4())
+    if len(gid) > _GROUP_ID_MAX:
+        raise HTTPException(status_code=400, detail="receipt_group_id en fazla 64 karakter olabilir.")
+    return gid
+
+
+def _validate_cheque_req(req: Dict[str, Any]) -> Dict[str, Any]:
+    """Tekli ve toplu çek/senet girişi aynı alan kurallarını kullanır."""
+    direction = req.get("direction") or "received"
+    instrument = _instrument(req)
+    if direction not in ("received", "issued"):
+        raise HTTPException(status_code=400, detail="Yön alınan veya verilen olmalı.")
+    if instrument not in ("cheque", "promissory"):
+        raise HTTPException(status_code=400, detail="Tür çek veya senet olmalı.")
+    amount = round(float(req.get("amount") or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
+    return {
+        "direction": direction,
+        "instrument": instrument,
+        "amount": amount,
+        "issue_date": req.get("issue_date") or _today(),
+        "due_date": req.get("due_date") or _today(),
+        "serial_no": (req.get("serial_no") or "").strip(),
+        "bank_name": (req.get("bank_name") or "").strip(),
+        "bank_branch": (req.get("bank_branch") or "").strip(),
+        "account_no": (req.get("account_no") or "").strip(),
+        "drawer_name": (req.get("drawer_name") or "").strip(),
+        "notes": (req.get("notes") or "").strip(),
+        "related_invoice_id": req.get("related_invoice_id"),
+        "installment_id": req.get("installment_id"),
+        "skip_ledger": bool(req.get("skip_ledger") or req.get("from_installment")),
+    }
+
+
+async def _load_cheque_contact(company_id: str, contact_id, *, missing_status: int = 400) -> dict:
+    if not contact_id:
+        if missing_status == 404:
+            raise HTTPException(status_code=404, detail="Cari bulunamadı.")
+        raise HTTPException(status_code=400, detail="Cari seçin.")
+    contact = await _db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari bulunamadı.")
+    return contact
+
+
+async def _build_cheque_doc(*, company_id: str, contact: dict, receipt_group_id: str, fields: Dict[str, Any]) -> dict:
+    skip_ledger = fields["skip_ledger"]
+    return {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "receipt_group_id": receipt_group_id,
+        "number": await _next_number(company_id, fields["instrument"]),
+        "instrument": fields["instrument"],
+        "direction": fields["direction"],
+        "status": "open",
+        "contact_id": contact["_id"],
+        "contact_name": contact.get("name"),
+        "amount": fields["amount"],
+        "currency": "TRY",
+        "issue_date": fields["issue_date"],
+        "due_date": fields["due_date"],
+        "serial_no": fields["serial_no"],
+        "bank_name": fields["bank_name"],
+        "bank_branch": fields["bank_branch"],
+        "account_no": fields["account_no"],
+        "drawer_name": (fields["drawer_name"] or contact.get("name") or "").strip(),
+        "notes": fields["notes"],
+        "related_invoice_id": fields["related_invoice_id"],
+        "installment_id": fields["installment_id"],
+        "skip_ledger": skip_ledger,
+        "endorsed_to_contact_id": None,
+        "endorsed_to_name": None,
+        "account_id": None,
+        "account_name": None,
+        "settled_at": None,
+        "events": [{"at": _now(), "action": "created", "note": "Taksitten senet" if skip_ledger else "Giriş kaydı"}],
+        "created_at": _now(),
+    }
+
+
+def _batch_item_error(index: int, exc: HTTPException) -> HTTPException:
+    detail = exc.detail if isinstance(exc.detail, str) else "Kalem geçersiz."
+    if not detail.startswith("Kalem "):
+        detail = f"Kalem {index}: {detail}"
+    return HTTPException(status_code=400, detail=detail)
+
+
+async def _rollback_cheque_group(company_id: str, receipt_group_id: str, contact_id: str, delta: float):
+    """Yarım kalan toplu girişi company_id + receipt_group_id ile geri al."""
+    try:
+        await _db.cheques.delete_many({"company_id": company_id, "receipt_group_id": receipt_group_id})
+        await _db.bank_transactions.delete_many({"company_id": company_id, "receipt_group_id": receipt_group_id})
+        if delta:
+            await _apply_contact(contact_id, -delta)
+    except Exception:
+        return
+
+
 async def _post_cari_payment(doc: dict):
     """Alınan/verilen çeki cari Ödemeler sekmesine düşür (kasa bakiyesine dokunmaz)."""
     direction = doc.get("direction") or "received"
@@ -134,6 +244,7 @@ async def _post_cari_payment(doc: dict):
         "source": "cheque",
         "cheque_id": doc["_id"],
         "cheque_kind": "portfolio",
+        "receipt_group_id": doc.get("receipt_group_id"),
         "date": doc.get("issue_date") or _today(),
         "created_at": _now(),
     })
@@ -248,6 +359,85 @@ async def list_cheques(
     return {"cheques": rows, "summary": summary}
 
 
+@router.get("/cheques/receipt")
+async def cheque_receipt_group(group_id: str = "", company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    """Aynı tahsilat grubundaki çek/senetler. Başka şirketin kaydı dönmez."""
+    cid = tenant_access.resolve_caller_company(user, company_id)
+    gid = str(group_id or "").strip()
+    if not gid or len(gid) > _GROUP_ID_MAX:
+        raise HTTPException(status_code=404, detail="Bu gruba ait çek/senet bulunamadı.")
+    rows = await _db.cheques.find(
+        {"company_id": cid, "receipt_group_id": gid},
+    ).sort([("issue_date", 1), ("number", 1)]).to_list(200)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Bu gruba ait çek/senet bulunamadı.")
+    today = _today()
+    annotated = [_annotate(row, today) for row in rows]
+    total = round(sum(float(row.get("amount") or 0) for row in annotated), 2)
+    return {"receipt_group_id": gid, "cheques": annotated, "total": total}
+
+
+@router.post("/cheques/batch")
+async def create_cheques_batch(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    """Aynı cariye N çek/senet, tek receipt_group_id. Kalem hatasında hiçbir şey yazılmaz."""
+    company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
+    items = req.get("items")
+    if not isinstance(items, list) or not (1 <= len(items) <= 50):
+        raise HTTPException(status_code=400, detail="Kalem sayısı 1 ile 50 arasında olmalı.")
+    direction = req.get("direction") or "received"
+    if direction not in ("received", "issued"):
+        raise HTTPException(status_code=400, detail="Yön alınan veya verilen olmalı.")
+    contact = await _load_cheque_contact(company_id, req.get("contact_id"), missing_status=404)
+    prepared = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail=f"Kalem {index}: geçersiz.")
+        notes = item.get("notes")
+        if notes is None or not str(notes).strip():
+            notes = req.get("notes") or ""
+        merged = {
+            "instrument": item.get("instrument"),
+            "amount": item.get("amount"),
+            "due_date": item.get("due_date"),
+            "issue_date": item.get("issue_date"),
+            "serial_no": item.get("serial_no"),
+            "bank_name": item.get("bank_name"),
+            "bank_branch": item.get("bank_branch"),
+            "account_no": item.get("account_no"),
+            "drawer_name": item.get("drawer_name"),
+            "notes": notes,
+            "direction": direction,
+            "contact_id": contact["_id"],
+        }
+        try:
+            prepared.append(_validate_cheque_req(merged))
+        except HTTPException as exc:
+            raise _batch_item_error(index, exc) from exc
+    gid = str(uuid.uuid4())
+    created = []
+    applied_delta = 0.0
+    try:
+        for fields in prepared:
+            doc = await _build_cheque_doc(
+                company_id=company_id, contact=contact, receipt_group_id=gid, fields=fields,
+            )
+            doc["company_id"] = company_id
+            await _db.cheques.insert_one(doc)
+            created.append(doc)
+            delta = _contact_delta_on_create(fields["direction"], fields["amount"])
+            await _apply_contact(contact["_id"], delta)
+            applied_delta = round(applied_delta + delta, 2)
+            await _post_cari_payment(doc)
+    except Exception:
+        await _rollback_cheque_group(company_id, gid, contact["_id"], applied_delta)
+        raise
+    await _refresh_contact_cheque(contact["_id"])
+    today = _today()
+    annotated = [_annotate(dict(doc), today) for doc in created]
+    total = round(sum(float(doc.get("amount") or 0) for doc in created), 2)
+    return {"receipt_group_id": gid, "items": annotated, "total": total}
+
+
 @router.get("/cheques/{cheque_id}")
 async def get_cheque(cheque_id: str, user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
@@ -344,55 +534,14 @@ async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
 @router.post("/cheques")
 async def create_cheque(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
-    direction = req.get("direction") or "received"
-    instrument = _instrument(req)
-    if direction not in ("received", "issued"):
-        raise HTTPException(status_code=400, detail="Yön alınan veya verilen olmalı.")
-    if instrument not in ("cheque", "promissory"):
-        raise HTTPException(status_code=400, detail="Tür çek veya senet olmalı.")
-    amount = round(float(req.get("amount") or 0), 2)
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
-    if not req.get("contact_id"):
-        raise HTTPException(status_code=400, detail="Cari seçin.")
-    contact = await _db.contacts.find_one({"_id": req["contact_id"], "company_id": company_id})
-    if not contact:
-        raise HTTPException(status_code=404, detail="Cari bulunamadı.")
-    due = req.get("due_date") or _today()
-    skip_ledger = bool(req.get("skip_ledger") or req.get("from_installment"))
-    doc = {
-        "_id": str(uuid.uuid4()),
-        "company_id": company_id,
-        "number": await _next_number(company_id, instrument),
-        "instrument": instrument,
-        "direction": direction,
-        "status": "open",
-        "contact_id": contact["_id"],
-        "contact_name": contact.get("name"),
-        "amount": amount,
-        "currency": "TRY",
-        "issue_date": req.get("issue_date") or _today(),
-        "due_date": due,
-        "serial_no": (req.get("serial_no") or "").strip(),
-        "bank_name": (req.get("bank_name") or "").strip(),
-        "bank_branch": (req.get("bank_branch") or "").strip(),
-        "account_no": (req.get("account_no") or "").strip(),
-        "drawer_name": (req.get("drawer_name") or contact.get("name") or "").strip(),
-        "notes": (req.get("notes") or "").strip(),
-        "related_invoice_id": req.get("related_invoice_id"),
-        "installment_id": req.get("installment_id"),
-        "skip_ledger": skip_ledger,
-        "endorsed_to_contact_id": None,
-        "endorsed_to_name": None,
-        "account_id": None,
-        "account_name": None,
-        "settled_at": None,
-        "events": [{"at": _now(), "action": "created", "note": "Taksitten senet" if skip_ledger else "Giriş kaydı"}],
-        "created_at": _now(),
-    }
+    fields = _validate_cheque_req(req)
+    contact = await _load_cheque_contact(company_id, req.get("contact_id"))
+    gid = _normalize_group_id(req.get("receipt_group_id"))
+    doc = await _build_cheque_doc(company_id=company_id, contact=contact, receipt_group_id=gid, fields=fields)
+    doc["company_id"] = company_id
     await _db.cheques.insert_one(doc)
-    if not skip_ledger:
-        await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount))
+    if not fields["skip_ledger"]:
+        await _apply_contact(contact["_id"], _contact_delta_on_create(fields["direction"], fields["amount"]))
         await _post_cari_payment(doc)
     await _refresh_contact_cheque(contact["_id"])
     return _annotate(await _db.cheques.find_one({"_id": doc["_id"]}), _today())

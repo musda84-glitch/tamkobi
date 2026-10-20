@@ -28,6 +28,19 @@ jest.mock("axios", () => {
 
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() } }));
 
+jest.mock("./ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }) => children,
+  DropdownMenuContent: ({ children }) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onSelect, disabled, ...rest }) => (
+    <button type="button" disabled={!!disabled} onClick={() => !disabled && onSelect?.()} {...rest}>{children}</button>
+  ),
+  DropdownMenuSeparator: () => <hr />,
+  DropdownMenuSub: ({ children }) => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({ children, ...rest }) => <button type="button" {...rest}>{children}</button>,
+  DropdownMenuSubContent: ({ children, ...rest }) => <div {...rest}>{children}</div>,
+}));
+
 jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
   useAuth: () => ({ activeCompany: { id: "c1", name: "Tam Kobi" }, can: () => true }),
@@ -239,4 +252,280 @@ test("ödeme satırı çek kaynağındaysa eşleşen çeki items olarak geçirir
   expect(host.querySelector("[data-testid=receipt-cheque-table]")).toBeNull();
   expect(host.querySelector("[data-testid=receipt-simple-table]").textContent).toContain("Nakit tahsilat");
   expect(host.querySelector("[data-testid=receipt-amount-words]").textContent).toMatch(/^Yalnız: /);
+});
+
+function typeInto(el, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  setter.call(el, value);
+  act(() => { el.dispatchEvent(new Event("input", { bubbles: true })); });
+}
+
+async function openChequeForm() {
+  await act(async () => { host.querySelector("[data-testid=detail-collect-cheque]").click(); });
+  await flush(6);
+  expect(host.querySelector("[data-testid=collect-modal]")).toBeTruthy();
+  expect(host.querySelector("[data-testid=pay-cheque-row-0]")).toBeTruthy();
+}
+
+test("çoklu çek satırı eklenir silinir ve toplam kilitlenir", async () => {
+  await renderPanel();
+  await openChequeForm();
+  expect(host.querySelector("[data-testid=pay-cheque-remove-row-0]").disabled).toBe(true);
+  expect(host.querySelector("[data-testid=pay-cheque-total]").readOnly).toBe(true);
+
+  await act(async () => { host.querySelector("[data-testid=pay-cheque-add-row]").click(); });
+  await act(async () => { host.querySelector("[data-testid=pay-cheque-add-row]").click(); });
+  expect(host.querySelector("[data-testid=pay-cheque-row-2]")).toBeTruthy();
+
+  typeInto(host.querySelector("[data-testid=pay-cheque-amount-0]"), "100");
+  typeInto(host.querySelector("[data-testid=pay-cheque-amount-1]"), "50");
+  typeInto(host.querySelector("[data-testid=pay-cheque-amount-2]"), "25");
+  expect(host.querySelector("[data-testid=pay-cheque-total]").value).toBe("175.00");
+
+  await act(async () => { host.querySelector("[data-testid=pay-cheque-remove-row-2]").click(); });
+  expect(host.querySelector("[data-testid=pay-cheque-row-2]")).toBeNull();
+  expect(host.querySelector("[data-testid=pay-cheque-total]").value).toBe("150.00");
+});
+
+test("çoklu çek kaydı batch çağırır ve makbuzda N satır gösterir", async () => {
+  axios.post.mockImplementation(async (url, body) => {
+    if (String(url).includes("/cheques/batch")) {
+      const items = (body.items || []).map((item, i) => ({
+        id: `new-${i}`,
+        number: `CEK-N-${i + 1}`,
+        instrument: item.instrument,
+        direction: body.direction,
+        amount: item.amount,
+        currency: "TRY",
+        serial_no: item.serial_no,
+        bank_name: item.bank_name,
+        bank_branch: "Levent",
+        account_no: `TR${i}`,
+        drawer_name: "Ali",
+        due_date: item.due_date,
+        issue_date: "2026-10-20",
+        status: "open",
+      }));
+      return { data: { receipt_group_id: "grp-new", items, total: items.reduce((sum, row) => sum + Number(row.amount || 0), 0) } };
+    }
+    return { data: {} };
+  });
+  await renderPanel();
+  await openChequeForm();
+  await act(async () => { host.querySelector("[data-testid=pay-cheque-add-row]").click(); });
+  typeInto(host.querySelector("[data-testid=pay-cheque-amount-0]"), "100");
+  typeInto(host.querySelector("[data-testid=pay-cheque-amount-1]"), "40");
+  typeInto(host.querySelector("[data-testid=pay-cheque-serial-0]"), "BATCH-1");
+  typeInto(host.querySelector("[data-testid=pay-cheque-serial-1]"), "BATCH-2");
+  await act(async () => { host.querySelector("[data-testid=collect-save-btn]").click(); });
+  await flush(8);
+
+  const batchCall = axios.post.mock.calls.find((call) => String(call[0]).includes("/cheques/batch"));
+  expect(batchCall).toBeTruthy();
+  expect(batchCall[1].items).toHaveLength(2);
+  expect(axios.post.mock.calls.some((call) => String(call[0]).endsWith("/cheques") && !String(call[0]).includes("/batch"))).toBe(false);
+  const table = host.querySelector("[data-testid=receipt-cheque-table]");
+  expect(table).toBeTruthy();
+  expect(table.textContent).toContain("BATCH-1");
+  expect(table.textContent).toContain("BATCH-2");
+  expect(host.textContent).toContain("Toplam 2 adet evrak");
+});
+
+test("receipt_group_id makbuzu yereldeki grubu, eksikse GET ile gösterir", async () => {
+  const groupCheques = [
+    {
+      id: "g1",
+      receipt_group_id: "grp-9",
+      number: "CEK-G1",
+      instrument: "cheque",
+      direction: "received",
+      amount: 10,
+      currency: "TRY",
+      serial_no: "G-SN-1",
+      bank_name: "Ziraat",
+      bank_branch: "Merkez",
+      account_no: "TRG1",
+      drawer_name: "Ali",
+      due_date: "2026-12-01",
+      issue_date: "2026-10-01",
+      status: "open",
+    },
+    {
+      id: "g2",
+      receipt_group_id: "grp-9",
+      number: "CEK-G2",
+      instrument: "promissory",
+      direction: "received",
+      amount: 20,
+      currency: "TRY",
+      serial_no: "G-SN-2",
+      bank_name: "Halk",
+      bank_branch: "Kadıköy",
+      account_no: "TRG2",
+      drawer_name: "Ayşe",
+      due_date: "2026-12-02",
+      issue_date: "2026-10-02",
+      status: "open",
+    },
+  ];
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/overview")) {
+      return Promise.resolve({
+        data: {
+          ...OVERVIEW,
+          cheques: groupCheques,
+          payments: [
+            {
+              id: "pay-group",
+              type: "inflow",
+              date: "2026-10-01",
+              account_name: "Çek Portföyü",
+              category: "Alınan Çek",
+              description: "CEK-G1",
+              amount: 10,
+              currency: "TRY",
+              source: "cheque",
+              cheque_id: "g1",
+              receipt_group_id: "grp-9",
+            },
+            OVERVIEW.payments[1],
+          ],
+        },
+      });
+    }
+    if (u.includes("/cheques/receipt")) {
+      return Promise.resolve({ data: { receipt_group_id: "grp-9", cheques: groupCheques, total: 30 } });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  await renderPanel();
+  await act(async () => { host.querySelector("[data-testid=detail-tab-payments]").click(); });
+  const groupBtn = host.querySelector("[data-testid=receipt-btn-pay-group]")
+    || host.querySelector("[data-testid=card-receipt-btn-pay-group]");
+  await act(async () => { groupBtn.click(); });
+  await flush(4);
+  let table = host.querySelector("[data-testid=receipt-cheque-table]");
+  expect(table.textContent).toContain("G-SN-1");
+  expect(table.textContent).toContain("G-SN-2");
+  expect(host.textContent).toContain("Toplam 2 adet evrak");
+  expect(axios.get.mock.calls.some((call) => String(call[0]).includes("/cheques/receipt"))).toBe(false);
+
+  await act(async () => { host.querySelector("[data-testid=receipt-close-btn]").click(); });
+  const cashBtn = host.querySelector("[data-testid=receipt-btn-pay-cash]")
+    || host.querySelector("[data-testid=card-receipt-btn-pay-cash]");
+  await act(async () => { cashBtn.click(); });
+  expect(host.querySelector("[data-testid=receipt-cheque-table]")).toBeNull();
+  expect(host.querySelector("[data-testid=receipt-simple-table]").textContent).toContain("Nakit tahsilat");
+});
+
+test("yerelde grup yoksa makbuz GET /cheques/receipt ile dolar", async () => {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/overview")) {
+      return Promise.resolve({
+        data: {
+          ...OVERVIEW,
+          cheques: [],
+          payments: [{
+            id: "pay-remote",
+            type: "inflow",
+            date: "2026-10-01",
+            account_name: "Çek Portföyü",
+            category: "Alınan Çek",
+            description: "CEK-R",
+            amount: 15,
+            currency: "TRY",
+            source: "cheque",
+            cheque_id: "remote-1",
+            receipt_group_id: "grp-remote",
+          }],
+        },
+      });
+    }
+    if (u.includes("/cheques/receipt")) {
+      return Promise.resolve({
+        data: {
+          receipt_group_id: "grp-remote",
+          cheques: [
+            {
+              id: "remote-1",
+              number: "CEK-R1",
+              instrument: "cheque",
+              direction: "received",
+              amount: 15,
+              currency: "TRY",
+              serial_no: "R-SN-1",
+              bank_name: "Vakıf",
+              due_date: "2026-12-01",
+            },
+            {
+              id: "remote-2",
+              number: "CEK-R2",
+              instrument: "cheque",
+              direction: "received",
+              amount: 35,
+              currency: "TRY",
+              serial_no: "R-SN-2",
+              bank_name: "Deniz",
+              due_date: "2026-12-05",
+            },
+          ],
+          total: 50,
+        },
+      });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  await renderPanel();
+  await act(async () => { host.querySelector("[data-testid=detail-tab-payments]").click(); });
+  const btn = host.querySelector("[data-testid=receipt-btn-pay-remote]")
+    || host.querySelector("[data-testid=card-receipt-btn-pay-remote]");
+  await act(async () => { btn.click(); });
+  await flush(6);
+  const table = host.querySelector("[data-testid=receipt-cheque-table]");
+  expect(table).toBeTruthy();
+  expect(table.textContent).toContain("R-SN-1");
+  expect(table.textContent).toContain("R-SN-2");
+  expect(host.textContent).toContain("Toplam 2 adet evrak");
+  expect(axios.get.mock.calls.some((call) => String(call[0]).includes("/cheques/receipt"))).toBe(true);
+});
+
+test("tek çek satırı mevcut POST /cheques ile kaydolur ve makbuz açılır", async () => {
+  axios.post.mockImplementation(async (url, body) => {
+    if (String(url).endsWith("/cheques")) {
+      return {
+        data: {
+          id: "one-1",
+          number: "CEK-ONE",
+          instrument: body.instrument,
+          direction: body.direction,
+          amount: body.amount,
+          currency: "TRY",
+          serial_no: body.serial_no,
+          bank_name: body.bank_name,
+          due_date: body.due_date,
+          issue_date: "2026-10-20",
+          status: "open",
+          receipt_group_id: "grp-one",
+        },
+      };
+    }
+    return { data: {} };
+  });
+  await renderPanel();
+  await openChequeForm();
+  typeInto(host.querySelector("[data-testid=pay-cheque-amount-0]"), "80");
+  typeInto(host.querySelector("[data-testid=pay-cheque-serial-0]"), "ONE-SN");
+  await act(async () => { host.querySelector("[data-testid=collect-save-btn]").click(); });
+  await flush(8);
+  const single = axios.post.mock.calls.find((call) => String(call[0]).endsWith("/cheques"));
+  expect(single).toBeTruthy();
+  expect(single[1].amount).toBe(80);
+  expect(single[1].serial_no).toBe("ONE-SN");
+  expect(axios.post.mock.calls.some((call) => String(call[0]).includes("/cheques/batch"))).toBe(false);
+  const table = host.querySelector("[data-testid=receipt-cheque-table]");
+  expect(table).toBeTruthy();
+  expect(table.textContent).toContain("ONE-SN");
+  expect(host.textContent).toContain("Toplam 1 adet evrak");
 });
