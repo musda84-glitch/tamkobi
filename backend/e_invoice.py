@@ -133,7 +133,7 @@ async def apply_issue_stamp(
     invoice_id: str,
     inv: Dict[str, Any],
     *,
-    company_id: str = "",
+    company_id: str,
     stamp_now: bool = False,
     issue_date: Optional[str] = None,
     issue_time: Optional[str] = None,
@@ -161,9 +161,9 @@ async def apply_issue_stamp(
             status_code=400,
             detail="GİB'e iletilmiş faturada tarih/saat değiştirilemez.",
         )
-    cid = str(company_id or (inv or {}).get("company_id") or "").strip()
+    cid = str(company_id or "").strip()
     if not cid:
-        return inv
+        return {**(inv or {}), **patch}
     await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
     refreshed = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     return {**(refreshed or inv or {}), **patch}

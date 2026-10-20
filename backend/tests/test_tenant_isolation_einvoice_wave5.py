@@ -553,6 +553,53 @@ def test_edoc_backup_lists_and_reads_only_own_company():
     assert empty == []
 
 
+def test_apply_issue_stamp_requires_company_and_stays_in_tenant():
+    with pytest.raises(TypeError):
+        _run(e_invoice.apply_issue_stamp(INV, {"_id": INV, "status": "draft"}, stamp_now=True))
+
+    db = _DB()
+    _seed_pair(db, dispatches=False, orders=False)
+    for cid in (CO_A, CO_B):
+        row = _doc(db, "invoices", INV, cid)
+        row["status"] = "draft"
+        row["einvoice_state"] = "draft"
+        row.pop("gib_uuid", None)
+    before = _digest(db, CO_B)
+    prev = _bind_einvoice(db)
+    try:
+        stamped = _run(e_invoice.apply_issue_stamp(
+            INV,
+            _doc(db, "invoices", INV, CO_A),
+            company_id=CO_A,
+            issue_date="2026-10-19",
+            issue_time="11:22:33",
+        ))
+    finally:
+        _unbind_einvoice(prev)
+    assert stamped["issue_date"] == "2026-10-19"
+    assert stamped["issue_time"] == "11:22:33"
+    assert stamped["company_id"] == CO_A
+    assert _doc(db, "invoices", INV, CO_A)["issue_date"] == "2026-10-19"
+    assert _doc(db, "invoices", INV, CO_B)["issue_date"] == "2026-10-05"
+    assert _digest(db, CO_B) == before
+
+    boom = _Boom()
+    prev = _bind_einvoice(boom)
+    try:
+        blank = _run(e_invoice.apply_issue_stamp(
+            INV,
+            {"_id": INV, "status": "draft", "issue_date": "2020-01-01"},
+            company_id="",
+            issue_date="2026-10-19",
+            issue_time="11:22:33",
+        ))
+    finally:
+        _unbind_einvoice(prev)
+    assert blank["issue_date"] == "2026-10-19"
+    assert blank["issue_time"] == "11:22:33"
+    assert blank["_id"] == INV
+
+
 def test_blank_einvoice_company_does_not_query():
     boom = _Boom()
     prev = _bind_einvoice(boom)

@@ -40,6 +40,7 @@ class TestApplyIssueStamp:
             out = await e_invoice.apply_issue_stamp(
                 "inv_st",
                 inv,
+                company_id="c1",
                 stamp_now=True,
                 issue_date="2026-10-09",
                 issue_time="22:56:00",
@@ -65,7 +66,7 @@ class TestApplyIssueStamp:
         e_invoice.init(fake_db)
 
         async def _run():
-            out = await e_invoice.apply_issue_stamp("inv_st2", inv, stamp_now=True)
+            out = await e_invoice.apply_issue_stamp("inv_st2", inv, company_id="c1", stamp_now=True)
             assert out["issue_date"]
             assert out["issue_time"]
             assert len(out["issue_time"]) == 8
@@ -84,7 +85,7 @@ class TestApplyIssueStamp:
 
         async def _run():
             with pytest.raises(HTTPException) as ei:
-                await e_invoice.apply_issue_stamp("inv_lock", inv, stamp_now=True)
+                await e_invoice.apply_issue_stamp("inv_lock", inv, company_id="c1", stamp_now=True)
             assert ei.value.status_code == 400
 
         asyncio.get_event_loop().run_until_complete(_run())
