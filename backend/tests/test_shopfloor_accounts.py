@@ -327,6 +327,12 @@ def test_station_allowed_and_filter():
     assert [r["_id"] for r in kept] == ["1", "2"]
     assert sfa.filter_work_orders_for_user(plain, rows) == rows
     assert sfa.filter_work_orders_for_user(floor, None) == []
+    both = {"account_type": "atolye", "shopfloor_stations": ["CNC", "LAZER"]}
+    assert sfa.station_query_values(both) == ["CNC", "LAZER"]
+    assert sfa.station_query_values(both, "  cnc ") == ["CNC"]
+    assert sfa.station_query_values(both, "Kaynak") == []
+    assert sfa.station_query_values(both, None) == ["CNC", "LAZER"]
+    assert sfa.station_query_values(both, "") == ["CNC", "LAZER"]
 
 
 def test_admin_assigns_and_me_returns_fields(api):
@@ -491,7 +497,7 @@ def test_work_orders_filtered_and_actions_scoped(api):
     assert listed.status_code == 200, listed.text
     ids = {row["id"] for row in listed.json()}
     assert "wo-lazer" not in ids and "wo-lazer-run" not in ids and "wo-done-lazer" not in ids
-    assert {"wo-ready", "wo-run", "wo-fin", "wo-done-cnc", "wo-spaced"} <= ids
+    assert {"wo-ready", "wo-run", "wo-fin", "wo-done-cnc"} <= ids
 
     bad_station = client.get(
         "/api/production/work-orders",
@@ -505,8 +511,7 @@ def test_work_orders_filtered_and_actions_scoped(api):
         headers=floor,
     )
     assert good_station.status_code == 200, good_station.text
-    assert {row["id"] for row in good_station.json()} <= {"wo-ready", "wo-run", "wo-fin", "wo-done-cnc", "wo-spaced"}
-    assert good_station.json()
+    assert {row["id"] for row in good_station.json()} == {"wo-ready", "wo-run", "wo-fin", "wo-done-cnc"}
 
     stations = client.get("/api/production/work-orders/stations", params={"company_id": COMP_A}, headers=floor)
     assert stations.status_code == 200, stations.text
@@ -622,6 +627,118 @@ def test_work_orders_filtered_and_actions_scoped(api):
     )
     assert normal_trash.status_code == 404, normal_trash.text
     assert db.work_orders.docs
+
+
+def _spy_find(coll):
+    seen = []
+    real = coll.find
+
+    def wrapped(query=None, projection=None):
+        seen.append(copy.deepcopy(query) if isinstance(query, dict) else query)
+        return real(query, projection)
+
+    coll.find = wrapped
+    return seen
+
+
+def test_list_query_scopes_atolye_stations_and_keeps_normal_exact(api):
+    client, db = api
+    _assign(client)
+    seen = _spy_find(db.work_orders)
+
+    listed = client.get("/api/production/work-orders", params={"company_id": COMP_A}, headers=_auth("floor-a"))
+    assert listed.status_code == 200, listed.text
+    assert seen[-1]["station"] == {"$in": ["CNC"]}
+    assert seen[-1]["company_id"] == COMP_A
+
+    one = client.get(
+        "/api/production/work-orders",
+        params={"company_id": COMP_A, "station": "cnc"},
+        headers=_auth("floor-a"),
+    )
+    assert one.status_code == 200, one.text
+    assert seen[-1]["station"] == {"$in": ["CNC"]}
+    assert {row["id"] for row in one.json()} == {"wo-ready", "wo-run", "wo-fin", "wo-done-cnc"}
+
+    denied = client.get(
+        "/api/production/work-orders",
+        params={"company_id": COMP_A, "station": "lazer"},
+        headers=_auth("floor-a"),
+    )
+    assert denied.status_code == 403, denied.text
+    assert seen[-1]["station"] == {"$in": ["CNC"]}
+
+    normal = client.get(
+        "/api/production/work-orders",
+        params={"company_id": COMP_A, "station": "LAZER"},
+        headers=_auth("plain-a"),
+    )
+    assert normal.status_code == 200, normal.text
+    assert seen[-1]["station"] == "LAZER"
+    assert {row["id"] for row in normal.json()} == {"wo-lazer", "wo-lazer-run", "wo-done-lazer"}
+
+    normal_case = client.get(
+        "/api/production/work-orders",
+        params={"company_id": COMP_A, "station": "cnc"},
+        headers=_auth("plain-a"),
+    )
+    assert normal_case.status_code == 200, normal_case.text
+    assert seen[-1]["station"] == "cnc"
+    assert normal_case.json() == []
+
+
+def test_atolye_list_is_not_cut_by_other_station_cap(api):
+    """Başka istasyondaki 1000 satır, izinli istasyonun satırlarını listeden düşürmesin."""
+    client, db = api
+    _assign(client)
+    for i in range(1001):
+        db.work_orders.docs.append({
+            "_id": f"wo-fill-{i}",
+            "company_id": COMP_A,
+            "order_id": "po-1",
+            "station": "LAZER",
+            "status": "ready",
+            "step_name": "Kesim",
+            "step_no": i,
+            "order_code": "AAA",
+            "planned_quantity": 1,
+            "planned_date": DAY,
+        })
+    allowed = []
+    for i in range(3):
+        wid = f"wo-late-{i}"
+        allowed.append(wid)
+        db.work_orders.docs.append({
+            "_id": wid,
+            "company_id": COMP_A,
+            "order_id": "po-1",
+            "station": "CNC",
+            "status": "ready",
+            "step_name": "Kesim",
+            "step_no": i,
+            "order_code": "ZZZ",
+            "planned_quantity": 1,
+            "planned_date": "2099-01-01",
+        })
+    listed = client.get("/api/production/work-orders", params={"company_id": COMP_A}, headers=_auth("floor-a"))
+    assert listed.status_code == 200, listed.text
+    ids = {row["id"] for row in listed.json()}
+    assert not any(str(row.get("station") or "").casefold().strip() == "lazer" for row in listed.json())
+    assert "wo-ready" in ids and "wo-run" in ids and "wo-fin" in ids and "wo-done-cnc" in ids
+    assert set(allowed) <= ids
+    narrowed = client.get(
+        "/api/production/work-orders",
+        params={"company_id": COMP_A, "station": "cnc"},
+        headers=_auth("floor-a"),
+    )
+    assert narrowed.status_code == 200, narrowed.text
+    assert set(allowed) <= {row["id"] for row in narrowed.json()}
+    blocked = client.get(
+        "/api/production/work-orders",
+        params={"company_id": COMP_A, "station": "lazer"},
+        headers=_auth("floor-a"),
+    )
+    assert blocked.status_code == 403, blocked.text
 
 
 def _blob(caplog):

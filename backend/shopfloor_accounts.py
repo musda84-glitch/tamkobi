@@ -142,6 +142,21 @@ def filter_station_names(user: Any, names: Any) -> list:
     return [name for name in items if station_allowed(user, name)]
 
 
+def station_query_values(user: Any, station: Any = None) -> list:
+    """İş emri sorgusundaki kanonik istasyon adları.
+
+    Atamada katalog yazımı saklanır. station boşsa listenin tamamı,
+    doluysa yalnız o adın station_key ile eşleşen yazımı.
+    """
+    names = public_stations(user)
+    if station is None or not str(station).strip():
+        return names
+    want = station_key(station)
+    if not want:
+        return []
+    return [name for name in names if station_key(name) == want]
+
+
 def resolve_station_names(requested: Any, catalog: Any) -> tuple:
     """İstenen adları katalogdaki yazıma çevir. (canonical, unknown)."""
     by_key = {}

@@ -22737,7 +22737,11 @@ async def list_work_orders(
     if station and atolye_user and not shopfloor_accounts.station_allowed(user, station):
         shopfloor_accounts.log_denied(user)
         raise HTTPException(status_code=403, detail=shopfloor_accounts.STATION_DENIED)
-    if station and not atolye_user:
+    if atolye_user:
+        # 1000 satır sınırı başka istasyonları saymasın. Kanonik ad $in ile gider;
+        # station_key süzmesi aşağıdaki güvenlik ağı olarak durur.
+        q["station"] = {"$in": shopfloor_accounts.station_query_values(user, station)}
+    elif station:
         q["station"] = station
     if assigned_to:
         q["assigned_to"] = assigned_to
