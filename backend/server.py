@@ -20385,16 +20385,18 @@ async def mark_form_printed(req: Dict[str, Any], user: dict = Depends(get_curren
     return {"status": "success", "count": int(getattr(result, "matched_count", 0) or 0), "form_printed_at": now}
 
 
-async def _resolve_order_cargo_label(order_id: str):
+async def _resolve_order_cargo_label(order_id: str, company_id: str):
     """Pazaryeri veya oluşturulan gönderinin resmi etiketini bulur."""
-    o = await db.orders.find_one({"_id": order_id})
+    if not company_id:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    o = await db.orders.find_one({"_id": order_id, "company_id": company_id})
     if not o:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     sh = None
     if o.get("cargo_shipment_id"):
-        sh = await db.cargo_shipments.find_one({"_id": o["cargo_shipment_id"]})
+        sh = await db.cargo_shipments.find_one({"_id": o["cargo_shipment_id"], "company_id": company_id})
     if not sh:
-        sh = await db.cargo_shipments.find_one({"order_id": order_id})
+        sh = await db.cargo_shipments.find_one({"order_id": order_id, "company_id": company_id})
     provider: Dict[str, str] = {}
     if not cargo_label.pick_stored_label_url(o, sh) and sh and sh.get("provider_shipment_id") and sh.get("carrier_code") == "geliver":
         cfg = await db.cargo_configs.find_one({"company_id": o["company_id"], "carrier_code": "geliver"})
@@ -20403,8 +20405,8 @@ async def _resolve_order_cargo_label(order_id: str):
                 info = await cargo_providers.geliver_get_shipment(cfg, sh["provider_shipment_id"])
                 provider = cargo_label.extract_provider_label(info)
                 if provider.get("label_url"):
-                    await db.cargo_shipments.update_one({"_id": sh["_id"]}, {"$set": {"label_url": provider["label_url"]}})
-                    await db.orders.update_one({"_id": order_id}, {"$set": {"cargo_label_url": provider["label_url"]}})
+                    await db.cargo_shipments.update_one({"_id": sh["_id"], "company_id": company_id}, {"$set": {"label_url": provider["label_url"]}})
+                    await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": {"cargo_label_url": provider["label_url"]}})
             except Exception:
                 logger.exception("geliver label refresh failed")
     track = o.get("cargo_tracking_number") or o.get("cargo_barcode")
@@ -20416,7 +20418,7 @@ async def _resolve_order_cargo_label(order_id: str):
                 raw = await client.common_label(str(track))
                 provider = {**provider, **cargo_label.extract_provider_label(raw)}
                 if provider.get("label_url"):
-                    await db.orders.update_one({"_id": order_id}, {"$set": {"cargo_label_url": provider["label_url"]}})
+                    await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": {"cargo_label_url": provider["label_url"]}})
             except Exception:
                 logger.exception("trendyol common label failed")
             finally:
@@ -20426,15 +20428,15 @@ async def _resolve_order_cargo_label(order_id: str):
 
 @api_router.get("/orders/{order_id}/cargo-label")
 async def get_order_cargo_label(order_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
-    resolved = await _resolve_order_cargo_label(order_id)
+    order = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    resolved = await _resolve_order_cargo_label(order_id, order.get("company_id"))
     return resolved.as_json()
 
 
 @api_router.get("/orders/{order_id}/cargo-label/file")
 async def get_order_cargo_label_file(order_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
-    resolved = await _resolve_order_cargo_label(order_id)
+    order = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    resolved = await _resolve_order_cargo_label(order_id, order.get("company_id"))
     filename = f"kargo-etiket-{(resolved.cargo_tracking_number or order_id)}.pdf"
     if resolved.pdf_base64:
         import base64
@@ -20498,8 +20500,9 @@ async def add_cargo_integration(req: Dict[str, Any], user: dict = Depends(get_cu
         raise HTTPException(status_code=400, detail="Bu sağlayıcı zaten ekli.")
     creds = {k: req.get(k) for k in cat["fields"]}
     has_key = any(creds.values())
-    doc = {"_id": f"cargo_{cat['carrier_code']}_{uuid.uuid4().hex[:4]}", "company_id": company_id, "carrier_code": cat["carrier_code"], "carrier_name": cat["carrier_name"], "kind": cat["kind"], "is_active": True,
-           "auto_create_barcode": True, "test_mode": bool(req.get("test_mode", True)), "status": "connected" if has_key else "not_configured", "created_at": datetime.now(timezone.utc).isoformat(), **{k: (comm_service.encrypt(v) if v and k in ("api_password", "api_secret", "api_key") and hasattr(comm_service, "encrypt") else v) for k, v in creds.items()}}
+    packed = {k: (comm_service.encrypt(v) if v and k in ("api_password", "api_secret", "api_key") and hasattr(comm_service, "encrypt") else v) for k, v in creds.items()}
+    doc = {"_id": f"cargo_{cat['carrier_code']}_{uuid.uuid4().hex[:4]}", "carrier_code": cat["carrier_code"], "carrier_name": cat["carrier_name"], "kind": cat["kind"], "is_active": True,
+           "auto_create_barcode": True, "test_mode": bool(req.get("test_mode", True)), "status": "connected" if has_key else "not_configured", "created_at": datetime.now(timezone.utc).isoformat(), **packed, "company_id": company_id}
     await db.cargo_configs.insert_one(doc)
     out = clean_doc(doc)
     for k in ("api_password", "api_secret", "api_key"):
@@ -20526,7 +20529,7 @@ async def test_cargo_integration(carrier_id: str, user: dict = Depends(get_curre
                 or (comm_service.looks_like_fernet_token(str(raw_key)) and comm_service.try_decrypt(raw_key) is None)
             ):
                 await db.cargo_configs.update_one(
-                    {"_id": carrier_id},
+                    {"_id": carrier_id, "company_id": cfg["company_id"]},
                     {
                         "$unset": {"api_key": ""},
                         "$set": {
@@ -20537,7 +20540,7 @@ async def test_cargo_integration(carrier_id: str, user: dict = Depends(get_curre
                     },
                 )
         raise
-    await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": {"status": "connected", "is_active": True, "last_test_at": datetime.now(timezone.utc).isoformat(), "sender_addresses": r["addresses"]}})
+    await db.cargo_configs.update_one({"_id": carrier_id, "company_id": cfg["company_id"]}, {"$set": {"status": "connected", "is_active": True, "last_test_at": datetime.now(timezone.utc).isoformat(), "sender_addresses": r["addresses"]}})
     return {**r, "simulated": False}
 
 @api_router.post("/cargo/shipments/{shipment_id}/refresh")
@@ -20551,16 +20554,18 @@ async def refresh_cargo_shipment(shipment_id: str, user: dict = Depends(get_curr
     info = await cargo_providers.geliver_get_shipment(cfg, sh["provider_shipment_id"])
     upd = {k: v for k, v in {"tracking_number": info.get("tracking_number"), "barcode": info.get("barcode"), "label_url": info.get("label_url"), "tracking_url": info.get("tracking_url"), "provider_status": info.get("status")}.items() if v}
     upd["last_refreshed_at"] = datetime.now(timezone.utc).isoformat()
-    await db.cargo_shipments.update_one({"_id": shipment_id}, {"$set": upd})
+    await db.cargo_shipments.update_one({"_id": shipment_id, "company_id": sh["company_id"]}, {"$set": upd})
     if sh.get("order_id") and upd.get("tracking_number"):
-        await db.orders.update_one({"_id": sh["order_id"]}, {"$set": {"cargo_tracking_number": upd["tracking_number"], "cargo_label_url": upd.get("label_url"), "cargo_tracking_url": upd.get("tracking_url")}})
-        await _push_order_to_shopphp(await db.orders.find_one({"_id": sh["order_id"]}), reason="cargo_tracking")
-    return clean_doc(await db.cargo_shipments.find_one({"_id": shipment_id}))
+        await db.orders.update_one({"_id": sh["order_id"], "company_id": sh["company_id"]}, {"$set": {"cargo_tracking_number": upd["tracking_number"], "cargo_label_url": upd.get("label_url"), "cargo_tracking_url": upd.get("tracking_url")}})
+        order = await db.orders.find_one({"_id": sh["order_id"], "company_id": sh["company_id"]})
+        if order:
+            await _push_order_to_shopphp(order, reason="cargo_tracking")
+    return clean_doc(await db.cargo_shipments.find_one({"_id": shipment_id, "company_id": sh["company_id"]}))
 
 @api_router.delete("/integrations/cargo/{carrier_id}")
 async def delete_cargo_integration(carrier_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "cargo_configs", carrier_id, user, not_found="Kargo entegrasyonu bulunamadı.")
-    await db.cargo_configs.delete_one({"_id": carrier_id})
+    cfg = await tenant_access.get_tenant_doc(db, "cargo_configs", carrier_id, user, not_found="Kargo entegrasyonu bulunamadı.")
+    await db.cargo_configs.delete_one({"_id": carrier_id, "company_id": cfg["company_id"]})
     return {"status": "success"}
 
 # ---- Atölye performans
@@ -20632,8 +20637,8 @@ async def update_cargo_integration(carrier_id: str, data: Dict[str, Any], user: 
     merged = {**cur, **upd}
     upd["status"] = "connected" if any(merged.get(k) for k in cargo_providers.SECRET_FIELDS) else "not_configured"
     upd["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": upd})
-    return cargo_providers.mask_config(clean_doc(await db.cargo_configs.find_one({"_id": carrier_id})))
+    await db.cargo_configs.update_one({"_id": carrier_id, "company_id": cur["company_id"]}, {"$set": upd})
+    return cargo_providers.mask_config(clean_doc(await db.cargo_configs.find_one({"_id": carrier_id, "company_id": cur["company_id"]})))
 
 @api_router.post("/cargo/auto-ship")
 async def cargo_auto_ship(req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -20665,7 +20670,7 @@ async def cargo_auto_ship(req: Dict[str, Any], user: dict = Depends(get_current_
             row.update({"status": "failed", "reason": str(e)[:160]}); summary["failed"] += 1
         summary["results"].append(row)
     if not req.get("dry_run"):
-        await db.cargo_auto_runs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, **{k: v for k, v in summary.items() if k != "results"}, "results": summary["results"], "created_at": datetime.now(timezone.utc).isoformat()})
+        await db.cargo_auto_runs.insert_one({"_id": str(uuid.uuid4()), **{k: v for k, v in summary.items() if k != "results"}, "results": summary["results"], "created_at": datetime.now(timezone.utc).isoformat(), "company_id": company_id})
     summary["message"] = (f"{summary['candidates']} kargolanabilir sipariş bulundu." if req.get("dry_run") else f"{summary['created']} kargo oluşturuldu, {summary['failed']} hata, {summary['skipped']} atlandı.") + ("" if live else " (Geliver canlı bağlantısı yok → simülasyon takip no üretildi.)" if carrier_code == "geliver" else "")
     return summary
 
@@ -20681,7 +20686,10 @@ async def _enrich_order_items_from_products(order: dict) -> dict:
     ids = [str(it.get("product_id")) for it in items if it.get("product_id")]
     if not ids:
         return order
-    products = await db.products.find({"_id": {"$in": ids}}).to_list(len(ids))
+    cid = order.get("company_id")
+    if not cid:
+        return order
+    products = await db.products.find({"_id": {"$in": ids}, "company_id": cid}).to_list(len(ids))
     by_id = {str(p["_id"]): p for p in products}
     PKG_KEYS = ("desi", "weight", "length", "width", "height", "package_count")
     enriched = []
@@ -20709,7 +20717,7 @@ async def create_cargo_shipment(req: Dict[str, Any], user: Any = Depends(get_cur
     address = req.get("address") or req.get("shipping_address") or "Adres"
     city = req.get("city", "İstanbul")
 
-    order = await db.orders.find_one({"_id": order_id}) if order_id else None
+    order = await db.orders.find_one({"_id": order_id, "company_id": company_id}) if order_id else None
     if order and order.get("cargo_tracking_number") and not req.get("force"):
         raise HTTPException(status_code=400, detail=f"Bu sipariş için zaten kargo kaydı var: {order['cargo_tracking_number']}")
     if order:
@@ -20789,11 +20797,13 @@ async def create_cargo_shipment(req: Dict[str, Any], user: Any = Depends(get_cur
     shipment = CargoShipment(id=f"shp_{uuid.uuid4().hex[:8]}", company_id=company_id, carrier_code=carrier_code, carrier_name=(cfg or {}).get("carrier_name") or cat.get("carrier_name", "Kargo"), tracking_number=tracking_num, barcode=barcode,
                              order_id=order_id, customer_name=customer_name, customer_phone=req.get("customer_phone") or (order or {}).get("customer_phone"), address=address, city=city, status=status_,
                              estimated_delivery=(datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%d"))
-    doc = {**shipment.to_mongo(), **extra}
+    doc = {**shipment.to_mongo(), **extra, "company_id": company_id}
     await db.cargo_shipments.insert_one(doc)
-    if order_id:
-        await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "shipped", "cargo_carrier": carrier_code, "cargo_tracking_number": tracking_num, "cargo_barcode": barcode, "cargo_label_url": extra.get("label_url"), "cargo_tracking_url": extra.get("tracking_url"), "cargo_shipment_id": doc["_id"]}})
-        await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="cargo")
+    if order:
+        await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": {"order_status": "shipped", "cargo_carrier": carrier_code, "cargo_tracking_number": tracking_num, "cargo_barcode": barcode, "cargo_label_url": extra.get("label_url"), "cargo_tracking_url": extra.get("tracking_url"), "cargo_shipment_id": doc["_id"]}})
+        pushed = await db.orders.find_one({"_id": order_id, "company_id": company_id})
+        if pushed:
+            await _push_order_to_shopphp(pushed, reason="cargo")
     if live:
         if g.get("message"):
             msg = g["message"]
