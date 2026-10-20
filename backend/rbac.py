@@ -1031,8 +1031,15 @@ _CROSS_EMPLOYEE_MODULES = ("/personnel", "/projects", "/production", "/atolye", 
 
 # (yöntem, şablon, modüller, personel/portal özellikleri, portal yalnız personelde mi)
 # Ekstre, yaşlandırma, hareket, alış maliyeti ve benzeri alt kaynaklar yok.
-# `{id}` _portal_template_match ile tek segmenttir; units/categories allowlist'te
-# daha önce allow olur. reorder-preview ve contacts/flags aynı segment kuralına girer.
+# `{id}` tek segmenttir. Sabit alt kaynaklar çapraz satıra girmez.
+# reorder-preview stokta, flags caride kalır. units ve categories paylaşılan
+# okuma listesindedir; search kendi çapraz satırındadır.
+CROSS_MODULE_VIEW_EXCLUDE = (
+    "/api/products/reorder-preview",
+    "/api/products/units",
+    "/api/products/categories",
+    "/api/contacts/flags",
+)
 CROSS_MODULE_VIEW = (
     ("GET", "/api/products", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
     ("GET", "/api/products/{id}", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
@@ -1107,10 +1114,17 @@ def _shared_get_matches(path: str, method: str = "GET") -> bool:
     return False
 
 
+def _cross_view_excluded(path: str) -> bool:
+    """Tek segmentte `{id}` ye düşen sabit alt kaynak. Çapraz görünüme girmez."""
+    return _portal_norm_path(path) in CROSS_MODULE_VIEW_EXCLUDE
+
+
 def cross_module_view_matches(path: str, method: str = "GET") -> bool:
     if _view_rule_method(method) != "GET":
         return False
     p = _portal_norm_path(path)
+    if _cross_view_excluded(p):
+        return False
     for rule_method, template, _modules, _features, _personel_only in CROSS_MODULE_VIEW:
         if rule_method != "GET":
             continue
@@ -1145,10 +1159,12 @@ def _view_module_allows(module: Optional[str], perms: Dict[str, str]) -> bool:
 def _cross_view_allows(user: Optional[dict], role: Optional[dict], path: str, method: str) -> bool:
     if not role:
         return False
+    p = _portal_norm_path(path)
+    if _cross_view_excluded(p):
+        return False
     perms = role.get("permissions") or {}
     feats = role_features(role)
     personel = bool(user) and normalize_role_code(user.get("role")) == "personel"
-    p = _portal_norm_path(path)
     method_u = _view_rule_method(method)
     for rule_method, template, modules, features, personel_only in CROSS_MODULE_VIEW:
         if rule_method != method_u:
@@ -1274,17 +1290,27 @@ def _log_rbac_get_would_deny(request: Any, user: Optional[dict], role: Optional[
     )
 
 
+def _log_rbac_get_view_error(request: Any, path: str, exc: BaseException) -> None:
+    """Görünürlük kararı düştü. Yalnız yöntem, rota şablonu ve istisna sınıfı."""
+    logger.warning(
+        "rbac_get_view_error method=%s route=%s error=%s",
+        _log_field(getattr(request, "method", None) or "GET"),
+        _route_template(request, path),
+        _log_field(type(exc).__name__),
+    )
+
+
 async def _shadow_get_view(request: Any, user: Optional[dict], role: Optional[dict], path: str, company_id: Optional[str]):
-    """GET/HEAD view. shadow: logla ve geç. enforce: 403. off: dokunma."""
+    """GET/HEAD view. (engel yanıtı veya None, çözülen rol). off: rolü olduğu gibi geri ver."""
     mode = rbac_get_enforce_mode()
     if mode == "off":
-        return None
+        return None, role
     view_role = role
     if user and view_role is None and not _view_admin_user(user):
         view_role = await role_for(user, company_id)
     decision, reason = get_view_decision(user, view_role, path, getattr(request, "method", "GET"))
     if decision != "deny":
-        return None
+        return None, view_role
     if mode == "enforce":
         from fastapi.responses import JSONResponse
         label = ""
@@ -1294,12 +1320,12 @@ async def _shadow_get_view(request: Any, user: Optional[dict], role: Optional[di
             label = normalize_role_code(user.get("role"))
         module = module_for_get_path(path) or "eşlenmemiş"
         detail = f"Bu işlem için yetkiniz yok ({label} rolü: {module})."
-        return JSONResponse({"detail": detail}, status_code=403)
+        return JSONResponse({"detail": detail}, status_code=403), view_role
     resolved_company = company_id
     if not resolved_company and user:
         resolved_company = user.get("active_company_id")
     _log_rbac_get_would_deny(request, user, view_role, path, reason, resolved_company)
-    return None
+    return None, view_role
 
 
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
@@ -1411,15 +1437,30 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                     role = await role_for(user, cid)
                 if role_features(role).get("portal_orders"):
                     portal_grant = True
+        view_lookup_failed = False
         if request.method in ("GET", "HEAD") or (path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES)):
             if request.method in ("GET", "HEAD"):
-                blocked = await _shadow_get_view(request, user, role, path, cid)
-                if blocked is not None:
-                    return blocked
+                try:
+                    blocked, view_role = await _shadow_get_view(request, user, role, path, cid)
+                except Exception as exc:
+                    _log_rbac_get_view_error(request, path, exc)
+                    try:
+                        failed_mode = rbac_get_enforce_mode()
+                    except Exception:
+                        failed_mode = "shadow"
+                    if failed_mode == "enforce":
+                        return JSONResponse({"detail": "Bu işlem için yetkiniz yok."}, status_code=403)
+                    view_lookup_failed = True
+                else:
+                    if view_role is not None:
+                        role = view_role
+                    if blocked is not None:
+                        return blocked
             response = await call_next(request)
             if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
-                role = await role_for(user)
-                if not role_features(role)["view_prices"]:
+                if role is None and not view_lookup_failed:
+                    role = await role_for(user)
+                if role is not None and not role_features(role)["view_prices"]:
                     import json as _json
                     body = b"".join([chunk async for chunk in response.body_iterator])
                     try:

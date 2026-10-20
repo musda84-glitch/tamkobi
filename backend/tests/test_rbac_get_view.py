@@ -352,6 +352,34 @@ def test_enforce_blocks_and_off_skips_the_log(monkeypatch, caplog):
     assert not [rec for rec in caplog.records if "rbac_get_would_deny" in rec.getMessage()]
 
 
+def test_literal_subresources_stay_on_the_primary_module():
+    user = _user()
+    opened = _role(features={"portal_saha": True})
+    decision, reason = _decision(user, opened, "/api/products/reorder-preview")
+    assert (decision, reason) == ("deny", "module_denied")
+    decision, reason = _decision(user, opened, "/api/contacts/flags")
+    assert (decision, reason) == ("deny", "module_denied")
+    assert rbac.cross_module_view_matches("/api/products/reorder-preview") is False
+    assert rbac.cross_module_view_matches("/api/contacts/flags") is False
+    assert rbac.cross_module_view_matches("/api/products/units") is False
+    assert rbac.cross_module_view_matches("/api/products/categories") is False
+    assert _decision(user, opened, "/api/products") == ("allow", "cross_module")
+    assert _decision(user, opened, "/api/products/prd_1") == ("allow", "cross_module")
+    assert _decision(user, opened, "/api/contacts/search") == ("allow", "cross_module")
+    assert _decision(user, opened, "/api/contacts/cnt_1") == ("allow", "cross_module")
+    assert _decision(user, opened, "/api/products/units")[0] == "allow"
+    with_contacts = _role(
+        features={"portal_saha": True},
+        permissions=_perms(**{"/contacts": "view"}),
+    )
+    assert _decision(user, with_contacts, "/api/contacts/flags") == ("allow", "module_view")
+    with_stock = _role(
+        features={"portal_saha": True},
+        permissions=_perms(**{"/stock": "view"}),
+    )
+    assert _decision(user, with_stock, "/api/products/reorder-preview") == ("allow", "module_view")
+
+
 def test_post_mutation_still_denies_personel(monkeypatch):
     monkeypatch.setenv("RBAC_GET_ENFORCE", "shadow")
     role = _role("personel", permissions=_perms(**{"/invoices": "none"}), features={})
@@ -368,3 +396,113 @@ def test_post_mutation_still_denies_personel(monkeypatch):
     resp = asyncio.run(mw.dispatch(request, _next))
     assert resp.status_code == 403
     assert calls["n"] == 0
+
+
+class _RoleLookupError(RuntimeError):
+    """role_for kasıtlı olarak düşer. Mesaj gizli alan taşır; loga yazılmamalı."""
+
+
+def test_role_for_error_shadow_passes_and_enforce_closes(monkeypatch, caplog):
+    role = _role(permissions=_perms(**{"/invoices": "none"}))
+    mw = _install_middleware(monkeypatch, role)
+    secret = "token=super-secret-token email=ada@example.com phone=5551234567 q=company_id=comp_secret_99"
+
+    async def _boom(_user_doc, _company_id=None):
+        raise _RoleLookupError(secret)
+
+    monkeypatch.setattr(rbac, "role_for", _boom)
+    calls = {"n": 0}
+
+    async def _next(_request):
+        calls["n"] += 1
+        return _json({"ok": True, "email": "ada@example.com"})
+
+    query = "token=super-secret-token&email=ada@example.com"
+    request = _http("GET", "/api/invoices", query, "super-secret-token")
+    request.scope["route"] = SimpleNamespace(path="/api/invoices")
+
+    async def _hit():
+        with caplog.at_level(logging.WARNING, logger="rbac"):
+            return await mw.dispatch(request, _next)
+
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "shadow")
+    resp = asyncio.run(_hit())
+    assert resp.status_code == 200
+    assert calls["n"] == 1
+    lines = [rec for rec in caplog.records if rec.getMessage().startswith("rbac_get_view_error")]
+    assert len(lines) == 1
+    text = lines[0].getMessage()
+    assert "method=GET" in text
+    assert "route=/api/invoices" in text
+    assert "error=_RoleLookupError" in text
+    assert lines[0].exc_info is None
+    for hidden in (
+        secret,
+        "super-secret-token",
+        "ada@example.com",
+        "5551234567",
+        "comp_secret_99",
+        "token=",
+        "email=",
+    ):
+        assert hidden not in text
+    body = resp.body.decode()
+    assert "super-secret-token" not in body
+    assert secret not in body
+
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "off")
+    caplog.clear()
+    calls["n"] = 0
+
+    async def _off_view(*_a, **_k):
+        raise _RoleLookupError(secret)
+
+    monkeypatch.setattr(rbac, "_shadow_get_view", _off_view)
+    resp = asyncio.run(_hit())
+    assert resp.status_code == 200
+    assert calls["n"] == 1
+    off_lines = [rec.getMessage() for rec in caplog.records if rec.getMessage().startswith("rbac_get_view_error")]
+    assert len(off_lines) == 1
+    assert "error=_RoleLookupError" in off_lines[0]
+    assert secret not in off_lines[0]
+    assert "super-secret-token" not in off_lines[0]
+
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "enforce")
+    caplog.clear()
+    calls["n"] = 0
+    resp = asyncio.run(_hit())
+    assert resp.status_code == 403
+    assert calls["n"] == 0
+    enforce_lines = [rec.getMessage() for rec in caplog.records if "rbac_get_view_error" in rec.getMessage()]
+    assert enforce_lines
+    assert secret not in enforce_lines[0]
+    assert "super-secret-token" not in enforce_lines[0]
+    denied = resp.body.decode()
+    assert secret not in denied
+    assert "super-secret-token" not in denied
+    assert "ada@example.com" not in denied
+    assert "_RoleLookupError" not in denied
+
+
+def test_get_resolves_role_once(monkeypatch):
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "shadow")
+    role = _role(permissions=_perms(**{"/invoices": "view"}), features={"view_prices": False})
+    mw = _install_middleware(monkeypatch, role)
+    calls = {"n": 0}
+
+    async def _counted(_user_doc, _company_id=None):
+        calls["n"] += 1
+        return role
+
+    monkeypatch.setattr(rbac, "role_for", _counted)
+
+    async def _next(_request):
+        return _json({"grand_total": 250, "ok": True})
+
+    request = _http("GET", "/api/invoices", "email=ada@example.com", "super-secret-token")
+    request.scope["route"] = SimpleNamespace(path="/api/invoices")
+    resp = asyncio.run(mw.dispatch(request, _next))
+    assert resp.status_code == 200
+    assert calls["n"] <= 1
+    assert calls["n"] == 1
+    assert resp.headers.get("x-prices-masked") == "1"
