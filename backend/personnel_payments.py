@@ -805,11 +805,8 @@ async def _load_reimburse_expense(db, emp: dict, ln: dict) -> Optional[dict]:
 
 
 async def _next_msr(db, company_id: str) -> str:
-    year = datetime.now(timezone.utc).strftime("%Y")
-    prefix = f"MSR-{year}-"
-    rows = await _rows(db, "expenses", {"company_id": company_id}, limit=8000)
-    n = 1 + sum(1 for r in rows if str(r.get("expense_number") or "").startswith(prefix))
-    return f"{prefix}{n:04d}"
+    import expenses
+    return await expenses.next_msr_number(db, company_id)
 
 
 def _month_day(pay_date: str, day: Optional[int]) -> str:

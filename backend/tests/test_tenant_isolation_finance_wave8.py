@@ -28,7 +28,7 @@ import tenant_scope  # noqa: E402
 import tenant_scope_allowlist as allowlist  # noqa: E402
 import trash  # noqa: E402
 from dashboard_memdb import MemColl, MemDB, _split_field_ops  # noqa: E402
-from mysql_store import apply_update, match_query  # noqa: E402
+from mysql_store import apply_update, match_query, new_upsert_doc  # noqa: E402
 
 CO_A = "co_a"
 CO_B = "co_b"
@@ -140,6 +140,29 @@ def _user(company_id):
 
 
 class _Coll(MemColl):
+    async def update_one(self, query, update, upsert=False):
+        result = await super().update_one(query, update, upsert=False)
+        if result.matched_count or not upsert:
+            return result
+        doc = new_upsert_doc(update, query)
+        self.docs.append(doc)
+        return SimpleNamespace(modified_count=0, matched_count=0, upserted_id=doc.get("_id"))
+
+    async def find_one_and_update(self, query, update, upsert=False, return_document=True, projection=None):
+        tenant_scope.check(self.name, "find_one_and_update", query=query, update=update, upsert=upsert)
+        query = _split_field_ops(query or {})
+        for i, doc in enumerate(self.docs):
+            if match_query(doc, query):
+                before = copy.deepcopy(doc)
+                self.docs[i] = apply_update(doc, update, query)
+                found = self.docs[i] if return_document else before
+                return copy.deepcopy(found)
+        if not upsert:
+            return None
+        doc = new_upsert_doc(update, query)
+        self.docs.append(doc)
+        return copy.deepcopy(doc) if return_document else None
+
     async def delete_one(self, query=None):
         tenant_scope.check(self.name, "delete_one", query=query)
         query = _split_field_ops(query or {})

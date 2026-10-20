@@ -45,15 +45,42 @@ class FakeCollection:
     async def insert_one(self, doc):
         self.docs.append(doc)
 
-    async def update_one(self, q, upd):
-        d = next((x for x in self.docs if self._match(x, q)), None)
-        if not d:
-            return
+    def _apply(self, d, upd):
         if "$set" in upd:
             d.update(upd["$set"])
         if "$inc" in upd:
             for k, v in upd["$inc"].items():
                 d[k] = (d.get(k) or 0) + v
+
+    def _insert_update(self, q, upd):
+        doc = {}
+        for k, v in (q or {}).items():
+            if not str(k).startswith("$") and not isinstance(v, dict):
+                doc[k] = v
+        for k, v in (upd.get("$setOnInsert") or {}).items():
+            doc[k] = v
+        self._apply(doc, upd)
+        self.docs.append(doc)
+        return doc
+
+    async def update_one(self, q, upd, upsert=False):
+        d = next((x for x in self.docs if self._match(x, q)), None)
+        if d:
+            self._apply(d, upd)
+            return
+        if upsert:
+            self._insert_update(q, upd)
+
+    async def find_one_and_update(self, q, upd, upsert=False, return_document=True, projection=None):
+        d = next((x for x in self.docs if self._match(x, q)), None)
+        if d is None:
+            if not upsert:
+                return None
+            d = self._insert_update(q, upd)
+            return dict(d)
+        before = dict(d)
+        self._apply(d, upd)
+        return dict(d if return_document else before)
 
     async def delete_one(self, q):
         self.docs[:] = [d for d in self.docs if not self._match(d, q)]
@@ -76,6 +103,7 @@ class FakeDb:
         self.expense_budgets = FakeCollection()
         self.contacts = FakeCollection()
         self.employees = FakeCollection()
+        self.counters = FakeCollection()
 
     def __getitem__(self, name):
         return getattr(self, name)

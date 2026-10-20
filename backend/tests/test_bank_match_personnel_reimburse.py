@@ -90,6 +90,20 @@ class MemColl:
             return SimpleNamespace(modified_count=0, matched_count=0, upserted_id=self.docs[-1].get("_id"))
         return SimpleNamespace(modified_count=0, matched_count=0)
 
+    async def find_one_and_update(self, query, update, upsert=False, return_document=True, projection=None):
+        for i, doc in enumerate(self.docs):
+            if not match_query(doc, query or {}):
+                continue
+            before = copy.deepcopy(doc)
+            self.docs[i] = apply_update(doc, update, query)
+            found = self.docs[i] if return_document else before
+            return copy.deepcopy(found)
+        if not upsert:
+            return None
+        created = new_upsert_doc(update, query)
+        self.docs.append(created)
+        return copy.deepcopy(created) if return_document else None
+
     async def update_one_atomic(self, query, update, upsert=False):
         return await self.update_one(query, update, upsert=upsert)
 

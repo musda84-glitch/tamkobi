@@ -115,10 +115,53 @@ def _calc(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"amount": amount, "vat_rate": vat_rate, "vat_amount": vat_amount, "total": round(amount + vat_amount, 2)}
 
 
-async def _next_number(company_id: str) -> str:
+def _msr_seq(number: Any, year: str) -> Optional[int]:
+    """MSR-YYYY-NNNN sonekini sayıya çevirir. D001 gibi sayısal olmayan sonekler yok sayılır."""
+    prefix = f"MSR-{year}-"
+    text = str(number or "")
+    if not text.startswith(prefix):
+        return None
+    suffix = text[len(prefix):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+async def _max_msr_seq(db, company_id: str, year: str) -> int:
+    prefix = f"MSR-{year}-"
+    best = 0
+    cursor = db.expenses.find(
+        {"company_id": company_id, "expense_number": {"$regex": f"^{prefix}"}},
+        {"expense_number": 1},
+    )
+    rows = await cursor.to_list(None) if hasattr(cursor, "to_list") else list(cursor)
+    for row in rows or []:
+        seq = _msr_seq((row or {}).get("expense_number"), year)
+        if seq is not None and seq > best:
+            best = seq
+    return best
+
+
+async def next_msr_number(db, company_id: str) -> str:
+    """Atomik MSR sayacı. Silinen kayıt ve eşzamanlı istek aynı numarayı vermez.
+
+    Anahtar MSR-{yıl}-{company_id}. İlk çağrı o yılın sayısal en büyük
+    MSR-YYYY-NNNN değerinden tohumlanır; sonraki çağrılar $inc ile ilerler.
+    """
     year = datetime.now(timezone.utc).strftime("%Y")
-    n = await _db.expenses.count_documents({"company_id": company_id, "expense_number": {"$regex": f"^MSR-{year}"}}) + 1
-    return f"MSR-{year}-{n:04d}"
+    key = f"MSR-{year}-{company_id}"
+    if not await db.counters.find_one({"_id": key}):
+        seed = await _max_msr_seq(db, company_id, year)
+        await db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+    doc = await db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = int((doc or {}).get("seq") or 1)
+    return f"MSR-{year}-{seq:04d}"
+
+
+async def _next_number(company_id: str) -> str:
+    return await next_msr_number(_db, company_id)
 
 
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
