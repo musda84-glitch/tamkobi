@@ -311,8 +311,57 @@ async def impersonate_exit(request: Request, response: Response):
     }
 
 
+def _abn_seq(number: Any, year: int) -> Optional[int]:
+    """ABN{yıl}NNNNNN sonekini sayıya çevirir. Desen dışındaki numaraları yok sayar."""
+    prefix = f"ABN{year}"
+    text = str(number or "")
+    if len(text) != len(prefix) + 6 or not text.startswith(prefix):
+        return None
+    suffix = text[len(prefix):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+async def _max_abn_seq(platform_cid: str, year: int) -> int:
+    pattern = f"^ABN{year}\\d{{6}}$"
+    best = 0
+    cursor = _db.invoices.find(
+        {"company_id": platform_cid, "invoice_number": {"$regex": pattern}},
+        {"invoice_number": 1},
+    )
+    rows = await cursor.to_list(None) if hasattr(cursor, "to_list") else list(cursor)
+    for row in rows or []:
+        seq = _abn_seq((row or {}).get("invoice_number"), year)
+        if seq is not None and seq > best:
+            best = seq
+    return best
+
+
+async def _next_subscription_invoice_number(platform_cid: str) -> str:
+    """Atomik abonelik fatura numarası. Eşzamanlı ödeme bildirimi aynı numarayı almaz.
+
+    Anahtar ABN-{yıl}-{platform_cid}. İlk çağrı o yılın ^ABN{yıl}\\d{6}$
+    numaralarının sayısal en büyüğünden tohumlanır; sonraki çağrılar $inc ile ilerler.
+    """
+    year = datetime.now(timezone.utc).year
+    key = f"ABN-{year}-{platform_cid}"
+    if not await _db.counters.find_one({"_id": key}):
+        seed = await _max_abn_seq(platform_cid, year)
+        await _db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+    doc = await _db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = int((doc or {}).get("seq") or 1)
+    return f"ABN{year}{seq:06d}"
+
+
 # ---------------- Otomatik e-Arşiv fatura ----------------
 async def issue_subscription_invoice(tx: dict) -> Optional[str]:
+    if tx.get("_id"):
+        stored = await _db.payment_transactions.find_one({"_id": tx["_id"]})
+        if stored and stored.get("invoice_id"):
+            return stored["invoice_id"]
     st = await saas_billing.settings()
     platform_cid = st["sender_company_id"]
     customer = await _db.companies.find_one({"_id": tx["company_id"]}) or {}
@@ -324,9 +373,8 @@ async def issue_subscription_invoice(tx: dict) -> Optional[str]:
         await _db.contacts.insert_one(contact)
     gross = round(float(tx["amount"]), 2); net = round(gross / 1.20, 2); vat = round(gross - net, 2)
     period_label = "Yıllık" if tx["period"] == "yearly" else "Aylık"
-    year = datetime.now(timezone.utc).year
-    seq = await _db.invoices.count_documents({"company_id": platform_cid, "source": "subscription"}) + 1
-    inv = {"_id": str(uuid.uuid4()), "company_id": platform_cid, "invoice_number": f"ABN{year}{seq:06d}", "invoice_type": "sales", "e_type": "e_archive", "contact_id": contact["_id"], "contact_name": contact["name"], "contact_tax_id": contact.get("tax_number_or_id"), "issue_date": _now()[:10], "due_date": _now()[:10],
+    invoice_number = await _next_subscription_invoice_number(platform_cid)
+    inv = {"_id": str(uuid.uuid4()), "company_id": platform_cid, "invoice_number": invoice_number, "invoice_type": "sales", "e_type": "e_archive", "contact_id": contact["_id"], "contact_name": contact["name"], "contact_tax_id": contact.get("tax_number_or_id"), "issue_date": _now()[:10], "due_date": _now()[:10],
            "items": [{"product_id": "", "name": f"{st.get('brand_name', 'TamKobi')} {tx['plan_name']} Paketi – {period_label} Abonelik", "quantity": 1, "unit": "Adet", "unit_price": net, "vat_rate": 20, "discount_rate": 0, "total": net, "vat_amount": vat}],
            "subtotal": net, "vat_total": vat, "discount_total": 0.0, "grand_total": gross, "currency": "TRY", "status": "approved", "gib_status": "Başarıyla İletildi (GİB Onaylı)", "gib_tracking_id": f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}", "payment_status": "paid", "paid_amount": gross,
            "notes": f"Online ödeme ({tx.get('provider', 'stripe')}) · Referans {tx.get('session_id') or tx.get('merchant_oid')}", "source": "subscription", "payment_tx_id": tx["_id"], "subscriber_company_id": tx["company_id"], "created_at": _now()}
