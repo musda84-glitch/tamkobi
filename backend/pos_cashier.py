@@ -400,7 +400,6 @@ async def _write_event(
     name = _uname(user)
     doc = {
         "_id": str(uuid.uuid4()),
-        "company_id": company_id,
         "kind": kind,
         "kind_label": KIND_LABELS.get(kind, kind),
         "summary": summary,
@@ -410,6 +409,7 @@ async def _write_event(
         "cashier_name": (cashier or {}).get("name") or (extra or {}).get("cashier_name"),
         "created_at": _now(),
         **(extra or {}),
+        "company_id": company_id,
     }
     await _db.pos_events.insert_one(doc)
     await _db.activity_logs.insert_one({
@@ -443,7 +443,12 @@ async def require_session(company_id: str, terminal_id: str, *, allow_locked: bo
         raise HTTPException(status_code=403, detail="Kasiyer girişi gerekli.")
     company = await _company(company_id)
     if not allow_locked and session_is_idle(sess, timeout_sec=idle_timeout_sec(company)):
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"locked": True, "updated_at": _now()}})
+        cid = str(sess.get("company_id") or company_id or "")
+        if cid:
+            await _db.pos_sessions.update_one(
+                {"_id": sess["_id"], "company_id": cid},
+                {"$set": {"locked": True, "updated_at": _now()}},
+            )
         raise HTTPException(status_code=423, detail="Ekran kilitlendi. PIN ile açın.")
     if sess.get("locked") and not allow_locked:
         raise HTTPException(status_code=423, detail="Ekran kilitlendi. PIN ile açın.")
@@ -666,17 +671,26 @@ async def queue_approval(
 
 async def _apply_payload(company_id: str, sess: dict, kind: str, payload: dict) -> dict:
     """Onaylanan eylemi uygula. Sepet değişikliği oturuma yazılır."""
+    cid = str((sess or {}).get("company_id") or company_id or "")
     cart = cart_snapshot(sess.get("cart"))
     items = list(cart.get("items") or [])
     if kind == "delete_line":
         lid = str(payload.get("line_id") or "")
         items = [x for x in items if str(x.get("id")) != lid]
         cart["items"] = items
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": cart, "updated_at": _now()}})
+        if cid:
+            await _db.pos_sessions.update_one(
+                {"_id": sess["_id"], "company_id": cid},
+                {"$set": {"cart": cart, "updated_at": _now()}},
+            )
         return {"cart": cart}
     if kind == "cancel_cart":
         cart = empty_cart(cart.get("customer_name"))
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": cart, "updated_at": _now()}})
+        if cid:
+            await _db.pos_sessions.update_one(
+                {"_id": sess["_id"], "company_id": cid},
+                {"$set": {"cart": cart, "updated_at": _now()}},
+            )
         return {"cart": cart}
     if kind == "price_change":
         lid = str(payload.get("line_id") or "")
@@ -687,7 +701,11 @@ async def _apply_payload(company_id: str, sess: dict, kind: str, payload: dict) 
                 if payload.get("discount_pct") is not None:
                     it["discount_pct"] = float(payload.get("discount_pct") or 0)
         cart["items"] = items
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": cart, "updated_at": _now()}})
+        if cid:
+            await _db.pos_sessions.update_one(
+                {"_id": sess["_id"], "company_id": cid},
+                {"$set": {"cart": cart, "updated_at": _now()}},
+            )
         return {"cart": cart}
     if kind == "discount":
         lid = str(payload.get("line_id") or "")
@@ -699,14 +717,19 @@ async def _apply_payload(company_id: str, sess: dict, kind: str, payload: dict) 
                 if cat > 0:
                     it["unit_price"] = round(cat * (1 - pct / 100.0), 4)
         cart["items"] = items
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": cart, "updated_at": _now()}})
+        if cid:
+            await _db.pos_sessions.update_one(
+                {"_id": sess["_id"], "company_id": cid},
+                {"$set": {"cart": cart, "updated_at": _now()}},
+            )
         return {"cart": cart}
     if kind == "exit":
         now = _now()
-        await _db.pos_sessions.update_one(
-            {"_id": sess["_id"]},
-            {"$set": {"exit_granted": True, "locked": True, "ended_at": now, "updated_at": now}},
-        )
+        if cid:
+            await _db.pos_sessions.update_one(
+                {"_id": sess["_id"], "company_id": cid},
+                {"$set": {"exit_granted": True, "locked": True, "ended_at": now, "updated_at": now}},
+            )
         return {"exit_granted": True, "ended": True}
     if kind == "open_drawer":
         return {"drawer": "opened"}
@@ -736,10 +759,12 @@ async def _apply_payload(company_id: str, sess: dict, kind: str, payload: dict) 
 
 async def _restore_snapshot(sess: dict, snapshot: Optional[dict]):
     cart = restore_cart_from_snapshot(snapshot)
-    await _db.pos_sessions.update_one(
-        {"_id": sess["_id"]},
-        {"$set": {"cart": cart, "exit_granted": False, "updated_at": _now()}},
-    )
+    cid = str((sess or {}).get("company_id") or "")
+    if cid:
+        await _db.pos_sessions.update_one(
+            {"_id": sess["_id"], "company_id": cid},
+            {"$set": {"cart": cart, "exit_granted": False, "updated_at": _now()}},
+        )
     return cart
 
 
@@ -782,11 +807,11 @@ async def decide_approval(
             raise HTTPException(status_code=403, detail="POS onayı için yetkiniz yok.")
         actor = user
         via = "remote"
-    sess = await _db.pos_sessions.find_one({"_id": doc.get("session_id")}) or {}
+    sess = await _db.pos_sessions.find_one({"_id": doc.get("session_id"), "company_id": company_id}) or {}
     result = {"status": "rejected"}
     if approve:
         result = await _apply_payload(company_id, sess or doc, doc.get("kind"), doc.get("payload") or {})
-        await _db.pos_approvals.update_one({"_id": req_id}, {"$set": {
+        await _db.pos_approvals.update_one({"_id": req_id, "company_id": company_id}, {"$set": {
             "status": "approved",
             "applied": True,
             "decided_at": _now(),
@@ -806,7 +831,7 @@ async def decide_approval(
 
     if sess:
         await _restore_snapshot(sess, doc.get("snapshot"))
-    await _db.pos_approvals.update_one({"_id": req_id}, {"$set": {
+    await _db.pos_approvals.update_one({"_id": req_id, "company_id": company_id}, {"$set": {
         "status": "rejected",
         "applied": False,
         "decided_at": _now(),
@@ -880,7 +905,13 @@ async def consume_kind_approval(company_id: str, session: dict, kind: str) -> bo
     })
     if not doc:
         return False
-    await _db.pos_approvals.update_one({"_id": doc["_id"]}, {"$set": {"consumed": True, "consumed_at": _now()}})
+    cid = str(doc.get("company_id") or "")
+    if not cid or cid != str(company_id or ""):
+        return False
+    await _db.pos_approvals.update_one(
+        {"_id": doc["_id"], "company_id": cid},
+        {"$set": {"consumed": True, "consumed_at": _now()}},
+    )
     return True
 
 
@@ -914,7 +945,7 @@ async def preflight_checkout(user: dict, req: dict) -> dict:
     price_issues = []
     for raw in items_in:
         pid = raw.get("product_id")
-        product = await _db.products.find_one({"_id": pid}) if pid else None
+        product = await _db.products.find_one({"_id": pid, "company_id": company_id}) if pid else None
         if not product:
             continue
         qty = float(raw.get("quantity") or 0)
@@ -984,6 +1015,7 @@ async def preflight_return(user: dict, req: dict) -> dict:
 
 async def on_checkout_done(user: dict, invoice: dict, meta: dict):
     company_id = invoice.get("company_id")
+    cid = str(company_id or "")
     await _write_event(
         company_id,
         kind="sale",
@@ -1000,12 +1032,12 @@ async def on_checkout_done(user: dict, invoice: dict, meta: dict):
         },
     )
     sess = meta.get("session")
-    if sess:
+    if sess and cid:
         await _db.pos_sessions.update_one(
-            {"_id": sess["_id"]},
+            {"_id": sess["_id"], "company_id": cid},
             {"$set": {"cart": empty_cart(), "last_activity": _now(), "updated_at": _now()}},
         )
-    if meta.get("shift_id"):
+    if meta.get("shift_id") and cid:
         inc = {}
         pay = str(meta.get("payment_method") or "")
         grand = float(invoice.get("grand_total") or 0)
@@ -1022,11 +1054,15 @@ async def on_checkout_done(user: dict, invoice: dict, meta: dict):
             inc["sales_cash"] = grand
         inc["sales_count"] = 1
         if inc:
-            await _db.pos_shifts.update_one({"_id": meta["shift_id"]}, {"$inc": inc, "$set": {"updated_at": _now()}})
+            await _db.pos_shifts.update_one(
+                {"_id": meta["shift_id"], "company_id": cid},
+                {"$inc": inc, "$set": {"updated_at": _now()}},
+            )
 
 
 async def on_return_done(user: dict, original: dict, return_inv: dict, meta: dict):
     company_id = original.get("company_id")
+    cid = str(company_id or "")
     await _write_event(
         company_id,
         kind="refund",
@@ -1041,10 +1077,10 @@ async def on_return_done(user: dict, original: dict, return_inv: dict, meta: dic
             "cashier_name": meta.get("cashier_name"),
         },
     )
-    if meta.get("shift_id") or (meta.get("session") or {}).get("shift_id"):
+    if cid and (meta.get("shift_id") or (meta.get("session") or {}).get("shift_id")):
         sid = meta.get("shift_id") or (meta.get("session") or {}).get("shift_id")
         await _db.pos_shifts.update_one(
-            {"_id": sid},
+            {"_id": sid, "company_id": cid},
             {"$inc": {"refunds_amount": float(original.get("grand_total") or 0), "refunds_count": 1}, "$set": {"updated_at": _now()}},
         )
 
@@ -1164,7 +1200,13 @@ async def put_pos_rules(req: Dict[str, Any], user: dict = Depends(_user_dep)):
         if not role:
             continue
         rules = normalize_pos_rules(item.get("pos_rules") or item, role.get("code") or "")
-        await _db.roles.update_one({"_id": role["_id"]}, {"$set": {"pos_rules": rules, "updated_at": _now()}})
+        role_cid = str(role.get("company_id") or "")
+        if not role_cid or role_cid != str(cid):
+            continue
+        await _db.roles.update_one(
+            {"_id": role["_id"], "company_id": role_cid},
+            {"$set": {"pos_rules": rules, "updated_at": _now()}},
+        )
         saved.append({"id": str(role["_id"]), "code": role.get("code"), "pos_rules": rules})
     return {"status": "success", "roles": saved, "idle_timeout_sec": idle_timeout_sec(await _company(cid))}
 
@@ -1217,8 +1259,9 @@ async def get_session(company_id: Optional[str] = None, terminal_id: Optional[st
     company = await _company(cid)
     sess = await _session_by_terminal(cid, tid) if tid else None
     pending = await _db.pos_approvals.find({
-        "company_id": cid, "status": "pending",
+        "status": "pending",
         **({"terminal_id": tid} if tid else {}),
+        "company_id": cid,
     }).sort("created_at", -1).to_list(50)
     held = []
     if sess and sess.get("cashier_user_id"):
@@ -1227,10 +1270,13 @@ async def get_session(company_id: Optional[str] = None, terminal_id: Optional[st
         }).sort("held_at", -1).to_list(40)
     shift = None
     if sess and sess.get("shift_id"):
-        shift = await _db.pos_shifts.find_one({"_id": sess["shift_id"]})
+        shift = await _db.pos_shifts.find_one({"_id": sess["shift_id"], "company_id": str(sess.get("company_id") or cid)})
     pubs = public_session(sess, company=company) if sess else None
     if pubs and session_is_idle(sess, timeout_sec=idle_timeout_sec(company)) and not sess.get("locked"):
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"locked": True, "updated_at": _now()}})
+        await _db.pos_sessions.update_one(
+            {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+            {"$set": {"locked": True, "updated_at": _now()}},
+        )
         pubs["locked"] = True
         pubs["refresh_lock"] = True
     return {
@@ -1301,7 +1347,10 @@ async def _open_cashier_session(req: Dict[str, Any], user: dict, request: Option
         "ended_at": None,
     }
     if existing:
-        await _db.pos_sessions.update_one({"_id": sess_id}, {"$set": {k: v for k, v in doc.items() if k != "_id"}})
+        await _db.pos_sessions.update_one(
+            {"_id": sess_id, "company_id": cid},
+            {"$set": {k: v for k, v in doc.items() if k != "_id"}},
+        )
     else:
         await _db.pos_sessions.insert_one(doc)
     await _write_event(cid, kind="cashier_login", summary=f"Kasiyer giriş: {doc['cashier_name']}", user=user, extra={"cashier_user_id": doc["cashier_user_id"]})
@@ -1320,7 +1369,10 @@ async def session_lock(req: Dict[str, Any], user: dict = Depends(_user_dep), req
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     tid = _terminal_of(req, request)
     sess = await require_session(cid, tid, allow_locked=True)
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"locked": True, "updated_at": _now()}})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"locked": True, "updated_at": _now()}},
+    )
     return {"status": "locked"}
 
 
@@ -1343,7 +1395,10 @@ async def session_unlock(req: Dict[str, Any], user: dict = Depends(_user_dep), r
         raise
     await _clear_pin_attempt(ident)
     now = _now()
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"locked": False, "last_activity": now, "updated_at": now}})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"locked": False, "last_activity": now, "updated_at": now}},
+    )
     sess["locked"] = False
     sess["last_activity"] = now
     return {"status": "unlocked", "session": public_session(sess, company=await _company(cid))}
@@ -1357,7 +1412,10 @@ async def session_ping(req: Dict[str, Any], user: dict = Depends(_user_dep), req
     if sess.get("locked"):
         return {"status": "locked", "session": public_session(sess, company=await _company(cid))}
     now = _now()
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"last_activity": now, "updated_at": now}})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"last_activity": now, "updated_at": now}},
+    )
     sess["last_activity"] = now
     return {"status": "ok", "session": public_session(sess, company=await _company(cid))}
 
@@ -1390,7 +1448,7 @@ async def session_exit(req: Dict[str, Any], user: dict = Depends(_user_dep), req
         if gated and gated.get("status") != "approved":
             return gated
     now = _now()
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {
+    await _db.pos_sessions.update_one({"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)}, {"$set": {
         "exit_granted": True, "locked": True, "ended_at": now, "updated_at": now,
     }})
     await _write_event(cid, kind="exit", summary=f"Çıkış: {sess.get('cashier_name')}", user=user)
@@ -1460,7 +1518,10 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
             if gated.get("status") == "approved":
                 return {"status": "success", "cart": empty_cart(incoming.get("customer_name")), **gated}
             return gated
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": incoming, "last_activity": _now()}})
+        await _db.pos_sessions.update_one(
+            {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+            {"$set": {"cart": incoming, "last_activity": _now()}},
+        )
         await _write_event(cid, kind="cancel_cart", summary="Sepet iptal edildi", user=user, extra={"cashier_user_id": sess.get("cashier_user_id")})
         return {"status": "success", "cart": incoming}
 
@@ -1478,7 +1539,7 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
         if not old:
             continue
         if abs(float(nit.get("unit_price") or 0) - float(old.get("unit_price") or 0)) > 0.0001:
-            product = await _db.products.find_one({"_id": nit.get("product_id")}) or {}
+            product = await _db.products.find_one({"_id": nit.get("product_id"), "company_id": cid}) or {}
             cat = catalog_unit_price(product) or float(old.get("unit_price") or 0)
             extra = {"catalog_price": cat, "unit_price": float(nit.get("unit_price") or 0)}
             kind = "discount" if float(nit.get("unit_price") or 0) < cat else "price_change"
@@ -1491,7 +1552,10 @@ async def put_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), request
             if gated:
                 return gated
 
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": incoming, "last_activity": _now(), "updated_at": _now()}})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"cart": incoming, "last_activity": _now(), "updated_at": _now()}},
+    )
     return {"status": "success", "cart": incoming}
 
 
@@ -1515,7 +1579,10 @@ async def hold_cart(req: Dict[str, Any], user: dict = Depends(_user_dep), reques
     }
     await _db.pos_held_carts.insert_one(doc)
     empty = empty_cart(cart.get("customer_name"))
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": empty, "updated_at": _now()}})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"cart": empty, "updated_at": _now()}},
+    )
     return {"status": "success", "hold": public_hold(doc), "cart": empty}
 
 
@@ -1538,8 +1605,11 @@ async def resume_hold(req: Dict[str, Any], user: dict = Depends(_user_dep), requ
             "cart": current,
             "held_at": _now(),
         })
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"cart": cart_snapshot(hold.get("cart")), "updated_at": _now()}})
-    await _db.pos_held_carts.delete_one({"_id": hold["_id"]})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"cart": cart_snapshot(hold.get("cart")), "updated_at": _now()}},
+    )
+    await _db.pos_held_carts.delete_one({"_id": hold["_id"], "company_id": str(hold.get("company_id") or cid)})
     return {"status": "success", "cart": cart_snapshot(hold.get("cart"))}
 
 
@@ -1646,7 +1716,10 @@ async def open_shift(req: Dict[str, Any], user: dict = Depends(_user_dep), reque
         "company_id": cid, "cashier_user_id": sess.get("cashier_user_id"), "status": "open",
     })
     if existing:
-        await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"shift_id": existing["_id"]}})
+        await _db.pos_sessions.update_one(
+            {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+            {"$set": {"shift_id": existing["_id"]}},
+        )
         return {"status": "already_open", "shift": public_shift(existing)}
     opening = round(float(req.get("opening_cash") or 0), 2)
     doc = {
@@ -1667,7 +1740,10 @@ async def open_shift(req: Dict[str, Any], user: dict = Depends(_user_dep), reque
         "created_at": _now(),
     }
     await _db.pos_shifts.insert_one(doc)
-    await _db.pos_sessions.update_one({"_id": sess["_id"]}, {"$set": {"shift_id": doc["_id"], "updated_at": _now()}})
+    await _db.pos_sessions.update_one(
+        {"_id": sess["_id"], "company_id": str(sess.get("company_id") or cid)},
+        {"$set": {"shift_id": doc["_id"], "updated_at": _now()}},
+    )
     await _write_event(cid, kind="shift_open", summary=f"Kasa açılış {opening:.2f} ₺ · {sess.get('cashier_name')}", user=user)
     return {"status": "success", "shift": public_shift(doc)}
 
@@ -1685,7 +1761,8 @@ async def close_shift(shift_id: str, req: Dict[str, Any], user: dict = Depends(_
     cash_diff = round(counted_cash - expected_cash, 2)
     card_diff = round(counted_card - expected_card, 2)
     now = _now()
-    await _db.pos_shifts.update_one({"_id": shift_id}, {"$set": {
+    cid = shift["company_id"]
+    await _db.pos_shifts.update_one({"_id": shift_id, "company_id": cid}, {"$set": {
         "status": "closed",
         "closed_at": now,
         "counted_cash": counted_cash,
@@ -1697,7 +1774,7 @@ async def close_shift(shift_id: str, req: Dict[str, Any], user: dict = Depends(_
         "notes": req.get("notes") or "",
         "updated_at": now,
     }})
-    closed = await _db.pos_shifts.find_one({"_id": shift_id})
+    closed = await _db.pos_shifts.find_one({"_id": shift_id, "company_id": cid})
     await _write_event(
         shift["company_id"], kind="shift_close",
         summary=f"Kasa kapanış fark nakit {cash_diff:.2f} ₺ · kart {card_diff:.2f} ₺",
@@ -1746,5 +1823,8 @@ async def cancel_sale(req: Dict[str, Any], user: dict = Depends(_user_dep), requ
     result = await fn(payload)
     await _write_event(cid, kind="cancel_sale", summary=payload.get("invoice_number") or "Satış iptal", user=user, extra={"invoice_id": payload.get("invoice_id")})
     if sess.get("shift_id"):
-        await _db.pos_shifts.update_one({"_id": sess["shift_id"]}, {"$inc": {"cancels_count": 1}})
+        await _db.pos_shifts.update_one(
+            {"_id": sess["shift_id"], "company_id": str(sess.get("company_id") or cid)},
+            {"$inc": {"cancels_count": 1}},
+        )
     return result
