@@ -19,6 +19,8 @@ from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Body, Depends, HTTPException, Request, Response, status, UploadFile, File, Query, Form
 from fastapi.responses import JSONResponse
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -93,6 +95,7 @@ from auth_utils import (
 import superadmin_2fa
 import google_auth
 import tenant_access
+import shopfloor_accounts
 from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
@@ -505,6 +508,35 @@ async def _bank_tx_actor_middleware(request: Request, call_next):
         return await call_next(request)
     finally:
         bank_tx.reset_current_actor(tok)
+
+
+class _ShopfloorAccountGuard(BaseHTTPMiddleware):
+    """Atölye hesabı yalnız atölye uçlarına girer. Diğer oturumlar bu kapıdan geçer.
+
+    user_middleware sonuna eklenir; böylece 403, CORS katmanının içinden döner.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path or ""
+        if not path.startswith("/api") or request.method == "OPTIONS":
+            return await call_next(request)
+        has_auth = bool(request.headers.get("Authorization") or request.cookies.get("access_token"))
+        if not has_auth:
+            return await call_next(request)
+        try:
+            user = await get_current_user(request)
+        except Exception:
+            return await call_next(request)
+        if not shopfloor_accounts.is_atolye_user(user):
+            return await call_next(request)
+        if shopfloor_accounts.atolye_path_allowed(request.method, path):
+            return await call_next(request)
+        shopfloor_accounts.log_denied(user)
+        return JSONResponse(status_code=403, content={"detail": shopfloor_accounts.PATH_DENIED})
+
+
+# add_middleware başa ekler ve bu kapıyı CORS'un dışına alırdı. Son sıra 403'e ACAO yazar.
+app.user_middleware.append(Middleware(_ShopfloorAccountGuard))
 
 
 # ----------------- AUTH ENDPOINTS -----------------
@@ -978,6 +1010,9 @@ async def auth_2fa_setup_confirm(req: TwoFASetupConfirmRequest, user: dict = Dep
 async def update_my_profile(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Kullanıcı kendi Ad Soyad ve Telefonunu günceller."""
     import phone_norm as _phone_norm
+    # Atölye tipi yalnız şirket admininin PUT /users/{id}/shopfloor-account ucundan değişir.
+    req.pop("account_type", None)
+    req.pop("shopfloor_stations", None)
     uid = str(user.get("_id") or user.get("id") or "")
     if not uid:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
@@ -3844,6 +3879,8 @@ async def get_me(request: Request):
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
             "phone": user.get("phone") or "",
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
+            "account_type": shopfloor_accounts.public_account_type(user),
+            "shopfloor_stations": shopfloor_accounts.public_stations(user),
         },
         "authenticated": True,
         "impersonation": await saas_extras.impersonation_info(request),
@@ -20493,6 +20530,8 @@ async def work_order_performance(company_id: Optional[str] = None, date_from: Op
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     df, dt = date_from or today, date_to or today
     rows = await db.work_orders.find({"company_id": cid, "status": "done", "finished_at": {"$gte": df, "$lte": dt + "T23:59:59"}}).to_list(5000)
+    if shopfloor_accounts.is_atolye_user(user):
+        rows = shopfloor_accounts.filter_work_orders_for_user(user, rows)
     per: Dict[str, Dict[str, Any]] = {}
     per_station: Dict[str, Dict[str, Any]] = {}
     for w in rows:
@@ -22694,7 +22733,15 @@ async def list_work_orders(
     q: Dict[str, Any] = {"company_id": cid}
     if status:
         q["status"] = {"$in": status.split(",")}
-    if station:
+    atolye_user = shopfloor_accounts.is_atolye_user(user)
+    if station and atolye_user and not shopfloor_accounts.station_allowed(user, station):
+        shopfloor_accounts.log_denied(user)
+        raise HTTPException(status_code=403, detail=shopfloor_accounts.STATION_DENIED)
+    if atolye_user:
+        # 1000 satır sınırı başka istasyonları saymasın. Kanonik ad $in ile gider;
+        # station_key süzmesi aşağıdaki güvenlik ağı olarak durur.
+        q["station"] = {"$in": shopfloor_accounts.station_query_values(user, station)}
+    elif station:
         q["station"] = station
     if assigned_to:
         q["assigned_to"] = assigned_to
@@ -22704,6 +22751,12 @@ async def list_work_orders(
     # İptal / silinmiş üretim emirlerine ait iş emirlerini atölyeden gizle
     rows = await _filter_active_production_work_orders(rows)
     await _enrich_work_orders_job_fields(rows)
+    if atolye_user:
+        rows = shopfloor_accounts.filter_work_orders_for_user(user, rows)
+        if station:
+            import shopfloor_operators as _sfo_list
+            want = _sfo_list.station_key(station)
+            rows = [r for r in rows if _sfo_list.station_key(r.get("station")) == want]
     if not station:
         company = await db.companies.find_one({"_id": cid}, {"shopfloor_group_same_station": 1}) or {}
         if company.get("shopfloor_group_same_station"):
@@ -22743,7 +22796,10 @@ async def list_stations(company_id: Optional[str] = None, user: dict = Depends(g
     cid = tenant_access.resolve_company_id(user, company_id)
     company = await db.companies.find_one({"_id": cid}) or {}
     wo = [s for s in await db.work_orders.distinct("station", {"company_id": cid}) if s]
-    return wp.station_names_from_parks(company.get("work_parks"), wo)
+    names = wp.station_names_from_parks(company.get("work_parks"), wo)
+    if shopfloor_accounts.is_atolye_user(user):
+        names = shopfloor_accounts.filter_station_names(user, names)
+    return names
 
 async def _shopfloor_require_mesaim_check_in(emp: Dict[str, Any]) -> None:
     """Giriş yapmamış personel atölyede operatör olamaz."""
@@ -22828,6 +22884,7 @@ async def _apply_shopfloor_station_grouping(company_id: str, enabled: bool) -> i
 @api_router.post("/production/work-orders/shopfloor-settings")
 async def put_shopfloor_settings(req: Dict[str, Any] = None, user: Any = Depends(get_current_user)):
     """Atölye: aynı istasyonu peşi sıra işle — kalan adımları yeniden sıralar."""
+    shopfloor_accounts.enforce_not_atolye(user)
     req = req or {}
     company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
     c = await db.companies.find_one({"_id": company_id})
@@ -22874,6 +22931,7 @@ def _log(w: Dict[str, Any], action: str, who: Optional[str], extra: str = "") ->
 @api_router.put("/production/work-orders/{wo_id}/assign")
 async def assign_work_order(wo_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     w = await _wo(wo_id, user)
+    shopfloor_accounts.enforce_station(user, w.get("station"))
     await db.work_orders.update_one({"_id": wo_id}, {"$set": {"assigned_to": req.get("assigned_to"), "assigned_name": req.get("assigned_name")}, "$push": {"logs": _log(w, "assigned", req.get("assigned_name"))}})
     return {"status": "success"}
 
@@ -22881,6 +22939,7 @@ async def assign_work_order(wo_id: str, req: Dict[str, Any], user: dict = Depend
 async def start_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     req = req or {}
     w = await _wo(wo_id, user)
+    shopfloor_accounts.enforce_station(user, w.get("station"))
     # ready / waiting / paused — waiting: önceki adım bitmeden araya girilebilir
     if w["status"] not in ("ready", "waiting", "paused"):
         raise HTTPException(status_code=400, detail="Bu adım başlatılamaz (adım kapanmış veya zaten devam ediyor).")
@@ -22945,13 +23004,31 @@ async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] 
 async def get_pause_policy(company_id: Optional[str] = None, operator_name: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Atölye Duraklat: mesai / mola / fazla mesai penceresi."""
     cid = tenant_access.resolve_company_id(user, company_id)
-    return await _shopfloor_pause_policy(cid, operator_name)
+    policy = await _shopfloor_pause_policy(cid, operator_name)
+    if not shopfloor_accounts.is_atolye_user(user):
+        return policy
+    operator = str(operator_name or "").strip()
+    if not operator:
+        return policy
+    open_rows = await db.work_orders.find(
+        {
+            "company_id": cid,
+            "operator_name": operator,
+            "status": {"$in": ["in_progress", "paused"]},
+        },
+        {"station": 1},
+    ).to_list(50)
+    if open_rows and not shopfloor_accounts.filter_work_orders_for_user(user, open_rows):
+        shopfloor_accounts.log_denied(user)
+        raise HTTPException(status_code=403, detail=shopfloor_accounts.STATION_DENIED)
+    return policy
 
 
 @api_router.post("/production/work-orders/{wo_id}/pause")
 async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     req = req or {}
     w = await _wo(wo_id, user)
+    shopfloor_accounts.enforce_station(user, w.get("station"))
     if w["status"] != "in_progress":
         raise HTTPException(status_code=400, detail="Sadece devam eden adım duraklatılabilir.")
     who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
@@ -22974,6 +23051,7 @@ async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = 
 async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     req = req or {}
     w = await _wo(wo_id, user)
+    shopfloor_accounts.enforce_station(user, w.get("station"))
     # Mobil/web yarışı: zaten bitmişse 200 + güncel satır (idempotent)
     if w.get("status") == "done":
         return {
@@ -23156,6 +23234,7 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict =
 @api_router.post("/production/work-orders/trash-completed")
 async def trash_completed_work_orders(req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Atölye: tamamlanan iş emirlerini çöp kutusuna taşı (30 gün geri alınabilir)."""
+    shopfloor_accounts.enforce_not_atolye(user)
     req = req or {}
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     q: Dict[str, Any] = {"company_id": company_id, "status": "done"}
@@ -23241,6 +23320,7 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user:
     """Atölye: silme talebini yönetici onayına gönder (hemen silmez)."""
     req = req or {}
     w = await _wo(wo_id, user)
+    shopfloor_accounts.enforce_station(user, w.get("station"))
     if w.get("status") == "done":
         raise HTTPException(
             status_code=400,
@@ -23288,6 +23368,7 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user:
 @api_router.post("/production/work-orders/trash-requests/{req_id}/decide")
 async def decide_trash_work_order(req_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Yönetici: iş emri silme talebini onayla (çöpe taşı) veya reddet."""
+    shopfloor_accounts.enforce_not_atolye(user)
     req = req or {}
     role = str(user.get("role") or "")
     if not (user.get("is_super_admin") or role in ("admin", "owner", "manager", "accountant")):
@@ -23336,6 +23417,7 @@ async def decide_trash_work_order(req_id: str, req: Dict[str, Any] = None, user:
 @api_router.post("/production/work-orders/{wo_id}/admin-trash")
 async def admin_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Acil: yönetici şifresiyle anında çöpe taşı (onay kuyruğunu atlar)."""
+    shopfloor_accounts.enforce_not_atolye(user)
     req = req or {}
     w = await _wo(wo_id, user)
     company_id = str(w.get("company_id") or "").strip()
@@ -25974,6 +26056,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = None, user: dict 
 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
+shopfloor_accounts.init(db, get_current_user)
 company_audit.init(db, get_current_user)
 import tenant_db
 tenant_db.init(db, get_current_user)
@@ -26227,6 +26310,7 @@ app.include_router(company_events.router)
 app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)
+app.include_router(shopfloor_accounts.router)
 app.include_router(company_audit.router)
 app.include_router(pos_cashier.router)
 app.include_router(desktop_release.router)
