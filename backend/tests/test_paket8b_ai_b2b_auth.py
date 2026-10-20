@@ -56,7 +56,7 @@ INVOICE_KEYS = {"draft", "invoice_type", "source", "matched_contact", "file_url"
 RECEIPT_KEYS = {"draft", "source", "matched_contact", "filename", "text_preview"}
 CART_KEYS = {"filename", "items", "unmatched", "total_lines", "parse_mode"}
 LEARN_KEYS = {"saved", "count"}
-ADVICE_KEYS = {"advice", "metrics"}
+ADVICE_KEYS = {"advice", "metrics", "source", "fallback"}
 METRIC_KEYS = {
     "company_id", "company_name", "total_bank_balance", "total_receivables", "total_payables",
     "monthly_sales", "monthly_expenses", "pending_orders_count", "low_stock_count",
@@ -399,7 +399,7 @@ def api():
                 patch.object(server, "ai_service_extract_products", fake_products), \
                 patch.object(server, "extract_invoice_from_text", fake_invoice), \
                 patch.object(server, "extract_receipt_file", fake_receipt), \
-                patch.object(server, "get_financial_ai_advice", fake_advice), \
+                patch.object(server, "get_financial_ai_advice_result", fake_advice), \
                 patch.object(server, "ai_service_extract_b2b_cart", fake_cart), \
                 patch.object(server, "_file_to_text", fake_text), \
                 patch.object(server, "put_object", fake_put), \

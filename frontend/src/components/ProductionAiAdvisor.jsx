@@ -20,6 +20,7 @@ export function ProductionAiAdvisor({ companyId, compact = false }) {
   const [open, setOpen] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const [advice, setAdvice] = useState("");
+  const [aiSource, setAiSource] = useState("");
   const [metrics, setMetrics] = useState(null);
   const [q, setQ] = useState("");
 
@@ -36,6 +37,7 @@ export function ProductionAiAdvisor({ companyId, compact = false }) {
         res = await axios.post(`${API_URL}/ai/production-advisor`, { company_id: companyId, message: text }, { timeout: 120000 });
       }
       setAdvice(res.data?.advice || "");
+      setAiSource(res.data?.source || "");
       setMetrics(res.data?.metrics || null);
       setOpen(true);
       if (message) setQ("");
@@ -81,6 +83,9 @@ export function ProductionAiAdvisor({ companyId, compact = false }) {
                 <span key={l} className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-600"><b className="text-slate-900">{v ?? 0}</b> {l}</span>
               ))}
             </div>
+          )}
+          {(aiSource === "fallback" || aiSource === "config_error") && (
+            <p className="text-[10px] font-semibold text-amber-800" data-testid="production-ai-unavailable">AI şu an yanıt veremedi</p>
           )}
           {advice ? (
             <div className="text-xs text-slate-800 whitespace-pre-wrap bg-white border border-emerald-100 rounded-xl p-3 max-h-64 overflow-y-auto" data-testid="production-ai-advice"><AiMessageText text={advice} /></div>

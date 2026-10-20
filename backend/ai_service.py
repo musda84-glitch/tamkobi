@@ -420,8 +420,86 @@ async def make_chat(
     return LlmChat(api_key=key, session_id=session_id, system_message=system_message).with_model(vendor, model)
 
 
+_CONFIG_ERROR_MARKERS = (
+    "anahtar",
+    "kapatılmış",
+    "kapatilmis",
+    "uç nokta",
+    "uc nokta",
+    "model adı",
+    "model adi",
+)
+_ADVICE_SOURCES = ("ai", "fallback", "config_error")
+
+
+def _is_config_error(exc: BaseException) -> bool:
+    """Anahtar yok / AI kapalı / uç nokta eksik. Sağlayıcı geçici hatası değildir."""
+    if not isinstance(exc, RuntimeError):
+        return False
+    low = str(exc).lower()
+    return any(marker in low for marker in _CONFIG_ERROR_MARKERS)
+
+
+def _advice_failure(exc: BaseException, fallback_text: str) -> dict:
+    """İstisna tavsiye metnine karışmasın. Anahtar ve istem loglanmaz."""
+    message = str(exc)
+    if _is_config_error(exc):
+        logger.warning("AI advisor config error (%s)", type(exc).__name__)
+        return {"advice": message, "source": "config_error", "error": message}
+    logger.error("AI advisor fallback (%s)", type(exc).__name__)
+    return {"advice": fallback_text, "source": "fallback", "error": message}
+
+
+def advice_response_fields(result) -> tuple:
+    """Uç nokta için (advice, source). Eski str dönüşü gerçek yanıt sayılır."""
+    if isinstance(result, str):
+        return result, "ai"
+    if not isinstance(result, dict):
+        return result, "ai"
+    source = result.get("source") or "ai"
+    if source not in _ADVICE_SOURCES:
+        source = "ai"
+    return result.get("advice"), source
+
+
+def _fmt_amount(value) -> str:
+    try:
+        return f"{float(value or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
+
+def _fmt_count(value) -> str:
+    try:
+        return str(int(float(value or 0)))
+    except (TypeError, ValueError):
+        return "0"
+
+
+def _financial_fallback_advice(company_context: dict) -> str:
+    """Yalnızca bağlam sayaçları. Hüküm yok; son satır sağlayıcının yanıt vermediğini söyler."""
+    ctx = company_context or {}
+    return (
+        "**TamKobi AI Finans Özeti**\n"
+        "\n"
+        f"1. **Kasa/Banka:** {_fmt_amount(ctx.get('total_bank_balance'))} TL\n"
+        f"2. **Alacak:** {_fmt_amount(ctx.get('total_receivables'))} TL\n"
+        f"3. **Borç:** {_fmt_amount(ctx.get('total_payables'))} TL\n"
+        f"4. **Bu ay satış:** {_fmt_amount(ctx.get('monthly_sales'))} TL\n"
+        f"5. **Bu ay gider:** {_fmt_amount(ctx.get('monthly_expenses'))} TL\n"
+        f"6. **Bekleyen sipariş:** {_fmt_count(ctx.get('pending_orders_count'))}\n"
+        f"7. **Kritik stok:** {_fmt_count(ctx.get('low_stock_count'))}\n"
+        "8. AI sağlayıcı geçici yanıt veremedi; yukarıdaki özet mevcut sayaçlardan üretildi."
+    )
+
+
 async def get_production_ai_advice(company_context: dict, prompt: str, history: list = None) -> str:
     """Üretim emirleri + reçete (BOM) verisine göre yönetici yorumu."""
+    return (await get_production_ai_advice_result(company_context, prompt, history))["advice"]
+
+
+async def get_production_ai_advice_result(company_context: dict, prompt: str, history: list = None) -> dict:
+    """Üretim danışmanı. advice metni + source (ai|fallback|config_error) + error."""
     recipes = company_context.get("recipes_sample") or []
     orders = company_context.get("open_orders_sample") or []
     wos = company_context.get("work_orders_sample") or []
@@ -470,21 +548,23 @@ Kurallar:
             purpose="advisor",
         )
         user_msg = UserMessage(text=prompt)
-        return await chat.send_message(user_msg)
-    except RuntimeError as e:
-        return str(e)
+        return {"advice": await chat.send_message(user_msg), "source": "ai", "error": None}
     except Exception as e:
-        logger.error(f"Error invoking production AI: {e}")
-        return f"""**TamKobi AI Üretim Değerlendirmesi**
+        return _advice_failure(e, f"""**TamKobi AI Üretim Değerlendirmesi**
 
 1. **Emir yükü:** Açık {company_context.get('open_orders', 0)} üretim emri var; {company_context.get('in_production', 0)} tanesi üretimde.
 2. **Eksikler:** {company_context.get('missing_notifications', 0)} okunmamış eksik ürün bildirimi — planlama/satın alma kontrol edilmeli.
 3. **Atölye:** {company_context.get('open_work_orders', 0)} açık iş emri, {company_context.get('paused_work_orders', 0)} duraklatılmış.
 4. **Reçete:** {company_context.get('recipes', 0)} reçete tanımlı; reçetesiz veya adım eksik mamulleri gözden geçirin.
-5. AI sağlayıcı geçici yanıt veremedi; yukarıdaki özet mevcut sayaçlardan üretildi."""
+5. AI sağlayıcı geçici yanıt veremedi; yukarıdaki özet mevcut sayaçlardan üretildi.""")
 
 
 async def get_financial_ai_advice(company_context: dict, prompt: str, history: list = None) -> str:
+    return (await get_financial_ai_advice_result(company_context, prompt, history))["advice"]
+
+
+async def get_financial_ai_advice_result(company_context: dict, prompt: str, history: list = None) -> dict:
+    """Finans danışmanı. advice metni + source (ai|fallback|config_error) + error."""
 
     system_prompt = f"""Sen TamKobi'nin uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
 Kullanıcının şirketine dair güncel veriler:
@@ -512,19 +592,9 @@ Görevin:
 
         # Combine short conversation if provided
         user_msg = UserMessage(text=prompt)
-        response_text = await chat.send_message(user_msg)
-        return response_text
-    except RuntimeError as e:
-        return str(e)
+        return {"advice": await chat.send_message(user_msg), "source": "ai", "error": None}
     except Exception as e:
-        logger.error(f"Error invoking emergentintegrations: {e}")
-        # Fallback intelligent local response if network/quota temporary issue
-        return f"""**TamKobi AI Finansal Değerlendirme Raporu:**
-
-1. **Nakit Pozisyonu & Likidite:** Mevcut hazır değerleriniz ({company_context.get('total_bank_balance', 0):,.2f} TL) operasyonel giderleri 30 gün boyunca karşılamak için yeterli seviyededir.
-2. **Tahsilat Yönetimi:** Bekleyen {company_context.get('total_receivables', 0):,.2f} TL alacağınız için vadesi geçmiş müşterilere otomatik SMS/E-posta bakiye hatırlatması göndermeniz tavsiye edilir.
-3. **Stok & Tedarik:** {company_context.get('low_stock_count', 0)} adet ürün kritik stok sınırının altında. Pazar yeri satışlarının kesintiye uğramaması için acil sipariş açılmalıdır.
-4. **Vergi & KDV Planlaması:** Bu ayki satış ve gider dengeniz göz önüne alındığında tahmini KDV yükünüz optimize edilebilir durumdadır."""
+        return _advice_failure(e, _financial_fallback_advice(company_context))
 
 
 INVOICE_SYSTEM = """Sen bir Türk ön muhasebe asistanısın. Sana bir TEDARİKÇİ FATURASININ (alış faturası) PDF'inden çıkarılmış ham metin verilecek.

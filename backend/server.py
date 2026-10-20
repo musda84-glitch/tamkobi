@@ -100,7 +100,7 @@ from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
-from ai_service import get_financial_ai_advice, get_production_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
+from ai_service import advice_response_fields, get_financial_ai_advice_result, get_production_ai_advice_result, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
 from invoice_status import is_cancelled_invoice
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
 from expense_extract import extract_expense_file, public_expense_match
@@ -20062,10 +20062,14 @@ async def suggest_marketplace_product_matches(req: Dict[str, Any], user: dict = 
                     "Emin değilsen product_id boş bırak.\n\n"
                     f"STOK KARTLARI:\n{catalog}\n\nPAZARYERI:\n{lines}"
                 )
-                advice = await get_financial_ai_advice({"task": "marketplace_product_match"}, prompt)
+                result = await get_financial_ai_advice_result({"task": "marketplace_product_match"}, prompt)
+                advice, source = advice_response_fields(result)
+                # Yedek veya yapılandırma hatası JSON sanılıp öneriye yazılmasın; kural tabanlı liste kalır.
+                if source in ("fallback", "config_error"):
+                    advice = ""
                 import json as _json
                 raw = advice if isinstance(advice, str) else str(advice or "")
-                m = re.search(r"\{[\s\S]*\}", raw)
+                m = re.search(r"\{[\s\S]*\}", raw) if raw else None
                 if m:
                     parsed = _json.loads(m.group(0))
                     by_id = {p["_id"]: p for p in products}
@@ -20086,7 +20090,7 @@ async def suggest_marketplace_product_matches(req: Dict[str, Any], user: dict = 
                         }] + [s for s in (suggestions.get(bc) or []) if s.get("product_id") != pid][: limit - 1]
                     mode = "ai"
             except Exception as e:  # noqa: BLE001
-                logger.warning("marketplace match AI suggest skipped: %s", e)
+                logger.warning("marketplace match AI suggest skipped: %s", type(e).__name__)
     count = sum(1 for v in suggestions.values() if v)
     return {"suggestions": suggestions, "mode": mode, "count": count}
 
@@ -25915,8 +25919,8 @@ async def ask_financial_ai(req: FinancialAIChatRequest, user: dict = Depends(get
         "low_stock_count": len(low_stock)
     }
 
-    advice = await get_financial_ai_advice(context, req.message)
-    return {"advice": advice, "metrics": context}
+    advice, source = advice_response_fields(await get_financial_ai_advice_result(context, req.message))
+    return {"advice": advice, "metrics": context, "source": source, "fallback": source == "fallback"}
 
 
 async def _production_ai_context(company_id: str) -> Dict[str, Any]:
@@ -25994,12 +25998,12 @@ async def ai_production_summary(company_id: Optional[str] = None, user: dict = D
     cid = tenant_access.resolve_company_id(user, company_id)
     await addons.require(cid, "ai.production")
     context = await _production_ai_context(cid)
-    advice = await get_production_ai_advice(
+    advice, source = advice_response_fields(await get_production_ai_advice_result(
         context,
         "Güncel üretim ve reçete durumunu yönetici için özetle; öncelikli aksiyonları madde madde yaz.",
-    )
+    ))
     metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
-    return {"advice": advice, "metrics": metrics}
+    return {"advice": advice, "metrics": metrics, "source": source}
 
 
 @api_router.post("/ai/production-advisor")
@@ -26007,9 +26011,9 @@ async def ask_production_ai(req: ProductionAIChatRequest, user: dict = Depends(g
     cid = tenant_access.resolve_company_id(user, req.company_id)
     await addons.require(cid, "ai.production")
     context = await _production_ai_context(cid)
-    advice = await get_production_ai_advice(context, req.message or "Üretim durumunu yorumla.")
+    advice, source = advice_response_fields(await get_production_ai_advice_result(context, req.message or "Üretim durumunu yorumla."))
     metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
-    return {"advice": advice, "metrics": metrics}
+    return {"advice": advice, "metrics": metrics, "source": source}
 
 @api_router.get("/ai/status")
 async def get_ai_status():

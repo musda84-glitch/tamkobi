@@ -80,9 +80,11 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
         company_id: companyId
       });
 
+      const source = res.data?.source;
+      const unavailable = res.data?.fallback === true || source === "fallback" || source === "config_error";
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: res.data.advice }
+        { role: "assistant", content: res.data.advice, unavailable }
       ]);
     } catch (err) {
       toast.error("AI yanıt verirken bir sorun oluştu.");
@@ -183,6 +185,9 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
                     : 'bg-white border border-slate-200/90 text-slate-800 shadow-sm rounded-tl-none whitespace-pre-wrap'
                 }`}
               >
+                {m.unavailable && (
+                  <p className="text-[10px] font-semibold text-amber-700" data-testid={`ai-chat-unavailable-${idx}`}>AI şu an yanıt veremedi</p>
+                )}
                 {m.role === "assistant" ? <AiMessageText text={m.content} /> : m.content}
               </div>
             </div>

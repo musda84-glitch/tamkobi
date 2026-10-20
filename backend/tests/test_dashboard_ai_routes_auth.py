@@ -1,7 +1,7 @@
 """Dashboard and AI summary routes: session + company, same response shape.
 
 In-process TestClient and a memory database. No live server, port 8021,
-MySQL, tamkobi_p0, or a real AI provider. get_production_ai_advice is patched.
+MySQL, tamkobi_p0, or a real AI provider. get_production_ai_advice_result is patched.
 """
 from __future__ import annotations
 
@@ -399,7 +399,7 @@ def api():
     client = TestClient(server.app)
     entered = False
     try:
-        with patch.object(server, "get_production_ai_advice", fake_advice):
+        with patch.object(server, "get_production_ai_advice_result", fake_advice):
             client.__enter__()
             entered = True
             yield client, db, calls
@@ -562,7 +562,8 @@ def test_missing_company_uses_active_company(api):
 
     summary = client.get("/api/ai/production-summary", headers=headers)
     assert summary.status_code == 200, summary.text
-    assert set(summary.json()) == {"advice", "metrics"}
+    assert set(summary.json()) == {"advice", "metrics", "source"}
+    assert summary.json()["source"] == "ai"
     assert set(summary.json()["metrics"]) == AI_METRIC_KEYS
     assert summary.json()["advice"] == "MOCK-ADVICE"
     assert summary.json()["metrics"]["company_id"] == COMP_A

@@ -88,6 +88,57 @@ test("karşılama balonu kalın yazar, yıldızları göstermez", async () => {
   expect(bubble.textContent).toContain("Merhaba!");
 });
 
+function setInput(el, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  setter.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+test("yedek yanıtta AI yanıt veremedi etiketi görünür", async () => {
+  axios.post.mockResolvedValue({
+    data: {
+      advice: "1. **Kasa/Banka:** 1,250.50 TL\n8. AI sağlayıcı geçici yanıt veremedi",
+      source: "fallback",
+      fallback: true,
+    },
+  });
+  await show();
+  const input = host.querySelector("[data-testid='ai-chat-input']");
+  await act(async () => {
+    setInput(input, "nakit");
+  });
+  const send = host.querySelector("[data-testid='ai-chat-send-btn']");
+  await act(async () => {
+    send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const label = host.querySelector("[data-testid='ai-chat-unavailable-2']");
+  expect(label).not.toBeNull();
+  expect(label.textContent).toBe("AI şu an yanıt veremedi");
+  const bubble = host.querySelector("[data-testid='ai-chat-msg-2']");
+  expect(bubble.textContent).toContain("1,250.50");
+  expect(host.querySelector("[data-testid='ai-chat-unavailable-0']")).toBeNull();
+});
+
+test("gerçek AI yanıtında yedek etiketi yoktur", async () => {
+  axios.post.mockResolvedValue({
+    data: { advice: "Tahsilatı hızlandırın.", source: "ai", fallback: false },
+  });
+  await show();
+  const input = host.querySelector("[data-testid='ai-chat-input']");
+  await act(async () => {
+    setInput(input, "nakit");
+  });
+  await act(async () => {
+    host.querySelector("[data-testid='ai-chat-send-btn']").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(host.querySelector("[data-testid='ai-chat-unavailable-2']")).toBeNull();
+  expect(host.querySelector("[data-testid='ai-chat-msg-2']").textContent).toContain("Tahsilatı hızlandırın.");
+});
+
 test("sayfa rozeti /ai/status badge değerini gösterir", async () => {
   await show();
   const badge = host.querySelector("[data-testid='ai-assistant-model-badge']");

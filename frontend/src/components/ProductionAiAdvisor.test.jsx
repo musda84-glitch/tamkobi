@@ -52,6 +52,30 @@ test("üretim önerisi AiMessageText ile kalın ve liste gösterir", async () =>
   expect(advice.querySelector("strong").textContent).toBe("Darboğaz");
   expect(advice.textContent).not.toContain("**");
   expect([...advice.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["istasyon", "hammadde"]);
+  expect(host.querySelector("[data-testid='production-ai-unavailable']")).toBeNull();
+  act(() => root.unmount());
+  host.remove();
+});
+
+test("yedek üretim yanıtında AI yanıt veremedi etiketi görünür", async () => {
+  axios.get.mockResolvedValue({
+    data: { advice: "Açık 2 üretim emri.\nAI sağlayıcı geçici yanıt veremedi", source: "fallback", metrics: { recipes: 1 } },
+  });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<ProductionAiAdvisor companyId="c1" />);
+  });
+  await act(async () => {
+    host.querySelector("[data-testid='production-ai-analyze']").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const label = host.querySelector("[data-testid='production-ai-unavailable']");
+  expect(label).not.toBeNull();
+  expect(label.textContent).toBe("AI şu an yanıt veremedi");
+  expect(host.querySelector("[data-testid='production-ai-advice']").textContent).toContain("Açık 2");
   act(() => root.unmount());
   host.remove();
 });
