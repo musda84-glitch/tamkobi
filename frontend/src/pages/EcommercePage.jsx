@@ -115,13 +115,23 @@ export default function EcommercePage() {
     e.preventDefault();
     try {
       const id = selectedConfig.id || selectedConfig._id;
-      const { settlement_account_id, settlement_account_name, ...rest } = selectedConfig;
+      const {
+        settlement_account_id,
+        settlement_account_name,
+        transfer_settlement_account_id,
+        transfer_settlement_account_name,
+        ...rest
+      } = selectedConfig;
       await axios.put(`${API_URL}/integrations/ecommerce/${id}`, {
         ...rest,
         // Kaydet & Bağlan: kanalı aktif işaretle (sipariş çekilebiliyorsa kart "Bağlı Değil" kalmasın)
         is_active: true,
       });
-      await axios.put(`${API_URL}/integrations/ecommerce/${id}/settlement-account`, { account_id: settlement_account_id || null });
+      const settlementBody = { account_id: settlement_account_id || null };
+      if (selectedConfig.channel === "shopphp") {
+        settlementBody.transfer_account_id = transfer_settlement_account_id || null;
+      }
+      await axios.put(`${API_URL}/integrations/ecommerce/${id}/settlement-account`, settlementBody);
       toast.success(`${selectedConfig.channel_name} ayarları kaydedildi.`);
       setSelectedConfig(null);
       try {
@@ -334,7 +344,14 @@ export default function EcommercePage() {
               <div className="pt-2 border-t">
                 <label className="block font-semibold text-slate-700 mb-1">Ödeme / Hakediş Hesabı</label>
                 <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id} accounts={accounts.filter((a) => !a.is_integrated)} value={selectedConfig.settlement_account_id || ""} onChange={(v) => setSelectedConfig({ ...selectedConfig, settlement_account_id: v || null })} testId="ecom-settlement-select" emptyLabel="Hesap seçilmedi — fatura yalnızca ödendi işaretlenir" collectableOnly includePartners={false} />
-                <p className="text-[10px] text-slate-400 mt-1">Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) bu hesaba tahsilat olarak işlenir; müşteri carisine ödeme kaydı düşülür; kesinti pazaryeri carisine (Trendyol vb.) ve &quot;Pazaryeri Komisyonu&quot; masrafına yazılır.</p>
+                <p className="text-[10px] text-slate-400 mt-1">Kredi kartı / PayTR tahsilatı bu hesaba yazılır. Sipariş faturalandığında net hakediş (ciro − komisyon − hizmet/kargo) tahsilat olarak işlenir; müşteri carisine ödeme kaydı düşülür; kesinti pazaryeri carisine ve &quot;Pazaryeri Komisyonu&quot; masrafına yazılır.</p>
+                {selectedConfig.channel === "shopphp" && (
+                  <div className="mt-3" data-testid="ecom-transfer-settlement">
+                    <label className="block font-semibold text-slate-700 mb-1">Havale / EFT Hesabı</label>
+                    <PaymentTargetSelect companyId={activeCompany?.id || activeCompany?._id} accounts={accounts.filter((a) => !a.is_integrated)} value={selectedConfig.transfer_settlement_account_id || ""} onChange={(v) => setSelectedConfig({ ...selectedConfig, transfer_settlement_account_id: v || null })} testId="ecom-transfer-settlement-select" emptyLabel="Havale hesabı seçilmedi" collectableOnly includePartners={false} />
+                    <p className="text-[10px] text-slate-400 mt-1">Havale siparişi ödeme onaylanınca bu hesaba yazılır. BANKA_ADI ile eşleşen banka hesabı varsa o kullanılır. Eşleşme yoksa hakediş yazılmaz; PayTR hesabına düşmez.</p>
+                  </div>
+                )}
               </div>
               <div className="space-y-2 pt-2 border-t">
                 <label className="flex items-center gap-2 cursor-pointer">

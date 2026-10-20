@@ -819,7 +819,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', '_update_bonus_core', 'bonus_payments', 'find_one'): 1,
     ('server.py', '_update_bonus_core', 'bonus_payments', 'update_one'): 1,
     ('server.py', '_update_bonus_core', 'bonus_payments', 'update_one_atomic'): 1,
-    ('server.py', '_upsert_marketplace_orders', 'orders', 'find_one'): 1,
     ('server.py', '_upsert_marketplace_orders', 'orders', 'insert_one'): 1,
     ('server.py', '_upsert_marketplace_orders', 'orders', 'update_one'): 2,
     ('server.py', '_virman_load_contact', 'contacts', 'find_one'): 1,

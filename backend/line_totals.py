@@ -178,6 +178,41 @@ def invoice_document_totals(
     }
 
 
+def net_general_discount_for_payable(items: Iterable[Mapping[str, Any]], payable_incl: Any) -> float:
+    """KDV hariç genel iskonto: invoice_document_totals grand_total ödenen brüte gelsin.
+
+    general_discount_amount matrahtan düşülür. KDV, belge faktörüyle satır satır
+    yeniden hesaplanır; indirim satır birim fiyatına dağıtılmaz.
+    """
+    rows = list(items)
+    target = round(_f(payable_incl), 2)
+    if target <= 0 or not rows:
+        return 0.0
+    base = invoice_document_totals(rows)
+    gross = base["grand_total"]
+    if target >= gross - 0.005:
+        return 0.0
+    items_sum = round(sum(_f(i.get("total")) for i in rows), 2)
+    if items_sum <= 0:
+        return 0.0
+    vat = base["vat_total"]
+    denom = 1.0 + (vat / items_sum if items_sum else 0.0)
+    guess = round(items_sum - (target / denom if denom else target), 2)
+    guess = min(max(guess, 0.0), items_sum)
+    best = guess
+    best_gap = abs(invoice_document_totals(rows, 0, guess)["grand_total"] - target)
+    cents = int(round(guess * 100))
+    for delta in range(-30, 31):
+        gd = round((cents + delta) / 100.0, 2)
+        if gd < 0 or gd > items_sum:
+            continue
+        gap = abs(invoice_document_totals(rows, 0, gd)["grand_total"] - target)
+        if gap < best_gap - 1e-9 or (abs(gap - best_gap) < 1e-9 and gd < best):
+            best_gap = gap
+            best = gd
+    return best
+
+
 def order_document_totals(items: Iterable[Mapping[str, Any]]) -> Tuple[float, float, float, float]:
     rows = list(items)
     subtotal = round(sum(_f(i.get("total")) for i in rows), 2)
