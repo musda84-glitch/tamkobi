@@ -228,25 +228,43 @@ function makeCheques(n, drawer = "ERSAY HOME ÜRETİM TEDARİK İÇ VE DIŞ TİC
   }));
 }
 
-test("3 çek tablosu sabit kolon, keşideci iki satır, vade ve tutar tek satır", () => {
+test("3 çek tablosu sabit kolon, keşideci ve vade tam, tutar tek satır", () => {
+  const companyAddress = "Atatürk Mahallesi Cumhuriyet Caddesi No: 125 Kat: 4 Daire: 8";
+  const companyCity = "Kadıköy / İstanbul";
+  const partyAddress = "Bağdat Caddesi No: 400 Palmiye Apartmanı Kat: 2";
+  const partyCity = "Kadıköy";
+  const drawer = "ERSAY HOME ÜRETİM TEDARİK İÇ VE DIŞ TİCARET LİMİTED ŞİRKETİ";
   mount({
     tx: { ...CASH_TX, id: "chequegrp1", account_name: "Çek Portföyü", category: "Alınan Çek / Senet" },
-    contact: { ...CONTACT, phone: "0532 111 22 33" },
-    items: makeCheques(3),
+    company: {
+      ...COMPANY,
+      address: companyAddress,
+      city: companyCity,
+      logo_url: "https://cdn.example/logo.png",
+    },
+    contact: { ...CONTACT, address: partyAddress, city: partyCity, phone: "0532 111 22 33" },
+    items: makeCheques(3, drawer),
   });
   const table = document.querySelector("[data-testid=receipt-cheque-table]");
   const cols = [...table.querySelectorAll("col")];
   expect(cols).toHaveLength(7);
   expect(cols.map((col) => col.style.width)).toEqual(["8%", "11%", "16%", "17%", "24%", "10%", "14%"]);
   const row = table.querySelector("tbody tr");
-  expect(row.querySelector(".receipt-col-drawer .receipt-clamp").textContent).toContain("ERSAY HOME");
-  expect(row.querySelector(".receipt-col-drawer .receipt-clamp").getAttribute("title")).toContain("LİMİTED ŞTİ.");
+  expect(row.querySelector(".receipt-col-drawer").textContent).toBe(drawer);
+  expect(row.querySelector(".receipt-clamp")).toBeNull();
   expect(row.querySelector(".receipt-col-no").className).toContain("receipt-col-nowrap");
-  expect(row.querySelector(".receipt-col-due").className).toContain("receipt-col-nowrap");
+  expect(row.querySelector(".receipt-col-due").className).not.toMatch(/nowrap|truncate|ellipsis|line-clamp|receipt-clamp/);
   expect(row.querySelector(".receipt-col-amount").className).toContain("receipt-col-nowrap");
   expect(row.querySelector(".receipt-col-account").textContent).toContain("TR330006100519786457841326");
   expect(row.querySelector(".receipt-col-due").textContent).toBe("30.11.2026");
   expect(row.querySelector(".receipt-col-amount").textContent).toContain("250.000,00");
+  const addresses = [...document.querySelectorAll(".receipt-address")].map((el) => el.textContent);
+  expect(addresses).toContain(`${companyAddress} ${companyCity}`);
+  expect(addresses).toContain(`${partyAddress} ${partyCity}`);
+  document.querySelectorAll(".receipt-address, .receipt-col-drawer, .receipt-col-due").forEach((el) => {
+    expect(el.className).not.toMatch(/truncate|ellipsis|line-clamp|receipt-clamp/);
+  });
+  expect(document.querySelector("[class*='ellipsis'], [class*='truncate'], [class*='line-clamp'], .receipt-clamp, .receipt-clamp-2")).toBeNull();
   const companyMeta = document.querySelector(".receipt-company-meta");
   expect(companyMeta.textContent).toContain("VKN:");
   expect(companyMeta.textContent).toContain(COMPANY.tax_number);
@@ -255,11 +273,27 @@ test("3 çek tablosu sabit kolon, keşideci iki satır, vade ve tutar tek satır
   expect(partyMeta.textContent).toContain("VKN/TCKN:");
   expect(partyMeta.textContent).toContain(CONTACT.tax_number_or_id);
   expect(partyMeta.textContent).toContain("0532 111 22 33");
-  expect(document.querySelectorAll(".receipt-clamp-2").length).toBeGreaterThanOrEqual(2);
-  document.querySelectorAll(".receipt-clamp-2").forEach((el) => {
-    expect(el.className).toContain("receipt-clamp-2");
-  });
   expect(document.querySelector("[data-testid=receipt-copy-0]").className).toContain("receipt-density-normal");
+  expect(document.querySelector("[data-testid=receipt-page]").className).toContain("receipt-page-single");
+  expect(document.querySelector("[data-testid=receipt-print-style]").textContent).toContain("size: A5 landscape");
+
+  setCopies(2);
+  const copies = [0, 1].map((index) => document.querySelector(`[data-testid='receipt-copy-${index}']`));
+  expect(copies.every(Boolean)).toBe(true);
+  expect(document.querySelector("[data-testid=receipt-page]").className).toContain("receipt-page-pair");
+  copies.forEach((copy) => {
+    const head = copy.querySelector(".receipt-head");
+    expect(head).toBeTruthy();
+    expect(head.querySelector(".receipt-logo")).toBeTruthy();
+    expect(head.querySelector(".receipt-company-name").textContent).toBe(COMPANY.name);
+    expect(head.querySelector(".receipt-title").textContent).toBe("TAHSİLAT MAKBUZU");
+    expect(copy.textContent).toContain(`${companyAddress} ${companyCity}`);
+    expect(copy.textContent).toContain(`${partyAddress} ${partyCity}`);
+    expect(copy.textContent).toContain(drawer);
+    expect(copy.querySelector(".receipt-col-due").textContent).toBe("30.11.2026");
+  });
+  expect(document.querySelector("[data-testid=receipt-print-style]").textContent).toContain("size: A4 portrait");
+  expect(document.querySelector("[data-testid=receipt-print-style]").textContent).toContain("148.5mm");
 });
 
 test("yoğunluk sınıfı satır sayısına göre değişir", () => {

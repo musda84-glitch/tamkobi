@@ -67,34 +67,49 @@ test("receipt copy layout is receipt-only", () => {
   expect(printPageCss("order", "A4")).not.toContain(".receipt-cut");
 });
 
-test("receipt print uses portrait pages, fixed halves and unwrapped columns", () => {
+test("tek nüsha A5 yatay, iki nüsha A4 dikey ve 148.5mm yarımlar", () => {
   const a5 = printPageCss("receipt", "A5");
   const a4 = printPageCss("receipt", "A4");
-  expect(a5).toContain("size: A5 portrait");
-  expect(a5).toMatch(/@page \{ size: A5 portrait; margin: \d+mm; \}/);
+  expect(a5).toContain("size: A5 landscape");
+  expect(a5).toMatch(/@page \{ size: A5 landscape; margin: 0; \}/);
+  expect(a5).not.toContain("portrait");
+  expect(a5).toMatch(/min-height:\s*148mm/);
+  expect(a5).toContain("210mm");
+  expect(a5).toContain("max-width: none");
+  expect(a4).toContain("max-width: none");
+  expect(a5).toMatch(/padding:\s*8mm/);
+  expect(a5).toMatch(/box-sizing:\s*border-box/);
+  expect(a5).not.toContain("148.5mm");
   expect(a4).toMatch(/@page \{ size: A4 portrait; margin: 0; \}/);
-  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*height:\s*148\.5mm/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*flex:\s*0 0 148\.5mm/);
   expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*max-height:\s*148\.5mm/);
-  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*overflow:\s*hidden/);
   expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*box-sizing:\s*border-box/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*padding:\s*8mm/);
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\] \.receipt-half \{[^}]*overflow:\s*visible/);
+  expect(a4).not.toMatch(/\.receipt-half \{[^}]*overflow:\s*hidden/);
   expect(a4).not.toContain("248mm");
   expect(a4).not.toContain("justify-content: space-between");
   expect(a4).not.toMatch(/height:\s*297mm/);
   expect(a5).not.toContain("248mm");
   expect(a4).toContain("table-layout: fixed");
-  expect(a4).toContain("white-space: nowrap");
-  expect(a4).toContain("-webkit-line-clamp: 2");
-  expect(a4).toContain("-webkit-box-orient: vertical");
   expect(a5).toContain("table-layout: fixed");
-  expect(a5).toContain("white-space: nowrap");
-  expect(a5).toContain("-webkit-line-clamp: 2");
-  expect(a4).not.toContain("word-break: break-word");
-  expect(a4).not.toContain("overflow-wrap: anywhere");
+  expect(a4).not.toContain("text-overflow: ellipsis");
+  expect(a4).not.toContain("-webkit-line-clamp");
+  expect(a4).not.toContain("line-clamp");
+  expect(a5).not.toContain("text-overflow: ellipsis");
+  expect(a5).not.toContain("-webkit-line-clamp");
+  expect(a5).not.toContain("line-clamp");
+  expect(a4).not.toMatch(/font-size:\s*7(\.5)?pt/);
+  expect(a5).not.toMatch(/font-size:\s*7(\.5)?pt/);
+  expect(a4).toMatch(/font-size:\s*8pt/);
+  expect(a5).toMatch(/font-size:\s*8pt/);
   expect(printPageCss("invoice", "A4")).toContain("@page { size: A4; margin: 10mm; }");
   expect(printPageCss("invoice", "A4")).not.toContain("portrait");
+  expect(printPageCss("invoice", "A4")).not.toContain("landscape");
   expect(printPageCss("order", "A4")).not.toContain("148.5mm");
   expect(printPageCss("dispatch", "A5")).toContain("@page { size: A5; margin: 10mm; }");
   expect(printPageCss("dispatch", "A5")).not.toContain("portrait");
+  expect(printPageCss("dispatch", "A5")).not.toContain("landscape");
 });
 
 test("invoice order quote and dispatch print css stay byte-identical", () => {

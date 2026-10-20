@@ -103,7 +103,7 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
           )}
           <div className="min-w-0">
             <div className="receipt-company-name text-sm font-black leading-tight">{company?.name}</div>
-            <div className="receipt-clamp-2 text-slate-500" title={companyAddress}>{company?.address} {company?.city}</div>
+            <div className="receipt-address text-slate-500">{companyAddress}</div>
             <div className="receipt-company-meta text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number} • {company?.phone}</div>
           </div>
         </div>
@@ -119,7 +119,7 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
           <div className="text-[10px] uppercase text-slate-400 font-bold">{meta.partyLabel}</div>
           <div className="font-bold text-sm">{partyName}</div>
           <div className="receipt-party-meta text-slate-500">{partyMeta}</div>
-          <div className="receipt-clamp-2 text-slate-500" title={partyAddress}>{contact?.address} {contact?.city}</div>
+          <div className="receipt-address text-slate-500">{partyAddress}</div>
         </div>
         <div className="min-w-0">
           <div className="text-[10px] uppercase text-slate-400 font-bold">{meta.isTransfer ? "Hesap" : "Ödeme Şekli"}</div>
@@ -156,14 +156,12 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
                 return (
                   <tr key={ch.id || ch._id || `${no}-${idx}`} className="receipt-row">
                     <td className="receipt-col-kind p-1 border-b border-slate-200">{instrumentLabel(ch)}</td>
-                    <td className="receipt-col-no receipt-col-nowrap p-1 border-b border-slate-200" title={no}>{no}</td>
+                    <td className="receipt-col-no receipt-col-nowrap p-1 border-b border-slate-200">{no}</td>
                     <td className="receipt-col-bank p-1 border-b border-slate-200">{bankBranch(ch)}</td>
-                    <td className="receipt-col-account p-1 border-b border-slate-200" title={account}>{account}</td>
-                    <td className="receipt-col-drawer p-1 border-b border-slate-200">
-                      <span className="receipt-clamp" title={drawer}>{drawer}</span>
-                    </td>
-                    <td className="receipt-col-due receipt-col-nowrap p-1 border-b border-slate-200" title={due}>{due}</td>
-                    <td className="receipt-col-amount receipt-col-nowrap p-1 border-b border-slate-200 text-right font-bold" title={amount}>{amount}</td>
+                    <td className="receipt-col-account p-1 border-b border-slate-200">{account}</td>
+                    <td className="receipt-col-drawer p-1 border-b border-slate-200">{drawer}</td>
+                    <td className="receipt-col-due p-1 border-b border-slate-200">{due}</td>
+                    <td className="receipt-col-amount receipt-col-nowrap p-1 border-b border-slate-200 text-right font-bold">{amount}</td>
                   </tr>
                 );
               })}
@@ -274,7 +272,7 @@ export const ReceiptPrint = ({ tx, contact, company, onClose, items }) => {
           {pages.map((page, pageIndex) => (
             <section
               key={page[0]}
-              className={`receipt-page${pageIndex > 0 ? " receipt-print-only" : ""}`}
+              className={`receipt-page ${page.length > 1 ? "receipt-page-pair" : "receipt-page-single"}${pageIndex > 0 ? " receipt-print-only" : ""}`}
               data-testid="receipt-page"
               data-copy-count={page.length}
             >

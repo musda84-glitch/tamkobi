@@ -8,7 +8,8 @@ import { RECEIPT_HALF_MM } from "./receiptLayout";
 export const A4_HEIGHT_MM = 297;
 export const PRINT_PAGE_MARGIN_MM = 10;
 export const PRINT_CONTENT_PAD_MM = 8;
-export const RECEIPT_A5_MARGIN_MM = 5;
+/** A5 yatay yaprak. A4 yarısı 148,5mm; iç boşluk aynı, yükseklik kâğıda göre. */
+export const RECEIPT_A5_HEIGHT_MM = 148;
 
 export const PRINT_DOC_TYPES = ["invoice", "order", "quote", "dispatch", "receipt"];
 
@@ -22,7 +23,8 @@ export function printChromeFitsA4(marginMm = PRINT_PAGE_MARGIN_MM, padMm = PRINT
 
 function paperSize(paper, kind) {
   const name = paper === "A5" ? "A5" : "A4";
-  return kind === "receipt" ? `${name} portrait` : name;
+  if (kind !== "receipt") return name;
+  return name === "A5" ? "A5 landscape" : "A4 portrait";
 }
 
 function safeDocType(docType) {
@@ -35,9 +37,9 @@ export function printPageCss(docType = "order", paper = "A4") {
   const receipt = kind === "receipt";
   const a5 = paper === "A5";
   const size = paperSize(paper, kind);
-  const margin = receipt ? (a5 ? RECEIPT_A5_MARGIN_MM : 0) : PRINT_PAGE_MARGIN_MM;
+  const margin = receipt ? 0 : PRINT_PAGE_MARGIN_MM;
   const pad = receipt ? 0 : PRINT_CONTENT_PAD_MM;
-  const pageMargin = receipt && !a5 ? "0" : `${margin}mm`;
+  const pageMargin = receipt ? "0" : `${margin}mm`;
   const base = `
 @page { size: ${size}; margin: ${pageMargin}; }
 @media print {
@@ -129,23 +131,57 @@ function both(selector, body) {
 /** İki nüsha tek A4 yaprağa sığsın; diğer belge türlerine yazılmaz. */
 function receiptCopyCss(a5) {
   const half = `${RECEIPT_HALF_MM}mm`;
+  const safePad = `${PRINT_CONTENT_PAD_MM}mm`;
+  const a5Sheet = `${RECEIPT_A5_HEIGHT_MM}mm`;
+  /* Sabit height + overflow:hidden, Chrome "Varsayılan" kenar boşluğunda
+     üst başlığı kırpıyordu. Yarım ölçü flex/max-height olarak kalır; içerik
+     border-box içinde ≥8mm boşlukla durur ve taşan satır gizlenmez. */
   const a4Sheets = a5 ? `
-  #print-area .receipt-page {
-    break-inside: avoid;
-    page-break-inside: avoid;
+  #print-area .receipt-page-single .receipt-half,
+  #print-area .receipt-page[data-copy-count="1"] .receipt-half {
+    box-sizing: border-box;
+    width: 210mm;
+    max-width: 210mm;
+    min-height: ${a5Sheet};
+    height: auto;
+    max-height: none;
+    margin: 0;
+    overflow: visible;
+    padding: ${safePad};
+    display: flex !important;
+    flex-direction: column;
+  }
+  #print-area .receipt-page-single .receipt-card,
+  #print-area .receipt-page[data-copy-count="1"] .receipt-card {
+    box-sizing: border-box;
+    min-height: calc(${a5Sheet} - ${safePad} - ${safePad});
   }` : `
   #print-area .receipt-page[data-copy-count="2"] {
     position: relative;
     display: flex !important;
     flex-direction: column;
-  }
-  #print-area .receipt-page[data-copy-count="2"] .receipt-half {
-    height: ${half};
-    max-height: ${half};
-    flex: 0 0 ${half};
-    overflow: hidden;
+    width: 210mm;
     box-sizing: border-box;
-    padding: 6mm;
+  }
+  #print-area .receipt-page-pair .receipt-half,
+  #print-area .receipt-page[data-copy-count="2"] .receipt-half {
+    box-sizing: border-box;
+    width: 210mm;
+    max-width: 210mm;
+    flex: 0 0 ${half};
+    max-height: ${half};
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    overflow: visible;
+    padding: ${safePad};
+    display: flex !important;
+    flex-direction: column;
+  }
+  #print-area .receipt-page-pair .receipt-card,
+  #print-area .receipt-page[data-copy-count="2"] .receipt-card {
+    box-sizing: border-box;
+    min-height: calc(${half} - ${safePad} - ${safePad});
   }
   #print-area .receipt-page[data-copy-count="2"] .receipt-cut {
     position: absolute;
@@ -162,9 +198,18 @@ function receiptCopyCss(a5) {
     pointer-events: none;
     background: #fff;
   }
+  #print-area .receipt-page-single .receipt-half,
   #print-area .receipt-page[data-copy-count="1"] .receipt-half {
     box-sizing: border-box;
-    padding: 6mm;
+    width: 210mm;
+    max-width: 210mm;
+    height: auto;
+    max-height: none;
+    margin: 0;
+    overflow: visible;
+    padding: ${safePad};
+    display: flex !important;
+    flex-direction: column;
   }
   #print-area .receipt-page[data-copy-count="1"] {
     break-inside: avoid;
@@ -175,25 +220,11 @@ function receiptCopyCss(a5) {
 ${both(".receipt-cheque-table", `  width: 100%;
   table-layout: fixed;
   border-collapse: collapse;`)}
-${both(".receipt-cheque-table th", `  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;`)}
-${both(".receipt-col-nowrap, .receipt-col-account", `  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;`)}
-${both(".receipt-col-drawer .receipt-clamp", `  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;`)}
-${both(".receipt-company-meta, .receipt-party-meta", `  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;`)}
-${both(".receipt-clamp-2", `  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;`)}
+${both(".receipt-col-no, .receipt-col-amount", `  white-space: nowrap;`)}
+${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-account, .receipt-company-meta, .receipt-party-meta, .receipt-cheque-table th", `  white-space: normal;
+  overflow: visible;
+  overflow-wrap: break-word;
+  word-break: normal;`)}
 .receipt-measure,
 .receipt-measure .text-sm,
 .receipt-measure .text-base,
@@ -203,8 +234,8 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
 }
 .receipt-measure {
   width: 210mm;
-  box-sizing: border-box;
-  padding: 6mm;
+  box-sizing: border-box !important;
+  padding: ${safePad} !important;
 }
 .receipt-measure .receipt-title {
   font-size: 11pt !important;
@@ -214,6 +245,17 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
   #print-area[data-doc-type="receipt"] {
     font-size: 9pt !important;
     line-height: 1.25 !important;
+    padding: 0 !important;
+    width: 210mm !important;
+    max-width: 210mm !important;
+  }
+  /* Ekran modalı (max-w-xl) baskıda yaprağı ortalayıp sağ kenarı kırpıyordu. */
+  .fixed:has(#print-area[data-doc-type="receipt"]),
+  .fixed:has(#print-area[data-doc-type="receipt"]) > * {
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
     padding: 0 !important;
   }
   #print-area .receipt-print-only { display: block !important; }
@@ -251,6 +293,15 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
   #print-area .receipt-head {
     padding-bottom: 1mm !important;
     gap: 2mm !important;
+    overflow: visible;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  #print-area .receipt-half .receipt-card {
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    min-height: 100%;
+    overflow: visible;
   }
   #print-area .receipt-party {
     gap: 2mm !important;
@@ -278,10 +329,11 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
   #print-area .receipt-cheque-table,
   #print-area .receipt-cheque-table th,
   #print-area .receipt-cheque-table td {
-    font-size: 8pt;
+    font-size: 9pt;
     padding: 0.6mm 1mm;
     word-break: normal;
-    overflow-wrap: normal;
+    overflow-wrap: break-word;
+    white-space: normal;
   }
   #print-area .receipt-density-compact {
     font-size: 8.5pt !important;
@@ -292,7 +344,7 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
   #print-area .receipt-density-compact .receipt-cheque-table,
   #print-area .receipt-density-compact .receipt-cheque-table th,
   #print-area .receipt-density-compact .receipt-cheque-table td {
-    font-size: 7.5pt;
+    font-size: 8.5pt;
     padding: 0.45mm 0.7mm;
   }
   #print-area .receipt-density-dense {
@@ -307,7 +359,7 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
   #print-area .receipt-density-dense .receipt-cheque-table,
   #print-area .receipt-density-dense .receipt-cheque-table th,
   #print-area .receipt-density-dense .receipt-cheque-table td {
-    font-size: 7pt;
+    font-size: 8pt;
     padding: 0.3mm 0.5mm;
   }
   #print-area .receipt-density-dense .receipt-sign {
@@ -317,12 +369,15 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
     height: 8mm !important;
     max-height: 8mm !important;
   }
-  #print-area .receipt-cheque-table td.receipt-col-nowrap,
-  #print-area .receipt-cheque-table td.receipt-col-account {
-    font-size: 7pt;
-    padding: 0.4mm 0.5mm;
+  #print-area .receipt-cheque-table td.receipt-col-nowrap {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  #print-area .receipt-cheque-table td.receipt-col-account,
+  #print-area .receipt-cheque-table td.receipt-col-due,
+  #print-area .receipt-cheque-table td.receipt-col-drawer {
+    white-space: normal;
+    overflow-wrap: break-word;
   }
   ${a4Sheets}
 }
@@ -342,12 +397,12 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
 .receipt-measure .receipt-cheque-table,
 .receipt-measure .receipt-cheque-table th,
 .receipt-measure .receipt-cheque-table td {
-  font-size: 8pt;
+  font-size: 9pt;
   padding: 0.6mm 1mm;
 }
 .receipt-measure.receipt-density-compact .receipt-cheque-table td,
 .receipt-measure.receipt-density-compact .receipt-cheque-table th {
-  font-size: 7.5pt;
+  font-size: 8.5pt;
   padding: 0.45mm 0.7mm;
 }
 .receipt-measure.receipt-density-dense .receipt-card {
@@ -358,7 +413,7 @@ ${both(".receipt-clamp-2", `  display: -webkit-box;
 }
 .receipt-measure.receipt-density-dense .receipt-cheque-table td,
 .receipt-measure.receipt-density-dense .receipt-cheque-table th {
-  font-size: 7pt;
+  font-size: 8pt;
   padding: 0.3mm 0.5mm;
 }
 .receipt-measure.receipt-density-dense .receipt-logo {
