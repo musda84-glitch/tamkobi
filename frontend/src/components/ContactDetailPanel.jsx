@@ -94,7 +94,24 @@ function chequeReceipt(ch) {
     category: `${dir} ${kind}`,
     description: `${ch.number || "Çek"} · vade ${ch.due_date || "—"}${ch.serial_no ? ` · seri ${ch.serial_no}` : ""}`,
     amount: ch.amount,
+    currency: ch.currency || "TRY",
     contact_name: ch.contact_name,
+  };
+}
+
+function chequesReceipt(list) {
+  const rows = (Array.isArray(list) ? list : []).filter(Boolean);
+  const head = chequeReceipt(rows[0] || {});
+  const amount = Math.round(rows.reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0) * 100) / 100;
+  const instruments = [...new Set(rows.map((ch) => (ch.instrument === "promissory" ? "Senet" : "Çek")))];
+  const dir = rows[0]?.direction === "issued" ? "Verilen" : "Alınan";
+  return {
+    ...head,
+    amount: rows.length ? amount : head.amount,
+    category: rows.length ? `${dir} ${instruments.join(" / ")}` : head.category,
+    description: rows.map((ch) => ch.number || ch.serial_no || "Çek").join(", ") || head.description,
+    currency: rows[0]?.currency || head.currency || "TRY",
+    items: rows,
   };
 }
 
@@ -391,6 +408,32 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
+  const [selectedChequeIds, setSelectedChequeIds] = useState([]);
+  useEffect(() => { setSelectedChequeIds([]); }, [contactId]);
+  const toggleChequeSelect = (id) => {
+    if (!id) return;
+    setSelectedChequeIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  };
+  const openSelectedChequeReceipt = () => {
+    const rows = (data?.cheques || []).filter((ch) => selectedChequeIds.includes(ch.id || ch._id));
+    if (!rows.length) return;
+    const directions = new Set(rows.map((ch) => ch.direction || "received"));
+    if (directions.size > 1) {
+      toast.error("Aynı yöndeki çek ve senetleri seçin.");
+      return;
+    }
+    setReceipt(chequesReceipt(rows));
+  };
+  const openPaymentReceipt = (p) => {
+    if (p?.source === "cheque" && p.cheque_id) {
+      const ch = (data?.cheques || []).find((row) => String(row.id || row._id) === String(p.cheque_id));
+      if (ch) {
+        setReceipt({ ...p, items: [ch] });
+        return;
+      }
+    }
+    setReceipt(p);
+  };
   const [accounts, setAccounts] = useState([]);
   const [receiptScanBusy, setReceiptScanBusy] = useState(false);
   const receiptCamRef = useRef(null);
@@ -954,12 +997,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           )}
           {tab === "cheques" && (
+            <div className="space-y-2">
+            <div className="flex justify-end">
+              <button type="button" onClick={openSelectedChequeReceipt} disabled={!selectedChequeIds.length} className="px-3 py-1.5 border rounded-lg text-[11px] font-semibold hover:bg-slate-50 disabled:opacity-40" data-testid="detail-cheques-receipt-selected">Seçilenlerle makbuz</button>
+            </div>
             <table className="w-full text-left" data-testid="detail-cheques">
-              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">No</th><th className="py-2">Yön</th><th className="py-2">Vade</th><th className="py-2">Durum</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
+              <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2 w-8"></th><th className="py-2">No</th><th className="py-2">Yön</th><th className="py-2">Vade</th><th className="py-2">Durum</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {!(data.cheques || []).length && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Bu cariye ait çek/senet yok. <button onClick={() => navigate("/cheques")} className="text-teal-700 underline">Çek / Senet modülü</button></td></tr>}
+                {!(data.cheques || []).length && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Bu cariye ait çek/senet yok. <button onClick={() => navigate("/cheques")} className="text-teal-700 underline">Çek / Senet modülü</button></td></tr>}
                 {(data.cheques || []).map((ch) => (
                   <tr key={ch.id} data-testid={`detail-cheque-${ch.number}`}>
+                    <td className="py-2">
+                      <input type="checkbox" checked={selectedChequeIds.includes(ch.id || ch._id)} onChange={() => toggleChequeSelect(ch.id || ch._id)} aria-label={`${ch.number || "Evrak"} seç`} data-testid={`detail-cheque-select-${ch.number}`} />
+                    </td>
                     <td className="py-2 font-mono font-semibold">{ch.number}</td>
                     <td className="py-2">{ch.direction === "received" ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}</td>
                     <td className="py-2 font-mono">{fmtDate(ch.due_date)}</td>
@@ -967,7 +1017,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     <td className="py-2 text-right font-bold">{fmt(ch.amount)}</td>
                     <td className="py-2 text-right">
                       <div className="flex justify-end gap-1">
-                        <button type="button" onClick={() => setReceipt(chequeReceipt(ch))} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-cheque-receipt-${ch.number}`}>Makbuz</button>
+                        <button type="button" onClick={() => setReceipt(chequesReceipt([ch]))} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-cheque-receipt-${ch.number}`}>Makbuz</button>
                         <button type="button" onClick={() => openEditPay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`detail-cheque-edit-${ch.number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
                         <button type="button" onClick={() => deletePay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-cheque-delete-${ch.number}`}><Trash2 className="w-3 h-3" /> Sil</button>
                       </div>
@@ -976,13 +1026,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           {tab === "payments" && (() => {
             const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : p.account_name);
             const payDesc = (p) => (isContactLedgerPay(p) ? (p.description || p.category) : `${p.category || ""} • ${p.description || ""}`.replace(/^ • | • $/g, ""));
             const payActions = (p, prefix) => (
               <div className="flex flex-wrap justify-end gap-1">
-                <button type="button" onClick={() => setReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`${prefix}receipt-btn-${p.id}`}>Makbuz</button>
+                <button type="button" onClick={() => openPaymentReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`${prefix}receipt-btn-${p.id}`}>Makbuz</button>
                 <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`${prefix}pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
                 <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`${prefix}pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
               </div>
@@ -1252,7 +1303,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />
         )}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
-        {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
+        {receipt && <ReceiptPrint tx={receipt} items={receipt.items} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
         {statementView?.mode === "reconciliation" && (
           <StatementPrint
             contact={c}

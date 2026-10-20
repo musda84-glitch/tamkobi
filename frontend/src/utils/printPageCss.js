@@ -31,7 +31,7 @@ export function printPageCss(docType = "order", paper = "A4") {
   const size = paperSize(paper);
   const margin = PRINT_PAGE_MARGIN_MM;
   const pad = PRINT_CONTENT_PAD_MM;
-  return `
+  const base = `
 @page { size: ${size}; margin: ${margin}mm; }
 @media print {
   :root {
@@ -107,6 +107,74 @@ export function printPageCss(docType = "order", paper = "A4") {
     border: 0 !important;
   }
   .no-print { display: none !important; }
+}
+`.trim();
+  if (kind !== "receipt") return base;
+  return `${base}\n${receiptCopyCss(size)}`.trim();
+}
+
+/** İki nüsha tek A4 yaprağa sığsın; diğer belge türlerine yazılmaz. */
+function receiptCopyCss(size) {
+  const a4Sheets = size === "A4" ? `
+  #print-area .receipt-page[data-copy-count="2"] {
+    min-height: 248mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  #print-area .receipt-page[data-copy-count="1"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }` : `
+  #print-area .receipt-page {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }`;
+  return `
+.receipt-print-only { display: none; }
+@media print {
+  #print-area .receipt-print-only { display: block !important; }
+  #print-area .receipt-page:not(:last-child) {
+    break-after: page;
+    page-break-after: always;
+  }
+  #print-area .receipt-half,
+  #print-area .receipt-row,
+  #print-area .receipt-cheque-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  #print-area .receipt-cut {
+    border-top: 1px dashed #111;
+    text-align: center;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    margin: 1.5mm 0;
+    padding-top: 1mm;
+    flex: 0 0 auto;
+  }
+  #print-area .receipt-logo {
+    height: 13mm;
+    max-height: 14mm;
+    width: auto;
+    object-fit: contain;
+  }
+  #print-area .receipt-total {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #print-area .receipt-cheque-table,
+  #print-area .receipt-cheque-table th,
+  #print-area .receipt-cheque-table td {
+    font-size: 9px;
+  }
+  #print-area .receipt-cheque-table th,
+  #print-area .receipt-cheque-table td {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  ${a4Sheets}
 }
 `.trim();
 }

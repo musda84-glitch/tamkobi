@@ -18,6 +18,8 @@ jest.mock("axios", () => {
     put: jest.fn(async () => ({ data: {} })),
     delete: jest.fn(async () => ({ data: {} })),
     isCancel: (err) => err?.code === "ERR_CANCELED",
+    defaults: {},
+    interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
   };
   return { __esModule: true, default: impl, ...impl };
 });
