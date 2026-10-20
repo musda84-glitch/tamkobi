@@ -68,8 +68,8 @@ export function ChequeScanButtons({
   onError?: (message: string) => void;
   disabled?: boolean;
   testID?: string;
-  /** buttons: liste kartı. sheet: formdaki kırmızı “Kamerayla çek oku”. */
-  variant?: "buttons" | "sheet";
+  /** buttons: liste kartı. sheet: formdaki kırmızı “Kamerayla çek oku”. batch: tahsilat listesindeki “Kamerayla ekle”. */
+  variant?: "buttons" | "sheet" | "batch";
 }) {
   const { client, companyId } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -116,19 +116,20 @@ export function ChequeScanButtons({
     }
   };
 
-  if (variant === "sheet") {
+  if (variant === "sheet" || variant === "batch") {
     const scanning = (source: "camera" | "gallery") => busy && busySource === source;
+    const batch = variant === "batch";
     return (
       <>
         <Pressable
-          testID={`${testID}-open`}
+          testID={batch ? testID : `${testID}-open`}
           accessibilityRole="button"
-          accessibilityLabel="Kamerayla çek oku"
+          accessibilityLabel={batch ? "Kamerayla ekle" : "Kamerayla çek oku"}
           disabled={disabled || busy}
           onPress={() => setOpen(true)}
           style={{
-            minHeight: 52,
-            borderRadius: 14,
+            minHeight: batch ? 48 : 52,
+            borderRadius: batch ? 12 : 14,
             backgroundColor: colors.danger,
             alignItems: "center",
             justifyContent: "center",
@@ -136,8 +137,8 @@ export function ChequeScanButtons({
             opacity: disabled ? 0.5 : 1,
           }}
         >
-          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 16 }}>
-            {busy ? "Okunuyor…" : "📷 Kamerayla çek oku"}
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: batch ? 15 : 16 }}>
+            {busy ? "Okunuyor…" : batch ? "📷 Kamerayla ekle" : "📷 Kamerayla çek oku"}
           </Text>
         </Pressable>
         <Modal visible={open} animationType="slide" transparent onRequestClose={() => { if (!busy) setOpen(false); }}>

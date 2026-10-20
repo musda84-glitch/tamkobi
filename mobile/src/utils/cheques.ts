@@ -23,6 +23,7 @@ export type Cheque = {
   overdue?: boolean;
   due_soon?: boolean;
   notes?: string;
+  receipt_group_id?: string;
 };
 
 export type ChequeSummary = {
