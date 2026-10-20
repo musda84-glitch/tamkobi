@@ -926,6 +926,18 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "employee_id", "period", "date", "lines", "total", "status"),
         "refs": ("companies._id", "employees._id"),
     },
+    "shopfloor_pin_attempts": {
+        "scope": SCOPE_TENANT,
+        "description": "Atölye PIN deneme sayacı ve kilidi. Operatör veya atölye hesabı başına, company_id ile.",
+        "keys": ("_id", "company_id", "subject", "fails", "window_start", "locked_until"),
+        "refs": ("companies._id",),
+    },
+    "shopfloor_pin_audit": {
+        "scope": SCOPE_TENANT,
+        "description": "Atölye PIN ve operatör token iş emri denetimi. PIN, token ve hash yazılmaz.",
+        "keys": ("_id", "company_id", "at", "action", "actor_user_id", "atolye_user_id", "operator_type", "operator_id", "wo_id"),
+        "refs": ("companies._id",),
+    },
     "work_order_trash_requests": {
         "scope": SCOPE_TENANT,
         "description": "Atölye iş emri silme talebi. Yönetici onayına kadar bekler.",

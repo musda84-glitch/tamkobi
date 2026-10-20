@@ -96,6 +96,7 @@ import superadmin_2fa
 import google_auth
 import tenant_access
 import shopfloor_accounts
+import shopfloor_pin
 from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
@@ -3918,6 +3919,7 @@ async def get_me(request: Request):
             "skip_check_in": bool((emp or {}).get("skip_check_in")),
             "account_type": shopfloor_accounts.public_account_type(user),
             "shopfloor_stations": shopfloor_accounts.public_stations(user),
+            "has_shopfloor_pin": bool((emp or {}).get("shopfloor_pin_hash") or user.get("shopfloor_pin_hash")),
         },
         "authenticated": True,
         "impersonation": await saas_extras.impersonation_info(request),
@@ -22867,29 +22869,13 @@ async def _shopfloor_require_mesaim_check_in(emp: Dict[str, Any]) -> None:
 
 @api_router.post("/production/work-orders/shopfloor-unlock")
 async def shopfloor_unlock(req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    """Tablet atölye: operatör seçmeden önce personel şifresi / bağlı kullanıcı şifresi doğrulanır."""
-    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
-    emp_id = (req.get("employee_id") or "").strip()
-    password = str(req.get("password") or "")
-    if not emp_id or not password:
-        raise HTTPException(status_code=400, detail="Personel ve şifre gerekli.")
-    emp = await db.employees.find_one({"_id": emp_id, "company_id": company_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Personel bulunamadı.")
-    pin_hash = emp.get("shopfloor_pin_hash") or ""
-    user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
-    user_hash = (user or {}).get("password_hash") or ""
-    ok = False
-    if pin_hash and verify_password(password, pin_hash):
-        ok = True
-    elif user and user.get("is_active", True) and user_hash and verify_password(password, user_hash):
-        ok = True
-    if not ok:
-        if not pin_hash and not user_hash:
-            raise HTTPException(status_code=400, detail="Bu personel için atölye şifresi tanımlı değil. Personel kartından şifre belirleyin.")
-        raise HTTPException(status_code=401, detail="Şifre hatalı.")
-    await _shopfloor_require_mesaim_check_in(emp)
-    return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
+    """Atölye operatör PIN'i. Giriş şifresi kabul edilmez; 4 haneli PIN gerekir."""
+    try:
+        return await shopfloor_pin.unlock(req, user)
+    except shopfloor_pin.PinResult as exc:
+        body = {"detail": exc.detail}
+        body.update(exc.extra)
+        return JSONResponse(status_code=exc.status_code, content=body)
 
 
 @api_router.get("/production/work-orders/shopfloor-settings")
@@ -22979,21 +22965,27 @@ def _log(w: Dict[str, Any], action: str, who: Optional[str], extra: str = "") ->
     return {"at": datetime.now(timezone.utc).isoformat(), "action": action, "by": who or w.get("operator_name"), "note": extra}
 
 @api_router.put("/production/work-orders/{wo_id}/assign")
-async def assign_work_order(wo_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def assign_work_order(wo_id: str, req: Dict[str, Any], request: Request = None, user: dict = Depends(get_current_user)):
     w = await _wo(wo_id, user)
     shopfloor_accounts.enforce_station(user, w.get("station"))
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"assigned_to": req.get("assigned_to"), "assigned_name": req.get("assigned_name")}, "$push": {"logs": _log(w, "assigned", req.get("assigned_name"))}})
+    who = await shopfloor_pin.resolve_operator(
+        req, user, w, fallback=str(req.get("assigned_name") or ""), request=request, prefer_body=False,
+    )
+    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"assigned_to": req.get("assigned_to"), "assigned_name": req.get("assigned_name")}, "$push": {"logs": _log(w, "assigned", who)}})
+    await shopfloor_pin.record_wo_action(user, w, who)
     return {"status": "success"}
 
 @api_router.post("/production/work-orders/{wo_id}/start")
-async def start_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def start_work_order(wo_id: str, req: Dict[str, Any] = None, request: Request = None, user: dict = Depends(get_current_user)):
     req = req or {}
     w = await _wo(wo_id, user)
     shopfloor_accounts.enforce_station(user, w.get("station"))
     # ready / waiting / paused — waiting: önceki adım bitmeden araya girilebilir
     if w["status"] not in ("ready", "waiting", "paused"):
         raise HTTPException(status_code=400, detail="Bu adım başlatılamaz (adım kapanmış veya zaten devam ediyor).")
-    who = str(req.get("operator_name") or w.get("assigned_name") or "").strip()
+    who = await shopfloor_pin.resolve_operator(
+        req, user, w, fallback=str(w.get("assigned_name") or ""), request=request,
+    )
     if not who:
         raise HTTPException(status_code=400, detail="Operatör seçin.")
     # Başlatan personel bitirmeden/duraklatmadan başka istasyonda iş açamaz; başka personel serbest.
@@ -23019,6 +23011,7 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = 
         upd["paused_at"] = None
         log_action = "resume"
     await db.work_orders.update_one({"_id": wo_id}, {"$set": upd, "$push": {"logs": _log(w, log_action, who)}})
+    await shopfloor_pin.record_wo_action(user, w, who)
     await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     refreshed = await db.work_orders.find_one({"_id": wo_id})
     out: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} başlatıldı."}
@@ -23051,13 +23044,19 @@ async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] 
 
 
 @api_router.get("/production/work-orders/pause-policy")
-async def get_pause_policy(company_id: Optional[str] = None, operator_name: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def get_pause_policy(company_id: Optional[str] = None, operator_name: Optional[str] = None, request: Request = None, user: dict = Depends(get_current_user)):
     """Atölye Duraklat: mesai / mola / fazla mesai penceresi."""
     cid = tenant_access.resolve_company_id(user, company_id)
-    policy = await _shopfloor_pause_policy(cid, operator_name)
+    if isinstance(user, dict) and shopfloor_accounts.is_atolye_user(user):
+        who = await shopfloor_pin.resolve_operator(None, user, {"company_id": cid}, request=request)
+    elif isinstance(user, dict):
+        who = await shopfloor_pin.caller_display_name(user)
+    else:
+        who = str(operator_name or "").strip()
+    policy = await _shopfloor_pause_policy(cid, who)
     if not shopfloor_accounts.is_atolye_user(user):
         return policy
-    operator = str(operator_name or "").strip()
+    operator = str(who or "").strip()
     if not operator:
         return policy
     open_rows = await db.work_orders.find(
@@ -23075,13 +23074,15 @@ async def get_pause_policy(company_id: Optional[str] = None, operator_name: Opti
 
 
 @api_router.post("/production/work-orders/{wo_id}/pause")
-async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, request: Request = None, user: dict = Depends(get_current_user)):
     req = req or {}
     w = await _wo(wo_id, user)
     shopfloor_accounts.enforce_station(user, w.get("station"))
     if w["status"] != "in_progress":
         raise HTTPException(status_code=400, detail="Sadece devam eden adım duraklatılabilir.")
-    who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
+    who = await shopfloor_pin.resolve_operator(
+        req, user, w, fallback=str(w.get("operator_name") or ""), request=request,
+    )
     _pause_cid = str(w.get("company_id") or "").strip()
     if not _pause_cid:
         raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
@@ -23095,13 +23096,15 @@ async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = 
             "$push": {"logs": _log(w, "pause", who, req.get("reason", ""))},
         },
     )
+    await shopfloor_pin.record_wo_action(user, w, who)
     return {"status": "success", "message": "Adım duraklatıldı.", "pause_phase": policy.get("phase")}
 
 @api_router.post("/production/work-orders/{wo_id}/finish")
-async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Request = None, user: dict = Depends(get_current_user)):
     req = req or {}
     w = await _wo(wo_id, user)
     shopfloor_accounts.enforce_station(user, w.get("station"))
+    who = await shopfloor_pin.resolve_operator(req, user, w, request=request)
     # Mobil/web yarışı: zaten bitmişse 200 + güncel satır (idempotent)
     if w.get("status") == "done":
         return {
@@ -23225,10 +23228,13 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict =
         log_extra = " (plan altı)"
     if mat_consume > 0:
         log_extra += f"; stok -{mat_consume:g} {finish_unit}"
+    if str(who or "").strip():
+        wo_patch["operator_name"] = str(who).strip()
     await db.work_orders.update_one(
         {"_id": wo_id},
-        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire{log_extra}")}},
+        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", who, f"{produced:g} üretildi, {scrap:g} fire{log_extra}")}},
     )
+    await shopfloor_pin.record_wo_action(user, w, who)
     nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1})
     msg_bits = [f"{w['step_name']} tamamlandı."]
     if over and not is_material_step:
@@ -23366,7 +23372,7 @@ async def _soft_trash_work_order_cascade(w: Dict[str, Any], *, note_prefix: str)
 
 
 @api_router.post("/production/work-orders/{wo_id}/trash-request")
-async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, request: Request = None, user: dict = Depends(get_current_user)):
     """Atölye: silme talebini yönetici onayına gönder (hemen silmez)."""
     req = req or {}
     w = await _wo(wo_id, user)
@@ -23379,7 +23385,9 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user:
     company_id = str(w.get("company_id") or "").strip()
     if not company_id:
         raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
-    who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
+    who = await shopfloor_pin.resolve_operator(
+        req, user, w, fallback=str(w.get("operator_name") or ""), request=request,
+    )
     if not who:
         raise HTTPException(status_code=400, detail="Silme talebi için operatör seçin.")
     existing = await db.work_order_trash_requests.find_one(
@@ -23407,6 +23415,7 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, user:
     doc["_id"] = str(uuid.uuid4())
     doc["company_id"] = company_id
     await db.work_order_trash_requests.insert_one(doc)
+    await shopfloor_pin.record_wo_action(user, w, who)
     return {
         "status": "success",
         "id": doc["_id"],
@@ -25079,12 +25088,7 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
 
 @api_router.post("/personnel/employees/{emp_id}/shopfloor-pin")
 async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
-    pin = str(req.get("password") or req.get("pin") or "").strip()
-    if len(pin) < 4:
-        raise HTTPException(status_code=400, detail="Atölye şifresi en az 4 karakter olmalı.")
-    await db.employees.update_one({"_id": emp_id, "company_id": emp["company_id"]}, {"$set": {"shopfloor_pin_hash": hash_password(pin), "updated_at": datetime.now(timezone.utc).isoformat()}})
-    return {"status": "success", "has_shopfloor_pin": True, "message": "Atölye şifresi kaydedildi."}
+    return await shopfloor_pin.set_employee_pin(emp_id, req, user)
 
 @api_router.get("/personnel/payrolls")
 async def list_payrolls(company_id: Optional[str] = None, period: Optional[str] = None, employee_id: Optional[str] = None, user: dict = Depends(get_current_user)):
@@ -26107,6 +26111,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = None, user: dict 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 shopfloor_accounts.init(db, get_current_user)
+shopfloor_pin.init(db, get_current_user)
 mesaim_gate.init(db)
 company_audit.init(db, get_current_user)
 import tenant_db
@@ -26362,6 +26367,7 @@ app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(shopfloor_accounts.router)
+app.include_router(shopfloor_pin.router)
 app.include_router(company_audit.router)
 app.include_router(pos_cashier.router)
 app.include_router(desktop_release.router)
