@@ -779,8 +779,17 @@ def user_ids_of(user: Optional[Dict[str, Any]]) -> List[str]:
     return out
 
 
-def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Expo Push API gövdesi — başlık/metin + uygulama içi yönlendirme verisi."""
+def expo_push_messages(
+    tokens: Iterable[str],
+    note: Dict[str, Any],
+    token_users: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Expo Push API gövdesi — başlık/metin + uygulama içi yönlendirme verisi.
+
+    token_users: cihaz token'ı → o satırın user_id'si. Her mesaj kendi data
+    kopyasını taşır; data.user_id o token'ın kullanıcısı, data.company_id
+    bildirimin şirketidir.
+    """
     title = str(note.get("title") or "TamKobi").strip() or "TamKobi"
     body = str(note.get("message") or note.get("body") or "").strip()
     target = note.get("target") if isinstance(note.get("target"), dict) else {}
@@ -793,7 +802,9 @@ def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict
         "target_type": str(target.get("type") or ""),
         "target_id": str(target.get("id") or ""),
         "target_route": str(target.get("route") or ""),
+        "company_id": str(note.get("company_id") or ""),
     }
+    users = {str(key or "").strip(): str(value or "") for key, value in (token_users or {}).items()}
     msgs: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for raw in tokens:
@@ -801,6 +812,8 @@ def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict
         if not is_expo_push_token(token) or token in seen:
             continue
         seen.add(token)
+        payload = dict(data)
+        payload["user_id"] = users.get(token, "")
         msgs.append({
             "to": token,
             "title": title,
@@ -809,9 +822,31 @@ def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict
             "channelId": PUSH_CHANNEL_ID,
             "priority": "high",
             "badge": 1,
-            "data": data,
+            "data": payload,
         })
     return msgs
+
+
+async def direct_recipient_ids(db, note: Dict[str, Any]) -> List[str]:
+    """Kişisel bildirimin alıcısı: user_id ve personel kartına bağlı kullanıcı."""
+    ids: List[str] = []
+    seen: set[str] = set()
+
+    def add(value: Optional[str]) -> None:
+        v = str(value or "").strip()
+        if v and v not in seen:
+            seen.add(v)
+            ids.append(v)
+
+    add(note.get("user_id"))
+    emp_id = str(note.get("employee_id") or "").strip()
+    if emp_id:
+        add(emp_id)
+        emp_user = await db.users.find_one({"employee_id": emp_id})
+        if emp_user:
+            for uid in user_ids_of(emp_user):
+                add(uid)
+    return ids
 
 
 async def recipient_user_ids(db, note: Dict[str, Any]) -> List[str]:
@@ -854,16 +889,88 @@ async def recipient_user_ids(db, note: Dict[str, Any]) -> List[str]:
     return ids
 
 
-async def tokens_for_users(db, user_ids: Iterable[str]) -> List[str]:
+def _dedupe_token_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        token = str(row.get("token") or "").strip()
+        if not is_expo_push_token(token) or token in seen:
+            continue
+        seen.add(token)
+        out.append(row)
+    return out
+
+
+def _token_user_map(rows: Iterable[Dict[str, Any]]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        token = str(row.get("token") or "").strip()
+        uid = str(row.get("user_id") or "").strip()
+        if token and uid and token not in mapping:
+            mapping[token] = uid
+    return mapping
+
+
+async def _users_by_push_ids(db, user_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    ids: List[str] = []
+    seen: set[str] = set()
+    for raw in user_ids:
+        uid = str(raw or "").strip()
+        if uid and uid not in seen:
+            seen.add(uid)
+            ids.append(uid)
+    if not ids:
+        return {}
+    rows = await db.users.find({
+        "$or": [{"_id": {"$in": ids}}, {"id": {"$in": ids}}],
+    }).to_list(400)
+    found: Dict[str, Dict[str, Any]] = {}
+    for user in rows or []:
+        if not isinstance(user, dict):
+            continue
+        for key in user_ids_of(user):
+            found.setdefault(key, user)
+    return found
+
+
+async def _visible_token_rows(db, rows: Iterable[Dict[str, Any]], note: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """user_id boş ya da bildirimi göremeyen token'ı şirket yayınından çıkar."""
+    pending = [row for row in rows if isinstance(row, dict)]
+    users = await _users_by_push_ids(db, (row.get("user_id") for row in pending))
+    kept: List[Dict[str, Any]] = []
+    for row in pending:
+        uid = str(row.get("user_id") or "").strip()
+        if not uid:
+            continue
+        user = users.get(uid)
+        if not user or not notification_visible(note, user):
+            continue
+        kept.append(row)
+    return kept
+
+
+async def tokens_for_users(db, user_ids: Iterable[str]) -> List[Dict[str, Any]]:
     ids = [str(i) for i in user_ids if i]
     if not ids:
         return []
     rows = await db.push_tokens.find({"user_id": {"$in": ids}}).to_list(400)
-    return [str(r.get("token") or "") for r in rows if is_expo_push_token(r.get("token"))]
+    return _dedupe_token_rows(rows)
 
 
-async def tokens_for_company(db, company_id: Optional[str]) -> List[str]:
-    """Şirket cihazları: company_id eşleşen + o şirketteki kullanıcıların token'ları."""
+async def tokens_for_company(
+    db,
+    company_id: Optional[str],
+    *,
+    note: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Şirket cihazları: company_id eşleşen + o şirketteki kullanıcıların token satırları.
+
+    note verilirse satır, token'daki user_id bildirimi görebiliyorsa kalır.
+    """
     cid = str(company_id or "").strip()
     if not cid:
         return []
@@ -879,7 +986,10 @@ async def tokens_for_company(db, company_id: Optional[str]) -> List[str]:
     if uids:
         query["$or"].append({"user_id": {"$in": uids}})
     rows = await db.push_tokens.find(query).to_list(400)
-    return merge_push_tokens(r.get("token") for r in rows)
+    deduped = _dedupe_token_rows(rows)
+    if note is None:
+        return deduped
+    return await _visible_token_rows(db, deduped, note)
 
 
 def is_targeted_note(note: Optional[Dict[str, Any]]) -> bool:
@@ -1263,9 +1373,11 @@ async def replay_unread_to_token(
         "is_read": {"$ne": True},
     }).sort("created_at", -1).to_list(80)
     notes = pick_unread_for_push(rows, user, limit=limit)
+    actor = str((user or {}).get("id") or (user or {}).get("_id") or "").strip()
+    clean_token = str(token or "").strip()
     messages: List[Dict[str, Any]] = []
     for note in notes:
-        messages.extend(expo_push_messages([token], note))
+        messages.extend(expo_push_messages([clean_token], note, {clean_token: actor}))
     if not messages:
         return {"sent": 0, "count": 0}
     result = await send_expo_push(messages)
@@ -1274,11 +1386,29 @@ async def replay_unread_to_token(
 
 
 async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
-    recipients = await recipient_user_ids(db, note)
-    user_tokens = await tokens_for_users(db, recipients)
-    company_tokens = [] if is_targeted_note(note) else await tokens_for_company(db, note.get("company_id"))
-    tokens = collect_dispatch_tokens(user_tokens, company_tokens, is_targeted_note(note))
-    messages = expo_push_messages(tokens, note)
+    targeted = is_targeted_note(note)
+    if targeted:
+        recipients = await direct_recipient_ids(db, note)
+    else:
+        recipients = await recipient_user_ids(db, note)
+    user_rows = await tokens_for_users(db, recipients)
+    # Kişisel bildirim yalnız alıcının token'ına gider. Şirket yayını, token
+    # satırındaki kullanıcının görebildiği cihazlarla sınırlıdır.
+    company_rows: List[Dict[str, Any]] = []
+    if not targeted:
+        try:
+            company_rows = await tokens_for_company(db, note.get("company_id"), note=note)
+        except Exception:
+            logger.exception("company push visibility filter failed")
+            company_rows = []
+    mapping = _token_user_map(list(user_rows) + list(company_rows))
+    tokens = collect_dispatch_tokens(
+        (str(row.get("token") or "") for row in user_rows),
+        (str(row.get("token") or "") for row in company_rows),
+        targeted,
+    )
+    tokens = [token for token in tokens if mapping.get(token)]
+    messages = expo_push_messages(tokens, note, mapping)
     if not messages:
         logger.warning(
             "push skipped (no tokens) type=%s company=%s recipients=%s",

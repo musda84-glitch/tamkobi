@@ -1,3 +1,7 @@
+import asyncio
+from unittest.mock import patch
+
+import notify
 from notify import (
     collect_dispatch_tokens,
     expo_push_messages,
@@ -9,8 +13,11 @@ from notify import (
     notification_doc,
     notification_visible,
     pick_unread_for_push,
+    remove_push_token,
+    replay_unread_to_token,
     role_label,
     roles_for_type,
+    upsert_push_token,
     user_ids_of,
 )
 
@@ -115,11 +122,20 @@ def test_expo_push_token_and_payload():
     assert not is_expo_push_token("fcm:abc")
     assert not is_expo_push_token("")
     note = notification_doc("c1", "b2b_order", "Yeni sipariş", "N11 · 2 kalem", link="/orders", ref_type="order", ref_id="o1")
-    msgs = expo_push_messages(["ExponentPushToken[abc123]", "bad", "ExponentPushToken[abc123]"], note)
+    msgs = expo_push_messages(
+        ["ExponentPushToken[abc123]", "bad", "ExponentPushToken[abc123]"],
+        note,
+        {"ExponentPushToken[abc123]": "usr_1"},
+    )
     assert len(msgs) == 1
     assert msgs[0]["to"] == "ExponentPushToken[abc123]"
     assert msgs[0]["title"] == "Yeni sipariş"
     assert msgs[0]["data"]["link"] == "/orders"
+    assert msgs[0]["data"]["type"] == "b2b_order"
+    assert msgs[0]["data"]["ref_type"] == "order"
+    assert msgs[0]["data"]["ref_id"] == "o1"
+    assert msgs[0]["data"]["user_id"] == "usr_1"
+    assert msgs[0]["data"]["company_id"] == "c1"
     assert msgs[0]["channelId"] == "tamkobi_chime"
     assert msgs[0]["sound"] == "tamkobi.wav"
     assert msgs[0]["badge"] == 1
@@ -169,3 +185,252 @@ def test_unread_panel_notes_are_queued_for_phone():
     ]
     staff = {"_id": "usr_wh", "role": "warehouse", "active_company_id": "c1"}
     assert pick_unread_for_push(rows, staff) == []
+
+
+MGR = "ExponentPushToken[managerPhone001]"
+ACC = "ExponentPushToken[accountantPhone1]"
+PER = "ExponentPushToken[personnelPhone01]"
+ADM = "ExponentPushToken[adminPhone000001]"
+SHARED = "ExponentPushToken[sharedDevice0001]"
+BLANK = "ExponentPushToken[blankUserDevice1]"
+
+
+class _PushColl:
+    def __init__(self):
+        self.docs = {}
+
+    def _match(self, doc, query):
+        for key, expected in (query or {}).items():
+            if key == "$or":
+                if not any(self._match(doc, clause) for clause in expected):
+                    return False
+                continue
+            if str(key).startswith("$"):
+                continue
+            current = doc.get(key)
+            if isinstance(expected, dict):
+                if "$in" in expected and current not in expected["$in"]:
+                    return False
+                if "$ne" in expected and current == expected["$ne"]:
+                    return False
+                continue
+            if current != expected:
+                return False
+        return True
+
+    async def find_one(self, query=None, *args, **kwargs):
+        for doc in self.docs.values():
+            if self._match(doc, query or {}):
+                return dict(doc)
+        return None
+
+    def find(self, query=None, *args, **kwargs):
+        rows = [dict(doc) for doc in self.docs.values() if self._match(doc, query or {})]
+
+        class Cursor:
+            def sort(self, *args, **kwargs):
+                return self
+
+            async def to_list(self, limit=None):
+                if limit is None:
+                    return list(rows)
+                return list(rows)[:limit]
+
+        return Cursor()
+
+    async def update_one(self, filt, upd, upsert=False):
+        found = None
+        for doc in self.docs.values():
+            if self._match(doc, filt or {}):
+                found = doc
+                break
+        if found is None:
+            if not upsert:
+                return None
+            doc = {}
+            if "$setOnInsert" in (upd or {}):
+                doc.update(upd["$setOnInsert"])
+            if "$set" in (upd or {}):
+                doc.update(upd["$set"])
+            for key, value in (filt or {}).items():
+                if not str(key).startswith("$") and not isinstance(value, dict):
+                    doc.setdefault(key, value)
+            if not doc.get("_id"):
+                doc["_id"] = f"row{len(self.docs)}"
+            self.docs[str(doc["_id"])] = doc
+            return None
+        if "$set" in (upd or {}):
+            found.update(upd["$set"])
+        return None
+
+    async def delete_many(self, query):
+        class Result:
+            deleted_count = 0
+
+        doomed = [key for key, doc in self.docs.items() if self._match(doc, query or {})]
+        for key in doomed:
+            del self.docs[key]
+        Result.deleted_count = len(doomed)
+        return Result()
+
+
+class _PushDB:
+    def __init__(self):
+        self.push_tokens = _PushColl()
+        self.users = _PushColl()
+        self.notifications = _PushColl()
+
+    def add_user(self, uid, role, **extra):
+        doc = {
+            "_id": uid,
+            "id": uid,
+            "role": role,
+            "is_active": True,
+            "is_super_admin": False,
+            "active_company_id": "c1",
+            "company_ids": ["c1"],
+        }
+        doc.update(extra)
+        self.users.docs[uid] = doc
+        return doc
+
+    def add_token(self, token, user_id, company_id="c1"):
+        self.push_tokens.docs[token] = {
+            "_id": token,
+            "token": token,
+            "user_id": user_id,
+            "company_id": company_id,
+        }
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+async def _sent(db, note):
+    captured = {}
+
+    async def fake_send(messages):
+        captured["messages"] = list(messages)
+        return {"sent": len(messages), "tickets": [], "errors": 0}
+
+    with patch.object(notify, "send_expo_push", fake_send):
+        await notify.dispatch_push(db, note)
+    return captured.get("messages") or []
+
+
+def test_push_payload_user_and_company_are_per_token():
+    note = notification_doc("c1", "einvoice_incoming", "Gelen e-belge", "1 fatura", link="/edoc-inbox")
+    msgs = expo_push_messages([MGR, ACC], note, {MGR: "usr_mgr", ACC: "usr_acc"})
+    assert [m["to"] for m in msgs] == [MGR, ACC]
+    assert msgs[0]["data"]["user_id"] == "usr_mgr"
+    assert msgs[1]["data"]["user_id"] == "usr_acc"
+    assert msgs[0]["data"]["company_id"] == "c1"
+    assert msgs[1]["data"]["company_id"] == "c1"
+    assert msgs[0]["data"]["type"] == "einvoice_incoming"
+    assert msgs[0]["data"]["link"] == "/edoc-inbox"
+    msgs[0]["data"]["user_id"] = "changed"
+    assert msgs[1]["data"]["user_id"] == "usr_acc"
+
+
+def test_company_broadcast_skips_personnel_and_blank_tokens():
+    db = _PushDB()
+    db.add_user("usr_mgr", "manager")
+    db.add_user("usr_acc", "accountant")
+    db.add_user("usr_per", "personel")
+    db.add_user("usr_adm", "admin")
+    db.add_token(MGR, "usr_mgr")
+    db.add_token(ACC, "usr_acc")
+    db.add_token(PER, "usr_per")
+    db.add_token(ADM, "usr_adm")
+    db.add_token(BLANK, "")
+    note = notification_doc("c1", "einvoice_incoming", "Gelen e-belge", "1 fatura")
+    assert note["roles"] == ["admin", "manager", "accountant"]
+    messages = _run(_sent(db, note))
+    targets = {m["to"]: m["data"]["user_id"] for m in messages}
+    assert PER not in targets
+    assert BLANK not in targets
+    assert targets[MGR] == "usr_mgr"
+    assert targets[ACC] == "usr_acc"
+    assert targets[ADM] == "usr_adm"
+    assert {m["data"]["company_id"] for m in messages} == {"c1"}
+
+
+def test_personal_push_goes_only_to_recipient_token():
+    db = _PushDB()
+    db.add_user("usr_mgr", "manager")
+    db.add_user("usr_per", "personel")
+    db.add_user("usr_adm", "admin")
+    db.add_token(MGR, "usr_mgr")
+    db.add_token(PER, "usr_per")
+    db.add_token(ADM, "usr_adm")
+    note = notification_doc("c1", "task_assigned", "Görev", "sana", user_id="usr_mgr", roles=[])
+    assert is_targeted_note(note)
+    messages = _run(_sent(db, note))
+    assert [m["to"] for m in messages] == [MGR]
+    assert messages[0]["data"]["user_id"] == "usr_mgr"
+    assert messages[0]["data"]["company_id"] == "c1"
+
+
+def test_personal_employee_push_reaches_linked_user_only():
+    db = _PushDB()
+    db.add_user("usr_per", "personel", employee_id="emp_9")
+    db.add_user("usr_adm", "admin")
+    db.add_token(PER, "usr_per")
+    db.add_token(ADM, "usr_adm")
+    note = notification_doc("c1", "overtime_assigned", "Mesai", "sana", employee_id="emp_9")
+    messages = _run(_sent(db, note))
+    assert [m["to"] for m in messages] == [PER]
+    assert messages[0]["data"]["user_id"] == "usr_per"
+    assert messages[0]["data"]["company_id"] == "c1"
+
+
+def test_rebound_token_follows_the_new_user_and_unregister_stops_push():
+    db = _PushDB()
+    db.add_user("usr_mgr", "manager")
+    db.add_user("usr_per", "personel")
+    _run(upsert_push_token(db, user_id="usr_mgr", company_id="c1", token=SHARED))
+    _run(upsert_push_token(db, user_id="usr_per", company_id="c1", token=SHARED))
+    row = _run(db.push_tokens.find_one({"token": SHARED}))
+    assert row["user_id"] == "usr_per"
+    assert row["company_id"] == "c1"
+    assert len(db.push_tokens.docs) == 1
+    assert _run(remove_push_token(db, SHARED, "usr_mgr")) == 0
+    assert _run(db.push_tokens.find_one({"token": SHARED}))["user_id"] == "usr_per"
+
+    _run(upsert_push_token(db, user_id="usr_mgr", company_id="c1", token=MGR))
+    note = notification_doc("c1", "einvoice_incoming", "Gelen e-belge", "yönetici")
+    messages = _run(_sent(db, note))
+    assert SHARED not in {m["to"] for m in messages}
+    assert MGR in {m["to"] for m in messages}
+    mgr_msg = next(m for m in messages if m["to"] == MGR)
+    assert mgr_msg["data"]["user_id"] == "usr_mgr"
+    assert mgr_msg["data"]["company_id"] == "c1"
+
+    assert _run(remove_push_token(db, SHARED, "usr_per")) == 1
+    assert _run(db.push_tokens.find_one({"token": SHARED})) is None
+    again = _run(_sent(db, note))
+    assert SHARED not in {m["to"] for m in again}
+    assert MGR in {m["to"] for m in again}
+
+
+def test_replay_unread_uses_registering_user_id():
+    db = _PushDB()
+    user = db.add_user("usr_per", "personel")
+    note = notification_doc("c1", "task_assigned", "Görev", "sana", user_id="usr_per", roles=[])
+    db.notifications.docs[note["_id"]] = note
+    captured = {}
+
+    async def fake_send(messages):
+        captured["messages"] = list(messages)
+        return {"sent": len(messages), "tickets": [], "errors": 0}
+
+    async def go():
+        with patch.object(notify, "send_expo_push", fake_send):
+            return await replay_unread_to_token(db, user=user, company_id="c1", token=PER)
+
+    result = _run(go())
+    assert result["sent"] == 1
+    assert captured["messages"][0]["to"] == PER
+    assert captured["messages"][0]["data"]["user_id"] == "usr_per"
+    assert captured["messages"][0]["data"]["company_id"] == "c1"
