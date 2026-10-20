@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from datetime import date, timedelta
 
 import addons
 import server
@@ -39,6 +40,7 @@ class MemCursor:
 
     def sort(self, key, direction=1):
         self._sort = [(key, direction)] if isinstance(key, str) else list(key)
+        self._coll.sorts.append(list(self._sort))
         return self
 
     async def to_list(self, length=None):
@@ -54,6 +56,7 @@ class MemColl:
         self.docs = []
         self.queries = []
         self.limits = []
+        self.sorts = []
 
     def find(self, query=None, projection=None):
         self.queries.append(copy.deepcopy(query or {}))
@@ -344,4 +347,67 @@ def test_open_cheque_without_bank_row_is_listed_once(monkeypatch):
     assert "SN1" not in docs[1]
     assert "BOUNCE" not in json.dumps(docs, ensure_ascii=False)
     assert "YABANCI" not in json.dumps(docs, ensure_ascii=False)
+    _assert_private(body)
+
+
+def test_over_limit_keeps_newest_payments(monkeypatch):
+    start = date(2024, 1, 1)
+    payments = [
+        _payment(
+            _id=f"pay-{i:04d}",
+            amount=1,
+            date=(start + timedelta(days=i)).isoformat(),
+            description=f"H{i:04d}",
+        )
+        for i in range(600)
+    ]
+    body, db = _portal(monkeypatch, payments=payments, balance=0)
+    docs = [row["doc"] for row in body["statement"]["rows"]]
+    assert len(docs) == 500
+    assert any("H0599" in doc for doc in docs)
+    assert all("H0000" not in doc and "H0099" not in doc for doc in docs)
+    assert any("H0100" in doc for doc in docs)
+    assert body["statement"]["rows"][-1]["date"] == payments[-1]["date"]
+    assert db.bank_transactions.sorts[-1] == [("date", -1)]
+    assert db.bank_transactions.limits[-1] == 500
+    assert db.cheques.sorts[-1] == [("due_date", -1)]
+
+
+def test_skip_ledger_and_installment_notes_stay_off_statement(monkeypatch):
+    body, _db = _portal(
+        monkeypatch,
+        invoices=[_invoice()],
+        payments=[_payment()],
+        cheques=[
+            {
+                "_id": "note-skip",
+                "company_id": COMPANY,
+                "contact_id": CONTACT,
+                "instrument": "promissory",
+                "direction": "received",
+                "status": "open",
+                "amount": 300,
+                "due_date": "2026-10-08",
+                "serial_no": "SKIP300",
+                "skip_ledger": True,
+            },
+            {
+                "_id": "note-inst",
+                "company_id": COMPANY,
+                "contact_id": CONTACT,
+                "instrument": "promissory",
+                "direction": "received",
+                "status": "open",
+                "amount": 150,
+                "due_date": "2026-10-09",
+                "serial_no": "TAKSIT",
+                "installment_id": "inst-1",
+            },
+        ],
+    )
+    docs = [row["doc"] for row in body["statement"]["rows"]]
+    assert docs == ["SF-1 • Satış Faturası", "Tahsilat • Kasa • Nakit"]
+    assert body["statement"]["rows"][-1]["balance"] == 600
+    blob = json.dumps(body["statement"], ensure_ascii=False)
+    assert "SKIP300" not in blob and "TAKSIT" not in blob
     _assert_private(body)

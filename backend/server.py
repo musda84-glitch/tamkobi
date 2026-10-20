@@ -6333,16 +6333,19 @@ async def _b2b_portal_statement(contact: dict, invoices: List[dict]) -> Dict[str
     contact_id = contact.get("_id")
     raw_payments = await db.bank_transactions.find(
         {"company_id": company_id, "contact_id": contact_id, "type": {"$ne": "transfer"}},
-    ).sort("date", 1).to_list(_B2B_STATEMENT_LIMIT)
+    ).sort("date", -1).to_list(_B2B_STATEMENT_LIMIT)
     payments = [row for row in raw_payments if not _b2b_statement_dead(row)]
     cheques = []
     for ch in await db.cheques.find(
         {"company_id": company_id, "contact_id": contact_id},
-    ).sort("due_date", 1).to_list(_B2B_STATEMENT_LIMIT):
+    ).sort("due_date", -1).to_list(_B2B_STATEMENT_LIMIT):
         if _b2b_statement_dead(ch):
             continue
         status = str(ch.get("status") or "open").strip().lower()
         if status not in _B2B_CHEQUE_STATUSES:
+            continue
+        # Taksit senedi ve skip_ledger cari bakiyeye yazılmaz; ekstreye de girmez.
+        if ch.get("skip_ledger") or ch.get("installment_id"):
             continue
         cheques.append(ch)
     rows = [
