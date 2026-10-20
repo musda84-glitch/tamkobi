@@ -46,14 +46,46 @@ class FakeColl:
     async def count_documents(self, q=None):
         return len([d for d in self.docs if self._match(d, q or {})])
 
-    async def update_one(self, q, upd):
+    def _apply(self, doc, upd, insert=False):
+        if insert and "$setOnInsert" in (upd or {}):
+            doc.update(upd["$setOnInsert"])
+        if "$set" in (upd or {}):
+            doc.update(upd["$set"])
+        if "$inc" in (upd or {}):
+            for key, value in upd["$inc"].items():
+                doc[key] = (doc.get(key) or 0) + value
+
+    async def update_one(self, q, upd, upsert=False):
         self.update_filters.append(dict(q or {}))
         d = next((x for x in self.docs if self._match(x, q or {})), None)
         if not d:
-            return MagicMock(matched_count=0, modified_count=0)
-        if "$set" in upd:
-            d.update(upd["$set"])
+            if not upsert:
+                return MagicMock(matched_count=0, modified_count=0)
+            created = {}
+            for key, value in (q or {}).items():
+                if not str(key).startswith("$") and not isinstance(value, dict):
+                    created[key] = value
+            self._apply(created, upd, insert=True)
+            self.docs.append(created)
+            return MagicMock(matched_count=0, modified_count=0, upserted_id=created.get("_id"))
+        self._apply(d, upd)
         return MagicMock(matched_count=1, modified_count=1)
+
+    async def find_one_and_update(self, q, upd, upsert=False, return_document=True, projection=None):
+        d = next((x for x in self.docs if self._match(x, q or {})), None)
+        if d is None:
+            if not upsert:
+                return None
+            created = {}
+            for key, value in (q or {}).items():
+                if not str(key).startswith("$") and not isinstance(value, dict):
+                    created[key] = value
+            self._apply(created, upd, insert=True)
+            self.docs.append(created)
+            return dict(created) if return_document else None
+        before = dict(d)
+        self._apply(d, upd)
+        return dict(d if return_document else before)
 
 
 def _mock_db(contacts, invoices=None):
@@ -62,6 +94,7 @@ def _mock_db(contacts, invoices=None):
     db.invoices = FakeColl(invoices or [])
     db.products = FakeColl([])
     db.stock_lots = FakeColl([])
+    db.counters = FakeColl([])
     return db
 
 
