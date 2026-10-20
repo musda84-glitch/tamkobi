@@ -162,6 +162,65 @@ test("chevron kalemleri açar ve kapatır, lazy fetch bir kez çağrılır, topl
   expect(axios.get).toHaveBeenCalledTimes(2);
 });
 
+const STATEMENT = {
+  rows: [
+    { date: "2026-10-01", doc: "SF-9 • Satış Faturası", debit: 1000, credit: 0, balance: 1000, kind: "invoice" },
+    { date: "2026-10-02", doc: "Tahsilat • Kasa • Nakit", debit: 0, credit: 400, balance: 600, kind: "payment" },
+    { date: "2026-10-03", doc: "Ödeme • Banka • Havale", debit: 100, credit: 0, balance: 500, kind: "payment" },
+  ],
+  payments: [
+    { date: "2026-10-02", doc: "Tahsilat • Kasa • Nakit", debit: 0, credit: 400, balance: 600, kind: "payment" },
+    { date: "2026-10-03", doc: "Ödeme • Banka • Havale", debit: 100, credit: 0, balance: 500, kind: "payment" },
+  ],
+};
+
+test("tahsilat Hareketler görünümünde Alacak sütununda ve bakiyede görünür", async () => {
+  root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <StatementList invoices={INVOICES} company={{}} balance={700} token="tok-1" statement={STATEMENT} />,
+    );
+  });
+  expect(host.querySelector('[data-testid="b2b-statement-tab-moves"]').getAttribute("aria-selected")).toBe("true");
+  expect(host.querySelector('[data-testid="b2b-statement-balance"]').textContent).toMatch(/700,00/);
+  const sale = host.querySelector('[data-testid="b2b-statement-row-0"]');
+  expect(sale.textContent).toContain("Satış Faturası");
+  expect(sale.querySelectorAll("td")[2].textContent).toMatch(/1.?000,00/);
+  const tahsilat = host.querySelector('[data-testid="b2b-statement-row-1"]');
+  const tahsilatCells = tahsilat.querySelectorAll("td");
+  expect(tahsilatCells[1].textContent).toContain("Tahsilat");
+  expect(tahsilatCells[3].textContent).toMatch(/400,00/);
+  expect(tahsilatCells[2].textContent).not.toMatch(/400/);
+  expect(tahsilatCells[4].textContent).toMatch(/600,00/);
+  const odeme = host.querySelector('[data-testid="b2b-statement-row-2"]');
+  expect(odeme.querySelectorAll("td")[1].textContent).toContain("Ödeme");
+  expect(odeme.querySelectorAll("td")[2].textContent).toMatch(/100,00/);
+  const cards = host.querySelector('[data-testid="b2b-statement-cards"]');
+  expect(cards.textContent).toContain("Tahsilat");
+  expect(cards.querySelector("table")).toBeNull();
+  expect(txMobileListGuards(host)).toEqual({ ok: true, reason: "" });
+
+  await act(async () => { host.querySelector('[data-testid="b2b-statement-tab-invoices"]').click(); });
+  await act(async () => { toggle("SF-1").click(); });
+  expect(host.querySelector('[data-testid="b2b-invoice-lines-SF-1"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="b2b-invoice-lines-SF-1"]').textContent).toContain("Duvar Rafı — Beyaz");
+});
+
+test("ödeme yokken Fatura yok yerine hareket boş durumu yazar", async () => {
+  root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <StatementList invoices={[]} company={{}} balance={0} token="tok-1" statement={{ rows: [], payments: [] }} />,
+    );
+  });
+  expect(host.textContent).not.toContain("Fatura yok.");
+  expect(host.textContent).toContain("Hareket yok.");
+  const cards = host.querySelector('[data-testid="b2b-statement-cards"]');
+  expect(cards.textContent).toContain("Hareket yok.");
+  expect(cards.querySelector("table")).toBeNull();
+  expect(cards.closest("[data-tx-mobile-list]")).not.toBeNull();
+});
+
 test("kalemler yüklenirken ve hata olunca durum yazılır", async () => {
   let resolveGet;
   axios.get.mockImplementation(() => new Promise((resolve) => { resolveGet = resolve; }));

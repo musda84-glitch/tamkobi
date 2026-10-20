@@ -25,6 +25,28 @@ def test_statement_rows_debit_credit_and_skip_noise():
     assert rows[2]["credit"] == 30 and rows[2]["balance"] == 30
 
 
+def test_statement_rows_cheques_follow_detail_and_skip_linked():
+    rows = ss.statement_rows(
+        [{"invoice_number": "SF-1", "invoice_type": "sales", "grand_total": 1000, "issue_date": "2026-10-01", "status": "issued"}],
+        [{"type": "inflow", "amount": 300, "date": "2026-10-02", "account_name": "Çek Portföyü", "cheque_id": "ch1"}],
+        [
+            {"_id": "ch1", "instrument": "cheque", "direction": "received", "amount": 300, "due_date": "2026-11-01", "serial_no": "SN1"},
+            {"_id": "ch2", "instrument": "cheque", "direction": "received", "amount": 50, "due_date": "2026-10-03", "serial_no": "SN2", "bank_name": "Ziraat"},
+            {"_id": "ch3", "instrument": "promissory", "direction": "issued", "amount": 25, "due_date": "2026-10-04", "serial_no": "S1"},
+        ],
+    )
+    assert [r["doc"] for r in rows] == [
+        "SF-1 • Satış Faturası",
+        "Tahsilat • Çek Portföyü",
+        "Alınan Çek • SN2 • Ziraat",
+        "Verilen Senet • S1",
+    ]
+    assert rows[1]["credit"] == 300 and rows[1]["balance"] == 700
+    assert rows[2]["credit"] == 50 and rows[2]["kind"] == "cheque"
+    assert rows[3]["debit"] == 25 and rows[3]["balance"] == 675
+    assert all(r["doc"] != "Alınan Çek • SN1" for r in rows)
+
+
 def test_public_statement_hides_internal_ids():
     view = ss.public_statement_view(
         {"_id": "cnt", "company_id": "co", "name": "Hatice", "balance": 10, "tax_number_or_id": "111"},

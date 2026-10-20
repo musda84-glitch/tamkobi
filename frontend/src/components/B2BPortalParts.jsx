@@ -17,6 +17,7 @@ import { TX_NO_OVERFLOW_CLASS, TX_WRAP_CLASS } from "./TxMobileCard";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { DocumentFormModal } from "./DocumentFormModal";
 import { B2BCardPay } from "./B2BCardPay";
+import { StatementTxList } from "./StatementTxList";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -759,12 +760,15 @@ function InvoiceLinesBody({ state, invoiceNumber }) {
   );
 }
 
-export const StatementList = ({ invoices, company, balance, token, cardPayment }) => {
+export const StatementList = ({ invoices, company, balance, token, cardPayment, statement }) => {
   const bal = balance || 0;
+  const moveRows = Array.isArray(statement?.rows) ? statement.rows : [];
+  const [panel, setPanel] = useState(statement != null ? "moves" : "invoices");
   const openRef = useRef({});
   const cacheRef = useRef({});
   const [open, setOpen] = useState({});
   const [cache, setCache] = useState({});
+  const tabCls = (id) => `px-2.5 py-1 rounded-lg text-xs font-bold ${panel === id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`;
 
   const loadInvoiceLines = (id) => {
     const cur = cacheRef.current[id];
@@ -802,8 +806,25 @@ export const StatementList = ({ invoices, company, balance, token, cardPayment }
 
   return (
     <div className="bg-white rounded-2xl border overflow-hidden" data-testid="b2b-statement">
-      <div className="p-3 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm"><b>Faturalarım</b><span className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">Güncel bakiye: <b className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b>{cardPayment?.enabled ? <B2BCardPay token={token} balance={bal} cardPayment={cardPayment} /> : null}</span></div>
-      {invoices.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Fatura yok.</div>}
+      <div className="p-3 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+        <div className="flex items-center gap-1" role="tablist" aria-label="Hesap ekstresi">
+          <button type="button" role="tab" aria-selected={panel === "moves"} data-testid="b2b-statement-tab-moves" onClick={() => setPanel("moves")} className={tabCls("moves")}>Hareketler</button>
+          <button type="button" role="tab" aria-selected={panel === "invoices"} data-testid="b2b-statement-tab-invoices" onClick={() => setPanel("invoices")} className={tabCls("invoices")}>Faturalarım</button>
+        </div>
+        <span className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">Güncel bakiye: <b data-testid="b2b-statement-balance" className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b>{cardPayment?.enabled ? <B2BCardPay token={token} balance={bal} cardPayment={cardPayment} /> : null}</span>
+      </div>
+      {panel === "moves" ? (
+        <StatementTxList
+          rows={moveRows}
+          currency="TRY"
+          tableTestId="b2b-statement-table"
+          cardsTestId="b2b-statement-cards"
+          rowTestId={(r, idx) => `b2b-statement-row-${idx}`}
+          emptyLabel="Hareket yok."
+        />
+      ) : null}
+      {panel === "invoices" && invoices.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Fatura yok.</div>}
+      {panel === "invoices" ? (
       <div className={`md:hidden divide-y ${TX_NO_OVERFLOW_CLASS}`}>
         {invoices.map((i) => {
           const id = invoiceId(i);
@@ -825,7 +846,8 @@ export const StatementList = ({ invoices, company, balance, token, cardPayment }
           );
         })}
       </div>
-      {invoices.length > 0 && (
+      ) : null}
+      {panel === "invoices" && invoices.length > 0 && (
         <table className="hidden md:table w-full text-xs">
           <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b">
             <tr><th className="p-2 w-8" /><Th>Fatura</Th><Th>Tarih</Th><Th>Vade</Th><Th right>Tutar</Th><Th right>Ödenen</Th><Th>Durum</Th></tr>
