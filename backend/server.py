@@ -2565,6 +2565,9 @@ async def create_quote(req: Dict[str, Any], user: dict = Depends(get_current_use
 @api_router.post("/quotes/{quote_id}/send-approval")
 async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
     q = await tenant_access.get_tenant_doc(db, "quotes", quote_id, user, not_found="Teklif bulunamadı.")
+    cid = str(q.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
     items = q.get("items") or []
     await _fill_stock_codes(q["company_id"], items)
     subtotal, vat_total, grand_total = _calc_items(items)
@@ -2572,7 +2575,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Reque
     channels = [c for c in (req.get("channels") or []) if c in ("sms", "email", "whatsapp")]
     if not channels:
         raise HTTPException(status_code=400, detail="En az bir kanal seçin (SMS / E-posta / WhatsApp).")
-    contact = await db.contacts.find_one({"_id": q.get("contact_id")}) if q.get("contact_id") else None
+    contact = await db.contacts.find_one({"_id": q.get("contact_id"), "company_id": cid}) if q.get("contact_id") else None
     company = await db.companies.find_one({"_id": q["company_id"]}) or {}
     phone = req.get("phone") or (contact or {}).get("phone")
     email = req.get("email") or (contact or {}).get("email")
@@ -2627,7 +2630,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Reque
     upd = {"approval": approval, "items": items, "subtotal": subtotal, "vat_total": vat_total, "grand_total": grand_total}
     if q.get("status") == "draft":
         upd["status"] = "sent"
-    await db.quotes.update_one({"_id": quote_id}, {"$set": upd})
+    await db.quotes.update_one({"_id": quote_id, "company_id": cid}, {"$set": upd})
     summary = comm_service.approval_dispatch_summary(results)
     return {"status": summary["status"], "link": link, "results": results, "message": summary["message"]}
 
@@ -2642,8 +2645,9 @@ def _public_quote_view(q: Dict[str, Any], company: Dict[str, Any]) -> Dict[str, 
 
 @api_router.get("/public/quotes/{token}")
 async def public_quote(token: str):
+    # tenant-ok değil: oturumsuz müşteri onay sayfası; teklif yalnız approval.token (uuid4 hex) ile bulunur, şirket token'dan çıkar. Sonraki tüm sorgular q['company_id'] ile daraltılır.
     q = await db.quotes.find_one({"approval.token": token})
-    if not q:
+    if not q or not str(q.get("company_id") or "").strip():
         raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
     company = await db.companies.find_one({"_id": q["company_id"]}) or {}
     items = q.get("items") or []
@@ -2651,7 +2655,7 @@ async def public_quote(token: str):
     subtotal, vat_total, grand_total = _calc_items(items)
     q["items"], q["subtotal"], q["vat_total"], q["grand_total"] = items, subtotal, vat_total, grand_total
     await db.quotes.update_one(
-        {"_id": q["_id"]},
+        {"_id": q["_id"], "company_id": q["company_id"]},
         {"$set": {
             "approval.last_viewed_at": datetime.now(timezone.utc).isoformat(),
             "items": items,
@@ -2664,8 +2668,9 @@ async def public_quote(token: str):
 
 @api_router.post("/public/quotes/{token}/respond")
 async def public_quote_respond(token: str, req: Dict[str, Any], request: Request):
+    # tenant-ok değil: oturumsuz müşteri kabul/ret yanıtı; teklif yalnız approval.token (uuid4 hex) ile bulunur, token kanıttır. Sonraki tüm sorgular q['company_id'] ile daraltılır.
     q = await db.quotes.find_one({"approval.token": token})
-    if not q:
+    if not q or not str(q.get("company_id") or "").strip():
         raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
     ap = q.get("approval") or {}
     if ap.get("status") in ("accepted", "rejected"):
@@ -2679,7 +2684,7 @@ async def public_quote_respond(token: str, req: Dict[str, Any], request: Request
     now = datetime.now(timezone.utc).isoformat()
     ip = request_ip(request)
     ap.update({"status": decision, "responded_at": now, "responder_name": name, "note": (req.get("note") or "").strip(), "ip": ip, "user_agent": request.headers.get("user-agent", "")[:200]})
-    await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"approval": ap, "status": decision}})
+    await db.quotes.update_one({"_id": q["_id"], "company_id": q["company_id"]}, {"$set": {"approval": ap, "status": decision}})
     import notify as _notify
     await _notify.insert_notification(db, {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "type": "quote_response", "title": f"{q.get('quote_number')} {'ONAYLANDI' if decision == 'accepted' else 'REDDEDİLDİ'}",
                                        "message": f"{q.get('contact_name')} ({name}) teklifi {'onayladı' if decision == 'accepted' else 'reddetti'}." + (f" Not: {ap['note']}" if ap.get("note") else ""),
@@ -2867,19 +2872,22 @@ def _quote_project_sync_fields(q: Dict[str, Any]) -> Dict[str, Any]:
 @api_router.post("/quotes/{quote_id}/convert-to-project")
 async def convert_quote_to_project(quote_id: str, user: dict = Depends(get_current_user)):
     q = await tenant_access.get_tenant_doc(db, "quotes", quote_id, user, not_found="Teklif bulunamadı.")
+    cid = str(q.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
     if q.get("project_id"):
-        project = await db.projects.find_one({"_id": q["project_id"]})
+        project = await db.projects.find_one({"_id": q["project_id"], "company_id": cid})
         if not project:
             raise HTTPException(status_code=404, detail="Bağlı proje bulunamadı.")
-        await db.projects.update_one({"_id": project["_id"]}, {"$set": _quote_project_sync_fields(q)})
-        project = clean_doc(await db.projects.find_one({"_id": project["_id"]}))
+        await db.projects.update_one({"_id": project["_id"], "company_id": cid}, {"$set": _quote_project_sync_fields(q)})
+        project = clean_doc(await db.projects.find_one({"_id": project["_id"], "company_id": cid}))
         return {
             "status": "success",
             "project": project,
             "updated": True,
             "message": f"{q['quote_number']} → {project['project_number']} proje güncellendi.",
         }
-    survey = await db.surveys.find_one({"_id": q["survey_id"]}) if q.get("survey_id") else None
+    survey = await db.surveys.find_one({"_id": q["survey_id"], "company_id": cid}) if q.get("survey_id") else None
     name = (q.get("title") or "").strip() or f"{q['quote_number']} projesi"
     project = await _create_project_core({
         "company_id": q["company_id"],
@@ -2898,11 +2906,11 @@ async def convert_quote_to_project(quote_id: str, user: dict = Depends(get_curre
     extra = {"quote_id": q["_id"], "quote_number": q.get("quote_number"), "survey_id": q.get("survey_id")}
     if images:
         extra["images"] = images
-    await db.projects.update_one({"_id": project["id"]}, {"$set": extra})
-    await db.quotes.update_one({"_id": quote_id}, {"$set": {"project_id": project["id"], "project_number": project["project_number"], "status": "accepted"}})
+    await db.projects.update_one({"_id": project["id"], "company_id": cid}, {"$set": extra})
+    await db.quotes.update_one({"_id": quote_id, "company_id": cid}, {"$set": {"project_id": project["id"], "project_number": project["project_number"], "status": "accepted"}})
     if survey:
-        await db.surveys.update_one({"_id": survey["_id"]}, {"$set": {"project_id": project["id"]}})
-    project = clean_doc(await db.projects.find_one({"_id": project["id"]}))
+        await db.surveys.update_one({"_id": survey["_id"], "company_id": cid}, {"$set": {"project_id": project["id"]}})
+    project = clean_doc(await db.projects.find_one({"_id": project["id"], "company_id": cid}))
     return {"status": "success", "project": project, "message": f"{q['quote_number']} → {project['project_number']} proje oluşturuldu.", "advanced": True}
 
 def _group_by_project(rows):
@@ -2919,11 +2927,11 @@ async def list_projects(company_id: Optional[str] = None, light: bool = False, u
     projects = await db.projects.find({"company_id": cid}).sort("created_at", -1).to_list(500)
     pids = [p["_id"] for p in projects]
     quote_proj = {"grand_total": 1, "invoice_id": 1, "project_id": 1} if light else None
-    quotes = await db.quotes.find({"project_id": {"$in": pids}}, quote_proj).to_list(2000) if pids else []
+    quotes = await db.quotes.find({"project_id": {"$in": pids}, "company_id": cid}, quote_proj).to_list(2000) if pids else []
     qmap = _group_by_project(quotes)
     if light:
         expenses_rows = await db.expenses.find(
-            {"project_id": {"$in": pids}}, {"project_id": 1, "total": 1},
+            {"project_id": {"$in": pids}, "company_id": cid}, {"project_id": 1, "total": 1},
         ).to_list(2000) if pids else []
         emap = _group_by_project(expenses_rows)
         out = []
@@ -2941,8 +2949,8 @@ async def list_projects(company_id: Optional[str] = None, light: bool = False, u
             )
             out.append(clean_doc(p))
         return out
-    expenses_rows = await db.expenses.find({"project_id": {"$in": pids}}).to_list(2000) if pids else []
-    invoices_rows = await db.invoices.find({"project_id": {"$in": pids}, "invoice_type": {"$ne": "dispatch"}}).to_list(2000) if pids else []
+    expenses_rows = await db.expenses.find({"project_id": {"$in": pids}, "company_id": cid}).to_list(2000) if pids else []
+    invoices_rows = await db.invoices.find({"project_id": {"$in": pids}, "company_id": cid, "invoice_type": {"$ne": "dispatch"}}).to_list(2000) if pids else []
     emap, imap = _group_by_project(expenses_rows), _group_by_project(invoices_rows)
     out = []
     for p in projects:
@@ -2997,20 +3005,37 @@ async def _project_production_order_fields(req: Dict[str, Any], company_id: Opti
                 "production_steps": [],
             })
             return out
-        order = await db.production_orders.find_one({"_id": oid})
+        cid = str(company_id or "").strip()
+        if not cid:
+            out.update({
+                "production_order_id": None,
+                "production_order_code": None,
+                "recipe_id": None,
+                "recipe_name": None,
+                "production_steps": [],
+            })
+            return out
+        order = await db.production_orders.find_one({"_id": oid, "company_id": cid})
         if not order:
-            raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+            out.update({
+                "production_order_id": None,
+                "production_order_code": None,
+                "recipe_id": None,
+                "recipe_name": None,
+                "production_steps": [],
+            })
+            return out
         if company_id and order.get("company_id") and order.get("company_id") != company_id:
             raise HTTPException(status_code=400, detail="Üretim emri bu firmaya ait değil.")
         if order.get("status") == "cancelled":
             raise HTTPException(status_code=400, detail="İptal edilmiş üretim emri projeye bağlanamaz.")
         wos = await db.work_orders.find(
-            {"order_id": oid},
+            {"order_id": oid, "company_id": cid},
             {"step_no": 1, "original_step_no": 1, "step_name": 1, "station": 1, "step_note": 1, "material_name": 1},
         ).to_list(500)
         steps = pwo.customer_work_order_steps(wos)
         if not steps and order.get("recipe_id"):
-            recipe = await db.recipes.find_one({"_id": order.get("recipe_id")})
+            recipe = await db.recipes.find_one({"_id": order.get("recipe_id"), "company_id": cid})
             if recipe:
                 steps = pwo.customer_recipe_steps(recipe)
         if not steps:
@@ -3114,15 +3139,16 @@ async def update_project(project_id: str, req: Dict[str, Any], user: dict = Depe
 async def invoice_project(project_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     req = req or {}
     p = await tenant_access.get_tenant_doc(db, "projects", project_id, user, not_found="Proje bulunamadı.")
-    if not p:
+    cid = str(p.get("company_id") or "").strip()
+    if not p or not cid:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
     if p.get("status") != "completed":
         raise HTTPException(status_code=400, detail="Fatura kesmek için proje Tamamlandı olmalı.")
     if p.get("invoice_id"):
-        ex = await db.invoices.find_one({"_id": p["invoice_id"]})
+        ex = await db.invoices.find_one({"_id": p["invoice_id"], "company_id": cid})
         if ex:
             return {"status": "exists", "invoice": clean_doc(ex), "message": f"Bu proje zaten faturalandı: {ex.get('invoice_number')}"}
-    quotes = await db.quotes.find({"project_id": project_id}).to_list(200)
+    quotes = await db.quotes.find({"project_id": project_id, "company_id": cid}).to_list(200)
     pending = [q for q in quotes if not q.get("invoice_id")]
     items: List[Dict[str, Any]] = []
     notes = []
@@ -3164,9 +3190,9 @@ async def invoice_project(project_id: str, req: Dict[str, Any] = None, user: dic
         status="draft",
     )
     created = await _create_invoice_core(inv, user)
-    await db.projects.update_one({"_id": project_id}, {"$set": {"invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
+    await db.projects.update_one({"_id": project_id, "company_id": cid}, {"$set": {"invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
     for q in pending:
-        await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"status": "accepted", "invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
+        await db.quotes.update_one({"_id": q["_id"], "company_id": cid}, {"$set": {"status": "accepted", "invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
     return {"status": "success", "invoice": created, "message": f"{p.get('project_number')} → {created['invoice_number']} taslak fatura oluşturuldu."}
 import project_tracking as project_tracking
 
@@ -3296,8 +3322,11 @@ async def _send_customer_link(company_id: str, channels: List[str], phone: Optio
 @api_router.post("/projects/{project_id}/send-tracking")
 async def send_project_tracking(project_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
     p = await tenant_access.get_tenant_doc(db, "projects", project_id, user, not_found="Proje bulunamadı.")
+    cid = str(p.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
     channels = [c for c in (req.get("channels") or []) if c in ("sms", "email", "whatsapp")]
-    contact = await db.contacts.find_one({"_id": p.get("contact_id")}) if p.get("contact_id") else None
+    contact = await db.contacts.find_one({"_id": p.get("contact_id"), "company_id": cid}) if p.get("contact_id") else None
     company = await db.companies.find_one({"_id": p["company_id"]}) or {}
     phone = req.get("phone") or (contact or {}).get("phone")
     email = req.get("email") or (contact or {}).get("email")
@@ -3319,7 +3348,7 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any], request: R
     now = datetime.now(timezone.utc).isoformat()
     tracking.update({"token": token, "link": link, "sent_at": now if channels else tracking.get("sent_at"), "channels": channels or tracking.get("channels") or [],
                      "results": results, "sent_count": tracking.get("sent_count", 0) + (1 if channels else 0)})
-    await db.projects.update_one({"_id": project_id}, {"$set": {"tracking": tracking}})
+    await db.projects.update_one({"_id": project_id, "company_id": cid}, {"$set": {"tracking": tracking}})
     any_ok = (not channels) or any(v.get("status") in ("sent", "simulated") for v in results.values())
     if channels:
         msg = "Takip linki gönderildi." if any_ok else "Hiçbir kanaldan gönderilemedi."
@@ -3333,9 +3362,12 @@ async def _project_statement(p: Dict[str, Any], company: Dict[str, Any]):
     contact_id = p.get("contact_id")
     if not contact_id:
         return None
-    contact = await db.contacts.find_one({"_id": contact_id}) or {"name": p.get("contact_name"), "balance": 0}
-    invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).to_list(100)
-    payments = await db.bank_transactions.find({"contact_id": contact_id, "type": {"$ne": "transfer"}}).to_list(100)
+    cid = p.get("company_id")
+    if not cid:
+        return None
+    contact = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) or {"name": p.get("contact_name"), "balance": 0}
+    invoices = await db.invoices.find({"contact_id": contact_id, "company_id": cid, "status": {"$ne": "cancelled"}}).to_list(100)
+    payments = await db.bank_transactions.find({"contact_id": contact_id, "company_id": cid, "type": {"$ne": "transfer"}}).to_list(100)
     rows = statement_share.statement_rows(invoices, payments)
     if not contact.get("name"):
         contact = {**contact, "name": p.get("contact_name") or ""}
@@ -3347,19 +3379,20 @@ async def public_project(token: str):
     token = (token or "").strip()
     if not token or len(token) < 16:
         raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    # tenant-ok değil: oturumsuz proje takip sayfası; tracking.token (≥16 karakter) ile bulunur, şirket p['company_id']'den çözülür.
     p = await db.projects.find_one({"tracking.token": token})
-    if not p:
+    if not p or not str(p.get("company_id") or "").strip():
         raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
     company = await db.companies.find_one({"_id": p["company_id"]}) or {}
-    quotes = await db.quotes.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
-    surveys = await db.surveys.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
+    quotes = await db.quotes.find({"project_id": p["_id"], "company_id": p["company_id"]}).sort("created_at", 1).to_list(100)
+    surveys = await db.surveys.find({"project_id": p["_id"], "company_id": p["company_id"]}).sort("created_at", 1).to_list(100)
     prod_wos: List[Dict[str, Any]] = []
     if p.get("show_production_steps") and p.get("production_order_id"):
         prod_wos = await db.work_orders.find(
-            {"order_id": p["production_order_id"]},
+            {"order_id": p["production_order_id"], "company_id": p["company_id"]},
             {"step_no": 1, "original_step_no": 1, "station": 1, "status": 1, "started_at": 1, "finished_at": 1},
         ).to_list(500)
-    await db.projects.update_one({"_id": p["_id"]}, {"$set": {"tracking.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"tracking.view_count": 1}})
+    await db.projects.update_one({"_id": p["_id"], "company_id": p["company_id"]}, {"$set": {"tracking.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"tracking.view_count": 1}})
     view = _public_project_view(p, company, quotes, surveys, work_orders=prod_wos)
     statement = await _project_statement(p, company)
     if statement:
@@ -3380,10 +3413,11 @@ async def public_project_quote(token: str, quote_number: str):
     want = _quote_number_key(quote_number)
     if not token or len(token) < 16 or not want:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
+    # tenant-ok değil: oturumsuz proje takip sayfası; tracking.token (≥16 karakter) ile bulunur, şirket p['company_id']'den çözülür. Proje token'ı şart, teklif kalemleri p['company_id'] ile daraltılır.
     p = await db.projects.find_one({"tracking.token": token})
-    if not p:
+    if not p or not str(p.get("company_id") or "").strip():
         raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
-    quotes = await db.quotes.find({"project_id": p["_id"]}).to_list(100)
+    quotes = await db.quotes.find({"project_id": p["_id"], "company_id": p["company_id"]}).to_list(100)
     q = next((row for row in quotes if _quote_number_key(row.get("quote_number")) == want), None)
     if not q:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı veya link geçersiz.")
@@ -3400,6 +3434,7 @@ async def public_project_statement_pdf(token: str):
     token = (token or "").strip()
     if not token or len(token) < 16:
         raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
+    # tenant-ok değil: oturumsuz proje takip sayfası; tracking.token (≥16 karakter) ile bulunur, şirket p['company_id']'den çözülür. Ekstre _project_statement içinde p['company_id'] ile daraltılır.
     p = await db.projects.find_one({"tracking.token": token})
     if not p:
         raise HTTPException(status_code=404, detail="Proje bulunamadı veya link geçersiz.")
