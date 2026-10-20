@@ -210,6 +210,19 @@ describe("OrdersList", () => {
     const label = pending.querySelector('[title="14× Ad"]');
     expect(label.querySelector("b").textContent).toBe("14×");
 
+    const actions = q(pending, "b2b-order-actions-B2B-2026-0097");
+    const actionIcons = [...actions.querySelectorAll("button")];
+    expect(actionIcons.map((el) => el.getAttribute("aria-label"))).toEqual(["Önizle", "Düzenle", "Sil"]);
+    actionIcons.forEach((el) => {
+      expect(el.className).toContain("w-7");
+      expect(el.className).toContain("h-7");
+    });
+    const actionCell = actions.closest("td");
+    expect(actionCell.className).toContain("w-32");
+    expect(actionCell.className).toContain("min-w-32");
+    expect(number.getAttribute("title")).toBe("B2B-2026-0097");
+    expect(number.className).toContain("truncate");
+
     const edit = button(pending, "Düzenle");
     const remove = button(pending, "Sil");
     expect(edit.getAttribute("aria-label")).toBe("Düzenle");
