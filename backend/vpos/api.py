@@ -333,10 +333,13 @@ async def _finalize_paid_b2b_order(intent_id: str) -> None:
         logger.exception("b2b order finalize failed id=%s", intent_id)
 
 
-async def _record_paid_collection(intent_id: str) -> None:
+async def _record_paid_collection(intent_id: str, *, company_id: str) -> None:
     """Kazanan paid claim. Test ve diğer amaçlar kasa/cari yazmaz."""
+    cid = str(company_id or "")
+    if not cid:
+        return
     db = _require_db()
-    fresh = await db.payment_intents.find_one({"_id": intent_id})
+    fresh = await db.payment_intents.find_one({"_id": intent_id, "company_id": cid})
     if not fresh or fresh.get("purpose") not in _COLLECTION_PURPOSES:
         return
     if str(fresh.get("status") or "") != "paid":
@@ -345,10 +348,13 @@ async def _record_paid_collection(intent_id: str) -> None:
     await _finalize_paid_b2b_order(intent_id)
 
 
-async def _retry_paid_collection(intent_id: str) -> None:
+async def _retry_paid_collection(intent_id: str, *, company_id: str) -> None:
     """Aynı yardımcı. Yeni callback, daha önce post_failed kaldıysa bir kez daha dener."""
+    cid = str(company_id or "")
+    if not cid:
+        return
     db = _require_db()
-    fresh = await db.payment_intents.find_one({"_id": intent_id})
+    fresh = await db.payment_intents.find_one({"_id": intent_id, "company_id": cid})
     if not fresh or fresh.get("purpose") not in _COLLECTION_PURPOSES:
         return
     if str(fresh.get("status") or "") != "paid":
@@ -450,19 +456,22 @@ async def _app_base(request: Request) -> str:
     return await public_url.public_base_url_for(_require_db(), "app", request=request)
 
 
-async def _result_redirect(app_base: str, intent_id: str) -> RedirectResponse:
+async def _result_redirect(app_base: str, intent_id: str, *, company_id: str) -> RedirectResponse:
     """Panel sonucu /vpos/result. B2B portal ödemesi portal sonuç sayfasına gider."""
+    target = f"{str(app_base).rstrip('/')}/vpos/result/{intent_id}"
+    cid = str(company_id or "")
+    if not cid:
+        return RedirectResponse(target, status_code=303)
     db = _require_db()
-    intent = await db.payment_intents.find_one({"_id": intent_id}) or {}
+    intent = await db.payment_intents.find_one({"_id": intent_id, "company_id": cid}) or {}
     if str(intent.get("source") or "") == "b2b_portal":
         contact_id = str(intent.get("contact_id") or "")
-        contact = await db.contacts.find_one({"_id": contact_id}) if contact_id else None
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) if contact_id else None
         token = str((contact or {}).get("b2b_token") or "")
         if token:
             b2b_base = await public_url.public_base_url_for(db, "b2b")
             target = f"{str(b2b_base).rstrip('/')}/portal/{token}/odeme/{intent_id}"
             return RedirectResponse(target, status_code=303)
-    target = f"{str(app_base).rstrip('/')}/vpos/result/{intent_id}"
     return RedirectResponse(target, status_code=303)
 
 
@@ -615,7 +624,7 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
     }
     db = _require_db()
     if existing.get("_id"):
-        await db.vpos_configs.update_one({"_id": doc["_id"]}, {"$set": doc})
+        await db.vpos_configs.update_one({"_id": doc["_id"], "company_id": cid}, {"$set": doc})
     else:
         await db.vpos_configs.insert_one(doc)
     await _audit(
@@ -697,6 +706,7 @@ def _payment_ctx(
 async def _allocate_order_id(db) -> str:
     for _ in range(5):
         candidate = secrets.token_hex(16)
+        # tenant-ok değil: order_id tüm platformda benzersiz olmalı (paytr_notify yalnız order_id ile arar); şirket filtresi eklemek çakışma riskini açar. Okuma yalnız varlık kontrolü, belge döndürmez.
         if not await db.payment_intents.find_one({"order_id": candidate}):
             return candidate
     raise HTTPException(status_code=500, detail="Sipariş numarası üretilemedi.")
@@ -957,17 +967,19 @@ async def vpos_callback(intent_id: str, request: Request):
         raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
     form = _form_dict(await request.form())
     db = _require_db()
+    # tenant-ok değil: banka okUrl/failUrl geri çağrısı oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve hash doğrulanır.
     intent = await db.payment_intents.find_one({"_id": intent_id})
     if not intent:
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
+    intent_cid = str(intent.get("company_id") or "")
     app_base = await _app_base(request)
     status = str(intent.get("status") or "")
     if status in TERMINAL_STATUSES:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, status)
-        await _retry_paid_collection(intent_id)
-        return await _result_redirect(app_base, intent_id)
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     if status != "pending":
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     if is_expired(intent):
         await _conditional_update(intent_id, {"status": "pending"}, {
             "status": "expired",
@@ -975,27 +987,27 @@ async def vpos_callback(intent_id: str, request: Request):
             "updated_at": _iso(),
         })
         logger.info("vpos callback id=%s status=expired", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     cfg = None
     cfg_id = intent.get("vpos_config_id")
     if cfg_id:
-        cfg = await db.vpos_configs.find_one({"_id": cfg_id})
-    same_company = bool(cfg) and str(cfg.get("company_id") or "") == str(intent.get("company_id") or "")
+        cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": intent_cid})
+    same_company = bool(cfg) and str(cfg.get("company_id") or "") == intent_cid
     if not same_company:
         await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
         logger.info("vpos callback id=%s status=failed error=company_mismatch", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     family = str(cfg.get("family") or "nestpay")
     if family != "nestpay":
         logger.info("vpos callback id=%s family=%s ignored=1", intent_id, family)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     try:
         store_key = await _decrypt_secret(str(cfg.get("store_key_enc") or ""), "store key")
         adapter = get_adapter(family)
     except (HTTPException, KeyError):
         await _claim_finish(intent_id, "failed", {"error": "config"})
         logger.info("vpos callback id=%s status=failed error=config", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     verdict = adapter.verify_callback({**cfg, "store_key": store_key}, intent, form)
     error = str(verdict.get("error") or "")
     if not verdict.get("ok"):
@@ -1013,13 +1025,13 @@ async def vpos_callback(intent_id: str, request: Request):
         final = "failed"
     wrote = await _claim_finish(intent_id, final, result)
     if wrote and final == "paid":
-        await _record_paid_collection(intent_id)
+        await _record_paid_collection(intent_id, company_id=intent_cid)
     if wrote:
         logger.info("vpos callback id=%s status=%s", intent_id, final)
     else:
         logger.info("vpos callback id=%s status=%s repeat=1", intent_id, final)
-        await _retry_paid_collection(intent_id)
-    return await _result_redirect(app_base, intent_id)
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
+    return await _result_redirect(app_base, intent_id, company_id=intent_cid)
 
 
 def _notify_ok() -> PlainTextResponse:
@@ -1033,6 +1045,7 @@ async def paytr_notify(config_id: str, request: Request):
         raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
     form = _form_dict(await request.form())
     db = _require_db()
+    # tenant-ok değil: PayTR sunucu bildirimi oturumsuz; config_id URL'den gelir, şirket cfg'den çözülür ve hash bu cfg sırlarıyla doğrulanır.
     cfg = await db.vpos_configs.find_one({"_id": config_id})
     if not cfg or str(cfg.get("family") or "") != "paytr":
         raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.")
@@ -1046,19 +1059,21 @@ async def paytr_notify(config_id: str, request: Request):
         logger.info("vpos paytr notify config=%s bad_hash=1", config_id)
         raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.")
     oid = str(form.get("merchant_oid") or "")
+    # tenant-ok değil: PayTR yalnız merchant_oid döner; intent order_id ile bulunur, sonra vpos_config_id + company_id eşleşmesi (same) şart. order_id global benzersiz olduğundan şirket filtresi anlamsız; yine de hash doğrulamasından SONRA çalışır.
     intent = await db.payment_intents.find_one({"order_id": oid}) if oid else None
     if not intent:
         logger.info("vpos paytr notify config=%s missing=1", config_id)
         return _notify_ok()
     intent_id = str(intent.get("_id") or "")
-    same = str(intent.get("vpos_config_id") or "") == str(config_id) and str(intent.get("company_id") or "") == str(cfg.get("company_id") or "")
+    intent_cid = str(intent.get("company_id") or "")
+    same = str(intent.get("vpos_config_id") or "") == str(config_id) and intent_cid == str(cfg.get("company_id") or "")
     if not same:
         logger.info("vpos paytr notify id=%s skipped=1", intent_id)
         return _notify_ok()
     status = str(intent.get("status") or "")
     if status in TERMINAL_STATUSES or status != "pending":
         logger.info("vpos paytr notify id=%s status=%s repeat=1", intent_id, status)
-        await _retry_paid_collection(intent_id)
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
         return _notify_ok()
     verdict = await paytr_family.ADAPTER.confirm(runtime, intent, form)
     error = str(verdict.get("error") or "")
@@ -1073,12 +1088,12 @@ async def paytr_notify(config_id: str, request: Request):
         result = {"error": error or "declined"}
     wrote = await _claim_finish(intent_id, final, result)
     if wrote and final == "paid":
-        await _record_paid_collection(intent_id)
+        await _record_paid_collection(intent_id, company_id=intent_cid)
     if wrote:
         logger.info("vpos paytr notify id=%s status=%s", intent_id, final)
     else:
         logger.info("vpos paytr notify id=%s status=%s repeat=1", intent_id, final)
-        await _retry_paid_collection(intent_id)
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
     return _notify_ok()
 
 
@@ -1089,38 +1104,40 @@ async def iyzico_callback(intent_id: str, request: Request):
         raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
     form = _form_dict(await request.form())
     db = _require_db()
+    # tenant-ok değil: iyzico Checkout Form dönüşü oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve token + retrieve yanıtı doğrulanır.
     intent = await db.payment_intents.find_one({"_id": intent_id})
     if not intent:
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
+    intent_cid = str(intent.get("company_id") or "")
     app_base = await _app_base(request)
     status = str(intent.get("status") or "")
     if status in TERMINAL_STATUSES or status != "pending":
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, status)
-        await _retry_paid_collection(intent_id)
-        return await _result_redirect(app_base, intent_id)
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     token = str(form.get("token") or "")
     stored = str(intent.get("provider_ref") or "")
     if not _token_equal(stored, token):
         logger.info("vpos iyzico callback id=%s token_mismatch=1", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     cfg = None
     cfg_id = intent.get("vpos_config_id")
     if cfg_id:
-        cfg = await db.vpos_configs.find_one({"_id": cfg_id})
-    same_company = bool(cfg) and str(cfg.get("company_id") or "") == str(intent.get("company_id") or "")
+        cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": intent_cid})
+    same_company = bool(cfg) and str(cfg.get("company_id") or "") == intent_cid
     if not same_company or str(cfg.get("family") or "") != "iyzico":
         await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
         logger.info("vpos iyzico callback id=%s status=failed error=company_mismatch", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     try:
         runtime = await _runtime_config(cfg)
     except HTTPException:
         logger.info("vpos iyzico callback id=%s status=pending error=config", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     verdict = await iyzico_family.ADAPTER.confirm(runtime, intent, {"token": stored}, client=_outbound_client)
     if verdict.get("retryable"):
         logger.info("vpos iyzico callback id=%s status=pending retry=1", intent_id)
-        return await _result_redirect(app_base, intent_id)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     error = str(verdict.get("error") or "")
     if not verdict.get("ok"):
         final = "failed"
@@ -1133,13 +1150,13 @@ async def iyzico_callback(intent_id: str, request: Request):
         result = {"error": error or "declined"}
     wrote = await _claim_finish(intent_id, final, result)
     if wrote and final == "paid":
-        await _record_paid_collection(intent_id)
+        await _record_paid_collection(intent_id, company_id=intent_cid)
     if wrote:
         logger.info("vpos iyzico callback id=%s status=%s", intent_id, final)
     else:
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, final)
-        await _retry_paid_collection(intent_id)
-    return await _result_redirect(app_base, intent_id)
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
+    return await _result_redirect(app_base, intent_id, company_id=intent_cid)
 
 
 def _token_equal(left: str, right: str) -> bool:

@@ -78,9 +78,12 @@ def _fee_amount(intent: dict) -> float:
 _COLLECTION_PURPOSES = ("contact_collection", "b2b_collection", "b2b_order")
 
 
-async def _link(db, intent_id: str, tx_id: str) -> None:
+async def _link(db, intent_id: str, tx_id: str, *, company_id: str) -> None:
+    cid = str(company_id or "")
+    if not cid:
+        return
     await db.payment_intents.update_one(
-        {"_id": intent_id},
+        {"_id": intent_id, "company_id": cid},
         {"$set": {"collection_tx_id": tx_id, "collection_error": None}},
     )
 
@@ -102,22 +105,30 @@ def _stored_effects(effects: dict) -> dict:
     return stored
 
 
-async def _save_effects(db, tx_id: str, effects: dict) -> None:
+async def _save_effects(db, tx_id: str, effects: dict, *, company_id: str) -> None:
+    cid = str(company_id or "")
+    if not cid:
+        return
     await db.bank_transactions.update_one(
-        {"_id": tx_id},
+        {"_id": tx_id, "company_id": cid},
         {"$set": {"effects": _stored_effects(effects)}},
     )
 
 
-async def _ensure_fee(db, fee: dict) -> None:
+async def _ensure_fee(db, fee: dict, *, company_id: str) -> None:
     """Komisyon farkını aynı POS hesabına bir kez yazar. Cari bağlanmaz."""
+    cid = str((fee or {}).get("company_id") or "")
+    if not cid or cid != str(company_id or ""):
+        return
     amount = float(fee.get("amount") or 0)
     if amount <= 0:
         return
     intent_id = str(fee.get("intent_id") or "")
     fee_id = f"vpos:{intent_id}:fee"
     account_id = str(fee.get("account_id") or "")
-    existing = await db.bank_transactions.find_one({"_id": fee_id})
+    existing = await db.bank_transactions.find_one({"_id": fee_id, "company_id": cid})
+    if existing and str(existing.get("company_id") or "") != cid:
+        raise RuntimeError("account")
     if not existing:
         doc = {
             "_id": fee_id,
@@ -138,73 +149,102 @@ async def _ensure_fee(db, fee: dict) -> None:
         try:
             await db.bank_transactions.insert_one(doc)
         except Exception:
-            existing = await db.bank_transactions.find_one({"_id": fee_id})
-            if not existing:
+            existing = await db.bank_transactions.find_one({"_id": fee_id, "company_id": cid})
+            if not existing or str(existing.get("company_id") or "") != cid:
                 raise
         else:
             existing = doc
     effects = existing.get("effects") if isinstance(existing.get("effects"), dict) else {}
     if effects.get("account"):
         return
-    await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": amount}})
+    await db.bank_accounts.update_one(
+        {"_id": account_id, "company_id": cid},
+        {"$inc": {"current_balance": amount}},
+    )
     try:
-        await db.bank_transactions.update_one({"_id": fee_id}, {"$set": {"effects": {"account": True}}})
+        await db.bank_transactions.update_one(
+            {"_id": fee_id, "company_id": cid},
+            {"$set": {"effects": {"account": True}}},
+        )
     except Exception:
         try:
-            await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+            await db.bank_accounts.update_one(
+                {"_id": account_id, "company_id": cid},
+                {"$inc": {"current_balance": -amount}},
+            )
         except Exception:
             logger.exception("vpos collection fee rollback failed tx=%s", fee_id)
         raise
 
 
-async def _apply_balances(db, tx_id: str, account_id: str, contact_id: str, amount: float, fee: Optional[dict] = None) -> dict:
+async def _apply_balances(db, tx_id: str, account_id: str, contact_id: str, amount: float, fee: Optional[dict] = None, *, company_id: str) -> dict:
     """Eksik bakiyeyi yazar. Bu çağrıda artan hesap, cari patlarsa geri alınır.
 
     ``amount`` ana satırın tutarıdır (cari tahsilatı / ledger). Komisyon farkı
     varsa ayrıca POS hesabına eklenir; cariye yazılmaz.
     """
-    fresh = await db.bank_transactions.find_one({"_id": tx_id}) or {}
+    cid = str(company_id or "")
+    if not cid:
+        return {"account": False, "contact": False}
+    fresh = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid}) or {}
+    if fresh and str(fresh.get("company_id") or "") != cid:
+        raise RuntimeError("account")
     effects = _effects_of(fresh)
     applied_account_now = False
     if not effects["account"]:
-        await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": amount}})
+        await db.bank_accounts.update_one(
+            {"_id": account_id, "company_id": cid},
+            {"$inc": {"current_balance": amount}},
+        )
         effects["account"] = True
         applied_account_now = True
-        await _save_effects(db, tx_id, effects)
+        await _save_effects(db, tx_id, effects, company_id=cid)
     if contact_id and not effects["contact"]:
         try:
-            await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount}})
+            await db.contacts.update_one(
+                {"_id": contact_id, "company_id": cid},
+                {"$inc": {"balance": -amount}},
+            )
         except Exception:
             if applied_account_now:
                 try:
-                    await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
+                    await db.bank_accounts.update_one(
+                        {"_id": account_id, "company_id": cid},
+                        {"$inc": {"current_balance": -amount}},
+                    )
                     effects["account"] = False
-                    await _save_effects(db, tx_id, effects)
+                    await _save_effects(db, tx_id, effects, company_id=cid)
                 except Exception:
                     logger.exception("vpos collection account rollback failed tx=%s", tx_id)
             raise
         effects["contact"] = True
-        await _save_effects(db, tx_id, effects)
+        await _save_effects(db, tx_id, effects, company_id=cid)
     elif not contact_id and not effects["contact"]:
         effects["contact"] = True
-        await _save_effects(db, tx_id, effects)
+        await _save_effects(db, tx_id, effects, company_id=cid)
     if "fee" in effects and not effects["fee"]:
         if fee and float(fee.get("amount") or 0) > 0:
-            await _ensure_fee(db, fee)
+            fee_cid = str(fee.get("company_id") or "")
+            if fee_cid != cid:
+                raise RuntimeError("account")
+            await _ensure_fee(db, fee, company_id=fee_cid)
         effects["fee"] = True
-        await _save_effects(db, tx_id, effects)
+        await _save_effects(db, tx_id, effects, company_id=cid)
     return effects
 
 
-async def _drop_if_unsettled(db, tx_id: str) -> None:
-    fresh = await db.bank_transactions.find_one({"_id": tx_id})
-    if not fresh:
+async def _drop_if_unsettled(db, tx_id: str, *, company_id: str) -> None:
+    cid = str(company_id or "")
+    if not cid:
+        return
+    fresh = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+    if not fresh or str(fresh.get("company_id") or "") != cid:
         return
     effects = _effects_of(fresh)
     if effects["account"] or effects["contact"] or effects.get("fee"):
         return
     try:
-        await db.bank_transactions.delete_one({"_id": tx_id})
+        await db.bank_transactions.delete_one({"_id": tx_id, "company_id": cid})
     except Exception:
         logger.exception("vpos collection rollback failed tx=%s", tx_id)
 
@@ -221,18 +261,21 @@ def _fee_spec(intent: dict, intent_id: str, account_id: str, account_name: str, 
     }
 
 
-async def _notify_b2b_collection(db, intent: dict) -> None:
+async def _notify_b2b_collection(db, intent: dict, *, company_id: str) -> None:
     """Yöneticiye uygulama içi bildirim. E-posta yok; hata tahsilatı bozmaz."""
-    purpose = str(intent.get("purpose") or "")
+    purpose = str((intent or {}).get("purpose") or "")
     if purpose not in _B2B_CARD_PURPOSES:
         return
     if intent.get("collection_notified"):
+        return
+    cid = str(intent.get("company_id") or "")
+    if not cid or cid != str(company_id or ""):
         return
     intent_id = str(intent.get("_id") or "")
     try:
         import notify
         contact_id = str(intent.get("contact_id") or "")
-        contact = await db.contacts.find_one({"_id": contact_id}) if contact_id else None
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) if contact_id else None
         name = (contact or {}).get("name") or "Cari"
         ledger = _ledger_amount(intent)
         if purpose == "b2b_order":
@@ -244,7 +287,7 @@ async def _notify_b2b_collection(db, intent: dict) -> None:
             title = "B2B kart tahsilatı"
             message = f"{name} portaldan {ledger:,.2f} ₺ kartla ödedi."
         await notify.insert_notification(db, notify.notification_doc(
-            str(intent.get("company_id") or ""),
+            cid,
             ntype,
             title,
             message,
@@ -253,19 +296,25 @@ async def _notify_b2b_collection(db, intent: dict) -> None:
             ref_type="payment_intent",
             ref_id=intent_id,
         ))
-        await db.payment_intents.update_one({"_id": intent_id}, {"$set": {"collection_notified": True}})
+        await db.payment_intents.update_one(
+            {"_id": intent_id, "company_id": cid},
+            {"$set": {"collection_notified": True}},
+        )
     except Exception:
         logger.exception("b2b card notify failed intent=%s", intent_id)
 
 
-async def _finish(db, intent: dict, intent_id: str, tx_id: str) -> None:
-    await _link(db, intent_id, tx_id)
-    await _notify_b2b_collection(db, intent)
+async def _finish(db, intent: dict, intent_id: str, tx_id: str, *, company_id: str) -> None:
+    await _link(db, intent_id, tx_id, company_id=company_id)
+    await _notify_b2b_collection(db, intent, company_id=company_id)
 
 
 async def post_collection(db, intent: dict) -> None:
     """Ödenmiş cari tahsilatını bir kez yazar. Hata intent'i paid bırakır."""
     intent = intent or {}
+    cid = str(intent.get("company_id") or "")
+    if not cid:
+        return
     intent_id = str(intent.get("_id") or "")
     if not intent_id or intent.get("purpose") not in _COLLECTION_PURPOSES:
         return
@@ -274,7 +323,9 @@ async def post_collection(db, intent: dict) -> None:
     tx_id = f"vpos:{intent_id}"
     b2b = str(intent.get("purpose") or "") in _B2B_CARD_PURPOSES
     try:
-        existing = await db.bank_transactions.find_one({"_id": tx_id})
+        existing = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+        if existing and str(existing.get("company_id") or "") != cid:
+            raise RuntimeError("account")
         if existing:
             fee = _fee_spec(
                 intent, intent_id,
@@ -289,23 +340,24 @@ async def post_collection(db, intent: dict) -> None:
                     str(existing.get("contact_id") or ""),
                     float(existing.get("amount") or 0),
                     fee=fee,
+                    company_id=cid,
                 )
             except Exception:
-                await _drop_if_unsettled(db, tx_id)
+                await _drop_if_unsettled(db, tx_id, company_id=cid)
                 raise
-            await _finish(db, intent, intent_id, tx_id)
+            await _finish(db, intent, intent_id, tx_id, company_id=cid)
             return
         cfg_id = intent.get("vpos_config_id")
-        cfg = await db.vpos_configs.find_one({"_id": cfg_id}) if cfg_id else None
+        cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": cid}) if cfg_id else None
         if not cfg:
             raise RuntimeError("config")
         account_id = str(cfg.get("account_id") or "").strip()
-        account = await db.bank_accounts.find_one({"_id": account_id}) if account_id else None
-        if not account or str(account.get("company_id") or "") != str(intent.get("company_id") or ""):
+        account = await db.bank_accounts.find_one({"_id": account_id, "company_id": cid}) if account_id else None
+        if not account or str(account.get("company_id") or "") != cid:
             raise RuntimeError("account")
         contact_id = str(intent.get("contact_id") or "").strip()
-        contact = await db.contacts.find_one({"_id": contact_id}) if contact_id else None
-        if not contact or str(contact.get("company_id") or "") != str(intent.get("company_id") or ""):
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) if contact_id else None
+        if not contact or str(contact.get("company_id") or "") != cid:
             raise RuntimeError("contact")
         amount = _ledger_amount(intent)
         description = str(intent.get("description") or "").strip() or "Cari Tahsilat"
@@ -339,8 +391,8 @@ async def post_collection(db, intent: dict) -> None:
         try:
             await db.bank_transactions.insert_one(doc)
         except Exception:
-            raced = await db.bank_transactions.find_one({"_id": tx_id})
-            if not raced:
+            raced = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+            if not raced or str(raced.get("company_id") or "") != cid:
                 raise
             try:
                 await _apply_balances(
@@ -349,23 +401,24 @@ async def post_collection(db, intent: dict) -> None:
                     str(raced.get("contact_id") or contact_id),
                     float(raced.get("amount") or amount),
                     fee=fee,
+                    company_id=cid,
                 )
             except Exception:
-                await _drop_if_unsettled(db, tx_id)
+                await _drop_if_unsettled(db, tx_id, company_id=cid)
                 raise
-            await _finish(db, intent, intent_id, tx_id)
+            await _finish(db, intent, intent_id, tx_id, company_id=cid)
             return
         try:
-            await _apply_balances(db, tx_id, account_id, contact_id, amount, fee=fee)
+            await _apply_balances(db, tx_id, account_id, contact_id, amount, fee=fee, company_id=cid)
         except Exception:
-            await _drop_if_unsettled(db, tx_id)
+            await _drop_if_unsettled(db, tx_id, company_id=cid)
             raise
-        await _finish(db, intent, intent_id, tx_id)
+        await _finish(db, intent, intent_id, tx_id, company_id=cid)
     except Exception:
         logger.exception("vpos collection post_failed intent=%s", intent_id)
         try:
             await db.payment_intents.update_one(
-                {"_id": intent_id},
+                {"_id": intent_id, "company_id": cid},
                 {"$set": {"collection_error": "post_failed"}},
             )
         except Exception:
