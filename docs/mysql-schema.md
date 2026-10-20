@@ -89,7 +89,19 @@ Uygulama sınırı `backend/tenant_scope.py` ve `backend/tenant_db.py` katmanın
 - `users` üyeliği `company_ids` ile, `companies` belgesi `_id` ile okunur. Bu iki koleksiyonun yazması ham `db` üzerinden yapılır. Platform koleksiyonları ile token koleksiyonları (`password_resets`, `b2b_password_resets`, `push_receipts_pending`) süzülmeden geçer.
 - `unscoped(reason)` bilerek kapsam dışına çıkar ve `tenant_guard.escape` yazar (`reason`, `caller`, `kind`). `reason` boş olamaz. Loga filtre, belge, e-posta veya token konmaz.
 - `get_tenant_db` istek dependency'sidir; şirketi `resolve_company_id` seçer ve kapsamı yanıt sonunda bırakır. `for_company(cid, reason)` arka plan işidir (`kind=system`). `from_b2b_contact(contact)` B2B oturumudur (`kind=b2b`). Boş `company_id` ile kapsam kurulmaz.
-- Çalışma zamanı koruması `tenant_scope.check`. Mod `TAMKOBI_TENANT_GUARD`: `off` (prod varsayılanı; değişken yoksa veya tanınmazsa), `log`, `raise`. `off` hemen döner; çerçeve taraması ve sayaç yoktur. `log` kiracı koleksiyonunda `company_id` olmayan erişimi `tenant_guard.unscoped`, kapsamla çelişen kimliği `tenant_guard.conflict` olarak `(collection, op, caller)` başına bir kez yazar; istisna atmaz. `raise` yalnız bağlı bir kapsam varken ve `unscoped(reason)` dışında `TenantScopeViolation` (404) üretir. `unscoped` `_UNSCOPED` bayrağını bağlar; bu blokta koruma susar. Kapsam bağlı değilse raise hata atmaz, yalnız `violations()` sayacını artırır ve log yazmaz. Log alanları yalnız `event`, `collection`, `op`, `caller`, `kind`, `mode` (filtre, belge, `company_id` değeri, e-posta ve token yazılmaz). Üyelik (`users`), şirket (`companies`), platform ve token koleksiyonları hiçbir modda kontrol edilmez. Testler `backend/tests/conftest.py` içinde `TAMKOBI_TENANT_GUARD=raise` ile çalışır. Statik tarama ve allowlist PR1c'dedir. Bu belgede şema DDL'i değişmez.
+- Çalışma zamanı koruması `tenant_scope.check`. Mod `TAMKOBI_TENANT_GUARD`: `off` (prod varsayılanı; değişken yoksa veya tanınmazsa), `log`, `raise`. `off` hemen döner; çerçeve taraması ve sayaç yoktur. `log` kiracı koleksiyonunda `company_id` olmayan erişimi `tenant_guard.unscoped`, kapsamla çelişen kimliği `tenant_guard.conflict` olarak `(collection, op, caller)` başına bir kez yazar; istisna atmaz. `raise` yalnız bağlı bir kapsam varken ve `unscoped(reason)` dışında `TenantScopeViolation` (404) üretir. `unscoped` `_UNSCOPED` bayrağını bağlar; bu blokta koruma susar. Kapsam bağlı değilse raise hata atmaz, yalnız `violations()` sayacını artırır ve log yazmaz. Log alanları yalnız `event`, `collection`, `op`, `caller`, `kind`, `mode` (filtre, belge, `company_id` değeri, e-posta ve token yazılmaz). Üyelik (`users`), şirket (`companies`), platform ve token koleksiyonları hiçbir modda kontrol edilmez. Testler `backend/tests/conftest.py` içinde `TAMKOBI_TENANT_GUARD=raise` ile çalışır. Bu belgede şema DDL'i değişmez.
+
+#### Statik tarama
+
+`backend/tenant_static_scan.py` `db.<koleksiyon>.<op>(...)` çağrılarını AST ile tarar. Çalışma zamanı değişmez; tarayıcı uygulama başlangıcında import edilmez.
+
+Anahtar `(dosya, fonksiyon, koleksiyon, op)` biçimindedir; değer çağrı adedidir. Satır numarası anahtara girmez. Dosya yolu `backend/` köküne görelidir ve `/` ayraçlıdır. Yalnız `collection_kind` sonucu `tenant` veya `unknown` olan koleksiyonlar sayılır.
+
+`company_id` kısıtı görülen çağrı ihlal değildir. Kısıt yoksa (`missing`) ya da filtre statik çözülemiyorsa (`unclear`) anahtar `backend/tenant_scope_allowlist.py` tabanına yazılır. Bilinçli istisna için çağrı satırına ya da bir üst satıra `# tenant-ok: neden` yazılır; neden boş olamaz. `with tenant_scope.unscoped("neden"):` (veya `with <x>.unscoped("neden"):`) bloğunun içindeki çağrı da ihlal sayılmaz.
+
+Taban yalnız küçülür: yeni anahtar veya artan adet testi kırar; kodda kalmayan ya da adedi düşen giriş de kırılır. `rbac.py` ve `addons.py` `TENANT_SCOPE_FROZEN` bölümündedir; sahibin onayı olmadan değişmez.
+
+Yeniden üretmek için: `python backend/scripts/tenant_scope_baseline.py --write`
 
 ---
 
