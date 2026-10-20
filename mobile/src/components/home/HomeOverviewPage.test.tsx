@@ -7,6 +7,7 @@ import { fmtMoney } from "../../utils/money";
 import { goHref } from "../../nav";
 import type { QuickTile } from "../../utils/quickMenu";
 import { HomeOverviewPage } from "./HomeOverviewPage";
+import { DEFAULT_OVERVIEW_SECTION_ORDER } from "./overviewSections";
 
 const { createRoot } = require("react-dom/client") as {
   createRoot: (container: unknown) => { render: (node: unknown) => void; unmount: () => void };
@@ -189,8 +190,12 @@ describe("HomeOverviewPage", () => {
     expect(reactProps(manager)?.style?.flexDirection).not.toBe("row");
     const productionEl = findByTestId(view.container, "home-overview-production");
     const projectsEl = findByTestId(view.container, "home-overview-projects");
-    expect(productionEl.parentNode).toBe(manager);
-    expect(projectsEl.parentNode).toBe(manager);
+    const productionSection = findByTestId(manager, "home-overview-section-production");
+    const projectsSection = findByTestId(manager, "home-overview-section-projects");
+    expect(productionSection.parentNode).toBe(manager);
+    expect(projectsSection.parentNode).toBe(manager);
+    expect(productionEl.parentNode).toBe(productionSection);
+    expect(projectsEl.parentNode).toBe(projectsSection);
     expect(reactProps(productionEl)?.style?.width).toBe("100%");
     expect(reactProps(projectsEl)?.style?.width).toBe("100%");
     expect(reactProps(productionEl)?.style?.flex).not.toBe(1);
@@ -306,6 +311,41 @@ describe("HomeOverviewPage", () => {
     expect(findByTestId(hiddenPanels, "home-approvals")).toBeNull();
     expect(findByTestId(hiddenPanels, "home-messages-panel")).toBeNull();
     await hidden.unmount();
+  });
+
+  it("renders section wrappers in the default order and nests the month card", async () => {
+    const view = await renderPage();
+    const ids = collectTestIds(view.container);
+    const sections = ids.filter((id) => id.startsWith("home-overview-section-"));
+    expect(sections).toEqual(DEFAULT_OVERVIEW_SECTION_ORDER.map((key) => `home-overview-section-${key}`));
+    const month = findByTestId(view.container, "home-overview-month");
+    expect(textOf(month)).toContain("Ekim 2026");
+    expect(findByTestId(month, "home-overview-sales")).toBeTruthy();
+    expect(findByTestId(month, "home-overview-kpis")).toBeTruthy();
+    for (const key of ["bank", "recv", "pay", "profit", "vat"]) {
+      expect(findByTestId(month, `home-overview-kpi-${key}`)).toBeTruthy();
+    }
+    expect(findByTestId(month, "home-overview-collections")).toBeTruthy();
+    expect(findByTestId(month, "home-overview-payments")).toBeTruthy();
+    expect(findByTestId(month, "home-overview-collections-bar")).toBeTruthy();
+    expect(findByTestId(month, "home-overview-payments-bar")).toBeTruthy();
+    await view.unmount();
+  });
+
+  it("hides stock when the count is zero and there are no products, and drops empty manager sections", async () => {
+    const view = await renderPage({
+      stats: { ...stats, low_stock_count: 0, low_stock_products: [] },
+      manager: {},
+    });
+    expect(findByTestId(view.container, "home-overview-stock")).toBeNull();
+    expect(findByTestId(view.container, "home-overview-section-stock")).toBeNull();
+    expect(findByTestId(view.container, "home-overview-production")).toBeNull();
+    expect(findByTestId(view.container, "home-overview-projects")).toBeNull();
+    expect(findByTestId(view.container, "home-overview-section-production")).toBeNull();
+    expect(findByTestId(view.container, "home-overview-section-projects")).toBeNull();
+    expect(findByTestId(view.container, "home-overview-section-today")).toBeTruthy();
+    expect(findByTestId(view.container, "home-overview-section-month")).toBeTruthy();
+    await view.unmount();
   });
 });
 
