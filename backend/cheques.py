@@ -110,11 +110,15 @@ def open_portfolio_balance(rows) -> float:
     return round(received - issued, 2)
 
 
-async def _refresh_contact_cheque(contact_id: str):
-    if not contact_id:
+async def _refresh_contact_cheque(contact_id: str, *, company_id: str):
+    cid = str(company_id or "").strip()
+    if not contact_id or not cid:
         return
-    rows = await _db.cheques.find({"contact_id": contact_id, "status": "open"}).to_list(5000)
-    await _db.contacts.update_one({"_id": contact_id}, {"$set": {"cheque_bond_balance": open_portfolio_balance(rows)}})
+    rows = await _db.cheques.find({"contact_id": contact_id, "status": "open", "company_id": cid}).to_list(5000)
+    await _db.contacts.update_one(
+        {"_id": contact_id, "company_id": cid},
+        {"$set": {"cheque_bond_balance": open_portfolio_balance(rows)}},
+    )
 
 
 def _contact_delta_on_create(direction: str, amount: float) -> float:
@@ -123,9 +127,12 @@ def _contact_delta_on_create(direction: str, amount: float) -> float:
     return -amount if direction == "received" else amount
 
 
-async def _apply_contact(contact_id: str, delta: float):
+async def _apply_contact(contact_id: str, delta: float, *, company_id: str):
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
     if contact_id and delta:
-        await _db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": delta}})
+        await _db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$inc": {"balance": delta}})
 
 
 def _account_id(req: Dict[str, Any]) -> Optional[str]:
@@ -246,7 +253,7 @@ async def _rollback_cheque_group(company_id: str, receipt_group_id: str, contact
         await _db.cheques.delete_many({"company_id": company_id, "receipt_group_id": receipt_group_id})
         await _db.bank_transactions.delete_many({"company_id": company_id, "receipt_group_id": receipt_group_id})
         if delta:
-            await _apply_contact(contact_id, -delta)
+            await _apply_contact(contact_id, -delta, company_id=company_id)
     except Exception:
         return
 
@@ -297,15 +304,21 @@ async def _bank_move(company_id: str, account_id: str, *, inflow: bool, amount: 
     return acc.get("account_name")
 
 
-async def _unwind_bank(cheque_id: str):
+async def _unwind_bank(cheque_id: str, *, company_id: str):
     """Çeke bağlı portföy (cari) ve tahsil/ödeme (kasa) hareketlerini geri al."""
-    txs = await _db.bank_transactions.find({"cheque_id": cheque_id}).to_list(50)
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    txs = await _db.bank_transactions.find({"cheque_id": cheque_id, "company_id": cid}).to_list(50)
     for tx in txs:
         amt = float(tx.get("amount") or 0)
         if tx.get("account_id") and amt and tx.get("cheque_kind") != "portfolio":
             change = -amt if tx.get("type") == "inflow" else amt
-            await _db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
-        await _db.bank_transactions.delete_one({"_id": tx["_id"]})
+            await _db.bank_accounts.update_one(
+                {"_id": tx["account_id"], "company_id": cid},
+                {"$inc": {"current_balance": change}},
+            )
+        await _db.bank_transactions.delete_one({"_id": tx["_id"], "company_id": cid})
 
 
 def _open_only(doc: dict):
@@ -313,6 +326,13 @@ def _open_only(doc: dict):
         raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
     if doc.get("status") != "open":
         raise HTTPException(status_code=400, detail=f"Bu kayıt {STATUS_TR.get(doc.get('status'), doc.get('status'))} durumunda; işlem yapılamaz.")
+
+
+def _doc_cid(doc: Optional[dict], detail: str = "Çek/senet bulunamadı.") -> str:
+    cid = str((doc or {}).get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail=detail)
+    return cid
 
 
 async def _cheques_summary(company_id: str):
@@ -453,13 +473,13 @@ async def create_cheques_batch(req: Dict[str, Any], user: dict = Depends(_user_d
             await _db.cheques.insert_one(doc)
             created.append(doc)
             delta = _contact_delta_on_create(fields["direction"], fields["amount"])
-            await _apply_contact(contact["_id"], delta)
+            await _apply_contact(contact["_id"], delta, company_id=doc["company_id"])
             applied_delta = round(applied_delta + delta, 2)
             await _post_cari_payment(doc)
     except Exception:
         await _rollback_cheque_group(company_id, gid, contact["_id"], applied_delta)
         raise
-    await _refresh_contact_cheque(contact["_id"])
+    await _refresh_contact_cheque(contact["_id"], company_id=company_id)
     today = _today()
     annotated = [_annotate(dict(doc), today) for doc in created]
     total = round(sum(float(doc.get("amount") or 0) for doc in created), 2)
@@ -489,6 +509,7 @@ def _sync_portfolio_tx(doc: dict):
 @router.put("/cheques/{cheque_id}")
 async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    cid = _doc_cid(doc)
     notes = (req.get("notes") if "notes" in req else doc.get("notes") or "") or ""
     serial = (req.get("serial_no") if "serial_no" in req else doc.get("serial_no") or "") or ""
     patch = {
@@ -523,7 +544,7 @@ async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
         contact_id = req.get("contact_id") or old_contact
         if not contact_id:
             raise HTTPException(status_code=400, detail="Cari seçin.")
-        contact = await _db.contacts.find_one({"_id": contact_id, "company_id": doc["company_id"]})
+        contact = await _db.contacts.find_one({"_id": contact_id, "company_id": cid})
         if not contact:
             raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         patch.update({
@@ -541,21 +562,21 @@ async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
             or contact["_id"] != old_contact
         )
         if ledger_changed and not doc.get("skip_ledger"):
-            await _apply_contact(old_contact, -_contact_delta_on_create(old_direction, old_amount))
-            await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount))
+            await _apply_contact(old_contact, -_contact_delta_on_create(old_direction, old_amount), company_id=cid)
+            await _apply_contact(contact["_id"], _contact_delta_on_create(direction, amount), company_id=cid)
         merged = {**doc, **patch}
         if not doc.get("skip_ledger"):
             await _db.bank_transactions.update_one(
-                {"company_id": doc["company_id"], "cheque_id": cheque_id, "cheque_kind": "portfolio"},
+                {"company_id": cid, "cheque_id": cheque_id, "cheque_kind": "portfolio"},
                 {"$set": _sync_portfolio_tx(merged)},
             )
         if old_contact != contact["_id"]:
-            await _refresh_contact_cheque(old_contact)
-        await _refresh_contact_cheque(contact["_id"])
+            await _refresh_contact_cheque(old_contact, company_id=cid)
+        await _refresh_contact_cheque(contact["_id"], company_id=cid)
 
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": patch})
-    await _append_event(cheque_id, "updated", "Düzenleme")
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": patch})
+    await _append_event(cheque_id, "updated", "Düzenleme", company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 
 
 @router.post("/cheques")
@@ -567,20 +588,28 @@ async def create_cheque(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await _build_cheque_doc(company_id=company_id, contact=contact, receipt_group_id=gid, fields=fields)
     doc["company_id"] = company_id
     await _db.cheques.insert_one(doc)
+    cid = doc["company_id"]
     if not fields["skip_ledger"]:
-        await _apply_contact(contact["_id"], _contact_delta_on_create(fields["direction"], fields["amount"]))
+        await _apply_contact(contact["_id"], _contact_delta_on_create(fields["direction"], fields["amount"]), company_id=cid)
         await _post_cari_payment(doc)
-    await _refresh_contact_cheque(contact["_id"])
-    return _annotate(await _db.cheques.find_one({"_id": doc["_id"]}), _today())
+    await _refresh_contact_cheque(contact["_id"], company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": doc["_id"], "company_id": cid}), _today())
 
 
-async def _append_event(cheque_id: str, action: str, note: str = ""):
-    await _db.cheques.update_one({"_id": cheque_id}, {"$push": {"events": {"at": _now(), "action": action, "note": note}}})
+async def _append_event(cheque_id: str, action: str, note: str = "", *, company_id: str):
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    await _db.cheques.update_one(
+        {"_id": cheque_id, "company_id": cid},
+        {"$push": {"events": {"at": _now(), "action": action, "note": note}}},
+    )
 
 
 @router.post("/cheques/{cheque_id}/collect")
 async def collect_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    cid = _doc_cid(doc)
     _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Tahsil yalnızca alınan çek/senet için.")
@@ -593,26 +622,27 @@ async def collect_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depen
     pay_date = req.get("date") or _today()
     amount = float(doc["amount"])
     if partner_id:
-        name = await partner_pay.move(_db, doc["company_id"], partner_id, amount, "withdrawal", f"{doc['number']} {doc.get('contact_name') or ''} tahsil", pay_date, extra={"cheque_id": cheque_id})
+        name = await partner_pay.move(_db, cid, partner_id, amount, "withdrawal", f"{doc['number']} {doc.get('contact_name') or ''} tahsil", pay_date, extra={"cheque_id": cheque_id})
         name = f"{name} (Ortak)"
         account_id = None
     else:
         await assert_collection_allowed(_db, account_id)
         name = await _bank_move(
-            doc["company_id"], account_id, inflow=True, amount=amount,
+            cid, account_id, inflow=True, amount=amount,
             category="Çek/Senet Tahsilatı", description=f"{doc['number']} {doc.get('contact_name') or ''} tahsil",
             date=pay_date, cheque_id=cheque_id, contact_name=doc.get("contact_name"),
         )
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "collected", "account_id": account_id, "partner_id": partner_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
-    await _append_event(cheque_id, "collected", f"{name} · {pay_date}")
-    await _refresh_contact_cheque(doc.get("contact_id"))
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {"status": "collected", "account_id": account_id, "partner_id": partner_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
+    await _append_event(cheque_id, "collected", f"{name} · {pay_date}", company_id=cid)
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 
 
 
 @router.post("/cheques/{cheque_id}/pay")
 async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    cid = _doc_cid(doc)
     _open_only(doc)
     if doc.get("direction") != "issued":
         raise HTTPException(status_code=400, detail="Ödeme yalnızca verilen çek/senet için.")
@@ -625,82 +655,87 @@ async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any], user: dict = De
     pay_date = req.get("date") or _today()
     amount = float(doc["amount"])
     if partner_id:
-        name = await partner_pay.withdraw(_db, doc["company_id"], partner_id, amount, f"{doc['number']} {doc.get('contact_name') or ''} ödeme", pay_date, extra={"cheque_id": cheque_id})
+        name = await partner_pay.withdraw(_db, cid, partner_id, amount, f"{doc['number']} {doc.get('contact_name') or ''} ödeme", pay_date, extra={"cheque_id": cheque_id})
         name = f"{name} (Ortak)"
         account_id = None
     else:
         name = await _bank_move(
-            doc["company_id"], account_id, inflow=False, amount=amount,
+            cid, account_id, inflow=False, amount=amount,
             category="Çek/Senet Ödemesi", description=f"{doc['number']} {doc.get('contact_name') or ''} ödeme",
             date=pay_date, cheque_id=cheque_id, contact_name=doc.get("contact_name"),
         )
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
-    await _append_event(cheque_id, "paid", f"{name} · {pay_date}")
-    await _refresh_contact_cheque(doc.get("contact_id"))
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {"status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "settled_at": pay_date, "updated_at": _now()}})
+    await _append_event(cheque_id, "paid", f"{name} · {pay_date}", company_id=cid)
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 
 
 
 @router.post("/cheques/{cheque_id}/endorse")
 async def endorse_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    cid = _doc_cid(doc)
     _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Ciro yalnızca alınan çek/senet için.")
     if not req.get("contact_id"):
         raise HTTPException(status_code=400, detail="Ciro edilecek cariyi seçin.")
-    target = await _db.contacts.find_one({"_id": req.get("contact_id"), "company_id": doc["company_id"]})
+    target = await _db.contacts.find_one({"_id": req.get("contact_id"), "company_id": cid})
     if not target:
         raise HTTPException(status_code=404, detail="Cari bulunamadı.")
     if target["_id"] == doc.get("contact_id"):
         raise HTTPException(status_code=400, detail="Aynı cariye ciro edilemez.")
     amount = float(doc["amount"])
-    await _apply_contact(target["_id"], amount)
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {
+    await _apply_contact(target["_id"], amount, company_id=cid)
+    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {
         "status": "endorsed", "endorsed_to_contact_id": target["_id"], "endorsed_to_name": target.get("name"),
         "settled_at": req.get("date") or _today(), "updated_at": _now(),
     }})
-    await _append_event(cheque_id, "endorsed", f"Ciro → {target.get('name')}")
-    await _refresh_contact_cheque(doc.get("contact_id"))
-    await _refresh_contact_cheque(target["_id"])
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+    await _append_event(cheque_id, "endorsed", f"Ciro → {target.get('name')}", company_id=cid)
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
+    await _refresh_contact_cheque(target["_id"], company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 
 
 @router.post("/cheques/{cheque_id}/bounce")
 async def bounce_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    cid = _doc_cid(doc)
     st = doc.get("status")
     if st not in ("open", "collected", "paid", "endorsed"):
         raise HTTPException(status_code=400, detail=f"Bu kayıt {STATUS_TR.get(st, st)} durumunda; karşılıksız işlenemez.")
     amount = float(doc["amount"])
     # Portföy (cari Ödemeler) + varsa tahsil/ödeme kasa hareketlerini geri al.
-    await _unwind_bank(cheque_id)
+    await _unwind_bank(cheque_id, company_id=cid)
     if st == "endorsed" and doc.get("endorsed_to_contact_id"):
-        await _apply_contact(doc["endorsed_to_contact_id"], -amount)
-        await _refresh_contact_cheque(doc["endorsed_to_contact_id"])
-    await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount))
+        await _apply_contact(doc["endorsed_to_contact_id"], -amount, company_id=cid)
+        await _refresh_contact_cheque(doc["endorsed_to_contact_id"], company_id=cid)
+    await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount), company_id=cid)
     reason = (req.get("reason") or "Karşılıksız").strip()
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "bounced", "bounce_reason": reason, "settled_at": req.get("date") or _today(), "updated_at": _now()}})
-    await _append_event(cheque_id, "bounced", reason)
-    await _refresh_contact_cheque(doc.get("contact_id"))
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {"status": "bounced", "bounce_reason": reason, "settled_at": req.get("date") or _today(), "updated_at": _now()}})
+    await _append_event(cheque_id, "bounced", reason, company_id=cid)
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 
 
 async def _cancel_cheque_core(cheque_id: str, req: Optional[Dict[str, Any]] = None, *, doc: Optional[dict] = None):
     """Senet/çek iptali. Sistem çağrıları (taksit planı silme) doc ile kullanıcı gerektirmeden kullanır."""
-    if doc is None:
-        doc = await _db.cheques.find_one({"_id": cheque_id})
-    if not doc:
+    cid = str((doc or {}).get("company_id") or "").strip()
+    if not doc or not cid:
         raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+    loaded = await _db.cheques.find_one({"_id": cheque_id, "company_id": cid})
+    if not loaded:
+        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+    doc = loaded
     _open_only(doc)
     amount = float(doc["amount"])
-    await _unwind_bank(cheque_id)
+    await _unwind_bank(cheque_id, company_id=cid)
     if not doc.get("skip_ledger"):
-        await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount))
-    await _db.cheques.update_one({"_id": cheque_id}, {"$set": {"status": "cancelled", "updated_at": _now()}})
-    await _append_event(cheque_id, "cancelled", (req or {}).get("reason") or "İptal")
-    await _refresh_contact_cheque(doc.get("contact_id"))
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+        await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount), company_id=cid)
+    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {"status": "cancelled", "updated_at": _now()}})
+    await _append_event(cheque_id, "cancelled", (req or {}).get("reason") or "İptal", company_id=cid)
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
+    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 
 
 @router.post("/cheques/{cheque_id}/cancel")
@@ -712,26 +747,30 @@ async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None, us
 @router.delete("/cheques/{cheque_id}")
 async def delete_cheque(cheque_id: str, user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    cid = _doc_cid(doc)
     if doc.get("status") not in ("open", "cancelled", "bounced"):
         raise HTTPException(status_code=400, detail="Tahsil/ödeme/ciro edilmiş kayıt silinemez. Banka hareketinden geri alın.")
     if doc.get("status") == "open" and not doc.get("skip_ledger"):
-        await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], float(doc["amount"])))
+        await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], float(doc["amount"])), company_id=cid)
     related = []
-    txs = await _db.bank_transactions.find({"cheque_id": cheque_id}).to_list(20)
+    txs = await _db.bank_transactions.find({"cheque_id": cheque_id, "company_id": cid}).to_list(20)
     if txs:
         related.append({"collection": "bank_transactions", "docs": txs})
     await trash.soft_delete("cheques", doc, "cheque", f"{doc.get('number')} · {doc.get('contact_name')} · {float(doc.get('amount') or 0):,.2f} ₺", related=related, note=doc.get("serial_no") or "")
-    await _refresh_contact_cheque(doc.get("contact_id"))
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
     return {"status": "success", "message": "Çek/senet çöp kutusuna taşındı."}
 
 
 async def restore_cheque(doc: dict, _related):
+    cid = str((doc or {}).get("company_id") or "").strip()
+    if not cid:
+        return
     if doc.get("status") == "open" and not doc.get("skip_ledger"):
-        await _apply_contact(doc.get("contact_id"), _contact_delta_on_create(doc.get("direction"), float(doc.get("amount") or 0)))
+        await _apply_contact(doc.get("contact_id"), _contact_delta_on_create(doc.get("direction"), float(doc.get("amount") or 0)), company_id=cid)
         # Eski silmelerde portföy satırı yoksa cari Ödemeler'e yeniden yaz.
-        if not await _db.bank_transactions.find_one({"cheque_id": doc["_id"], "cheque_kind": "portfolio"}):
+        if not await _db.bank_transactions.find_one({"cheque_id": doc["_id"], "cheque_kind": "portfolio", "company_id": cid}):
             await _post_cari_payment(doc)
-    await _refresh_contact_cheque(doc.get("contact_id"))
+    await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
 
 
 async def create_promissory_for_installments(installments: list, *, include_down_payment: bool = False) -> list:
@@ -743,6 +782,8 @@ async def create_promissory_for_installments(installments: list, *, include_down
             continue
         amount = round(float(inst.get("amount") or 0), 2)
         if amount <= 0:
+            continue
+        if not str(inst.get("company_id") or "").strip():
             continue
         direction = "received" if inst.get("direction") == "receivable" else "issued"
         inv_no = inst.get("invoice_number") or "Taksit"
@@ -764,13 +805,14 @@ async def create_promissory_for_installments(installments: list, *, include_down
         iid = inst.get("_id") or inst.get("id")
         if iid:
             await _db.installments.update_one(
-                {"_id": iid},
+                {"_id": iid, "company_id": inst["company_id"]},
                 {"$set": {"cheque_id": note.get("id"), "cheque_number": note.get("number")}},
             )
         notes.append(note)
     return notes
 
 
+# tenant-ok değil: id listesi server.py _cancel_promissory_for_query (company_id'li sorgu) sonucundan gelir; server.py taksit PR'ında company_id kwarg ile kapanacak.
 async def cancel_promissory_for_installments(installment_ids: list) -> int:
     """Plan silinince bağlı açık senetleri iptal eder."""
     if not installment_ids:

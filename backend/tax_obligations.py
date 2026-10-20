@@ -49,40 +49,49 @@ def _clean(d):
 
 async def _ensure_expense(ob: dict) -> str:
     """Yükümlülüğe bağlı masraf yoksa oluşturur; expense_id döner."""
+    cid = str((ob or {}).get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
     eid = ob.get("expense_id")
     if eid:
-        existing = await _db.expenses.find_one({"_id": eid})
+        existing = await _db.expenses.find_one({"_id": eid, "company_id": cid})
         if existing:
             return eid
     exp = await expenses.create_tax_payable_expense(ob)
     eid = exp["id"]
-    await _db.tax_obligations.update_one({"_id": ob["_id"]}, {"$set": {"expense_id": eid}})
+    await _db.tax_obligations.update_one({"_id": ob["_id"], "company_id": cid}, {"$set": {"expense_id": eid}})
     ob["expense_id"] = eid
     return eid
 
 
 async def _delete_linked_expense(ob: dict):
+    cid = str((ob or {}).get("company_id") or "").strip()
+    if not cid:
+        return
     eid = ob.get("expense_id")
     if not eid:
-        exp = await _db.expenses.find_one({"tax_obligation_id": ob["_id"]})
+        exp = await _db.expenses.find_one({"tax_obligation_id": ob["_id"], "company_id": cid})
         eid = exp["_id"] if exp else None
     if not eid:
         return
-    exp = await _db.expenses.find_one({"_id": eid})
+    exp = await _db.expenses.find_one({"_id": eid, "company_id": cid})
     if not exp:
         return
     if exp.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş masraf bağlı; önce ödemeyi geri alın.")
-    await _db.expenses.delete_one({"_id": eid})
+    await _db.expenses.delete_one({"_id": eid, "company_id": cid})
 
 
 async def _reverse_legacy_bank(ob: dict):
     """Eski (masrafsız) vergi ödemesi kasa hareketini geri alır."""
-    bt = await _db.bank_transactions.find_one({"tax_obligation_id": ob["_id"]})
+    cid = str((ob or {}).get("company_id") or "").strip()
+    if not cid:
+        return
+    bt = await _db.bank_transactions.find_one({"tax_obligation_id": ob["_id"], "company_id": cid})
     if bt:
-        await _db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": bt["amount"]}})
-        await _db.bank_transactions.delete_one({"_id": bt["_id"]})
-    await partner_pay.reverse_one(_db, {"tax_obligation_id": ob["_id"]})
+        await _db.bank_accounts.update_one({"_id": bt["account_id"], "company_id": cid}, {"$inc": {"current_balance": bt["amount"]}})
+        await _db.bank_transactions.delete_one({"_id": bt["_id"], "company_id": cid})
+    await partner_pay.reverse_one(_db, {"tax_obligation_id": ob["_id"], "company_id": cid})
 
 
 def month_summary(rows: list) -> dict:
@@ -133,6 +142,9 @@ def visible_obligations(rows: list, month: Optional[str]) -> list:
 
 async def persist_extracted_document(company_id: str, draft: dict, filename: str, month: Optional[str] = None) -> dict:
     """AI okuduğu anda belgeyi listede tutar (onay bekleyen taslak)."""
+    company_id = str(company_id or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     period = coerce_period(draft.get("period"), month)
     if period:
         draft["period"] = period
@@ -154,12 +166,12 @@ async def persist_extracted_document(company_id: str, draft: dict, filename: str
     draft["document_id"] = doc_id
     draft["filename"] = payload["filename"]
     payload["draft"] = dict(draft)
-    existing = await _db.tax_documents.find_one({"_id": doc_id})
+    existing = await _db.tax_documents.find_one({"_id": doc_id, "company_id": company_id})
     if existing:
-        await _db.tax_documents.update_one({"_id": doc_id}, {"$set": payload})
+        await _db.tax_documents.update_one({"_id": doc_id, "company_id": company_id}, {"$set": payload})
     else:
-        await _db.tax_documents.insert_one({"_id": doc_id, "created_at": _now(), **payload})
-    found = await _db.tax_documents.find_one({"_id": doc_id})
+        await _db.tax_documents.insert_one({"_id": doc_id, "created_at": _now(), **payload, "company_id": company_id})
+    found = await _db.tax_documents.find_one({"_id": doc_id, "company_id": company_id})
     return _clean(dict(found) if found else {"_id": doc_id, **payload})
 
 
@@ -229,7 +241,7 @@ async def _import_tax_doc_core(req: Dict[str, Any], user: dict):
         raise HTTPException(status_code=400, detail="İçe aktarılacak ödenecek satır yok.")
     period = coerce_period(draft.get("period"), req.get("month"), lines[0].get("period"))
     existing_id = str(draft.get("document_id") or "").strip()
-    existing = await _db.tax_documents.find_one({"_id": existing_id}) if existing_id else None
+    existing = await _db.tax_documents.find_one({"_id": existing_id, "company_id": company_id}) if existing_id else None
     doc = existing or {
         "_id": existing_id or str(uuid.uuid4()),
         "company_id": company_id,
@@ -248,9 +260,12 @@ async def _import_tax_doc_core(req: Dict[str, Any], user: dict):
         "updated_at": _now(),
     })
     if existing:
-        await _db.tax_documents.update_one({"_id": doc["_id"]}, {"$set": {k: v for k, v in doc.items() if k != "_id"}})
+        await _db.tax_documents.update_one(
+            {"_id": doc["_id"], "company_id": company_id},
+            {"$set": {k: v for k, v in doc.items() if k != "_id"}},
+        )
     else:
-        await _db.tax_documents.insert_one(doc)
+        await _db.tax_documents.insert_one({**doc, "company_id": company_id})
     created = []
     for line in lines:
         ob = {
@@ -276,7 +291,7 @@ async def _import_tax_doc_core(req: Dict[str, Any], user: dict):
         }
         await _db.tax_obligations.insert_one(ob)
         exp = await expenses.create_tax_payable_expense(ob)
-        await _db.tax_obligations.update_one({"_id": ob["_id"]}, {"$set": {"expense_id": exp["id"]}})
+        await _db.tax_obligations.update_one({"_id": ob["_id"], "company_id": company_id}, {"$set": {"expense_id": exp["id"]}})
         ob["expense_id"] = exp["id"]
         created.append(_clean(dict(ob)))
     return {
@@ -321,6 +336,9 @@ async def list_tax_obligations(
 async def pay_tax_obligation(oid: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Ödemeyi Masraflar (Vergi / Harç / SGK) üzerinden kasa/bankaya işler."""
     ob = await tenant_access.get_tenant_doc(_db, "tax_obligations", oid, user, not_found="Yükümlülük bulunamadı.")
+    cid = str(ob.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
     if ob.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Bu yükümlülük zaten ödendi.")
     if not req.get("account_id") and not req.get("partner_id"):
@@ -331,7 +349,7 @@ async def pay_tax_obligation(oid: str, req: Dict[str, Any], user: dict = Depends
     eid = await _ensure_expense(ob)
     paid_exp = await expenses._pay_expense_core(eid, {"account_id": account_id, "partner_id": partner_id, "date": pay_date}, user)
     await _db.tax_obligations.update_one(
-        {"_id": oid},
+        {"_id": oid, "company_id": cid},
         {"$set": {
             "payment_status": "paid",
             "account_id": paid_exp.get("account_id"),
@@ -342,12 +360,15 @@ async def pay_tax_obligation(oid: str, req: Dict[str, Any], user: dict = Depends
             "expense_number": paid_exp.get("expense_number"),
         }},
     )
-    return _clean(await _db.tax_obligations.find_one({"_id": oid}))
+    return _clean(await _db.tax_obligations.find_one({"_id": oid, "company_id": cid}))
 
 
 @router.post("/tax-obligations/{oid}/unpay")
 async def unpay_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
     ob = await tenant_access.get_tenant_doc(_db, "tax_obligations", oid, user, not_found="Yükümlülük bulunamadı.")
+    cid = str(ob.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
     if ob.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş yükümlülük bulunamadı.")
     if ob.get("expense_id"):
@@ -355,7 +376,7 @@ async def unpay_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
     else:
         await _reverse_legacy_bank(ob)
     await _db.tax_obligations.update_one(
-        {"_id": oid},
+        {"_id": oid, "company_id": cid},
         {"$set": {
             "payment_status": "unpaid",
             "account_id": None,
@@ -364,16 +385,19 @@ async def unpay_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
             "paid_date": None,
         }},
     )
-    return _clean(await _db.tax_obligations.find_one({"_id": oid}))
+    return _clean(await _db.tax_obligations.find_one({"_id": oid, "company_id": cid}))
 
 
 @router.delete("/tax-obligations/{oid}")
 async def delete_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
     ob = await tenant_access.get_tenant_doc(_db, "tax_obligations", oid, user, not_found="Yükümlülük bulunamadı.")
+    cid = str(ob.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
     if ob.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş kayıt silinemez. Önce ödemeyi geri alın.")
     await _delete_linked_expense(ob)
-    await _db.tax_obligations.delete_one({"_id": oid})
+    await _db.tax_obligations.delete_one({"_id": oid, "company_id": cid})
     return {"ok": True}
 
 
@@ -381,11 +405,14 @@ async def delete_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
 async def delete_tax_document(doc_id: str, user: dict = Depends(_user_dep)):
     """Yüklenen bordro/mizan/tahakkuk belgesini ve ödenmemiş satırlarını siler."""
     doc = await tenant_access.get_tenant_doc(_db, "tax_documents", doc_id, user, not_found="Belge bulunamadı.")
-    obs = await _db.tax_obligations.find({"document_id": doc_id}).to_list(500)
+    cid = str(doc.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    obs = await _db.tax_obligations.find({"document_id": doc_id, "company_id": cid}).to_list(500)
     if any(o.get("payment_status") == "paid" for o in obs):
         raise HTTPException(status_code=400, detail="Ödenmiş satırı olan belge silinemez. Önce ödemeleri geri alın.")
     for o in obs:
         await _delete_linked_expense(o)
-        await _db.tax_obligations.delete_one({"_id": o["_id"]})
-    await _db.tax_documents.delete_one({"_id": doc_id})
+        await _db.tax_obligations.delete_one({"_id": o["_id"], "company_id": cid})
+    await _db.tax_documents.delete_one({"_id": doc_id, "company_id": cid})
     return {"ok": True, "deleted_obligations": len(obs), "filename": doc.get("filename") or ""}
