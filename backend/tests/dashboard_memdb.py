@@ -9,7 +9,7 @@ import copy
 from types import SimpleNamespace
 
 import tenant_scope
-from mysql_store import aggregate_rows, apply_update, match_query, project_doc, sort_docs
+from mysql_store import aggregate_rows, apply_update, match_query, new_upsert_doc, project_doc, sort_docs
 
 
 def _split_field_ops(query):
@@ -147,6 +147,28 @@ class MemColl:
                 self.docs[i] = apply_update(doc, update, query)
                 return SimpleNamespace(modified_count=1, matched_count=1)
         return SimpleNamespace(modified_count=0, matched_count=0)
+
+    async def find_one_and_update(self, query, update, upsert=False, return_document=True, projection=None):
+        """Eşleşen belgeyi günceller. upsert yoksa ve kayıt yoksa None.
+
+        Gövde bekletmez; aynı olay döngüsünde $inc kesilmez.
+        """
+        tenant_scope.check(self.name, "find_one_and_update", query=query, update=update, upsert=upsert)
+        query = _split_field_ops(query or {})
+        for i, doc in enumerate(self.docs):
+            if not match_query(doc, query):
+                continue
+            before = copy.deepcopy(doc)
+            self.docs[i] = apply_update(doc, update, query)
+            found = self.docs[i] if return_document else before
+            return project_doc(found, projection) if projection else copy.deepcopy(found)
+        if not upsert:
+            return None
+        created = new_upsert_doc(update, query)
+        self.docs.append(created)
+        if not return_document:
+            return None
+        return project_doc(created, projection) if projection else copy.deepcopy(created)
 
     async def update_many(self, query, update, upsert=False):
         """mysql_store.update_many: eşleşenler matched, içeriği değişenler modified."""

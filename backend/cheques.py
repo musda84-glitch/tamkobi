@@ -88,11 +88,55 @@ def _annotate(row: dict, today: str) -> dict:
     return d
 
 
+def _portfolio_prefix(instrument: str) -> str:
+    return "SNT" if instrument == "promissory" else "CEK"
+
+
+def _portfolio_seq(number: Any, prefix: str, year: str) -> Optional[int]:
+    """{prefix}-YYYY-NNNN sonekini sayıya çevirir. Sayısal olmayan sonek yok sayılır."""
+    head = f"{prefix}-{year}-"
+    text = str(number or "")
+    if not text.startswith(head):
+        return None
+    suffix = text[len(head):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+async def _max_portfolio_seq(company_id: str, prefix: str, year: str) -> int:
+    """O yılın ^{prefix}-{yıl}-\\d+$ numaralarının sayısal en büyüğü. Kayıt yoksa 0."""
+    pattern = rf"^{prefix}-{year}-\d+$"
+    cursor = _db.cheques.find(
+        {"company_id": company_id, "number": {"$regex": pattern}},
+        {"number": 1},
+    )
+    rows = await cursor.to_list(None) if hasattr(cursor, "to_list") else list(cursor)
+    best = 0
+    for row in rows or []:
+        seq = _portfolio_seq((row or {}).get("number"), prefix, year)
+        if seq is not None and seq > best:
+            best = seq
+    return best
+
+
 async def _next_number(company_id: str, instrument: str) -> str:
+    """Atomik portföy numarası. Silinen kayıt ve eşzamanlı giriş aynı numarayı vermez.
+
+    Anahtar {CEK|SNT}-{yıl}-{company_id}. İlk çağrı o yılın sayısal en büyük
+    numarasından $setOnInsert ile tohumlanır; sonraki çağrılar $inc ile ilerler.
+    """
     year = datetime.now(timezone.utc).strftime("%Y")
-    prefix = "SNT" if instrument == "promissory" else "CEK"
-    n = await _db.cheques.count_documents({"company_id": company_id, "number": {"$regex": f"^{prefix}-{year}"}}) + 1
-    return f"{prefix}-{year}-{n:04d}"
+    prefix = _portfolio_prefix(instrument)
+    key = f"{prefix}-{year}-{company_id}"
+    if not await _db.counters.find_one({"_id": key}):
+        seed = await _max_portfolio_seq(company_id, prefix, year)
+        await _db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+    doc = await _db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = int((doc or {}).get("seq") or 1)
+    return f"{prefix}-{year}-{seq:04d}"
 
 
 def open_portfolio_balance(rows) -> float:
