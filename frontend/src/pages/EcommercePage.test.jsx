@@ -124,3 +124,29 @@ test("kanal eklendikten sonra panelde yeni kanal seçeneği görünür", async (
     { company_id: COMPANY, channel: "n11" },
   );
 });
+
+test("shopphp ayarında havale hesabı vardır, diğer kanalda yoktur", async () => {
+  integrationResponses = [[
+    { id: "ecom_shopphp", channel: "shopphp", channel_name: "ShopPHP", is_active: true, status: "connected" },
+    { id: "ecom_n11", channel: "n11", channel_name: "n11", is_active: false },
+  ]];
+  root = createRoot(host);
+  await act(async () => {
+    root.render(<EcommercePage />);
+  });
+  await flush();
+
+  await act(async () => {
+    host.querySelector('[data-testid="config-btn-n11"]').click();
+  });
+  await flush();
+  expect(host.querySelector('[data-testid="ecom-transfer-settlement"]')).toBeNull();
+
+  await act(async () => {
+    host.querySelector('[data-testid="config-btn-shopphp"]').click();
+  });
+  await flush();
+  expect(host.querySelector('[data-testid="ecom-transfer-settlement"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="ecom-transfer-settlement-select"]')).toBeTruthy();
+  expect(host.querySelector('[data-testid="ecom-settlement-select"]')).toBeTruthy();
+});

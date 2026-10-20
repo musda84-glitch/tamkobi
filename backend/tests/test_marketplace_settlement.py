@@ -18,6 +18,13 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _db_mock():
+    """db.orders ve db['orders'] aynı koleksiyon olsun."""
+    mock_db = MagicMock()
+    mock_db.__getitem__.side_effect = lambda name: getattr(mock_db, name)
+    return mock_db
+
+
 def test_marketplace_contact_name():
     assert marketplace_contact_name("trendyol") == "Trendyol"
     assert marketplace_contact_name("TRENDYOL") == "Trendyol"
@@ -338,14 +345,14 @@ def test_update_order_status_cancelled_reverses_settlement():
     import server
 
     order = {"_id": "ord_c", "order_status": "approved", "settlement": {"net": 10}}
-    mock_db = MagicMock()
+    mock_db = _db_mock()
     mock_db.orders.find_one = AsyncMock(side_effect=[order, order, order])
     mock_db.orders.update_one = AsyncMock()
 
     with patch.object(server, "db", mock_db), patch.object(
         server, "_reverse_marketplace_settlement", AsyncMock(return_value={"removed_txs": 1, "removed_expenses": 0, "reversed_net": 10})
     ) as rev, patch.object(server, "_push_order_to_shopphp", AsyncMock()):
-        out = _run(server.update_order_status("ord_c", {"status": "cancelled"}))
+        out = _run(server.update_order_status("ord_c", {"status": "cancelled"}, {"is_super_admin": True}))
 
     rev.assert_awaited_once()
     assert out["order_status"] == "cancelled"
@@ -365,7 +372,7 @@ def test_approve_claim_reverses_linked_order_settlement():
         "status": "Created",
     }
     order = {"_id": "ord_1", "order_number": "11626987372", "settlement": {"net": 100}}
-    mock_db = MagicMock()
+    mock_db = _db_mock()
     mock_db.marketplace_claims.find_one = AsyncMock(side_effect=[claim, {**claim, "status": "Accepted"}])
     mock_db.marketplace_claims.update_one = AsyncMock()
     mock_db.integration_configs.find_one = AsyncMock(return_value=None)
@@ -375,7 +382,333 @@ def test_approve_claim_reverses_linked_order_settlement():
     ), patch.object(
         server, "_reverse_marketplace_settlement", AsyncMock(return_value={"removed_txs": 2, "removed_expenses": 1, "reversed_net": 100})
     ) as rev:
-        out = _run(server.approve_marketplace_claim("cl_1", {}))
+        out = _run(server.approve_marketplace_claim("cl_1", {}, {"is_super_admin": True, "company_ids": ["c1"]}))
 
     rev.assert_awaited_once_with(order)
     assert out["settlement_reversed"]["removed_txs"] == 2
+
+
+def _havale_order(**over):
+    order = {
+        "_id": "ord_havale",
+        "company_id": "c1",
+        "channel": "shopphp",
+        "order_number": "881325049",
+        "order_status": "approved",
+        "total_amount": 11519.04,
+        "gross_total": 11999.0,
+        "discount_total": 479.96,
+        "grand_total": 11519.04,
+        "payment_method": "Havale",
+        "bank_name": "Ziraat Bankası",
+        "payment_status": "Ödeme Onay Bekliyor",
+        "payment_type": "transfer",
+        "payment_confirmed": False,
+        "contact_id": "cust_1",
+        "customer_name": "Müşteri",
+        "items": [],
+    }
+    order.update(over)
+    return order
+
+
+def _settle_db(accounts, cfg, find_one):
+    import server
+
+    inserted = []
+    mock_db = MagicMock()
+    mock_db.integration_configs.find_one = AsyncMock(return_value=cfg)
+    mock_db.bank_accounts.find_one = AsyncMock(side_effect=find_one)
+    mock_db.bank_accounts.find = MagicMock(
+        return_value=MagicMock(to_list=AsyncMock(return_value=accounts))
+    )
+    mock_db.bank_accounts.update_one = AsyncMock()
+    mock_db.bank_transactions.insert_one = AsyncMock(side_effect=lambda d: inserted.append(d) or None)
+    mock_db.contacts.update_one = AsyncMock()
+    mock_db.invoices.update_one = AsyncMock()
+    mock_db.expenses.insert_one = AsyncMock()
+    mock_db.orders.update_one = AsyncMock()
+    return server, mock_db, inserted
+
+
+def test_pending_havale_does_not_post_settlement():
+    paytr = {"_id": "acc_paytr", "account_name": "PayTR", "bank_name": "PayTR", "type": "bank", "currency": "TRY"}
+    ziraat = {"_id": "acc_z", "account_name": "Ziraat Vadesiz", "bank_name": "Ziraat Bankası", "type": "bank", "currency": "TRY"}
+    cfg = {"company_id": "c1", "channel": "shopphp", "settlement_account_id": "acc_paytr"}
+    server, mock_db, inserted = _settle_db([paytr, ziraat], cfg, AsyncMock(return_value=paytr))
+    invoice = {"_id": "inv_h", "grand_total": 11519.04}
+    with patch.object(server, "db", mock_db):
+        result = _run(server._post_marketplace_settlement(_havale_order(), invoice, {"_id": "cust_1", "name": "Müşteri"}))
+        forced = _havale_order(order_status="pending", payment_status="Ödendi", payment_confirmed=True)
+        forced_result = _run(server._post_marketplace_settlement(forced, invoice, {"_id": "cust_1"}))
+    assert result is None
+    assert forced_result is None
+    assert inserted == []
+    mock_db.bank_accounts.update_one.assert_not_awaited()
+
+
+def test_paid_havale_posts_once_to_matched_bank_not_paytr():
+    paytr = {"_id": "acc_paytr", "account_name": "PayTR", "bank_name": "PayTR", "type": "bank", "currency": "TRY"}
+    ziraat = {"_id": "acc_z", "account_name": "Ziraat Vadesiz", "bank_name": "Ziraat Bankası", "type": "bank", "currency": "TRY"}
+    cfg = {"company_id": "c1", "channel": "shopphp", "settlement_account_id": "acc_paytr"}
+
+    async def find_one(q):
+        if q.get("_id") == "acc_paytr":
+            return paytr
+        return None
+
+    server, mock_db, inserted = _settle_db([paytr, ziraat], cfg, find_one)
+    invoice = {"_id": "inv_h", "grand_total": 11519.04, "contact_id": "cust_1"}
+    order = _havale_order(payment_status="Ödendi", payment_confirmed=True)
+    with patch.object(server, "db", mock_db):
+        first = _run(server._post_marketplace_settlement(order, invoice, {"_id": "cust_1", "name": "Müşteri"}))
+        order["settlement"] = {"tx_id": inserted[0]["_id"], "net": first["net"]}
+        second = _run(server._post_marketplace_settlement(order, invoice, {"_id": "cust_1", "name": "Müşteri"}))
+    assert second is None
+    assert first is not None
+    assert first["net"] == pytest.approx(11519.04)
+    assert first["account_name"] == "Ziraat Vadesiz"
+    hakedis = [t for t in inserted if t["category"] == "Pazaryeri Hakedişi"]
+    assert len(hakedis) == 1
+    assert hakedis[0]["account_id"] == "acc_z"
+    assert hakedis[0]["amount"] == pytest.approx(11519.04)
+    assert all(t["account_id"] != "acc_paytr" for t in inserted)
+    bank_inc = mock_db.bank_accounts.update_one.await_args_list
+    assert len(bank_inc) == 1
+    assert bank_inc[0].args[0] == {"_id": "acc_z"}
+    assert bank_inc[0].args[1]["$inc"]["current_balance"] == pytest.approx(11519.04)
+
+
+def test_paid_havale_without_account_writes_nothing():
+    paytr = {"_id": "acc_paytr", "account_name": "PayTR", "bank_name": "PayTR", "type": "bank", "currency": "TRY"}
+    cfg = {"company_id": "c1", "channel": "shopphp", "settlement_account_id": "acc_paytr"}
+    server, mock_db, inserted = _settle_db([paytr], cfg, AsyncMock(return_value=paytr))
+    order = _havale_order(payment_status="Ödendi", payment_confirmed=True, bank_name="Bilinmeyen Banka")
+    with patch.object(server, "db", mock_db):
+        result = _run(server._post_marketplace_settlement(order, {"_id": "inv_h", "grand_total": 11519.04}, {"_id": "cust_1"}))
+    assert result is None
+    assert inserted == []
+    mock_db.bank_accounts.update_one.assert_not_awaited()
+
+
+def test_paid_havale_uses_configured_transfer_account():
+    paytr = {"_id": "acc_paytr", "account_name": "PayTR", "bank_name": "PayTR", "type": "bank", "currency": "TRY"}
+    manual = {"_id": "acc_h", "account_name": "Havale Kasası", "bank_name": "Kasa", "type": "cash_box", "currency": "TRY"}
+    cfg = {
+        "company_id": "c1",
+        "channel": "shopphp",
+        "settlement_account_id": "acc_paytr",
+        "transfer_settlement_account_id": "acc_h",
+    }
+
+    async def find_one(q):
+        if q.get("_id") == "acc_h" and q.get("company_id") == "c1":
+            return manual
+        if q.get("_id") == "acc_paytr":
+            return paytr
+        return None
+
+    server, mock_db, inserted = _settle_db([paytr], cfg, find_one)
+    order = _havale_order(payment_status="Ödendi", payment_confirmed=True, bank_name="")
+    with patch.object(server, "db", mock_db):
+        result = _run(server._post_marketplace_settlement(order, {"_id": "inv_h", "grand_total": 11519.04}, {"_id": "cust_1", "name": "Müşteri"}))
+    assert result["account_name"] == "Havale Kasası"
+    assert inserted[0]["account_id"] == "acc_h"
+    assert inserted[0]["amount"] == pytest.approx(11519.04)
+
+
+def test_paid_shopphp_invoice_does_not_post_again():
+    """Ödenmiş veya iptal fatura ShopPHP hakedişini ikinci kez açmaz."""
+    paytr = {"_id": "acc_paytr", "account_name": "PayTR", "bank_name": "PayTR", "type": "bank", "currency": "TRY"}
+    ziraat = {"_id": "acc_z", "account_name": "Ziraat Vadesiz", "bank_name": "Ziraat Bankası", "type": "bank", "currency": "TRY"}
+    cfg = {"company_id": "c1", "channel": "shopphp", "settlement_account_id": "acc_paytr"}
+    server, mock_db, inserted = _settle_db([paytr, ziraat], cfg, AsyncMock(return_value=paytr))
+    order = _havale_order(payment_status="Ödendi", payment_confirmed=True)
+    contact = {"_id": "cust_1", "name": "Müşteri"}
+    with patch.object(server, "db", mock_db):
+        paid = _run(server._post_marketplace_settlement(
+            order, {"_id": "inv_h", "grand_total": 11519.04, "payment_status": "paid", "paid_amount": 11519.04}, contact,
+        ))
+        partial = _run(server._post_marketplace_settlement(
+            order, {"_id": "inv_h", "grand_total": 11519.04, "payment_status": "partial", "paid_amount": 10}, contact,
+        ))
+        cancelled = _run(server._post_marketplace_settlement(
+            order, {"_id": "inv_h", "grand_total": 11519.04, "status": "cancelled", "payment_status": "unpaid"}, contact,
+        ))
+    assert paid is None
+    assert partial is None
+    assert cancelled is None
+    mock_db.bank_transactions.insert_one.assert_not_called()
+    assert inserted == []
+
+
+def test_paid_shopphp_card_still_posts_to_paytr():
+    paytr = {"_id": "acc_paytr", "account_name": "PayTR", "bank_name": "PayTR", "type": "bank", "currency": "TRY"}
+    cfg = {"company_id": "c1", "channel": "shopphp", "settlement_account_id": "acc_paytr", "fees": {}}
+
+    async def find_one(q):
+        assert q.get("_id") == "acc_paytr"
+        return paytr
+
+    server, mock_db, inserted = _settle_db([paytr], cfg, find_one)
+    order = _havale_order(
+        payment_method="PayTR -  / 3 Taksit",
+        bank_name="Kredi Kartı ile Ödeme",
+        payment_status="Ödendi",
+        payment_type="card",
+        payment_confirmed=True,
+        total_amount=12548.90,
+        gross_total=12548.90,
+        discount_total=0,
+        grand_total=12548.90,
+    )
+    invoice = {"_id": "inv_card", "grand_total": 12548.90}
+    with patch.object(server, "db", mock_db):
+        result = _run(server._post_marketplace_settlement(order, invoice, {"_id": "cust_1", "name": "Müşteri"}))
+    assert result["account_name"] == "PayTR"
+    assert result["net"] == pytest.approx(12548.90)
+    assert inserted[0]["account_id"] == "acc_paytr"
+
+
+def test_shopphp_draft_invoice_keeps_list_price_and_payable_grand():
+    import server
+    import marketplace_providers as mp
+    import xml.etree.ElementTree as ET
+
+    xml = """<SIPARISLER><SIPARIS>
+        <SIPARIS_NO>881325049</SIPARIS_NO><DURUM_NO>2</DURUM_NO>
+        <ODEME_DURUM>Ödeme Onay Bekliyor</ODEME_DURUM><ODEME_SEKLI>Havale</ODEME_SEKLI>
+        <BANKA_ADI>Ziraat Bankası</BANKA_ADI><NET_TOPLAM>11999</NET_TOPLAM>
+        <ODEME_TOPLAM>11519.04</ODEME_TOPLAM><ISKONTO>0</ISKONTO>
+        <TeslimAlici>Ayşe Gökmen</TeslimAlici>
+        <SATIRLAR><SATIR><ADI>Ürün</ADI><MIKTAR>1</MIKTAR><FIYAT>11999</FIYAT><KDV>20</KDV></SATIR></SATIRLAR>
+    </SIPARIS></SIPARISLER>"""
+    order = mp.normalize_marketplace_order_prices(mp.map_shopphp_xml_order(ET.fromstring(xml).find("SIPARIS"), "c1", "shopphp"))
+    order["_id"] = "ord_havale"
+    inserted = {}
+
+    async def _insert(doc):
+        inserted["doc"] = doc
+
+    mock_db = MagicMock()
+    mock_db.invoices.find_one = AsyncMock(return_value=None)
+    mock_db.invoices.insert_one = AsyncMock(side_effect=_insert)
+    mock_db.invoices.count_documents = AsyncMock(return_value=1)
+    mock_db.orders.update_one = AsyncMock()
+    with patch.object(server, "db", mock_db), patch.object(
+        server, "_ensure_order_contact", AsyncMock(return_value={"_id": "cnt_1", "name": "Ayşe", "tax_number_or_id": "11111111111", "payment_term_days": 0})
+    ), patch.object(server, "_fill_stock_codes", AsyncMock()):
+        doc = _run(server._attach_draft_invoice_on_intake(order, source="marketplace"))
+    assert doc["grand_total"] == pytest.approx(11519.04)
+    assert doc["general_discount_amount"] == pytest.approx(399.97)
+    assert doc["items"][0]["unit_price_incl"] == pytest.approx(11999)
+    assert doc["items"][0]["unit_price"] == pytest.approx(9999.1667, abs=0.01)
+    assert inserted["doc"]["grand_total"] == pytest.approx(11519.04)
+
+
+def test_upsert_posts_havale_once_when_payment_becomes_confirmed():
+    import server
+    import marketplace_providers as mp
+    import xml.etree.ElementTree as ET
+
+    def _xml(durum):
+        raw = f"""<SIPARISLER><SIPARIS>
+            <SIPARIS_NO>881325049</SIPARIS_NO><DURUM_NO>2</DURUM_NO>
+            <ODEME_DURUM>{durum}</ODEME_DURUM><ODEME_SEKLI>Havale</ODEME_SEKLI>
+            <BANKA_ADI>Ziraat Bankası</BANKA_ADI><NET_TOPLAM>11999</NET_TOPLAM>
+            <ODEME_TOPLAM>11519.04</ODEME_TOPLAM><ISKONTO>0</ISKONTO>
+            <TeslimAlici>Ayşe</TeslimAlici>
+            <SATIRLAR><SATIR><ADI>Ürün</ADI><MIKTAR>1</MIKTAR><FIYAT>11999</FIYAT><KDV>20</KDV></SATIR></SATIRLAR>
+        </SIPARIS></SIPARISLER>"""
+        return mp.map_shopphp_xml_order(ET.fromstring(raw).find("SIPARIS"), "c1", "shopphp")
+
+    pending = _xml("Ödeme Onay Bekliyor")
+    paid = _xml("Ödendi")
+    stored = {}
+
+    async def collapse(_cid, _ch, _no):
+        return stored.get("row")
+
+    async def insert(doc):
+        stored["row"] = dict(doc)
+
+    mock_db = MagicMock()
+    mock_db.orders.insert_one = AsyncMock(side_effect=insert)
+    mock_db.orders.update_one = AsyncMock()
+    mock_db.orders.find_one = AsyncMock(side_effect=lambda q: stored.get("row"))
+    mock_db.invoices.find_one = AsyncMock(return_value={"_id": "inv_h", "grand_total": 11519.04, "company_id": "c1"})
+    mock_db.contacts.find_one = AsyncMock(return_value={"_id": "cust_1", "name": "Ayşe", "company_id": "c1"})
+
+    with patch.object(server, "db", mock_db), patch.object(
+        server.omp_media, "marketplace_channels_from_orders", return_value=set()
+    ), patch.object(
+        server, "_load_marketplace_stock_match_index", AsyncMock(return_value={})
+    ), patch.object(
+        server, "_collapse_marketplace_order_dupes", side_effect=collapse
+    ), patch.object(
+        server, "_ensure_order_contact", AsyncMock(return_value={"_id": "cust_1", "name": "Ayşe"})
+    ), patch.object(
+        server, "_attach_draft_invoice_on_intake", AsyncMock(return_value={"_id": "inv_h", "grand_total": 11519.04})
+    ), patch.object(
+        server, "_post_marketplace_settlement", AsyncMock(return_value={"net": 11519.04})
+    ) as posted:
+        _run(server._upsert_marketplace_orders("c1", [pending]))
+        assert posted.await_count == 0
+        stored["row"] = {**stored["row"], "invoice_id": "inv_h", "contact_id": "cust_1"}
+        _run(server._upsert_marketplace_orders("c1", [paid]))
+        assert posted.await_count == 1
+        args = posted.await_args.args
+        assert args[0]["payment_confirmed"] is True
+        assert args[0]["total_amount"] == pytest.approx(11519.04)
+        stored["row"] = {**stored["row"], "settlement": {"tx_id": "tx_1"}}
+        _run(server._upsert_marketplace_orders("c1", [paid]))
+        assert posted.await_count == 1
+
+
+def test_upsert_skips_settlement_when_existing_order_already_paid():
+    """tx_id'siz ama zaten Ödendi olan eski ShopPHP siparişi sync'te hakediş açmaz."""
+    import server
+    import marketplace_providers as mp
+    import xml.etree.ElementTree as ET
+
+    raw = """<SIPARISLER><SIPARIS>
+        <SIPARIS_NO>881325049</SIPARIS_NO><DURUM_NO>2</DURUM_NO>
+        <ODEME_DURUM>Ödendi</ODEME_DURUM><ODEME_SEKLI>Havale</ODEME_SEKLI>
+        <BANKA_ADI>Ziraat Bankası</BANKA_ADI><NET_TOPLAM>11999</NET_TOPLAM>
+        <ODEME_TOPLAM>11519.04</ODEME_TOPLAM><ISKONTO>0</ISKONTO>
+        <TeslimAlici>Ayşe</TeslimAlici>
+        <SATIRLAR><SATIR><ADI>Ürün</ADI><MIKTAR>1</MIKTAR><FIYAT>11999</FIYAT><KDV>20</KDV></SATIR></SATIRLAR>
+    </SIPARIS></SIPARISLER>"""
+    paid = mp.map_shopphp_xml_order(ET.fromstring(raw).find("SIPARIS"), "c1", "shopphp")
+    stored = {
+        "row": {
+            **paid,
+            "_id": "ord_old",
+            "invoice_id": "inv_h",
+            "contact_id": "cust_1",
+            "payment_confirmed": True,
+            "payment_status": "Ödendi",
+        }
+    }
+
+    async def collapse(_cid, _ch, _no):
+        return stored["row"]
+
+    mock_db = MagicMock()
+    mock_db.orders.update_one = AsyncMock()
+    mock_db.orders.find_one = AsyncMock(return_value=stored["row"])
+    with patch.object(server, "db", mock_db), patch.object(
+        server.omp_media, "marketplace_channels_from_orders", return_value=set()
+    ), patch.object(
+        server, "_load_marketplace_stock_match_index", AsyncMock(return_value={})
+    ), patch.object(
+        server, "_collapse_marketplace_order_dupes", side_effect=collapse
+    ), patch.object(
+        server, "_ensure_order_contact", AsyncMock(return_value={"_id": "cust_1", "name": "Ayşe"})
+    ), patch.object(
+        server, "_attach_draft_invoice_on_intake", AsyncMock(return_value={"_id": "inv_h"})
+    ), patch.object(
+        server, "_post_marketplace_settlement", AsyncMock(return_value={"net": 11519.04})
+    ) as posted:
+        _run(server._upsert_marketplace_orders("c1", [paid]))
+    posted.assert_not_awaited()

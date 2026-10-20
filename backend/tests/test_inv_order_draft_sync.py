@@ -170,4 +170,40 @@ def test_sync_draft_invoice_still_updates_from_order():
         _run(server._sync_draft_invoice_items(order, items))
 
     assert inv_sets["set"]["grand_total"] == 360.0
+    assert inv_sets["set"]["general_discount_amount"] == 0.0
     assert inv_sets["set"]["items"][0]["name"] == "Kalem"
+
+
+def test_sync_draft_invoice_keeps_general_discount_in_totals():
+    """Taslak kalem güncellemesi kayıtlı genel iskontoyu toplama dahil eder."""
+    order = {
+        "_id": "ord_gd",
+        "invoice_id": "inv_gd",
+        "is_invoiced": False,
+        "company_id": "comp_1",
+    }
+    invoice = {
+        "_id": "inv_gd",
+        "status": "draft",
+        "general_discount_amount": 50.0,
+        "general_discount_rate": 0.0,
+    }
+    inv_sets = {}
+
+    async def _inv_update(filt, update):
+        inv_sets["set"] = update["$set"]
+
+    mock_db = MagicMock()
+    mock_db.invoices.find_one = AsyncMock(return_value=invoice)
+    mock_db.invoices.update_one = AsyncMock(side_effect=_inv_update)
+    items = [{"product_name": "Kalem", "quantity": 1, "unit_price": 100, "vat_rate": 20, "unit": "Adet"}]
+
+    with patch.object(server, "db", mock_db), patch.object(
+        server, "_fill_stock_codes", AsyncMock()
+    ):
+        _run(server._sync_draft_invoice_items(order, items))
+
+    assert inv_sets["set"]["general_discount_amount"] == 50.0
+    assert inv_sets["set"]["subtotal"] == 50.0
+    assert inv_sets["set"]["vat_total"] == 10.0
+    assert inv_sets["set"]["grand_total"] == 60.0

@@ -4,7 +4,7 @@ import json
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import HTTPException
@@ -50,9 +50,26 @@ def normalize_marketplace_order_prices(doc: Dict[str, Any]) -> Dict[str, Any]:
     grand = round(sum(float(it.get("total_incl") or 0) for it in items), 2)
     doc["subtotal"] = subtotal
     doc["vat_total"] = vat_total
-    paid = float(doc.get("total_amount") or doc.get("gross_total") or 0)
-    if paid > 0 and abs(paid - grand) <= 0.05:
-        doc["grand_total"] = round(paid, 2)
+    try:
+        discount = float(doc.get("discount_total") or 0)
+    except (TypeError, ValueError):
+        discount = 0.0
+    try:
+        paid = float(doc.get("total_amount") or 0)
+    except (TypeError, ValueError):
+        paid = 0.0
+    # ShopPHP havale indirimi satır brütünden (FIYAT) düşer. total_amount ODEME_TOPLAM
+    # kalır; diğer kanallarda ödeme satırdan sapınca eski ezme davranışı sürer.
+    if str(doc.get("channel") or "").lower() == "shopphp" and discount > 0.005 and paid > 0 and abs(paid - grand) > 0.05:
+        doc["grand_total"] = round(max(grand - discount, 0.0), 2)
+        if abs(doc["grand_total"] - paid) <= 0.05:
+            doc["grand_total"] = round(paid, 2)
+        return doc
+    ref = paid or float(doc.get("gross_total") or 0)
+    if ref > 0 and abs(ref - grand) <= 0.05:
+        doc["grand_total"] = round(ref, 2)
+        if paid <= 0:
+            doc["total_amount"] = doc["grand_total"]
     else:
         doc["grand_total"] = grand
         doc["total_amount"] = grand
@@ -682,6 +699,169 @@ def _g(d: dict, *keys, default=None):
     return default
 
 
+_TR_FOLD = str.maketrans({
+    "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    "â": "a", "î": "i", "û": "u",
+})
+_TRANSFER_HINTS = ("havale", "eft", "wire transfer", "banka havalesi")
+_CARD_HINTS = ("paytr", "kredi kart", "taksit", "sanal pos", "iyzico", "payu", "param pos")
+_PAID_HINTS = ("odendi", "paid", "tahsil edildi", "onaylandi", "odeme onaylandi", "odeme alindi")
+_PENDING_HINTS = ("bekliyor", "beklemede", "pending", "onay bek", "odenmedi", "odenmemis", "unpaid")
+_BANK_NOISE = ("bankasi", "banka", "bbva", "katilim", "bank")
+
+
+def _fold_tr(value: Any) -> str:
+    text = str(value or "").replace("İ", "i").replace("I", "ı")
+    text = text.lower().replace("i\u0307", "i")
+    return " ".join(text.translate(_TR_FOLD).split())
+
+
+def _shopphp_money(value: Any, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return float(default)
+    try:
+        return float(str(value).replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def shopphp_payment_type(method: Any, bank_name: Any = "") -> str:
+    """ODEME_SEKLI + BANKA_ADI → card / transfer / other. Havale asla karta düşmez."""
+    blob = _fold_tr(f"{method or ''} {bank_name or ''}")
+    if any(hint in blob for hint in _TRANSFER_HINTS):
+        return "transfer"
+    if any(hint in blob for hint in _CARD_HINTS):
+        return "card"
+    bank = _fold_tr(bank_name)
+    if bank and not any(hint in bank for hint in ("kredi", "kart", "paytr", "pos")):
+        return "transfer"
+    return "other"
+
+
+def _hint_in_payment_text(text: str, hint: str) -> bool:
+    """Tek kelime ipucu sözcük olarak eşleşir; 'paid' 'unpaid' içinde onay sayılmaz."""
+    if not text or not hint:
+        return False
+    if " " in hint:
+        return hint in text
+    return hint in text.split()
+
+
+def shopphp_payment_text_pending(odeme_durum: Any) -> bool:
+    text = _fold_tr(odeme_durum)
+    if not text:
+        return False
+    return any(_hint_in_payment_text(text, hint) for hint in _PENDING_HINTS)
+
+
+def shopphp_payment_confirmed(odeme_durum: Any, durum_no: Any = "") -> bool:
+    """Ödeme onaylı mı. DURUM_NO tek başına yetmez; bekleyen ODEME_DURUM asla onay değildir."""
+    if str(durum_no or "").strip() == "1":
+        return False
+    if shopphp_payment_text_pending(odeme_durum):
+        return False
+    text = _fold_tr(odeme_durum)
+    if not text:
+        return False
+    return any(_hint_in_payment_text(text, hint) for hint in _PAID_HINTS)
+
+
+def shopphp_order_amounts(
+    net: Any,
+    paid: Any,
+    iskonto: Any = 0,
+    sepet: Any = 0,
+    promo: Any = 0,
+    line_sum: Any = 0,
+) -> Tuple[float, float, float]:
+    """(total_amount, gross_total, discount_total).
+
+    total_amount ödenen tutardır (ODEME_TOPLAM). İndirim alanları 0 ise
+    NET_TOPLAM − ODEME_TOPLAM farkı discount_total olur.
+    """
+    net_v = _shopphp_money(net)
+    paid_present = paid not in (None, "")
+    paid_v = _shopphp_money(paid) if paid_present else 0.0
+    explicit = round(abs(_shopphp_money(iskonto)) + _shopphp_money(sepet) + _shopphp_money(promo), 2)
+    if explicit > 0.005:
+        discount = explicit
+    elif net_v > 0 and paid_present and paid_v > 0 and net_v - paid_v > 0.005:
+        discount = round(net_v - paid_v, 2)
+    else:
+        discount = 0.0
+    if paid_present and paid_v > 0:
+        total = paid_v
+    else:
+        total = net_v or _shopphp_money(line_sum)
+    gross = net_v or _shopphp_money(line_sum)
+    return round(total, 2), round(gross, 2), discount
+
+
+def _bank_key(value: Any) -> str:
+    text = _fold_tr(value)
+    text = text.replace("is bankasi", "isbank").replace("isbankasi", "isbank")
+    parts = [part for part in text.split() if part not in _BANK_NOISE]
+    return " ".join(parts)
+
+
+def pick_havale_bank_account(accounts: List[dict], bank_name: Any) -> Optional[dict]:
+    """BANKA_ADI ile banka hesabı. Belirsiz veya kredi kartı eşleşmesi yok sayılır."""
+    target = _bank_key(bank_name)
+    if len(target.replace(" ", "")) < 4:
+        return None
+    hits = []
+    for acc in accounts or []:
+        if not isinstance(acc, dict) or str(acc.get("type") or "") == "credit_card":
+            continue
+        rank = None
+        length = 0
+        for field in (acc.get("bank_name"), acc.get("account_name")):
+            key = _bank_key(field)
+            if not key:
+                continue
+            exact = key == target
+            partial = len(target) >= 4 and (target in key or key in target)
+            if exact or partial:
+                rank = 0 if exact else 1
+                length = len(key)
+                break
+        if rank is not None:
+            hits.append((rank, length, str(acc.get("_id") or ""), acc))
+    if not hits:
+        return None
+    hits.sort(key=lambda row: (row[0], row[1], row[2]))
+    best = hits[0]
+    tied = [row for row in hits if row[0] == best[0] and row[1] == best[1]]
+    if len(tied) > 1:
+        return None
+    return best[3]
+
+
+def shopphp_settlement_mismatch_reason(order: dict, card_account_id: str = "") -> Optional[str]:
+    """Eski hatalı hakediş kaydı. Yazma/silme yapmaz; rapor içindir."""
+    if not isinstance(order, dict) or str(order.get("channel") or "").lower() != "shopphp":
+        return None
+    settlement = order.get("settlement") or {}
+    if not settlement.get("tx_id"):
+        return None
+    reasons = []
+    odeme = order.get("payment_status") or order.get("marketplace_status") or ""
+    confirmed = order.get("payment_confirmed") is True and not shopphp_payment_text_pending(odeme)
+    if not confirmed and not shopphp_payment_confirmed(odeme, ""):
+        reasons.append("odeme_onaylanmamis")
+    if str(order.get("payment_type") or "") == "transfer" and card_account_id and str(settlement.get("account_id") or "") == str(card_account_id):
+        reasons.append("havale_paytr_hesabina")
+    try:
+        gross = float(order.get("gross_total") or 0)
+        paid = float(order.get("total_amount") or 0)
+        posted = float(settlement.get("gross") or 0)
+    except (TypeError, ValueError):
+        gross = paid = posted = 0.0
+    if gross > 0 and paid > 0 and abs(gross - paid) > 0.05 and abs(posted - gross) <= 0.05:
+        reasons.append("liste_fiyati_tahsil")
+    return ",".join(reasons) or None
+
+
 def map_shopphp_order(o: dict, company_id: str, channel: str) -> dict:
     """ShopPHP sipariş kaydını (sürüme göre Türkçe alan adları) ortak sipariş modeline çevirir."""
     lines = _g(o, "urunler", "products", "items", "kalemler", default=[]) or []
@@ -690,8 +870,25 @@ def map_shopphp_order(o: dict, company_id: str, channel: str) -> dict:
         qty = float(_g(ln, "adet", "miktar", "quantity", default=1) or 1); price = float(str(_g(ln, "fiyat", "birimFiyat", "price", default=0) or 0).replace(",", "."))
         items.append({"product_id": str(_g(ln, "urunID", "urun_id", "productId", "ID", default="") or ""), "product_name": str(_g(ln, "urunAdi", "urun_adi", "ad", "name", "title", default="Ürün")), "sku": str(_g(ln, "stokKodu", "urunKodu", "kod", "sku", "code", default="") or ""),
                       "barcode": str(_g(ln, "barkod", "barcode", default="") or ""), "quantity": int(round(qty)) or 1, "unit_price": price, "total": round(qty * price, 2)})
-    total = float(str(_g(o, "toplam", "genelToplam", "TOPLAM", "total", "tutar", default=sum(i["total"] for i in items)) or 0).replace(",", "."))
+    line_sum = sum(i["total"] for i in items)
+    paid_raw = _g(o, "ODEME_TOPLAM", "odemeToplam", "odeme_toplam", "odemeTutari", default=None)
+    net_raw = _g(o, "NET_TOPLAM", "netToplam", "net_toplam", default=None)
+    if net_raw is None:
+        net_raw = _g(o, "genelToplam", "toplam", "TOPLAM", "total", "tutar", default=None)
+    iskonto = _g(o, "ISKONTO", "iskonto", default=0)
+    sepet = _g(o, "SEPETINDIRIM", "sepetIndirim", "sepetindirim", default=0)
+    promo = _g(o, "PROMOSYON", "promosyon", default=0)
+    has_discount = any(_shopphp_money(v) > 0.005 for v in (iskonto, sepet, promo))
+    if paid_raw is not None or has_discount:
+        total, gross_total, discount_total = shopphp_order_amounts(net_raw, paid_raw, iskonto, sepet, promo, line_sum)
+    else:
+        total = _shopphp_money(net_raw if net_raw is not None else line_sum)
+        gross_total = round(total, 2)
+        discount_total = 0.0
     status_no = str(_g(o, "durum", "DURUM_NO", "sdurum", "status", default="2") or "2")
+    method = str(_g(o, "ODEME_SEKLI", "odemeSekli", "odeme", "odemeTipi", "payment", default="") or "")
+    bank = str(_g(o, "BANKA_ADI", "bankaAdi", "banka", default="") or "")
+    odeme_durum = str(_g(o, "ODEME_DURUM", "odemeDurum", "odeme_durum", default="") or "")
     addr = _g(o, "teslimatAdresi", "adres", "address", default={}) or {}
     addr_text = addr if isinstance(addr, str) else " ".join(str(v) for v in addr.values() if v) if isinstance(addr, dict) else ""
     name = _g(o, "adSoyad", "musteri", "musteriAdi", "aliciAdi", "customer", "name", default=None) or (isinstance(addr, dict) and _g(addr, "adSoyad", "ad", default=None)) or "ShopPHP Müşterisi"
@@ -699,9 +896,9 @@ def map_shopphp_order(o: dict, company_id: str, channel: str) -> dict:
     order_date = _local_order_date(raw_date)
     return {"company_id": company_id, "channel": channel, "order_number": str(_g(o, "no", "SIPARIS_NO", "siparisNo", "id", "ID", default=uuid.uuid4().hex[:8])), "external_id": str(_g(o, "no", "SIPARIS_NO", "id", "ID", default="") or ""),
             "customer_name": str(name), "customer_phone": str(_g(o, "telefon", "tel", "gsm", "phone", default="") or (isinstance(addr, dict) and _g(addr, "telefon", "tel", default="")) or ""), "customer_email": str(_g(o, "email", "eposta", "mail", default="") or ""),
-            "shipping_address": addr_text or "-", "city": str(_g(o, "il", "sehir", "city", default="") or (isinstance(addr, dict) and _g(addr, "il", "sehir", default="")) or "-"), "items": items, "total_amount": round(total, 2), "currency": "TRY",
-            "order_status": SHOPPHP_STATUS.get(status_no, "approved"), "marketplace_status": str(_g(o, "durumAdi", "durum_adi", "statusName", default=status_no)), "cargo_carrier_name": str(_g(o, "kargoFirma", "KargoFirma", "kargo", default="") or ""),
-            "cargo_tracking_number": str(_g(o, "kargoSeriNo", "KargoTakipNo", "kargoTakip", default="") or ""), "payment_method": str(_g(o, "odeme", "odemeTipi", "payment", default="") or ""), "is_invoiced": False, "order_date": order_date, "order_date_tz": ORDER_DATE_TZ_UTC,
+            "shipping_address": addr_text or "-", "city": str(_g(o, "il", "sehir", "city", default="") or (isinstance(addr, dict) and _g(addr, "il", "sehir", default="")) or "-"), "items": items, "total_amount": round(total, 2), "gross_total": round(gross_total, 2), "discount_total": discount_total, "currency": "TRY",
+            "order_status": SHOPPHP_STATUS.get(status_no, "approved"), "marketplace_status": str(_g(o, "durumAdi", "durum_adi", "statusName", default=odeme_durum or status_no)), "cargo_carrier_name": str(_g(o, "kargoFirma", "KargoFirma", "kargo", default="") or ""),
+            "cargo_tracking_number": str(_g(o, "kargoSeriNo", "KargoTakipNo", "kargoTakip", default="") or ""), "payment_method": method, "bank_name": bank, "payment_status": odeme_durum, "payment_type": shopphp_payment_type(method, bank), "payment_confirmed": shopphp_payment_confirmed(odeme_durum, status_no), "is_invoiced": False, "order_date": order_date, "order_date_tz": ORDER_DATE_TZ_UTC,
             "is_simulated": False, "source": "marketplace_sync", "raw": {k: o[k] for k in list(o)[:40]}}
 
 
@@ -799,12 +996,21 @@ def map_shopphp_xml_order(s: ET.Element, company_id: str, channel: str) -> dict:
     status_no = _xt(s, "DURUM_NO", "2")
     date = _xt(s, "TARIH"); time_ = _xt(s, "ZAMAN", "00:00:00")
     order_date = _local_order_date(f"{date}T{time_}" if date else "")
-    net, paid = _xf(s, "NET_TOPLAM"), _xf(s, "ODEME_TOPLAM")
+    method, bank, odeme = _xt(s, "ODEME_SEKLI"), _xt(s, "BANKA_ADI"), _xt(s, "ODEME_DURUM")
+    total_amount, gross_total, discount_total = shopphp_order_amounts(
+        _xf(s, "NET_TOPLAM") if _xt(s, "NET_TOPLAM", "") else None,
+        _xf(s, "ODEME_TOPLAM") if _xt(s, "ODEME_TOPLAM", "") else None,
+        _xf(s, "ISKONTO"),
+        _xf(s, "SEPETINDIRIM"),
+        _xf(s, "PROMOSYON"),
+        sum(i["total"] for i in items),
+    )
     return {"company_id": company_id, "channel": channel, "order_number": _xt(s, "SIPARIS_NO"), "external_id": _xt(s, "SIPARIS_NO"), "customer_name": _xt(s, "TeslimAlici") or _xt(s, "FirmaUnvani") or "ShopPHP Müşterisi", "customer_email": _xt(s, "POSTA"),
             "customer_phone": _xt(s, "TeslimTelefon"), "customer_tax_id": _xt(s, "VergiNo") or _xt(s, "TeslimTCKNo"), "customer_tax_office": _xt(s, "VergiDairesi"), "customer_company": _xt(s, "FirmaUnvani"),
             "shipping_address": " ".join(x for x in (_xt(s, "TeslimAdresi"), _xt(s, "TeslimMahalle"), _xt(s, "TeslimIlce"), _xt(s, "TeslimIl")) if x) or "-", "city": _xt(s, "TeslimIl") or "-", "district": _xt(s, "TeslimIlce"),
-            "billing_address": " ".join(x for x in (_xt(s, "FaturaAdresi"), _xt(s, "FaturaIlce"), _xt(s, "FaturaIl")) if x), "items": items, "total_amount": round(paid or net or sum(i["total"] for i in items), 2), "gross_total": round(net, 2), "discount_total": round(abs(_xf(s, "ISKONTO")) + _xf(s, "SEPETINDIRIM") + _xf(s, "PROMOSYON"), 2),
-            "cargo_fee": _xf(s, "KARGO_UCRETI"), "currency": "TRY", "order_status": SHOPPHP_STATUS.get(status_no, "approved"), "marketplace_status": _xt(s, "ODEME_DURUM") or status_no, "payment_method": _xt(s, "ODEME_SEKLI"), "bank_name": _xt(s, "BANKA_ADI"),
+            "billing_address": " ".join(x for x in (_xt(s, "FaturaAdresi"), _xt(s, "FaturaIlce"), _xt(s, "FaturaIl")) if x), "items": items, "total_amount": total_amount, "gross_total": gross_total, "discount_total": discount_total,
+            "cargo_fee": _xf(s, "KARGO_UCRETI"), "currency": "TRY", "order_status": SHOPPHP_STATUS.get(status_no, "approved"), "marketplace_status": odeme or status_no, "payment_method": method, "bank_name": bank,
+            "payment_status": odeme, "payment_type": shopphp_payment_type(method, bank), "payment_confirmed": shopphp_payment_confirmed(odeme, status_no),
             "cargo_carrier_name": _xt(s, "KargoFirma"), "cargo_tracking_number": _xt(s, "KargoTakipNo"), "cargo_barcode": _xt(s, "KargoBarkodNo"), "cargo_tracking_url": _xt(s, "KargoURL"), "customer_note": _xt(s, "Not"), "is_invoiced": False, "order_date": order_date, "order_date_tz": ORDER_DATE_TZ_UTC, "is_simulated": False, "source": "marketplace_sync"}
 
 

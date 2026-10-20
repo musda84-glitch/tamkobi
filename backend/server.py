@@ -68,6 +68,7 @@ from line_totals import (
     enrich_line,
     enrich_items,
     invoice_document_totals,
+    net_general_discount_for_payable,
     order_document_totals,
     order_items_to_invoice_items,
     invoice_items_to_order_items,
@@ -17248,6 +17249,28 @@ async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None, user
         raise
 
 
+def _order_invoice_money(order: dict, inv_items: list) -> dict:
+    """ShopPHP belge iskontosunu faturaya genel iskonto olarak geçir.
+
+    discount_total KDV dahil farktır (NET_TOPLAM − ODEME_TOPLAM). Fatura
+    general_discount_amount KDV hariç matrah iskontosudur; KDV
+    invoice_document_totals faktörüyle hesaplanır. Satır birim fiyatı liste
+    fiyatı kalır. Diğer kanallar satır toplamını olduğu gibi kullanır.
+    """
+    if str((order or {}).get("channel") or "").lower() != "shopphp":
+        return invoice_document_totals(inv_items)
+    try:
+        discount = float((order or {}).get("discount_total") or 0)
+        payable = float((order or {}).get("total_amount") or (order or {}).get("grand_total") or 0)
+    except (TypeError, ValueError):
+        return invoice_document_totals(inv_items)
+    line_gross = round(sum(float(i.get("total_incl") or 0) for i in inv_items or []), 2)
+    if discount <= 0.005 or payable <= 0 or line_gross <= 0 or abs(payable - line_gross) <= 0.05:
+        return invoice_document_totals(inv_items)
+    gd = net_general_discount_for_payable(inv_items, payable)
+    return invoice_document_totals(inv_items, 0, gd)
+
+
 async def _create_draft_invoice_for_order(order: dict, source: str = "approve") -> Optional[dict]:
     """Sipariş onayında / sevkiyatta cari Faturalar sekmesinde görünen taslak satış faturası.
 
@@ -17274,7 +17297,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         return None
     await _fill_stock_codes(order.get("company_id"), rows)
     inv_items = [it.model_dump() for it in _invoice_item_models(rows)]
-    inv_totals = invoice_document_totals(inv_items)
+    inv_totals = _order_invoice_money(order, inv_items)
     inv_id = f"inv_{uuid.uuid4().hex[:8]}"
     year = datetime.now(timezone.utc).strftime("%Y")
     count = await db.invoices.count_documents({"company_id": order.get("company_id")}) + 1
@@ -17322,6 +17345,8 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "subtotal": subtotal,
         "vat_total": vat_total,
         "discount_total": discount_total,
+        "general_discount_amount": float(inv_totals.get("general_discount_amount") or 0),
+        "general_discount_rate": 0.0,
         "grand_total": grand_total,
         "price_mode": "excl",
         "currency": order.get("currency") or "TRY",
@@ -17377,12 +17402,24 @@ async def _sync_draft_invoice_items(order: dict, items: list) -> None:
     inv_rows = order_items_to_invoice_items(items)
     await _fill_stock_codes(order.get("company_id"), inv_rows)
     inv_items = [it.model_dump() for it in _invoice_item_models(inv_rows)]
-    totals = invoice_document_totals(inv_items)
+    # Belgede kayıtlı genel iskontoyu yeniden hesaplamaya taşı. Tutarlar
+    # satır brütüyle, iskonto alanı eski değerle kalmasın.
+    try:
+        gd_rate = float(invoice.get("general_discount_rate") or 0)
+    except (TypeError, ValueError):
+        gd_rate = 0.0
+    try:
+        gd_amt = float(invoice.get("general_discount_amount") or 0)
+    except (TypeError, ValueError):
+        gd_amt = 0.0
+    totals = invoice_document_totals(inv_items, gd_rate, gd_amt)
     await db.invoices.update_one({"_id": invoice["_id"]}, {"$set": {
         "items": inv_items,
         "subtotal": totals["subtotal"],
         "vat_total": totals["vat_total"],
         "discount_total": totals["discount_total"],
+        "general_discount_amount": float(totals.get("general_discount_amount") or 0),
+        "general_discount_rate": gd_rate,
         "grand_total": totals["grand_total"],
     }})
 
@@ -18178,6 +18215,43 @@ def _apply_stock_matches_to_order(order: dict, match_idx: dict) -> dict:
     return {**order, "items": new_items}
 
 
+async def _try_shopphp_settlement(order: dict, contact: Optional[dict] = None, invoice: Optional[dict] = None) -> None:
+    """Ödeme onayına geçince ShopPHP hakedişini bir kez yaz. tx_id varsa tekrar yazma."""
+    if str((order or {}).get("channel") or "").lower() != "shopphp":
+        return
+    if (order.get("settlement") or {}).get("tx_id"):
+        return
+    if not _marketplace_settlement_payment_ready(order):
+        return
+    try:
+        fresh = await db.orders.find_one({"_id": order["_id"], "company_id": order.get("company_id")}) or order
+        if (fresh.get("settlement") or {}).get("tx_id"):
+            return
+        payload = dict(fresh)
+        for key in (
+            "payment_confirmed", "payment_status", "payment_type", "payment_method",
+            "bank_name", "order_status", "marketplace_status", "total_amount",
+            "discount_total", "grand_total", "gross_total", "items", "cargo_fee", "channel",
+        ):
+            if key in order and order.get(key) is not None:
+                payload[key] = order[key]
+        inv = invoice
+        if inv is None and payload.get("invoice_id"):
+            inv = await db.invoices.find_one({"_id": payload["invoice_id"], "company_id": payload.get("company_id")})
+        if not inv or not inv.get("_id"):
+            return
+        who = contact
+        if who is None and payload.get("contact_id"):
+            who = await db.contacts.find_one({"_id": payload["contact_id"], "company_id": payload.get("company_id")})
+        if who is None:
+            who = await _ensure_order_contact(payload)
+        if not who:
+            return
+        await _post_marketplace_settlement(payload, inv, who)
+    except Exception:
+        logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", (order or {}).get("order_number"))
+
+
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
     inserted = updated = 0
     inserted_orders: list = []
@@ -18207,6 +18281,13 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
             if not merged.get("invoice_id") and not merged.get("is_invoiced"):
                 await _attach_draft_invoice_on_intake(merged, source="marketplace")
+            # Yalnızca bekleyen → onaylı geçişi. Bu değişiklikten önce "Ödendi"
+            # kalmış, tx_id'siz siparişlere geriye dönük hakediş yazılmaz.
+            if (
+                not _marketplace_settlement_payment_ready(existing)
+                and _marketplace_settlement_payment_ready(merged)
+            ):
+                await _try_shopphp_settlement(merged)
             updated += 1
             continue
         d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
@@ -18215,14 +18296,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             await db.orders.insert_one(d)
             contact = await _ensure_order_contact(d)
             inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
-            # ShopPHP vb. ön ödemeli kanallar: hakediş hesabı seçiliyse sipariş gelince tahsilat yaz.
-            if inv and contact and (d.get("channel") or "").lower() == "shopphp":
-                try:
-                    fresh = await db.orders.find_one({"_id": d["_id"]}) or d
-                    if not (fresh.get("settlement") or {}).get("tx_id"):
-                        await _post_marketplace_settlement(fresh, inv, contact)
-                except Exception:
-                    logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", d.get("order_number"))
+            await _try_shopphp_settlement(d, contact, inv)
             inserted += 1
             inserted_orders.append({
                 "_id": d["_id"],
@@ -18241,8 +18315,14 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 payload = _apply_stock_matches_to_order(payload, match_idx)
                 payload = marketplace_providers.normalize_marketplace_order_prices(payload)
                 await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
-                if not existing.get("contact_id"):
-                    await _ensure_order_contact({**existing, **payload})
+                merged = {**existing, **payload}
+                if not merged.get("contact_id"):
+                    await _ensure_order_contact(merged)
+                if (
+                    not _marketplace_settlement_payment_ready(existing)
+                    and _marketplace_settlement_payment_ready(merged)
+                ):
+                    await _try_shopphp_settlement(merged)
                 updated += 1
     return {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
 
@@ -18517,8 +18597,30 @@ async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any], u
             raise HTTPException(status_code=400, detail="Entegre (API bağlı) hesaba otomatik hakediş yazılamaz; ödemeler banka senkronuyla gelir. Manuel bir kasa/banka hesabı seçin.")
         await bank_guard.assert_collection_allowed(db, account_id)
         name = acc.get("account_name")
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"settlement_account_id": account_id, "settlement_account_name": name}})
-    return {"status": "success", "settlement_account_id": account_id, "settlement_account_name": name, "message": f"Hakediş hesabı: {name}" if name else "Hakediş hesabı kaldırıldı; faturalar yalnızca 'ödendi' işaretlenir."}
+    update = {"settlement_account_id": account_id, "settlement_account_name": name}
+    if "transfer_account_id" in req or "transfer_settlement_account_id" in req:
+        tid = req.get("transfer_account_id") if "transfer_account_id" in req else req.get("transfer_settlement_account_id")
+        tid = tid or None
+        tname = None
+        if tid:
+            tacc = await db.bank_accounts.find_one({"_id": tid, "company_id": cfg["company_id"]})
+            if not tacc:
+                raise HTTPException(status_code=404, detail="Havale hesabı bulunamadı.")
+            if tacc.get("type") == "credit_card":
+                raise HTTPException(status_code=400, detail="Havale hesabı kredi kartı olamaz.")
+            tname = tacc.get("account_name")
+        update["transfer_settlement_account_id"] = tid
+        update["transfer_settlement_account_name"] = tname
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": update})
+    saved = await db.integration_configs.find_one({"_id": channel_id, "company_id": cfg["company_id"]}) or {}
+    return {
+        "status": "success",
+        "settlement_account_id": account_id,
+        "settlement_account_name": name,
+        "transfer_settlement_account_id": saved.get("transfer_settlement_account_id"),
+        "transfer_settlement_account_name": saved.get("transfer_settlement_account_name"),
+        "message": f"Hakediş hesabı: {name}" if name else "Hakediş hesabı kaldırıldı; faturalar yalnızca 'ödendi' işaretlenir.",
+    }
 
 async def _ensure_marketplace_contact(company_id: str, channel: str) -> Optional[dict]:
     """Kanalın pazaryeri carisini bulur (Trendyol, Hepsiburada…); yoksa tedarikçi cari açar."""
@@ -18605,6 +18707,68 @@ async def _consume_expected_settlement(bank_tx: dict) -> bool:
     return True
 
 
+def _marketplace_settlement_payment_ready(order: dict) -> bool:
+    """ShopPHP hakedişi yalnızca ödeme onaylı siparişte. DURUM_NO tek başına yetmez."""
+    if str((order or {}).get("channel") or "").lower() != "shopphp":
+        return True
+    status = str(order.get("order_status") or "").strip().lower()
+    if status in ("pending", "cancelled", "returned"):
+        return False
+    odeme = order.get("payment_status")
+    if odeme in (None, ""):
+        odeme = order.get("marketplace_status") or ""
+    if marketplace_providers.shopphp_payment_text_pending(odeme):
+        return False
+    if order.get("payment_confirmed") is True:
+        return True
+    if order.get("payment_confirmed") is False:
+        return False
+    return marketplace_providers.shopphp_payment_confirmed(odeme, "")
+
+
+def _shopphp_payment_kind(order: dict) -> str:
+    kind = str(order.get("payment_type") or "").strip().lower()
+    if kind in ("card", "transfer", "other"):
+        return kind
+    return marketplace_providers.shopphp_payment_type(order.get("payment_method") or "", order.get("bank_name") or "")
+
+
+async def _match_havale_account(order: dict, cfg: Optional[dict]) -> Optional[dict]:
+    """Havale hesabı: kanal ayarı ya da BANKA_ADI. Eşleşme yoksa None (PayTR'ye düşülmez)."""
+    company_id = order.get("company_id")
+    if not company_id:
+        return None
+    tid = (cfg or {}).get("transfer_settlement_account_id")
+    if tid:
+        acc = await db.bank_accounts.find_one({"_id": tid, "company_id": company_id})
+        if acc and acc.get("type") != "credit_card":
+            return acc
+        return None
+    bank = str(order.get("bank_name") or "").strip()
+    if not bank:
+        return None
+    rows = await db.bank_accounts.find({"company_id": company_id}).to_list(400)
+    return marketplace_providers.pick_havale_bank_account(rows, bank)
+
+
+def _shopphp_invoice_blocks_settlement(invoice: dict) -> bool:
+    """ShopPHP faturası ödenmiş veya iptal/iade ise hakediş yazılmaz. Diğer kanallar bunu kullanmaz."""
+    if not invoice:
+        return True
+    if is_cancelled_invoice(invoice):
+        return True
+    status = str(invoice.get("status") or "").strip().lower()
+    if status in ("returned", "refunded", "iade"):
+        return True
+    if str(invoice.get("payment_status") or "").strip().lower() == "paid":
+        return True
+    try:
+        paid_amount = float(invoice.get("paid_amount") or 0)
+    except (TypeError, ValueError):
+        paid_amount = 0.0
+    return paid_amount > 0.005
+
+
 async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
     """Kanal için hakediş hesabı seçiliyse: net tutar hesaba tahsilat, müşteri carisine ödeme, kesinti pazaryeri carisine."""
     channel = (order.get("channel") or "").lower()
@@ -18612,12 +18776,24 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
         return None
     if (order.get("settlement") or {}).get("tx_id"):
         return None
+    if not _marketplace_settlement_payment_ready(order):
+        return None
     if not invoice or not invoice.get("_id"):
         return None
-    cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
-    if not cfg or not cfg.get("settlement_account_id"):
+    if channel == "shopphp" and _shopphp_invoice_blocks_settlement(invoice):
         return None
-    acc = await db.bank_accounts.find_one({"_id": cfg["settlement_account_id"]})
+    cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
+    kind = _shopphp_payment_kind(order) if channel == "shopphp" else "channel"
+    if kind == "transfer":
+        acc = await _match_havale_account(order, cfg)
+        if not acc:
+            return None
+    elif kind == "other":
+        return None
+    else:
+        if not cfg or not cfg.get("settlement_account_id"):
+            return None
+        acc = await db.bank_accounts.find_one({"_id": cfg["settlement_account_id"]})
     if not acc or acc.get("type") == "credit_card":
         return None
     p = _order_profit(order, _channel_fees(cfg, channel), {})
@@ -19110,6 +19286,8 @@ async def set_channel_fees(channel_id: str, req: Dict[str, Any], user: dict = De
     return {"status": "success", "fees": _channel_fees(await db.integration_configs.find_one({"_id": channel_id}), cfg.get("channel", ""))}
 
 def _order_profit(o: dict, fees: dict, cost_lookup: Dict[str, float]) -> dict:
+    # Gelir, indirim sonrası ödenen tutardır (ShopPHP ODEME_TOPLAM → total_amount).
+    # gross_total liste fiyatıdır; hakediş ve kâr ona yazılmaz.
     revenue = float(o.get("total_amount") or 0)
     commission = round(revenue * float(fees.get("commission_rate") or 0) / 100, 2)
     commission_vat = round(commission * float(fees.get("commission_vat_rate") or 0) / 100, 2)
@@ -21066,7 +21244,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
     await _fill_stock_codes(order.get("company_id"), rows)
     inv_items = [it.model_dump() for it in _invoice_item_models(rows)]
 
-    inv_totals = invoice_document_totals(inv_items)
+    inv_totals = _order_invoice_money(order, inv_items)
 
     inv_id = f"inv_{uuid.uuid4().hex[:8]}"
     invoice_number = format_sales_invoice_number(str(uuid.uuid4().int)[:8])
@@ -21086,6 +21264,8 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         "subtotal": inv_totals["subtotal"],
         "vat_total": inv_totals["vat_total"],
         "discount_total": inv_totals["discount_total"],
+        "general_discount_amount": float(inv_totals.get("general_discount_amount") or 0),
+        "general_discount_rate": 0.0,
         "grand_total": inv_totals["grand_total"],
         "price_mode": "excl",
         "currency": "TRY",
