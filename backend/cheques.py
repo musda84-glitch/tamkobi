@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from bank_guard import assert_manual_allowed, assert_collection_allowed
@@ -43,6 +44,14 @@ def _now():
 
 def _today():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+_ISTANBUL = ZoneInfo("Europe/Istanbul")
+
+
+def _portfolio_entry_day() -> str:
+    """Portföy hareketinin günü: giriş anının İstanbul takvim günü. Keşide tarihi değildir."""
+    return datetime.now(_ISTANBUL).strftime("%Y-%m-%d")
 
 
 def _clean(d):
@@ -245,7 +254,7 @@ async def _post_cari_payment(doc: dict):
         "cheque_id": doc["_id"],
         "cheque_kind": "portfolio",
         "receipt_group_id": doc.get("receipt_group_id"),
-        "date": doc.get("issue_date") or _today(),
+        "date": _portfolio_entry_day(),
         "created_at": _now(),
     })
 
@@ -455,7 +464,6 @@ def _sync_portfolio_tx(doc: dict):
         "type": "inflow" if doc.get("direction") == "received" else "outflow",
         "category": f"{kind} {instrument}",
         "description": f"{doc.get('number')} · vade {due}".strip(" ·"),
-        "date": doc.get("issue_date") or _today(),
     }
 
 
@@ -519,7 +527,7 @@ async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
         merged = {**doc, **patch}
         if not doc.get("skip_ledger"):
             await _db.bank_transactions.update_one(
-                {"cheque_id": cheque_id, "cheque_kind": "portfolio"},
+                {"company_id": doc["company_id"], "cheque_id": cheque_id, "cheque_kind": "portfolio"},
                 {"$set": _sync_portfolio_tx(merged)},
             )
         if old_contact != contact["_id"]:
