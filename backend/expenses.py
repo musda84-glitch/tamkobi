@@ -43,12 +43,12 @@ async def create_tax_payable_expense(ob: dict) -> dict:
     note_bits = [x for x in (ob.get("source_kind"), ob.get("filename"), period) if x]
     doc = {
         "_id": str(uuid.uuid4()),
-        "company_id": company_id,
         "expense_number": await _next_number(company_id),
         "date": date_s,
         "category": TAX_CATEGORY,
         "description": desc,
         **calc,
+        "company_id": company_id,
         "currency": "TRY",
         "fx_rate": 1.0,
         "fx_date": date_s,
@@ -122,11 +122,14 @@ async def _next_number(company_id: str) -> str:
 
 
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
+    cid = str((exp or {}).get("company_id") or "").strip()
+    if not cid:
+        return None
     if partner_id:
         # Ortak şirket masrafını öder → ortak alacaklı (credit), para çekişi değil.
         name = await partner_pay.credit_expense(
             _db,
-            exp["company_id"],
+            cid,
             partner_id,
             fx.try_amount(exp, exp.get("total")),
             f"{exp['expense_number']} {exp.get('description', '')}",
@@ -141,7 +144,7 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
         return f"{name} (Ortak)"
     if not account_id:
         raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
-    acc = await _db.bank_accounts.find_one({"_id": account_id})
+    acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": cid})
     if not acc:
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
     await assert_manual_allowed(_db, account_id)
@@ -149,10 +152,10 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     exp_ccy = (exp.get("currency") or "TRY").upper()
     posted = exp["total"] if acc_ccy == exp_ccy else fx.try_amount(exp, exp.get("total"))
     posted_ccy = acc_ccy if acc_ccy == exp_ccy else "TRY"
-    await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -posted}})
+    await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$inc": {"current_balance": -posted}})
     tx_doc = {
         "_id": str(uuid.uuid4()),
-        "company_id": exp["company_id"],
+        "company_id": cid,
         "account_id": account_id,
         "account_name": acc.get("account_name"),
         "type": "outflow",
@@ -169,7 +172,7 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     }
     owner_meta = await apply_customer_card_owner_effect(
         _db, acc, "outflow", posted, exp.get("contact_id"), sign=1,
-        company_id=exp.get("company_id") or (acc or {}).get("company_id") or "",
+        company_id=cid,
     )
     if owner_meta:
         tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
@@ -191,19 +194,22 @@ def _from_statement(exp: dict) -> bool:
     return (exp or {}).get("source") in _STATEMENT_SOURCES
 
 
-async def _reverse_payment(exp: dict):
+async def _reverse_payment(exp: dict, *, company_id: str):
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
     if _from_statement(exp):
         return
-    bt = await _db.bank_transactions.find_one({"expense_id": exp["_id"]})
+    bt = await _db.bank_transactions.find_one({"expense_id": exp["_id"], "company_id": cid})
     if bt:
-        await _db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": bt["amount"]}})
+        await _db.bank_accounts.update_one({"_id": bt["account_id"], "company_id": cid}, {"$inc": {"current_balance": bt["amount"]}})
         if bt.get("owner_contact_id"):
             await _db.contacts.update_one(
-                {"_id": bt["owner_contact_id"]},
+                {"_id": bt["owner_contact_id"], "company_id": cid},
                 {"$inc": {"balance": float(bt.get("amount") or 0)}},
             )
-        await _db.bank_transactions.delete_one({"_id": bt["_id"]})
-    await partner_pay.reverse_one(_db, {"expense_id": exp["_id"]})
+        await _db.bank_transactions.delete_one({"_id": bt["_id"], "company_id": cid})
+    await partner_pay.reverse_one(_db, {"expense_id": exp["_id"], "company_id": cid})
 
 
 async def record_card_spend(
@@ -222,10 +228,13 @@ async def record_card_spend(
     source: str = "card_statement",
 ) -> dict:
     """Paid expense already reflected on the statement — do not post another bank payment."""
+    company_id = str(company_id or "").strip()
+    if not company_id:
+        return {}
     calc = _calc({"amount": abs(float(amount or 0)), "vat_rate": 0, "vat_included": True})
     if calc["total"] <= 0:
         return {}
-    contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
+    contact = await _db.contacts.find_one({"_id": contact_id, "company_id": company_id}) if contact_id else None
     emp = await _db.employees.find_one({"_id": employee_id, "company_id": company_id}) if employee_id else None
     cat = (category or "Diğer").strip() or "Diğer"
     src = source or "card_statement"
@@ -240,12 +249,12 @@ async def record_card_spend(
         default_desc = "Kart harcaması"
     doc = {
         "_id": str(uuid.uuid4()),
-        "company_id": company_id,
         "expense_number": await _next_number(company_id),
         "date": date,
         "category": cat,
         "description": (description or default_desc).strip()[:200],
         **calc,
+        "company_id": company_id,
         "currency": "TRY",
         "payment_status": "paid",
         "account_id": account_id,
@@ -349,17 +358,20 @@ async def list_expenses(company_id: Optional[str] = None, date_from: Optional[st
 
 
 async def create_expense_for_company(company_id: str, req: Dict[str, Any]):
+    company_id = str(company_id or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
     if not (req.get("description") or "").strip():
         raise HTTPException(status_code=400, detail="Açıklama zorunlu.")
     calc = _calc(req)
     if calc["total"] <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalı.")
     stamp = await fx.stamp(company_id, req.get("currency"), req.get("date"), fx.typed_rate(req.get("currency"), req.get("fx_rate"), req.get("fx_source")))
-    contact = await _db.contacts.find_one({"_id": req["contact_id"]}) if req.get("contact_id") else None
-    emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req.get("employee_id") else None
+    contact = await _db.contacts.find_one({"_id": req["contact_id"], "company_id": company_id}) if req.get("contact_id") else None
+    emp = await _db.employees.find_one({"_id": req["employee_id"], "company_id": company_id}) if req.get("employee_id") else None
     actor = _actor_name(req, "created_by_name", "paid_by_name", "user_name")
-    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
-           "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
+    doc = {"_id": str(uuid.uuid4()), "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
+           "description": req["description"].strip(), **calc, **stamp, "company_id": company_id, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
            "contact_id": contact["_id"] if contact else None, "contact_name": contact["name"] if contact else (req.get("contact_name") or None), "employee_id": emp["_id"] if emp else None, "employee_name": emp["full_name"] if emp else None,
            "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"),
            "created_by_name": actor, "paid_by_name": None, "created_at": _now()}
@@ -390,7 +402,7 @@ async def create_expense_for_company(company_id: str, req: Dict[str, Any]):
         doc["account_name"] = await _post_payment(doc, pay_acc, doc["date"], partner_id=pay_partner)
         payer = _actor_name(req, "paid_by_name", "created_by_name", "user_name") or actor
         doc.update({"payment_status": "paid", "account_id": None if pay_partner else pay_acc, "partner_id": pay_partner, "paid_date": doc["date"], "paid_by_name": payer})
-        await _db.expenses.update_one({"_id": doc["_id"]}, {"$set": {"payment_status": "paid", "account_id": doc["account_id"], "partner_id": pay_partner, "account_name": doc["account_name"], "paid_date": doc["date"], "paid_by_name": payer}})
+        await _db.expenses.update_one({"_id": doc["_id"], "company_id": company_id}, {"$set": {"payment_status": "paid", "account_id": doc["account_id"], "partner_id": pay_partner, "account_name": doc["account_name"], "paid_date": doc["date"], "paid_by_name": payer}})
     if req.get("category") and req["category"] not in DEFAULT_CATEGORIES:
         await add_category_for_company(company_id, req["category"])
     b = await _db.expense_budgets.find_one({"company_id": company_id, "category": doc["category"]})
@@ -412,20 +424,23 @@ async def create_expense(req: Dict[str, Any], user: dict = Depends(_user_dep)):
 @router.put("/expenses/{expense_id}")
 async def update_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
+    cid = str(exp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "recurrence_day", "recurring_end", "charge_to_account", "account_effect", "next_date") if k in req}
     if any(k in req for k in ("amount", "vat_rate", "vat_included")):
         upd.update(_calc({**exp, **req}))
     if any(k in upd for k in ("amount", "currency", "fx_rate", "date")) or "vat_rate" in req:
         merged = {**exp, **upd}
-        stamp = await fx.stamp(exp["company_id"], merged.get("currency"), merged.get("date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
+        stamp = await fx.stamp(cid, merged.get("currency"), merged.get("date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         upd.update(stamp)
         upd["local_total"] = fx.local_of(merged.get("total") or exp.get("total") or 0, stamp["fx_rate"])
     if "employee_id" in req:
-        emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req["employee_id"] else None
+        emp = await _db.employees.find_one({"_id": req["employee_id"], "company_id": cid}) if req["employee_id"] else None
         upd["employee_id"] = emp["_id"] if emp else None
         upd["employee_name"] = emp["full_name"] if emp else None
     if "contact_id" in req:
-        c = await _db.contacts.find_one({"_id": req["contact_id"]}) if req["contact_id"] else None
+        c = await _db.contacts.find_one({"_id": req["contact_id"], "company_id": cid}) if req["contact_id"] else None
         upd["contact_id"] = c["_id"] if c else None
         upd["contact_name"] = c["name"] if c else upd.get("contact_name")
     if "project_id" in upd:
@@ -455,17 +470,20 @@ async def update_expense(expense_id: str, req: Dict[str, Any], user: dict = Depe
     if new_acc:
         new_partner = None
     if exp.get("payment_status") == "paid" and (merged["total"] != exp["total"] or new_acc != exp.get("account_id") or new_partner != exp.get("partner_id")):
-        await _reverse_payment(exp)
+        await _reverse_payment(exp, company_id=cid)
         upd["account_name"] = await _post_payment(merged, new_acc, exp.get("paid_date") or merged["date"], partner_id=new_partner)
         upd["account_id"] = new_acc
         upd["partner_id"] = new_partner
     upd["updated_at"] = _now()
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": upd})
-    return _clean(await _db.expenses.find_one({"_id": expense_id}))
+    await _db.expenses.update_one({"_id": expense_id, "company_id": cid}, {"$set": upd})
+    return _clean(await _db.expenses.find_one({"_id": expense_id, "company_id": cid}))
 
 
 async def _pay_expense_core(expense_id: str, req: Dict[str, Any], user: dict):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
+    cid = str(exp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     if exp.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Bu masraf zaten ödendi.")
     if not req.get("account_id") and not req.get("partner_id"):
@@ -475,8 +493,8 @@ async def _pay_expense_core(expense_id: str, req: Dict[str, Any], user: dict):
     account_id = None if partner_id else req.get("account_id")
     name = await _post_payment(exp, account_id, pay_date, partner_id=partner_id)
     payer = _actor_name(req, "paid_by_name", "user_name", "created_by_name")
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "paid_date": pay_date, "paid_by_name": payer}})
-    return _clean(await _db.expenses.find_one({"_id": expense_id}))
+    await _db.expenses.update_one({"_id": expense_id, "company_id": cid}, {"$set": {"payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "paid_date": pay_date, "paid_by_name": payer}})
+    return _clean(await _db.expenses.find_one({"_id": expense_id, "company_id": cid}))
 
 
 @router.post("/expenses/{expense_id}/pay")
@@ -486,13 +504,16 @@ async def pay_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends
 
 async def _unpay_expense_core(expense_id: str, user: dict):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
+    cid = str(exp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     if exp.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş masraf bulunamadı.")
     if _from_statement(exp):
         raise HTTPException(status_code=400, detail="Ekstreden aktarılan masrafın ödemesi hesap hareketinden gelir; geri alınamaz.")
-    await _reverse_payment(exp)
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None, "paid_by_name": None}})
-    return _clean(await _db.expenses.find_one({"_id": expense_id}))
+    await _reverse_payment(exp, company_id=cid)
+    await _db.expenses.update_one({"_id": expense_id, "company_id": cid}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None, "paid_by_name": None}})
+    return _clean(await _db.expenses.find_one({"_id": expense_id, "company_id": cid}))
 
 
 @router.post("/expenses/{expense_id}/unpay")
@@ -503,9 +524,12 @@ async def unpay_expense(expense_id: str, user: dict = Depends(_user_dep)):
 @router.delete("/expenses/{expense_id}")
 async def delete_expense(expense_id: str, user: dict = Depends(_user_dep)):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
-    had_partner = bool(await _db.partner_transactions.find_one({"expense_id": expense_id}))
+    cid = str(exp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
+    had_partner = bool(await _db.partner_transactions.find_one({"expense_id": expense_id, "company_id": cid}))
     if exp.get("payment_status") == "paid":
-        await _reverse_payment(exp)  # ortak / kasa karşılığını siler, bakiyeleri geri alır
+        await _reverse_payment(exp, company_id=cid)  # ortak / kasa karşılığını siler, bakiyeleri geri alır
     import trash
     note = f"{float(exp.get('total') or 0):,.2f} ₺ · {exp.get('payment_status')}"
     if had_partner:
@@ -534,6 +558,9 @@ def _bump_next_date(src: dict, due: str) -> str:
 
 async def run_recurring_for_company(company_id: str, today: Optional[str] = None, db=None) -> Dict[str, Any]:
     """Vadesi gelen tekrarlayan masrafları oluşturur. Personel şablonunda ödeme + hesaba yaz da işlenir."""
+    company_id = str(company_id or "").strip()
+    if not company_id:
+        return {"created": [], "skipped": 0, "message": "0 tekrarlayan masraf oluşturuldu."}
     store = db or _db
     today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     created: List[dict] = []
@@ -541,21 +568,24 @@ async def run_recurring_for_company(company_id: str, today: Optional[str] = None
     cursor = store.expenses.find({"company_id": company_id, "is_recurring": True, "next_date": {"$lte": today}})
     rows = await cursor.to_list(500) if hasattr(cursor, "to_list") else list(cursor)
     for src in rows:
+        if str(src.get("company_id") or "").strip() != company_id:
+            continue
         due = str(src.get("next_date") or today)[:10]
         end = str(src.get("recurring_end") or "").strip()[:10]
         if end and due > end:
-            await store.expenses.update_one({"_id": src["_id"]}, {"$set": {"is_recurring": False, "next_date": None}})
+            await store.expenses.update_one({"_id": src["_id"], "company_id": company_id}, {"$set": {"is_recurring": False, "next_date": None}})
             skipped += 1
             continue
         period = due[:7]
         parent_id = src["_id"]
         already = await store.expenses.find_one({
+            "company_id": company_id,
             "recurring_parent_id": parent_id,
             "date": {"$regex": f"^{period}"},
         })
         nxt = _bump_next_date(src, due)
         if already:
-            await store.expenses.update_one({"_id": parent_id}, {"$set": {"next_date": nxt}})
+            await store.expenses.update_one({"_id": parent_id, "company_id": company_id}, {"$set": {"next_date": nxt}})
             skipped += 1
             continue
         if str(src.get("source") or "") == "personnel_reimburse_recurring":
@@ -565,12 +595,12 @@ async def run_recurring_for_company(company_id: str, today: Optional[str] = None
                 created.append({"period": period, "parent_id": parent_id, "source": "personnel"})
             else:
                 skipped += 1
-            await store.expenses.update_one({"_id": parent_id}, {"$set": {"next_date": nxt}})
+            await store.expenses.update_one({"_id": parent_id, "company_id": company_id}, {"$set": {"next_date": nxt}})
             continue
-        new = {**src, "_id": str(uuid.uuid4()), "expense_number": await _next_number(company_id), "date": due, "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None, "is_recurring": False, "receipt_url": None, "recurring_parent_id": parent_id, "created_at": _now()}
+        new = {**src, "_id": str(uuid.uuid4()), "expense_number": await _next_number(company_id), "date": due, "payment_status": "unpaid", "account_id": None, "account_name": None, "paid_date": None, "is_recurring": False, "receipt_url": None, "recurring_parent_id": parent_id, "created_at": _now(), "company_id": company_id}
         new.pop("next_date", None)
         await store.expenses.insert_one(new)
-        await store.expenses.update_one({"_id": parent_id}, {"$set": {"next_date": nxt}})
+        await store.expenses.update_one({"_id": parent_id, "company_id": company_id}, {"$set": {"next_date": nxt}})
         created.append(_clean(new))
     return {"created": created, "skipped": skipped, "message": f"{len(created)} tekrarlayan masraf oluşturuldu."}
 

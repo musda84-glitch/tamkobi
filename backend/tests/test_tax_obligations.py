@@ -116,7 +116,7 @@ def test_import_creates_expense_and_pay_as_masraf():
     db = FakeDb()
     tax_obligations.init(db)
     expenses.init(db)
-    db.bank_accounts.docs.append({"_id": "acc1", "account_name": "Kasa", "current_balance": 100000, "currency": "TRY"})
+    db.bank_accounts.docs.append({"_id": "acc1", "company_id": "c1", "account_name": "Kasa", "current_balance": 100000, "currency": "TRY"})
     draft = {
         "source_kind": "bordro",
         "period": "2026-09",
@@ -174,7 +174,7 @@ def test_delete_document_removes_unpaid():
     admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
     imported = asyncio.run(tax_obligations._import_tax_doc_core({"company_id": "c1", "draft": draft}, admin))
     doc_id = imported["document"]["id"]
-    out = asyncio.run(tax_obligations.delete_tax_document(doc_id))
+    out = asyncio.run(tax_obligations.delete_tax_document(doc_id, admin))
     assert out["deleted_obligations"] == 1
     assert db.tax_documents.docs == []
     assert db.tax_obligations.docs == []
