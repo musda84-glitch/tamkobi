@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { get, post, put, type ApiClient } from "../api/client";
 import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
@@ -73,6 +73,11 @@ function isAuthRejection(err: unknown): boolean {
   return err instanceof ApiHttpError && (err.status === 401 || err.status === 403);
 }
 
+function sessionUserId(user: { id?: string; _id?: string } | null | undefined): string {
+  if (!user) return "";
+  return String(user.id || user._id || "").trim();
+}
+
 const loggedOut = {
   token: null as string | null,
   user: null as User | null,
@@ -91,13 +96,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     baseUrl: "https://tamkobi.com",
     ...loggedOut,
   });
+  const sessionRef = useRef(state);
+  sessionRef.current = state;
 
-  const applySession = useCallback((baseUrl: string, token: string | null, payload: SessionPayload | null, error: string | null = null) => {
+  const applySession = useCallback(async (baseUrl: string, token: string | null, payload: SessionPayload | null, error: string | null = null) => {
     const user = payload?.user || null;
+    const prev = sessionRef.current;
+    const prevId = sessionUserId(prev.user);
+    const nextId = sessionUserId(user);
+    if (prevId && nextId && prevId !== nextId) {
+      try {
+        const { unregisterDevicePush, clearDevicePushState } = await import("../utils/pushRegister");
+        if (prev.token) await unregisterDevicePush({ baseUrl: prev.baseUrl, token: prev.token });
+        else await clearDevicePushState();
+      } catch {
+        try {
+          const { clearDevicePushState } = await import("../utils/pushRegister");
+          await clearDevicePushState();
+        } catch {
+          /* giriş yine devam eder */
+        }
+      }
+    }
     const companies = payload?.companies || [];
     const active = pickCompany(companies, user?.active_company_id);
     setPriceDecimals(active?.price_decimals);
-    setState({
+    const next: AuthState = {
       ready: true,
       baseUrl,
       token,
@@ -109,7 +133,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sessionKind: token && user ? "erp" : null,
       b2bToken: null,
       b2bName: null,
-    });
+    };
+    sessionRef.current = next;
+    setState(next);
   }, []);
 
   const applyB2b = useCallback((baseUrl: string, token: string, name?: string | null) => {
@@ -168,15 +194,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!me?.authenticated || !me.user) {
         await clearToken();
         await saveSessionCache(null);
-        applySession(baseUrl, null, null);
+        await applySession(baseUrl, null, null);
         return;
       }
       await saveSessionCache(me);
-      applySession(baseUrl, token, me);
+      await applySession(baseUrl, token, me);
     } catch (err) {
       const cached = isAuthRejection(err) ? null : await loadSessionCache();
       if (cached) {
-        applySession(baseUrl, token, cached, apiErrorMessage(err, "Sunucuya ulaşılamadı; son bilinen oturum kullanılıyor."));
+        await applySession(baseUrl, token, cached, apiErrorMessage(err, "Sunucuya ulaşılamadı; son bilinen oturum kullanılıyor."));
         return;
       }
       await clearToken();
@@ -205,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await saveToken(res.token);
     await saveSessionKind("erp");
     await saveSessionCache(res);
-    applySession(baseUrl, res.token, res);
+    await applySession(baseUrl, res.token, res);
   }, [applySession, state.baseUrl]);
 
   const loginB2b = useCallback(async (email: string, password: string, serverUrl?: string) => {
@@ -292,12 +318,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      if (state.token) {
-        const { unregisterDevicePush } = await import("../utils/pushRegister");
-        await unregisterDevicePush({ baseUrl: state.baseUrl, token: state.token });
-      }
+      const { unregisterDevicePush, clearDevicePushState } = await import("../utils/pushRegister");
+      if (state.token) await unregisterDevicePush({ baseUrl: state.baseUrl, token: state.token });
+      else await clearDevicePushState();
     } catch {
-      /* token kaydı çıkışı engellemesin */
+      try {
+        const { clearDevicePushState } = await import("../utils/pushRegister");
+        await clearDevicePushState();
+      } catch {
+        /* token kaydı çıkışı engellemesin */
+      }
     }
     try {
       if (state.token) await post({ baseUrl: state.baseUrl, token: state.token }, "/auth/logout", {});
@@ -315,16 +345,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       /* konum görevi yoksa çıkışı engellemesin */
     }
     setPriceDecimals(2);
-    setState((s) => ({ ...s, ...loggedOut }));
+    setState((s) => {
+      const next = { ...s, ...loggedOut };
+      sessionRef.current = next;
+      return next;
+    });
   }, [state.baseUrl, state.token]);
 
   const switchCompany = useCallback(
     async (companyId: string) => {
       if (!state.token) return;
-      await post({ baseUrl: state.baseUrl, token: state.token }, "/auth/switch-company", { company_id: companyId });
-      const me = await get<SessionPayload>({ baseUrl: state.baseUrl, token: state.token }, "/auth/me");
+      const client = { baseUrl: state.baseUrl, token: state.token };
+      await post(client, "/auth/switch-company", { company_id: companyId });
+      const me = await get<SessionPayload>(client, "/auth/me");
       await saveSessionCache(me);
-      applySession(state.baseUrl, state.token, me);
+      try {
+        const { unregisterDevicePush } = await import("../utils/pushRegister");
+        await unregisterDevicePush(client);
+      } catch {
+        try {
+          const { clearDevicePushState } = await import("../utils/pushRegister");
+          await clearDevicePushState();
+        } catch {
+          /* şirket değişimi sürer */
+        }
+      }
+      await applySession(state.baseUrl, state.token, me);
+      try {
+        const { registerDevicePush } = await import("../utils/pushRegister");
+        await registerDevicePush(client);
+      } catch {
+        /* sonraki giriş / PushBridge token'ı yeniden bağlar */
+      }
     },
     [applySession, state.baseUrl, state.token]
   );

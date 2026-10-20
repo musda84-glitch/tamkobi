@@ -7,7 +7,7 @@ import { goHref } from "../nav";
 import type { Notification } from "../types";
 import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { visibleNotifications } from "../utils/notifications";
-import { notificationHref } from "../utils/push";
+import { guardedNotificationHref } from "../utils/push";
 import { askPushPermission, enablePushHandler, registerDevicePush, syncLocalPhoneAlerts } from "../utils/pushRegister";
 
 const POLL_MS = 30000;
@@ -82,32 +82,46 @@ export function PushBridge() {
     });
 
     let remove = () => { /* no-op */ };
+    let alive = true;
     (async () => {
       try {
         const Notifications = await import("expo-notifications");
         const open = (response: { notification?: { request?: { identifier?: string; content?: { data?: Record<string, unknown> } } } } | null) => {
+          if (!alive) return;
           const id = String(response?.notification?.request?.identifier || "");
           const data = response?.notification?.request?.content?.data;
           if (!data) return;
           if (id && lastId.current === id) return;
+          const href = guardedNotificationHref(data, user, companyId);
+          if (!href) return;
           if (id) lastId.current = id;
-          goHref(notificationHref(data));
+          goHref(href);
         };
         const tap = Notifications.addNotificationResponseReceivedListener(open);
         const received = Notifications.addNotificationReceivedListener(() => {
           refresh();
         });
-        const last = await Notifications.getLastNotificationResponseAsync();
-        open(last);
         remove = () => {
           tap.remove();
           received.remove();
         };
+        const last = await Notifications.getLastNotificationResponseAsync();
+        if (!alive) return;
+        open(last);
+        const clearLast = (Notifications as { clearLastNotificationResponseAsync?: () => Promise<void> }).clearLastNotificationResponseAsync;
+        if (clearLast) {
+          try {
+            await clearLast();
+          } catch {
+            /* web / test */
+          }
+        }
       } catch {
         /* web / tests */
       }
     })();
     return () => {
+      alive = false;
       cancelled = true;
       clearInterval(timer);
       sub.remove();
