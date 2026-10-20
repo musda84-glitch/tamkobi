@@ -54,6 +54,25 @@ def _portfolio_entry_day() -> str:
     return datetime.now(_ISTANBUL).strftime("%Y-%m-%d")
 
 
+def _istanbul_day(value) -> str:
+    """ISO string veya datetime → Europe/Istanbul takvim günü. Okunamazsa boş."""
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return ""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_ISTANBUL).strftime("%Y-%m-%d")
+
+
 def _clean(d):
     if d and "_id" in d:
         d["id"] = str(d.pop("_id"))

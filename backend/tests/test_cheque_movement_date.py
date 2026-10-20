@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -185,46 +185,111 @@ def test_contact_overview_virtual_row_uses_created_at_day(db, monkeypatch):
     monkeypatch.setattr(server, "db", db)
 
     async def plant():
-        await db.cheques.insert_one({
-            "_id": "ch-old",
-            "company_id": CO_A,
-            "contact_id": "ct-a",
-            "contact_name": "Cari A",
-            "status": "open",
-            "direction": "received",
-            "instrument": "cheque",
-            "amount": 40,
-            "currency": "TRY",
-            "number": "CEK-OLD",
-            "issue_date": "2026-10-01",
-            "due_date": "2026-12-01",
-            "created_at": "2026-09-15T21:30:00+00:00",
-        })
-        await db.cheques.insert_one({
-            "_id": "ch-plain",
-            "company_id": CO_A,
-            "contact_id": "ct-a",
-            "contact_name": "Cari A",
-            "status": "open",
-            "direction": "received",
-            "instrument": "cheque",
-            "amount": 15,
-            "currency": "TRY",
-            "number": "CEK-PLAIN",
-            "issue_date": "2026-08-02",
-            "due_date": "2026-11-02",
-        })
+        rows = [
+            {
+                "_id": "ch-old",
+                "number": "CEK-OLD",
+                "amount": 40,
+                "issue_date": "2026-10-01",
+                "due_date": "2026-12-01",
+                "created_at": "2026-09-15T21:30:00+00:00",
+            },
+            {
+                "_id": "ch-day",
+                "number": "CEK-DAY",
+                "amount": 11,
+                "issue_date": "2026-10-01",
+                "due_date": "2026-12-01",
+                "created_at": "2026-09-15T10:00:00+00:00",
+            },
+            {
+                "_id": "ch-aware",
+                "number": "CEK-AWARE",
+                "amount": 12,
+                "issue_date": "2026-01-01",
+                "due_date": "2026-12-02",
+                "created_at": datetime(2026, 9, 15, 21, 30, tzinfo=timezone.utc),
+            },
+            {
+                "_id": "ch-naive",
+                "number": "CEK-NAIVE",
+                "amount": 13,
+                "issue_date": "2026-01-02",
+                "due_date": "2026-12-03",
+                "created_at": datetime(2026, 9, 15, 21, 30),
+            },
+            {
+                "_id": "ch-aware-day",
+                "number": "CEK-AWARE-DAY",
+                "amount": 14,
+                "issue_date": "2026-01-03",
+                "due_date": "2026-12-04",
+                "created_at": datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc),
+            },
+            {
+                "_id": "ch-naive-day",
+                "number": "CEK-NAIVE-DAY",
+                "amount": 16,
+                "issue_date": "2026-01-04",
+                "due_date": "2026-12-05",
+                "created_at": datetime(2026, 9, 15, 10, 0),
+            },
+            {
+                "_id": "ch-plain",
+                "number": "CEK-PLAIN",
+                "amount": 15,
+                "issue_date": "2026-08-02",
+                "due_date": "2026-11-02",
+            },
+            {
+                "_id": "ch-blank",
+                "number": "CEK-BLANK",
+                "amount": 17,
+                "due_date": "2026-11-03",
+            },
+            {
+                "_id": "ch-bad",
+                "number": "CEK-BAD",
+                "amount": 18,
+                "issue_date": "2026-07-01",
+                "due_date": "2026-11-04",
+                "created_at": "not-a-date",
+            },
+        ]
+        for row in rows:
+            await db.cheques.insert_one({
+                "company_id": CO_A,
+                "contact_id": "ct-a",
+                "contact_name": "Cari A",
+                "status": "open",
+                "direction": "received",
+                "instrument": "cheque",
+                "currency": "TRY",
+                **row,
+            })
 
     _run(plant())
+    before = {doc["_id"]: (doc.get("issue_date"), doc.get("due_date")) for doc in db.cheques.docs}
     overview = _run(server.get_contact_overview("ct-a", _user(CO_A)))
     payments = overview["payments"]
-    old = next(row for row in payments if row.get("cheque_id") == "ch-old")
-    plain = next(row for row in payments if row.get("cheque_id") == "ch-plain")
+    by_cheque = {row.get("cheque_id"): row for row in payments if row.get("source") == "cheque"}
+    old = by_cheque["ch-old"]
     assert old.get("virtual") is True
-    assert old["date"] == "2026-09-15"
+    assert old["date"] == "2026-09-16"
+    assert old["account_name"] == "Çek Portföyü"
+    assert old["cheque_kind"] == "portfolio"
+    assert by_cheque["ch-day"]["date"] == "2026-09-15"
+    assert by_cheque["ch-aware"]["date"] == "2026-09-16"
+    assert by_cheque["ch-naive"]["date"] == "2026-09-16"
+    assert by_cheque["ch-aware-day"]["date"] == "2026-09-15"
+    assert by_cheque["ch-naive-day"]["date"] == "2026-09-15"
+    plain = by_cheque["ch-plain"]
     assert plain.get("virtual") is True
     assert plain["date"] == "2026-08-02"
+    assert by_cheque["ch-blank"]["date"] == ""
+    assert by_cheque["ch-bad"]["date"] == "2026-07-01"
     cheques_by_id = {row["id"]: row for row in overview["cheques"]}
     assert cheques_by_id["ch-old"]["issue_date"] == "2026-10-01"
     assert cheques_by_id["ch-old"]["due_date"] == "2026-12-01"
+    assert {doc["_id"]: (doc.get("issue_date"), doc.get("due_date")) for doc in db.cheques.docs} == before
     assert db.bank_transactions.docs == []
