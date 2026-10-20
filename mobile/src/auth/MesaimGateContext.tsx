@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import { get } from "../api/client";
 import { attendanceCalendarMonth, mesaimExclusiveUntilCheckIn } from "../utils/attendanceSelf";
 import { useAuth } from "./AuthContext";
+import { bindMesaimGateRefresh } from "./mesaimLockSignal";
 
 const POLL_MS = 20_000;
 
@@ -51,6 +52,11 @@ export function MesaimGateProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     setReady(false);
     refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    bindMesaimGateRefresh(() => { void refresh(); });
+    return () => bindMesaimGateRefresh(null);
   }, [refresh]);
 
   useEffect(() => {

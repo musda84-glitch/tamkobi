@@ -28,6 +28,7 @@ export type User = {
   features?: Record<string, boolean>;
   is_super_admin?: boolean;
   employee_id?: string;
+  skip_check_in?: boolean;
 };
 
 export type License = {

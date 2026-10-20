@@ -52,10 +52,11 @@ export function hasOpenMesaimSession(today?: { check_in?: string | null; check_o
  * Özet ve Mesaim her zaman açık kalır. Yönetici / admin kilitlenmez.
  */
 export function mesaimExclusiveUntilCheckIn(
-  user?: { role?: string | null; employee_id?: string | null } | null,
+  user?: { role?: string | null; employee_id?: string | null; skip_check_in?: boolean | null } | null,
   today?: { check_in?: string | null; check_out?: string | null } | null,
 ): boolean {
   if (!user?.employee_id) return false;
+  if (user?.skip_check_in) return false;
   const role = String(user.role || "");
   if (role === "admin" || role === "manager") return false;
   return !hasOpenMesaimSession(today);

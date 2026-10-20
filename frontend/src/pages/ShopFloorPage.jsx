@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
+import { useMesaimGate } from "../context/MesaimGateContext";
+import { bindMesaimLockedInterceptor } from "../utils/mesaimLockClient";
 import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText, Trash2, ArrowDownUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
@@ -42,7 +44,9 @@ function WoStepBar({ w }) {
 
 export default function ShopFloorPage() {
   const { activeCompany } = useAuth();
+  const { refresh: refreshMesaimGate } = useMesaimGate();
   const companyId = activeCompanyId(activeCompany);
+  useEffect(() => bindMesaimLockedInterceptor(axios, refreshMesaimGate), [refreshMesaimGate]);
   const [wos, setWos] = useState([]);
   /** İstasyon filtresinden bağımsız in_progress listesi — operatör kilit kontrolü için */
   const [lockWos, setLockWos] = useState([]);

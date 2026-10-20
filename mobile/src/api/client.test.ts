@@ -1,3 +1,4 @@
+import { bindMesaimGateRefresh } from "../auth/mesaimLockSignal";
 import { ApiHttpError } from "./errors";
 import { request } from "./client";
 import { clearRedirectedApiBase } from "./url";
@@ -151,5 +152,23 @@ describe("request", () => {
     expect(data.authenticated).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(saveApiBase).toHaveBeenCalledWith("https://app.tamkobi.com");
+  });
+
+  it("refreshes the mesaim gate on mesaim_locked", async () => {
+    const refresh = jest.fn();
+    bindMesaimGateRefresh(refresh);
+    // @ts-expect-error test mock
+    global.fetch = async () => ({
+      ok: false,
+      status: 403,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({
+        detail: "Mesai çıkışı yapıldı. Diğer modüller bir sonraki mesai girişine kadar kapalı. Mesaim'den giriş yapın.",
+        code: "mesaim_locked",
+      }),
+    });
+    await expect(request(client, "GET", "/production/work-orders")).rejects.toBeInstanceOf(ApiHttpError);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    bindMesaimGateRefresh(null);
   });
 });
