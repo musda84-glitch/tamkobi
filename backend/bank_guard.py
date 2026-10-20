@@ -35,11 +35,14 @@ def is_customer_card(account: Optional[Dict[str, Any]]) -> bool:
     return bool(account.get("linked_contact_id"))
 
 
-async def pin_customer_card_pool_balance(db, pool_id: Optional[str]) -> None:
+async def pin_customer_card_pool_balance(db, pool_id: Optional[str], *, company_id: str) -> None:
     """Havuz kasası defteridir: giriş+çıkış eşlenik; bakiye her zaman 0."""
-    if not pool_id:
+    if not pool_id or not str(company_id or "").strip():
         return
-    await db.bank_accounts.update_one({"_id": pool_id, "is_customer_card_pool": True}, {"$set": {"current_balance": 0.0}})
+    await db.bank_accounts.update_one(
+        {"_id": pool_id, "company_id": company_id, "is_customer_card_pool": True},
+        {"$set": {"current_balance": 0.0}},
+    )
 
 
 async def ensure_customer_card_pool(db, company_id: str) -> Dict[str, Any]:
@@ -50,7 +53,7 @@ async def ensure_customer_card_pool(db, company_id: str) -> Dict[str, Any]:
     if existing:
         # Eski tek yönlü kayıtlar bakiyeyi bozmuş olabilir — her zaman sıfırla.
         if float(existing.get("current_balance") or 0) != 0.0:
-            await pin_customer_card_pool_balance(db, existing["_id"])
+            await pin_customer_card_pool_balance(db, existing["_id"], company_id=company_id)
             existing["current_balance"] = 0.0
         return existing
     doc = {
@@ -71,14 +74,16 @@ async def ensure_customer_card_pool(db, company_id: str) -> Dict[str, Any]:
     return doc
 
 
-async def get_connection_for_account(db, account_id):
-    if not account_id:
+async def get_connection_for_account(db, account_id, *, company_id):
+    if not account_id or not str(company_id or "").strip():
         return None
-    return await db.bank_connections.find_one({"linked_account_id": account_id})
+    return await db.bank_connections.find_one({"company_id": company_id, "linked_account_id": account_id})
 
 
 async def assert_manual_allowed(db, account_id):
-    conn = await get_connection_for_account(db, account_id)
+    from account_balance import _lookup_company_id
+    cid = await _lookup_company_id(db, account_id)
+    conn = await get_connection_for_account(db, account_id, company_id=cid)
     if conn:
         name = conn.get("linked_account_name") or "Bu hesap"
         raise HTTPException(status_code=400, detail=f"{name} banka entegrasyonuna ({conn.get('provider_name') or 'API'}) bağlı; manuel işlem yapılamaz. Hareketler bankadan otomatik çekilir ve Banka Entegrasyonu → Eşleştirme ekranından işlenir.")
@@ -124,13 +129,19 @@ async def apply_customer_card_owner_effect(
     payee_contact_id: Optional[str] = None,
     *,
     sign: int = 1,
+    company_id: str,
 ) -> Optional[Dict[str, str]]:
     """sign=+1 uygular, sign=-1 geri alır. owner_contact_id / name döner."""
+    if not str(company_id or "").strip():
+        return None
     hit = customer_card_owner_delta(account, tx_type, amount, payee_contact_id)
     if not hit:
         return None
     owner_id, delta = hit
-    await db.contacts.update_one({"_id": owner_id}, {"$inc": {"balance": float(delta) * sign}})
+    await db.contacts.update_one(
+        {"_id": owner_id, "company_id": company_id},
+        {"$inc": {"balance": float(delta) * sign}},
+    )
     return {
         "owner_contact_id": owner_id,
         "owner_contact_name": (account or {}).get("linked_contact_name") or "",

@@ -186,13 +186,17 @@ async def _audit(db, *, company_id: Optional[str], actor: Optional[dict], action
 async def _recalc_touched_accounts(db, txs: List[dict]):
     cash_ids = set()
     contact_ids = set()
+    contact_company = {}
     for tx in txs:
         for k in ("account_id", "target_account_id"):
             if tx.get(k):
                 cash_ids.add(tx[k])
+        company = tx.get("company_id")
         for k in ("contact_id", "owner_contact_id"):
             if tx.get(k):
                 contact_ids.add(tx[k])
+                if company:
+                    contact_company[tx[k]] = company
     cash_accs = []
     for aid in cash_ids:
         acc = await db.bank_accounts.find_one({"_id": aid})
@@ -205,7 +209,7 @@ async def _recalc_touched_accounts(db, txs: List[dict]):
         await account_balance.sync_cash_box_balances(db, cash_accs)
     for cid in contact_ids:
         try:
-            await contact_balance.sync_contact_balance(db, cid)
+            await contact_balance.sync_contact_balance(db, cid, company_id=contact_company.get(cid) or "")
         except Exception:
             logger.exception("sync_contact_balance %s", cid)
 
@@ -260,7 +264,9 @@ async def _write_reverse_bank_entry(db, tx: dict, reason: str) -> dict:
         change = amt if rev_type == "inflow" else -amt
         if doc.get("account_id"):
             import account_balance
-            posted = await account_balance.apply_balance_delta(db, doc["account_id"], change)
+            posted = await account_balance.apply_balance_delta(
+                db, doc["account_id"], change, company_id=doc.get("company_id") or "",
+            )
             if posted == "integrated":
                 doc["balance_posted"] = False
                 doc["match_status"] = "expected"

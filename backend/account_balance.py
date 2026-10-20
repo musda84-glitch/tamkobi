@@ -141,25 +141,33 @@ def pos_cancel_outflow_doc(tx: dict, *, now_iso: str, today: str) -> Optional[Di
     }
 
 
-async def account_is_integrated(db, account_id: str) -> bool:
+async def account_is_integrated(db, account_id: str, *, company_id: Optional[str] = None) -> bool:
     """Bağlantı kaydı gerçek bir dict ise entegre. Eksik koleksiyon / sahte mock → değil."""
     if not account_id or db is None:
         return False
+    cid = str(company_id or "").strip()
+    if not cid:
+        cid = await _lookup_company_id(db, account_id)
+    if not cid:
+        return False
     try:
         import bank_guard
-        conn = await bank_guard.get_connection_for_account(db, account_id)
+        conn = await bank_guard.get_connection_for_account(db, account_id, company_id=cid)
     except Exception:
         return False
     return isinstance(conn, dict) and bool(conn.get("linked_account_id") or conn.get("_id"))
 
 
-async def apply_balance_delta(db, account_id: str, delta: float) -> str:
+async def apply_balance_delta(db, account_id: str, delta: float, *, company_id: str) -> str:
     """Entegre hesapta bakiye yazılmaz ('integrated'). Diğerlerinde $inc ('posted')."""
-    if not account_id or abs(_num(delta)) < 0.0000001:
+    if not account_id or not str(company_id or "").strip() or abs(_num(delta)) < 0.0000001:
         return "skipped"
-    if await account_is_integrated(db, account_id):
+    if await account_is_integrated(db, account_id, company_id=company_id):
         return "integrated"
-    await db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": float(delta)}})
+    await db.bank_accounts.update_one(
+        {"_id": account_id, "company_id": company_id},
+        {"$inc": {"current_balance": float(delta)}},
+    )
     return "posted"
 
 
@@ -309,13 +317,18 @@ async def fetch_account_txs(db, account_id: str, company_id: Optional[str] = Non
     return list(grouped.get(str(account_id), []))
 
 
-async def recalc_account_balance(db, account_id: str, account: Optional[dict] = None) -> float:
+async def recalc_account_balance(db, account_id: str, account: Optional[dict] = None, *, company_id: Optional[str] = None) -> float:
     acc = account if isinstance(account, dict) else None
+    cid = str(company_id or (acc or {}).get("company_id") or "").strip()
     if acc is None:
-        try:
-            found = await db.bank_accounts.find_one({"_id": account_id})
-        except Exception:
-            found = None
+        if not cid:
+            cid = await _lookup_company_id(db, account_id)
+        found = None
+        if cid:
+            try:
+                found = await db.bank_accounts.find_one({"_id": account_id, "company_id": cid})
+            except Exception:
+                found = None
         acc = found if isinstance(found, dict) else None
     if _is_pool_account(acc):
         return 0.0
@@ -413,9 +426,12 @@ def day_before(iso_day: str) -> str:
 
 async def ensure_opening_tx(db, acc: dict, *, on_date: Optional[str] = None) -> Optional[dict]:
     """Yeni hesapta current_balance varsa deftere açılış hareketi yaz (bakiye zaten set, $inc yok)."""
+    if not str((acc or {}).get("company_id") or "").strip():
+        return None
     doc = opening_tx_doc(acc, acc.get("current_balance"), on_date=on_date)
     if not doc:
         return None
+    doc["company_id"] = acc["company_id"]
     await db.bank_transactions.insert_one(doc)
     return doc
 
@@ -429,15 +445,19 @@ async def rewrite_opening_tx(
     description: Optional[str] = None,
 ) -> Optional[dict]:
     """Eski source=opening satırlarını siler; tutar ≠ 0 ise yenisini yazar. Bakiye $inc yok."""
+    cid = str((acc or {}).get("company_id") or "").strip()
+    if not cid:
+        return None
     aid = str((acc or {}).get("_id") or (acc or {}).get("id") or "")
     if aid:
-        await db.bank_transactions.delete_many({"account_id": aid, "source": "opening"})
+        await db.bank_transactions.delete_many({"company_id": cid, "account_id": aid, "source": "opening"})
     stamped = dict(acc or {})
     if aid:
         stamped["_id"] = aid
     doc = opening_tx_doc(stamped, amount, on_date=on_date, description=description)
     if not doc:
         return None
+    doc["company_id"] = acc["company_id"]
     await db.bank_transactions.insert_one(doc)
     return doc
 
@@ -476,9 +496,15 @@ async def sync_cash_box_balances(
         cash.append(acc)
     if not cash:
         return accounts
+    company_id = ""
     if txs is None:
         company_id = await _company_id_for_accounts(db, accounts)
         txs = await fetch_cash_box_txs(db, company_id, _cash_box_ids(cash)) if company_id else []
+    else:
+        for row in cash:
+            if row.get("company_id"):
+                company_id = str(row["company_id"])
+                break
     grouped = group_txs_by_account(txs)
     for acc in cash:
         aid = str(acc.get("_id") or acc.get("id"))
@@ -487,7 +513,10 @@ async def sync_cash_box_balances(
         if abs(moved - stored) >= 0.01:
             acc["current_balance"] = moved
             if persist:
-                await db.bank_accounts.update_one({"_id": aid}, {"$set": {"current_balance": moved}})
+                await db.bank_accounts.update_one(
+                    {"_id": aid, "company_id": company_id},
+                    {"$set": {"current_balance": moved}},
+                )
     return accounts
 
 

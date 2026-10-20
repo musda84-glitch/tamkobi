@@ -152,9 +152,11 @@ def _tx_key(t: Dict[str, Any]):
     return (t.get("date"), (t.get("description") or "")[:200], round(abs(float(t.get("amount") or 0)), 2))
 
 
-async def _existing_statement_keys(account_id: str, *, all_sources: bool = False):
+async def _existing_statement_keys(account_id: str, *, company_id: str, all_sources: bool = False):
     """Kart: yalnızca ekstre kaynakları. Banka: manuel hareketler de tekrar yüklenmesin."""
-    q: Dict[str, Any] = {"account_id": account_id}
+    if not str(company_id or "").strip():
+        return set()
+    q: Dict[str, Any] = {"company_id": company_id, "account_id": account_id}
     if not all_sources:
         q["source"] = {"$in": ["card_statement", "bank_statement"]}
     rows = await _db.bank_transactions.find(q, {"date": 1, "description": 1, "amount": 1}).to_list(5000)
@@ -165,9 +167,9 @@ async def _enrich_statement_lines(company_id: str, txs: List[Dict[str, Any]], *,
     import duplicate_guard
     contacts = await _db.contacts.find({"company_id": company_id}).to_list(10000)
     manual_rows: List[Dict[str, Any]] = []
-    if account_id:
+    if account_id and str(company_id or "").strip():
         try:
-            manual_rows = await _db.bank_transactions.find({"account_id": account_id}).to_list(5000)
+            manual_rows = await _db.bank_transactions.find({"company_id": company_id, "account_id": account_id}).to_list(5000)
         except Exception:
             manual_rows = []
     out = []
@@ -212,7 +214,8 @@ async def _apply_statement_account(account_id: str, statement: Dict[str, Any], a
         last4 = sanitize_card_fields({"card_last4": statement.get("card_last4")}).get("card_last4")
         if last4 and not acc.get("card_last4"):
             upd["card_last4"] = last4
-    await _db.bank_accounts.update_one({"_id": account_id}, {"$set": upd})
+    cid = acc.get("company_id")
+    await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$set": upd})
 
 
 def _line_outflow(amount: float, *, is_card: bool) -> bool:
@@ -230,13 +233,14 @@ def _line_category(category: str, *, outflow: bool, is_card: bool) -> str:
 
 async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict[str, Any]:
     account_id = acc["_id"]
+    cid = acc["company_id"]
     is_card = _is_card(acc)
     amount = float(t.get("amount") or 0)
     outflow = _line_outflow(amount, is_card=is_card)
     abs_amt = abs(amount)
     kind = t.get("kind") or _kind_for_line(amount, None, is_card=is_card)
     contact_id = t.get("contact_id") or None
-    contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
+    contact = await _db.contacts.find_one({"_id": contact_id, "company_id": cid}) if contact_id else None
     contact_name = contact["name"] if contact else (t.get("contact_name") or None)
     category = (t.get("category") or "Diğer").strip() or "Diğer"
     desc = ((t.get("description") or "") + (f" ({t['installment']})" if t.get("installment") else ""))[:200]
@@ -245,7 +249,7 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
     source = "card_statement" if is_card else "bank_statement"
     await _db.bank_transactions.insert_one({
         "_id": tx_id,
-        "company_id": acc["company_id"],
+        "company_id": cid,
         "account_id": account_id,
         "account_name": acc.get("account_name"),
         "type": "outflow" if outflow else "inflow",
@@ -263,15 +267,15 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
     })
     if not is_card:
         change = -abs_amt if outflow else abs_amt
-        await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": change}})
+        await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$inc": {"current_balance": change}})
     created: Dict[str, Any] = {"tx_id": tx_id, "kind": kind}
     if kind == "cari_odeme" and contact:
         c_change = abs_amt if outflow else -abs_amt
-        await _db.contacts.update_one({"_id": contact["_id"]}, {"$inc": {"balance": c_change}})
+        await _db.contacts.update_one({"_id": contact["_id"], "company_id": cid}, {"$inc": {"balance": c_change}})
         created["contact_id"] = contact["_id"]
     elif kind == "masraf" and outflow:
         exp = await expenses_mod.record_card_spend(
-            acc["company_id"],
+            cid,
             date=t.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             category=category,
             description=desc,
@@ -284,7 +288,7 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
             source=source,
         )
         if exp:
-            await _db.bank_transactions.update_one({"_id": tx_id}, {"$set": {"expense_id": exp.get("id")}})
+            await _db.bank_transactions.update_one({"_id": tx_id, "company_id": cid}, {"$set": {"expense_id": exp.get("id")}})
             created["expense_id"] = exp.get("id")
     return created
 
@@ -343,10 +347,10 @@ async def create_loan(req: Dict[str, Any], user: dict = Depends(_user_dep)):
         if partner_id:
             await partner_pay.move(_db, company_id, partner_id, doc["principal"], "capital_in", f"{doc['name']} anapara girişi", doc["start_date"], extra=link)
         elif account_id:
-            acc = await _db.bank_accounts.find_one({"_id": account_id})
+            acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": company_id})
             if acc:
                 await assert_manual_allowed(_db, acc["_id"])
-                await _db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": doc["principal"]}})
+                await _db.bank_accounts.update_one({"_id": acc["_id"], "company_id": company_id}, {"$inc": {"current_balance": doc["principal"]}})
                 tx_doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "date": doc["start_date"], "created_at": _now()}
                 tx_doc.update(link)
                 await _db.bank_transactions.insert_one(tx_doc)
@@ -357,6 +361,7 @@ async def create_loan(req: Dict[str, Any], user: dict = Depends(_user_dep)):
 @router.post("/loans/{loan_id}/installments/{no}/pay")
 async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     loan = await tenant_access.get_tenant_doc(_db, "loans", loan_id, user, not_found="Kredi bulunamadı.")
+    cid = loan["company_id"]
     ins = next((i for i in loan["installments"] if int(i["no"]) == no), None)
     if not ins or ins.get("paid"):
         raise HTTPException(status_code=400, detail="Taksit bulunamadı veya zaten ödendi.")
@@ -376,21 +381,21 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
     paid_name = None
     link = {**linked_moves.link_fields("loan", loan_id), "installment_no": no}
     if partner_id:
-        paid_name = await partner_pay.withdraw(_db, loan["company_id"], partner_id, ins["amount"], f"{loan['name']} {no}. taksit", pay_date, extra=link)
+        paid_name = await partner_pay.withdraw(_db, cid, partner_id, ins["amount"], f"{loan['name']} {no}. taksit", pay_date, extra=link)
         paid_name = f"{paid_name} (Ortak)"
         account_id = None
     else:
-        acc = await _db.bank_accounts.find_one({"_id": account_id})
+        acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": cid})
         if not acc:
             raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
         await assert_manual_allowed(_db, account_id)
-        await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -ins["amount"]}})
-        tx_doc = {"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "date": pay_date, "created_at": _now()}
+        await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$inc": {"current_balance": -ins["amount"]}})
+        tx_doc = {"_id": str(uuid.uuid4()), "company_id": cid, "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "date": pay_date, "created_at": _now()}
         tx_doc.update(link)
         await _db.bank_transactions.insert_one(tx_doc)
         paid_name = acc.get("account_name")
     upd = await _db.loans.update_one(
-        {"_id": loan_id, "installments": {"$elemMatch": {"no": ins["no"], "paid": {"$ne": True}}}},
+        {"_id": loan_id, "company_id": cid, "installments": {"$elemMatch": {"no": ins["no"], "paid": {"$ne": True}}}},
         {"$set": {
             "installments.$.paid": True,
             "installments.$.paid_date": pay_date,
@@ -402,15 +407,15 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
         raise HTTPException(status_code=409, detail="Bu kredi taksiti zaten ödenmiş.")
     if ins.get("interest") or ins.get("kkdf_bsmv"):
         cost = round(float(ins.get("interest") or 0) + float(ins.get("kkdf_bsmv") or 0), 2)
-        await _db.expenses.insert_one({"_id": str(uuid.uuid4()), "company_id": loan["company_id"], "expense_number": f"KRD-{loan_id[:4].upper()}-{no:02d}", "date": pay_date, "category": "Kredi Faizi / Finansman", "description": f"{loan['name']} {no}. taksit faiz+KKDF/BSMV", "amount": cost, "vat_rate": 0, "vat_amount": 0, "total": cost, "currency": "TRY", "payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": paid_name, "paid_date": pay_date, "loan_id": loan_id, "notes": "Kredi modülünden otomatik", "is_recurring": False, "created_at": _now()})
+        await _db.expenses.insert_one({"_id": str(uuid.uuid4()), "company_id": cid, "expense_number": f"KRD-{loan_id[:4].upper()}-{no:02d}", "date": pay_date, "category": "Kredi Faizi / Finansman", "description": f"{loan['name']} {no}. taksit faiz+KKDF/BSMV", "amount": cost, "vat_rate": 0, "vat_amount": 0, "total": cost, "currency": "TRY", "payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": paid_name, "paid_date": pay_date, "loan_id": loan_id, "notes": "Kredi modülünden otomatik", "is_recurring": False, "created_at": _now()})
     try:
         if account_id:
             import account_balance
-            bal = await account_balance.recalc_account_balance(_db, account_id)
-            await _db.bank_accounts.update_one({"_id": account_id}, {"$set": {"current_balance": bal}})
+            bal = await account_balance.recalc_account_balance(_db, account_id, company_id=cid)
+            await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$set": {"current_balance": bal}})
     except Exception:
         logging.getLogger(__name__).exception("Kredi taksit ödemesi kasa recalc: %s", account_id)
-    return _clean(await _db.loans.find_one({"_id": loan_id}))
+    return _clean(await _db.loans.find_one({"_id": loan_id, "company_id": cid}))
 
 
 
@@ -449,16 +454,17 @@ def _normalize_tx_rows(raw_txs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 @router.post("/banking/accounts/{account_id}/import-statement")
 async def import_statement(account_id: str, file: UploadFile = File(...), dry_run: bool = Query(True), user: dict = Depends(_user_dep)):
     acc = await tenant_access.get_tenant_doc(_db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    cid = acc["company_id"]
     is_card = _is_card(acc)
     if not is_card:
         await assert_manual_allowed(_db, account_id)
     text = await _statement_text(file)
     d = await _ask_json(CARD_SYSTEM if is_card else BANK_SYSTEM, text)
     txs = _normalize_tx_rows(d.get("transactions") or [])
-    existing = await _existing_statement_keys(account_id, all_sources=not is_card)
+    existing = await _existing_statement_keys(account_id, company_id=cid, all_sources=not is_card)
     for t in txs:
         t["duplicate"] = _tx_key(t) in existing
-    txs = await _enrich_statement_lines(acc["company_id"], txs, is_card=is_card, account_id=account_id)
+    txs = await _enrich_statement_lines(cid, txs, is_card=is_card, account_id=account_id)
     if is_card:
         statement = {k: d.get(k) for k in ("bank", "card_last4", "statement_date", "due_date", "total_debt", "minimum_payment", "limit", "confidence")}
     else:
@@ -472,7 +478,7 @@ async def import_statement(account_id: str, file: UploadFile = File(...), dry_ru
             continue
         await _insert_statement_line(acc, t)
         inserted += 1
-    acc = await _db.bank_accounts.find_one({"_id": account_id}) or acc
+    acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": cid}) or acc
     await _apply_statement_account(account_id, result["statement"], acc, apply_card_balance=is_card)
     extra = ""
     if is_card and d.get("total_debt") is not None:
@@ -487,12 +493,13 @@ async def import_statement(account_id: str, file: UploadFile = File(...), dry_ru
 @router.post("/banking/accounts/{account_id}/import-statement/confirm")
 async def confirm_statement(account_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     acc = await tenant_access.get_tenant_doc(_db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
+    cid = acc["company_id"]
     is_card = _is_card(acc)
     if not is_card:
         await assert_manual_allowed(_db, account_id)
     statement = req.get("statement") or {}
     lines = req.get("lines") or req.get("transactions") or []
-    existing = await _existing_statement_keys(account_id, all_sources=not is_card)
+    existing = await _existing_statement_keys(account_id, company_id=cid, all_sources=not is_card)
     inserted, expenses_n, contacts_n = 0, 0, 0
     details = []
     for raw in lines:
@@ -517,7 +524,7 @@ async def confirm_statement(account_id: str, req: Dict[str, Any], user: dict = D
             contacts_n += 1
         details.append(created)
         existing.add(_tx_key(t))
-    acc = await _db.bank_accounts.find_one({"_id": account_id}) or acc
+    acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": cid}) or acc
     await _apply_statement_account(account_id, statement, acc, apply_card_balance=is_card)
     return {
         "inserted": inserted,

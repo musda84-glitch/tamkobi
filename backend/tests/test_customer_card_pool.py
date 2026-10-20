@@ -64,8 +64,8 @@ def test_ensure_pool_resets_nonzero_balance():
 def test_pin_pool_balance():
     db = MagicMock()
     db.bank_accounts.update_one = AsyncMock()
-    _run(pin_customer_card_pool_balance(db, "pool1"))
+    _run(pin_customer_card_pool_balance(db, "pool1", company_id="c1"))
     db.bank_accounts.update_one.assert_awaited_once_with(
-        {"_id": "pool1", "is_customer_card_pool": True},
+        {"_id": "pool1", "company_id": "c1", "is_customer_card_pool": True},
         {"$set": {"current_balance": 0.0}},
     )

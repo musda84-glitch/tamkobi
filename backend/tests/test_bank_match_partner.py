@@ -118,16 +118,17 @@ def test_clear_bank_match_status_unmatches_without_touching_partner():
             "target_account_name": "Ali BAL (Ortak)",
             "matched_via": "manual",
             "category": "Hesaplar Arası Virman",
+            "company_id": "co",
         }
     ])
     db = MagicMock()
     db.bank_transactions = btxs
-    ok = _run(clear_bank_match_status(db, "btx1"))
+    ok = _run(clear_bank_match_status(db, "btx1", company_id="co"))
     assert ok is True
     assert btxs.docs[0]["match_status"] == "unmatched"
     assert "target_account_id" not in btxs.docs[0]
     assert btxs.docs[0]["category"] == "Banka Giden Ödeme"
-    assert _run(clear_bank_match_status(db, "btx1")) is False  # zaten unmatched
+    assert _run(clear_bank_match_status(db, "btx1", company_id="co")) is False  # zaten unmatched
 
 
 def test_clear_bank_match_for_partner_tx_by_related_id():
@@ -139,11 +140,12 @@ def test_clear_bank_match_for_partner_tx_by_related_id():
             "match_status": "matched",
             "target_account_id": "partner:ali",
             "category": "Hesaplar Arası Virman",
+            "company_id": "co",
         }
     ])
     db = MagicMock()
     db.bank_transactions = btxs
-    ptx = {"_id": "pt1", "partner_id": "ali", "amount": 80000, "related_bank_tx_id": "btx-rel", "source": "bank_match"}
+    ptx = {"_id": "pt1", "company_id": "co", "partner_id": "ali", "amount": 80000, "related_bank_tx_id": "btx-rel", "source": "bank_match"}
     assert _run(resolve_bank_tx_id_for_partner_tx(db, ptx)) == "btx-rel"
     assert _run(clear_bank_match_for_partner_tx(db, ptx)) is True
     assert btxs.docs[0]["match_status"] == "unmatched"
@@ -160,11 +162,12 @@ def test_clear_bank_match_for_partner_tx_fallback_without_related_id():
             "match_status": "matched",
             "target_account_id": "partner:p9",
             "category": "Hesaplar Arası Virman",
+            "company_id": "co",
         }
     ])
     db = MagicMock()
     db.bank_transactions = btxs
-    ptx = {"_id": "pt9", "partner_id": "p9", "amount": 5000.0, "date": "2026-03-01", "source": "bank_match"}
+    ptx = {"_id": "pt9", "company_id": "co", "partner_id": "p9", "amount": 5000.0, "date": "2026-03-01", "source": "bank_match"}
     assert _run(resolve_bank_tx_id_for_partner_tx(db, ptx)) == "btx-fb"
     assert _run(clear_bank_match_for_partner_tx(db, ptx)) is True
     assert btxs.docs[0]["match_status"] == "unmatched"

@@ -278,10 +278,12 @@ async def fetch_contact_rows(
     lite: bool = False,
     include_inactive: Optional[bool] = None,
 ) -> List[dict]:
+    if not str(company_id or "").strip():
+        return []
     query = contact_query(company_id, type=type, lite=lite, include_inactive=include_inactive)
     proj = LITE_PROJ if lite else None
     cap = LITE_CAP if lite else FETCH_CAP
-    rows = await db.contacts.find(query, proj).sort("name", 1).to_list(cap)
+    rows = await db.contacts.find({**query, "company_id": company_id}, proj).sort("name", 1).to_list(cap)
     return list(rows or [])
 
 

@@ -136,15 +136,17 @@ def stamp_search_balances(contacts: Optional[Iterable[dict]], rates: Optional[di
     return out
 
 
-async def sync_contact_balance(db, contact_id: str) -> Tuple[float, Dict[str, Any]]:
+async def sync_contact_balance(db, contact_id: str, *, company_id: str) -> Tuple[float, Dict[str, Any]]:
     """Hareketlerden bakiyeyi yeniden hesapla; kaymayı düzelt. (new_balance, meta) döner."""
-    contact = await db.contacts.find_one({"_id": contact_id})
+    if not str(contact_id or "").strip() or not str(company_id or "").strip():
+        return 0.0, {"ok": False, "reason": "missing"}
+    contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
     if not contact:
         return 0.0, {"ok": False, "reason": "missing"}
 
-    invoices = await db.invoices.find({"contact_id": contact_id}).to_list(5000)
-    bank_txs = await db.bank_transactions.find({"contact_id": contact_id}).to_list(5000)
-    partner_txs = await db.partner_transactions.find({"contact_id": contact_id}).to_list(2000)
+    invoices = await db.invoices.find({"company_id": company_id, "contact_id": contact_id}).to_list(5000)
+    bank_txs = await db.bank_transactions.find({"company_id": company_id, "contact_id": contact_id}).to_list(5000)
+    partner_txs = await db.partner_transactions.find({"company_id": company_id, "contact_id": contact_id}).to_list(2000)
 
     movement = compute_contact_balance(
         opening_balance=0.0,
@@ -157,7 +159,7 @@ async def sync_contact_balance(db, contact_id: str) -> Tuple[float, Dict[str, An
     if opening is None and contact.get("opening_balance_source"):
         opening = infer_opening_balance(stored, movement)
         await db.contacts.update_one(
-            {"_id": contact_id},
+            {"_id": contact_id, "company_id": company_id},
             {"$set": {"opening_balance": opening}},
         )
     opening = _num(opening)
@@ -178,7 +180,7 @@ async def sync_contact_balance(db, contact_id: str) -> Tuple[float, Dict[str, An
     }
     if meta["repaired"]:
         await db.contacts.update_one(
-            {"_id": contact_id},
+            {"_id": contact_id, "company_id": company_id},
             {"$set": {"balance": live, "balance_synced_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}},
         )
     return live, meta
