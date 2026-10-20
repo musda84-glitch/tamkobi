@@ -492,7 +492,7 @@ class TestIngest:
             "received_at": "2026-09-02T00:00:00",
         })
         db.incoming_edoc_xml.docs.append({"_id": "dup-2", "company_id": "comp1", "xml": "<Invoice/>"})
-        r = asyncio.run(edocs.list_inbox("comp1", user={"company_ids": ["comp1"], "active_company_id": "comp1"}))
+        r = asyncio.run(edocs.list_inbox("comp1", user={"company_ids": ["comp1"], "active_company_id": "comp1", "role": "admin"}))
         assert len(r["items"]) == 1
         assert r["items"][0]["id"] == "dup-2"
         assert r["counts"]["approved"] == 1
@@ -513,7 +513,7 @@ class TestRepair:
 
     def test_inbox_reports_blank_count(self, db):
         self._blank(db, 2)
-        assert asyncio.run(edocs.list_inbox("comp1", user={"company_ids": ["comp1"], "active_company_id": "comp1"}))["blank"] == 2
+        assert asyncio.run(edocs.list_inbox("comp1", user={"company_ids": ["comp1"], "active_company_id": "comp1", "role": "admin"}))["blank"] == 2
 
     def test_reparse_recovers_from_stored_xml(self, db):
         asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL))
@@ -578,7 +578,7 @@ class TestInboxAuth:
         async def user_from_token(token):
             if token != "tok":
                 raise HTTPException(status_code=401, detail="Geçersiz oturum anahtarı")
-            base = {"company_ids": ["comp1"], "active_company_id": "comp1", "is_super_admin": False}
+            base = {"company_ids": ["comp1"], "active_company_id": "comp1", "is_super_admin": False, "role": "admin"}
             base.update(kw)
             return base
         return user_from_token

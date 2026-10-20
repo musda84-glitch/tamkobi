@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
+import rbac
 import saas
 import tenant_access
 from auth_utils import session_token
@@ -533,9 +534,49 @@ def _clean(d: dict) -> dict:
     d = dict(d); d["id"] = d.pop("_id"); d.pop("source_meta", None); return d
 
 
+_INBOX_MODULE = "/edoc-inbox"
+_INBOX_DENIED = "Bu işlem için yetkiniz yok."
+
+
+def _inbox_role_unrestricted(user: dict) -> bool:
+    """Süper admin / admin / owner gelen kutuyu rol belgesi olmadan açar."""
+    if user.get("is_super_admin"):
+        return True
+    role = str(user.get("role") or "").strip().lower()
+    return role in ("admin", "owner")
+
+
+async def _require_inbox_view(user: Optional[dict], cid: str, need: str = "view") -> None:
+    """Rol belgesinde /edoc-inbox seviyesi. Çözülemezse 403 (fail closed).
+
+    Middleware GET isteklerinde modül bakmaz; bu kontrol yalnız gelen kutu okuma
+    ve bu dosyadaki XML/PDF/yeniden okuma uçlarındadır.
+    """
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=403, detail=_INBOX_DENIED)
+    if _inbox_role_unrestricted(user):
+        return
+    company_id = str(cid or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=403, detail=_INBOX_DENIED)
+    try:
+        role_doc = await rbac.role_for(user, company_id)
+    except Exception:
+        logger.exception("edoc inbox permission check failed")
+        raise HTTPException(status_code=403, detail=_INBOX_DENIED)
+    if not isinstance(role_doc, dict):
+        raise HTTPException(status_code=403, detail=_INBOX_DENIED)
+    perms = role_doc.get("permissions")
+    if not isinstance(perms, dict) or not perms:
+        raise HTTPException(status_code=403, detail=_INBOX_DENIED)
+    if not rbac.level_allows(perms.get(_INBOX_MODULE), need):
+        raise HTTPException(status_code=403, detail=_INBOX_DENIED)
+
+
 @router.get("/edocs/inbox")
 async def list_inbox(company_id: Optional[str] = None, status: Optional[str] = None, user: dict = Depends(_user_dep)):
     cid = tenant_access.resolve_company_id(user, company_id)
+    await _require_inbox_view(user, cid, "view")
     await merge_duplicate_edocs(cid)
     q: Dict[str, Any] = {"company_id": cid}
     if status:
@@ -551,13 +592,14 @@ def is_blank(d: dict) -> bool:
             and not (d.get("supplier") or {}).get("tax_id") and not float(d.get("grand_total") or 0))
 
 
-async def require_inbox_company(request: Request, company_id: Optional[str] = None) -> str:
+async def require_inbox_company(request: Request, company_id: Optional[str] = None, need: str = "view") -> str:
     """Ham XML / yeniden okuma / temizlik oturumsuz açılamaz.
 
     Kullanıcı, `session_token`'ın kabul ettiği aynı tokendan çözülür —
     `get_current_user` çağrılmaz. Aksi halde boş `Authorization: Bearer `
     çereze düşülüp kap geçer, sonra `get_current_user` boş Bearer'ı görünce
     demo yöneticiye iner. Şirket sorgudan olduğu gibi kabul edilmez.
+    Çözülen kullanıcı gelen kutu modül seviyesini de geçmek zorundadır.
     """
     token = session_token(request)
     if not token:
@@ -571,9 +613,11 @@ async def require_inbox_company(request: Request, company_id: Optional[str] = No
     if user.get("is_super_admin"):
         if not cid:
             raise HTTPException(status_code=400, detail="Şirket belirtilmedi.")
+        await _require_inbox_view(user, cid, need)
         return cid
     if not cid or cid not in allowed:
         raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+    await _require_inbox_view(user, cid, need)
     return cid
 
 
@@ -711,7 +755,7 @@ async def reparse_inbox(company_id: str):
 
 @router.post("/edocs/inbox/reparse")
 async def reparse_inbox_route(request: Request, company_id: Optional[str] = None):
-    return await reparse_inbox(await require_inbox_company(request, company_id))
+    return await reparse_inbox(await require_inbox_company(request, company_id, need="edit"))
 
 
 async def cleanup_inbox(company_id: str):
@@ -726,7 +770,7 @@ async def cleanup_inbox(company_id: str):
 
 @router.post("/edocs/inbox/cleanup")
 async def cleanup_inbox_route(request: Request, company_id: Optional[str] = None):
-    return await cleanup_inbox(await require_inbox_company(request, company_id))
+    return await cleanup_inbox(await require_inbox_company(request, company_id, need="edit"))
 
 
 async def _set_lines_core(doc_id: str, req: Dict[str, Any], user: dict):
@@ -995,7 +1039,7 @@ async def process_pending_for_company(company_id: str, req: Optional[Dict[str, A
 @router.post("/edocs/inbox/process-pending")
 async def process_pending_edocs(request: Request, company_id: Optional[str] = None, req: Dict[str, Any] = None):
     """Bekleyen (okunabilir) belgeleri BizimHesap gibi toplu içeri alır."""
-    cid = await require_inbox_company(request, company_id)
+    cid = await require_inbox_company(request, company_id, need="edit")
     return await process_pending_for_company(cid, req)
 
 
