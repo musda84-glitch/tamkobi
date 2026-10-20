@@ -112,11 +112,56 @@ def distribute_landed(data: Dict[str, Any]) -> List[dict]:
     return items
 
 
+def _file_prefix(kind: str) -> str:
+    return "ITH" if kind == "import" else "IHR"
+
+
+def _file_seq(number: Any, prefix: str, year: str) -> Optional[int]:
+    """IHR-YYYY-NNNN / ITH-YYYY-NNNN sonekini sayıya çevirir. Sayısal olmayan sonek yok sayılır."""
+    head = f"{prefix}-{year}-"
+    text = str(number or "")
+    if not text.startswith(head):
+        return None
+    suffix = text[len(head):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+async def _max_file_seq(company_id: str, prefix: str, year: str) -> int:
+    """^{prefix}-{yıl}-\\d+$ numaralarının sayısal en büyüğü. Yoksa 0."""
+    pattern = rf"^{prefix}-{year}-\d+$"
+    best = 0
+    cursor = _db.trade_files.find(
+        {"company_id": company_id, "file_number": {"$regex": pattern}},
+        {"file_number": 1},
+    )
+    rows = await cursor.to_list(None) if hasattr(cursor, "to_list") else list(cursor)
+    for row in rows or []:
+        seq = _file_seq((row or {}).get("file_number"), prefix, year)
+        if seq is not None and seq > best:
+            best = seq
+    return best
+
+
 async def _next_file_number(company_id: str, kind: str) -> str:
-    prefix = "ITH" if kind == "import" else "IHR"
+    """Atomik dış ticaret dosya no. Silinen kayıt ve eşzamanlı istek aynı numarayı vermez.
+
+    Anahtar TRADE-{IHR|ITH}-{yıl}-{company_id}. İlk çağrı o yılın
+    ^{prefix}-{yıl}-\\d+$ eşleşmelerinin sayısal en büyüğünden tohumlanır;
+    sonraki çağrılar $inc ile ilerler. Format IHR-YYYY-NNNN / ITH-YYYY-NNNN kalır.
+    """
+    prefix = _file_prefix(kind)
     year = datetime.now(timezone.utc).strftime("%Y")
-    n = await _db.trade_files.count_documents({"company_id": company_id, "kind": kind, "file_number": {"$regex": f"^{prefix}-{year}-"}}) + 1
-    return f"{prefix}-{year}-{str(n).zfill(4)}"
+    key = f"TRADE-{prefix}-{year}-{company_id}"
+    if not await _db.counters.find_one({"_id": key}):
+        seed = await _max_file_seq(company_id, prefix, year)
+        await _db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+    doc = await _db.counters.find_one_and_update(
+        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+    )
+    seq = int((doc or {}).get("seq") or 1)
+    return f"{prefix}-{year}-{str(seq).zfill(4)}"
 
 
 def _require_company_id(req: Dict[str, Any], existing: Optional[dict] = None) -> str:
