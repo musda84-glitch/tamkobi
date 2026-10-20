@@ -411,7 +411,7 @@ class TestRefreshOutbound:
                 "get_document_viewer_link",
                 AsyncMock(return_value={"url": "https://isnet.example/view?k=1", "html_url": "https://isnet.example/view?k=1", "pdf_url": ""}),
             ):
-                out = await e_invoice.resolve_gib_document_url("inv1")
+                out = await e_invoice.resolve_gib_document_url("inv1", company_id="c1")
             assert out["url"].startswith("https://isnet.example")
             assert out["source"] == "viewer_link"
 
@@ -485,7 +485,7 @@ class TestFetchIntegratorXml:
                 "download_invoice_xml",
                 AsyncMock(side_effect=HTTPException(status_code=404, detail="İşNet XML anahtarı (key) bulunamadı.")),
             ):
-                out = await e_invoice.fetch_integrator_xml("inv_xml")
+                out = await e_invoice.fetch_integrator_xml("inv_xml", company_id="c1")
             assert out is None
 
         asyncio.get_event_loop().run_until_complete(_run())

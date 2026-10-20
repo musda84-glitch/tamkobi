@@ -40,6 +40,6 @@ def test_fetch_integrator_pdf_passes_incoming_direction():
 
     dl = AsyncMock(return_value=b"%PDF-1.4 incoming")
     with patch("e_invoice.isnet.download_invoice_pdf", dl):
-        out = _run(e_invoice.fetch_integrator_pdf("inv_in"))
+        out = _run(e_invoice.fetch_integrator_pdf("inv_in", company_id="c1"))
     assert out.startswith(b"%PDF")
     assert dl.await_args.kwargs.get("direction") == "Incoming"

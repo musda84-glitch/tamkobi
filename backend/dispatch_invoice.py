@@ -21,13 +21,15 @@ async def find_existing_invoice_for_dispatch(db, dispatch: Dict[str, Any]) -> Op
     """İrsaliyeye zaten bağlı veya aynı siparişten üretilmiş satış faturasını bul."""
     if not dispatch:
         return None
-    cid = dispatch.get("company_id")
+    cid = str(dispatch.get("company_id") or "").strip()
+    if not cid:
+        return None
     did = dispatch.get("_id") or dispatch.get("id")
 
     async def load_ok(iid: Any) -> Optional[Dict[str, Any]]:
         if not iid:
             return None
-        inv = await db.invoices.find_one({"_id": iid})
+        inv = await db.invoices.find_one({"_id": iid, "company_id": cid})
         return inv if _is_sales_invoice(inv) else None
 
     for key in ("converted_invoice_id", "invoice_id"):
@@ -36,7 +38,7 @@ async def find_existing_invoice_for_dispatch(db, dispatch: Dict[str, Any]) -> Op
             return found
 
     ref = str(dispatch.get("invoice_ref_number") or dispatch.get("converted_invoice_number") or "").strip()
-    if ref and cid:
+    if ref:
         inv = await db.invoices.find_one(
             {"company_id": cid, "invoice_number": ref, "invoice_type": {"$ne": "dispatch"}}
         )
@@ -44,19 +46,26 @@ async def find_existing_invoice_for_dispatch(db, dispatch: Dict[str, Any]) -> Op
             return inv
 
     if did:
-        inv = await db.invoices.find_one({"dispatch_id": did, "invoice_type": {"$ne": "dispatch"}})
+        inv = await db.invoices.find_one(
+            {"company_id": cid, "dispatch_id": did, "invoice_type": {"$ne": "dispatch"}}
+        )
         if _is_sales_invoice(inv):
             return inv
 
     oid = dispatch.get("order_id")
     if oid:
-        order = await db.orders.find_one({"_id": oid})
+        order = await db.orders.find_one({"_id": oid, "company_id": cid})
         if order:
             found = await load_ok(order.get("invoice_id"))
             if found:
                 return found
         inv = await db.invoices.find_one(
-            {"order_id": oid, "invoice_type": {"$ne": "dispatch"}, "status": {"$ne": "cancelled"}}
+            {
+                "company_id": cid,
+                "order_id": oid,
+                "invoice_type": {"$ne": "dispatch"},
+                "status": {"$ne": "cancelled"},
+            }
         )
         if _is_sales_invoice(inv):
             return inv
@@ -65,12 +74,17 @@ async def find_existing_invoice_for_dispatch(db, dispatch: Dict[str, Any]) -> Op
 
 async def link_dispatch_to_invoice(db, dispatch: Dict[str, Any], invoice: Dict[str, Any]) -> Dict[str, Any]:
     """İrsaliye ve faturayı karşılıklı bağla; siparişte fatura yoksa yaz."""
+    if not dispatch or not invoice:
+        return invoice
+    cid = str(dispatch.get("company_id") or "").strip()
+    if not cid or str(invoice.get("company_id") or "") != cid:
+        return invoice
     did = dispatch.get("_id") or dispatch.get("id")
     iid = invoice.get("_id") or invoice.get("id")
     dnum = dispatch.get("invoice_number")
     inum = invoice.get("invoice_number")
     await db.invoices.update_one(
-        {"_id": did},
+        {"_id": did, "company_id": cid},
         {
             "$set": {
                 "converted_invoice_id": iid,
@@ -89,14 +103,14 @@ async def link_dispatch_to_invoice(db, dispatch: Dict[str, Any], invoice: Dict[s
     elif not invoice.get("dispatch_number"):
         inv_patch["dispatch_number"] = dnum
     if inv_patch:
-        await db.invoices.update_one({"_id": iid}, {"$set": inv_patch})
+        await db.invoices.update_one({"_id": iid, "company_id": cid}, {"$set": inv_patch})
     oid = dispatch.get("order_id") or invoice.get("order_id")
     if oid:
         await db.orders.update_one(
-            {"_id": oid, "invoice_id": None},
+            {"_id": oid, "company_id": cid, "invoice_id": None},
             {"$set": {"invoice_id": iid, "invoice_number": inum}},
         )
-    return await db.invoices.find_one({"_id": iid}) or invoice
+    return await db.invoices.find_one({"_id": iid, "company_id": cid}) or invoice
 
 
 class MergeBlocked(Exception):
@@ -336,6 +350,8 @@ def _claim_query(dispatch_id: str, company_id: str) -> Dict[str, Any]:
 
 async def _claim_dispatch(db, dispatch: Dict[str, Any], company_id: str, invoice_id: str, invoice_number: str) -> bool:
     did = _doc_id(dispatch)
+    if not str(company_id or "").strip() or not did:
+        return False
     prev = str(dispatch.get("dispatch_status") or "draft")
     if prev == "invoiced":
         prev = "draft"
@@ -347,7 +363,7 @@ async def _claim_dispatch(db, dispatch: Dict[str, Any], company_id: str, invoice
     }}
     coll = db.invoices
     atomic = getattr(coll, "update_one_atomic", None)
-    q = _claim_query(did, company_id)
+    q = {**_claim_query(did, company_id), "company_id": company_id}
     if atomic is not None:
         res = await atomic(q, upd)
     else:
@@ -355,10 +371,13 @@ async def _claim_dispatch(db, dispatch: Dict[str, Any], company_id: str, invoice
     return int(getattr(res, "matched_count", 0) or 0) == 1
 
 
-async def _release_one(db, dispatch_id: str, invoice_id: str, previous_status: str) -> None:
+async def _release_one(db, dispatch_id: str, invoice_id: str, previous_status: str, *, company_id: str) -> None:
+    cid = str(company_id or "").strip()
+    if not cid or not dispatch_id:
+        return
     prev = previous_status if previous_status and previous_status != "invoiced" else "draft"
     await db.invoices.update_one(
-        {"_id": dispatch_id, "converted_invoice_id": invoice_id},
+        {"_id": dispatch_id, "company_id": cid, "converted_invoice_id": invoice_id},
         {"$set": {"dispatch_status": prev}, "$unset": {
             "converted_invoice_id": "",
             "converted_invoice_number": "",
@@ -369,14 +388,17 @@ async def _release_one(db, dispatch_id: str, invoice_id: str, previous_status: s
 
 async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, company_id: str, products: Dict[str, Any], create_invoice) -> Dict[str, Any]:
     """Doğrulanmış irsaliyelerden tek TASLAK satış faturası. Aynı irsaliye ikinci faturaya girmez."""
-    validate_merge_dispatches(dispatches, company_id)
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise MergeBlocked(404, "İrsaliye bulunamadı.")
+    validate_merge_dispatches(dispatches, cid)
     lines = build_merge_lines(dispatches, products or {})
     if not lines:
         raise MergeBlocked(400, "İrsaliyede kalem yok.")
     first = dispatches[0]
     money = _shared_money(dispatches)
     spec = {
-        "company_id": company_id,
+        "company_id": cid,
         "contact_id": first.get("contact_id"),
         "contact_name": first.get("contact_name") or "",
         "contact_tax_id": first.get("contact_tax_id") or "",
@@ -392,33 +414,33 @@ async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, c
     if not invoice_id:
         raise MergeBlocked(500, "Satış faturası oluşturulamadı.")
     header = merge_header(dispatches, invoice_id, invoice_number)
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": header})
+    await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": header})
     claimed: List[tuple] = []
     try:
         for d in dispatches:
             prev = str(d.get("dispatch_status") or "draft")
-            ok = await _claim_dispatch(db, d, company_id, invoice_id, invoice_number)
+            ok = await _claim_dispatch(db, d, cid, invoice_id, invoice_number)
             if not ok:
                 num = d.get("invoice_number") or _doc_id(d)
                 raise MergeBlocked(409, f"İrsaliye zaten faturalanmış: {num}.")
             claimed.append((_doc_id(d), prev))
         for oid in order_ids_of({"order_ids": header.get("order_ids"), "order_id": header.get("order_id")}):
             await db.orders.update_one(
-                {"_id": oid, "invoice_id": None},
+                {"_id": oid, "company_id": cid, "invoice_id": None},
                 {"$set": {"invoice_id": invoice_id, "invoice_number": invoice_number}},
             )
     except Exception:
         for did, prev in claimed:
             try:
-                await _release_one(db, did, invoice_id, prev)
+                await _release_one(db, did, invoice_id, prev, company_id=cid)
             except Exception:
                 pass
         try:
-            await db.invoices.delete_one({"_id": invoice_id})
+            await db.invoices.delete_one({"_id": invoice_id, "company_id": cid})
         except Exception:
             pass
         raise
-    fresh = await db.invoices.find_one({"_id": invoice_id})
+    fresh = await db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     return fresh or {**(created or {}), "_id": invoice_id, "invoice_number": invoice_number, **header}
 
 
@@ -480,6 +502,9 @@ async def release_invoice_dispatches(db, inv: Dict[str, Any]) -> None:
     invoice_id = inv.get("_id") or inv.get("id")
     if not invoice_id:
         return
+    cid = str(inv.get("company_id") or "").strip()
+    if not cid:
+        return
     ids: List[str] = []
     for raw in list(inv.get("dispatch_ids") or []):
         sid = str(raw or "").strip()
@@ -491,8 +516,8 @@ async def release_invoice_dispatches(db, inv: Dict[str, Any]) -> None:
     if not ids:
         return
     for did in ids:
-        row = await db.invoices.find_one({"_id": did})
+        row = await db.invoices.find_one({"_id": did, "company_id": cid})
         if not row or row.get("converted_invoice_id") != invoice_id:
             continue
         prev = str(row.get("dispatch_status_before_invoice") or "draft")
-        await _release_one(db, did, invoice_id, prev)
+        await _release_one(db, did, invoice_id, prev, company_id=cid)

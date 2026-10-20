@@ -624,7 +624,7 @@ async def _fetch_incoming_edoc_pdf(doc: dict, company_id: str) -> bytes:
         try:
             import e_invoice
 
-            remote = await e_invoice.fetch_integrator_pdf(inv_id)
+            remote = await e_invoice.fetch_integrator_pdf(inv_id, company_id=str(doc.get("company_id") or ""))
             if remote:
                 return remote
         except Exception:

@@ -168,10 +168,14 @@ def _unique(used: set, name: str) -> str:
 
 
 async def _list_invoices(company_id: str, date_from: str, date_to: str) -> List[dict]:
-    rows = await _db.invoices.find(invoice_query(company_id, date_from, date_to)).sort("issue_date", 1).to_list(MAX_DOCS)
+    cid = str(company_id or "").strip()
+    if not cid:
+        return []
+    query = {**invoice_query(cid, date_from, date_to), "company_id": cid}
+    rows = await _db.invoices.find(query).sort("issue_date", 1).to_list(MAX_DOCS)
     out = []
     for row in rows:
-        if str(row.get("company_id") or "") != str(company_id):
+        if str(row.get("company_id") or "") != cid:
             continue
         day = _issue_day(row)
         if not day or day < date_from or day > date_to:
@@ -283,10 +287,11 @@ async def _buyer(inv: dict) -> dict:
     return ubl_export._buyer_from(inv, contact)
 
 
-async def _stored_xml(invoice_id: str) -> Optional[bytes]:
-    if not invoice_id:
+async def _stored_xml(invoice_id: str, *, company_id: str) -> Optional[bytes]:
+    cid = str(company_id or "").strip()
+    if not invoice_id or not cid:
         return None
-    stored = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id})
+    stored = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id, "company_id": cid})
     if not stored or not stored.get("xml"):
         return None
     xml = stored["xml"]
@@ -321,7 +326,7 @@ async def _xml_from_integrator(inv: dict, seller: dict, lock: asyncio.Lock, last
     try:
         if _ettn(inv):
             await _pace(lock, last)
-        remote = await e_invoice.fetch_integrator_xml(iid)
+        remote = await e_invoice.fetch_integrator_xml(iid, company_id=str(inv.get("company_id") or ""))
         blob = _as_bytes(remote)
         if blob:
             return _file("xml", blob, "integrator")
@@ -337,7 +342,7 @@ async def _pdf_from_integrator(inv: dict, seller: dict, lock: asyncio.Lock, last
     try:
         if _ettn(inv):
             await _pace(lock, last)
-        remote = await e_invoice.fetch_integrator_pdf(iid)
+        remote = await e_invoice.fetch_integrator_pdf(iid, company_id=str(inv.get("company_id") or ""))
         blob = _as_bytes(remote)
         if blob:
             return _file("pdf", blob, "integrator")
@@ -350,7 +355,7 @@ async def _pdf_from_integrator(inv: dict, seller: dict, lock: asyncio.Lock, last
 async def _xml_fallback(inv: dict, seller: dict, error_code: str = "", error_message: str = "") -> dict:
     try:
         if not _is_incoming(inv):
-            stored = await _stored_xml(_inv_id(inv))
+            stored = await _stored_xml(_inv_id(inv), company_id=str(inv.get("company_id") or ""))
             if stored:
                 return _file("xml", stored, "stored", error_code, error_message)
         return _file("xml", await _local_xml(inv, seller), "local", error_code, error_message)

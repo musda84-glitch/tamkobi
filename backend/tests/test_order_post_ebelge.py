@@ -110,7 +110,7 @@ def test_finalize_create_result_sets_order_invoiced():
             assert out["e_type"] == "e_invoice"
             db.orders.update_one.assert_awaited()
             args = db.orders.update_one.await_args[0]
-            assert args[0] == {"_id": "ord_2"}
+            assert args[0] == {"_id": "ord_2", "company_id": "co"}
             order_set = args[1]["$set"]
             assert order_set["is_invoiced"] is True
             assert order_set["e_type"] == "e_invoice"
@@ -134,6 +134,7 @@ def test_finalize_create_result_defaults_earsiv_when_type_missing():
                 {"status": "success", "einvoice_state": "queued"},
                 "inv_3",
                 order_id="ord_3",
+                company_id="co",
             )
             order_set = db.orders.update_one.await_args[0][1]["$set"]
             assert order_set["e_type"] == "e_archive"

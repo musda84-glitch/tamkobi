@@ -251,7 +251,9 @@ async def invoice_pdf(
         try:
             import e_invoice
 
-            remote = await e_invoice.fetch_integrator_pdf(invoice_id)
+            remote = await e_invoice.fetch_integrator_pdf(
+                invoice_id, company_id=str(inv.get("company_id") or ""),
+            )
             if remote:
                 return Response(
                     remote,
