@@ -188,7 +188,7 @@ def test_bonus_pay_delete_clears_move_and_balance(db):
     })
     db.bank_accounts.docs[0]["current_balance"] = 900.0
 
-    related = _run(linked_moves.prepare_source_trash(db, "personnel_bonus", bid))
+    related = _run(linked_moves.prepare_source_trash(db, "personnel_bonus", bid, company_id="c1"))
     assert related and related[0]["collection"] == "bank_transactions"
     # soft_delete simulation then recalc (production order)
     for block in related:
@@ -218,7 +218,7 @@ def test_payroll_same_pattern(db):
         "_id": "txp", "company_id": "c1", "account_id": "acc1", "type": "outflow", "amount": 50, **link,
     })
     db.bank_accounts.docs[0]["current_balance"] = 950.0
-    related = _run(linked_moves.prepare_source_trash(db, "payroll", pid))
+    related = _run(linked_moves.prepare_source_trash(db, "payroll", pid, company_id="c1"))
     for block in related:
         for d in block["docs"]:
             _run(db[block["collection"]].delete_one({"_id": d["_id"]}))
@@ -240,7 +240,7 @@ def test_loan_and_installment_delete_reverses_all(db):
     })
     db.expenses.docs.append({"_id": "e1", "company_id": "c1", "loan_id": lid, "amount": 30, "total": 30})
     db.bank_accounts.docs[0]["current_balance"] = 1800.0  # +1000 -200
-    related = _run(linked_moves.prepare_source_trash(db, "loan", lid))
+    related = _run(linked_moves.prepare_source_trash(db, "loan", lid, company_id="c1"))
     assert len(related) >= 2  # bank + expenses
     bank_n = sum(len(b["docs"]) for b in related if b["collection"] == "bank_transactions")
     assert bank_n == 2
@@ -276,7 +276,9 @@ def test_installment_unpay_via_reverse_linked(db):
         return "tid"
 
     with patch.object(linked_moves.trash, "soft_delete", new=AsyncMock(side_effect=_sd)):
-        rev = _run(linked_moves.reverse_linked(db, "installment", iid, mode="delete", reason="unpay"))
+        rev = _run(linked_moves.reverse_linked(
+            db, "installment", iid, mode="delete", reason="unpay", company_id="c1",
+        ))
     assert rev["bank"] == 1
     assert db.bank_accounts.docs[0]["current_balance"] == pytest.approx(1000.0, abs=0.01)
     assert not any(t.get("installment_id") == iid for t in db.bank_transactions.docs)
@@ -304,9 +306,9 @@ def test_link_query_scopes_company_id(db):
 
 
 def test_stock_count_reverse(db):
-    db.products.docs.append({"_id": "prod1", "stock_quantity": 10})
+    db.products.docs.append({"_id": "prod1", "company_id": "c1", "stock_quantity": 10})
     sc = {
-        "_id": "sc1", "status": "completed", "applied": True, "name": "Sayım",
+        "_id": "sc1", "company_id": "c1", "status": "completed", "applied": True, "name": "Sayım",
         "items": [{"product_id": "prod1", "product_name": "X", "expected": 8, "counted": 10}],
     }
     n = _run(linked_moves.reverse_applied_stock_count(db, sc))

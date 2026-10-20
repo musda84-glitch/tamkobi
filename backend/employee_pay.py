@@ -283,9 +283,20 @@ async def accrue_allowances(
 ) -> Dict[str, Any]:
     """Hak ediş tarihinde yemek/yol masrafını (ödenmemiş) yazar. Aynı ay tekrar etmez."""
     today = partner_pay.parse_iso_date(as_of) or istanbul_today()
-    q: Dict[str, Any] = {"company_id": company_id}
+    cid = str(company_id or "").strip()
+    if not cid:
+        return {
+            "status": "success",
+            "as_of": today.isoformat(),
+            "posted": [],
+            "skipped": [],
+            "posted_count": 0,
+            "scheduled_date": None,
+            "message": "Yazılacak yeni yemek/yol hakkı yok.",
+        }
+    q: Dict[str, Any] = {"company_id": cid}
     if employee_id:
-        q = {"_id": employee_id}
+        q["_id"] = employee_id
     cursor = db.employees.find(q)
     employees = await cursor.to_list(500) if hasattr(cursor, "to_list") else list(cursor)
     posted: List[dict] = []
@@ -323,8 +334,10 @@ async def accrue_allowances(
                     amount = 0.0
                 if amount <= 0:
                     continue
+                emp_cid = str(emp.get("company_id") or cid)
                 exists = await db.expenses.find_one({
                     "employee_id": emp["_id"],
+                    "company_id": emp_cid,
                     "category": cat,
                     "allowance_period": per,
                     "source": "employee_allowance",
@@ -376,6 +389,7 @@ async def accrue_allowances(
 
 
 async def accrue_due_for_all_companies(db, as_of: Optional[str] = None, generate_payroll_fn=None) -> Dict[str, Any]:
+    # tenant-ok değil: zamanlayıcı tüm şirketleri tarar; her satırın company_id'si ile şirket bazlı işleme devreder.
     cursor = db.employees.find({})
     employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
     seen = set()
@@ -406,6 +420,7 @@ async def scheduler_loop(db, generate_payroll_fn=None):
             log.warning("employee allowance scheduler: %s", exc)
         try:
             import expenses as exp_mod
+            # tenant-ok değil: zamanlayıcı tüm şirketleri tarar; her satırın company_id'si ile şirket bazlı işleme devreder.
             cursor = db.employees.find({})
             employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
             seen_cid = set()
