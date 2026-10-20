@@ -199,8 +199,10 @@ def _merge_unique(groups: Sequence[Sequence[dict]]) -> List[dict]:
     return [merged[key] for key in order]
 
 
-async def _load_leg(db, query: dict) -> List[dict]:
-    cursor = db.bank_transactions.find(query)
+async def _load_leg(db, query: dict, *, company_id: str) -> List[dict]:
+    if not str(company_id or "").strip():
+        return []
+    cursor = db.bank_transactions.find({**query, "company_id": company_id})
     cursor = cursor.sort(list(TX_SORT))
     rows = await cursor.to_list(FETCH_CAP)
     return list(rows or [])
@@ -209,7 +211,7 @@ async def _load_leg(db, query: dict) -> List[dict]:
 async def load_account_txs(db, company_id: str, account_id: str) -> List[dict]:
     groups = []
     for query in member_queries(company_id, account_id):
-        groups.append(await _load_leg(db, query))
+        groups.append(await _load_leg(db, query, company_id=company_id))
     return _merge_unique(groups)
 
 

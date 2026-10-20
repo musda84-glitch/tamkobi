@@ -169,6 +169,7 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     }
     owner_meta = await apply_customer_card_owner_effect(
         _db, acc, "outflow", posted, exp.get("contact_id"), sign=1,
+        company_id=exp.get("company_id") or (acc or {}).get("company_id") or "",
     )
     if owner_meta:
         tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]

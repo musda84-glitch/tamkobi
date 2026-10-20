@@ -139,20 +139,20 @@ async def reverse_partner_match(db, tx: dict) -> bool:
     return await partner_pay.reverse_one(db, {"related_bank_tx_id": tx["_id"]})
 
 
-async def clear_bank_match_status(db, bank_tx_id: Optional[str]) -> bool:
+async def clear_bank_match_status(db, bank_tx_id: Optional[str], *, company_id: str) -> bool:
     """Ortak/cari tarafı silinince banka satırını eşleşmemiş yap (bakiyeye dokunma).
 
     Partner tx zaten `_reverse_partner_tx` ile geri alındı; burada yalnızca
     match_status / hedef alanları temizlenir — `_unmatch` gibi tekrar reverse yok.
     """
-    if not bank_tx_id:
+    if not bank_tx_id or not str(company_id or "").strip():
         return False
-    tx = await db.bank_transactions.find_one({"_id": bank_tx_id})
+    tx = await db.bank_transactions.find_one({"_id": bank_tx_id, "company_id": company_id})
     if not tx or tx.get("match_status") != "matched":
         return False
     is_inflow = tx.get("type") == "inflow"
     await db.bank_transactions.update_one(
-        {"_id": bank_tx_id},
+        {"_id": bank_tx_id, "company_id": company_id},
         {
             "$set": {
                 "match_status": "unmatched",
@@ -185,11 +185,15 @@ async def resolve_bank_tx_id_for_partner_tx(db, partner_tx: dict) -> Optional[st
     partner_id = partner_tx.get("partner_id")
     if not partner_id:
         return None
+    cid = str(partner_tx.get("company_id") or "").strip()
+    if not cid:
+        return None
     try:
         amount = float(partner_tx.get("amount") or 0)
     except (TypeError, ValueError):
         amount = 0.0
     q: Dict[str, Any] = {
+        "company_id": cid,
         "match_status": "matched",
         "target_account_id": stored_match_target("partner", partner_id),
     }
@@ -203,6 +207,7 @@ async def resolve_bank_tx_id_for_partner_tx(db, partner_tx: dict) -> Optional[st
     # Son çare: tutar+hedef (tarih farklı yazılmış olabilir)
     if amount:
         btx = await db.bank_transactions.find_one({
+            "company_id": cid,
             "match_status": "matched",
             "target_account_id": stored_match_target("partner", partner_id),
             "amount": amount,
@@ -217,4 +222,6 @@ async def clear_bank_match_for_partner_tx(db, partner_tx: dict) -> bool:
     bank_tx_id = await resolve_bank_tx_id_for_partner_tx(db, partner_tx)
     if not bank_tx_id:
         return False
-    return await clear_bank_match_status(db, bank_tx_id)
+    return await clear_bank_match_status(
+        db, bank_tx_id, company_id=str((partner_tx or {}).get("company_id") or ""),
+    )

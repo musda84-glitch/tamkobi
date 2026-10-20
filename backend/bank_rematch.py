@@ -113,11 +113,13 @@ def _apply_kwargs(body: dict, actor: Optional[dict]) -> dict:
     }
 
 
-async def _clear_rematching(db, tx_id: str) -> None:
+async def _clear_rematching(db, tx_id: str, *, company_id: str) -> None:
     """Kilit, _apply_match bitmeden düşerse hareket rematching'de kalmasın."""
+    if not str(company_id or "").strip():
+        return
     try:
         await db.bank_transactions.update_one(
-            {"_id": tx_id, "match_status": "rematching"},
+            {"_id": tx_id, "company_id": company_id, "match_status": "rematching"},
             {"$set": {"match_status": "unmatched"}},
         )
     except Exception:
@@ -149,14 +151,14 @@ async def replace_matched_transaction(
         raise HTTPException(status_code=400, detail="Hareketin şirketi yok.")
     await validate_replace_target(db, company_id, body or {})
     locked = await db.bank_transactions.update_one(
-        {"_id": tx["_id"], "match_status": "matched"},
+        {"_id": tx["_id"], "company_id": company_id, "match_status": "matched"},
         {"$set": {"match_status": "rematching"}},
     )
     if int(getattr(locked, "modified_count", 0) or 0) == 0:
         raise HTTPException(status_code=409, detail="Bu hareket yeniden eşleştiriliyor.")
     try:
         await unmatch(tx, actor)
-        fresh = await db.bank_transactions.find_one({"_id": tx["_id"]})
+        fresh = await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": company_id})
         if not fresh:
             raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
         kwargs = _apply_kwargs(body, actor)
@@ -176,7 +178,7 @@ async def replace_matched_transaction(
         )
     except Exception as exc:
         # Eski eşleşme geri kurulmaz. Hareket unmatched kalır; rematching'de bırakılmaz.
-        await _clear_rematching(db, tx["_id"])
+        await _clear_rematching(db, tx["_id"], company_id=company_id)
         if isinstance(exc, HTTPException):
             raise
         logger.exception("bank rematch apply failed tx=%s", tx.get("_id"))
@@ -228,9 +230,11 @@ async def attach_month_totals(db, company_id: str, rows: List[dict]) -> None:
     totals = {aid: {"month_in": 0.0, "month_out": 0.0, "unmatched_count": 0} for aid in ids}
     if company_id and ids:
         start, end = istanbul_month_bounds()
-        grouped = await db.bank_transactions.aggregate(
-            _month_pipeline(company_id, ids, start, end),
-        ).to_list(None)
+        stages = _month_pipeline(company_id, ids, start, end)
+        grouped = await db.bank_transactions.aggregate([
+            {"$match": {**stages[0]["$match"], "company_id": company_id}},
+            *stages[1:],
+        ]).to_list(None)
         for bucket in grouped or []:
             aid = str(bucket.get("_id") or "")
             if aid not in totals:
