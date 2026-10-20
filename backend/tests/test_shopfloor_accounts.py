@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import logging
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ import rbac  # noqa: E402
 import saas  # noqa: E402
 import server  # noqa: E402
 import shopfloor_accounts as sfa  # noqa: E402
+import shopfloor_pin  # noqa: E402
 from mysql_store import apply_update, match_query, sort_docs  # noqa: E402
 
 COMP_A = "co_a"
@@ -193,6 +195,7 @@ def _seed(db):
         _user("plain-a", COMP_A, role="admin", name="Normal A"),
         _user("linked-a", COMP_A, role="admin", employee_id="emp-1", name="Bagli A"),
         _user("user-b", COMP_B, role="admin", name="Admin B"),
+        _operator_user(),
     ])
     db.production_orders.docs.append({
         "_id": "po-1",
@@ -253,6 +256,33 @@ def _token(uid, role="admin"):
 
 def _auth(uid, role="admin"):
     return {"Authorization": f"Bearer {_token(uid, role)}"}
+
+
+def _operator_user():
+    doc = _user("op-seed", COMP_A, role="admin", name="Op Seed")
+    doc["shopfloor_pin_hash"] = "$2b$12$shopfloorpinhashplaceholder000000000000000000"
+    doc["shopfloor_pin_ver"] = 1
+    return doc
+
+
+def _op_token(name):
+    now = datetime.now(timezone.utc)
+    return shopfloor_pin.issue_operator_token(
+        company_id=COMP_A,
+        atolye_user_id="floor-a",
+        operator_id="op-seed",
+        operator_type="user",
+        operator_name=name,
+        pin_ver=1,
+        exp=now + timedelta(hours=4),
+        now=now,
+    )
+
+
+def _floor(name="Op A"):
+    headers = _auth("floor-a")
+    headers["X-Shopfloor-Operator"] = _op_token(name)
+    return headers
 
 
 def _doc(db, uid):
@@ -538,13 +568,13 @@ def test_work_orders_filtered_and_actions_scoped(api):
     policy = client.get(
         "/api/production/work-orders/pause-policy",
         params={"company_id": COMP_A, "operator_name": "Op A"},
-        headers=floor,
+        headers=_floor("Op A"),
     )
     assert policy.status_code == 200, policy.text
     outside = client.get(
         "/api/production/work-orders/pause-policy",
         params={"company_id": COMP_A, "operator_name": "Op Lazer"},
-        headers=floor,
+        headers=_floor("Op Lazer"),
     )
     assert outside.status_code == 403, outside.text
     plain_policy = client.get(
@@ -592,31 +622,31 @@ def test_work_orders_filtered_and_actions_scoped(api):
     started = client.post(
         "/api/production/work-orders/wo-ready/start",
         json={"operator_name": "Op A"},
-        headers=floor,
+        headers=_floor("Op A"),
     )
     assert started.status_code == 200, started.text
     paused = client.post(
         "/api/production/work-orders/wo-run/pause",
         json={"operator_name": "Op A"},
-        headers=floor,
+        headers=_floor("Op A"),
     )
     assert paused.status_code == 200, paused.text
     finished = client.post(
         "/api/production/work-orders/wo-fin/finish",
         json={"operator_name": "Op Fin", "produced_qty": 1},
-        headers=floor,
+        headers=_floor("Op Fin"),
     )
     assert finished.status_code == 200, finished.text
     trash = client.post(
         "/api/production/work-orders/wo-spaced/trash-request",
         json={"operator_name": "Op A"},
-        headers=floor,
+        headers=_floor("Op A"),
     )
     assert trash.status_code == 200, trash.text
     assigned = client.put(
         "/api/production/work-orders/wo-done-cnc/assign",
         json={"assigned_to": "u", "assigned_name": "Op A"},
-        headers=floor,
+        headers=_floor("Op A"),
     )
     assert assigned.status_code == 200, assigned.text
 

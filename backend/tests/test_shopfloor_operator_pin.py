@@ -1,6 +1,4 @@
-"""Shopfloor operator select requires employee PIN or linked user password + mesaim check-in."""
-import uuid
-
+"""Shopfloor operator select requires a 4-digit PIN (not the login password) + mesaim check-in."""
 from attendance import SHOPFLOOR_REQUIRE_CHECKIN_DETAIL
 from conftest import API, TEST_COMPANY_ID
 
@@ -40,8 +38,12 @@ class TestShopfloorOperatorPin:
 
     def test_wrong_pin_rejected(self):
         s = _admin()
-        r = s.post(f"{API}/production/work-orders/shopfloor-unlock", json={
+        bad_format = s.post(f"{API}/production/work-orders/shopfloor-unlock", json={
             "company_id": TEST_COMPANY_ID, "employee_id": "emp_01", "password": "wrong-pin",
+        }, timeout=20)
+        assert bad_format.status_code == 400, bad_format.text
+        r = s.post(f"{API}/production/work-orders/shopfloor-unlock", json={
+            "company_id": TEST_COMPANY_ID, "employee_id": "emp_01", "password": "0000",
         }, timeout=20)
         assert r.status_code == 401, r.text
 
@@ -50,8 +52,13 @@ class TestShopfloorOperatorPin:
         # emp_03: clear today's attendance if any, then unlock should 403
         emps = s.get(f"{API}/personnel/employees", params={"company_id": TEST_COMPANY_ID}, timeout=20).json()
         emp = next(e for e in emps if e.get("full_name") == "Emre Çetin")
-        # Ensure PIN exists
-        s.post(f"{API}/personnel/employees/{emp['id']}/shopfloor-pin", json={"password": "1234"}, timeout=20)
+        # Ensure PIN exists (1234 API ile yazılamaz; trivial liste)
+        pin_r = s.post(
+            f"{API}/personnel/employees/{emp['id']}/shopfloor-pin",
+            json={"password": "5829"},
+            timeout=20,
+        )
+        assert pin_r.status_code == 200, pin_r.text
         # Wipe today check-in via upsert without check_in (leave)
         from datetime import datetime, timezone
         # Use a fresh employee snapshot: punch leave for today to clear? Better: pick day with no record.
@@ -64,18 +71,18 @@ class TestShopfloorOperatorPin:
             "employee_id": emp["id"], "date": today, "status": "leave", "check_in": None, "check_out": None,
         }, timeout=20)
         r = s.post(f"{API}/production/work-orders/shopfloor-unlock", json={
-            "company_id": TEST_COMPANY_ID, "employee_id": emp["id"], "password": "1234",
+            "company_id": TEST_COMPANY_ID, "employee_id": emp["id"], "password": "5829",
         }, timeout=20)
         assert r.status_code == 403, r.text
         assert SHOPFLOOR_REQUIRE_CHECKIN_DETAIL in (r.json().get("detail") or "")
 
     def test_demo_pin_unlocks_after_check_in(self):
         s = _admin()
-        pin_r = s.post(f"{API}/personnel/employees/emp_01/shopfloor-pin", json={"password": "1234"}, timeout=20)
+        pin_r = s.post(f"{API}/personnel/employees/emp_01/shopfloor-pin", json={"password": "5829"}, timeout=20)
         assert pin_r.status_code == 200, pin_r.text
         _ensure_check_in(s, "emp_01")
         r = s.post(f"{API}/production/work-orders/shopfloor-unlock", json={
-            "company_id": TEST_COMPANY_ID, "employee_id": "emp_01", "password": "1234",
+            "company_id": TEST_COMPANY_ID, "employee_id": "emp_01", "password": "5829",
         }, timeout=20)
         assert r.status_code == 200, r.text
         assert r.json()["operator_name"] == "Ahmet Yılmaz"
@@ -84,7 +91,7 @@ class TestShopfloorOperatorPin:
         s = _admin()
         emps = s.get(f"{API}/personnel/employees", params={"company_id": TEST_COMPANY_ID}, timeout=20).json()
         emp = next(e for e in emps if e.get("full_name") == "Emre Çetin")
-        pin = f"p{uuid.uuid4().hex[:6]}"
+        pin = "2468"
         r = s.post(f"{API}/personnel/employees/{emp['id']}/shopfloor-pin", json={"password": pin}, timeout=20)
         assert r.status_code == 200, r.text
         assert r.json()["has_shopfloor_pin"] is True
@@ -94,8 +101,8 @@ class TestShopfloorOperatorPin:
         }, timeout=20)
         assert ok.status_code == 200, ok.text
         assert ok.json()["operator_name"] == "Emre Çetin"
-        # restore demo pin so other tests stay stable
-        s.post(f"{API}/personnel/employees/{emp['id']}/shopfloor-pin", json={"password": "1234"}, timeout=20)
+        # 1234 API ile yeniden yazılamaz (trivial). Seed hash'i doğrudan durur; bu kart 2468 kalır.
+        s.post(f"{API}/personnel/employees/{emp['id']}/shopfloor-pin", json={"password": "2468"}, timeout=20)
 
     def test_missing_pin_too_short(self):
         s = _admin()
