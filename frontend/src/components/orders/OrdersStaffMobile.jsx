@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../../context/AuthContext";
@@ -94,31 +94,46 @@ export default function OrdersStaffMobile() {
   const [printDoc, setPrintDoc] = useState(null);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const epochRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (epoch, signal) => {
     if (!companyId) return;
     setListLoading(true);
     try {
-      const r = await axios.get(`${API_URL}/orders`, { params: { company_id: companyId } });
+      const r = await axios.get(`${API_URL}/orders`, { params: { company_id: companyId }, signal });
+      if (epoch !== epochRef.current) return;
       setRows(rowsOf(r.data));
       setError("");
     } catch (err) {
+      if (epoch !== epochRef.current) return;
+      if (axios.isCancel?.(err) || err?.code === "ERR_CANCELED" || err?.name === "CanceledError") return;
       setError(err.response?.data?.detail || "Siparişler yüklenemedi.");
     } finally {
-      setListLoading(false);
+      if (epoch === epochRef.current) setListLoading(false);
     }
   }, [companyId]);
 
   useEffect(() => {
-    if (!allowed) return undefined;
-    load();
-    return undefined;
-  }, [allowed, load]);
+    epochRef.current += 1;
+    setRows([]);
+    setOrder(null);
+    setView("list");
+    setError("");
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!allowed || !companyId) return undefined;
+    const epoch = epochRef.current;
+    const controller = new AbortController();
+    load(epoch, controller.signal);
+    return () => controller.abort();
+  }, [allowed, companyId, load]);
 
   const counts = useMemo(() => orderListFilterCounts(rows), [rows]);
   const filtered = useMemo(() => filterOrders(rows, filter, q), [rows, filter, q]);
 
   const openOrder = async (row) => {
+    const epoch = epochRef.current;
     setOrder(row);
     setView("detail");
     setError("");
@@ -127,18 +142,22 @@ export default function OrdersStaffMobile() {
     if (!id) return;
     try {
       const r = await axios.get(`${API_URL}/orders/${id}`);
+      if (epoch !== epochRef.current) return;
       if (r.data && typeof r.data === "object" && !Array.isArray(r.data)) setOrder(r.data);
     } catch (err) {
+      if (epoch !== epochRef.current) return;
       setError(err.response?.data?.detail || "Sipariş yüklenemedi.");
     }
   };
 
   const refreshOrder = async () => {
+    const epoch = epochRef.current;
     const id = orderIdOf(order);
-    await load();
-    if (!id) return;
+    await load(epoch);
+    if (epoch !== epochRef.current || !id) return;
     try {
       const r = await axios.get(`${API_URL}/orders/${id}`);
+      if (epoch !== epochRef.current) return;
       if (r.data) setOrder(r.data);
     } catch { /* liste yenilendi */ }
   };

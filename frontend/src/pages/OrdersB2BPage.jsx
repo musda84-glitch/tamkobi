@@ -44,7 +44,7 @@ import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
-import { OrdersToolbar, ORDER_PAGE_SIZES } from "../components/OrdersToolbar";
+import { OrdersToolbar, ORDER_PAGE_SIZES, orderExportColumns } from "../components/OrdersToolbar";
 import { isOrdersServerPagingEnabled } from "../utils/featureFlags";
 import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
@@ -1520,14 +1520,14 @@ function OrdersB2BPageImpl({ staffMode = false }) {
         return;
       case "download_xlsx": {
         const rows = orderExportRows(ord);
-        exportExcel(rows, ORDER_EXPORT_LINE_COLS, `siparis-${ord.order_number || "order"}`);
+        exportExcel(rows, orderExportColumns(ORDER_EXPORT_LINE_COLS, showPrices), `siparis-${ord.order_number || "order"}`);
         return;
       }
       case "download_pdf": {
         const rows = orderExportRows(ord);
         exportPdf(
           rows,
-          ORDER_EXPORT_LINE_COLS,
+          orderExportColumns(ORDER_EXPORT_LINE_COLS, showPrices),
           `siparis-${ord.order_number || "order"}`,
           `Sipariş ${ord.order_number || ""}`,
           activeCompany?.name || activeCompany?.title || "",
@@ -2029,6 +2029,8 @@ function OrdersB2BPageImpl({ staffMode = false }) {
           bulkBusy={bulkBusy}
           onBulkAction={staffMode ? undefined : bulk}
           showTotal={staffMode ? showPrices : true}
+          showExport={!staffMode}
+          showPrices={showPrices}
           pageSize={pageSize}
           onPageSizeChange={setPageSizePersist}
           pageSizeOptions={pageSizeChoices}
@@ -2617,11 +2619,17 @@ function OrdersStaffBranch() {
   return <OrdersB2BPageImpl staffMode />;
 }
 
-/** /orders. Auth yokken ve personel portal_orders kapalıyken sipariş işlemleri yok. */
+/**
+ * /orders. Fail-closed: user yok (null/undefined) veya rol bilinmiyorsa sipariş işlemi yok.
+ * Admin, owner, manager ve diğer personel olmayan roller yükleme sırasında da eski sayfayı görür.
+ */
 export default function OrdersB2BPage() {
   const { user, loading } = useAuth();
-  if (loading === true || user === null) return null;
-  if (user && isPersonelRole(user) && !hasPortalFeature(user, "portal_orders")) return null;
-  if (user && isOrderStaffMode(user)) return <OrdersStaffBranch />;
-  return <OrdersB2BPageImpl />;
+  const personnel = isPersonelRole(user);
+  const roleKnown = Boolean(user && String(user.role || "").trim());
+  if (roleKnown && !personnel) return <OrdersB2BPageImpl />;
+  if (loading === true || !user) return null;
+  if (personnel && !hasPortalFeature(user, "portal_orders")) return null;
+  if (isOrderStaffMode(user)) return <OrdersStaffBranch />;
+  return null;
 }

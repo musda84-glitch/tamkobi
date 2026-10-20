@@ -1,7 +1,12 @@
+/**
+ * @jest-environment jsdom
+ */
 import React from "react";
-import { act, render, screen } from "@testing-library/react";
-import "@testing-library/jest-dom";
+import { createRoot } from "react-dom/client";
+import { act } from "react";
 import { useIsNarrow } from "./useIsNarrow";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 function Probe() {
   const narrow = useIsNarrow(768);
@@ -18,12 +23,17 @@ test("useIsNarrow follows matchMedia and its change listener", () => {
     removeEventListener: jest.fn(),
   };
   window.matchMedia = jest.fn(() => mql);
-  render(<Probe />);
-  expect(screen.getByTestId("narrow")).toHaveTextContent("no");
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => { root.render(<Probe />); });
+  expect(host.querySelector("[data-testid='narrow']").textContent).toBe("no");
   expect(window.matchMedia).toHaveBeenCalledWith("(max-width: 768px)");
   act(() => {
     mql.matches = true;
     mql.onChange();
   });
-  expect(screen.getByTestId("narrow")).toHaveTextContent("yes");
+  expect(host.querySelector("[data-testid='narrow']").textContent).toBe("yes");
+  act(() => { root.unmount(); });
+  host.remove();
 });
