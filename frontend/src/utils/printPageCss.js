@@ -133,9 +133,8 @@ function receiptCopyCss(a5) {
   const half = `${RECEIPT_HALF_MM}mm`;
   const safePad = `${PRINT_CONTENT_PAD_MM}mm`;
   const a5Sheet = `${RECEIPT_A5_HEIGHT_MM}mm`;
-  /* Sabit height + overflow:hidden, Chrome "Varsayılan" kenar boşluğunda
-     üst başlığı kırpıyordu. Yarım ölçü flex/max-height olarak kalır; içerik
-     border-box içinde ≥8mm boşlukla durur ve taşan satır gizlenmez. */
+  /* A4 yarısı eski sabit ölçüde kalır. Başlık, taşma kuralı değişmeden
+     yalnız padding-top ile sayfa kenarından içeri alınır. */
   const a4Sheets = a5 ? `
   #print-area .receipt-page-single .receipt-half,
   #print-area .receipt-page[data-copy-count="1"] .receipt-half {
@@ -155,33 +154,38 @@ function receiptCopyCss(a5) {
   #print-area .receipt-page[data-copy-count="1"] .receipt-card {
     box-sizing: border-box;
     min-height: calc(${a5Sheet} - ${safePad} - ${safePad});
+  }
+  #print-area .receipt-page-single,
+  #print-area .receipt-page-single .receipt-cheque-table,
+  #print-area .receipt-page-single .receipt-cheque-table th,
+  #print-area .receipt-page-single .receipt-cheque-table td {
+    font-size: 9pt !important;
+  }
+  #print-area .receipt-page-single .receipt-density-compact,
+  #print-area .receipt-page-single .receipt-density-compact .receipt-cheque-table,
+  #print-area .receipt-page-single .receipt-density-compact .receipt-cheque-table th,
+  #print-area .receipt-page-single .receipt-density-compact .receipt-cheque-table td {
+    font-size: 8.5pt !important;
+  }
+  #print-area .receipt-page-single .receipt-density-dense,
+  #print-area .receipt-page-single .receipt-density-dense .receipt-cheque-table,
+  #print-area .receipt-page-single .receipt-density-dense .receipt-cheque-table th,
+  #print-area .receipt-page-single .receipt-density-dense .receipt-cheque-table td {
+    font-size: 8pt !important;
   }` : `
   #print-area .receipt-page[data-copy-count="2"] {
     position: relative;
     display: flex !important;
     flex-direction: column;
-    width: 210mm;
-    box-sizing: border-box;
   }
-  #print-area .receipt-page-pair .receipt-half,
   #print-area .receipt-page[data-copy-count="2"] .receipt-half {
-    box-sizing: border-box;
-    width: 210mm;
-    max-width: 210mm;
-    flex: 0 0 ${half};
+    height: ${half};
     max-height: ${half};
-    height: auto;
-    min-height: 0;
-    margin: 0;
-    overflow: visible;
-    padding: ${safePad};
-    display: flex !important;
-    flex-direction: column;
-  }
-  #print-area .receipt-page-pair .receipt-card,
-  #print-area .receipt-page[data-copy-count="2"] .receipt-card {
+    flex: 0 0 ${half};
+    overflow: hidden;
     box-sizing: border-box;
-    min-height: calc(${half} - ${safePad} - ${safePad});
+    padding: 6mm;
+    padding-top: ${safePad};
   }
   #print-area .receipt-page[data-copy-count="2"] .receipt-cut {
     position: absolute;
@@ -198,18 +202,9 @@ function receiptCopyCss(a5) {
     pointer-events: none;
     background: #fff;
   }
-  #print-area .receipt-page-single .receipt-half,
   #print-area .receipt-page[data-copy-count="1"] .receipt-half {
     box-sizing: border-box;
-    width: 210mm;
-    max-width: 210mm;
-    height: auto;
-    max-height: none;
-    margin: 0;
-    overflow: visible;
-    padding: ${safePad};
-    display: flex !important;
-    flex-direction: column;
+    padding: 6mm;
   }
   #print-area .receipt-page[data-copy-count="1"] {
     break-inside: avoid;
@@ -220,8 +215,11 @@ function receiptCopyCss(a5) {
 ${both(".receipt-cheque-table", `  width: 100%;
   table-layout: fixed;
   border-collapse: collapse;`)}
-${both(".receipt-col-no, .receipt-col-amount", `  white-space: nowrap;`)}
-${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-account, .receipt-company-meta, .receipt-party-meta, .receipt-cheque-table th", `  white-space: normal;
+${both(".receipt-col-no, .receipt-col-amount, .receipt-col-due", `  white-space: nowrap;
+  overflow: visible;
+  word-break: normal;
+  overflow-wrap: normal;`)}
+${both(".receipt-address, .receipt-col-drawer, .receipt-company-meta, .receipt-party-meta", `  white-space: normal;
   overflow: visible;
   overflow-wrap: break-word;
   word-break: normal;`)}
@@ -234,8 +232,8 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
 }
 .receipt-measure {
   width: 210mm;
-  box-sizing: border-box !important;
-  padding: ${safePad} !important;
+  box-sizing: border-box;
+  padding: 6mm;
 }
 .receipt-measure .receipt-title {
   font-size: 11pt !important;
@@ -329,11 +327,10 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
   #print-area .receipt-cheque-table,
   #print-area .receipt-cheque-table th,
   #print-area .receipt-cheque-table td {
-    font-size: 9pt;
+    font-size: 8pt;
     padding: 0.6mm 1mm;
     word-break: normal;
-    overflow-wrap: break-word;
-    white-space: normal;
+    overflow-wrap: normal;
   }
   #print-area .receipt-density-compact {
     font-size: 8.5pt !important;
@@ -344,7 +341,7 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
   #print-area .receipt-density-compact .receipt-cheque-table,
   #print-area .receipt-density-compact .receipt-cheque-table th,
   #print-area .receipt-density-compact .receipt-cheque-table td {
-    font-size: 8.5pt;
+    font-size: 7.5pt;
     padding: 0.45mm 0.7mm;
   }
   #print-area .receipt-density-dense {
@@ -359,7 +356,7 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
   #print-area .receipt-density-dense .receipt-cheque-table,
   #print-area .receipt-density-dense .receipt-cheque-table th,
   #print-area .receipt-density-dense .receipt-cheque-table td {
-    font-size: 8pt;
+    font-size: 7pt;
     padding: 0.3mm 0.5mm;
   }
   #print-area .receipt-density-dense .receipt-sign {
@@ -370,14 +367,30 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
     max-height: 8mm !important;
   }
   #print-area .receipt-cheque-table td.receipt-col-nowrap {
+    font-size: 7pt;
+    padding: 0.4mm 0.5mm;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  #print-area .receipt-cheque-table td.receipt-col-account,
-  #print-area .receipt-cheque-table td.receipt-col-due,
-  #print-area .receipt-cheque-table td.receipt-col-drawer {
+  #print-area .receipt-cheque-table td.receipt-col-account {
+    font-size: 7pt;
+    padding: 0.4mm 0.5mm;
+    font-variant-numeric: tabular-nums;
     white-space: normal;
     overflow-wrap: break-word;
+  }
+  #print-area .receipt-address,
+  #print-area .receipt-cheque-table td.receipt-col-drawer {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+  #print-area .receipt-cheque-table td.receipt-col-due {
+    white-space: nowrap;
+    overflow: visible;
+    overflow-wrap: normal;
+    word-break: normal;
   }
   ${a4Sheets}
 }
@@ -397,12 +410,12 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
 .receipt-measure .receipt-cheque-table,
 .receipt-measure .receipt-cheque-table th,
 .receipt-measure .receipt-cheque-table td {
-  font-size: 9pt;
+  font-size: 8pt;
   padding: 0.6mm 1mm;
 }
 .receipt-measure.receipt-density-compact .receipt-cheque-table td,
 .receipt-measure.receipt-density-compact .receipt-cheque-table th {
-  font-size: 8.5pt;
+  font-size: 7.5pt;
   padding: 0.45mm 0.7mm;
 }
 .receipt-measure.receipt-density-dense .receipt-card {
@@ -413,7 +426,7 @@ ${both(".receipt-address, .receipt-col-drawer, .receipt-col-due, .receipt-col-ac
 }
 .receipt-measure.receipt-density-dense .receipt-cheque-table td,
 .receipt-measure.receipt-density-dense .receipt-cheque-table th {
-  font-size: 8pt;
+  font-size: 7pt;
   padding: 0.3mm 0.5mm;
 }
 .receipt-measure.receipt-density-dense .receipt-logo {

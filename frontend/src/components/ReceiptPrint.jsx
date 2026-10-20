@@ -20,8 +20,8 @@ const CHEQUE_COLS = [
   { key: "no", label: "No", title: "Çek/Senet No", width: "11%" },
   { key: "bank", label: "Banka/Şube", width: "16%" },
   { key: "account", label: "Hesap/IBAN", title: "Hesap No/IBAN", width: "17%" },
-  { key: "drawer", label: "Keşideci", width: "24%" },
-  { key: "due", label: "Vade", width: "10%" },
+  { key: "drawer", label: "Keşideci", width: "20%" },
+  { key: "due", label: "Vade", width: "14%" },
   { key: "amount", label: "Tutar", width: "14%" },
 ];
 
@@ -160,7 +160,7 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
                     <td className="receipt-col-bank p-1 border-b border-slate-200">{bankBranch(ch)}</td>
                     <td className="receipt-col-account p-1 border-b border-slate-200">{account}</td>
                     <td className="receipt-col-drawer p-1 border-b border-slate-200">{drawer}</td>
-                    <td className="receipt-col-due p-1 border-b border-slate-200">{due}</td>
+                    <td className="receipt-col-due receipt-col-nowrap p-1 border-b border-slate-200">{due}</td>
                     <td className="receipt-col-amount receipt-col-nowrap p-1 border-b border-slate-200 text-right font-bold">{amount}</td>
                   </tr>
                 );

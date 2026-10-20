@@ -248,12 +248,13 @@ test("3 çek tablosu sabit kolon, keşideci ve vade tam, tutar tek satır", () =
   const table = document.querySelector("[data-testid=receipt-cheque-table]");
   const cols = [...table.querySelectorAll("col")];
   expect(cols).toHaveLength(7);
-  expect(cols.map((col) => col.style.width)).toEqual(["8%", "11%", "16%", "17%", "24%", "10%", "14%"]);
+  expect(cols.map((col) => col.style.width)).toEqual(["8%", "11%", "16%", "17%", "20%", "14%", "14%"]);
   const row = table.querySelector("tbody tr");
   expect(row.querySelector(".receipt-col-drawer").textContent).toBe(drawer);
   expect(row.querySelector(".receipt-clamp")).toBeNull();
   expect(row.querySelector(".receipt-col-no").className).toContain("receipt-col-nowrap");
-  expect(row.querySelector(".receipt-col-due").className).not.toMatch(/nowrap|truncate|ellipsis|line-clamp|receipt-clamp/);
+  expect(row.querySelector(".receipt-col-due").className).toContain("receipt-col-nowrap");
+  expect(row.querySelector(".receipt-col-due").className).not.toMatch(/truncate|ellipsis|line-clamp|receipt-clamp/);
   expect(row.querySelector(".receipt-col-amount").className).toContain("receipt-col-nowrap");
   expect(row.querySelector(".receipt-col-account").textContent).toContain("TR330006100519786457841326");
   expect(row.querySelector(".receipt-col-due").textContent).toBe("30.11.2026");
@@ -261,8 +262,8 @@ test("3 çek tablosu sabit kolon, keşideci ve vade tam, tutar tek satır", () =
   const addresses = [...document.querySelectorAll(".receipt-address")].map((el) => el.textContent);
   expect(addresses).toContain(`${companyAddress} ${companyCity}`);
   expect(addresses).toContain(`${partyAddress} ${partyCity}`);
-  document.querySelectorAll(".receipt-address, .receipt-col-drawer, .receipt-col-due").forEach((el) => {
-    expect(el.className).not.toMatch(/truncate|ellipsis|line-clamp|receipt-clamp/);
+  document.querySelectorAll(".receipt-address, .receipt-col-drawer").forEach((el) => {
+    expect(el.className).not.toMatch(/truncate|ellipsis|line-clamp|receipt-clamp|nowrap/);
   });
   expect(document.querySelector("[class*='ellipsis'], [class*='truncate'], [class*='line-clamp'], .receipt-clamp, .receipt-clamp-2")).toBeNull();
   const companyMeta = document.querySelector(".receipt-company-meta");
