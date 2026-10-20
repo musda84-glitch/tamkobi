@@ -1,4 +1,4 @@
-import { employeeHasSystemUser, operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan } from "./shopFloorActions";
+import { employeeHasSystemUser, operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan, workOrderQtyLabel } from "./shopFloorActions";
 
 describe("workOrderFinishPlan", () => {
   test("uses material needed for material-linked step", () => {
@@ -63,6 +63,65 @@ describe("workOrderFinishPlan", () => {
         materials: [],
       }),
     ).toEqual({ qty: 3, unit: "Adet", isMaterial: true, materialName: null });
+  });
+});
+
+describe("workOrderQtyLabel", () => {
+  test("uses Adet when unit is missing but planned quantity exists", () => {
+    expect(workOrderQtyLabel({ planned_quantity: 5 })).toBe("5 Adet");
+    expect(workOrderQtyLabel({ planned_quantity: 5, unit: undefined })).toBe("5 Adet");
+    expect(workOrderQtyLabel({ planned_quantity: 5, unit: null })).toBe("5 Adet");
+    expect(workOrderQtyLabel({ planned_quantity: 5, unit: "" })).toBe("5 Adet");
+    expect(workOrderQtyLabel({ planned_quantity: 5, unit: "M2" })).toBe("5 M2");
+  });
+
+  test("returns null when quantity is missing so the screen never shows undefined", () => {
+    for (const w of [
+      {},
+      { planned_quantity: null, unit: null },
+      { planned_quantity: undefined, unit: undefined },
+      { planned_quantity: "", unit: "" },
+      { unit: "Adet" },
+      { finish_unit: "Metre" },
+    ]) {
+      const label = workOrderQtyLabel(w);
+      expect(label == null || label === "").toBe(true);
+      expect(String(label ?? "")).not.toMatch(/undefined|null|NaN/);
+    }
+  });
+
+  test("prefers finish_unit over unit", () => {
+    expect(workOrderQtyLabel({ planned_quantity: 5, unit: "Adet", finish_unit: "Metre" })).toBe("5 Metre");
+    expect(workOrderQtyLabel({ planned_quantity: 5, unit: "Adet", finish_unit: "  " })).toBe("5 Adet");
+  });
+
+  test("material plan keeps the material qty and appends the finished-goods line", () => {
+    const w = {
+      planned_quantity: 2,
+      unit: "Adet",
+      material_product_id: "m1",
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+    };
+    const plan = workOrderFinishPlan(w);
+    expect(plan.isMaterial).toBe(true);
+    expect(workOrderQtyLabel(w, plan)).toBe("16 Metre · mamul 2 Adet");
+  });
+
+  test("material plan uses finish_unit on the mamul line and omits it when quantity is missing", () => {
+    const withFinish = {
+      planned_quantity: 2,
+      unit: "Adet",
+      finish_unit: "Takım",
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+    };
+    expect(workOrderQtyLabel(withFinish, workOrderFinishPlan(withFinish))).toBe("16 Metre · mamul 2 Takım");
+
+    const missing = {
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+    };
+    const label = workOrderQtyLabel(missing, workOrderFinishPlan(missing));
+    expect(label).toBe("16 Metre");
+    expect(String(label)).not.toMatch(/undefined|null|NaN/);
   });
 });
 

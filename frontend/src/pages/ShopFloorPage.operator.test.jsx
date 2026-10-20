@@ -616,6 +616,90 @@ test("logout clears the operator and change-cancel keeps the current one", async
   expect(host.querySelector('[data-testid="wo-start-URT-R-1"]').disabled).toBe(false);
 });
 
+function expectNoMissingQtyTokens(text) {
+  expect(text).not.toMatch(/undefined/);
+  expect(text).not.toMatch(/null/);
+  expect(text).not.toMatch(/NaN/);
+}
+
+test("work order without quantity or unit does not render 0 undefined", async () => {
+  mockGets([
+    wo({
+      id: "bare",
+      order_code: "URT-BARE",
+      status: "ready",
+      unit: undefined,
+      planned_quantity: undefined,
+      materials: [],
+    }),
+    wo({
+      id: "mat",
+      order_code: "URT-MAT",
+      status: "in_progress",
+      step_no: 2,
+      step_count: 2,
+      unit: undefined,
+      planned_quantity: undefined,
+      material_product_id: "m1",
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+    }),
+    wo({
+      id: "qty",
+      order_code: "URT-QTY",
+      status: "paused",
+      step_no: 1,
+      step_count: 1,
+      unit: undefined,
+      planned_quantity: 5,
+      material_product_id: "m1",
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 8, unit: "Metre" }],
+    }),
+  ]);
+  await renderPage();
+
+  const bare = host.querySelector('[data-testid="wo-plan-URT-BARE-1"]');
+  expect(bare).not.toBeNull();
+  expectNoMissingQtyTokens(bare.textContent);
+  expect(bare.textContent.trim()).toBe("");
+
+  const mat = host.querySelector('[data-testid="wo-plan-URT-MAT-2"]');
+  expect(mat.textContent).toContain("16");
+  expect(mat.textContent).toContain("Metre");
+  expect(mat.textContent).not.toContain("mamul");
+  expectNoMissingQtyTokens(mat.textContent);
+
+  const qty = host.querySelector('[data-testid="wo-plan-URT-QTY-1"]');
+  expect(qty.textContent).toContain("8");
+  expect(qty.textContent).toContain("Metre");
+  expect(qty.textContent).toContain("mamul 5 Adet");
+  expectNoMissingQtyTokens(qty.textContent);
+
+  await loginAsMuhammed();
+  await act(async () => {
+    host.querySelector('[data-testid="wo-finish-URT-MAT-2"]').click();
+  });
+  const missingStep = host.querySelector('[data-testid="wo-finish-last-step"]');
+  expect(missingStep).not.toBeNull();
+  expect(missingStep.textContent).toContain("mamul stoka yazılır");
+  expect(missingStep.textContent).not.toContain("mamul stoka  yazılır");
+  expectNoMissingQtyTokens(missingStep.textContent);
+  expectNoMissingQtyTokens(host.querySelector('[data-testid="wo-finish-modal"]').textContent);
+
+  await act(async () => {
+    [...host.querySelector('[data-testid="wo-finish-modal"]').querySelectorAll("button")]
+      .find((button) => button.textContent === "İptal")
+      .click();
+  });
+  expect(host.querySelector('[data-testid="wo-finish-modal"]')).toBeNull();
+
+  await act(async () => {
+    host.querySelector('[data-testid="wo-finish-URT-QTY-1"]').click();
+  });
+  const qtyStep = host.querySelector('[data-testid="wo-finish-last-step"]');
+  expect(qtyStep.textContent).toContain("mamul stoka 5 Adet yazılır");
+  expectNoMissingQtyTokens(qtyStep.textContent);
+});
+
 test("tablet mode opens and closes without performance or AI", async () => {
   await renderPage();
   const kiosk = () => host.querySelector('[data-testid="shopfloor-kiosk"]');

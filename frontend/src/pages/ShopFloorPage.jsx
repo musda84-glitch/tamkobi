@@ -7,7 +7,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan } from "../utils/shopFloorActions";
+import { operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan, workOrderQtyLabel } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { formatTrQty } from "../utils/money";
@@ -483,12 +483,15 @@ export default function ShopFloorPage() {
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
         {(() => {
           const plan = workOrderFinishPlan(w);
+          const label = workOrderQtyLabel(w, plan);
+          const mark = " · mamul ";
+          const at = label ? label.indexOf(mark) : -1;
+          const primary = at >= 0 ? label.slice(0, at) : label;
+          const mamul = at >= 0 ? label.slice(at + mark.length) : null;
           return (
             <span className="font-bold text-slate-900 text-sm" data-testid={`wo-plan-${w.order_code}-${w.step_no}`}>
-              {plan.isMaterial ? `${formatTrQty(plan.qty)} ${plan.unit}` : `${formatTrQty(w.planned_quantity)} ${w.unit}`}
-              {plan.isMaterial && Number(w.planned_quantity) > 0 ? (
-                <span className="ml-1 font-semibold text-slate-400">· mamul {formatTrQty(w.planned_quantity)} {w.unit}</span>
-              ) : null}
+              {primary}
+              {mamul ? <span className="ml-1 font-semibold text-slate-400">· mamul {mamul}</span> : null}
             </span>
           );
         })()}
@@ -786,6 +789,7 @@ export default function ShopFloorPage() {
       )}
           {finishing && (() => {
         const plan = workOrderFinishPlan(finishing);
+        const mamulQty = workOrderQtyLabel(finishing, { isMaterial: false });
         const entered = Number(fin.produced_qty) + Number(fin.scrap_qty || 0);
         const overPlan = entered > Number(plan.qty || 0) + 1e-9;
         const underPlan = Number(plan.qty || 0) > 0 && entered < Number(plan.qty || 0) - 1e-9;
@@ -816,9 +820,9 @@ export default function ShopFloorPage() {
             )}
             <input value={fin.notes} onChange={(e) => setFin({ ...fin, notes: e.target.value })} placeholder="Not (isteğe bağlı)" className="w-full border rounded-xl p-3" data-testid="wo-finish-notes" />
             {finishing.step_no === finishing.step_count && (
-              <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">
+              <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2" data-testid="wo-finish-last-step">
                 Son adım: {plan.isMaterial
-                  ? `girilen hammadde stoğundan düşülür; mamul stoka ${finishing.planned_quantity} ${finishing.unit} yazılır`
+                  ? `girilen hammadde stoğundan düşülür; ${mamulQty ? `mamul stoka ${mamulQty} yazılır` : "mamul stoka yazılır"}`
                   : "üretilen miktar mamul stoğa eklenir, hammaddeler buna göre düşülür (fazla/eksik dahil)"}.
               </p>
             )}

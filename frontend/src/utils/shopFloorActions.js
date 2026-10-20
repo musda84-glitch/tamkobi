@@ -1,4 +1,7 @@
+import { formatTrQty } from "./money";
+
 const DISCRETE_UNITS = new Set(["adet", "ad", "takım", "takim", "çift", "cift", "koli", "kutu", "paket", "set", "parça", "parca"]);
+const BAD_QTY_TOKEN = /^(undefined|null|nan)$/i;
 
 export function isDiscreteUnit(unit) {
   const u = String(unit || "").trim().toLocaleLowerCase("tr");
@@ -53,6 +56,46 @@ export function workOrderFinishPlan(w) {
     isMaterial: false,
     materialName: null,
   };
+}
+
+function displayUnit(...candidates) {
+  for (const raw of candidates) {
+    if (raw == null) continue;
+    const s = String(raw).trim();
+    if (!s || BAD_QTY_TOKEN.test(s)) continue;
+    return s;
+  }
+  return "Adet";
+}
+
+/** null / undefined / boş miktar yok sayılır; 0 gerçek miktardır. */
+function hasQty(value) {
+  if (value == null) return false;
+  if (typeof value === "string" && value.trim() === "") return false;
+  const n = Number(value);
+  return Number.isFinite(n);
+}
+
+function finishedGoodsQtyLabel(w) {
+  if (!hasQty(w?.planned_quantity)) return null;
+  const unit = displayUnit(w?.finish_unit, w?.unit);
+  return `${formatTrQty(w.planned_quantity)} ${unit}`.trim();
+}
+
+/**
+ * Atölye kartı miktar etiketi.
+ * Birim: finish_unit → unit → "Adet".
+ * Miktar yoksa null (ekranda "0 undefined" yok).
+ */
+export function workOrderQtyLabel(w, plan) {
+  const finished = finishedGoodsQtyLabel(w);
+  if (plan?.isMaterial) {
+    const unit = displayUnit(plan.unit);
+    const main = hasQty(plan.qty) ? `${formatTrQty(plan.qty)} ${unit}`.trim() : null;
+    if (main && finished) return `${main} · mamul ${finished}`;
+    return main || finished || null;
+  }
+  return finished || null;
 }
 
 /** İstasyon karşılaştırması (TR). */
