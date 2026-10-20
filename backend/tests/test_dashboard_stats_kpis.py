@@ -237,7 +237,7 @@ def test_critical_stock_counts_match_across_surfaces():
             async def fake_advice(context, message, history=None):
                 return "ok"
 
-            with patch.object(server, "get_financial_ai_advice", fake_advice), patch.object(addons, "require", AsyncMock()):
+            with patch.object(server, "get_financial_ai_advice_result", fake_advice), patch.object(addons, "require", AsyncMock()):
                 advice = await server.ask_financial_ai(
                     server.FinancialAIChatRequest(message="ozet", company_id=CO_STOCK),
                     _user(),
