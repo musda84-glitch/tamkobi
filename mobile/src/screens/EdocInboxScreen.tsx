@@ -30,6 +30,7 @@ const PROCESS_OPTS = { update_stock: true, update_cost: true, allow_unmatched: t
 
 export function EdocInboxScreen() {
   const { client, companyId, can } = useAuth();
+  const canView = can("/edoc-inbox");
   const params = useLocalSearchParams<{ ettn?: string | string[]; id?: string | string[] }>();
   const focusEttn = (Array.isArray(params.ettn) ? params.ettn[0] : params.ettn || "").replace(/…|\.\.\.$/, "");
   const focusId = Array.isArray(params.id) ? params.id[0] : params.id || "";
@@ -47,6 +48,7 @@ export function EdocInboxScreen() {
   const [reason, setReason] = useState("");
 
   const load = useCallback(async () => {
+    if (!canView) return;
     setRefreshing(true);
     try {
       const rows = await get<EdocInboxList>(client, "/edocs/inbox", {
@@ -60,7 +62,7 @@ export function EdocInboxScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [client, companyId, status]);
+  }, [canView, client, companyId, status]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -178,6 +180,14 @@ export function EdocInboxScreen() {
     setRejectFor(null);
     rejectLocal(doc, why);
   };
+
+  if (!canView) {
+    return (
+      <Screen>
+        <ErrorBanner message="Gelen e-fatura yetkiniz yok." />
+      </Screen>
+    );
+  }
 
   return (
     <Screen

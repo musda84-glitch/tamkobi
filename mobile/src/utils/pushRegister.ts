@@ -199,6 +199,32 @@ export async function saveLocalPushState(seen: string[], seeded: boolean): Promi
   if (seeded) await AsyncStorage.setItem(SEEDED_KEY, "1");
 }
 
+/** Sunulan bildirimler, rozet ve yerel "görüldü" durumu. Ağ hatasından bağımsız. */
+export async function clearDevicePushState(): Promise<void> {
+  try {
+    await saveLocalPushState([], false);
+    await AsyncStorage.removeItem(SEEDED_KEY);
+  } catch {
+    /* depolama yoksa çıkış sürer */
+  }
+  const Notifications = await nativeNotifications();
+  if (!Notifications) return;
+  try {
+    if (typeof Notifications.dismissAllNotificationsAsync === "function") {
+      await Notifications.dismissAllNotificationsAsync();
+    }
+  } catch {
+    /* web / test */
+  }
+  try {
+    if (typeof Notifications.setBadgeCountAsync === "function") {
+      await Notifications.setBadgeCountAsync(0);
+    }
+  } catch {
+    /* web / test */
+  }
+}
+
 export async function presentLocalNotification(note: {
   title: string;
   body?: string;
@@ -244,15 +270,21 @@ export async function syncLocalPhoneAlerts(rows: Notification[] | null | undefin
 
 export async function unregisterDevicePush(client: ApiClient): Promise<void> {
   const token = await getStoredPushToken();
-  if (!token) return;
-  try {
-    await post(client, "/notifications/push-token/unregister", { token });
-  } catch {
+  if (token) {
     try {
-      await del(client, "/notifications/push-token", { token });
+      await post(client, "/notifications/push-token/unregister", { token });
     } catch {
-      /* çıkış yine de devam eder */
+      try {
+        await del(client, "/notifications/push-token", { token });
+      } catch {
+        /* ağ hatası: token yine yerelde silinir */
+      }
+    }
+    try {
+      await AsyncStorage.removeItem(TOKEN_KEY);
+    } catch {
+      /* yerel silme başarısız olsa da sunulan bildirimler temizlenir */
     }
   }
-  await AsyncStorage.removeItem(TOKEN_KEY);
+  await clearDevicePushState();
 }

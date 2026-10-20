@@ -127,6 +127,31 @@ export function resolveMobilePath(path?: string | null): string | null {
   return TASK_PATH_MAP[p] || null;
 }
 
+/**
+ * Mobil bildirim href'inin RBAC modül yolu.
+ * Ayrıntı rotaları (/orders/id, /stok) önekle eşleşir. Çözülemezse null.
+ */
+export function modulePathForHref(href?: string | null): string | null {
+  const pathname = String(href || "").split("?")[0];
+  if (!pathname.startsWith("/")) return null;
+  if (pathname === "/" || pathname === "/notifications") return pathname;
+
+  let best: { modulePath: string; length: number; exactKey: boolean } | null = null;
+  for (const [modulePath, mobilePath] of Object.entries(TASK_PATH_MAP)) {
+    if (!modulePath || modulePath === "/") continue;
+    const bases = new Set([modulePath, mobilePath].filter((base) => base && base !== "/"));
+    for (const base of bases) {
+      if (pathname !== base && !pathname.startsWith(`${base}/`)) continue;
+      const exactKey = modulePath === pathname;
+      const length = base.length;
+      if (!best || length > best.length || (length === best.length && exactKey && !best.exactKey)) {
+        best = { modulePath, length, exactKey };
+      }
+    }
+  }
+  return best?.modulePath || null;
+}
+
 export function splitHref(href: string): { pathname: string; params?: Record<string, string> } {
   const [pathname, qs] = href.split("?");
   if (!qs) return { pathname };
