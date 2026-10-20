@@ -125,6 +125,7 @@ export const OrdersToolbar = ({
   statusCounts,
   loadExportRows,
   pageSizeOptions = ORDER_PAGE_SIZES,
+  showTotal = true,
 }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const channels = [...(channelOptions?.length ? channelOptions : new Set((orders || []).map((o) => o.channel || "b2b")))];
@@ -289,7 +290,7 @@ export const OrdersToolbar = ({
     <div className="ml-auto flex items-center gap-3 text-slate-500">
       {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} testidSuffix={variant === "mobile" ? "-m" : ""} />}
       <ExportButtons rows={rows} loadRows={loadExportRows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" testidSuffix={variant === "mobile" ? "-m" : ""} />
-      <div data-testid={variant === "mobile" ? "ord-result-summary-m" : "ord-result-summary"}><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
+      <div data-testid={variant === "mobile" ? "ord-result-summary-m" : "ord-result-summary"}><b className="text-slate-900">{count}</b>{showTotal === false ? " sipariş" : " sipariş · Toplam "}{showTotal === false ? null : <b className="text-slate-900">{formatTrAmount(total)} ₺</b>}</div>
     </div>
   );
 

@@ -22,6 +22,14 @@ export function isPersonelRole(user) {
   return String(user?.role || "").trim().toLowerCase() === "personel";
 }
 
+/** Personel sipariş modunda kalan işlemler (mobil OrderActions staffToolbar ile aynı). */
+export const ORDER_STAFF_ACTIONS = ["print", "missing", "produce", "cargo", "label"];
+
+/** Personel + portal_orders. Sipariş ekranında yalnız beş işlem. Auth yokken kapalı. */
+export function isOrderStaffMode(user) {
+  return isPersonelRole(user) && hasPortalFeature(user, "portal_orders");
+}
+
 export function isSelfPersonnelPath(path) {
   return SELF_PERSONNEL_PATHS.includes(path);
 }
