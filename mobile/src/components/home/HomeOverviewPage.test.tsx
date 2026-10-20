@@ -7,7 +7,7 @@ import { fmtMoney } from "../../utils/money";
 import { goHref } from "../../nav";
 import type { QuickTile } from "../../utils/quickMenu";
 import { HomeOverviewPage } from "./HomeOverviewPage";
-import { DEFAULT_OVERVIEW_SECTION_ORDER } from "./overviewSections";
+import { DEFAULT_OVERVIEW_SECTION_ORDER, type OverviewSectionKey } from "./overviewSections";
 
 const { createRoot } = require("react-dom/client") as {
   createRoot: (container: unknown) => { render: (node: unknown) => void; unmount: () => void };
@@ -345,6 +345,50 @@ describe("HomeOverviewPage", () => {
     expect(findByTestId(view.container, "home-overview-section-projects")).toBeNull();
     expect(findByTestId(view.container, "home-overview-section-today")).toBeTruthy();
     expect(findByTestId(view.container, "home-overview-section-month")).toBeTruthy();
+    await view.unmount();
+  });
+
+  it("renders section wrappers in the saved order", async () => {
+    const order = ["month", "today", "stock", "panels", "production", "projects"] as const;
+    const view = await renderPage({ sectionOrder: order });
+    const sections = collectTestIds(view.container).filter((id) => id.startsWith("home-overview-section-"));
+    expect(sections).toEqual(order.map((key) => `home-overview-section-${key}`));
+    await view.unmount();
+  });
+
+  it("splits non-adjacent production and projects without a duplicate key warning", async () => {
+    const errors: unknown[][] = [];
+    const spy = jest.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    const view = await renderPage({
+      sectionOrder: ["projects", "today", "production", "panels", "month", "stock"],
+    });
+    expect(findByTestId(view.container, "home-overview-section-production")).toBeTruthy();
+    expect(findByTestId(view.container, "home-overview-section-projects")).toBeTruthy();
+    const manager = findByTestId(view.container, "home-overview-manager");
+    expect(findByTestId(manager, "home-overview-section-projects")).toBeTruthy();
+    expect(findByTestId(manager, "home-overview-section-production")).toBeNull();
+    expect(collectTestIds(view.container).filter((id) => id === "home-overview-manager")).toEqual(["home-overview-manager"]);
+    const keyWarnings = errors.filter((args) => args.some((arg) => /same key|unique "key"/i.test(String(arg))));
+    expect(keyWarnings).toEqual([]);
+    spy.mockRestore();
+    await view.unmount();
+  });
+
+  it("still shows every non-empty section when the saved order has unknown or missing keys", async () => {
+    const view = await renderPage({
+      sectionOrder: ["foo", "month", "month"] as unknown as OverviewSectionKey[],
+    });
+    const sections = collectTestIds(view.container).filter((id) => id.startsWith("home-overview-section-"));
+    expect(sections).toEqual([
+      "home-overview-section-month",
+      "home-overview-section-today",
+      "home-overview-section-panels",
+      "home-overview-section-stock",
+      "home-overview-section-production",
+      "home-overview-section-projects",
+    ]);
     await view.unmount();
   });
 });

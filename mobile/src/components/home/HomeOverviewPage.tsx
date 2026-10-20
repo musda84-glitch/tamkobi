@@ -4,7 +4,6 @@ import { HomeHeaderTitle } from "../HomeHeaderTitle";
 import type { HomePanelProps } from "./HomePanels";
 import {
   COMPACT,
-  DEFAULT_OVERVIEW_SECTION_ORDER,
   isStockSectionEmpty,
   MonthSection,
   overviewMonthTitle,
@@ -20,6 +19,7 @@ import { colors } from "../../theme";
 import type { DashboardStats, ManagerSummary, Overview, User } from "../../types";
 import { monthlySalesRow, netProfitRow, salesChangeText, visibleHomeTasks } from "../../utils/dashboard";
 import { fmtMoney } from "../../utils/money";
+import { normalizeOverviewOrder } from "../../utils/homeOverviewOrder";
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -46,7 +46,7 @@ function summaryBlock<K extends "production" | "projects">(
 
 const MANAGER_KEYS: OverviewSectionKey[] = ["production", "projects"];
 
-/** Sayfa 0: yönetici genel bakış. Alan yoksa "—"; uydurma tutar yok. Sıra bu PR'da sabit. */
+/** Sayfa 0: yönetici genel bakış. Alan yoksa "—"; uydurma tutar yok. Sıra sectionOrder; yoksa varsayılan. */
 export function HomeOverviewPage({
   userName,
   companyName,
@@ -55,6 +55,7 @@ export function HomeOverviewPage({
   stats,
   overview,
   manager,
+  sectionOrder,
   ...panelProps
 }: {
   userName?: string | null;
@@ -64,7 +65,9 @@ export function HomeOverviewPage({
   stats: DashboardStats | null;
   overview: Overview | null;
   manager: ManagerSummary | null;
+  sectionOrder?: readonly OverviewSectionKey[];
 } & HomePanelProps) {
+  const order = normalizeOverviewOrder(sectionOrder);
   const sales = monthlySalesRow(stats, overview);
   const change = salesChangeText(stats?.sales_change_pct);
   const monthCount = overview?.invoices?.outgoing?.month;
@@ -139,7 +142,7 @@ export function HomeOverviewPage({
     }
   };
 
-  const pieces = DEFAULT_OVERVIEW_SECTION_ORDER.map((key) => {
+  const pieces = order.map((key) => {
     const content = renderSection(key);
     if (content == null) return null;
     return (
@@ -151,15 +154,22 @@ export function HomeOverviewPage({
 
   const body: React.ReactNode[] = [];
   const managerChildren: React.ReactElement[] = [];
+  let managerGroup = 0;
   const flushManager = () => {
     if (!managerChildren.length) return;
+    const index = managerGroup;
+    managerGroup += 1;
     body.push(
-      <View key="manager" testID="home-overview-manager" style={{ flexDirection: "column", gap: COMPACT.gap }}>
+      <View
+        key={`manager-${index}`}
+        {...(index === 0 ? { testID: "home-overview-manager" } : {})}
+        style={{ flexDirection: "column", gap: COMPACT.gap }}
+      >
         {managerChildren.splice(0, managerChildren.length)}
       </View>,
     );
   };
-  DEFAULT_OVERVIEW_SECTION_ORDER.forEach((key, index) => {
+  order.forEach((key, index) => {
     const piece = pieces[index];
     if (MANAGER_KEYS.includes(key)) {
       if (piece) managerChildren.push(piece);
