@@ -1364,20 +1364,25 @@ async def delete_company(company_id: str, _: dict = Depends(require_super_admin)
     return {"status": "success", "id": company_id, "name": c.get("name"), "users": users, "deleted_docs": collections}
 
 
-@router.post("/system/companies/{company_id}/activation")
-async def set_company_activation(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+async def apply_company_activation(company_id: str, active: bool):
+    """Askıya al / geri aç. Veri silinmez. /system bool() dönüşümünü uçta yapar."""
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     lid = await license_id_of(company_id)
     lic = await _db.company_licenses.find_one({"_id": lid}) or {}
-    status = _restore_active_status(lic) if bool(req.get("active", True)) else "suspended"
+    status = _restore_active_status(lic) if active else "suspended"
     await _db.company_licenses.update_one({"_id": lid}, {"$set": {"status": status, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
     invalidate(lid)
     return await effective(company_id)
 
 
-@router.put("/system/companies/{company_id}/license")
-async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+@router.post("/system/companies/{company_id}/activation")
+async def set_company_activation(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_company_activation(company_id, bool(req.get("active", True)))
+
+
+async def apply_license_update(company_id: str, req: Dict[str, Any]):
+    """Lisans yamasını yazar. Alan sıkılaştırması admin-v1 katmanındadır; /system tüm alanları kabul eder."""
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     lid = await license_id_of(company_id)
@@ -1423,8 +1428,13 @@ async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends
     return await effective(company_id)
 
 
-@router.post("/system/companies/{company_id}/modules/{module_key:path}")
-async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+@router.put("/system/companies/{company_id}/license")
+async def update_license(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_license_update(company_id, req)
+
+
+async def apply_module_toggle(company_id: str, module_key: str, enabled: bool):
+    """Modül override. /ai-advisor ayrıca addon_overrides['ai.advisor'] yazar. Şirket varlığı burada aranmaz."""
     key = "/" + module_key.lstrip("/")
     if key not in _ALL:
         raise HTTPException(status_code=400, detail="Bilinmeyen ya da çekirdek modül.")
@@ -1432,7 +1442,6 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
     lic = await _db.company_licenses.find_one({"_id": lid}) or {}
     plan = await _db.saas_plans.find_one({"_id": lic.get("plan_id")}) or {"modules": _ALL}
     ov = dict(lic.get("module_overrides") or {})
-    enabled = bool(req.get("enabled"))
     if enabled == (key in plan["modules"]):
         ov.pop(key, None)
     else:
@@ -1445,6 +1454,11 @@ async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _
     await _db.company_licenses.update_one({"_id": lid}, {"$set": patch, "$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "created_at": _now()}}, upsert=True)
     invalidate(lid)
     return await effective(company_id)
+
+
+@router.post("/system/companies/{company_id}/modules/{module_key:path}")
+async def toggle_module(company_id: str, module_key: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_module_toggle(company_id, module_key, bool(req.get("enabled")))
 
 
 def _user_row(u: dict, companies_by_id: Dict[str, dict]) -> Dict[str, Any]:
@@ -1611,22 +1625,26 @@ async def list_requests(status: Optional[str] = None, _: dict = Depends(require_
     return await upgrade_request_rows(status=status)
 
 
-@router.put("/system/upgrade-requests/{req_id}")
-async def resolve_request(req_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+async def apply_upgrade_resolution(req_id: str, status: str, note, apply):
+    """Talep durumunu yazar. Onay + apply lisansı günceller ve uygulama içi bildirim bırakır. Mail/SMS yok."""
     r = await _db.upgrade_requests.find_one({"_id": req_id})
     if not r:
         raise HTTPException(status_code=404, detail="Talep bulunamadı.")
-    status = req.get("status", "approved")
     if status not in ("approved", "rejected", "pending"):
         raise HTTPException(status_code=400, detail="Geçersiz durum.")
-    await _db.upgrade_requests.update_one({"_id": req_id}, {"$set": {"status": status, "admin_note": req.get("note") or "", "resolved_at": _now()}})
-    if status == "approved" and r.get("plan_id") and req.get("apply", True):
+    await _db.upgrade_requests.update_one({"_id": req_id}, {"$set": {"status": status, "admin_note": note or "", "resolved_at": _now()}})
+    if status == "approved" and r.get("plan_id") and apply:
         lid = await license_id_of(r["company_id"])
         await _db.company_licenses.update_one({"_id": lid}, {"$set": {"plan_id": r["plan_id"], "status": "active", "module_overrides": {}, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
         invalidate(lid)
     import notify as _notify
-    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {req.get('note') or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
+    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {note or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
     return _clean(await _db.upgrade_requests.find_one({"_id": req_id}))
+
+
+@router.put("/system/upgrade-requests/{req_id}")
+async def resolve_request(req_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_upgrade_resolution(req_id, req.get("status", "approved"), req.get("note"), req.get("apply", True))
 
 
 # ---------------- Customer-facing ----------------
