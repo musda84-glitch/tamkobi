@@ -2,7 +2,7 @@
 import React, { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, Factory, CheckCircle2, Circle, ChevronDown, Printer } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
@@ -267,56 +267,168 @@ export function orderShowsProduction(o) {
   return true;
 }
 
-export const ProductionCard = ({ p, orderNumber }) => {
-  if (!p) return null;
-  const doneAll = p.status === "completed" || (p.total > 0 && p.done >= p.total);
+function productionCounts(p) {
+  const total = Number(p?.total);
+  const done = Number(p?.done);
+  return {
+    total: Number.isFinite(total) ? total : 0,
+    done: Number.isFinite(done) ? done : 0,
+    status: String(p?.status || "").toLowerCase(),
+  };
+}
+
+function labelClaimsFinished(label) {
+  return /tamamland/i.test(String(label || ""));
+}
+
+/** Rozet ilerlemeden türetilir. status_label yalnız total yoksa veya tanınmayan durumda yedektir. */
+export function productionBadge(o) {
+  const p = o?.production;
+  if (!orderShowsProduction(o)) {
+    return { label: orderStatusLabel(o, statusTr(o?.order_status)), tone: "slate" };
+  }
+  const { total, done, status } = productionCounts(p);
+  if (status === "cancelled") return { label: p?.status_label || "Üretim iptal", tone: "slate" };
+  if (total > 0 && done >= total) return { label: "Üretim tamamlandı", tone: "emerald" };
+  if (done > 0 || status === "in_production") return { label: "Üretimde", tone: "blue" };
+  if (done === 0 && status === "planned") return { label: "Üretim planlandı", tone: "amber" };
+  if (total > 0 && done < total && (status === "completed" || labelClaimsFinished(p?.status_label))) {
+    return { label: "Üretimde", tone: "blue" };
+  }
+  if (p?.status_label && (total <= 0 || status !== "completed")) return { label: String(p.status_label), tone: "slate" };
+  return { label: orderStatusLabel(o, statusTr(o?.order_status)), tone: "slate" };
+}
+
+/** İlk `limit` kalem ve kalan adet. JSX etiketi formatOrderItemLabel ile basar. */
+export function orderItemsPreview(items, limit = 2) {
+  const list = Array.isArray(items) ? items : [];
+  const n = Math.max(0, Number(limit) || 0);
+  const shown = list.slice(0, n);
+  return { shown, rest: Math.max(0, list.length - shown.length) };
+}
+
+const BADGE_TONE = {
+  emerald: "bg-emerald-50 text-emerald-800",
+  blue: "bg-sky-50 text-sky-800",
+  amber: "bg-amber-50 text-amber-800",
+  slate: "bg-slate-100",
+};
+
+const STEP_PREVIEW = 5;
+
+function OrderItemLabel({ item }) {
+  const label = formatOrderItemLabel(item);
+  const mark = label.indexOf("×");
+  if (mark < 0) {
+    return <span className="block truncate" title={label}>{label}</span>;
+  }
+  const qty = label.slice(0, mark + 1);
+  const name = label.slice(mark + 1).trimStart();
   return (
-    <div
-      className={`rounded-xl border p-2.5 text-xs space-y-1.5 ${doneAll ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}
-      data-testid={`b2b-production-${orderNumber}`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className={`inline-flex items-center gap-1 font-bold ${doneAll ? "text-emerald-700" : "text-amber-800"}`}>
-          <Factory className="w-4 h-4" /> {p.status_label || "Üretimde"}
-          {p.product_name ? <span className="font-normal text-slate-500"> · {p.product_name}</span> : null}
+    <span className="block truncate" title={label}>
+      <b>{qty}</b>{name ? ` ${name}` : ""}
+    </span>
+  );
+}
+
+function OrderItemsCell({ items }) {
+  const [open, setOpen] = useState(false);
+  const list = Array.isArray(items) ? items : [];
+  const preview = orderItemsPreview(list, 2);
+  const visible = open ? list : preview.shown;
+  return (
+    <div className="min-w-0 space-y-0.5">
+      {visible.map((item, idx) => (
+        <OrderItemLabel key={`${item?.product_id || item?.sku || "item"}-${idx}`} item={item} />
+      ))}
+      {preview.rest > 0 ? (
+        <button
+          type="button"
+          className="text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "Daha az ▴" : `+${preview.rest} ürün daha ▾`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export const ProductionCard = ({ p, orderNumber }) => {
+  const [open, setOpen] = useState(false);
+  const [showAllSteps, setShowAllSteps] = useState(false);
+  if (!p) return null;
+  const { total, done } = productionCounts(p);
+  const complete = total > 0 && done >= total;
+  const ratio = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
+  const currentName = String(p.current_step_name || "").trim();
+  const steps = Array.isArray(p.steps) ? p.steps : [];
+  const visibleSteps = showAllSteps ? steps : steps.slice(0, STEP_PREVIEW);
+  const hiddenSteps = Math.max(0, steps.length - visibleSteps.length);
+  const barClass = complete ? "bg-emerald-500" : done <= 0 ? "bg-amber-400" : "bg-sky-500";
+  const barWidth = total > 0 && done <= 0 ? "0.5rem" : `${ratio * 100}%`;
+  const toggleDetail = () => {
+    setOpen((v) => !v);
+    setShowAllSteps(false);
+  };
+  return (
+    <div className="min-w-0 text-xs" data-testid={`b2b-production-${orderNumber}`}>
+      <div className="flex items-center gap-1 min-w-0 text-[11px] leading-tight">
+        <span className="shrink-0 whitespace-nowrap font-semibold text-slate-700" data-testid={`b2b-production-progress-${orderNumber}`}>
+          Üretim {done}/{total}
         </span>
-        {p.total > 0 ? (
-          <span className="text-[11px] text-slate-500 font-semibold" data-testid={`b2b-production-progress-${orderNumber}`}>
-            {p.done}/{p.total}
+        {currentName ? (
+          <span className="text-slate-400 truncate min-w-0" title={`Şu an: ${currentName}`}>
+            {` · Şu an: ${currentName}`}
           </span>
         ) : null}
       </div>
-      {p.total > 0 && (
-        <div className="flex items-center gap-1" aria-label="Üretim adımları">
-          {(p.steps || []).map((s) => (
-            <div
-              key={`${s.no}-${s.name}`}
-              className={`h-1.5 flex-1 rounded-full ${s.done ? "bg-emerald-500" : s.current ? "bg-amber-500" : "bg-slate-200"}`}
-              title={s.name}
-            />
-          ))}
-        </div>
-      )}
-      {(p.steps || []).length > 0 && (
-        <ul className="space-y-0.5" data-testid={`b2b-production-steps-${orderNumber}`}>
-          {(p.steps || []).map((s) => (
+      <div
+        className="mt-1 h-1 w-full rounded-full bg-slate-200 overflow-hidden"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuenow={total > 0 ? Math.min(done, total) : 0}
+        aria-valuemax={total}
+        aria-label="Üretim ilerlemesi"
+      >
+        <div className={`h-full ${barClass}`} style={{ width: barWidth }} />
+      </div>
+      {steps.length > 0 ? (
+        <button
+          type="button"
+          className="mt-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+          aria-expanded={open}
+          onClick={toggleDetail}
+          data-testid={`b2b-production-detail-${orderNumber}`}
+        >
+          Detay {open ? "▴" : "▾"}
+        </button>
+      ) : null}
+      {open && steps.length > 0 ? (
+        <ul className="mt-1 space-y-0.5" data-testid={`b2b-production-steps-${orderNumber}`}>
+          {visibleSteps.map((s) => (
             <li
               key={`${s.no}-${s.name}`}
-              className={`flex items-start gap-1.5 text-[11px] leading-tight ${s.done ? "text-emerald-700" : s.current ? "text-amber-800 font-semibold" : "text-slate-500"}`}
+              className={`flex items-center gap-1.5 min-w-0 text-[11px] leading-tight ${s.done ? "text-emerald-700" : s.current ? "text-amber-800 font-bold" : "text-slate-400"}`}
               data-testid={`b2b-production-step-${orderNumber}-${s.no}`}
             >
-              {s.done ? <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5" /> : s.current ? <Factory className="w-3 h-3 shrink-0 mt-0.5" /> : <Circle className="w-3 h-3 shrink-0 mt-0.5 text-slate-300" />}
-              <span className="min-w-0">
-                <span className="font-mono text-slate-400 mr-1">{s.no}.</span>
-                {s.name}
-                {s.station ? <span className="ml-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded">{s.station}</span> : null}
-              </span>
+              <span className="shrink-0 w-3 text-center" aria-hidden="true">{s.done ? "✓" : s.current ? "▶" : "○"}</span>
+              <span className="shrink-0 font-mono text-slate-400 whitespace-nowrap">{s.no}.</span>
+              <span className="truncate min-w-0" title={s.name}>{s.name}</span>
+              {s.station ? (
+                <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded" title={s.station}>{s.station}</span>
+              ) : null}
             </li>
           ))}
+          {hiddenSteps > 0 ? (
+            <li>
+              <button type="button" className="text-[11px] font-semibold text-slate-600 hover:text-slate-900" onClick={() => setShowAllSteps(true)}>
+                +{hiddenSteps} adım daha
+              </button>
+            </li>
+          ) : null}
         </ul>
-      )}
-      {p.current_step_name && !doneAll ? (
-        <div className="text-[11px] text-amber-800">Şu an: <b>{p.current_step_name}</b></div>
       ) : null}
     </div>
   );
@@ -351,24 +463,20 @@ export const OrderProgressCell = ({ o }) => {
 const Th = ({ children, right }) => <th className={`p-3 ${right ? "text-right" : "text-left"}`}>{children}</th>;
 const pendingStatus = (s) => ["pending", "new"].includes(s);
 const approvedStatus = (s) => ["approved", "preparing"].includes(s);
+const ACTION_ICON = "inline-flex items-center justify-center w-7 h-7 rounded-lg shrink-0 disabled:opacity-50";
 
 const OrderStatusBadge = ({ o }) => {
   const showProd = orderShowsProduction(o);
-  const statusText = showProd
-    ? (o.production?.status_label || "Üretimde")
-    : orderStatusLabel(o, statusTr(o.order_status));
-  const statusClass = showProd
-    ? (o.production?.status === "completed" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800")
-    : "bg-slate-100";
+  const badge = productionBadge(o);
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div className="flex flex-col items-start gap-1 shrink-0">
       {o.is_held_cart ? (
-        <span className={`px-1.5 py-0.5 rounded font-semibold ${o.is_active_cart ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-testid={`b2b-held-badge-${o.id}`}>
+        <span className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap ${o.is_active_cart ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-testid={`b2b-held-badge-${o.id}`}>
           {o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
         </span>
       ) : (
-        <span className={`px-1.5 py-0.5 rounded font-semibold ${statusClass}`} data-testid={showProd ? `b2b-prod-status-${o.order_number}` : undefined}>
-          {statusText}
+        <span className={`px-1.5 py-0.5 rounded font-semibold whitespace-nowrap ${BADGE_TONE[badge.tone] || BADGE_TONE.slate}`} data-testid={showProd ? `b2b-prod-status-${o.order_number}` : undefined}>
+          {badge.label}
         </span>
       )}
       {o.cancel_request?.status === "pending" && <span className="bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-semibold" data-testid={`b2b-cancel-pending-${o.order_number}`}>İptal talebi iletildi</span>}
@@ -378,16 +486,16 @@ const OrderStatusBadge = ({ o }) => {
 };
 
 const OrderActions = ({ o, onPreview, onEdit, onDelete, onCancel, busy }) => (
-  <div className="flex flex-wrap gap-1.5" data-testid={`b2b-order-actions-${o.order_number}`}>
+  <div className="flex flex-nowrap gap-1 justify-end" data-testid={`b2b-order-actions-${o.order_number}`}>
     {onPreview && <PreviewOrderBtn onClick={() => onPreview(o)} orderNumber={o.order_number} />}
     {!o.view_only && onEdit && pendingStatus(o.order_status) && (
       <>
-        <button type="button" onClick={() => onEdit(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-semibold disabled:opacity-50" data-testid={`b2b-order-edit-${o.order_number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
-        <button type="button" onClick={() => onDelete(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-rose-200 text-rose-700 text-[11px] font-semibold hover:bg-rose-50 disabled:opacity-50" data-testid={`b2b-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>
+        <button type="button" onClick={() => onEdit(o)} disabled={busy} className={`${ACTION_ICON} bg-slate-900 text-white`} data-testid={`b2b-order-edit-${o.order_number}`} aria-label="Düzenle" title="Düzenle"><Pencil className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => onDelete(o)} disabled={busy} className={`${ACTION_ICON} border border-rose-200 text-rose-700 hover:bg-rose-50`} data-testid={`b2b-order-delete-${o.order_number}`} aria-label="Sil" title="Sil"><Trash2 className="w-3.5 h-3.5" /></button>
       </>
     )}
     {!o.view_only && onCancel && approvedStatus(o.order_status) && o.cancel_request?.status !== "pending" && (
-      <button type="button" onClick={() => onCancel(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-200 text-amber-800 text-[11px] font-semibold hover:bg-amber-50 disabled:opacity-50" data-testid={`b2b-order-cancel-${o.order_number}`}><Ban className="w-3 h-3" /> İptal talebi</button>
+      <button type="button" onClick={() => onCancel(o)} disabled={busy} className={`${ACTION_ICON} border border-rose-200 text-rose-700 hover:bg-rose-50`} data-testid={`b2b-order-cancel-${o.order_number}`} aria-label="İptal talebi" title="İptal talebi"><Ban className="w-3.5 h-3.5" /></button>
     )}
   </div>
 );
@@ -551,36 +659,54 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
       {rows.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Henüz sipariş yok.</div>}
       <div className="md:hidden divide-y">{rows.map((o) => (
         <div key={o.id} className={`p-3 text-xs space-y-2 ${rowClass(o)}`} data-testid={o.is_held_cart ? `b2b-held-row-${o.id}` : `b2b-order-${o.order_number}`}>
-          <div className="flex items-center justify-between gap-2"><span className={`font-mono font-bold ${o.is_held_cart ? "text-slate-500" : ""}`}>{o.order_number}</span><OrderStatusBadge o={o} /></div>
-          {o.customer_order_number ? <div className="text-slate-500">Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
-          <div className="text-slate-500">{(o.order_date || "").slice(0, 10)} · {(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</div>
-          <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(b2bOrderGross(o))}</span></div>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className={`font-mono font-bold whitespace-nowrap ${o.is_held_cart ? "text-slate-500" : ""}`}>{o.order_number}</div>
+              {o.customer_order_number ? <div className="text-[10px] text-slate-500 truncate" title={o.customer_order_number}>Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
+            </div>
+            <OrderStatusBadge o={o} />
+          </div>
+          <div className="text-slate-500 whitespace-nowrap">{fmtDate(o.order_date)} · <span className="font-bold text-slate-800">{fmt(b2bOrderGross(o))}</span></div>
+          <OrderItemsCell items={o.items} />
           {!o.is_held_cart && <OrderProgressCell o={o} />}
-          <OrderActions
-            o={o}
-            onPreview={setPreview}
-            onEdit={!o.view_only && canMutate ? setEdit : undefined}
-            onDelete={!o.view_only && canMutate ? remove : undefined}
-            onCancel={!o.view_only && canMutate ? setCancel : undefined}
-            busy={busyId === o.id}
-          />
+          <div className="flex justify-end">
+            <OrderActions
+              o={o}
+              onPreview={setPreview}
+              onEdit={!o.view_only && canMutate ? setEdit : undefined}
+              onDelete={!o.view_only && canMutate ? remove : undefined}
+              onCancel={!o.view_only && canMutate ? setCancel : undefined}
+              busy={busyId === o.id}
+            />
+          </div>
         </div>))}</div>
       {rows.length > 0 && (
-        <table className="hidden md:table w-full text-xs">
+        <table className="hidden md:table w-full table-fixed text-xs">
+          <colgroup>
+            <col className="w-[13%]" />
+            <col className="w-[9%]" />
+            <col />
+            <col className="w-[9%]" />
+            <col className="w-[14%]" />
+            <col className="w-[22%]" />
+            <col className="w-[13%]" />
+          </colgroup>
           <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b">
-            <tr><Th>Sipariş</Th><Th>Sizin no</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Takip</Th><Th>İşlem</Th></tr>
+            <tr><Th>Sipariş No</Th><Th>Tarih</Th><Th>Ürünler</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Üretim / Kargo</Th><Th right>İşlem</Th></tr>
           </thead>
           <tbody className="divide-y">
             {rows.map((o) => (
               <tr key={o.id} className={rowClass(o)} data-testid={o.is_held_cart ? `b2b-held-row-${o.id}` : `b2b-order-row-${o.order_number}`}>
-                <td className={`p-3 font-mono font-bold ${o.is_held_cart ? "text-slate-500" : ""}`}>{o.order_number}</td>
-                <td className="p-3 font-mono text-slate-600">{o.customer_order_number || "—"}</td>
-                <td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td>
-                <td className="p-3">{(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</td>
-                <td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))}</td>
-                <td className="p-3"><OrderStatusBadge o={o} /></td>
-                <td className="p-3 min-w-[220px]"><OrderProgressCell o={o} /></td>
-                <td className="p-3">
+                <td className={`p-3 align-top whitespace-nowrap overflow-hidden ${o.is_held_cart ? "text-slate-500" : ""}`}>
+                  <div className="font-mono font-bold whitespace-nowrap">{o.order_number}</div>
+                  {o.customer_order_number ? <div className="text-[10px] font-normal text-slate-500 mt-0.5 truncate" title={o.customer_order_number}>Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
+                </td>
+                <td className="p-3 align-top text-slate-500 whitespace-nowrap">{fmtDate(o.order_date)}</td>
+                <td className="p-3 align-top min-w-0 overflow-hidden"><OrderItemsCell items={o.items} /></td>
+                <td className="p-3 align-top text-right font-bold whitespace-nowrap">{fmt(b2bOrderGross(o))}</td>
+                <td className="p-3 align-top"><OrderStatusBadge o={o} /></td>
+                <td className="p-3 align-top min-w-0 overflow-hidden"><OrderProgressCell o={o} /></td>
+                <td className="p-3 align-top overflow-hidden">
                   <OrderActions
                     o={o}
                     onPreview={setPreview}
