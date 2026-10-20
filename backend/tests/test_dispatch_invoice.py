@@ -44,8 +44,8 @@ class FakeColl:
 
 
 def test_find_invoice_on_dispatch_invoice_id():
-    inv = {"_id": "inv1", "invoice_type": "sales", "invoice_number": "TA1", "status": "approved"}
-    disp = {"_id": "d1", "invoice_type": "dispatch", "invoice_id": "inv1", "invoice_number": "IRS-1"}
+    inv = {"_id": "inv1", "company_id": "c1", "invoice_type": "sales", "invoice_number": "TA1", "status": "approved"}
+    disp = {"_id": "d1", "company_id": "c1", "invoice_type": "dispatch", "invoice_id": "inv1", "invoice_number": "IRS-1"}
     db = MagicMock()
     db.invoices = FakeColl([inv, disp])
     db.orders = FakeColl([])
@@ -54,9 +54,9 @@ def test_find_invoice_on_dispatch_invoice_id():
 
 
 def test_find_invoice_from_order():
-    order = {"_id": "o1", "invoice_id": "inv2", "invoice_number": "TA2"}
-    inv = {"_id": "inv2", "invoice_type": "sales", "invoice_number": "TA2", "status": "draft"}
-    disp = {"_id": "d2", "invoice_type": "dispatch", "order_id": "o1", "invoice_number": "IRS-2"}
+    order = {"_id": "o1", "company_id": "c1", "invoice_id": "inv2", "invoice_number": "TA2"}
+    inv = {"_id": "inv2", "company_id": "c1", "invoice_type": "sales", "invoice_number": "TA2", "status": "draft"}
+    disp = {"_id": "d2", "company_id": "c1", "invoice_type": "dispatch", "order_id": "o1", "invoice_number": "IRS-2"}
     db = MagicMock()
     db.invoices = FakeColl([inv, disp])
     db.orders = FakeColl([order])
@@ -74,11 +74,11 @@ def test_find_skips_cancelled_and_dispatch():
 
 
 def test_link_dispatch_sets_both_sides():
-    inv = {"_id": "inv4", "invoice_type": "sales", "invoice_number": "TA4"}
-    disp = {"_id": "d4", "invoice_number": "IRS-4", "order_id": "o4"}
+    inv = {"_id": "inv4", "company_id": "c1", "invoice_type": "sales", "invoice_number": "TA4"}
+    disp = {"_id": "d4", "company_id": "c1", "invoice_number": "IRS-4", "order_id": "o4"}
     db = MagicMock()
     db.invoices = FakeColl([inv, disp])
-    db.orders = FakeColl([{"_id": "o4", "invoice_id": None}])
+    db.orders = FakeColl([{"_id": "o4", "company_id": "c1", "invoice_id": None}])
     linked = _run(dispatch_invoice.link_dispatch_to_invoice(db, disp, inv))
     assert linked["dispatch_id"] == "d4"
     assert linked["dispatch_number"] == "IRS-4"

@@ -133,6 +133,7 @@ async def apply_issue_stamp(
     invoice_id: str,
     inv: Dict[str, Any],
     *,
+    company_id: str = "",
     stamp_now: bool = False,
     issue_date: Optional[str] = None,
     issue_time: Optional[str] = None,
@@ -160,8 +161,11 @@ async def apply_issue_stamp(
             status_code=400,
             detail="GİB'e iletilmiş faturada tarih/saat değiştirilemez.",
         )
-    await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
-    refreshed = await _db.invoices.find_one({"_id": invoice_id})
+    cid = str(company_id or (inv or {}).get("company_id") or "").strip()
+    if not cid:
+        return inv
+    await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
+    refreshed = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     return {**(refreshed or inv or {}), **patch}
 
 
@@ -540,15 +544,16 @@ async def record_e_invoice(
     result: Optional[Dict[str, Any]] = None,
 ) -> None:
     """e_invoices takip belgesi (docs koleksiyonu; kullanıcı şablonundaki alanlarla uyumlu)."""
-    if not _db or not invoice_id:
+    cid = str(company_id or "").strip()
+    if not _db or not invoice_id or not cid:
         return
-    inv = await _db.invoices.find_one({"_id": invoice_id}) or {}
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or {}
     result = result or {}
     doc_id = f"einv_{invoice_id}"
     status = state_to_track_status(result.get("einvoice_state") or inv.get("einvoice_state"))
     payload = {
         "_id": doc_id,
-        "company_id": company_id or inv.get("company_id") or "",
+        "company_id": cid,
         "order_id": order_id or inv.get("order_id") or inv.get("source_order_id") or "",
         "invoice_id": invoice_id,
         "invoice_number": result.get("invoice_number") or inv.get("invoice_number"),
@@ -559,10 +564,10 @@ async def record_e_invoice(
         "pdf_url": result.get("document_url") or inv.get("gib_document_url") or "",
         "updated_at": _now(),
     }
-    existing = await _db.e_invoices.find_one({"_id": doc_id})
+    existing = await _db.e_invoices.find_one({"_id": doc_id, "company_id": cid})
     if not existing:
         payload["created_at"] = _now()
-    await _db.e_invoices.update_one({"_id": doc_id}, {"$set": payload}, upsert=True)
+    await _db.e_invoices.update_one({"_id": doc_id, "company_id": cid}, {"$set": payload}, upsert=True)
 
 
 async def finalize_create_result(
@@ -572,11 +577,16 @@ async def finalize_create_result(
     order_id: Optional[str] = None,
     company_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    inv = await _db.invoices.find_one({"_id": invoice_id}) or {}
+    cid = str(company_id or "").strip()
     out = dict(result or {})
     out.setdefault("invoice_id", invoice_id)
+    if not cid or not _db:
+        out.setdefault("company_id", company_id)
+        out.setdefault("message", out.get("message") or "Fatura GİB sistemine başarıyla iletildi.")
+        return out
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or {}
     out.setdefault("invoice_number", inv.get("invoice_number"))
-    out.setdefault("company_id", company_id or inv.get("company_id"))
+    out.setdefault("company_id", cid)
     out.setdefault("message", out.get("message") or "Fatura GİB sistemine başarıyla iletildi.")
     oid = order_id or inv.get("order_id")
     if oid and out.get("status") != "error":
@@ -591,16 +601,16 @@ async def finalize_create_result(
             "invoice_e_type": e_type,
             "einvoice_state": einvoice_state,
         }
-        await _db.orders.update_one({"_id": oid}, {"$set": order_patch})
+        await _db.orders.update_one({"_id": oid, "company_id": cid}, {"$set": order_patch})
         from dispatch_invoice import order_ids_of
         for extra in order_ids_of(inv):
             if extra == oid:
                 continue
-            await _db.orders.update_one({"_id": extra}, {"$set": order_patch})
+            await _db.orders.update_one({"_id": extra, "company_id": cid}, {"$set": order_patch})
         out.setdefault("order_id", oid)
         out.setdefault("e_type", e_type)
     await record_e_invoice(
-        company_id=out.get("company_id"),
+        company_id=cid,
         invoice_id=invoice_id,
         order_id=oid,
         result=out,
@@ -651,12 +661,15 @@ def validate_buyer(contact: Optional[dict], invoice: dict, e_type: str) -> Dict[
 
 
 async def store_outgoing_xml(invoice_id: str, company_id: str, xml_bytes: bytes, meta: Optional[dict] = None) -> None:
+    cid = str(company_id or "").strip()
+    if not cid or not invoice_id or _db is None:
+        return
     await _db.outgoing_einvoice_xml.update_one(
-        {"_id": invoice_id},
+        {"_id": invoice_id, "company_id": cid},
         {
             "$set": {
                 "invoice_id": invoice_id,
-                "company_id": company_id,
+                "company_id": cid,
                 "xml": xml_bytes.decode("utf-8", "replace"),
                 "byte_len": len(xml_bytes),
                 "updated_at": _now(),
@@ -723,6 +736,7 @@ async def issue_invoice(
     inv = await apply_issue_stamp(
         invoice_id,
         inv,
+        company_id=str(inv.get("company_id") or ""),
         stamp_now=bool(stamp_now),
         issue_date=issue_date,
         issue_time=issue_time,
@@ -1434,14 +1448,22 @@ async def api_create_einvoice(payload: InvoiceCreateRequest, user: dict = Depend
 @router.get("/e-invoice/{invoice_id}/status")
 async def api_einvoice_status(invoice_id: str, user: dict = Depends(_user_dep)):
     inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("einvoice_state") in ("sent", "queued") and (inv.get("gib_uuid") or inv.get("gib_tracking_id")):
         try:
-            await refresh_one_invoice_status(invoice_id)
-            inv = await _db.invoices.find_one({"_id": invoice_id}) or inv
+            if cid:
+                await refresh_one_invoice_status(invoice_id, company_id=cid)
+                inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or inv
         except Exception:
             logger.exception("status refresh on read failed for %s", invoice_id)
-    xml_doc = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id}, {"byte_len": 1, "scenario": 1, "updated_at": 1})
-    track = await _db.e_invoices.find_one({"_id": f"einv_{invoice_id}"})
+    xml_doc = None
+    track = None
+    if cid:
+        xml_doc = await _db.outgoing_einvoice_xml.find_one(
+            {"_id": invoice_id, "company_id": cid},
+            {"byte_len": 1, "scenario": 1, "updated_at": 1},
+        )
+        track = await _db.e_invoices.find_one({"_id": f"einv_{invoice_id}", "company_id": cid})
     return {
         "invoice_id": invoice_id,
         "invoice_number": inv.get("invoice_number"),
@@ -1463,9 +1485,12 @@ async def api_einvoice_status(invoice_id: str, user: dict = Depends(_user_dep)):
     }
 
 
-async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
+async def refresh_one_invoice_status(invoice_id: str, *, company_id: str) -> Dict[str, Any]:
     """Tek fatura için İşNet/GİB durum + fatura no senkronu."""
-    inv = await _db.invoices.find_one({"_id": invoice_id})
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     ettn = (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
@@ -1558,8 +1583,8 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     if info.get("process_status"):
         patch["gib_process_status"] = info.get("process_status")
     if patch:
-        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
-    refreshed = await _db.invoices.find_one({"_id": invoice_id}) or {**inv, **patch}
+        await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
+    refreshed = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or {**inv, **patch}
     return {"updated": bool(patch), "invoice": refreshed, "verified": True}
 
 
@@ -1589,16 +1614,22 @@ async def _refresh_qnb_status(invoice_id: str, inv: dict, settings: dict) -> Dic
     if new_state == "error":
         patch["gib_error"] = str(info.get("message") or "")[:500]
         patch["error_at"] = _now()
+    cid = str((inv or {}).get("company_id") or "").strip()
+    if not cid:
+        return {"updated": False, "invoice": inv, "verified": False}
     if patch:
-        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
-    refreshed = await _db.invoices.find_one({"_id": invoice_id}) or {**inv, **patch}
+        await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
+    refreshed = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or {**inv, **patch}
     return {"updated": bool(patch), "invoice": refreshed, "verified": bool(info.get("ok"))}
 
 
 @router.post("/e-invoice/{invoice_id}/refresh-status")
 async def api_refresh_einvoice_status(invoice_id: str, user: dict = Depends(_user_dep)):
-    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
-    out = await refresh_one_invoice_status(invoice_id)
+    inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    out = await refresh_one_invoice_status(invoice_id, company_id=cid)
     inv = out.get("invoice") or {}
     return {
         "status": "success",
@@ -1675,8 +1706,9 @@ async def einvoice_share_link(
 @router.get("/e-invoice/{invoice_id}/xml")
 async def api_einvoice_xml(invoice_id: str, request: Request, t: Optional[str] = Query(None)):
     inv, _user = await _require_einvoice_access(request, invoice_id, "e-invoice-xml")
+    cid = str((inv or {}).get("company_id") or "").strip()
     try:
-        remote = await fetch_integrator_xml(invoice_id)
+        remote = await fetch_integrator_xml(invoice_id, company_id=cid)
         if remote:
             name = ubl_export.invoice_filename(inv or {"invoice_number": invoice_id}, "xml")
             return Response(
@@ -1692,7 +1724,9 @@ async def api_einvoice_xml(invoice_id: str, request: Request, t: Optional[str] =
         logger.info("integrator xml unavailable for %s: %s", invoice_id, getattr(exc, "detail", exc))
     except Exception:
         logger.exception("integrator xml fetch failed for %s", invoice_id)
-    stored = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id})
+    stored = None
+    if cid:
+        stored = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id, "company_id": cid})
     if stored and stored.get("xml"):
         data = stored["xml"].encode("utf-8") if isinstance(stored["xml"], str) else stored["xml"]
         name = ubl_export.invoice_filename({"invoice_number": stored.get("invoice_id") or invoice_id}, "xml")
@@ -1741,7 +1775,7 @@ async def api_einvoice_pdf(invoice_id: str, request: Request, download: bool = T
     disp = "attachment" if download else "inline"
     name = ubl_export.invoice_filename(inv, "pdf")
     try:
-        remote = await fetch_integrator_pdf(invoice_id)
+        remote = await fetch_integrator_pdf(invoice_id, company_id=str(inv.get("company_id") or ""))
         if remote:
             return Response(
                 remote,
@@ -1774,9 +1808,12 @@ def _is_http_url(url: str) -> bool:
     return u.startswith("http://") or u.startswith("https://")
 
 
-async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
+async def resolve_gib_document_url(invoice_id: str, *, company_id: str) -> Dict[str, Any]:
     """Resmi GİB/entegratör görüntüleme URL'si — yanlış n11 linkini İşNet'te düzeltir."""
-    inv = await _db.invoices.find_one({"_id": invoice_id})
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
@@ -1805,7 +1842,10 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
         if seller and ettn:
             url = n11faturam.document_url(seller, ettn, e_type)
             if url:
-                await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"gib_document_url": url}})
+                await _db.invoices.update_one(
+                    {"_id": invoice_id, "company_id": cid},
+                    {"$set": {"gib_document_url": url}},
+                )
                 return {"url": url, "provider": "n11faturam", "source": "built"}
 
     # İşNet: GetDocumentViewerLink (kayıtlı n11 URL'si yanlış olabilir — yok say)
@@ -1826,7 +1866,7 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
                 vendor_no = str(info.get("vendor_number") or "").strip()
                 if vendor_no:
                     patch["gib_vendor_number"] = vendor_no
-                await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+                await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
                 return {"url": url, "provider": "isnet", "source": "viewer_link"}
 
     if _is_http_url(stored) and not (provider in ("isnet", "isnet_portal") and _is_n11_document_url(stored)):
@@ -1845,15 +1885,15 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
 @router.get("/invoices/{invoice_id}/gib-document")
 async def api_gib_document_redirect(invoice_id: str, user: dict = Depends(_user_dep)):
     """Tarayıcıda resmi entegratör belgesini aç (cookie ile)."""
-    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
-    info = await resolve_gib_document_url(invoice_id)
+    inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    info = await resolve_gib_document_url(invoice_id, company_id=str(inv.get("company_id") or ""))
     return RedirectResponse(url=info["url"], status_code=302)
 
 
 @router.get("/invoices/{invoice_id}/gib-document.json")
 async def api_gib_document_json(invoice_id: str, user: dict = Depends(_user_dep)):
-    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
-    return await resolve_gib_document_url(invoice_id)
+    inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    return await resolve_gib_document_url(invoice_id, company_id=str(inv.get("company_id") or ""))
 
 
 def _invoice_ettn(inv: dict) -> str:
@@ -1900,13 +1940,20 @@ async def _remember_isnet_document(invoice_id: str, inv: dict, captured: Optiona
     vendor = str(captured.get("vendor_number") or "").strip()
     if vendor and vendor != str((inv or {}).get("gib_vendor_number") or "").strip():
         patch["gib_vendor_number"] = vendor
-    if patch:
-        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+    if not patch:
+        return
+    cid = str((inv or {}).get("company_id") or "").strip()
+    if not cid:
+        return
+    await _db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
 
 
-async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
+async def fetch_integrator_pdf(invoice_id: str, *, company_id: str) -> Optional[bytes]:
     """GİB e-belge PDF (İşNet). Gelen faturalarda InvoiceDirection=Incoming."""
-    inv = await _db.invoices.find_one({"_id": invoice_id})
+    cid = str(company_id or "").strip()
+    if not cid:
+        return None
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     if not inv:
         return None
     et = inv.get("e_type") or ""
@@ -1979,9 +2026,12 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
         raise HTTPException(status_code=502, detail="Entegratör belgesi alınamadı.") from exc
 
 
-async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
+async def fetch_integrator_xml(invoice_id: str, *, company_id: str) -> Optional[bytes]:
     """GİB UBL XML (İşNet). Gelen faturalarda InvoiceDirection=Incoming."""
-    inv = await _db.invoices.find_one({"_id": invoice_id})
+    cid = str(company_id or "").strip()
+    if not cid:
+        return None
+    inv = await _db.invoices.find_one({"_id": invoice_id, "company_id": cid})
     if not inv:
         return None
     et = inv.get("e_type") or ""
@@ -2071,7 +2121,9 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             if settings.get("status") != "configured":
                 continue
             try:
-                out = await refresh_one_invoice_status(inv["_id"])
+                out = await refresh_one_invoice_status(
+                    inv["_id"], company_id=str(inv.get("company_id") or ""),
+                )
                 if out.get("updated"):
                     updated += 1
             except Exception:

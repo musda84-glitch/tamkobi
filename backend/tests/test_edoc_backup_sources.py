@@ -215,7 +215,10 @@ def test_none_then_stored_then_local(monkeypatch, gap_off):
     )
     db = _Db(
         [stored, local, incoming],
-        xml_rows=[{"_id": "stored1", "xml": STORED_XML.decode()}, {"_id": "in1", "xml": STORED_XML.decode()}],
+        xml_rows=[
+            {"_id": "stored1", "company_id": "comp_a", "xml": STORED_XML.decode()},
+            {"_id": "in1", "company_id": "comp_a", "xml": STORED_XML.decode()},
+        ],
     )
     edoc_backup.init(db)
     blob, counts = _run(edoc_backup.build_zip("comp_a", D0, D1))
@@ -236,13 +239,13 @@ def test_none_then_stored_then_local(monkeypatch, gap_off):
 def test_integrator_error_uses_stored_and_masks(monkeypatch, gap_off, caplog):
     err = HTTPException(status_code=502, detail=LEAK)
 
-    async def boom(_invoice_id):
+    async def boom(_invoice_id, **_kwargs):
         raise err
 
     monkeypatch.setattr("e_invoice.fetch_integrator_xml", boom)
     monkeypatch.setattr("e_invoice.fetch_integrator_pdf", boom)
     row = _inv(_id="err1", gib_invoice_id="GIBERR1")
-    db = _Db([row], xml_rows=[{"_id": "err1", "xml": STORED_XML}])
+    db = _Db([row], xml_rows=[{"_id": "err1", "company_id": "comp_a", "xml": STORED_XML}])
     edoc_backup.init(db)
     with caplog.at_level(logging.WARNING, logger="TamKobiERP"):
         blob, counts = _run(edoc_backup.build_zip("comp_a", D0, D1))
@@ -261,7 +264,7 @@ def test_integrator_error_uses_stored_and_masks(monkeypatch, gap_off, caplog):
 
 
 def test_error_without_stored_is_local_marker(monkeypatch, gap_off):
-    async def boom(_invoice_id):
+    async def boom(_invoice_id, **_kwargs):
         raise HTTPException(status_code=404, detail="bulunamadı")
 
     monkeypatch.setattr("e_invoice.fetch_integrator_xml", boom)
@@ -313,7 +316,7 @@ def test_scope_folders_and_filename(monkeypatch, gap_off):
 def test_concurrency_cap(monkeypatch, gap_off):
     state = {"cur": 0, "max": 0}
 
-    async def slow(_invoice_id):
+    async def slow(_invoice_id, **_kwargs):
         state["cur"] += 1
         state["max"] = max(state["max"], state["cur"])
         await asyncio.sleep(0.12)
@@ -332,13 +335,13 @@ def test_concurrency_cap(monkeypatch, gap_off):
 def test_timeout_does_not_drop_zip(monkeypatch, gap_off):
     monkeypatch.setattr(edoc_backup, "INVOICE_TIMEOUT_SECONDS", 0.05)
 
-    async def xml(invoice_id):
+    async def xml(invoice_id, **_kwargs):
         if invoice_id == "slow":
             await asyncio.sleep(2)
             return b"LATE"
         return OFFICIAL_XML
 
-    async def pdf(_invoice_id):
+    async def pdf(_invoice_id, **_kwargs):
         return OFFICIAL_PDF
 
     monkeypatch.setattr("e_invoice.fetch_integrator_xml", xml)

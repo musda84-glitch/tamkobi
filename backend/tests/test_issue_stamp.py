@@ -53,7 +53,7 @@ class TestApplyIssueStamp:
 
     def test_stamp_now_without_client_uses_istanbul(self):
         fake_db = MagicMock()
-        inv = {"_id": "inv_st2", "status": "draft", "issue_date": "2020-01-01"}
+        inv = {"_id": "inv_st2", "company_id": "c1", "status": "draft", "issue_date": "2020-01-01"}
         fake_db.invoices.update_one = AsyncMock()
         fake_db.invoices.find_one = AsyncMock(side_effect=lambda q: {**inv, **fake_db._patch})
 

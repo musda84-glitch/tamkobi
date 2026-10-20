@@ -1206,7 +1206,9 @@ async def invoice_xml_payload(inv: dict) -> Response:
     try:
         import e_invoice
 
-        remote = await e_invoice.fetch_integrator_xml(invoice_id)
+        remote = await e_invoice.fetch_integrator_xml(
+            invoice_id, company_id=str(inv.get("company_id") or ""),
+        )
         if remote:
             return Response(
                 remote,
