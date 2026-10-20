@@ -55,7 +55,10 @@ describe("amountInWords", () => {
   });
 
   test("TRY dışı birim kodu", () => {
-    expect(amountInWords(10.5, "usd")).toBe("Yalnız: On USD Elli Kuruş");
+    expect(amountInWords(10.5, "usd")).toBe("Yalnız: On USD Elli Cent");
+    expect(amountInWords(10.5, "EUR")).toBe("Yalnız: On EUR Elli Cent");
     expect(amountInWords(100, "EUR")).toBe("Yalnız: Yüz EUR");
+    expect(amountInWords(10.5, "GBP")).toBe("Yalnız: On GBP 50/100");
+    expect(amountInWords(10.05, "CHF")).toBe("Yalnız: On CHF 05/100");
   });
 });

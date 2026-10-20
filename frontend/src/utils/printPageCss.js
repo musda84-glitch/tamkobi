@@ -118,7 +118,7 @@ function receiptCopyCss(size) {
   const a4Sheets = size === "A4" ? `
   #print-area .receipt-page[data-copy-count="2"] {
     min-height: 248mm;
-    display: flex;
+    display: flex !important;
     flex-direction: column;
     justify-content: space-between;
   }

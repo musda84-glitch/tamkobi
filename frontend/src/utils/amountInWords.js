@@ -57,7 +57,8 @@ function currencyUnit(currency) {
   if (!code || code === "TRY" || code === "TL" || code === "₺") {
     return { major: "Türk Lirası", minor: "Kuruş" };
   }
-  return { major: code, minor: "Kuruş" };
+  if (code === "USD" || code === "EUR") return { major: code, minor: "Cent" };
+  return { major: code, minor: null };
 }
 
 function splitLiraKurus(amount) {
@@ -76,6 +77,9 @@ export function amountInWords(amount, currency = "TRY") {
   if (parts.lira > 0 || parts.kurus === 0) {
     chunks.push(integerWords(parts.lira), major);
   }
-  if (parts.kurus > 0) chunks.push(integerWords(parts.kurus), minor);
+  if (parts.kurus > 0) {
+    if (minor) chunks.push(integerWords(parts.kurus), minor);
+    else chunks.push(`${String(parts.kurus).padStart(2, "0")}/100`);
+  }
   return `Yalnız: ${titleTr(chunks.join(" "))}`;
 }

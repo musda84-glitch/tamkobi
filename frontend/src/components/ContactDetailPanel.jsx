@@ -422,6 +422,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       toast.error("Aynı yöndeki çek ve senetleri seçin.");
       return;
     }
+    const currencies = new Set(rows.map((ch) => String(ch.currency || "TRY").trim().toUpperCase() || "TRY"));
+    if (currencies.size > 1) {
+      toast.error("Aynı para birimindeki çek ve senetleri seçin.");
+      return;
+    }
     setReceipt(chequesReceipt(rows));
   };
   const openPaymentReceipt = (p) => {

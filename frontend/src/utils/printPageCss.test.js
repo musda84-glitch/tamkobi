@@ -58,6 +58,8 @@ test("receipt copy layout is receipt-only", () => {
   expect(a4).toContain(".receipt-half");
   expect(a4).toContain(".receipt-cut");
   expect(a4).toContain("page-break-after: always");
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\][\s\S]*display:\s*flex\s*!important/);
+  expect(printPageCss("invoice", "A4")).not.toContain("display: flex !important");
   expect(a5).toContain("size: A5");
   expect(a5).not.toContain("min-height: 248mm");
   expect(printPageCss("invoice", "A4")).not.toContain(".receipt-half");

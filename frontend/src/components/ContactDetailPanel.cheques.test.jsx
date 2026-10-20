@@ -82,6 +82,22 @@ const CHEQUES = [
     issue_date: "2026-09-01",
     status: "open",
   },
+  {
+    id: "ch4",
+    number: "CEK-4",
+    instrument: "cheque",
+    direction: "received",
+    amount: 20,
+    currency: "USD",
+    serial_no: "SN-4",
+    bank_name: "Garanti",
+    bank_branch: "Levent",
+    account_no: "TR4",
+    drawer_name: "Ali",
+    due_date: "2026-12-20",
+    issue_date: "2026-10-04",
+    status: "open",
+  },
 ];
 
 const OVERVIEW = {
@@ -182,6 +198,16 @@ test("seçilen aynı yön çeklerle tek makbuz items taşır", async () => {
   expect(host.textContent).toContain("Toplam 2 adet evrak");
   expect(host.querySelector("[data-testid=receipt-amount-words]").textContent).toMatch(/^Yalnız: /);
   expect(host.textContent).not.toContain("İşlem sonrası cari bakiye");
+});
+
+test("karışık para birimi seçilince makbuz açılmaz", async () => {
+  await renderPanel();
+  await act(async () => { host.querySelector("[data-testid=detail-tab-cheques]").click(); });
+  await act(async () => { host.querySelector("[data-testid=detail-cheque-select-CEK-1]").click(); });
+  await act(async () => { host.querySelector("[data-testid=detail-cheque-select-CEK-4]").click(); });
+  await act(async () => { host.querySelector("[data-testid=detail-cheques-receipt-selected]").click(); });
+  expect(toast.error).toHaveBeenCalledWith("Aynı para birimindeki çek ve senetleri seçin.");
+  expect(host.querySelector("[data-testid=receipt-print-modal]")).toBeNull();
 });
 
 test("karışık yön seçilince makbuz açılmaz", async () => {

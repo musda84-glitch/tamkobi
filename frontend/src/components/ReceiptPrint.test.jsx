@@ -188,6 +188,12 @@ test("nüsha 1 A5, 2 A4 iki nüsha ve kesim, 5 üç sayfa", () => {
   expect(document.querySelector("[data-testid=receipt-copy-0]").className).not.toContain("receipt-print-only");
   expect(document.querySelector("[data-testid=receipt-copy-1]").className).toContain("receipt-print-only");
 
+  setCopies(4);
+  const pages4 = [...document.querySelectorAll("[data-testid=receipt-page]")];
+  expect(pages4).toHaveLength(2);
+  expect(pages4[1].getAttribute("data-copy-count")).toBe("2");
+  expect(pages4[1].querySelector("[data-testid=receipt-cut]")).toBeTruthy();
+
   setCopies(5);
   const pages = [...document.querySelectorAll("[data-testid=receipt-page]")];
   expect(pages).toHaveLength(3);
