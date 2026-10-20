@@ -39,6 +39,16 @@ export {
 };
 
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => formatOrderDateTime(r.order_date) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
+
+/** view_prices kapalıyken dışa aktarmada tutar ve birim fiyat kolonu yok. */
+export function orderExportColumns(columns, showPrices = true) {
+  if (showPrices !== false) return columns;
+  return (columns || []).filter((col) => {
+    const label = String(col?.label || "");
+    return !label.includes("Tutar") && !label.includes("Birim Fiyat");
+  });
+}
+
 const STATUS = ORDER_STATUS_OPTIONS;
 const SORT = [["date_desc", "Tarih (yeni)"], ["date_asc", "Tarih (eski)"], ["amount_desc", "Tutar (yüksek)"], ["amount_asc", "Tutar (düşük)"], ["customer", "Müşteri (A→Z)"], ["number", "Sipariş No"]];
 export const ORDER_PAGE_SIZES = [50, 100, 200, 500, 1000];
@@ -125,6 +135,9 @@ export const OrdersToolbar = ({
   statusCounts,
   loadExportRows,
   pageSizeOptions = ORDER_PAGE_SIZES,
+  showTotal = true,
+  showExport = true,
+  showPrices = true,
 }) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const channels = [...(channelOptions?.length ? channelOptions : new Set((orders || []).map((o) => o.channel || "b2b")))];
@@ -288,8 +301,10 @@ export const OrdersToolbar = ({
   const renderSummary = (variant) => (
     <div className="ml-auto flex items-center gap-3 text-slate-500">
       {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} testidSuffix={variant === "mobile" ? "-m" : ""} />}
-      <ExportButtons rows={rows} loadRows={loadExportRows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" testidSuffix={variant === "mobile" ? "-m" : ""} />
-      <div data-testid={variant === "mobile" ? "ord-result-summary-m" : "ord-result-summary"}><b className="text-slate-900">{count}</b> sipariş · Toplam <b className="text-slate-900">{formatTrAmount(total)} ₺</b></div>
+      {showExport !== false && (
+        <ExportButtons rows={rows} loadRows={loadExportRows} columns={orderExportColumns(ORD_COLS, showPrices)} filename="siparisler" title="Sipariş Listesi" testidSuffix={variant === "mobile" ? "-m" : ""} />
+      )}
+      <div data-testid={variant === "mobile" ? "ord-result-summary-m" : "ord-result-summary"}><b className="text-slate-900">{count}</b>{showTotal === false ? " sipariş" : " sipariş · Toplam "}{showTotal === false ? null : <b className="text-slate-900">{formatTrAmount(total)} ₺</b>}</div>
     </div>
   );
 

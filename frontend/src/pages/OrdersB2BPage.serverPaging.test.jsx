@@ -29,6 +29,7 @@ jest.mock("../context/AuthContext", () => {
   return {
     API_URL: "/api",
     useAuth: () => ({
+      user: { role: "admin" },
       activeCompany: company,
       can: () => true,
       feature: () => true,

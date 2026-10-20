@@ -1,5 +1,7 @@
 import {
+  ORDER_STAFF_ACTIONS,
   hasSelfPersonnelRecord,
+  isOrderStaffMode,
   isPersonelRole,
   isSelfPersonnelPath,
   personelAccountTabs,
@@ -72,6 +74,19 @@ describe("selfPersonnelNav", () => {
     expect(personelAccountTabs(p, 1)).toEqual(["profil"]);
     expect(personelAccountTabs(p, 2)).toEqual(["profil", "sirketler"]);
     expect(personelAccountTabs({ role: "admin" }, 1)).toContain("ayarlar");
+  });
+
+  test("order staff mode is personel with portal_orders only", () => {
+    const personel = { role: "personel", employee_id: "e1" };
+    expect(ORDER_STAFF_ACTIONS).toEqual(["print", "missing", "produce", "cargo", "label"]);
+    expect(isOrderStaffMode(null)).toBe(false);
+    expect(isOrderStaffMode(undefined)).toBe(false);
+    expect(isOrderStaffMode(personel)).toBe(false);
+    expect(isOrderStaffMode({ ...personel, features: {} })).toBe(false);
+    expect(isOrderStaffMode({ ...personel, features: { portal_orders: true } })).toBe(true);
+    expect(isOrderStaffMode({ role: "admin" })).toBe(false);
+    expect(isOrderStaffMode({ role: "owner", features: { portal_orders: true } })).toBe(false);
+    expect(isOrderStaffMode({ role: "manager", features: { portal_orders: true } })).toBe(false);
   });
 
   test("hides production AI advisor from personel and production roles", () => {

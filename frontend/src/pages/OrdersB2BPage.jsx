@@ -39,12 +39,12 @@ import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { ChangeMarketplaceCargoModal } from "../components/ChangeMarketplaceCargoModal";
 import { channelTr, statusTr, orderStatusBadgeClass, marketplaceStatusTr } from "../utils/labels";
-import { orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
+import { isWarehouseShipped, orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
-import { OrdersToolbar, ORDER_PAGE_SIZES } from "../components/OrdersToolbar";
+import { OrdersToolbar, ORDER_PAGE_SIZES, orderExportColumns } from "../components/OrdersToolbar";
 import { isOrdersServerPagingEnabled } from "../utils/featureFlags";
 import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
@@ -97,6 +97,11 @@ import {
 } from "../components/ui/dropdown-menu";
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
+import OrdersStaffMobile from "../components/orders/OrdersStaffMobile";
+import { StaffFiveActions, StaffProduceChoices } from "../components/orders/staffOrderActions";
+import { useIsNarrow } from "../hooks/useIsNarrow";
+import { hasPortalFeature } from "../utils/portalFields";
+import { isOrderStaffMode, isPersonelRole } from "../utils/selfPersonnelNav";
 
 const ORDER_EXPORT_LINE_COLS = [
   { label: "Sipariş No", value: (r) => r.order_number },
@@ -228,7 +233,7 @@ function mobilePrimaryAction(ord, gibLookup) {
   return null;
 }
 
-export default function OrdersB2BPage() {
+function OrdersB2BPageImpl({ staffMode = false }) {
   const serverPaging = isOrdersServerPagingEnabled();
   const { activeCompany, can, feature } = useAuth();
   const canDeleteOrder = can("/orders", "delete");
@@ -1040,6 +1045,7 @@ export default function OrdersB2BPage() {
   const [produceFromOrder, setProduceFromOrder] = useState(null);
   const [produceBusyId, setProduceBusyId] = useState(null);
   const [produceRecipeOrd, setProduceRecipeOrd] = useState(null);
+  const [produceChoiceOrd, setProduceChoiceOrd] = useState(null);
   const [lineStock, setLineStock] = useState(null);
   const productCatalog = allProducts.length ? allProducts : products;
   const openOrderLineStock = (ord, it, idx) => {
@@ -1076,6 +1082,36 @@ export default function OrdersB2BPage() {
     }
     setProduceRecipeOrd(ord);
   };
+  const notifyMissing = async (ord) => {
+    const id = ord?.id || ord?._id;
+    if (!id) return;
+    try {
+      const r = await axios.post(`${API_URL}/order-picks/${id}/notify-missing`, {});
+      toast.success(r.data?.message || "Eksik bildirimi gönderildi.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Eksik bildirimi gönderilemedi.");
+    }
+  };
+  const produceMissing = async (ord) => {
+    const id = ord?.id || ord?._id;
+    if (!id) return;
+    try {
+      const r = await axios.post(`${API_URL}/order-picks/${id}/to-production`, {});
+      toast.success(r.data?.message || "Eksik ürünler üretime alındı.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Eksik ürünler üretime alınamadı.");
+    }
+  };
+  const openStaffCargo = (ord) => {
+    if (ord?.cargo_tracking_number || isWarehouseShipped(ord)) {
+      toast.error("Bu sipariş zaten kargolandı.");
+      return;
+    }
+    setShipOrder(ord);
+  };
+  const openStaffProduce = (ord) => setProduceChoiceOrd(ord);
   const submitProduceRecipe = async (station) => {
     const ord = produceRecipeOrd;
     const oid = ord?.id || ord?._id;
@@ -1484,14 +1520,14 @@ export default function OrdersB2BPage() {
         return;
       case "download_xlsx": {
         const rows = orderExportRows(ord);
-        exportExcel(rows, ORDER_EXPORT_LINE_COLS, `siparis-${ord.order_number || "order"}`);
+        exportExcel(rows, orderExportColumns(ORDER_EXPORT_LINE_COLS, showPrices), `siparis-${ord.order_number || "order"}`);
         return;
       }
       case "download_pdf": {
         const rows = orderExportRows(ord);
         exportPdf(
           rows,
-          ORDER_EXPORT_LINE_COLS,
+          orderExportColumns(ORDER_EXPORT_LINE_COLS, showPrices),
           `siparis-${ord.order_number || "order"}`,
           `Sipariş ${ord.order_number || ""}`,
           activeCompany?.name || activeCompany?.title || "",
@@ -1848,7 +1884,7 @@ export default function OrdersB2BPage() {
           onClose={() => setNotifyOrder(null)}
         />
       )}
-      {selected.length > 0 && (
+      {selected.length > 0 && !staffMode && (
         <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="orders-bulk-bar">
           <span className="font-bold">{selected.length} sipariş seçildi</span>
           <button onClick={() => bulk("approve")} className="px-3 py-1.5 bg-emerald-600 rounded-lg font-semibold" data-testid="bulk-approve-btn">Toplu Onayla (entegrasyona yansır)</button>
@@ -1872,7 +1908,7 @@ export default function OrdersB2BPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Sipariş Modülü</h1>
           <p className="text-xs sm:text-sm text-slate-500">Pazaryeri & B2B siparişleri, iade/iptal/soru yönetimi, termal kargo etiketi ve tek tıkla faturalama</p>
-          {listMeta.missing_contact > 0 && (
+          {listMeta.missing_contact > 0 && !staffMode && (
             <button onClick={autoContacts} disabled={autoBusy} className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold disabled:opacity-50" data-testid="orders-auto-contacts-btn">
               <UserPlus className="w-3.5 h-3.5" /> Carileri Eşle ({listMeta.missing_contact} carisiz sipariş)
             </button>
@@ -1880,9 +1916,13 @@ export default function OrdersB2BPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {!staffMode && (
+            <>
           <button onClick={() => setNewOrder(true)} className="p-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl" title="Yeni Sipariş" aria-label="Yeni Sipariş" data-testid="new-order-btn"><Plus className="w-4 h-4" /></button>
           <button onClick={() => setAutoShip(true)} className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl" title="Toplu Kargola" aria-label="Toplu Kargola" data-testid="auto-ship-btn"><Truck className="w-4 h-4" /></button>
           <button onClick={() => setAiImport(true)} className="p-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl" title="AI ile Yükle (PDF/Excel)" aria-label="AI ile Yükle" data-testid="ai-order-btn"><Sparkles className="w-4 h-4" /></button>
+            </>
+          )}
         {/* Tab Switcher */}
         <div className="flex flex-wrap items-center gap-1 bg-slate-200/80 p-1 rounded-xl text-xs font-semibold">
           <button
@@ -1894,18 +1934,18 @@ export default function OrdersB2BPage() {
           >
             Gelen Siparişler ({listMeta.open_count})
           </button>
-          {[["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${listMeta.closed_count})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["pricing", "Fiyat Merkezi", Tag], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
+          {!staffMode && [["claims", "İadeler", RotateCcw], ["cancelled", `İptaller (${listMeta.closed_count})`, Trash2], ["questions", "Müşteri Soruları", FileIcon], ["mp_products", "Ürünler & Fiyat", PackageIcon], ["pricing", "Fiyat Merkezi", Tag], ["profit", "Komisyon & Kârlılık", Tag]].map(([k, l, Icon]) => (
             <button key={k} onClick={() => setActiveTab(k)} className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${activeTab === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`} data-testid={`tab-${k}`}><Icon className="w-3.5 h-3.5" /><span>{l}</span></button>
           ))}
         </div>
         </div>
       </div>
-      {activeTab === "claims" && <ClaimsPanel companyId={activeCompanyId(activeCompany)} />}
-      {activeTab === "cancelled" && <CancelledPanel companyId={companyId} closedCount={listMeta.closed_count} />}
-      {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompanyId(activeCompany)} />}
-      {activeTab === "questions" && <QuestionsPanel companyId={activeCompanyId(activeCompany)} />}
-      {activeTab === "pricing" && <PricingCenter companyId={activeCompanyId(activeCompany)} />}
-      {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompanyId(activeCompany)} />}
+      {!staffMode && activeTab === "claims" && <ClaimsPanel companyId={activeCompanyId(activeCompany)} />}
+      {!staffMode && activeTab === "cancelled" && <CancelledPanel companyId={companyId} closedCount={listMeta.closed_count} />}
+      {!staffMode && activeTab === "profit" && <ProfitabilityPanel companyId={activeCompanyId(activeCompany)} />}
+      {!staffMode && activeTab === "questions" && <QuestionsPanel companyId={activeCompanyId(activeCompany)} />}
+      {!staffMode && activeTab === "pricing" && <PricingCenter companyId={activeCompanyId(activeCompany)} />}
+      {!staffMode && activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompanyId(activeCompany)} />}
       {newOrder && <NewOrderModal companyId={activeCompanyId(activeCompany)} products={productCatalog} onClose={closeNewOrder} onSaved={loadData} />}
       {editOrder && <OrderEditModal order={editOrder} products={productCatalog} onClose={() => setEditOrder(null)} onSaved={loadData} />}
       {produceFromOrder && (
@@ -1917,6 +1957,25 @@ export default function OrdersB2BPage() {
           onCreated={() => setProduceFromOrder(null)}
         />
       )}
+      {staffMode && produceChoiceOrd ? (
+        <div className="fixed inset-0 z-[85] bg-slate-900/50 flex items-end sm:items-center justify-center p-4" data-testid="order-produce-choice-desktop">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <StaffProduceChoices
+              onMissing={() => {
+                const ord = produceChoiceOrd;
+                setProduceChoiceOrd(null);
+                produceMissing(ord);
+              }}
+              onRecipe={() => {
+                const ord = produceChoiceOrd;
+                setProduceChoiceOrd(null);
+                setProduceRecipeOrd(ord);
+              }}
+              onCancel={() => setProduceChoiceOrd(null)}
+            />
+          </div>
+        </div>
+      ) : null}
       {produceRecipeOrd && (
         <OrderProduceRecipeModal
           order={produceRecipeOrd}
@@ -1953,7 +2012,7 @@ export default function OrdersB2BPage() {
         />
       )}
 
-      {activeTab === "orders" ? (<>
+      {(activeTab === "orders" || staffMode) ? (<>
         {listMeta.truncated && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800" data-testid="orders-truncated-warning">
             Sipariş taraması kesildi (üst sınır). Toplam adet ve tutar eksik olabilir; tarih aralığını daraltın.
@@ -1968,7 +2027,10 @@ export default function OrdersB2BPage() {
           rows={orders}
           selectedCount={selected.length}
           bulkBusy={bulkBusy}
-          onBulkAction={bulk}
+          onBulkAction={staffMode ? undefined : bulk}
+          showTotal={staffMode ? showPrices : true}
+          showExport={!staffMode}
+          showPrices={showPrices}
           pageSize={pageSize}
           onPageSizeChange={setPageSizePersist}
           pageSizeOptions={pageSizeChoices}
@@ -2026,12 +2088,22 @@ export default function OrdersB2BPage() {
                     </button>
                   </div>
                   <div className="text-right shrink-0 font-bold text-slate-900">
-                    {showPrices ? `${formatTrAmount(ord.grand_total ?? ord.total_amount)} ₺` : "—"}
-                    <InvoiceOrderMismatchBadge ord={ord} />
+                    {showPrices ? `${formatTrAmount(ord.grand_total ?? ord.total_amount)} ₺` : (staffMode ? null : "—")}
+                    {!staffMode || showPrices ? <InvoiceOrderMismatchBadge ord={ord} /> : null}
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100" data-testid={`order-actions-mobile-${ord.order_number}`}>
-                  {isB2BCartOrder(ord) ? (
+                  {staffMode ? (
+                    <StaffFiveActions
+                      ord={ord}
+                      suffix="-mobile"
+                      onPrint={openPrintOrder}
+                      onMissing={notifyMissing}
+                      onProduce={openStaffProduce}
+                      onCargo={openStaffCargo}
+                      onLabel={printOrderCargoLabel}
+                    />
+                  ) : isB2BCartOrder(ord) ? (
                     <>
                       <button
                         type="button"
@@ -2141,7 +2213,7 @@ export default function OrdersB2BPage() {
                   </colgroup>
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
-                  <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && orders.length > 0 && selected.length === orders.map(orderRowId).filter(Boolean).length} onChange={(e) => setSelected(e.target.checked ? orders.map(orderRowId).filter(Boolean) : [])} className="rounded" data-testid="orders-select-all" /></th>
+                  <th className="px-3 py-3 w-8">{staffMode ? null : <input type="checkbox" checked={selected.length > 0 && orders.length > 0 && selected.length === orders.map(orderRowId).filter(Boolean).length} onChange={(e) => setSelected(e.target.checked ? orders.map(orderRowId).filter(Boolean) : [])} className="rounded" data-testid="orders-select-all" />}</th>
                   <SortTh k="order_number">Sipariş No & Kanal</SortTh>
                   <SortTh k="customer_name">Müşteri / Alıcı</SortTh>
                   <SortTh k="items">Ürünler</SortTh>
@@ -2155,7 +2227,7 @@ export default function OrdersB2BPage() {
                 {!loading && visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {pagedOrders.map((ord) => (
                   <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""} ${(ord.id || ord._id) === openFlash ? "ring-2 ring-inset ring-emerald-500 bg-emerald-50" : ""}`} data-testid={`order-row-${ord.order_number}`}>
-                    <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(orderRowId(ord))} onChange={() => toggleSel(orderRowId(ord))} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
+                    <td className="px-3 py-3">{staffMode ? null : <input type="checkbox" checked={selected.includes(orderRowId(ord))} onChange={() => toggleSel(orderRowId(ord))} className="rounded" data-testid={`order-select-${ord.order_number}`} />}</td>
                     <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
                       <div className="font-bold text-slate-900 font-mono">{ord.held_label || ord.order_number}</div>
                       {ord.held_label && ord.order_number && ord.held_label !== ord.order_number ? (
@@ -2215,20 +2287,27 @@ export default function OrdersB2BPage() {
                             const lineProd = resolveOrderLineProduct(it, productCatalog);
                             const canProduce = orderLineCanProduce(lineProd);
                             const thumb = img(it, lineProd);
+                            const itemLinkId = `order-item-link-${ord.order_number}-${idx}`;
                             return (
                             <div key={idx} className={`flex items-center gap-2 ${open ? `rounded-lg p-1.5 ${idx % 2 === 0 ? "bg-slate-50" : "bg-emerald-50/80"}` : ""}`}>
                               {thumb ? <img src={thumb} alt="" width={open ? 40 : 32} height={open ? 40 : 32} loading="lazy" decoding="async" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
+                              {staffMode ? (
+                                <div className="text-left min-w-0 flex-1 text-slate-700" data-testid={itemLinkId}>
+                                  <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
+                                </div>
+                              ) : (
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); openOrderLineStock(ord, it, idx); }}
                                 className={`text-left min-w-0 flex-1 hover:underline decoration-dotted ${lineProd ? "text-slate-700 hover:text-indigo-700" : "text-amber-800 hover:text-amber-900"}`}
                                 title={lineProd ? "Stok kartını aç" : "Stok kartına eşleştir"}
-                                data-testid={`order-item-link-${ord.order_number}-${idx}`}
+                                data-testid={itemLinkId}
                               >
                                 <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
                                 {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{showPrices && it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}{!lineProd ? " · eşleşmedi" : ""}</div>}
                               </button>
-                              {canProduce ? (
+                              )}
+                              {!staffMode && canProduce ? (
                                 <button
                                   type="button"
                                   onClick={(e) => { e.stopPropagation(); openProduceForLine(ord, it, idx); }}
@@ -2252,15 +2331,17 @@ export default function OrdersB2BPage() {
                           {formatTrAmount((ord.grand_total ?? ord.total_amount))} ₺
                           {Number(ord.vat_total) > 0 && <div className="text-[10px] font-semibold text-slate-400">KDV dahil</div>}
                         </>
-                      ) : "—"}
-                      <InvoiceOrderMismatchBadge ord={ord} />
+                      ) : (staffMode ? null : "—")}
+                      {!staffMode || showPrices ? <InvoiceOrderMismatchBadge ord={ord} /> : null}
                     </td>
                     <td className="px-4 py-3">
-                      {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
+                      {staffMode ? (
+                        <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`} data-testid={`order-status-badge-${ord.order_number}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
+                      ) : ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
                         <div data-testid={`order-status-badge-${ord.order_number}`} title="Durum pazaryerinden otomatik güncellenir">
                           <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {marketplaceStatusTr(ord.marketplace_status)}</div>}
-                          {ord.channel === "shopphp" && <button onClick={async () => { try { const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/push-shopphp`); toast.success(r.data.message); loadData(); } catch (e) { toast.error(e.response?.data?.detail || "Bildirilemedi."); } }} className={`mt-1 text-[10px] font-semibold underline ${ord.shopphp_push?.ok ? "text-emerald-700" : ord.shopphp_push?.ok === false ? "text-rose-600" : "text-indigo-600"}`} title={ord.shopphp_push ? `Son bildirim: ${new Date(ord.shopphp_push.at).toLocaleString("tr-TR")}${ord.shopphp_push.error ? " — " + ord.shopphp_push.error : ""}` : "Onay/kargo/fatura bilgisini ShopPHP mağazasına yaz"} data-testid={`shopphp-push-${ord.order_number}`}>{ord.shopphp_push?.ok ? "Mağazaya bildirildi ✓" : ord.shopphp_push?.ok === false ? "Bildirim hatası — tekrar dene" : "Mağazaya Bildir"}</button>}
+                          {ord.channel === "shopphp" && !staffMode && <button onClick={async () => { try { const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/push-shopphp`); toast.success(r.data.message); loadData(); } catch (e) { toast.error(e.response?.data?.detail || "Bildirilemedi."); } }} className={`mt-1 text-[10px] font-semibold underline ${ord.shopphp_push?.ok ? "text-emerald-700" : ord.shopphp_push?.ok === false ? "text-rose-600" : "text-indigo-600"}`} title={ord.shopphp_push ? `Son bildirim: ${new Date(ord.shopphp_push.at).toLocaleString("tr-TR")}${ord.shopphp_push.error ? " — " + ord.shopphp_push.error : ""}` : "Onay/kargo/fatura bilgisini ShopPHP mağazasına yaz"} data-testid={`shopphp-push-${ord.order_number}`}>{ord.shopphp_push?.ok ? "Mağazaya bildirildi ✓" : ord.shopphp_push?.ok === false ? "Bildirim hatası — tekrar dene" : "Mağazaya Bildir"}</button>}
                           <div className="mt-1"><OrderCancelRequestBadge ord={ord} /></div>
                         </div>
                       ) : isB2BCartOrder(ord) ? (
@@ -2284,8 +2365,17 @@ export default function OrdersB2BPage() {
                       </div>)}
                     </td>
                     <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
-                      <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
-                        {isB2BCartOrder(ord) ? (
+                      <div className={`inline-flex items-center justify-center gap-1${staffMode ? " flex-wrap" : ""}`} data-testid={`order-actions-${ord.order_number}`}>
+                        {staffMode ? (
+                          <StaffFiveActions
+                            ord={ord}
+                            onPrint={openPrintOrder}
+                            onMissing={notifyMissing}
+                            onProduce={openStaffProduce}
+                            onCargo={openStaffCargo}
+                            onLabel={printOrderCargoLabel}
+                          />
+                        ) : isB2BCartOrder(ord) ? (
                           <>
                             <button
                               type="button"
@@ -2521,4 +2611,25 @@ export default function OrdersB2BPage() {
       </>) : null}
     </div>
   );
+}
+
+function OrdersStaffBranch() {
+  const narrow = useIsNarrow(768);
+  if (narrow) return <OrdersStaffMobile />;
+  return <OrdersB2BPageImpl staffMode />;
+}
+
+/**
+ * /orders. Fail-closed: user yok (null/undefined) veya rol bilinmiyorsa sipariş işlemi yok.
+ * Admin, owner, manager ve diğer personel olmayan roller yükleme sırasında da eski sayfayı görür.
+ */
+export default function OrdersB2BPage() {
+  const { user, loading } = useAuth();
+  const personnel = isPersonelRole(user);
+  const roleKnown = Boolean(user && String(user.role || "").trim());
+  if (roleKnown && !personnel) return <OrdersB2BPageImpl />;
+  if (loading === true || !user) return null;
+  if (personnel && !hasPortalFeature(user, "portal_orders")) return null;
+  if (isOrderStaffMode(user)) return <OrdersStaffBranch />;
+  return null;
 }
