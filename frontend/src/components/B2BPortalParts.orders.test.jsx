@@ -200,7 +200,8 @@ describe("OrdersList", () => {
 
     const pending = q(host, "b2b-order-row-B2B-2026-0097");
     const number = [...pending.querySelectorAll("div")].find((el) => el.textContent === "B2B-2026-0097");
-    expect(number.className).toContain("whitespace-nowrap");
+    expect(number.className).toContain("truncate");
+    expect(number.getAttribute("title")).toBe("B2B-2026-0097");
     expect(number.className).toContain("font-mono");
     expect(pending.textContent).toContain("20.10.2026");
     expect(pending.textContent).not.toContain("Sizin no:");
@@ -224,9 +225,41 @@ describe("OrdersList", () => {
 
     const card = q(host, "b2b-order-B2B-2026-0097");
     const cardNumber = card.querySelector(".font-mono");
-    expect(cardNumber.className).toContain("whitespace-nowrap");
+    expect(cardNumber.className).toContain("truncate");
+    expect(cardNumber.getAttribute("title")).toBe("B2B-2026-0097");
     expect(card.textContent).toContain("20.10.2026");
     expect(button(card, "Sil")).toBeTruthy();
+  });
+
+  it("renders preview, edit, and delete icons in the actions column", () => {
+    renderList();
+    const table = host.querySelector("table");
+    expect(table.className).toContain("lg:table");
+    expect(table.className).not.toContain("md:table");
+    const cards = host.querySelector("[data-testid='b2b-orders'] > div.divide-y");
+    expect(cards.className).toContain("lg:hidden");
+    expect(cards.className).not.toContain("md:hidden");
+
+    const cols = [...table.querySelectorAll("col")];
+    expect(cols[0].className).toContain("w-32");
+    expect(cols[0].className).toContain("min-w-32");
+    expect(cols[6].className).toContain("min-w-28");
+    expect(cols[6].className).toContain("w-[7.5rem]");
+
+    const actions = q(q(table, "b2b-order-row-B2B-2026-0097"), "b2b-order-actions-B2B-2026-0097");
+    const icons = [...actions.querySelectorAll("button")];
+    expect(icons.map((el) => el.getAttribute("aria-label"))).toEqual(["Önizle", "Düzenle", "Sil"]);
+    icons.forEach((el) => {
+      expect(el.querySelector("svg")).toBeTruthy();
+      expect(el.className).toContain("w-7");
+      expect(el.className).toContain("h-7");
+    });
+
+    const cells = [...q(table, "b2b-order-row-B2B-2026-0097").querySelectorAll("td")];
+    expect(cells[1].querySelector(".truncate").textContent).toBe("20.10.2026");
+    expect(cells[1].className).toContain("overflow-hidden");
+    expect(cells[3].className).toContain("overflow-hidden");
+    expect(cells[3].querySelector(".truncate")).toBeTruthy();
   });
 
   it("derives the badge from progress so a partial completion is not finished", () => {
