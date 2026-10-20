@@ -50,6 +50,16 @@ export function isOverviewSectionKey(value: unknown): value is OverviewSectionKe
   return typeof value === "string" && (OVERVIEW_SECTION_KEYS as readonly string[]).includes(value);
 }
 
+/** Bölüm başlığı ve ikonu. Ay satırı render'da overviewMonthTitle ile gelir; buradaki ay başlığı yedektir. */
+export const OVERVIEW_SECTION_META: Record<OverviewSectionKey, { title: string; icon: string }> = {
+  today: { title: "Bugün", icon: "sunny-outline" },
+  panels: { title: "Bildirimler/Mesajlar", icon: "notifications-outline" },
+  month: { title: "Bu ay", icon: "calendar-outline" },
+  stock: { title: "Kritik stok", icon: "cube-outline" },
+  production: { title: "Üretim", icon: "construct-outline" },
+  projects: { title: "Projeler", icon: "briefcase-outline" },
+};
+
 export type OverviewKpi = {
   key: string;
   label: string;

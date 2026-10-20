@@ -55,7 +55,24 @@ jest.mock("react-native", () => {
     Keyboard: { addListener: () => ({ remove() { /* no-op */ } }) },
     View: host("div"),
     Text: host("span"),
-    Pressable: host("button"),
+    Pressable(props: {
+      testID?: string;
+      style?: unknown;
+      children?: React.ReactNode;
+      onPress?: () => void;
+      onLongPress?: () => void;
+      delayLongPress?: number;
+      disabled?: boolean;
+    }) {
+      return ReactLib.createElement("button", {
+        "data-testid": props.testID,
+        style: flatten(props.style),
+        onClick: props.onPress,
+        ...(typeof props.onLongPress === "function" ? { onLongPress: props.onLongPress } : {}),
+        ...(typeof props.delayLongPress === "number" ? { delayLongPress: props.delayLongPress } : {}),
+        disabled: props.disabled,
+      }, props.children);
+    },
     Image: host("img"),
     ScrollView: host("div"),
     KeyboardAvoidingView: host("div"),
@@ -391,7 +408,37 @@ describe("HomeOverviewPage", () => {
     ]);
     await view.unmount();
   });
+
+  it("starts reorder on a section long press and keeps inner presses working", async () => {
+    const onRequestReorder = jest.fn();
+    const view = await renderPage({ onRequestReorder });
+    const today = findByTestId(view.container, "home-overview-section-today");
+    expect(reactProps(today)?.delayLongPress).toBe(350);
+    expect(reactProps(today)?.onClick).toBeUndefined();
+    fireEvent(today, "longPress");
+    expect(onRequestReorder).toHaveBeenCalledTimes(1);
+    (goHref as jest.Mock).mockClear();
+    await act(async () => { reactProps(findByTestId(view.container, "home-overview-stock-all"))?.onClick?.(); });
+    expect(goHref).toHaveBeenCalledWith("/stok");
+    await view.unmount();
+  });
+
+  it("does not attach a long press when reorder is not requested", async () => {
+    const view = await renderPage();
+    const today = findByTestId(view.container, "home-overview-section-today");
+    expect(reactProps(today)?.onLongPress).toBeUndefined();
+    expect(collectTestIds(view.container).filter((id) => id.startsWith("home-overview-section-"))).toEqual(
+      DEFAULT_OVERVIEW_SECTION_ORDER.map((key) => `home-overview-section-${key}`),
+    );
+    await view.unmount();
+  });
 });
+
+function fireEvent(node: any, type: "longPress" | "press") {
+  const props = reactProps(node);
+  if (type === "longPress") props?.onLongPress?.();
+  else (props?.onClick || props?.onPress)?.();
+}
 
 function collectTestIds(node: any): string[] {
   const out: string[] = [];
