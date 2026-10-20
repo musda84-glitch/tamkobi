@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from mysql_store import apply_update, match_query
+from mysql_store import apply_update, match_query, new_upsert_doc
 
 
 def _run(coro):
@@ -58,8 +58,26 @@ class FakeColl:
         for i, doc in enumerate(self.docs):
             if match_query(doc, q or {}):
                 self.docs[i] = apply_update(doc, upd, q)
-                return MagicMock(matched_count=1, modified_count=1)
-        return MagicMock(matched_count=0, modified_count=0)
+                return MagicMock(matched_count=1, modified_count=1, upserted_id=None)
+        if not upsert:
+            return MagicMock(matched_count=0, modified_count=0, upserted_id=None)
+        created = new_upsert_doc(upd, q)
+        self.docs.append(created)
+        return MagicMock(matched_count=0, modified_count=0, upserted_id=created.get("_id"))
+
+    async def find_one_and_update(self, q, upd, upsert=False, return_document=True, projection=None):
+        for i, doc in enumerate(self.docs):
+            if not match_query(doc, q or {}):
+                continue
+            before = dict(doc)
+            self.docs[i] = apply_update(doc, upd, q)
+            found = self.docs[i] if return_document else before
+            return dict(found)
+        if not upsert:
+            return None
+        created = new_upsert_doc(upd, q)
+        self.docs.append(created)
+        return dict(created) if return_document else None
 
     async def update_one_atomic(self, q, upd):
         async with self._lock:
@@ -84,6 +102,7 @@ class FakeDB:
         self.installments = FakeColl()
         self.bank_transactions = FakeColl()
         self.partner_transactions = FakeColl()
+        self.counters = FakeColl()
         self.idempotency_keys = None
 
     def __getitem__(self, name):

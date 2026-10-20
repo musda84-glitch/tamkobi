@@ -65,7 +65,7 @@ from models import (
     SmsSettings, SmsLog, MailAccount, MailLog
 )
 import purchase_orders as po_mod
-from invoice_numbers import SALES_INVOICE_PREFIX, format_sales_invoice_number
+from invoice_numbers import SALES_INVOICE_PREFIX, format_sales_invoice_number, next_invoice_number
 from line_totals import (
     enrich_line,
     enrich_items,
@@ -10112,8 +10112,7 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
         if invoice.invoice_type == "dispatch":
             invoice.invoice_number = await _next_number("IRS", db.invoices)
         else:
-            year = datetime.now().strftime("%Y")
-            count = await db.invoices.count_documents({"company_id": invoice.company_id}) + 1
+            year = datetime.now(timezone.utc).strftime("%Y")
             if invoice.trade_kind == "export" or invoice.e_type == "e_export":
                 prefix = "IHR"
             elif invoice.trade_kind == "import":
@@ -10122,7 +10121,7 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
                 prefix = SALES_INVOICE_PREFIX
             else:
                 prefix = "AL"
-            invoice.invoice_number = f"{prefix}{year}{str(count).zfill(8)}"
+            invoice.invoice_number = await next_invoice_number(db, invoice.company_id, prefix, year)
     if invoice.invoice_type == "dispatch":
         invoice.e_type = "e_dispatch"
         invoice.status = "draft"
