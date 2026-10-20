@@ -104,13 +104,39 @@ class FakeCollection:
         for k in (upd.get("$unset") or {}):
             d.pop(k, None)
 
-    async def update_one(self, q, upd):
+    def _insert_update(self, q, upd):
+        doc = {}
+        for k, v in (q or {}).items():
+            if not str(k).startswith("$") and not isinstance(v, dict):
+                doc[k] = v
+        for k, v in (upd.get("$setOnInsert") or {}).items():
+            doc[k] = v
+        self._apply(doc, upd)
+        self.docs.append(doc)
+        return doc
+
+    async def update_one(self, q, upd, upsert=False):
         for d in self.docs:
             if not self._match(d, q):
                 continue
             self._apply(d, upd)
             return SimpleNamespace(matched_count=1, modified_count=1)
-        return SimpleNamespace(matched_count=0, modified_count=0)
+        if not upsert:
+            return SimpleNamespace(matched_count=0, modified_count=0)
+        doc = self._insert_update(q, upd)
+        return SimpleNamespace(matched_count=0, modified_count=0, upserted_id=doc.get("_id"))
+
+    async def find_one_and_update(self, q, upd, upsert=False, return_document=True, projection=None):
+        for d in self.docs:
+            if not self._match(d, q):
+                continue
+            before = dict(d)
+            self._apply(d, upd)
+            return dict(d if return_document else before)
+        if not upsert:
+            return None
+        doc = self._insert_update(q, upd)
+        return dict(doc)
 
     async def update_one_atomic(self, q, upd):
         return await self.update_one(q, upd)
