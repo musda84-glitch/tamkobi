@@ -276,7 +276,11 @@ function productionCounts(p) {
   };
 }
 
-/** Rozet ilerlemeden türetilir. status_label yalnız kural uymadığında yedektir. */
+function labelClaimsFinished(label) {
+  return /tamamland/i.test(String(label || ""));
+}
+
+/** Rozet ilerlemeden türetilir. status_label yalnız total yoksa veya tanınmayan durumda yedektir. */
 export function productionBadge(o) {
   const p = o?.production;
   if (!orderShowsProduction(o)) {
@@ -286,7 +290,10 @@ export function productionBadge(o) {
   if (total > 0 && done >= total) return { label: "Üretim tamamlandı", tone: "emerald" };
   if (done > 0 || status === "in_production") return { label: "Üretimde", tone: "blue" };
   if (done === 0 && status === "planned") return { label: "Üretim planlandı", tone: "amber" };
-  if (p?.status_label) return { label: String(p.status_label), tone: "slate" };
+  if (total > 0 && done < total && (status === "completed" || labelClaimsFinished(p?.status_label))) {
+    return { label: "Üretimde", tone: "blue" };
+  }
+  if (p?.status_label && (total <= 0 || status !== "completed")) return { label: String(p.status_label), tone: "slate" };
   return { label: orderStatusLabel(o, statusTr(o?.order_status)), tone: "slate" };
 }
 
@@ -405,6 +412,7 @@ export const ProductionCard = ({ p, orderNumber }) => {
               data-testid={`b2b-production-step-${orderNumber}-${s.no}`}
             >
               <span className="shrink-0 w-3 text-center" aria-hidden="true">{s.done ? "✓" : s.current ? "▶" : "○"}</span>
+              <span className="shrink-0 font-mono text-slate-400 whitespace-nowrap">{s.no}.</span>
               <span className="truncate min-w-0" title={s.name}>{s.name}</span>
               {s.station ? (
                 <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded" title={s.station}>{s.station}</span>

@@ -56,4 +56,39 @@ describe("productionBadge", () => {
   it("uses the order status when there is no production", () => {
     expect(productionBadge({ order_status: "pending" })).toEqual({ label: "Beklemede", tone: "slate" });
   });
+
+  it("stays in production when a completed order has not finished its steps", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "completed", status_label: "Üretim tamamlandı", done: 0, total: 3 },
+    })).toEqual({ label: "Üretimde", tone: "blue" });
+  });
+
+  it("finishes only when every counted step is done", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "completed", status_label: "Üretim tamamlandı", done: 3, total: 3 },
+    })).toEqual({ label: "Üretim tamamlandı", tone: "emerald" });
+  });
+
+  it("keeps a partial completed order in production", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "completed", status_label: "Üretim tamamlandı", done: 2, total: 3 },
+    })).toEqual({ label: "Üretimde", tone: "blue" });
+  });
+
+  it("plans a zero-progress planned order", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "planned", status_label: "Üretim planlandı", done: 0, total: 14 },
+    })).toEqual({ label: "Üretim planlandı", tone: "amber" });
+  });
+
+  it("keeps an unrecognized cancel label", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "cancelled", status_label: "Üretim iptal", done: 0, total: 3 },
+    })).toEqual({ label: "Üretim iptal", tone: "slate" });
+  });
 });

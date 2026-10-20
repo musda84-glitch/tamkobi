@@ -281,6 +281,10 @@ describe("OrdersList", () => {
     expect(button(row, "Detay ▴").getAttribute("aria-expanded")).toBe("true");
     const listed = testIds(row, /^b2b-production-step-B2B-2026-0095-/);
     expect(listed).toHaveLength(5);
+    expect(listed[0].getAttribute("data-testid")).toBe("b2b-production-step-B2B-2026-0095-1");
+    expect(listed[0].querySelector(".font-mono").textContent).toBe("1.");
+    expect(listed[0].querySelector(".font-mono").className).toContain("text-slate-400");
+    expect(listed[0].querySelector("[title]").getAttribute("title")).toBe(longStep);
     expect(listed[0].textContent).toContain("▶");
     expect(listed[0].className).toContain("font-bold");
     expect(listed[0].className).toContain("text-amber-800");
