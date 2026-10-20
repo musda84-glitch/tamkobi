@@ -270,7 +270,7 @@ def test_issue_dispatch_missing_shipment_is_422():
         _bind(db)
         with patch.object(e_invoice.isnet, "send_document", send):
             with pytest.raises(HTTPException) as exc:
-                await e_invoice.issue_invoice("d1", e_type="e_dispatch")
+                await e_invoice.issue_invoice("d1", company_id=COMPANY, e_type="e_dispatch")
             return exc.value
 
     err = _run(go())
@@ -286,7 +286,7 @@ def test_issue_dispatch_own_vehicle_and_carrier_send():
         db = _db_for_dispatch(_dispatch(**fields))
         _bind(db)
         with patch.object(e_invoice.isnet, "send_document", send):
-            out = await e_invoice.issue_invoice("d1", e_type="e_dispatch")
+            out = await e_invoice.issue_invoice("d1", company_id=COMPANY, e_type="e_dispatch")
         stored = next(r for r in db.invoices.rows if r["_id"] == "d1")
         return out, stored
 

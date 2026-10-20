@@ -291,7 +291,7 @@ def test_issue_invoice_prefers_doc_vkn_and_missing_is_error():
                 "lookup_status": "mukellef",
             }),
         ) as looked:
-            out = await e_invoice.issue_invoice("inv_doc", e_type="auto")
+            out = await e_invoice.issue_invoice("inv_doc", company_id="c1", e_type="auto")
         looked.assert_awaited()
         assert looked.await_args.args[1] == "3680486408"
         assert out["e_type"] == "e_invoice"
@@ -304,13 +304,13 @@ def test_issue_invoice_prefers_doc_vkn_and_missing_is_error():
         with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
             e_invoice, "resolve_buyer_mukellef", AsyncMock()
         ) as skipped:
-            blank_out = await e_invoice.issue_invoice("inv_blank", e_type="auto")
+            blank_out = await e_invoice.issue_invoice("inv_blank", company_id="c1", e_type="auto")
         skipped.assert_not_awaited()
         assert blank_out["e_type"] == "e_archive"
 
         with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as skipped_explicit:
             with pytest.raises(HTTPException) as explicit:
-                await e_invoice.issue_invoice("inv_blank", e_type="e_invoice")
+                await e_invoice.issue_invoice("inv_blank", company_id="c1", e_type="e_invoice")
         skipped_explicit.assert_not_awaited()
         assert explicit.value.status_code == 409
 
@@ -319,7 +319,7 @@ def test_issue_invoice_prefers_doc_vkn_and_missing_is_error():
         e_invoice.init(_issue_db(inv=short, contact=short_contact), {"consume_credits": AsyncMock(return_value=1)})
         with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as skipped_short:
             with pytest.raises(HTTPException) as short_exc:
-                await e_invoice.issue_invoice("inv_short", e_type="auto")
+                await e_invoice.issue_invoice("inv_short", company_id="c1", e_type="auto")
         skipped_short.assert_not_awaited()
         assert short_exc.value.status_code == 422
         assert short_exc.value.detail == "VKN/TCKN 10 veya 11 haneli olmalı"
@@ -350,7 +350,7 @@ def test_placeholder_doc_vkn_uses_contact_and_updates_draft():
         with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
             e_invoice, "resolve_buyer_mukellef", looked
         ):
-            out = await e_invoice.issue_invoice(inv["_id"], e_type="auto")
+            out = await e_invoice.issue_invoice(inv["_id"], company_id="c1", e_type="auto")
         return out, looked
 
     async def _go():
@@ -396,7 +396,7 @@ def test_placeholder_doc_vkn_uses_contact_and_updates_draft():
         with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
             e_invoice, "resolve_buyer_mukellef", AsyncMock()
         ) as skipped:
-            blank_out = await e_invoice.issue_invoice("inv_both_empty", e_type="auto")
+            blank_out = await e_invoice.issue_invoice("inv_both_empty", company_id="c1", e_type="auto")
         skipped.assert_not_awaited()
         assert blank_out["e_type"] == "e_archive"
 
