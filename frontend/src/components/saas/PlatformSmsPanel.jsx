@@ -214,10 +214,10 @@ export const PlatformSmsPanel = () => {
               {logs.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-50">
                   <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">{row.created_at ? new Date(row.created_at).toLocaleString("tr-TR") : "—"}</td>
-                  <td className="px-3 font-mono">{row.phone}</td>
+                  <td className="px-3 font-mono">{row.phone_masked}</td>
                   <td className="px-3"><span className={`px-1.5 rounded text-[10px] font-bold ${row.status === "sent" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{row.status}</span></td>
                   <td className="px-3 text-slate-600 truncate max-w-[14rem]">{row.context}</td>
-                  <td className="px-3 text-slate-500 truncate max-w-[16rem]">{row.message}</td>
+                  <td className="px-3 text-slate-500 truncate max-w-[16rem]" title={row.message_redacted ? "Gizli bağlam" : undefined}>{row.message_redacted ? "—" : row.message}</td>
                 </tr>
               ))}
             </tbody>

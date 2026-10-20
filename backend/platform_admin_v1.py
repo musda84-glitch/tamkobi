@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from build_stamp import read_stamp
 import company_sms
-import password_reset
 import platform_auth
 import platform_mail
 import platform_sms
@@ -386,38 +385,6 @@ async def admin_v1_platform_users(
     return _page(page, limit, offset, total)
 
 
-_SMS_MESSAGE_CONTEXTS = frozenset({
-    "announcement",
-    "maintenance",
-    "event_notify",
-    "platform_test",
-})
-
-
-def _sms_log_public(row: dict) -> dict:
-    """Beyaz liste. ref_id sıfırlama token'ı olabilir; ham telefon dönmez.
-
-    message yalnızca duyuru / bakım / olay / test bağlamlarında kalır.
-    """
-    context = row.get("context")
-    show_message = context in _SMS_MESSAGE_CONTEXTS
-    return {
-        "id": row.get("id", row.get("_id")),
-        "company_id": row.get("company_id"),
-        "context": context,
-        "provider": row.get("provider"),
-        "status": row.get("status"),
-        "detail": row.get("detail"),
-        "code": row.get("code"),
-        "job_id": row.get("job_id"),
-        "contact_name": row.get("contact_name"),
-        "created_at": row.get("created_at"),
-        "phone_masked": password_reset.mask_phone(row.get("phone")),
-        "message": row.get("message") if show_message else None,
-        "message_redacted": not show_message,
-    }
-
-
 @router.get("/platform/admin-v1/sms/settings")
 async def admin_v1_sms_settings(request: Request):
     """Platform SMS ayar özeti. Sağlayıcıya istek yok, bakiye sorgusu yok."""
@@ -449,7 +416,7 @@ async def admin_v1_sms_logs(
     )
     has_more = len(rows) > limit
     page = rows[:limit]
-    items = [_sms_log_public(row) for row in page]
+    items = [platform_sms.sms_log_public(row) for row in page]
     next_cursor = items[-1].get("created_at") if has_more and items else None
     sent_n = await platform_sms._db.sms_logs.count_documents({"source": "platform", "status": "sent"})
     failed_n = await platform_sms._db.sms_logs.count_documents({"source": "platform", "status": "failed"})

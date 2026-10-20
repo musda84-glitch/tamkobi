@@ -2340,16 +2340,20 @@ def test_system_sms_and_support_routes_keep_their_shape(db):
     logs = client.get("/api/system/sms/logs")
     assert logs.status_code == 200, logs.text
     raw_rows = asyncio.run(platform_sms.platform_sms_log_rows(100))
-    expect_logs = []
-    for row in raw_rows:
-        copied = dict(row)
-        copied["id"] = copied.pop("_id", None)
-        expect_logs.append(copied)
+    expect_logs = [platform_sms.sms_log_public(row) for row in raw_rows]
     assert logs.json() == {"items": expect_logs, "total": len(expect_logs)}
+    assert "LEAK-RESET-TOKEN" not in logs.text
+    assert _RAW_PHONE not in logs.text
+    assert _RESET_MESSAGE not in logs.text
+    for row in logs.json()["items"]:
+        assert "ref_id" not in row
+        assert "phone" not in row
     reset = next(row for row in logs.json()["items"] if row["id"] == "sms_reset")
-    assert reset["ref_id"] == "LEAK-RESET-TOKEN"
-    assert reset["phone"] == _RAW_PHONE
-    assert reset["message"] == _RESET_MESSAGE
+    assert reset["phone_masked"]
+    assert reset["message"] is None
+    assert reset["message_redacted"] is True
+    announce = next(row for row in logs.json()["items"] if row["id"] == "sms_ann")
+    assert announce["message"] == "Planli duyuru"
     assert "sms_co" not in {row["id"] for row in logs.json()["items"]}
     ignored = client.get(
         "/api/system/sms/logs",
@@ -2359,7 +2363,8 @@ def test_system_sms_and_support_routes_keep_their_shape(db):
     one = client.get("/api/system/sms/logs", params={"limit": 1})
     assert one.json()["total"] == 1
     assert one.json()["items"][0]["id"] == "sms_ann"
-    assert one.json()["items"][0]["phone"] == "+905559998877"
+    assert one.json()["items"][0]["phone_masked"] == "•••8877"
+    assert "phone" not in one.json()["items"][0]
     zero = client.get("/api/system/sms/logs", params={"limit": 0})
     assert zero.json()["total"] == 6
 
