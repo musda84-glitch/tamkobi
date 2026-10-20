@@ -6316,15 +6316,11 @@ def _b2b_statement_dead(doc: dict) -> bool:
 
 
 def _b2b_public_statement_row(row: dict) -> dict:
-    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok."""
-    return {
-        "date": row.get("date") or "",
-        "doc": row.get("doc") or "",
-        "debit": row.get("debit") or 0,
-        "credit": row.get("credit") or 0,
-        "balance": row.get("balance") or 0,
-        "kind": row.get("kind") or "",
-    }
+    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok.
+
+    Fatura satırında ek olarak gib ve e_type. ETTN / gib_status dışarı çıkmaz.
+    """
+    return statement_share.public_statement_row(row)
 
 
 async def _b2b_portal_statement(contact: dict, invoices: List[dict]) -> Dict[str, Any]:

@@ -621,7 +621,7 @@ export default function B2BPortalPage() {
           <OrdersList orders={portalOrderRows} heldRows={[]} token={token} products={data.products} company={data.company} onChanged={load} />
         )}
         {activeTab === "statement" && settings.show_statement !== false && (
-          <StatementList invoices={data.invoices} company={data.company} balance={data.contact.balance} token={token} cardPayment={settings.card_payment} statement={data.statement} />
+          <StatementList invoices={data.invoices} company={data.company} contact={data.contact} balance={data.contact.balance} token={token} cardPayment={settings.card_payment} statement={data.statement} />
         )}
         {activeTab === "installments" && settings.show_installments !== false && (
           <div className="bg-white rounded-2xl border divide-y text-xs" data-testid="b2b-installments">

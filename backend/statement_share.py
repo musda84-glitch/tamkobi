@@ -24,6 +24,50 @@ def _date(value: Any) -> str:
     return str(value or "")[:10]
 
 
+_GIB_SENT = frozenset({"sent", "accepted", "received"})
+_GIB_PENDING = frozenset({"queued", "pending"})
+
+
+def invoice_gib_fields(inv: Optional[dict]) -> Dict[str, str]:
+    """Fatura satırına salt-okuma GİB özeti. ETTN, uuid ve gib_status metni yok."""
+    src = inv or {}
+    state = str(src.get("einvoice_state") or "").strip().lower()
+    e_type = str(src.get("e_type") or "").strip()
+    if state == "paper" or e_type.lower() == "paper":
+        gib = "paper"
+    elif state in _GIB_SENT:
+        gib = "sent"
+    elif state in _GIB_PENDING:
+        gib = "pending"
+    elif state == "error":
+        gib = "error"
+    else:
+        gib = "none"
+    return {"gib": gib, "e_type": e_type}
+
+
+def public_statement_row(row: Optional[dict]) -> dict:
+    """Herkese açık / B2B satırı. Yalnız ekstre alanları; fatura ise gib ve e_type."""
+    src = row or {}
+
+    def amount(key: str) -> Any:
+        value = src.get(key)
+        return 0 if value is None or value == "" else value
+
+    out = {
+        "date": src.get("date") or "",
+        "doc": src.get("doc") or "",
+        "debit": amount("debit"),
+        "credit": amount("credit"),
+        "balance": amount("balance"),
+        "kind": src.get("kind") or "",
+    }
+    if src.get("kind") == "invoice":
+        out["gib"] = src.get("gib") or "none"
+        out["e_type"] = src.get("e_type") or ""
+    return out
+
+
 def _cheque_statement_row(ch: dict) -> dict:
     """Detaylı ekstredeki çek/senet satırı (buildStatementRows includeCheques)."""
     received = ch.get("direction") in ("received", "inflow")
@@ -68,6 +112,7 @@ def statement_rows(
             "debit": total if sales else 0.0,
             "credit": 0.0 if sales else total,
             "kind": "invoice",
+            **invoice_gib_fields(inv),
         })
     for pay in payments or []:
         if not isinstance(pay, dict) or pay.get("type") == "transfer":
@@ -128,7 +173,7 @@ def public_statement_view(contact: dict, company: dict, rows: List[dict]) -> Dic
             "tax_number": co.get("tax_number") or "",
             "logo_url": co.get("logo_url") or "",
         },
-        "rows": rows,
+        "rows": [public_statement_row(row) for row in (rows or [])],
         "balance": bal,
         "issued_at": datetime.now(timezone.utc).astimezone().strftime("%d.%m.%Y %H:%M"),
     }
