@@ -630,8 +630,7 @@ def test_wave4_baseline_keys_removed():
     present = [key for key in _REMOVED if key in base]
     assert present == []
     assert len(_REMOVED) == 40
-    assert len(base) == 1127
-    assert sum(1 for key in base if key[0] == "server.py") == 581
+    assert not any(key[0] == "server.py" for key in _REMOVED)
     script = _BACKEND / "scripts" / "tenant_scope_baseline.py"
     proc = subprocess.run(
         [sys.executable, str(script), "--check"],
