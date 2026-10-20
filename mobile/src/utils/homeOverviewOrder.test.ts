@@ -4,6 +4,7 @@ import {
   HOME_OVERVIEW_ORDER_PREFIX,
   homeOverviewOrderKey,
   isDefaultOverviewOrder,
+  moveOverviewSection,
   normalizeOverviewOrder,
   parseOverviewOrder,
   readHomeOverviewOrder,
@@ -133,5 +134,30 @@ describe("homeOverviewOrder", () => {
     expect(isDefaultOverviewOrder(DEFAULT_OVERVIEW_SECTION_ORDER)).toBe(true);
     expect(isDefaultOverviewOrder([...DEFAULT_OVERVIEW_SECTION_ORDER])).toBe(true);
     expect(isDefaultOverviewOrder(["stock", "today", "panels", "month", "production", "projects"])).toBe(false);
+  });
+
+  it("moves a section one step and leaves the ends and unknown keys in place", () => {
+    const snapshot = [...DEFAULT];
+    expect(moveOverviewSection(DEFAULT, "month", -1)).toEqual([
+      "today",
+      "month",
+      "panels",
+      "stock",
+      "production",
+      "projects",
+    ]);
+    expect(DEFAULT).toEqual(snapshot);
+    expect(moveOverviewSection(DEFAULT, "today", -1)).toEqual(DEFAULT);
+    expect(moveOverviewSection(DEFAULT, "projects", 1)).toEqual(DEFAULT);
+    expect(moveOverviewSection(DEFAULT, "nope", -1)).toEqual(DEFAULT);
+    expect(moveOverviewSection(DEFAULT, "nope", 1)).toEqual(DEFAULT);
+    const moved = moveOverviewSection(["stock", "today"], "today", 1);
+    expect(moved).toHaveLength(6);
+    expect(new Set(moved).size).toBe(6);
+    expect([...moved].sort()).toEqual([...DEFAULT].sort());
+    const again = moveOverviewSection(moved, "projects", -1);
+    expect(again).toHaveLength(6);
+    expect(new Set(again).size).toBe(6);
+    expect([...again].sort()).toEqual([...DEFAULT].sort());
   });
 });

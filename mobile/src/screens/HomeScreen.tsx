@@ -1,12 +1,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
+import { Alert, BackHandler, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
 import type { ActionTile } from "../components/ActionTiles";
 import { HomeOverviewPage } from "../components/home/HomeOverviewPage";
+import { HomeOverviewReorder, triggerReorderHaptic } from "../components/home/HomeOverviewReorder";
 import { HomePanels, type HomePanelProps } from "../components/home/HomePanels";
 import { HomeTilesPage } from "../components/home/HomeTilesPage";
 import { DEFAULT_OVERVIEW_SECTION_ORDER, type OverviewSectionKey } from "../components/home/overviewSections";
@@ -27,7 +28,7 @@ import {
   serializeExtraTileIds,
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
-import { readHomeOverviewOrder } from "../utils/homeOverviewOrder";
+import { isDefaultOverviewOrder, normalizeOverviewOrder, readHomeOverviewOrder, resetHomeOverviewOrder, writeHomeOverviewOrder } from "../utils/homeOverviewOrder";
 import { readHomeStartPage, startPageIndex } from "../utils/homeStartPage";
 import { idOf } from "../utils/money";
 import { resolveMediaUrl } from "../utils/media";
@@ -65,12 +66,17 @@ export function HomeScreen() {
   const [startIndex, setStartIndex] = useState(0);
   const [overviewOrder, setOverviewOrder] = useState<OverviewSectionKey[]>(() => [...DEFAULT_OVERVIEW_SECTION_ORDER]);
   const [overviewOrderScope, setOverviewOrderScope] = useState("");
+  const [reordering, setReordering] = useState(false);
+  const [draftOrder, setDraftOrder] = useState<OverviewSectionKey[]>(() => [...DEFAULT_OVERVIEW_SECTION_ORDER]);
   const [page, setPage] = useState(0);
   const [frameHeight, setFrameHeight] = useState(0);
   const [dotsHeight, setDotsHeight] = useState(0);
 
   const showFinance = showHomeFinanceSummary(user);
   const overviewScope = `${String(user?.id || "")}:${String(companyId || "")}`;
+  const overviewScopeRef = useRef(overviewScope);
+  overviewScopeRef.current = overviewScope;
+  const settledOverviewScope = useRef(overviewScope);
   const visibleOverviewOrder = overviewOrderScope === overviewScope ? overviewOrder : DEFAULT_OVERVIEW_SECTION_ORDER;
   const showRefresh = showHomeRefreshTile(user);
   const showApprovals = showHomeApprovals(user);
@@ -195,6 +201,43 @@ export function HomeScreen() {
     });
     return () => { live = false; };
   }, [showFinance, user?.id, companyId]);
+
+  useEffect(() => {
+    if (settledOverviewScope.current === overviewScope) return;
+    settledOverviewScope.current = overviewScope;
+    setReordering(false);
+  }, [overviewScope]);
+
+  useEffect(() => {
+    if (!reordering) return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      setReordering(false);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [reordering]);
+
+  const commitOverviewOrder = useCallback(async () => {
+    const userId = String(user?.id || "");
+    const company = String(companyId || "");
+    const scopeAtStart = `${userId}:${company}`;
+    const next = normalizeOverviewOrder(draftOrder);
+    await writeHomeOverviewOrder(userId, company, next);
+    if (overviewScopeRef.current !== scopeAtStart) return;
+    setOverviewOrder(next);
+    setOverviewOrderScope(scopeAtStart);
+    setReordering(false);
+  }, [companyId, draftOrder, user?.id]);
+
+  const resetOverviewDraft = useCallback(async () => {
+    const userId = String(user?.id || "");
+    const company = String(companyId || "");
+    const scopeAtStart = `${userId}:${company}`;
+    const def = await resetHomeOverviewOrder(userId, company);
+    if (overviewScopeRef.current !== scopeAtStart) return;
+    setDraftOrder(def);
+    setOverviewOrder(def);
+  }, [companyId, user?.id]);
 
   useEffect(() => {
     if (!showFinance || !startReady || width <= 0) return;
@@ -343,6 +386,7 @@ export function HomeScreen() {
         pagingEnabled
         nestedScrollEnabled
         showsHorizontalScrollIndicator={false}
+        scrollEnabled={!reordering}
         testID="home-pager"
         style={{ height: pageHeight || undefined, flex: pageHeight ? undefined : 1 }}
         contentOffset={{ x: pageOffset, y: 0 }}
@@ -354,18 +398,35 @@ export function HomeScreen() {
         }}
       >
         <View style={{ width, height: pageHeight || undefined }} testID="home-page-overview">
-          <Screen onRefresh={load} refreshing={refreshing}>
-            <HomeOverviewPage
-              userName={user?.name}
-              companyName={activeCompany?.name}
-              logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url) || null}
-              user={user}
-              stats={stats}
-              overview={overview}
-              manager={manager}
-              {...panelProps}
-              sectionOrder={visibleOverviewOrder}
-            />
+          <Screen onRefresh={reordering ? undefined : load} refreshing={refreshing}>
+            {reordering ? (
+              <HomeOverviewReorder
+                order={draftOrder}
+                onChange={setDraftOrder}
+                onDone={() => { void commitOverviewOrder(); }}
+                onCancel={() => setReordering(false)}
+                onReset={() => { void resetOverviewDraft(); }}
+                resetDisabled={isDefaultOverviewOrder(draftOrder)}
+              />
+            ) : (
+              <HomeOverviewPage
+                userName={user?.name}
+                companyName={activeCompany?.name}
+                logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url) || null}
+                user={user}
+                stats={stats}
+                overview={overview}
+                manager={manager}
+                {...panelProps}
+                sectionOrder={visibleOverviewOrder}
+                onRequestReorder={() => {
+                  if (overviewOrderScope !== overviewScope) return;
+                  triggerReorderHaptic();
+                  setDraftOrder([...visibleOverviewOrder]);
+                  setReordering(true);
+                }}
+              />
+            )}
           </Screen>
         </View>
         <View style={{ width, height: pageHeight || undefined }} testID="home-page-tiles">

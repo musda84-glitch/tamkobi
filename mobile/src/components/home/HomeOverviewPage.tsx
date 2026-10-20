@@ -1,5 +1,5 @@
 import React from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { HomeHeaderTitle } from "../HomeHeaderTitle";
 import type { HomePanelProps } from "./HomePanels";
 import {
@@ -56,6 +56,7 @@ export function HomeOverviewPage({
   overview,
   manager,
   sectionOrder,
+  onRequestReorder,
   ...panelProps
 }: {
   userName?: string | null;
@@ -66,6 +67,7 @@ export function HomeOverviewPage({
   overview: Overview | null;
   manager: ManagerSummary | null;
   sectionOrder?: readonly OverviewSectionKey[];
+  onRequestReorder?: () => void;
 } & HomePanelProps) {
   const order = normalizeOverviewOrder(sectionOrder);
   const sales = monthlySalesRow(stats, overview);
@@ -145,6 +147,18 @@ export function HomeOverviewPage({
   const pieces = order.map((key) => {
     const content = renderSection(key);
     if (content == null) return null;
+    if (onRequestReorder) {
+      return (
+        <Pressable
+          key={key}
+          testID={`home-overview-section-${key}`}
+          delayLongPress={350}
+          onLongPress={onRequestReorder}
+        >
+          {content}
+        </Pressable>
+      );
+    }
     return (
       <View key={key} testID={`home-overview-section-${key}`}>
         {content}

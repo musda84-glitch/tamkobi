@@ -87,3 +87,19 @@ export function isDefaultOverviewOrder(order: readonly string[] | null | undefin
   if (!order || order.length !== DEFAULT_OVERVIEW_SECTION_ORDER.length) return false;
   return DEFAULT_OVERVIEW_SECTION_ORDER.every((key, index) => order[index] === key);
 }
+
+/** Bir bölümü bir basamak yukarı (-1) veya aşağı (+1) taşır. Sınırda ve bilinmeyen anahtarda sıra değişmez. */
+export function moveOverviewSection(
+  order: readonly string[],
+  key: string,
+  delta: -1 | 1,
+): OverviewSectionKey[] {
+  const next = normalizeOverviewOrder(order);
+  const index = next.indexOf(key as OverviewSectionKey);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= next.length) return next;
+  const moved = next.slice();
+  const [item] = moved.splice(index, 1);
+  moved.splice(target, 0, item);
+  return normalizeOverviewOrder(moved);
+}
