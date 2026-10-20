@@ -23,6 +23,17 @@ describe("planLocalPush", () => {
     expect(plan.nextSeen).toEqual(expect.arrayContaining(["old", "new", "mid"]));
   });
 
+  it("skips an FCM-seen id on the first seed", () => {
+    const plan = planLocalPush(
+      [n("fcm", "2026-09-22T17:32:00Z"), n("local", "2026-09-21T10:00:00Z")],
+      ["fcm"],
+      false,
+    );
+    expect(plan.seeded).toBe(true);
+    expect(plan.alerts.map((r) => r.id)).toEqual(["local"]);
+    expect(plan.nextSeen).toEqual(expect.arrayContaining(["fcm", "local"]));
+  });
+
   it("after seed only alerts unseen unread", () => {
     const plan = planLocalPush(
       [n("a", "2026-09-21T10:00:00Z"), n("b", "2026-09-22T10:00:00Z")],
