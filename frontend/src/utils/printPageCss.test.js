@@ -51,6 +51,21 @@ test.each(PRINT_DOC_TYPES)("%s print css keeps a one-page document on one page",
   else expect(css).toContain("size: A4");
 });
 
+test("receipt copy layout is receipt-only", () => {
+  const a4 = printPageCss("receipt", "A4");
+  const a5 = printPageCss("receipt", "A5");
+  expect(a4).toContain("size: A4");
+  expect(a4).toContain(".receipt-half");
+  expect(a4).toContain(".receipt-cut");
+  expect(a4).toContain("page-break-after: always");
+  expect(a4).toMatch(/\.receipt-page\[data-copy-count="2"\][\s\S]*display:\s*flex\s*!important/);
+  expect(printPageCss("invoice", "A4")).not.toContain("display: flex !important");
+  expect(a5).toContain("size: A5");
+  expect(a5).not.toContain("min-height: 248mm");
+  expect(printPageCss("invoice", "A4")).not.toContain(".receipt-half");
+  expect(printPageCss("order", "A4")).not.toContain(".receipt-cut");
+});
+
 test("screen print entry installs the shared rules and drops the absolute sheet", () => {
   installPrintPageCss();
   const installed = document.getElementById("print-page-css");

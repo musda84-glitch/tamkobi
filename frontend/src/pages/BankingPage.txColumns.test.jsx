@@ -15,6 +15,8 @@ jest.mock("axios", () => {
     post: jest.fn(async () => ({ data: {} })),
     put: jest.fn(async () => ({ data: {} })),
     delete: jest.fn(async () => ({ data: {} })),
+    defaults: {},
+    interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
   };
   return { __esModule: true, default: impl, ...impl };
 });
