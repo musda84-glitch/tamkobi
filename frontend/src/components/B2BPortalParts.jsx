@@ -657,11 +657,11 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
   return (
     <div className="bg-white rounded-2xl border overflow-hidden" data-testid="b2b-orders">
       {rows.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Henüz sipariş yok.</div>}
-      <div className="md:hidden divide-y">{rows.map((o) => (
+      <div className="lg:hidden divide-y">{rows.map((o) => (
         <div key={o.id} className={`p-3 text-xs space-y-2 ${rowClass(o)}`} data-testid={o.is_held_cart ? `b2b-held-row-${o.id}` : `b2b-order-${o.order_number}`}>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className={`font-mono font-bold whitespace-nowrap ${o.is_held_cart ? "text-slate-500" : ""}`}>{o.order_number}</div>
+              <div className={`font-mono font-bold truncate whitespace-nowrap min-w-0 ${o.is_held_cart ? "text-slate-500" : ""}`} title={o.order_number}>{o.order_number}</div>
               {o.customer_order_number ? <div className="text-[10px] text-slate-500 truncate" title={o.customer_order_number}>Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
             </div>
             <OrderStatusBadge o={o} />
@@ -681,15 +681,15 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
           </div>
         </div>))}</div>
       {rows.length > 0 && (
-        <table className="hidden md:table w-full table-fixed text-xs">
+        <table className="hidden lg:table w-full table-fixed text-xs">
           <colgroup>
-            <col className="w-[13%]" />
+            <col className="w-32" />
             <col className="w-[9%]" />
             <col />
             <col className="w-[9%]" />
             <col className="w-[14%]" />
             <col className="w-[22%]" />
-            <col className="w-[13%]" />
+            <col className="w-32" />
           </colgroup>
           <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b">
             <tr><Th>Sipariş No</Th><Th>Tarih</Th><Th>Ürünler</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Üretim / Kargo</Th><Th right>İşlem</Th></tr>
@@ -697,16 +697,20 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
           <tbody className="divide-y">
             {rows.map((o) => (
               <tr key={o.id} className={rowClass(o)} data-testid={o.is_held_cart ? `b2b-held-row-${o.id}` : `b2b-order-row-${o.order_number}`}>
-                <td className={`p-3 align-top whitespace-nowrap overflow-hidden ${o.is_held_cart ? "text-slate-500" : ""}`}>
-                  <div className="font-mono font-bold whitespace-nowrap">{o.order_number}</div>
+                <td className={`p-3 align-top w-32 min-w-32 overflow-hidden ${o.is_held_cart ? "text-slate-500" : ""}`}>
+                  <div className="font-mono font-bold truncate whitespace-nowrap max-w-full" title={o.order_number}>{o.order_number}</div>
                   {o.customer_order_number ? <div className="text-[10px] font-normal text-slate-500 mt-0.5 truncate" title={o.customer_order_number}>Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
                 </td>
-                <td className="p-3 align-top text-slate-500 whitespace-nowrap">{fmtDate(o.order_date)}</td>
+                <td className="p-3 align-top text-slate-500 overflow-hidden">
+                  <div className="truncate max-w-full">{fmtDate(o.order_date)}</div>
+                </td>
                 <td className="p-3 align-top min-w-0 overflow-hidden"><OrderItemsCell items={o.items} /></td>
-                <td className="p-3 align-top text-right font-bold whitespace-nowrap">{fmt(b2bOrderGross(o))}</td>
+                <td className="p-3 align-top text-right font-bold overflow-hidden">
+                  <div className="truncate max-w-full">{fmt(b2bOrderGross(o))}</div>
+                </td>
                 <td className="p-3 align-top"><OrderStatusBadge o={o} /></td>
                 <td className="p-3 align-top min-w-0 overflow-hidden"><OrderProgressCell o={o} /></td>
-                <td className="p-3 align-top overflow-hidden">
+                <td className="p-3 align-top w-32 min-w-32">
                   <OrderActions
                     o={o}
                     onPreview={setPreview}

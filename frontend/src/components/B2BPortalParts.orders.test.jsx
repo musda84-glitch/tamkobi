@@ -297,6 +297,51 @@ describe("OrdersList", () => {
     expect(button(row, "Detay ▾").getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("keeps three action icons inside the işlem column for a pending order", () => {
+    renderList();
+    const table = host.querySelector("table");
+    expect(table.className).toContain("hidden");
+    expect(table.className).toContain("lg:table");
+    expect(table.className).not.toContain("md:table");
+
+    const cardList = q(host, "b2b-order-B2B-2026-0097").parentElement;
+    expect(cardList.className).toContain("lg:hidden");
+    expect(cardList.className).not.toContain("md:hidden");
+
+    const cols = [...table.querySelectorAll("col")].map((el) => el.className);
+    expect(cols[0]).toContain("w-32");
+    expect(cols[6]).toContain("w-32");
+
+    const pending = q(table, "b2b-order-row-B2B-2026-0097");
+    const actions = q(pending, "b2b-order-actions-B2B-2026-0097");
+    const icons = [...actions.querySelectorAll("button")];
+    expect(icons.map((el) => el.getAttribute("aria-label"))).toEqual(["Önizle", "Düzenle", "Sil"]);
+    icons.forEach((el) => {
+      expect(el.className).toContain("w-7");
+      expect(el.className).toContain("h-7");
+    });
+    const actionCell = actions.closest("td");
+    expect(actionCell.className).toContain("w-32");
+    expect(actionCell.className).toContain("min-w-32");
+    expect(actionCell.className).not.toContain("overflow-hidden");
+
+    const number = [...pending.querySelectorAll("div")].find((el) => el.textContent === "B2B-2026-0097");
+    expect(number.className).toContain("truncate");
+    expect(number.className).toContain("whitespace-nowrap");
+    expect(number.getAttribute("title")).toBe("B2B-2026-0097");
+
+    const cardNumber = q(host, "b2b-order-B2B-2026-0097").querySelector(".font-mono");
+    expect(cardNumber.className).toContain("truncate");
+    expect(cardNumber.getAttribute("title")).toBe("B2B-2026-0097");
+
+    const cells = [...pending.children];
+    expect(cells[1].className).toContain("overflow-hidden");
+    expect(cells[1].querySelector("div").className).toContain("truncate");
+    expect(cells[1].textContent).toContain("20.10.2026");
+    expect(cells[3].className).toContain("overflow-hidden");
+    expect(cells[3].querySelector("div").className).toContain("truncate");
+  });
+
   it("keeps a held cart faded, without production or edit actions", () => {
     renderList();
     const table = host.querySelector("table");
