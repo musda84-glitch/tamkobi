@@ -85,10 +85,20 @@ describe("productionBadge", () => {
     })).toEqual({ label: "Üretim planlandı", tone: "amber" });
   });
 
-  it("keeps an unrecognized cancel label", () => {
+  it("keeps a cancelled order cancelled even when steps are done", () => {
+    const expectCancel = (done, total) => {
+      expect(productionBadge({
+        order_status: "approved",
+        production: { status: "cancelled", status_label: "Üretim iptal", done, total },
+      })).toEqual({ label: "Üretim iptal", tone: "slate" });
+    };
+    expectCancel(0, 3);
+    expectCancel(1, 3);
+    expectCancel(3, 3);
+    expectCancel(0, 0);
     expect(productionBadge({
       order_status: "approved",
-      production: { status: "cancelled", status_label: "Üretim iptal", done: 0, total: 3 },
+      production: { status: "cancelled", done: 1, total: 3 },
     })).toEqual({ label: "Üretim iptal", tone: "slate" });
   });
 });

@@ -287,6 +287,7 @@ export function productionBadge(o) {
     return { label: orderStatusLabel(o, statusTr(o?.order_status)), tone: "slate" };
   }
   const { total, done, status } = productionCounts(p);
+  if (status === "cancelled") return { label: p?.status_label || "Üretim iptal", tone: "slate" };
   if (total > 0 && done >= total) return { label: "Üretim tamamlandı", tone: "emerald" };
   if (done > 0 || status === "in_production") return { label: "Üretimde", tone: "blue" };
   if (done === 0 && status === "planned") return { label: "Üretim planlandı", tone: "amber" };
