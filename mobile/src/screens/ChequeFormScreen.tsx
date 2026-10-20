@@ -1,26 +1,29 @@
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Pressable, Text, View } from "react-native";
 import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Chip } from "../components/chips";
-import { GroupedSelect } from "../components/GroupedSelect";
 import { ChequeScanButtons } from "../components/ChequeScanButtons";
+import { ContactSearchSelect } from "../components/ContactSearchSelect";
+import { DateField } from "../components/DateField";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { MoneyInput } from "../components/MoneyInput";
-import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
-import type { Contact } from "../types";
+import { applyChequeScan, scannedChequeFields } from "../utils/chequeScan";
 import { printChequeReceipt } from "../utils/chequeShare";
 import {
-  CHEQUE_DIRECTIONS,
-  CHEQUE_INSTRUMENTS,
+  CHEQUE_KINDS,
+  applyChequeKind,
   applyChequePrefill,
   chequeAction,
-  chequeReturnContact,
+  chequeKindOf,
   chequeLedgerLocked,
   chequePayload,
   chequeReceiptLabel,
+  chequeReturnContact,
   chequeStatusTr,
-  chequeTitle,
+  chequeTone,
   draftFromCheque,
   emptyChequeDraft,
   validateChequeDraft,
@@ -29,10 +32,28 @@ import {
 } from "../utils/cheques";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups, type BankAccount } from "../utils/finance";
-import { applyChequeScan } from "../utils/chequeScan";
-import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
+import { fmtDate, idOf, todayIso } from "../utils/money";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
+type TextKey = "serial_no" | "bank_name" | "bank_branch" | "account_no" | "drawer_name" | "notes";
+
+const scannedBox = {
+  backgroundColor: colors.amber50,
+  borderWidth: 1,
+  borderStyle: "dotted" as const,
+  borderColor: "#F59E0B",
+  borderRadius: 12,
+  paddingHorizontal: 6,
+  paddingTop: 4,
+};
+
+function ScanFrame({ on, testID, children }: { on: boolean; testID: string; children: React.ReactNode }) {
+  return (
+    <View testID={on ? `${testID}-scanned` : undefined} style={[{ flex: 1 }, on ? scannedBox : null]}>
+      {children}
+    </View>
+  );
+}
 
 export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
   const { client, companyId, can, activeCompany } = useAuth();
@@ -55,44 +76,51 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
   const isNew = !chequeId;
   const [draft, setDraft] = useState<ChequeDraft>(() => applyChequePrefill(emptyChequeDraft(todayIso()), prefill));
   const [loaded, setLoaded] = useState<Cheque | null>(null);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
-  const [custQ, setCustQ] = useState("");
   const [settleAcc, setSettleAcc] = useState("");
   const [settleDate, setSettleDate] = useState(todayIso());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [fromCamera, setFromCamera] = useState(false);
+  const [scanned, setScanned] = useState<Set<keyof ChequeDraft>>(() => new Set());
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
-  const set = <K extends keyof ChequeDraft>(key: K, value: ChequeDraft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  const clearScanned = (...keys: (keyof ChequeDraft)[]) => {
+    setScanned((prev) => {
+      if (!keys.some((key) => prev.has(key))) return prev;
+      const next = new Set(prev);
+      for (const key of keys) next.delete(key);
+      return next;
+    });
+  };
+
+  const set = <K extends keyof ChequeDraft>(key: K, value: ChequeDraft[K]) => {
+    setDraft((d) => ({ ...d, [key]: value }));
+    clearScanned(key);
+  };
   const locked = chequeLedgerLocked(loaded);
 
   const load = useCallback(async () => {
+    if (!chequeId) return;
     try {
-      const rows = await get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true });
-      setContacts(rows || []);
-      if (chequeId) {
-        const row = await get<Cheque>(client, `/cheques/${chequeId}`);
-        setLoaded(row);
-        setDraft(draftFromCheque(row, todayIso()));
-        setSettleDate(todayIso());
-      }
+      const row = await get<Cheque>(client, `/cheques/${chequeId}`);
+      setLoaded(row);
+      setDraft(draftFromCheque(row, todayIso()));
+      setSettleDate(todayIso());
+      setScanned(new Set());
+      setFromCamera(false);
+      setContactOpen(false);
       setError(null);
     } catch (err) {
-      setError(apiErrorMessage(err, isNew ? "Cari listesi yüklenemedi." : "Çek / senet yüklenemedi."));
+      setError(apiErrorMessage(err, "Çek / senet yüklenemedi."));
     }
-  }, [chequeId, client, companyId, isNew]);
+  }, [chequeId, client]);
 
   useEffect(() => { load(); }, [load]);
-
-  const hits = useMemo(() => {
-    const s = custQ.trim().toLowerCase();
-    if (s.length < 2) return [];
-    return contacts
-      .filter((c) => [c.name, c.phone, c.tax_number_or_id, c.city].some((v) => String(v || "").toLowerCase().includes(s)))
-      .slice(0, 8);
-  }, [contacts, custQ]);
 
   const save = async () => {
     const invalid = validateChequeDraft(draft);
@@ -113,6 +141,8 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
       const saved = await put<Cheque>(client, `/cheques/${chequeId}`, chequePayload(draft, companyId));
       setLoaded(saved);
       setDraft(draftFromCheque(saved, todayIso()));
+      setScanned(new Set());
+      setFromCamera(false);
       setMessage("Çek / senet güncellendi.");
       setError(null);
     } catch (err) {
@@ -177,31 +207,140 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
 
   const kind = draft.instrument === "promissory" ? "Senet" : "Çek";
   const action = loaded ? chequeAction(loaded) : null;
+  const activeKind = chequeKindOf(draft);
+  const showContactSearch = !locked && (!draft.contact_id || contactOpen);
+  const contactScanned = scanned.has("contact_id") || scanned.has("contact_name");
+  const recordToday = todayIso();
+  const title = isNew
+    ? `‹ ${draft.instrument === "promissory" ? "Yeni senet" : "Yeni çek"}`
+    : `‹ ${draft.serial_no || loaded?.number || kind}`;
+
+  const textField = (
+    key: TextKey,
+    label: string,
+    testID: string,
+    extra?: { placeholder?: string; autoCapitalize?: "characters"; multiline?: boolean },
+  ) => {
+    const on = scanned.has(key);
+    return (
+      <ScanFrame on={on} testID={testID}>
+        <Field
+          label={on ? `● ${label}` : label}
+          testID={testID}
+          value={draft[key]}
+          onChangeText={(v) => set(key, v)}
+          placeholder={extra?.placeholder}
+          autoCapitalize={extra?.autoCapitalize}
+          multiline={extra?.multiline}
+          style={on ? { backgroundColor: colors.amber50, borderColor: "#F59E0B", borderStyle: "dotted" } : undefined}
+        />
+      </ScanFrame>
+    );
+  };
+
+  const dateField = (key: "issue_date" | "due_date", label: string, testID: string, min?: string) => {
+    const on = scanned.has(key);
+    return (
+      <ScanFrame on={on} testID={testID}>
+        <DateField
+          label={on ? `● ${label}` : label}
+          testID={testID}
+          value={draft[key]}
+          onChangeText={(v) => set(key, v)}
+          min={min}
+        />
+      </ScanFrame>
+    );
+  };
+
+  const footer = (
+    <PrimaryButton
+      title={busy ? "Kaydediliyor…" : isNew ? "Kaydet" : "Güncelle"}
+      onPress={save}
+      loading={busy}
+      disabled={!canEdit}
+      color={colors.primary}
+      testID="cheque-save"
+    />
+  );
 
   return (
-    <Screen>
-      <H1>{isNew ? (draft.instrument === "promissory" ? "Yeni senet" : "Yeni çek") : "Çek / senet düzenle"}</H1>
-      <Muted>
-        {isNew
-          ? "Kayıt cari bakiyesine işlenir; portföyde “açık” olarak başlar."
-          : loaded
-            ? `${chequeTitle(loaded)} · ${chequeStatusTr(loaded)} · ${fmtMoney(loaded.amount)} · vade ${fmtDate(loaded.due_date)}`
-            : "Kayıt yükleniyor…"}
-      </Muted>
-      <ErrorBanner message={error} />
-      {message ? <Muted>{message}</Muted> : null}
+    <Screen stickyBottom={footer}>
+      <Pressable
+        testID="cheque-form-header"
+        accessibilityRole="button"
+        accessibilityLabel="Geri"
+        onPress={() => router.back()}
+        style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+      >
+        <Text testID="cheque-form-title" numberOfLines={1} style={{ flex: 1, fontSize: 20, fontWeight: "800", color: colors.text }}>
+          {title}
+        </Text>
+        {!isNew && loaded ? <Badge label={chequeStatusTr(loaded)} tone={chequeTone(loaded)} /> : null}
+      </Pressable>
+
+      <View testID="cheque-kind-segment" style={{ flexDirection: "row", backgroundColor: colors.slate100, borderRadius: 12, padding: 4, gap: 2 }}>
+        {CHEQUE_KINDS.map((item) => {
+          const active = activeKind === item.key;
+          return (
+            <Pressable
+              key={item.key}
+              testID={`cheque-kind-${item.key}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active, disabled: locked }}
+              disabled={locked}
+              onPress={() => {
+                if (locked) return;
+                setDraft((d) => applyChequeKind(d, item.key));
+                clearScanned("direction", "instrument");
+              }}
+              style={{
+                flex: 1,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingVertical: 8,
+                paddingHorizontal: 2,
+                borderRadius: 10,
+                minHeight: 44,
+                backgroundColor: active ? "#fff" : "transparent",
+                opacity: locked ? 0.55 : 1,
+              }}
+            >
+              <Text numberOfLines={2} style={{ fontWeight: "800", fontSize: 11, textAlign: "center", color: active ? colors.text : colors.muted }}>
+                {item.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {locked ? <Muted>Tahsil / ödeme sonrası yön, tür, cari ve tutar kilitlenir.</Muted> : null}
 
       {canEdit && !locked ? (
-        <Card testID="cheque-scan-card">
-          <ChequeScanButtons
-            testID="cheque-scan"
-            disabled={busy}
-            onDraft={(scan, match) => setDraft((cur) => applyChequeScan(cur, scan, match))}
-            onHint={(hint) => { setMessage(hint); setError(null); }}
-            onError={(msg) => { setError(msg); setMessage(null); }}
-          />
-        </Card>
+        <ChequeScanButtons
+          variant="sheet"
+          testID="cheque-scan"
+          disabled={busy}
+          onDraft={(scan, match) => {
+            const cur = draftRef.current;
+            const next = applyChequeScan(cur, scan, match);
+            setScanned(scannedChequeFields(cur, next));
+            setDraft(next);
+            setFromCamera(true);
+          }}
+          onHint={(hint) => { setMessage(hint); setError(null); }}
+          onError={(msg) => { setError(msg); setMessage(null); }}
+        />
       ) : null}
+      {fromCamera ? (
+        <View
+          testID="cheque-scan-banner"
+          style={{ backgroundColor: colors.amber50, borderRadius: 12, borderWidth: 1, borderColor: "#F59E0B", paddingHorizontal: 12, paddingVertical: 10 }}
+        >
+          <Text style={{ color: "#B45309", fontWeight: "800" }}>⚠️ Kameradan okundu — kontrol et</Text>
+        </View>
+      ) : null}
+      {message ? <Muted testID="cheque-form-message">{message}</Muted> : null}
+      <ErrorBanner message={error} />
 
       {!isNew ? (
         <PrimaryButton
@@ -213,79 +352,78 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
         />
       ) : null}
 
-      <Muted>Yön</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {CHEQUE_DIRECTIONS.map((d) => (
-          <Chip
-            key={d.key}
-            label={d.label}
-            active={draft.direction === d.key}
-            testID={`cheque-direction-${d.key}`}
-            onPress={() => !locked && set("direction", d.key)}
-          />
-        ))}
-      </Row>
-      <Muted>Tür</Muted>
-      <Row style={{ flexWrap: "wrap" }}>
-        {CHEQUE_INSTRUMENTS.map((i) => (
-          <Chip
-            key={i.key}
-            label={i.label}
-            active={draft.instrument === i.key}
-            testID={`cheque-instrument-${i.key}`}
-            onPress={() => !locked && set("instrument", i.key)}
-          />
-        ))}
-      </Row>
-      {locked ? <Muted>Tahsil / ödeme sonrası yön, tür, cari ve tutar kilitlenir.</Muted> : null}
-
-      <Card>
-        <Muted>Cari</Muted>
+      <Card testID={contactScanned ? "cheque-contact-scanned" : undefined} style={contactScanned ? { backgroundColor: colors.amber50, borderColor: "#F59E0B", borderStyle: "dotted" } : undefined}>
         {draft.contact_id ? (
-          <ListRow
-            testID="cheque-contact-selected"
-            title={draft.contact_name || "Cari"}
-            subtitle={locked ? "Kilitli" : "Değiştirmek için dokunun"}
-            onPress={locked ? undefined : () => setDraft((d) => ({ ...d, contact_id: "", contact_name: "" }))}
+          <View testID="cheque-contact-selected" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text numberOfLines={2} style={{ flex: 1, fontWeight: "800", fontSize: 16, color: colors.text }}>
+              {draft.contact_name || "Cari"}
+            </Text>
+            {locked ? <Muted>Kilitli</Muted> : (
+              <Pressable testID="cheque-contact-change" onPress={() => setContactOpen((v) => !v)} hitSlop={8}>
+                <Text style={{ color: "#B45309", fontWeight: "800" }}>Değiştir ›</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
+        {showContactSearch ? (
+          <ContactSearchSelect
+            label={draft.contact_id ? undefined : "Cari"}
+            testID="cheque-contact"
+            value={draft.contact_id}
+            valueLabel={draft.contact_name}
+            placeholder="Ad / VKN / telefon"
+            onChange={(id, contact) => {
+              setDraft((d) => ({ ...d, contact_id: id, contact_name: contact?.name || (id ? d.contact_name : "") }));
+              clearScanned("contact_id", "contact_name");
+              setContactOpen(false);
+            }}
           />
-        ) : (
-          <>
-            <Field label="Cari ara" testID="cheque-contact-search" value={custQ} onChangeText={setCustQ} placeholder="Ad / VKN / telefon" />
-            {hits.map((c) => (
-              <ListRow
-                key={idOf(c)}
-                testID={`cheque-contact-${idOf(c)}`}
-                title={c.name}
-                subtitle={[c.city, c.phone].filter(Boolean).join(" · ")}
-                onPress={() => { setDraft((d) => ({ ...d, contact_id: idOf(c), contact_name: c.name })); setCustQ(""); }}
-              />
-            ))}
-          </>
-        )}
+        ) : null}
       </Card>
 
-      <MoneyInput label="Tutar (₺)" testID="cheque-amount" value={draft.amount} onChange={(n) => { if (!locked) set("amount", n ?? ""); }} editable={!locked} />
-      <Field label={`${kind} no`} testID="cheque-serial" value={draft.serial_no} onChangeText={(v) => set("serial_no", v)} autoCapitalize="characters" />
-      <Field label="Keşide tarihi" testID="cheque-issue-date" value={draft.issue_date} onChangeText={(v) => set("issue_date", v)} placeholder="YYYY-AA-GG" />
-      <Field label="Vade" testID="cheque-due-date" value={draft.due_date} onChangeText={(v) => set("due_date", v)} placeholder="YYYY-AA-GG" />
+      <Card>
+        <ScanFrame on={scanned.has("amount")} testID="cheque-amount">
+          <MoneyInput
+            label={scanned.has("amount") ? "● Tutar (₺)" : "Tutar (₺)"}
+            testID="cheque-amount"
+            value={draft.amount}
+            onChange={(n) => { if (!locked) set("amount", n ?? ""); }}
+            editable={!locked}
+            containerStyle={{ marginBottom: 0 }}
+            style={{ fontSize: 32, fontWeight: "800", minHeight: 64 }}
+          />
+        </ScanFrame>
+      </Card>
+
       {draft.instrument === "cheque" ? (
         <>
-          <Field label="Banka" testID="cheque-bank" value={draft.bank_name} onChangeText={(v) => set("bank_name", v)} placeholder="Örn: Garanti BBVA" />
-          <Field label="Şube" testID="cheque-branch" value={draft.bank_branch} onChangeText={(v) => set("bank_branch", v)} />
-          <Field label="Hesap no" testID="cheque-account-no" value={draft.account_no} onChangeText={(v) => set("account_no", v)} />
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
+            {textField("bank_name", "Banka", "cheque-bank", { placeholder: "Örn: Garanti BBVA" })}
+            {textField("bank_branch", "Şube", "cheque-branch")}
+          </View>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
+            {textField("serial_no", `${kind} no`, "cheque-serial", { autoCapitalize: "characters" })}
+            {textField("account_no", "Hesap no", "cheque-account-no")}
+          </View>
         </>
-      ) : null}
-      <Field label="Keşideci" testID="cheque-drawer" value={draft.drawer_name} onChangeText={(v) => set("drawer_name", v)} placeholder="Boşsa cari adı kullanılır" />
-      <Field label="Not" testID="cheque-notes" value={draft.notes} onChangeText={(v) => set("notes", v)} multiline />
+      ) : textField("serial_no", `${kind} no`, "cheque-serial", { autoCapitalize: "characters" })}
+      {textField("drawer_name", "Keşideci", "cheque-drawer", { placeholder: "Boşsa cari adı kullanılır" })}
 
-      <PrimaryButton
-        title={busy ? "Kaydediliyor…" : isNew ? "Kaydet" : "Güncelle"}
-        onPress={save}
-        loading={busy}
-        disabled={!canEdit}
-        color={colors.primary}
-        testID="cheque-save"
-      />
+      <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
+        {dateField("issue_date", "Keşide tarihi (çek üzerindeki)", "cheque-issue-date")}
+        {dateField("due_date", "Vade", "cheque-due-date", draft.issue_date || undefined)}
+      </View>
+
+      <View
+        testID="cheque-record-date"
+        style={{ backgroundColor: colors.slate100, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}
+      >
+        <Text style={{ color: colors.slate800, fontWeight: "700" }}>
+          {`🗓 Kayıt tarihi · bugün · ${fmtDate(recordToday)}`}
+        </Text>
+      </View>
+
+      {textField("notes", "Not", "cheque-notes", { multiline: true })}
 
       {action && canEdit ? (
         <Card testID="cheque-settle-form">
@@ -302,7 +440,7 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
                 emptyLabel="Hesap seçin"
                 groups={paymentTargetGroups(accounts, partners, { collectableOnly: action.path === "collect" })}
               />
-              <Field label="Tarih" testID="cheque-settle-date" value={settleDate} onChangeText={setSettleDate} placeholder="YYYY-AA-GG" />
+              <DateField label="Tarih" testID="cheque-settle-date" value={settleDate} onChangeText={setSettleDate} />
               <PrimaryButton
                 title={action.label}
                 onPress={saveSettle}

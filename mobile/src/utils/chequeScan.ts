@@ -65,6 +65,32 @@ export function applyChequeScan(
   };
 }
 
+const CHEQUE_DRAFT_KEYS: (keyof ChequeDraft)[] = [
+  "direction",
+  "instrument",
+  "contact_id",
+  "contact_name",
+  "amount",
+  "issue_date",
+  "due_date",
+  "serial_no",
+  "bank_name",
+  "bank_branch",
+  "account_no",
+  "drawer_name",
+  "notes",
+];
+
+/** applyChequeScan öncesi/sonrası: yalnız değeri değişen alanlar. */
+export function scannedChequeFields(before: ChequeDraft, after: ChequeDraft): Set<keyof ChequeDraft> {
+  const changed = new Set<keyof ChequeDraft>();
+  if (!before || !after) return changed;
+  for (const key of CHEQUE_DRAFT_KEYS) {
+    if (String(before[key] ?? "") !== String(after[key] ?? "")) changed.add(key);
+  }
+  return changed;
+}
+
 export const CHEQUE_SCAN_IDLE_HINT =
   "Kamera veya galeri ile çek / senet okuyun; tutar, vade ve banka dolar. Gerekirse yapay zeka okur.";
 
