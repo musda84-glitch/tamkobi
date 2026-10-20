@@ -213,12 +213,13 @@ async def _write(
     *,
     op: str,
     prepare: _Prepare,
+    action: Optional[str] = None,
 ):
     """authenticate → Idempotency-Key → doğrulama → çakışma → run → yazma audit'i.
 
     400/404 prepare içinde, hiçbir koleksiyona yazmadan döner. Audit fn başarılı
     yazdıktan sonra, idempotency.run içinde atılır; aynı anahtar + gövde ikinci
-    kez fn'i çağırmaz.
+    kez fn'i çağırmaz. action verilmezse eylem admin_v1.write.<op> kalır.
     """
     key_doc, payload = await _auth(request, scope)
     key_id = str(key_doc.get("_id") or "")
@@ -241,14 +242,24 @@ async def _write(
         else:
             response, audit_fields = outcome, changed
         if audit_fields is not None:
+            if action:
+                details = (
+                    dict(audit_fields)
+                    if isinstance(audit_fields, dict)
+                    else {"fields": sorted(audit_fields), "idempotency": True}
+                )
+                audit_action = action
+            else:
+                details = {"fields": sorted(audit_fields), "idempotency": True}
+                audit_action = f"admin_v1.write.{op}"
             await store.write_audit(
                 actor_type="api_key",
                 actor_id=key_id,
                 ip=request_ip(request),
-                action=f"admin_v1.write.{op}",
+                action=audit_action,
                 target_type=target_type,
                 target_id=str(target_id),
-                details={"fields": sorted(audit_fields), "idempotency": True},
+                details=details,
             )
         return _redact(response)
 

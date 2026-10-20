@@ -49,7 +49,7 @@ Anahtar belgesinde `kind` alanı vardır: `product` (varsayılan) veya `platform
 | `kind` | Kural |
 |--------|--------|
 | `product` | v1 kapsamları (`license:verify`, `heartbeat`, `usage:write`, `platform:all`, `help:read`, …). `admin.` ile başlayan kapsam **verilemez**. |
-| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. |
+| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`, `admin.impersonate`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. `:read` ve `:write` kapsamları `admin.impersonate` kapsamını kapsamaz. |
 
 `admin.*` kapsamı şirket anahtarına (plan D dahil) oluşturulurken de istek anında da reddedilir. Doğrudan veritabanına yazılmış `kind=product` + `admin.*` anahtarı admin-v1’de **403** döner.
 
@@ -314,7 +314,7 @@ Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.product.update`. İzin
 
 Bu yazma yüzeyinde yoktur:
 
-- kimliğe bürünme ve oturum açma
+- kimliğe bürünme — aşağıdaki A5a bölümü (bu yazma modülünde yok)
 - şirket, kullanıcı, ürün veya anahtar silme
 - şifre sıfırlama gönderimi, şifre ve 2FA sıfırlama
 - kullanıcı oluşturma ve düzenleme
@@ -323,6 +323,43 @@ Bu yazma yüzeyinde yoktur:
 - SMS ve mail ayarları ile şifreleri
 - plan oluşturma, plan düzenleme ve modül fiyatları
 - şirket oluşturma ve üst şirket (parent) değişikliği
+
+## admin-v1 impersonation (A5a)
+
+Base path yazma uçlarıyla aynıdır: `/api/platform/admin-v1/`. Kapsam `admin.impersonate`. Bu kapsam `ADMIN_SCOPES` içindedir. Hiçbir `:read` veya `:write` kapsamı onu kapsamaz. `admin.dangerous` bu yüzeyde tanımlı değildir. Kimlik doğrulama `platform_auth.authenticate(..., audit_prefix="admin_v1")` sırasıdır; ardından `kind=platform_admin` ve boş `instance_id` gerekir. Idempotency-Key kuralları yazma uçlarıyla aynıdır: ad alanı `platform_admin:<key_id>`, uç kimliği `METHOD path#sha256(canonical_json(gövde))[:16]`. Başlık yoksa **400** `Idempotency-Key gerekli`. Aynı anahtar + farklı gövde **409** `Idempotency-Key farklı istekle kullanıldı`.
+
+Doğrulama yazmadan önce yapılır. **400**, **403** ve **404** destek oturumu, handoff, `activity_logs` ve `admin_v1.danger.*` audit’i yazmaz. Başarılı imzada `authenticate` erişim audit’i kalır. Ham JWT yanıtta, logda ve audit’te yoktur. Tek kullanımlık kod `auth_handoff.create_handoff` ile üretilir; `_TTL_S` 60 saniyedir ve değişmez. Handoff gövdesinde `sa_return` boş stringdir. Bu oturumda `POST /api/auth/impersonate/exit` **400** `Destek oturumu bulunamadı.` döner; kapatma aşağıdaki uçladır.
+
+Başarılı işlemden sonra `platform_audit_log` kaydı: `actor_type=api_key`, `actor_id` anahtar kimliği, `action=admin_v1.danger.impersonate.start` veya `admin_v1.danger.impersonate.end`, `details` yalnız `operator`, `reason`, `session_id`, `ttl_minutes`, `as_user`. Token, handoff kodu, `sa_return`, imza, nonce, Idempotency-Key ve secret `details` içine girmez. Aynı anahtar + aynı gövde kayıtlı yanıtı döner; yeni oturum ve ikinci danger audit’i yoktur. Zaten kapalı oturumu kapatmak no-op’tur; ikinci danger audit’i yazılmaz.
+
+Yanıtlar `{"item": …}` zarfındadır. `access_token`, `token` ve `sa_return` anahtarları yoktur.
+
+### POST `/api/platform/admin-v1/companies/{company_id}/impersonate`
+
+Kapsam: `admin.impersonate`. Audit: `admin_v1.danger.impersonate.start` ve `impersonate.enter`. Gövde: `reason` (zorunlu, trim sonrası 10..500 karakter), `operator_email` (zorunlu), `ttl_minutes` (opsiyonel tamsayı 5..60, varsayılan 30). Başka alan **400** `Desteklenmeyen alan: <ad>`. `reason` metin değilse **400** `reason metin olmalı.`; yoksa **400** `reason zorunlu.`; uzunluk dışındaysa **400** `reason 10 ile 500 karakter arasında olmalı.`. `ttl_minutes` aralık dışındaysa veya tamsayı değilse **400** `ttl_minutes 5 ile 60 arasında bir tamsayı olmalı.`.
+
+`operator_email`, kullanıcı koleksiyonunda `is_super_admin=True` ve `is_active` false olmayan bir kayda denk gelmiyorsa **403** `Operatör yetkili değil.`.
+
+Kontroller `/system/companies/{company_id}/impersonate` ile aynı sırada ve aynı metinlerdedir:
+
+1. `support.impersonate` kapalı → **403** `Bu müşteri için 'şirket olarak gir' destek aracı kapalı.`
+2. Giriş yapılabilir kullanıcı yok → **400** `Bu şirkette giriş yapılabilecek kullanıcı yok.`
+3. `platform_access_allowed` false → **403** `Bu şirket gizlilik ayarından yönetim paneli erişimini kapatmış. Destek girişi yapılamaz.`
+4. Şirket yok → **404** `Şirket bulunamadı.`
+
+Oturum süresi ve JWT `exp` `ttl_minutes` dakikadır. JWT `aud=app`, `imp_by` operatör e-postasıdır. `imp_via=api` yalnız bu API’de yazılır. `/system` ucu aynı yardımcıyı 120 dakika ve `sa_return=session_token(request)` ile çağırır. `/system` yanıtı, `Destek modu 2 saat geçerlidir.` metni ve **401** `Sistem paneli oturumu bulunamadı; tekrar giriş yapın.` kontrolü aynı kalır. `/system` JWT’sinde `imp_via` yoktur.
+
+```json
+{"item": {"company_name": "Ada", "as_user": "ada@example.com", "session_id": "ss_…", "started_at": "…", "expires_at": "…", "redirect": "https://app.example/sso?code=…", "code": "…"}}
+```
+
+### POST `/api/platform/admin-v1/impersonation/{session_id}/end`
+
+Kapsam: `admin.impersonate`. Audit: `admin_v1.danger.impersonate.end` (yalnızca aktif oturum kapanınca). Gövde: `reason` zorunlu; trim ve uzunluk kuralı başlangıç ucuyla aynıdır. Başka alan **400** `Desteklenmeyen alan: <ad>`.
+
+`support_access.close_session(session_id, ended_by="api_key:<key_id>", reason="revoked")`. Oturum yoksa **404** `Oturum bulunamadı.`. Zaten kapalıysa no-op; ikinci danger audit’i yazılmaz. Kapanan oturumun JWT’si `impersonation_info` için geçersizdir (`None`).
+
+Silme, veri sıfırlama, şifre, 2FA ve kullanıcı silme bu bölümde yoktur (A5b).
 
 ## Python
 
