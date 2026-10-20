@@ -87,8 +87,10 @@ async def create_session(
     by_name: Optional[str] = None,
     target_user_email: Optional[str] = None,
     hours: int = SESSION_HOURS,
+    minutes: Optional[int] = None,
 ) -> dict:
     now = _now()
+    span = timedelta(minutes=minutes) if minutes is not None else timedelta(hours=hours)
     await _db.support_sessions.update_many(
         {"company_id": company_id, "status": "active"},
         {"$set": {"status": "superseded", "ended_at": now.isoformat(), "ended_by": "system"}},
@@ -101,7 +103,7 @@ async def create_session(
         "by_name": by_name or by_email,
         "target_user_email": target_user_email,
         "started_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=hours)).isoformat(),
+        "expires_at": (now + span).isoformat(),
         "status": "active",
         "created_at": now.isoformat(),
     }

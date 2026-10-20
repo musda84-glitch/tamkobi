@@ -65,10 +65,9 @@ def privacy_view(company: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 # ---------------- Şirket olarak gir (impersonation) ----------------
-@router.post("/system/companies/{company_id}/impersonate")
-async def impersonate(company_id: str, request: Request, response: Response, admin: dict = Depends(saas.require_super_admin)):
+async def _impersonation_gate(company_id: str):
+    """Okuma: addon, hedef kullanıcı, gizlilik. Sıra ve metinler /system ile aynı."""
     import addons as _addons
-    import support_access
     if not await _addons.is_on(company_id, "support.impersonate"):
         raise HTTPException(status_code=403, detail="Bu müşteri için 'şirket olarak gir' destek aracı kapalı.")
     # Tenant kullanıcıları: platform süper adminleri şirket koltuğu sayılmaz.
@@ -76,50 +75,94 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
     if target and target.get("is_active") is False:
         target = None
     if not target or not target.get("password_hash"):
+        active_with_password = {
+            "is_active": {"$ne": False},
+            "password_hash": {"$exists": True, "$nin": [None, ""]},
+        }
         target = (
-            await _db.users.find_one({**saas.tenant_user_query(company_id), "is_active": {"$ne": False}, "password_hash": {"$exists": True, "$nin": [None, ""]}})
-            or await _db.users.find_one({**saas.company_member_clause(company_id), "is_active": {"$ne": False}, "password_hash": {"$exists": True, "$nin": [None, ""]}})
+            await _db.users.find_one({**saas.tenant_user_query(company_id), **active_with_password})
+            or await _db.users.find_one({**saas.company_member_clause(company_id), **active_with_password})
         )
     if not target:
         raise HTTPException(status_code=400, detail="Bu şirkette giriş yapılabilecek kullanıcı yok.")
     company = await _db.companies.find_one({"_id": company_id}) or {}
     if not platform_access_allowed(company):
         raise HTTPException(status_code=403, detail="Bu şirket gizlilik ayarından yönetim paneli erişimini kapatmış. Destek girişi yapılamaz.")
+    return target, company
+
+
+async def start_impersonation(
+    company_id: str,
+    *,
+    actor_email: str,
+    actor_name: Optional[str],
+    actor_id: str,
+    actor_type: str,
+    ip: str,
+    minutes: int,
+    sa_return: str,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Hedef kullanıcı, oturum, app JWT ve tek kullanımlık handoff.
+
+    Ham JWT dönüşte yoktur. imp_via=api yalnız API anahtarı çağrısında yazılır.
+    /system çağrısı boş sa_return ile 401 alır; API boş sa_return ile devam eder.
+    """
+    import support_access
+    target, company = await _impersonation_gate(company_id)
     now = datetime.now(timezone.utc)
     session = await support_access.create_session(
         company_id=company_id,
-        by_email=admin["email"],
-        by_name=admin.get("name"),
+        by_email=actor_email,
+        by_name=actor_name,
         target_user_email=target.get("email"),
-        hours=2,
+        minutes=minutes,
     )
     payload = {
         "sub": target["_id"],
         "email": target["email"],
         "role": target.get("role", "admin"),
         "type": "access",
-        "imp_by": admin["email"],
-        "imp_name": admin.get("name"),
+        "imp_by": actor_email,
+        "imp_name": actor_name,
         "imp_session": session["_id"],
         "imp_company": company_id,
         "imp_started": session["started_at"],
-        "exp": now + timedelta(hours=2),
+        "exp": now + timedelta(minutes=minutes),
     }
     # aud=app so the handoff cookie is valid on app.tamkobi.com
     payload["aud"] = "app"
     payload["iat"] = int(now.timestamp())
+    if actor_type == "api_key":
+        payload["imp_via"] = "api"
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
-    current = session_token(request) or ""
-    if not current:
+    current = sa_return or ""
+    if actor_type != "api_key" and not current:
         raise HTTPException(status_code=401, detail="Sistem paneli oturumu bulunamadı; tekrar giriş yapın.")
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"active_company_id": company_id}})
-    await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "user_id": admin.get("id") or admin.get("_id"), "user_name": admin.get("name"), "method": "IMPERSONATE", "path": f"/system/companies/{company_id}/impersonate", "module": "/settings", "status": 200, "target_user": target["email"], "created_at": _now()})
+    log_path = (
+        f"/platform/admin-v1/companies/{company_id}/impersonate"
+        if actor_type == "api_key"
+        else f"/system/companies/{company_id}/impersonate"
+    )
+    await _db.activity_logs.insert_one({
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "user_id": actor_id,
+        "user_name": actor_name,
+        "method": "IMPERSONATE",
+        "path": log_path,
+        "module": "/settings",
+        "status": 200,
+        "target_user": target["email"],
+        "created_at": _now(),
+    })
     try:
         import platform_store as _pstore
         await _pstore.write_audit(
-            actor_type="superadmin",
-            actor_id=str(admin.get("id") or admin.get("_id") or admin.get("email") or ""),
-            ip=request_ip(request),
+            actor_type=actor_type,
+            actor_id=str(actor_id or ""),
+            ip=ip,
             action="impersonate.enter",
             target_type="company",
             target_id=company_id,
@@ -129,9 +172,10 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         pass
     import auth_handoff
     import public_url as pu
-    # Bundle access + sa_return in one handoff payload (JSON in token field)
-    import json as _json
-    handoff_blob = _json.dumps({"access_token": token, "sa_return": current})
+    # Bundle access + sa_return in one handoff payload (JSON in token field).
+    # reason is for the caller audit; handoff and impersonate.enter omit it.
+    _ = reason
+    handoff_blob = json.dumps({"access_token": token, "sa_return": current})
     code = await auth_handoff.create_handoff(_db, handoff_blob, purpose="impersonate")
     app_base = await pu.public_base_url_for(_db, "app")
     return {
@@ -145,6 +189,20 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         "redirect": f"{app_base}/sso?code={code}",
         "code": code,
     }
+
+
+@router.post("/system/companies/{company_id}/impersonate")
+async def impersonate(company_id: str, request: Request, response: Response, admin: dict = Depends(saas.require_super_admin)):
+    return await start_impersonation(
+        company_id,
+        actor_email=admin["email"],
+        actor_name=admin.get("name"),
+        actor_id=str(admin.get("id") or admin.get("_id") or admin.get("email") or ""),
+        actor_type="superadmin",
+        ip=request_ip(request),
+        minutes=120,
+        sa_return=session_token(request) or "",
+    )
 
 
 async def impersonation_info(request: Request) -> Optional[Dict[str, Any]]:
