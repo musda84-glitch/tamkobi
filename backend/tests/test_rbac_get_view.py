@@ -1,6 +1,7 @@
 """GET/HEAD görünürlük kararı. Gölge mod engellemez; red yalnız loglanır."""
 import asyncio
 import hashlib
+import json
 import logging
 from types import SimpleNamespace
 
@@ -482,6 +483,98 @@ def test_role_for_error_shadow_passes_and_enforce_closes(monkeypatch, caplog):
     assert "super-secret-token" not in denied
     assert "ada@example.com" not in denied
     assert "_RoleLookupError" not in denied
+
+
+def _priced_invoice():
+    return {
+        "grand_total": 250,
+        "total_amount": 250,
+        "email": "ada@example.com",
+        "items": [{"product_name": "Raf", "quantity": 1, "unit_price": 200, "total": 200}],
+    }
+
+
+def test_view_lookup_failure_masks_prices(monkeypatch, caplog):
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "shadow")
+    secret = "token=super-secret-token email=ada@example.com phone=5551234567"
+    mw = _install_middleware(monkeypatch, _role(features={"view_prices": False}))
+    lookups = {"n": 0}
+
+    async def _boom(_user_doc, _company_id=None):
+        lookups["n"] += 1
+        raise _RoleLookupError(secret)
+
+    monkeypatch.setattr(rbac, "role_for", _boom)
+
+    async def _next(_request):
+        return _json(_priced_invoice())
+
+    request = _http("GET", "/api/invoices", "email=ada@example.com&token=super-secret-token", "super-secret-token")
+    request.scope["route"] = SimpleNamespace(path="/api/invoices")
+
+    async def _hit():
+        with caplog.at_level(logging.WARNING, logger="rbac"):
+            return await mw.dispatch(request, _next)
+
+    resp = asyncio.run(_hit())
+    body = json.loads(resp.body)
+    assert resp.status_code == 200
+    assert resp.headers.get("x-prices-masked") == "1"
+    assert body["grand_total"] == 0
+    assert body["total_amount"] == 0
+    assert body["items"][0]["unit_price"] == 0
+    assert body["items"][0]["total"] == 0
+    assert body["items"][0]["quantity"] == 1
+    assert body["items"][0]["product_name"] == "Raf"
+    assert body["email"] == "ada@example.com"
+    assert lookups["n"] == 2
+    logged = " ".join(rec.getMessage() for rec in caplog.records)
+    assert secret not in logged
+    assert "super-secret-token" not in logged
+    assert "ada@example.com" not in logged
+
+    closed = _role(features={"view_prices": False})
+    lookups["n"] = 0
+
+    async def _once_then_role(_user_doc, _company_id=None):
+        lookups["n"] += 1
+        if lookups["n"] == 1:
+            raise _RoleLookupError(secret)
+        return closed
+
+    monkeypatch.setattr(rbac, "role_for", _once_then_role)
+    caplog.clear()
+    resp = asyncio.run(_hit())
+    body = json.loads(resp.body)
+    assert resp.status_code == 200
+    assert resp.headers.get("x-prices-masked") == "1"
+    assert body["grand_total"] == 0
+    assert body["items"][0]["unit_price"] == 0
+    assert lookups["n"] == 2
+
+    async def _admin(_token, _db, request=None, path=None):
+        return {
+            "id": "usr_secret_id_42",
+            "role": "admin",
+            "email": "ada@example.com",
+            "name": "Ada Lovelace",
+            "company_ids": ["comp_secret_99"],
+            "active_company_id": "comp_secret_99",
+        }
+
+    monkeypatch.setattr(rbac, "get_user_from_token", _admin)
+    monkeypatch.setattr(rbac, "role_for", _boom)
+    lookups["n"] = 0
+    caplog.clear()
+    resp = asyncio.run(_hit())
+    body = json.loads(resp.body)
+    assert resp.status_code == 200
+    assert resp.headers.get("x-prices-masked") is None
+    assert body["grand_total"] == 250
+    assert body["total_amount"] == 250
+    assert body["items"][0]["unit_price"] == 200
+    assert body["items"][0]["total"] == 200
+    assert lookups["n"] == 0
 
 
 def test_get_resolves_role_once(monkeypatch):

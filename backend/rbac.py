@@ -1458,9 +1458,16 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                         return blocked
             response = await call_next(request)
             if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
-                if role is None and not view_lookup_failed:
-                    role = await role_for(user)
-                if role is not None and not role_features(role)["view_prices"]:
+                if role is None:
+                    try:
+                        role = await role_for(user)
+                    except Exception:
+                        # Görünürlük kararı düştüyse ikinci sorgu da düşebilir.
+                        # Rol bilinmiyorsa tutarlar maskeli kalır; istek 200 döner.
+                        if not view_lookup_failed:
+                            raise
+                        role = None
+                if role is None or not role_features(role)["view_prices"]:
                     import json as _json
                     body = b"".join([chunk async for chunk in response.body_iterator])
                     try:
