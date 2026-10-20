@@ -15,6 +15,14 @@ import {
 import { isPersonelRole, personelAccountTabs, personelCanManageCompany } from "../utils/selfPersonnelNav";
 import SettingsPage from "./SettingsPage";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { isAtolyeAccount, isValidPin } from "../utils/shopfloorOperatorSession";
+
+function canManageOwnShopfloorPin(user) {
+  if (!user || isAtolyeAccount(user)) return false;
+  if (user.is_super_admin) return true;
+  const role = String(user.role || "").trim().toLowerCase();
+  return role === "admin" || role === "owner" || role === "yönetici" || role === "yonetici";
+}
 
 const ALL_TABS = [
   ["profil", "Profilim", UserRound],
@@ -90,6 +98,12 @@ const ProfileTab = ({ user, reloadSession }) => {
   const [consentBusy, setConsentBusy] = useState(false);
   const linkedEmployee = Boolean(user?.employee_id);
   const consentOk = locationConsentAccepted(consent);
+  const showShopfloorPin = canManageOwnShopfloorPin(user);
+  const [shopPin, setShopPin] = useState({ pin: "", confirm: "" });
+  const [shopBusy, setShopBusy] = useState(false);
+  const [shopHas, setShopHas] = useState(null);
+  const hasShopPin = shopHas == null ? Boolean(user?.has_shopfloor_pin) : shopHas;
+  useEffect(() => { setShopHas(null); }, [user?.has_shopfloor_pin, user?.id]);
 
   useEffect(() => {
     setProfile({ name: user?.name || "", phone: user?.phone || "" });
@@ -227,6 +241,66 @@ const ProfileTab = ({ user, reloadSession }) => {
             </p>
           )}
         </div>
+      ) : null}
+      {showShopfloorPin ? (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!isValidPin(shopPin.pin) || shopPin.pin !== shopPin.confirm) {
+              toast.error(shopPin.pin !== shopPin.confirm ? "PIN tekrarı eşleşmiyor." : "PIN 4 haneli olmalı.");
+              return;
+            }
+            setShopBusy(true);
+            try {
+              const r = await axios.put(`${API_URL}/auth/me/shopfloor-pin`, { pin: shopPin.pin, pin_confirm: shopPin.confirm }, { withCredentials: true });
+              setShopHas(r.data?.has_shopfloor_pin !== false);
+              setShopPin({ pin: "", confirm: "" });
+              toast.success("Atölye PIN kaydedildi.");
+              if (reloadSession) await reloadSession();
+            } catch (err) {
+              toast.error(err.response?.data?.detail || "PIN kaydedilemedi.");
+            } finally {
+              setShopBusy(false);
+            }
+          }}
+          className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3"
+          data-testid="account-shopfloor-pin"
+        >
+          <h3 className="font-bold text-slate-900 text-sm">Atölye PIN&apos;im</h3>
+          <div>
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${hasShopPin ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`} data-testid="account-shopfloor-pin-badge">{hasShopPin ? "Tanımlı" : "Tanımsız"}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="block font-semibold text-slate-700 mb-1">Yeni PIN</label><input type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={shopPin.pin} onChange={(e) => setShopPin({ ...shopPin, pin: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="account-shopfloor-pin-new" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Yeni PIN (tekrar)</label><input type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={shopPin.confirm} onChange={(e) => setShopPin({ ...shopPin, confirm: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="account-shopfloor-pin-confirm" /></div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={shopBusy}
+              onClick={async () => {
+                if (!window.confirm("Atölye PIN kaldırılsın mı?")) return;
+                setShopBusy(true);
+                try {
+                  const r = await axios.delete(`${API_URL}/auth/me/shopfloor-pin`, { withCredentials: true });
+                  setShopHas(Boolean(r.data?.has_shopfloor_pin));
+                  setShopPin({ pin: "", confirm: "" });
+                  toast.success("Atölye PIN kaldırıldı.");
+                  if (reloadSession) await reloadSession();
+                } catch (err) {
+                  toast.error(err.response?.data?.detail || "PIN kaldırılamadı.");
+                } finally {
+                  setShopBusy(false);
+                }
+              }}
+              className="px-4 py-2 border border-rose-200 text-rose-700 rounded-xl font-bold disabled:opacity-60"
+              data-testid="account-shopfloor-pin-remove"
+            >
+              Kaldır
+            </button>
+            <button type="submit" disabled={shopBusy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold disabled:opacity-60" data-testid="account-shopfloor-pin-save">{shopBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Kaydet</button>
+          </div>
+        </form>
       ) : null}
       <form onSubmit={submit} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-change-password">
         <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-amber-500" /> Şifre değiştir</h3>
