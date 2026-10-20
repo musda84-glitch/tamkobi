@@ -56,7 +56,7 @@ jest.mock("../components/ContactDetailPanel", () => ({ ContactDetailPanel: () =>
 jest.mock("../components/ContactForm", () => ({ ContactForm: () => null }));
 jest.mock("../components/ExportButtons", () => ({ ExportButtons: () => null }));
 jest.mock("../components/StatementShare", () => ({ StatementShareBar: () => null, buildStatementRows: () => [] }));
-jest.mock("../components/StatementTxList", () => ({ StatementTxList: () => null }));
+jest.mock("../components/StatementTxList", () => ({ StatementTxList: () => null, StatementViewProvider: ({ children }) => children }));
 
 function summaryBody(over = {}) {
   return {

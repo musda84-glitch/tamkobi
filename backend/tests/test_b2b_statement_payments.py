@@ -29,6 +29,10 @@ SECRET_KEYS = {
     "cost_price",
     "purchase_price",
     "cost_amount",
+    "gib_uuid",
+    "gib_status",
+    "gib_invoice_id",
+    "einvoice_state",
 }
 
 
@@ -274,11 +278,53 @@ def test_show_statement_false_returns_empty_statement(monkeypatch):
 
 
 def test_statement_response_omits_account_and_actor(monkeypatch):
-    body, _db = _portal(monkeypatch, invoices=[_invoice()], payments=[_payment()])
+    body, _db = _portal(
+        monkeypatch,
+        invoices=[_invoice(einvoice_state="accepted", e_type="e_archive", gib_uuid="ettn-1", gib_status="İletildi")],
+        payments=[_payment()],
+    )
     _assert_private(body)
-    allowed = {"date", "doc", "debit", "credit", "balance", "kind"}
+    base = {"date", "doc", "debit", "credit", "balance", "kind"}
     for row in body["statement"]["rows"] + body["statement"]["payments"]:
-        assert set(row) == allowed
+        extra = set(row) - base
+        assert extra <= {"gib", "e_type"}
+        if row.get("kind") == "invoice":
+            assert extra == {"gib", "e_type"}
+            assert row["gib"] == "sent"
+            assert row["e_type"] == "e_archive"
+        else:
+            assert extra == set()
+    blob = json.dumps(body["statement"], ensure_ascii=False)
+    assert "ettn-1" not in blob and "İletildi" not in blob
+
+
+def test_other_tenant_invoice_gib_does_not_leak(monkeypatch):
+    body, _db = _portal(
+        monkeypatch,
+        invoices=[
+            _invoice(einvoice_state="draft", e_type="e_invoice"),
+            _invoice(
+                _id="inv-foreign",
+                company_id="co-other",
+                invoice_number="YABANCI",
+                grand_total=5000,
+                issue_date="2026-09-01",
+                einvoice_state="sent",
+                e_type="e_invoice",
+                gib_uuid="foreign-ettn",
+                gib_status="İletildi",
+            ),
+        ],
+        payments=[],
+    )
+    rows = body["statement"]["rows"]
+    assert len(rows) == 1
+    assert rows[0]["gib"] == "none"
+    assert rows[0]["e_type"] == "e_invoice"
+    assert rows[0]["balance"] == 1000
+    blob = json.dumps(body["statement"], ensure_ascii=False)
+    assert "foreign-ettn" not in blob and "YABANCI" not in blob and "İletildi" not in blob
+    assert set(rows[0]) == {"date", "doc", "debit", "credit", "balance", "kind", "gib", "e_type"}
 
 
 def test_open_cheque_without_bank_row_is_listed_once(monkeypatch):

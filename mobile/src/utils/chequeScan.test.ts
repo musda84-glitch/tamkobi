@@ -1,5 +1,5 @@
 import { emptyChequeDraft } from "./cheques";
-import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeAmountInput, chequeScanHint, chequeScanNavParams } from "./chequeScan";
+import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeAmountInput, chequeScanHint, chequeScanNavParams, scannedChequeFields } from "./chequeScan";
 
 describe("chequeScan", () => {
   it("formats amounts", () => {
@@ -41,5 +41,20 @@ describe("chequeScan", () => {
     });
     expect(chequeScanHint(draft)).toBe("verilen senet okundu · 250 ₺");
     expect(CHEQUE_SCAN_IDLE_HINT).toMatch(/yapay zeka/i);
+  });
+
+  it("marks only the fields a scan actually changed", () => {
+    const before = emptyChequeDraft("2026-10-20");
+    const after = applyChequeScan(before, {
+      instrument: "cheque",
+      direction: "received",
+      amount: 50000,
+      serial_no: "1234567",
+      bank_name: "Garanti BBVA",
+    });
+    const changed = scannedChequeFields(before, after);
+    expect([...changed].sort()).toEqual(["amount", "bank_name", "serial_no"]);
+    expect(scannedChequeFields(after, after).size).toBe(0);
+    expect(scannedChequeFields(before, before).size).toBe(0);
   });
 });

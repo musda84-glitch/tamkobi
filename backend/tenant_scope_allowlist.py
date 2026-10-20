@@ -9,12 +9,6 @@ from __future__ import annotations
 TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # account_balance.py
     ('account_balance.py', '_lookup_company_id', 'bank_accounts', 'find_one'): 2,
-    ('account_balance.py', 'apply_balance_delta', 'bank_accounts', 'update_one'): 1,
-    ('account_balance.py', 'ensure_opening_tx', 'bank_transactions', 'insert_one'): 1,
-    ('account_balance.py', 'recalc_account_balance', 'bank_accounts', 'find_one'): 1,
-    ('account_balance.py', 'rewrite_opening_tx', 'bank_transactions', 'delete_many'): 1,
-    ('account_balance.py', 'rewrite_opening_tx', 'bank_transactions', 'insert_one'): 1,
-    ('account_balance.py', 'sync_cash_box_balances', 'bank_accounts', 'update_one'): 1,
     # attendance.py
     ('attendance.py', '_on_leave_today', 'leave_requests', 'find_one'): 1,
     ('attendance.py', 'accept_location_consent', 'employees', 'update_one'): 1,
@@ -155,29 +149,16 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # balance_reconciliation.py
     ('balance_reconciliation.py', 'conflicting_connection_iban', 'bank_accounts', 'find'): 1,
     # bank_guard.py
-    ('bank_guard.py', 'apply_customer_card_owner_effect', 'contacts', 'update_one'): 1,
     ('bank_guard.py', 'assert_collection_allowed', 'bank_accounts', 'find_one'): 1,
-    ('bank_guard.py', 'get_connection_for_account', 'bank_connections', 'find_one'): 1,
-    ('bank_guard.py', 'pin_customer_card_pool_balance', 'bank_accounts', 'update_one'): 1,
     # bank_match_desc.py
     ('bank_match_desc.py', 'migrate_match_descriptions', 'bank_transactions', 'update_one'): 2,
     # bank_match_target.py
-    ('bank_match_target.py', 'clear_bank_match_status', 'bank_transactions', 'find_one'): 1,
-    ('bank_match_target.py', 'clear_bank_match_status', 'bank_transactions', 'update_one'): 1,
     ('bank_match_target.py', 'repair_legacy_bank_match_directions', 'bank_transactions', 'find'): 1,
     ('bank_match_target.py', 'repair_legacy_bank_match_directions', 'partner_transactions', 'find'): 1,
     ('bank_match_target.py', 'repair_legacy_bank_match_directions', 'partner_transactions', 'update_one'): 1,
-    ('bank_match_target.py', 'resolve_bank_tx_id_for_partner_tx', 'bank_transactions', 'find_one'): 2,
-    # bank_rematch.py
-    ('bank_rematch.py', '_clear_rematching', 'bank_transactions', 'update_one'): 1,
-    ('bank_rematch.py', 'attach_month_totals', 'bank_transactions', 'aggregate'): 1,
-    ('bank_rematch.py', 'replace_matched_transaction', 'bank_transactions', 'find_one'): 1,
-    ('bank_rematch.py', 'replace_matched_transaction', 'bank_transactions', 'update_one'): 1,
     # bank_tx.py
     ('bank_tx.py', 'scrub_platform_actors', 'bank_transactions', 'find'): 1,
     ('bank_tx.py', 'scrub_platform_actors', 'bank_transactions', 'update_one'): 1,
-    # bank_tx_page.py
-    ('bank_tx_page.py', '_load_leg', 'bank_transactions', 'find'): 1,
     # cheques.py
     ('cheques.py', '_append_event', 'cheques', 'update_one'): 1,
     ('cheques.py', '_apply_contact', 'contacts', 'update_one'): 1,
@@ -201,7 +182,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('cheques.py', 'pay_issued_cheque', 'cheques', 'find_one'): 1,
     ('cheques.py', 'pay_issued_cheque', 'cheques', 'update_one'): 1,
     ('cheques.py', 'restore_cheque', 'bank_transactions', 'find_one'): 1,
-    ('cheques.py', 'update_cheque', 'bank_transactions', 'update_one'): 1,
     ('cheques.py', 'update_cheque', 'cheques', 'find_one'): 1,
     ('cheques.py', 'update_cheque', 'cheques', 'update_one'): 1,
     # company_audit.py
@@ -212,14 +192,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # company_reset.py
     ('company_reset.py', '_count_stock_movements', 'stock_movements', 'count_documents'): 1,
     ('company_reset.py', 'wipe_company_business_data', 'stock_movements', 'delete_many'): 1,
-    # contact_balance.py
-    ('contact_balance.py', 'sync_contact_balance', 'bank_transactions', 'find'): 1,
-    ('contact_balance.py', 'sync_contact_balance', 'contacts', 'find_one'): 1,
-    ('contact_balance.py', 'sync_contact_balance', 'contacts', 'update_one'): 2,
-    ('contact_balance.py', 'sync_contact_balance', 'invoices', 'find'): 1,
-    ('contact_balance.py', 'sync_contact_balance', 'partner_transactions', 'find'): 1,
-    # contact_list_page.py
-    ('contact_list_page.py', 'fetch_contact_rows', 'contacts', 'find'): 1,
     # data_export.py
     ('data_export.py', 'export_my_data', 'employees', 'find_one'): 3,
     # demo.py
@@ -344,22 +316,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('expenses.py', 'update_expense', 'employees', 'find_one'): 1,
     ('expenses.py', 'update_expense', 'expenses', 'find_one'): 1,
     ('expenses.py', 'update_expense', 'expenses', 'update_one'): 1,
-    # finance.py
-    ('finance.py', '_apply_statement_account', 'bank_accounts', 'update_one'): 1,
-    ('finance.py', '_enrich_statement_lines', 'bank_transactions', 'find'): 1,
-    ('finance.py', '_existing_statement_keys', 'bank_transactions', 'find'): 1,
-    ('finance.py', '_insert_statement_line', 'bank_accounts', 'update_one'): 1,
-    ('finance.py', '_insert_statement_line', 'bank_transactions', 'update_one'): 1,
-    ('finance.py', '_insert_statement_line', 'contacts', 'find_one'): 1,
-    ('finance.py', '_insert_statement_line', 'contacts', 'update_one'): 1,
-    ('finance.py', 'confirm_statement', 'bank_accounts', 'find_one'): 1,
-    ('finance.py', 'create_loan', 'bank_accounts', 'find_one'): 1,
-    ('finance.py', 'create_loan', 'bank_accounts', 'update_one'): 1,
-    ('finance.py', 'import_statement', 'bank_accounts', 'find_one'): 1,
-    ('finance.py', 'pay_installment', 'bank_accounts', 'find_one'): 1,
-    ('finance.py', 'pay_installment', 'bank_accounts', 'update_one'): 2,
-    ('finance.py', 'pay_installment', 'loans', 'find_one'): 1,
-    ('finance.py', 'pay_installment', 'loans', 'update_one'): 1,
     # fx.py
     ('fx.py', '_upsert_rates', 'fx_rates', 'update_one'): 1,
     # gib_credits.py
@@ -375,8 +331,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('idempotency.py', 'mark_payment_applied', 'idempotency_keys', 'update_one'): 1,
     ('idempotency.py', 'purge_expired', 'idempotency_keys', 'delete_one'): 1,
     ('idempotency.py', 'purge_expired', 'idempotency_keys', 'find'): 1,
-    # invoice_list_page.py
-    ('invoice_list_page.py', 'fetch_invoice_rows', 'invoices', 'find'): 1,
     # legal_docs.py
     ('legal_docs.py', 'get_b2b_legal', 'contacts', 'find_one'): 1,
     ('legal_docs.py', 'list_b2b_legal', 'contacts', 'find_one'): 1,
@@ -1146,8 +1100,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('shopfloor_pause.py', 'run_auto_pause_work_orders', 'work_orders', 'update_many'): 1,
     # staff_messages.py
     ('staff_messages.py', '_post_message', 'staff_messages', 'insert_one'): 2,
-    # stock_codes.py
-    ('stock_codes.py', 'load_products_for_items', 'products', 'find'): 1,
     # storage_manager.py
     ('storage_manager.py', 'ensure_account_folders', 'storage_folders', 'find_one'): 2,
     # tax_obligations.py

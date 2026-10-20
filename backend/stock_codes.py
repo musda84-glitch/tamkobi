@@ -69,14 +69,14 @@ def apply_stock_codes(items: Iterable[Any], products: Mapping[str, Mapping[str, 
     return out
 
 
-async def load_products_for_items(db, items: Iterable[Any]) -> dict:
+async def load_products_for_items(db, items: Iterable[Any], *, company_id: str) -> dict:
     """Load product docs keyed by _id for the given lines."""
-    if db is None or not items:
+    if db is None or not items or not str(company_id or "").strip():
         return {}
     pids = [pid for it in items if (pid := line_get(it, "product_id"))]
     if not pids:
         return {}
-    found = await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 10)
+    found = await db.products.find({"company_id": company_id, "_id": {"$in": pids}}).to_list(len(pids) + 10)
     return {p["_id"]: p for p in found}
 
 
@@ -84,7 +84,7 @@ async def fill_stock_codes(db, company_id: Optional[str], items: list) -> list:
     """Copy product SKU / barcode onto document lines when missing (print + scan + UBL)."""
     if not items:
         return items
-    products = await load_products_for_items(db, items)
+    products = await load_products_for_items(db, items, company_id=str(company_id or ""))
     if not products:
         return items
     apply_stock_codes(items, products)

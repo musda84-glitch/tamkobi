@@ -1,4 +1,5 @@
 """Per-contact B2B portal settings resolve over company defaults."""
+import statement_share
 import server
 
 
@@ -38,3 +39,34 @@ def test_contact_b2b_portal_view():
     assert v["company_defaults"]["allow_ai_cart"] is False
     assert v["has_password"] is True
     assert v["login_method"] == "both"
+
+
+def test_b2b_statement_row_adds_only_gib_fields():
+    rows = statement_share.statement_rows([{
+        "invoice_number": "SF-1",
+        "invoice_type": "sales",
+        "grand_total": 10,
+        "issue_date": "2026-10-01",
+        "status": "approved",
+        "einvoice_state": "sent",
+        "e_type": "e_invoice",
+        "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "gib_status": "İletildi",
+        "company_id": "co-1",
+    }], [])
+    published = server._b2b_public_statement_row(rows[0])
+    assert published["gib"] == "sent" and published["e_type"] == "e_invoice"
+    assert published["balance"] == 10
+    extra = set(published) - {"date", "doc", "debit", "credit", "balance", "kind"}
+    assert extra == {"gib", "e_type"}
+    poisoned = server._b2b_public_statement_row({
+        **rows[0],
+        "gib_uuid": "foreign-ettn",
+        "gib_status": "İletildi",
+        "company_id": "co-other",
+        "_id": "inv-foreign",
+    })
+    blob = str(poisoned)
+    assert "foreign-ettn" not in blob and "co-other" not in blob and "inv-foreign" not in blob
+    assert "gib_uuid" not in poisoned and "gib_status" not in poisoned
+    assert set(poisoned) == {"date", "doc", "debit", "credit", "balance", "kind", "gib", "e_type"}

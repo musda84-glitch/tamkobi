@@ -2,7 +2,7 @@
 import React, { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
@@ -18,6 +18,7 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { DocumentFormModal } from "./DocumentFormModal";
 import { B2BCardPay } from "./B2BCardPay";
 import { StatementTxList } from "./StatementTxList";
+import { StatementPrint } from "./StatementShare";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -886,10 +887,12 @@ function InvoiceLinesBody({ state, invoiceNumber }) {
   );
 }
 
-export const StatementList = ({ invoices, company, balance, token, cardPayment, statement }) => {
+export const StatementList = ({ invoices, company, balance, token, cardPayment, statement, contact }) => {
   const bal = balance || 0;
   const moveRows = Array.isArray(statement?.rows) ? statement.rows : [];
   const [panel, setPanel] = useState(statement != null ? "moves" : "invoices");
+  const [printOpen, setPrintOpen] = useState(false);
+  const [statementLive, setStatementLive] = useState(null);
   const openRef = useRef({});
   const cacheRef = useRef({});
   const [open, setOpen] = useState({});
@@ -937,7 +940,14 @@ export const StatementList = ({ invoices, company, balance, token, cardPayment, 
           <button type="button" role="tab" aria-selected={panel === "moves"} data-testid="b2b-statement-tab-moves" onClick={() => setPanel("moves")} className={tabCls("moves")}>Hareketler</button>
           <button type="button" role="tab" aria-selected={panel === "invoices"} data-testid="b2b-statement-tab-invoices" onClick={() => setPanel("invoices")} className={tabCls("invoices")}>Faturalarım</button>
         </div>
-        <span className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">Güncel bakiye: <b data-testid="b2b-statement-balance" className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b>{cardPayment?.enabled ? <B2BCardPay token={token} balance={bal} cardPayment={cardPayment} /> : null}</span>
+        <span className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+          {panel === "moves" ? (
+            <button type="button" onClick={() => setPrintOpen(true)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-slate-800 font-bold" data-testid="b2b-statement-print-btn">
+              <Printer className="w-3.5 h-3.5" /> Ekstre Yazdır
+            </button>
+          ) : null}
+          Güncel bakiye: <b data-testid="b2b-statement-balance" className={bal > 0 ? "text-rose-600" : "text-emerald-600"}>{fmt(Math.abs(bal))} {bal > 0 ? "(borcunuz)" : bal < 0 ? "(alacağınız)" : ""}</b>{cardPayment?.enabled ? <B2BCardPay token={token} balance={bal} cardPayment={cardPayment} /> : null}
+        </span>
       </div>
       {panel === "moves" ? (
         <StatementTxList
@@ -947,6 +957,7 @@ export const StatementList = ({ invoices, company, balance, token, cardPayment, 
           cardsTestId="b2b-statement-cards"
           rowTestId={(r, idx) => `b2b-statement-row-${idx}`}
           emptyLabel="Hareket yok."
+          onViewChange={(viewRows, viewTotals) => setStatementLive({ rows: viewRows, totals: viewTotals })}
         />
       ) : null}
       {panel === "invoices" && invoices.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Fatura yok.</div>}
@@ -1008,6 +1019,16 @@ export const StatementList = ({ invoices, company, balance, token, cardPayment, 
         </table>
       )}
       {company.iban && <div className="p-3 text-xs text-slate-500 border-t break-all">Ödeme için: <b>{company.bank_name}</b> IBAN <span className="font-mono">{company.iban}</span></div>}
+      {printOpen && (
+        <StatementPrint
+          contact={{ ...(contact || {}), name: contact?.name || "", balance: bal, currency: contact?.currency || "TRY" }}
+          company={company || {}}
+          rows={moveRows}
+          viewRows={statementLive?.rows}
+          viewTotals={statementLive?.totals}
+          onClose={() => setPrintOpen(false)}
+        />
+      )}
     </div>
   );
 };

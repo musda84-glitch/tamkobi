@@ -6316,15 +6316,11 @@ def _b2b_statement_dead(doc: dict) -> bool:
 
 
 def _b2b_public_statement_row(row: dict) -> dict:
-    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok."""
-    return {
-        "date": row.get("date") or "",
-        "doc": row.get("doc") or "",
-        "debit": row.get("debit") or 0,
-        "credit": row.get("credit") or 0,
-        "balance": row.get("balance") or 0,
-        "kind": row.get("kind") or "",
-    }
+    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok.
+
+    Fatura satırında ek olarak gib ve e_type. ETTN / gib_status dışarı çıkmaz.
+    """
+    return statement_share.public_statement_row(row)
 
 
 async def _b2b_portal_statement(contact: dict, invoices: List[dict]) -> Dict[str, Any]:
@@ -7335,7 +7331,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             "cheque_id": ch["_id"],
             "cheque_kind": "portfolio",
             "receipt_group_id": ch.get("receipt_group_id"),
-            "date": ch.get("issue_date") or ch.get("due_date") or "",
+            "date": cheques._istanbul_day(ch.get("created_at")) or (ch.get("issue_date") or ""),
             "created_at": ch.get("created_at"),
             "virtual": True,
         })
@@ -7379,7 +7375,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": {"cheque_bond_balance": live_cheque}})
         contact["cheque_bond_balance"] = live_cheque
     # Ödeme silme / fatura iptali sonrası kaymış bakiyeyi hareketlerden onar.
-    live_bal, bal_meta = await contact_balance.sync_contact_balance(db, contact_id)
+    live_bal, bal_meta = await contact_balance.sync_contact_balance(db, contact_id, company_id=cid)
     if bal_meta.get("repaired"):
         contact["balance"] = live_bal
         if bal_meta.get("opening_balance") is not None:
@@ -7459,7 +7455,7 @@ async def clear_contact_opening_balance(contact_id: str, user: dict = Depends(ge
         {"_id": contact_id},
         {"$set": {"opening_balance": 0.0}, "$unset": {"opening_balance_source": ""}},
     )
-    live, meta = await contact_balance.sync_contact_balance(db, contact_id)
+    live, meta = await contact_balance.sync_contact_balance(db, contact_id, company_id=contact["company_id"])
     return {
         "status": "success",
         "balance": live,
@@ -9424,7 +9420,7 @@ async def _fill_order_line_images(company_id: str, items: list) -> None:
     from stock_codes import line_get, line_set, load_products_for_items
     import event_notify
     try:
-        products = await load_products_for_items(db, items)
+        products = await load_products_for_items(db, items, company_id=company_id)
     except Exception:
         logger.exception("order line image lookup failed")
         return
@@ -11221,7 +11217,7 @@ async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user
         )
         raise
     if inv.get("contact_id"):
-        await contact_balance.sync_contact_balance(db, inv["contact_id"])
+        await contact_balance.sync_contact_balance(db, inv["contact_id"], company_id=company_id)
     if _is_dispatch_doc(inv):
         msg = f"{inv.get('invoice_number')} irsaliyesi iptal edildi; bağlı sipariş irsaliye bağı koparıldı."
         msg += " GİB e-İrsaliye iptali ayrı süreçtir; gerekirse entegratörden iptal düzenleyin."
@@ -11610,6 +11606,7 @@ async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], use
             if not is_sales:
                 owner_meta = await bank_guard.apply_customer_card_owner_effect(
                     db, acc, "outflow", try_amt, inv.get("contact_id"), sign=1,
+                    company_id=inv.get("company_id") or "",
                 )
                 if owner_meta:
                     tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
@@ -12544,7 +12541,7 @@ async def _save_signed_opening_balance(
 
     # İlk kayıt apply_balance_delta(amount). replace, silinen açılışın işaretini düşer.
     delta = round(amount - old_signed, 2)
-    await account_balance.apply_balance_delta(db, account_id, delta)
+    await account_balance.apply_balance_delta(db, account_id, delta, company_id=company_id)
     fresh = await db.bank_accounts.find_one({"_id": account_id})
     if isinstance(fresh, dict) and fresh.get("current_balance") is not None:
         new_balance = round(float(fresh.get("current_balance") or 0), 2)
@@ -12935,7 +12932,7 @@ async def create_bank_transaction(tx: BankTransaction, user: dict = Depends(get_
     doc["company_id"] = cid
     acc = await db.bank_accounts.find_one({"_id": tx.account_id})
     owner_meta = await bank_guard.apply_customer_card_owner_effect(
-        db, acc, tx.type, tx.amount, tx.contact_id, sign=1,
+        db, acc, tx.type, tx.amount, tx.contact_id, sign=1, company_id=cid,
     )
     if owner_meta:
         doc["owner_contact_id"] = owner_meta["owner_contact_id"]
@@ -12965,7 +12962,7 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
         acc_meta = await db.bank_accounts.find_one({"_id": aid}, {"is_customer_card_pool": 1, "type": 1})
         if account_balance.skips_account_balance(tx, acc_meta, aid):
             if tx.get("customer_card_pool_ledger") or tx.get("via_customer_card") or bank_guard.is_customer_card_pool(acc_meta):
-                await bank_guard.pin_customer_card_pool_balance(db, aid)
+                await bank_guard.pin_customer_card_pool_balance(db, aid, company_id=tx.get("company_id") or "")
             return
         await db.bank_accounts.update_one({"_id": aid}, {"$inc": {"current_balance": delta}})
 
@@ -13119,7 +13116,7 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
     sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
     for cid in sync_ids:
         if cid:
-            await contact_balance.sync_contact_balance(db, cid)
+            await contact_balance.sync_contact_balance(db, cid, company_id=tx.get("company_id") or "")
     msg = "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."
     if pair and related:
         msg = "Hareket, eş virman satırı ve bağlı masraf çöp kutusuna taşındı; bakiyeler geri alındı."
@@ -13210,7 +13207,7 @@ async def _insert_pool_display_mirror(
     }
     _stamp_via_customer_card_pool(tx_doc, pool, desc)
     await db.bank_transactions.insert_one(tx_doc)
-    await bank_guard.pin_customer_card_pool_balance(db, pool["_id"])
+    await bank_guard.pin_customer_card_pool_balance(db, pool["_id"], company_id=company_id)
 
 
 async def _insert_cari_virman_ledger_pair(
@@ -13283,7 +13280,7 @@ async def _insert_cari_virman_ledger_pair(
         _stamp_via_customer_card_pool(tgt_tx, pool, desc)
     await db.bank_transactions.insert_many([src_tx, tgt_tx])
     if pool:
-        await bank_guard.pin_customer_card_pool_balance(db, pool["_id"])
+        await bank_guard.pin_customer_card_pool_balance(db, pool["_id"], company_id=company_id)
 
 async def _apply_virman_customer_card(
     source_acc: Optional[Dict[str, Any]],
@@ -13296,6 +13293,7 @@ async def _apply_virman_customer_card(
     if bank_guard.is_customer_card(source_acc):
         owner_meta = await bank_guard.apply_customer_card_owner_effect(
             db, source_acc, "outflow", amount, payee_contact_id, sign=1,
+            company_id=(source_acc or {}).get("company_id") or "",
         )
         if owner_meta:
             tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
@@ -13344,8 +13342,8 @@ async def _execute_virman_contact(
             target_contact_name=tgt_name,
             pool=pool,
         )
-        await contact_balance.sync_contact_balance(db, s_id)
-        await contact_balance.sync_contact_balance(db, t_id)
+        await contact_balance.sync_contact_balance(db, s_id, company_id=company_id)
+        await contact_balance.sync_contact_balance(db, t_id, company_id=company_id)
         msg = f"{amount:,.2f} TL cari virman tamamlandı ({src_name} → {tgt_name})."
         if pool:
             msg = f"{amount:,.2f} TL cari virman tamamlandı ({src_name} → {tgt_name}); Müşteri Kartları kasasına işlendi."
@@ -14935,7 +14933,7 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
             tacc = await db.bank_accounts.find_one({"_id": t_id})
             if not tacc:
                 raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
-            if await bank_guard.get_connection_for_account(db, t_id):
+            if await bank_guard.get_connection_for_account(db, t_id, company_id=tx["company_id"]):
                 raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
             target_name = tacc.get("account_name")
             counter_amount = amount if not is_inflow else -amount
@@ -18669,7 +18667,7 @@ async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any], u
         acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": cfg["company_id"]})
         if not acc:
             raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
-        if await bank_guard.get_connection_for_account(db, account_id):
+        if await bank_guard.get_connection_for_account(db, account_id, company_id=cfg["company_id"]):
             raise HTTPException(status_code=400, detail="Entegre (API bağlı) hesaba otomatik hakediş yazılamaz; ödemeler banka senkronuyla gelir. Manuel bir kasa/banka hesabı seçin.")
         await bank_guard.assert_collection_allowed(db, account_id)
         name = acc.get("account_name")
@@ -26061,7 +26059,7 @@ async def _restore_bank_tx(doc, _related):
             await account_balance.sync_cash_box_balances(db, [{**acc, "_id": aid}])
     for cid in {doc.get("contact_id"), doc.get("owner_contact_id")}:
         if cid:
-            await contact_balance.sync_contact_balance(db, cid)
+            await contact_balance.sync_contact_balance(db, cid, company_id=doc.get("company_id") or "")
 
 async def _restore_partner_tx(doc, _related):
     amount = float(doc.get("amount") or 0)

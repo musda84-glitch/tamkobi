@@ -182,6 +182,7 @@ def test_insert_bank_lines_adjust_balance_and_skip_manual_dupes():
     db.bank_accounts.docs.append(dict(acc))
     db.bank_transactions.docs.append({
         "_id": "manual-1",
+        "company_id": "comp1",
         "account_id": "acc-kt",
         "date": "2026-10-01",
         "description": "EFT GELEN MUSTAFA",
@@ -191,9 +192,9 @@ def test_insert_bank_lines_adjust_balance_and_skip_manual_dupes():
     finance._db = db
 
     async def run():
-        existing = await finance._existing_statement_keys("acc-kt", all_sources=True)
+        existing = await finance._existing_statement_keys("acc-kt", company_id="comp1", all_sources=True)
         assert finance._tx_key({"date": "2026-10-01", "description": "EFT GELEN MUSTAFA", "amount": 1000}) in existing
-        card_only = await finance._existing_statement_keys("acc-kt", all_sources=False)
+        card_only = await finance._existing_statement_keys("acc-kt", company_id="comp1", all_sources=False)
         assert not card_only
 
         created_in = await finance._insert_statement_line(acc, {

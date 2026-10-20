@@ -206,6 +206,45 @@ test("tahsilat Hareketler görünümünde Alacak sütununda ve bakiyede görün�
   expect(host.querySelector('[data-testid="b2b-invoice-lines-SF-1"]').textContent).toContain("Duvar Rafı — Beyaz");
 });
 
+test("Hareketler ekranında Ekstre Yazdır tam listeyi açar", async () => {
+  root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <StatementList
+        invoices={INVOICES}
+        company={{ name: "TamKobi" }}
+        contact={{ name: "Ada" }}
+        balance={500}
+        token="tok-1"
+        statement={{
+          ...STATEMENT,
+          rows: [
+            { ...STATEMENT.rows[0], gib: "sent", e_type: "e_invoice" },
+            STATEMENT.rows[1],
+            STATEMENT.rows[2],
+          ],
+        }}
+      />,
+    );
+  });
+  const button = host.querySelector('[data-testid="b2b-statement-print-btn"]');
+  expect(button.textContent).toMatch(/Ekstre Yazdır/);
+  await act(async () => { button.click(); });
+  const printed = [...host.querySelectorAll('[data-testid^="statement-print-row-"]')];
+  expect(printed).toHaveLength(3);
+  expect(printed[0].textContent).toMatch(/Satış Faturası/);
+  expect(printed[0].textContent).toMatch(/1.?000,00/);
+  expect(host.querySelector('[data-testid="statement-print-gib-0"]').textContent).toBe("GİB");
+  expect(host.querySelector('[data-testid="statement-print-filter-note"]')).toBeNull();
+  await act(async () => { host.querySelector('[data-testid="b2b-statement-table-filter-side-credit"]').click(); });
+  await act(async () => { host.querySelector('[data-testid="statement-print-apply-filter"] input').click(); });
+  const filtered = [...host.querySelectorAll('[data-testid^="statement-print-row-"]')];
+  expect(filtered).toHaveLength(1);
+  expect(filtered[0].textContent).toMatch(/Tahsilat/);
+  expect(filtered[0].textContent).toMatch(/600,00/);
+  expect(host.querySelector('[data-testid="statement-print-filter-note"]').textContent).toMatch(/Filtre uygulandı/);
+});
+
 test("ödeme yokken Fatura yok yerine hareket boş durumu yazar", async () => {
   root = createRoot(host);
   await act(async () => {

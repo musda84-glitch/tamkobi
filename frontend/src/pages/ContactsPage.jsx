@@ -9,7 +9,7 @@ import { ContactRow } from "../components/ContactRow";
 import { ContactForm } from "../components/ContactForm";
 import { ExportButtons } from "../components/ExportButtons";
 import { StatementShareBar, buildStatementRows } from "../components/StatementShare";
-import { StatementTxList } from "../components/StatementTxList";
+import { StatementTxList, StatementViewProvider } from "../components/StatementTxList";
 import { useEscape } from "../utils/useEscape";
 import { useSearchParams } from "react-router-dom";
 import { cachedList, contactTypeFilter } from "../utils/dataSync";
@@ -76,6 +76,7 @@ export default function ContactsPage() {
   const [selectedContactStatement, setSelectedContactStatement] = useState(null);
   useEscape(React.useCallback(() => setSelectedContactStatement(null), []));
   const [statementData, setStatementData] = useState(null);
+  const statementRows = statementData ? buildStatementRows(statementData) : [];
 
   const [editContact, setEditContact] = useState(null);
 
@@ -388,20 +389,22 @@ export default function ContactsPage() {
               </button>
             </div>
 
-            <StatementShareBar contact={selectedContactStatement} rows={buildStatementRows(statementData)} companyId={activeCompanyId(activeCompany)} />
+            <StatementViewProvider>
+              <StatementShareBar contact={selectedContactStatement} rows={statementRows} companyId={activeCompanyId(activeCompany)} />
 
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center justify-between"><h4 className="font-bold text-slate-800">Hesap Hareketleri (Fatura & Ödeme)</h4><div className="flex items-center gap-2 text-[10px] font-semibold"><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" /> Fatura (Borç)</span><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" /> Tahsilat / Ödeme</span></div></div>
-              <StatementTxList
-                rows={buildStatementRows(statementData)}
-                currency={selectedContactStatement.currency || "TRY"}
-                tableTestId="statement-table"
-                rowTestId={(r, idx) => `statement-row-${r.kind}-${idx}`}
-                showKindDot
-                emptyAmount="-"
-                cellPad="py-2 px-3"
-              />
-            </div>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between"><h4 className="font-bold text-slate-800">Hesap Hareketleri (Fatura & Ödeme)</h4><div className="flex items-center gap-2 text-[10px] font-semibold"><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" /> Fatura (Borç)</span><span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" /> Tahsilat / Ödeme</span></div></div>
+                <StatementTxList
+                  rows={statementRows}
+                  currency={selectedContactStatement.currency || "TRY"}
+                  tableTestId="statement-table"
+                  rowTestId={(r, idx) => `statement-row-${r.kind}-${idx}`}
+                  showKindDot
+                  emptyAmount="-"
+                  cellPad="py-2 px-3"
+                />
+              </div>
+            </StatementViewProvider>
 
             <div className="flex justify-end pt-2 border-t">
               <button

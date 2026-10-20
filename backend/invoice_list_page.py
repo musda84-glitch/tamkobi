@@ -564,7 +564,9 @@ def prefilter_query(
 async def fetch_invoice_rows(db, company_id: str, query: dict) -> List[dict]:
     """Firma faturaları. Yazmaz."""
     cid = str(company_id or "")
-    fetched = await db.invoices.find(query).to_list(FETCH_CAP + 1)
+    if not cid:
+        return []
+    fetched = await db.invoices.find({**query, "company_id": cid}).to_list(FETCH_CAP + 1)
     rows = []
     for row in (fetched or [])[:FETCH_CAP]:
         if isinstance(row, dict) and str(row.get("company_id") or "") == cid:
