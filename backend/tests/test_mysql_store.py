@@ -75,6 +75,16 @@ def test_apply_set_inc_push_addtoset_positional():
     out2 = apply_update(doc, {"$set": {"variants.$.image_url": "/img"}}, {"_id": "p1", "variants.variant_id": "v2"})
     assert out2["variants"][1]["image_url"] == "/img"
     assert out2["variants"][0]["image_url"] is None
+    first = apply_update(
+        {"_id": "n1", "company_id": "c1"},
+        {"$addToSet": {"pushed_device_ids": {"$each": ["phone-a"]}}, "$set": {"pushed_at": "t1"}},
+    )
+    second = apply_update(
+        first,
+        {"$addToSet": {"pushed_device_ids": {"$each": ["phone-b", "phone-a"]}}, "$set": {"pushed_at": "t2"}},
+    )
+    assert second["pushed_device_ids"] == ["phone-a", "phone-b"]
+    assert second["pushed_at"] == "t2"
 
 
 def test_set_on_insert_and_nested():

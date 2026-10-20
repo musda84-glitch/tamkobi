@@ -2733,17 +2733,18 @@ async def register_push_token(req: Dict[str, Any], request: Request, user: dict 
     token = str(req.get("token") or "").strip()
     try:
         company_id = str(user.get("active_company_id") or req.get("company_id") or "")
+        device_id = str(req.get("device_id") or "")
         out = await _notify.upsert_push_token(
             db,
             user_id=str(user.get("id") or user.get("_id") or ""),
             company_id=company_id,
             token=token,
             platform=str(req.get("platform") or ""),
-            device_id=str(req.get("device_id") or ""),
+            device_id=device_id,
         )
         if out.get("replay"):
             replay = await _notify.replay_unread_to_token(
-                db, user=user, company_id=company_id, token=token,
+                db, user=user, company_id=company_id, token=token, device_id=device_id,
             )
             out["replayed"] = replay.get("sent") or 0
         return out
