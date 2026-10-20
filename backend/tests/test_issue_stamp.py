@@ -146,6 +146,7 @@ class TestApplyIssueStamp:
             with patch.object(e_invoice, "build_and_store_xml", AsyncMock(side_effect=fake_build)):
                 await e_invoice.issue_invoice(
                     "inv_stamp",
+                    company_id="c1",
                     e_type="e_archive",
                     stamp_now=True,
                     issue_date="2026-10-09",

@@ -9623,7 +9623,7 @@ async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
         await db.invoices.update_one({"_id": doc["_id"]}, {"$set": patch})
         doc = await db.invoices.find_one({"_id": doc["_id"]}) or doc
     try:
-        result = await e_invoice.issue_invoice(doc["_id"], e_type="e_dispatch")
+        result = await e_invoice.issue_invoice(doc["_id"], company_id=doc["company_id"], e_type="e_dispatch")
         refreshed = await db.invoices.find_one({"_id": doc["_id"]}) or doc
         return {"sent": True, "result": result, "dispatch": clean_doc(refreshed)}
     except HTTPException as e:
@@ -11269,6 +11269,7 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
             await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
     return await e_invoice.issue_invoice(
         invoice_id,
+        company_id=inv["company_id"],
         e_type=req.get("e_type"),
         scenario=req.get("scenario"),
         stamp_now=bool(req.get("stamp_now")),

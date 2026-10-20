@@ -197,15 +197,14 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # demo.py
     ('demo.py', 'tag_legacy_seed', 'partner_transactions', 'update_many'): 1,
     # e_invoice.py
+    # İmzalı paylaşım linki, oturumsuz _id ile; tenant kontrolü sonra.
     ('e_invoice.py', '_require_einvoice_access', 'invoices', 'find_one'): 1,
-    ('e_invoice.py', 'issue_invoice', 'contacts', 'find_one'): 1,
-    ('e_invoice.py', 'issue_invoice', 'contacts', 'update_one'): 2,
-    ('e_invoice.py', 'issue_invoice', 'invoices', 'find_one'): 2,
-    ('e_invoice.py', 'issue_invoice', 'invoices', 'update_one'): 15,
+    # Açılış göçü, tüm şirketler.
     ('e_invoice.py', 'migrate_mislabelled_paper_invoices', 'invoices', 'find'): 1,
+    # Açılış göçü, tüm şirketler.
     ('e_invoice.py', 'migrate_mislabelled_paper_invoices', 'invoices', 'update_one'): 1,
+    # Zamanlayıcı, şirketler arası.
     ('e_invoice.py', 'refresh_outbound_statuses', 'invoices', 'find'): 1,
-    ('e_invoice.py', 'refresh_outbound_statuses', 'invoices', 'update_one'): 3,
     # employee_pay.py
     ('employee_pay.py', 'accrue_allowances', 'employees', 'find'): 1,
     ('employee_pay.py', 'accrue_allowances', 'expenses', 'find_one'): 1,
