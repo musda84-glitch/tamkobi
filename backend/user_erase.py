@@ -133,6 +133,111 @@ def _public_user(u: dict, companies: List[Dict[str, str]], counts: Dict[str, int
     }
 
 
+async def validate_erase_target(user_id: str, *, actor_id: Optional[str] = None) -> dict:
+    """Kullanıcı silinebilir mi. Yazmaz."""
+    u = await _load_tenant_user(user_id)
+    if actor_id is not None and str(actor_id) == _uid(u):
+        raise HTTPException(status_code=400, detail="Kendi hesabınızı bu modülden silemezsiniz.")
+
+    email = (u.get("email") or "").strip().lower()
+    if email in saas.PROTECTED_USER_EMAILS:
+        raise HTTPException(status_code=400, detail="Korumalı hesap silinemez.")
+
+    blocks = await _last_admin_blocks(u)
+    if blocks:
+        names = ", ".join(b["name"] for b in blocks)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Kullanıcı şu şirket(ler)in son yöneticisi: {names}. Önce başka bir yönetici atayın veya şirketi silin.",
+        )
+    counts = await _erase_counts(u)
+    return {"user": u, "email": email, "counts": counts, "blocks": blocks}
+
+
+async def apply_erase(user: dict, *, actor: dict, ip: Optional[str] = None) -> dict:
+    """Kişisel veriyi siler. Onay e-postası, cümle ve şifre uçta kalır."""
+    email = (user.get("email") or "").strip().lower()
+    uid = _uid(user)
+    deleted: Dict[str, int] = {
+        "user": 0,
+        "invites": 0,
+        "login_attempts": 0,
+        "activity_logs": 0,
+        "employees_unlinked": 0,
+        "tickets_anonymized": 0,
+    }
+
+    if email:
+        deleted["invites"] = int((await _db.user_invites.delete_many({"email": email})).deleted_count or 0)  # tenant-ok: KVKK kullanıcı silme, tüm şirketlerdeki kendi kayıtları
+        deleted["login_attempts"] = int(
+            (await _db.login_attempts.delete_many({"identifier": {"$regex": f":{re.escape(email)}$"}})).deleted_count or 0
+        )
+
+    deleted["activity_logs"] = int((await _db.activity_logs.delete_many({"user_id": uid})).deleted_count or 0)  # tenant-ok: KVKK kullanıcı silme, tüm şirketlerdeki kendi kayıtları
+
+    emp = await _linked_employee(user)
+    if emp:
+        await _db.employees.update_one(  # tenant-ok: KVKK kullanıcı silme, tüm şirketlerdeki kendi kayıtları
+            {"_id": emp["_id"]},
+            {"$set": {"user_id": None, "updated_at": _now()}, "$unset": {"portal_user_id": ""}},
+        )
+        deleted["employees_unlinked"] = 1
+
+    tick = await _db.support_tickets.update_many(
+        {"created_by_id": uid},
+        {"$set": {
+            "created_by_name": _ANON,
+            "created_by_email": _ANON,
+            "created_by_id": None,
+            "updated_at": _now(),
+        }},
+    )
+    deleted["tickets_anonymized"] = int(tick.modified_count or 0)
+
+    await _db.users.delete_one({"_id": uid})
+    deleted["user"] = 1
+
+    extra: Dict[str, Any] = {}
+    if actor.get("via") == "api":
+        extra["via"] = "api"
+        extra["operator_email"] = actor.get("email")
+    applog.log_event(
+        "user_erase",
+        f"{email} erased by {actor.get('email')}",
+        target_user_id=uid,
+        target_email=email,
+        admin_id=_uid(actor),
+        admin_email=actor.get("email"),
+        ip=ip,
+        deleted=deleted,
+        **extra,
+    )
+    activity = {
+        "_id": str(uuid.uuid4()),
+        "company_id": (user.get("active_company_id") or (user.get("company_ids") or [None])[0] or "platform"),
+        "user_id": _uid(actor),
+        "user_name": actor.get("name") or actor.get("email"),
+        "method": "ERASE",
+        "path": f"/system/users/{uid}/erase",
+        "module": "/sistem/veri-silme",
+        "status": 200,
+        "detail": f"user_erase:{email}",
+        "created_at": _now(),
+    }
+    if actor.get("via") == "api":
+        activity["via"] = "api"
+        activity["operator_email"] = actor.get("email")
+    await _db.activity_logs.insert_one(activity)
+
+    return {
+        "status": "success",
+        "id": uid,
+        "email": email,
+        "deleted": deleted,
+        "message": f"{email} hesabı ve ilişkili kişisel veriler silindi.",
+    }
+
+
 async def _verify_admin_password(admin: dict, password: str) -> None:
     pwd = (password or "").strip()
     if not pwd:
@@ -178,21 +283,9 @@ async def erase_preview(user_id: str, _: dict = Depends(saas.require_super_admin
 
 @router.post("/system/users/{user_id}/erase")
 async def erase_user(user_id: str, req: Dict[str, Any], request: Request, admin: dict = Depends(saas.require_super_admin)):
-    u = await _load_tenant_user(user_id)
-    if _uid(admin) == _uid(u):
-        raise HTTPException(status_code=400, detail="Kendi hesabınızı bu modülden silemezsiniz.")
-
-    email = (u.get("email") or "").strip().lower()
-    if email in saas.PROTECTED_USER_EMAILS:
-        raise HTTPException(status_code=400, detail="Korumalı hesap silinemez.")
-
-    blocks = await _last_admin_blocks(u)
-    if blocks:
-        names = ", ".join(b["name"] for b in blocks)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Kullanıcı şu şirket(ler)in son yöneticisi: {names}. Önce başka bir yönetici atayın veya şirketi silin.",
-        )
+    found = await validate_erase_target(user_id, actor_id=_uid(admin))
+    u = found["user"]
+    email = found["email"]
 
     confirm_email = (req.get("confirm_email") or "").strip().lower()
     if confirm_email != email:
@@ -203,74 +296,5 @@ async def erase_user(user_id: str, req: Dict[str, Any], request: Request, admin:
         raise HTTPException(status_code=400, detail=f'Onay cümlesi "{ERASE_CONFIRM_PHRASE}" olmalıdır.')
 
     await _verify_admin_password(admin, req.get("admin_password") or "")
-
-    uid = _uid(u)
-    deleted: Dict[str, int] = {
-        "user": 0,
-        "invites": 0,
-        "login_attempts": 0,
-        "activity_logs": 0,
-        "employees_unlinked": 0,
-        "tickets_anonymized": 0,
-    }
-
-    if email:
-        deleted["invites"] = int((await _db.user_invites.delete_many({"email": email})).deleted_count or 0)
-        deleted["login_attempts"] = int(
-            (await _db.login_attempts.delete_many({"identifier": {"$regex": f":{re.escape(email)}$"}})).deleted_count or 0
-        )
-
-    deleted["activity_logs"] = int((await _db.activity_logs.delete_many({"user_id": uid})).deleted_count or 0)
-
-    emp = await _linked_employee(u)
-    if emp:
-        await _db.employees.update_one(
-            {"_id": emp["_id"]},
-            {"$set": {"user_id": None, "updated_at": _now()}, "$unset": {"portal_user_id": ""}},
-        )
-        deleted["employees_unlinked"] = 1
-
-    tick = await _db.support_tickets.update_many(
-        {"created_by_id": uid},
-        {"$set": {
-            "created_by_name": _ANON,
-            "created_by_email": _ANON,
-            "created_by_id": None,
-            "updated_at": _now(),
-        }},
-    )
-    deleted["tickets_anonymized"] = int(tick.modified_count or 0)
-
-    await _db.users.delete_one({"_id": uid})
-    deleted["user"] = 1
-
-    applog.log_event(
-        "user_erase",
-        f"{email} erased by {admin.get('email')}",
-        target_user_id=uid,
-        target_email=email,
-        admin_id=_uid(admin),
-        admin_email=admin.get("email"),
-        ip=getattr(request.client, "host", None) if request.client else None,
-        deleted=deleted,
-    )
-    await _db.activity_logs.insert_one({
-        "_id": str(uuid.uuid4()),
-        "company_id": (u.get("active_company_id") or (u.get("company_ids") or [None])[0] or "platform"),
-        "user_id": _uid(admin),
-        "user_name": admin.get("name") or admin.get("email"),
-        "method": "ERASE",
-        "path": f"/system/users/{uid}/erase",
-        "module": "/sistem/veri-silme",
-        "status": 200,
-        "detail": f"user_erase:{email}",
-        "created_at": _now(),
-    })
-
-    return {
-        "status": "success",
-        "id": uid,
-        "email": email,
-        "deleted": deleted,
-        "message": f"{email} hesabı ve ilişkili kişisel veriler silindi.",
-    }
+    ip = getattr(request.client, "host", None) if request.client else None
+    return await apply_erase(u, actor=admin, ip=ip)

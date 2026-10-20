@@ -321,8 +321,8 @@ def test_allowlist_and_scope_constant():
         assert allowlist.ALLOWLIST_REASONS[pair] == _ADMIN_ALLOW_REASON
     assert store.SCOPE_ADMIN_IMPERSONATE == "admin.impersonate"
     assert store.SCOPE_ADMIN_IMPERSONATE in store.ADMIN_SCOPES
-    assert not hasattr(store, "SCOPE_ADMIN_DANGEROUS")
-    assert "admin.dangerous" not in store.ADMIN_SCOPES
+    assert store.SCOPE_ADMIN_DANGEROUS == "admin.dangerous"
+    assert store.SCOPE_ADMIN_DANGEROUS in store.ADMIN_SCOPES
     assert auth_handoff._TTL_S == 60
     covered = [
         scope for scope in store.ADMIN_SCOPES

@@ -49,7 +49,7 @@ Anahtar belgesinde `kind` alanı vardır: `product` (varsayılan) veya `platform
 | `kind` | Kural |
 |--------|--------|
 | `product` | v1 kapsamları (`license:verify`, `heartbeat`, `usage:write`, `platform:all`, `help:read`, …). `admin.` ile başlayan kapsam **verilemez**. |
-| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`, `admin.impersonate`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. `:read` ve `:write` kapsamları `admin.impersonate` kapsamını kapsamaz. |
+| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`, `admin.impersonate`, `admin.dangerous`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. `:read` ve `:write` kapsamları `admin.impersonate` ve `admin.dangerous` kapsamlarını kapsamaz. `admin.impersonate` ve `admin.dangerous` birbirini ve diğer kapsamları kapsamaz. `admin.dangerous` yalnızca anahtara açıkça yazıldıysa geçerlidir. |
 
 `admin.*` kapsamı şirket anahtarına (plan D dahil) oluşturulurken de istek anında da reddedilir. Doğrudan veritabanına yazılmış `kind=product` + `admin.*` anahtarı admin-v1’de **403** döner.
 
@@ -326,7 +326,7 @@ Bu yazma yüzeyinde yoktur:
 
 ## admin-v1 impersonation (A5a)
 
-Base path yazma uçlarıyla aynıdır: `/api/platform/admin-v1/`. Kapsam `admin.impersonate`. Bu kapsam `ADMIN_SCOPES` içindedir. Hiçbir `:read` veya `:write` kapsamı onu kapsamaz. `admin.dangerous` bu yüzeyde tanımlı değildir. Kimlik doğrulama `platform_auth.authenticate(..., audit_prefix="admin_v1")` sırasıdır; ardından `kind=platform_admin` ve boş `instance_id` gerekir. Idempotency-Key kuralları yazma uçlarıyla aynıdır: ad alanı `platform_admin:<key_id>`, uç kimliği `METHOD path#sha256(canonical_json(gövde))[:16]`. Başlık yoksa **400** `Idempotency-Key gerekli`. Aynı anahtar + farklı gövde **409** `Idempotency-Key farklı istekle kullanıldı`.
+Base path yazma uçlarıyla aynıdır: `/api/platform/admin-v1/`. Kapsam `admin.impersonate`. Bu kapsam `ADMIN_SCOPES` içindedir. Hiçbir `:read` veya `:write` kapsamı onu kapsamaz. `admin.dangerous` bu uçlarda geçerli değildir. Kimlik doğrulama `platform_auth.authenticate(..., audit_prefix="admin_v1")` sırasıdır; ardından `kind=platform_admin` ve boş `instance_id` gerekir. Idempotency-Key kuralları yazma uçlarıyla aynıdır: ad alanı `platform_admin:<key_id>`, uç kimliği `METHOD path#sha256(canonical_json(gövde))[:16]`. Başlık yoksa **400** `Idempotency-Key gerekli`. Aynı anahtar + farklı gövde **409** `Idempotency-Key farklı istekle kullanıldı`.
 
 Doğrulama yazmadan önce yapılır. **400**, **403** ve **404** destek oturumu, handoff, `activity_logs` ve `admin_v1.danger.*` audit’i yazmaz. Başarılı imzada `authenticate` erişim audit’i kalır. Ham JWT yanıtta, logda ve audit’te yoktur. Tek kullanımlık kod `auth_handoff.create_handoff` ile üretilir; `_TTL_S` 60 saniyedir ve değişmez. Handoff gövdesinde `sa_return` boş stringdir. Bu oturumda `POST /api/auth/impersonate/exit` **400** `Destek oturumu bulunamadı.` döner; kapatma aşağıdaki uçladır.
 
@@ -359,7 +359,37 @@ Kapsam: `admin.impersonate`. Audit: `admin_v1.danger.impersonate.end` (yalnızca
 
 `support_access.close_session(session_id, ended_by="api_key:<key_id>", reason="revoked")`. Oturum yoksa **404** `Oturum bulunamadı.`. Zaten kapalıysa no-op; ikinci danger audit’i yazılmaz. Kapanan oturumun JWT’si `impersonation_info` için geçersizdir (`None`).
 
-Silme, veri sıfırlama, şifre, 2FA ve kullanıcı silme bu bölümde yoktur (A5b).
+Silme, veri sıfırlama, şifre sıfırlama, 2FA sıfırlama ve kullanıcı silme bu bölümde yoktur; aşağıdaki A5b bölümündedir. Şirket askıya alma A4 aktivasyon ucundadır. Süper admin silme ve deletion-confirmations bu yüzeyde yoktur.
+
+## admin-v1 tehlikeli işlemler (A5b)
+
+Base path `/api/platform/admin-v1/danger/{action}/`. Kapsam `admin.dangerous`. Bu kapsam `ADMIN_SCOPES` içindedir ve yalnızca anahtara açıkça verildiyse geçerlidir. `admin.impersonate`, `:read` ve `:write` onu kapsamaz; `admin.dangerous` de diğer kapsamları kapsamaz. Kimlik doğrulama ve Idempotency-Key kuralları A5a ile aynıdır: ad alanı `platform_admin:<key_id>`, başlık yoksa **400** `Idempotency-Key gerekli`, aynı anahtar + farklı gövde **409** `Idempotency-Key farklı istekle kullanıldı`. Aynı anahtar + aynı gövde kayıtlı yanıtı döner; confirm işlemi ve danger audit’i ikinci kez çalışmaz. prepare tekrarı aynı `confirmation_token` değerini döner, yeni token üretilmez.
+
+İki adımdır. prepare hiçbir iş verisi yazmaz, silmez ve e-posta göndermez. confirm, token’ı işlemden önce atomik tüketir. Süre `created_at` + 5 dakikadır. Token düz metin olarak saklanmaz; `platform_danger_confirmations` koleksiyonunda `_id` sha256 özetidir. Ayrı bir şema migration’ı gerekmez.
+
+`confirm_text`: `company.*` için şirket adı (trim, birebir); `user.*` ve `superadmin.*` için hedef e-posta (trim, küçük harf). Uyuşmazsa **400** ve token tüketilmez. `confirm_phrase`: `company.reset_data` için `VERİLERİ SIFIRLA`, `user.erase` için `VERİLERİ SİL`; diğer işlemlerde gönderilirse **400**. `operator_otp`, operatörün 6 haneli güncel TOTP kodudur. Operatörde 2FA yoksa **403** `Operatör 2FA kurulu değil.`; kod hatalı veya sayaç yeniden kullanıldıysa **403** `Doğrulama kodu hatalı.` ve deneme `2fa:<uid>` kilidine yazılır. Kilitliyken **429**. Şifre alanı kabul edilmez. Bilinmeyen action **404** `İşlem bulunamadı.`. Bilinmeyen alan **400** `Desteklenmeyen alan: <ad>`.
+
+Token yok, süresi dolmuş, kullanılmış, başka `key_id` veya URL’deki action ile farklıysa hepsi **400** `Onay kodu geçersiz veya süresi dolmuş.` Hedef prepare ile confirm arasında değişirse **409** `Hedef değişti, yeniden hazırlayın.` ve token tüketilmiş kalır. İşlem hata verirse token da tüketilmiş kalır; yeniden prepare gerekir.
+
+| action | hedef | phrase | kaynak |
+|--------|--------|--------|--------|
+| `company.reset_data` | `target_id` = company_id; `scopes` opsiyonel (yoksa `all`) | `VERİLERİ SIFIRLA` | `company_reset.apply_reset` |
+| `company.delete` | company_id | yok | `saas.apply_company_delete` |
+| `user.erase` | user_id | `VERİLERİ SİL` | `user_erase.apply_erase` |
+| `user.password_reset` | company_id; opsiyonel `user_id`, `email` | yok | `saas.send_password_reset_for` (`notify_outbox`) |
+| `superadmin.2fa_reset` | user_id, `is_super_admin=True` | yok | `superadmin_2fa.reset_user_totp` |
+
+Korumalı şirketler (`PROTECTED_COMPANY_IDS`) reset ve delete için **400** `Platform demo şirketleri silinemez.` Platform gönderici şirketi delete için **400** `Platform gönderici şirketi silinemez. Önce ayarlardan başka bir gönderici seçin.` Kendi 2FA sıfırlama **400** `Kendi 2FA'nızı bu yolla sıfırlayamazsınız.` Süper admin olmayan 2FA hedefi **404** `Panel yöneticisi bulunamadı.`
+
+Audit: `admin_v1.danger.<action>.prepare` ve `admin_v1.danger.<action>.confirm`. `target_type` company veya user. `details` yalnız `operator`, `reason`, `action`, preview özeti veya sonuç sayıları, `scopes`. Token, token özeti, `operator_otp`, `confirm_text`, imza, nonce, Idempotency-Key, secret ve sıfırlama bağlantısı girmez. `activity_logs` ve applog satırında `operator_email` ve `via=api` görünür.
+
+### POST `/api/platform/admin-v1/danger/{action}/prepare`
+
+Gövde: `target_id`, `reason` (A5a, 10..500), `operator_email` (A5a). Action’a özel opsiyoneller yukarıdadır. Yanıt düz nesnedir: `action`, `target_id`, `target_label`, `preview`, `confirm_text_hint`, `confirm_phrase` (yoksa null), `confirmation_token`, `expires_at`. `user.password_reset` ve `superadmin.2fa_reset` önizlemesi yalnız hedef e-postadır.
+
+### POST `/api/platform/admin-v1/danger/{action}/confirm`
+
+Gövde: `confirmation_token`, `confirm_text`, `operator_otp`, phrase isteyen işlemlerde `confirm_phrase`. Başarıda `/system` ile aynı gövde `{"item": …}` zarfında döner. `user.password_reset` e-postayı SMTP ile göndermez; tek `notify_outbox` kaydı yazar. SMS yoktur.
 
 ## Python
 

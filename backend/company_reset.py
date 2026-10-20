@@ -173,6 +173,77 @@ async def _load_company(company_id: str) -> dict:
     return c
 
 
+async def validate_reset_request(company_id: str, scopes: Optional[Sequence[Any]] = None) -> Tuple[dict, List[str]]:
+    """Şirket var mı ve kapsam geçerli mi. Yazmaz."""
+    c = await _load_company(company_id)
+    scopes_n = _normalize_scopes(scopes)
+    return c, scopes_n
+
+
+async def apply_reset(
+    company_id: str,
+    scopes: Optional[Sequence[Any]],
+    *,
+    actor: dict,
+    ip: Optional[str] = None,
+) -> dict:
+    """İş verisini siler. Onay cümlesi ve yönetici şifresi uçta kalır."""
+    c, scopes_n = await validate_reset_request(company_id, scopes)
+    before = await preview_counts(company_id, scopes_n)
+    deleted = await wipe_company_business_data(company_id, scopes_n)
+    after = await preview_counts(company_id, scopes_n)
+
+    total_deleted = sum(deleted.values())
+    extra: Dict[str, Any] = {}
+    if actor.get("via") == "api":
+        extra["via"] = "api"
+        extra["operator_email"] = actor.get("email")
+    applog.log_event(
+        "company_data_reset",
+        f"{c.get('name')} ({company_id}) scopes={scopes_n} by {actor.get('email')}",
+        company_id=company_id,
+        admin_id=_uid(actor),
+        admin_email=actor.get("email"),
+        ip=ip,
+        scopes=scopes_n,
+        deleted=deleted,
+        total_deleted=total_deleted,
+        **extra,
+    )
+    activity = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "user_id": _uid(actor),
+        "user_name": actor.get("name") or actor.get("email"),
+        "method": "RESET",
+        "path": f"/system/companies/{company_id}/reset-data",
+        "module": "/sistem/veri-silme",
+        "status": 200,
+        "detail": f"company_data_reset:{','.join(scopes_n)}:{total_deleted}",
+        "created_at": _now(),
+    }
+    if actor.get("via") == "api":
+        activity["via"] = "api"
+        activity["operator_email"] = actor.get("email")
+    await _db.activity_logs.insert_one(activity)
+
+    return {
+        "status": "success",
+        "id": company_id,
+        "name": c.get("name"),
+        "scopes": scopes_n,
+        "deleted": deleted,
+        "total_deleted": total_deleted,
+        "before_total": before.get("total_docs") or 0,
+        "after_total": after.get("total_docs") or 0,
+        "kept": before.get("kept") or {},
+        "message": (
+            f"{c.get('name')} — {_scope_labels(scopes_n)} sıfırlandı "
+            f"({total_deleted} kayıt). Kullanıcılar ve lisans korundu."
+        ),
+    }
+
+
 async def _product_ids(company_id: str) -> List[str]:
     rows = await _db.products.find({"company_id": company_id}, {"_id": 1}).to_list(50000)
     return [r["_id"] for r in rows if r.get("_id")]
@@ -420,52 +491,6 @@ async def reset_company_data(
 
     await _verify_admin_password(admin, req.get("admin_password") or "")
 
-    if "scopes" in req:
-        scopes_n = _normalize_scopes(req.get("scopes"))
-    else:
-        scopes_n = [ALL_SCOPE]
-
-    before = await preview_counts(company_id, scopes_n)
-    deleted = await wipe_company_business_data(company_id, scopes_n)
-    after = await preview_counts(company_id, scopes_n)
-
-    total_deleted = sum(deleted.values())
-    applog.log_event(
-        "company_data_reset",
-        f"{c.get('name')} ({company_id}) scopes={scopes_n} by {admin.get('email')}",
-        company_id=company_id,
-        admin_id=_uid(admin),
-        admin_email=admin.get("email"),
-        ip=getattr(request.client, "host", None) if request.client else None,
-        scopes=scopes_n,
-        deleted=deleted,
-        total_deleted=total_deleted,
-    )
-    await _db.activity_logs.insert_one({
-        "_id": str(uuid.uuid4()),
-        "company_id": company_id,
-        "user_id": _uid(admin),
-        "user_name": admin.get("name") or admin.get("email"),
-        "method": "RESET",
-        "path": f"/system/companies/{company_id}/reset-data",
-        "module": "/sistem/veri-silme",
-        "status": 200,
-        "detail": f"company_data_reset:{','.join(scopes_n)}:{total_deleted}",
-        "created_at": _now(),
-    })
-
-    return {
-        "status": "success",
-        "id": company_id,
-        "name": c.get("name"),
-        "scopes": scopes_n,
-        "deleted": deleted,
-        "total_deleted": total_deleted,
-        "before_total": before.get("total_docs") or 0,
-        "after_total": after.get("total_docs") or 0,
-        "kept": before.get("kept") or {},
-        "message": (
-            f"{c.get('name')} — {_scope_labels(scopes_n)} sıfırlandı "
-            f"({total_deleted} kayıt). Kullanıcılar ve lisans korundu."
-        ),
-    }
+    scopes = req.get("scopes") if "scopes" in req else None
+    ip = getattr(request.client, "host", None) if request.client else None
+    return await apply_reset(company_id, scopes, actor=admin, ip=ip)
