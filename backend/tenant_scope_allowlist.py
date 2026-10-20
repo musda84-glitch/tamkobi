@@ -495,6 +495,10 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('phone_norm.py', 'find_user_by_phone', 'employees', 'update_one'): 1,
     # platform_admin_v1.py
     ('platform_admin_v1.py', 'admin_v1_sms_logs', 'sms_logs', 'count_documents'): 2,
+    # platform_admin_v1_write.py
+    ('platform_admin_v1_write.py', '_prepare_upgrade', 'upgrade_requests', 'find_one'): 1,
+    ('platform_admin_v1_write.py', '_write', 'idempotency_keys', 'find_one'): 1,
+    ('platform_admin_v1_write.py', 'apply', 'upgrade_requests', 'find_one'): 1,
     # platform_sms.py
     ('platform_sms.py', 'platform_sms_log_rows', 'sms_logs', 'find'): 1,
     # pos_cashier.py
@@ -536,10 +540,10 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('product_list_page.py', 'fetch_product_rows', 'products', 'find'): 1,
     # saas.py
     ('saas.py', '_usage', 'files', 'find'): 1,
+    ('saas.py', 'apply_upgrade_resolution', 'upgrade_requests', 'find_one'): 2,
+    ('saas.py', 'apply_upgrade_resolution', 'upgrade_requests', 'update_one'): 1,
     ('saas.py', 'overview_stats', 'upgrade_requests', 'count_documents'): 1,
     ('saas.py', 'quota_usage', 'files', 'find'): 1,
-    ('saas.py', 'resolve_request', 'upgrade_requests', 'find_one'): 2,
-    ('saas.py', 'resolve_request', 'upgrade_requests', 'update_one'): 1,
     ('saas.py', 'seed', 'products', 'find'): 1,
     ('saas.py', 'seed', 'products', 'update_one'): 1,
     ('saas.py', 'upgrade_request_rows', 'upgrade_requests', 'find'): 1,
