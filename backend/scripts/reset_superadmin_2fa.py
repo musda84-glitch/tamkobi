@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -62,26 +61,11 @@ async def _run() -> int:
             print("OK: eşleşen süper admin yok — işlem gerekmedi.")
             return 0
 
-        now = datetime.now(timezone.utc).isoformat()
+        from superadmin_2fa import reset_user_totp
+
         for user in users:
             uid = user.get("_id")
-            await db.users.update_one(
-                {"_id": uid},
-                {
-                    "$set": {
-                        "totp_enabled": False,
-                        "totp_secret": "",
-                        "totp_recovery_hashes": [],
-                        "totp_last_counter": None,
-                        "pending_2fa_jti": "",
-                        "pending_2fa_attempts": 0,
-                        "totp_reset_at": now,
-                        "updated_at": now,
-                    },
-                    "$unset": {"totp_setup_started_at": "", "totp_enabled_at": ""},
-                },
-            )
-            await db.login_attempts.delete_one({"identifier": f"2fa:{uid}"})
+            await reset_user_totp(db, uid)
             print(f"TAMAM: {user.get('email')} (id={uid}) 2FA sıfırlandı; 2fa:{uid} kilit temizlendi.")
 
         print(

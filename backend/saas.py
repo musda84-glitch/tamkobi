@@ -1126,16 +1126,12 @@ async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
     return row
 
 
-@router.post("/system/companies/{company_id}/send-password-reset")
-async def send_company_password_reset(company_id: str, req: Dict[str, Any], request: Request, _: dict = Depends(require_super_admin)):
-    """Sistem paneli: şirket ana kullanıcısına şifre sıfırlama e-postası gönder."""
-    import secrets
-    import password_reset
-
+async def validate_password_reset(company_id: str, user_id: str = "", email: str = "") -> dict:
+    """Şifre sıfırlama hedefi. Yazmaz, e-posta göndermez."""
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    user_id = (req.get("user_id") or "").strip()
-    email = (req.get("email") or "").strip().lower()
+    user_id = (user_id or "").strip()
+    email = (email or "").strip().lower()
     user = None
     if user_id:
         user = await _db.users.find_one({"_id": user_id})
@@ -1145,7 +1141,6 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
         user = await resolve_company_admin(company_id)
     if not user:
         raise HTTPException(status_code=404, detail="Şirket kullanıcısı bulunamadı.")
-    # Kullanıcı bu şirkete bağlı olmalı (veya e-posta şirketin kayıtlı e-postası).
     linked = company_id in (user.get("company_ids") or []) or user.get("active_company_id") == company_id
     company = await _db.companies.find_one({"_id": company_id}) or {}
     if not linked and (user.get("email") or "").strip().lower() != (company.get("email") or "").strip().lower():
@@ -1157,6 +1152,26 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
     to = (user.get("email") or "").strip().lower()
     if not to or "@" not in to:
         raise HTTPException(status_code=400, detail="Kullanıcının e-posta adresi yok.")
+    return {"user": user, "company": company, "to": to}
+
+
+async def send_password_reset_for(
+    company_id: str,
+    user_id: str,
+    email: str,
+    request: Request,
+    *,
+    requested_by: str,
+    deliver: str = "send",
+):
+    """Bağlantıyı üretir. deliver=send SMTP; deliver=outbox yalnız notify_outbox."""
+    import secrets
+    import password_reset
+
+    found = await validate_password_reset(company_id, user_id, email)
+    user = found["user"]
+    company = found["company"]
+    to = found["to"]
 
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
@@ -1175,7 +1190,7 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
         "expires_at": (now + timedelta(hours=1)).isoformat(),
         "used_at": None,
         "created_at": now.isoformat(),
-        "requested_by": "system_panel",
+        "requested_by": requested_by,
     })
     import public_url as pu
     _ctx = "ik" if user.get("employee_id") or (user.get("role") or "") == "personel" else "app"
@@ -1194,31 +1209,48 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
         "<p>Sistem yöneticiniz sizin için şifre sıfırlama bağlantısı oluşturdu. Bağlantı 1 saat geçerlidir.</p>"
         f"<p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
     )
-    mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
-    try:
-        import mail_service
-        res = await mail_service.send_mail(
-            to, subject, body, html=html, purpose="transactional",
-            company_id=company_id, from_name=brand,
-        )
-        if res.get("status") == "sent":
-            mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
-        else:
-            err = str(res.get("error") or "E-posta gönderilemedi.")[:200]
-            if err in ("MAIL_SMTP_* eksik",) or "MAIL_DRIVER" in err or "Platform" in err:
-                raise HTTPException(status_code=424, detail=err)
-            mail_status, mail_detail = "failed", err
-    except HTTPException as e:
-        mail_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
-        mail_detail = str(e.detail)[:200]
-    except Exception as e:
-        mail_status, mail_detail = "failed", str(e)[:200]
-    if mail_status != "sent":
-        await _db.password_resets.update_one(
-            {"_id": token},
-            {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True, "mail_error": mail_detail[:200]}},
-        )
-        raise HTTPException(status_code=400, detail=mail_detail or "Şifre sıfırlama e-postası gönderilemedi.")
+    if deliver == "outbox":
+        await _db.notify_outbox.insert_one({
+            "_id": str(uuid.uuid4()),
+            "company_id": company_id,
+            "event": "password_reset",
+            "channels": {"email": True, "sms": False},
+            "digest": "instant",
+            "status": "pending",
+            "attempts": 0,
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            "text": body,
+            "created_at": now.isoformat(),
+        })
+        mail_status = "queued"
+    else:
+        mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
+        try:
+            import mail_service
+            res = await mail_service.send_mail(
+                to, subject, body, html=html, purpose="transactional",
+                company_id=company_id, from_name=brand,
+            )
+            if res.get("status") == "sent":
+                mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
+            else:
+                err = str(res.get("error") or "E-posta gönderilemedi.")[:200]
+                if err in ("MAIL_SMTP_* eksik",) or "MAIL_DRIVER" in err or "Platform" in err:
+                    raise HTTPException(status_code=424, detail=err)
+                mail_status, mail_detail = "failed", err
+        except HTTPException as e:
+            mail_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
+            mail_detail = str(e.detail)[:200]
+        except Exception as e:
+            mail_status, mail_detail = "failed", str(e)[:200]
+        if mail_status != "sent":
+            await _db.password_resets.update_one(
+                {"_id": token},
+                {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True, "mail_error": mail_detail[:200]}},
+            )
+            raise HTTPException(status_code=400, detail=mail_detail or "Şifre sıfırlama e-postası gönderilemedi.")
     return {
         "status": "success",
         "message": f"Şifre sıfırlama bağlantısı {password_reset.mask_email(to)} adresine gönderildi.",
@@ -1226,6 +1258,18 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
         "masked_email": password_reset.mask_email(to),
         "mail_status": mail_status,
     }
+
+
+@router.post("/system/companies/{company_id}/send-password-reset")
+async def send_company_password_reset(company_id: str, req: Dict[str, Any], request: Request, _: dict = Depends(require_super_admin)):
+    """Sistem paneli: şirket ana kullanıcısına şifre sıfırlama e-postası gönder."""
+    return await send_password_reset_for(
+        company_id,
+        req.get("user_id") or "",
+        req.get("email") or "",
+        request,
+        requested_by="system_panel",
+    )
 
 
 async def quota_rows() -> Dict[str, Any]:
@@ -1341,8 +1385,8 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     return await _company_row(await _db.companies.find_one({"_id": cid}))
 
 
-@router.delete("/system/companies/{company_id}")
-async def delete_company(company_id: str, _: dict = Depends(require_super_admin)):
+async def validate_company_delete(company_id: str) -> dict:
+    """Silme ön kontrolleri. Yazmaz."""
     c = await _db.companies.find_one({"_id": company_id})
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
@@ -1351,6 +1395,11 @@ async def delete_company(company_id: str, _: dict = Depends(require_super_admin)
     st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
     if st.get("sender_company_id") == company_id:
         raise HTTPException(status_code=400, detail="Platform gönderici şirketi silinemez. Önce ayarlardan başka bir gönderici seçin.")
+    return c
+
+
+async def apply_company_delete(company_id: str) -> dict:
+    c = await validate_company_delete(company_id)
     users = await _detach_company_users(company_id)
     collections = 0
     names = await _db.list_collection_names()
@@ -1362,6 +1411,11 @@ async def delete_company(company_id: str, _: dict = Depends(require_super_admin)
     await _db.companies.delete_one({"_id": company_id})
     invalidate(company_id)
     return {"status": "success", "id": company_id, "name": c.get("name"), "users": users, "deleted_docs": collections}
+
+
+@router.delete("/system/companies/{company_id}")
+async def delete_company(company_id: str, _: dict = Depends(require_super_admin)):
+    return await apply_company_delete(company_id)
 
 
 async def apply_company_activation(company_id: str, active: bool):

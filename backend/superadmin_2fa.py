@@ -126,6 +126,31 @@ def decode_pending_2fa_token(token: str) -> Dict[str, Any]:
     return payload
 
 
+async def reset_user_totp(db: Any, user_id: str) -> dict:
+    """totp_* / pending_2fa_* alanlarını temizler ve 2fa kilidini siler."""
+    uid = str(user_id)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"_id": uid},
+        {
+            "$set": {
+                "totp_enabled": False,
+                "totp_secret": "",
+                "totp_recovery_hashes": [],
+                "totp_last_counter": None,
+                "pending_2fa_jti": "",
+                "pending_2fa_attempts": 0,
+                "totp_reset_at": now,
+                "updated_at": now,
+            },
+            "$unset": {"totp_setup_started_at": "", "totp_enabled_at": ""},
+        },
+    )
+    await db.login_attempts.delete_one({"identifier": twofa_lock_identifier(uid)})
+    user = await db.users.find_one({"_id": uid}) or {}
+    return {"id": uid, "email": user.get("email"), "totp_reset_at": now, "status": "success"}
+
+
 def user_totp_enabled(user: Optional[dict]) -> bool:
     return bool(user and user.get("totp_enabled") and user.get("totp_secret"))
 

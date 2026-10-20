@@ -76,6 +76,8 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("PUT", "/platform/admin-v1/integrators/products/{product_id}"),
     ("POST", "/platform/admin-v1/companies/{company_id}/impersonate"),
     ("POST", "/platform/admin-v1/impersonation/{session_id}/end"),
+    ("POST", "/platform/admin-v1/danger/{action}/prepare"),
+    ("POST", "/platform/admin-v1/danger/{action}/confirm"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -106,4 +108,6 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("PUT", "/platform/admin-v1/integrators/products/{product_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("POST", "/platform/admin-v1/companies/{company_id}/impersonate"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("POST", "/platform/admin-v1/impersonation/{session_id}/end"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/danger/{action}/prepare"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/danger/{action}/confirm"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
 }

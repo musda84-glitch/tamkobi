@@ -45,6 +45,8 @@ def _drop_key(name: str, value: Any) -> bool:
     kl = str(name).lower()
     if kl == "has_password" or (kl.startswith("has_") and isinstance(value, bool)):
         return False
+    if kl == "confirmation_token":
+        return False
     if any(part in kl for part in _DROP_SUBSTR):
         return True
     parts = _PAN_PART.split(kl)
