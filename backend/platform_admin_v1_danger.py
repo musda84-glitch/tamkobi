@@ -460,7 +460,7 @@ async def _consume_token(digest: str) -> bool:
     if atomic is not None:
         result = await atomic(query, update)
     else:
-        result = await coll.update_one(query, update)
+        result = await coll.update_one(query, update)  # tenant-ok: platform onay kaydı, şirket verisi değil, _id token hash'i
     return int(getattr(result, "modified_count", 0) or 0) == 1
 
 
@@ -628,7 +628,7 @@ async def admin_v1_danger_prepare(action: str, request: Request):
         params = held["params"]
         if action == "company.reset_data":
             params = {"scopes": snap.get("scopes")}
-        await store._db.platform_danger_confirmations.insert_one({
+        await store._db.platform_danger_confirmations.insert_one({  # tenant-ok: platform onay kaydı, şirket verisi değil, _id token hash'i
             "_id": _token_hash(token),
             "action": action,
             "target_id": held["target_id"],
@@ -682,7 +682,7 @@ async def admin_v1_danger_confirm(action: str, request: Request):
     token = peeked.get("confirmation_token") if isinstance(peeked.get("confirmation_token"), str) else ""
     target_id = ""
     if token:
-        doc = await store._db.platform_danger_confirmations.find_one({"_id": _token_hash(token)})
+        doc = await store._db.platform_danger_confirmations.find_one({"_id": _token_hash(token)})  # tenant-ok: platform onay kaydı, şirket verisi değil, _id token hash'i
         if doc:
             target_id = str(doc.get("target_id") or "")
 
@@ -705,7 +705,7 @@ async def admin_v1_danger_confirm(action: str, request: Request):
     async def apply(payload: Dict[str, Any], key_doc: dict):
         key_id = str(key_doc.get("_id") or "")
         digest = _token_hash(payload["confirmation_token"].strip())
-        doc = await store._db.platform_danger_confirmations.find_one({"_id": digest})
+        doc = await store._db.platform_danger_confirmations.find_one({"_id": digest})  # tenant-ok: platform onay kaydı, şirket verisi değil, _id token hash'i
         if not _token_usable(doc, action, key_id):
             raise HTTPException(status_code=400, detail=_TOKEN_INVALID)
         label = str(doc.get("target_label") or "")

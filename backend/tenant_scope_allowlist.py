@@ -1083,9 +1083,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('user_erase.py', '_erase_counts', 'activity_logs', 'count_documents'): 1,
     ('user_erase.py', '_erase_counts', 'user_invites', 'count_documents'): 1,
     ('user_erase.py', '_linked_employee', 'employees', 'find_one'): 3,
-    ('user_erase.py', 'erase_user', 'activity_logs', 'delete_many'): 1,
-    ('user_erase.py', 'erase_user', 'employees', 'update_one'): 1,
-    ('user_erase.py', 'erase_user', 'user_invites', 'delete_many'): 1,
     # vehicles.py
     ('vehicles.py', 'create_vehicle', 'vehicles', 'insert_one'): 1,
     ('vehicles.py', 'update_vehicle', 'vehicles', 'find_one'): 1,

@@ -168,16 +168,16 @@ async def apply_erase(user: dict, *, actor: dict, ip: Optional[str] = None) -> d
     }
 
     if email:
-        deleted["invites"] = int((await _db.user_invites.delete_many({"email": email})).deleted_count or 0)
+        deleted["invites"] = int((await _db.user_invites.delete_many({"email": email})).deleted_count or 0)  # tenant-ok: KVKK kullanıcı silme, tüm şirketlerdeki kendi kayıtları
         deleted["login_attempts"] = int(
             (await _db.login_attempts.delete_many({"identifier": {"$regex": f":{re.escape(email)}$"}})).deleted_count or 0
         )
 
-    deleted["activity_logs"] = int((await _db.activity_logs.delete_many({"user_id": uid})).deleted_count or 0)
+    deleted["activity_logs"] = int((await _db.activity_logs.delete_many({"user_id": uid})).deleted_count or 0)  # tenant-ok: KVKK kullanıcı silme, tüm şirketlerdeki kendi kayıtları
 
     emp = await _linked_employee(user)
     if emp:
-        await _db.employees.update_one(
+        await _db.employees.update_one(  # tenant-ok: KVKK kullanıcı silme, tüm şirketlerdeki kendi kayıtları
             {"_id": emp["_id"]},
             {"$set": {"user_id": None, "updated_at": _now()}, "$unset": {"portal_user_id": ""}},
         )
