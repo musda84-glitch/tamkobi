@@ -10,10 +10,21 @@ import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../
 import { fmtDate, fmtMoney } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { contactPaymentDocLabel, isContactLedgerPay } from "../utils/contactPayMenu";
+import { statementTotals } from "../utils/statementView";
+import { StatementGibBadge, useStatementView } from "./StatementTxList";
 
 export const buildStatementRows = (data, { includeCheques = false } = {}) => {
   const rows = [];
-  (data.invoices || []).filter((i) => i.status !== "cancelled").forEach((i) => rows.push({ date: i.issue_date, doc: `${i.invoice_number} • ${i.invoice_type === "sales" ? "Satış Faturası" : "Alış Faturası"}`, debit: i.invoice_type === "sales" ? i.grand_total : 0, credit: i.invoice_type === "sales" ? 0 : i.grand_total, kind: "invoice" }));
+  (data.invoices || []).filter((i) => i.status !== "cancelled").forEach((i) => rows.push({
+    date: i.issue_date,
+    doc: `${i.invoice_number} • ${i.invoice_type === "sales" ? "Satış Faturası" : "Alış Faturası"}`,
+    debit: i.invoice_type === "sales" ? i.grand_total : 0,
+    credit: i.invoice_type === "sales" ? 0 : i.grand_total,
+    kind: "invoice",
+    einvoice_state: i.einvoice_state || "",
+    e_type: i.e_type || "",
+    has_gib_uuid: Boolean(i.gib_uuid),
+  }));
   (data.payments || []).filter((p) => p.type !== "transfer").forEach((p) => {
     const doc = isContactLedgerPay(p)
       ? contactPaymentDocLabel(p)
@@ -58,6 +69,7 @@ const pdfNote = (contact, pdfUrl) => `Sayın ${contact.name}, cari hesap ekstren
 
 export const StatementShareBar = ({ contact, rows, companyId }) => {
   const { activeCompany } = useAuth();
+  const live = useStatementView();
   const [msg, setMsg] = useState(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [shareLink, setShareLink] = useState("");
@@ -180,25 +192,51 @@ export const StatementShareBar = ({ contact, rows, companyId }) => {
         )}
       </div>
       {msg && <QuickMessageModal companyId={companyId} channel={msg} initialFiles={msg === "email" && pdfFile ? [pdfFile] : []} recipient={{ contact_id: contact.id, name: contact.name, phone: contact.phone, email: contact.email }} defaultSubject={`Cari Hesap Ekstresi - ${contact.name}`} defaultMessage={msg === "sms" ? pdfNote(contact, pdfUrl || shareLink) : `Sayın ${contact.name},\n\nCari hesap ekstreniz PDF olarak ektedir.\n\n${activeCompany?.name || ""}`.trim()} context="statement" refId={contact.id} onClose={() => setMsg(null)} />}
-      {printOpen && <StatementPrint contact={contact} rows={rows} company={activeCompany} onClose={() => setPrintOpen(false)} />}
+      {printOpen && (
+        <StatementPrint
+          contact={contact}
+          rows={rows}
+          company={activeCompany}
+          viewRows={Array.isArray(live?.rows) ? live.rows : undefined}
+          viewTotals={live?.totals}
+          onClose={() => setPrintOpen(false)}
+        />
+      )}
     </>
   );
 };
 
-export const StatementPrint = ({ contact, rows, company, onClose, variant = "statement" }) => {
+export const StatementPrint = ({ contact, rows, company, onClose, variant = "statement", totals, filtered = false, viewRows, viewTotals }) => {
   useEscape(onClose);
-  const bal = rows.length ? rows[rows.length - 1].balance : contact.balance || 0;
-  const totD = rows.reduce((s, r) => s + (r.debit || 0), 0), totC = rows.reduce((s, r) => s + (r.credit || 0), 0);
+  const [applyFilter, setApplyFilter] = useState(Boolean(filtered));
+  const canApply = Array.isArray(viewRows);
+  const isRecon = variant === "reconciliation";
+  const useFiltered = !isRecon && (canApply ? applyFilter : Boolean(filtered));
+  const shown = useFiltered && canApply ? viewRows : rows;
+  const summed = statementTotals(shown);
+  const activeTotals = useFiltered ? ((canApply ? viewTotals : totals) || summed) : null;
+  const totD = activeTotals ? Number(activeTotals.debit) || 0 : summed.debit;
+  const totC = activeTotals ? Number(activeTotals.credit) || 0 : summed.credit;
+  const net = activeTotals ? Number(activeTotals.net) : totD - totC;
+  const endBal = shown.length ? shown[shown.length - 1].balance : contact?.balance || 0;
+  const bal = useFiltered ? (contact?.balance != null ? contact.balance : endBal) : (rows.length ? rows[rows.length - 1].balance : contact?.balance || 0);
   const ccy = contact?.currency || company?.currency || "TRY";
   const money = (n) => fmtMoney(n, ccy);
-  const isRecon = variant === "reconciliation";
   const title = isRecon ? "CARİ HESAP MUTABAKAT MEKTUBU" : "CARİ HESAP EKSTRESİ";
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" onClick={(e) => e.stopPropagation()} data-testid={isRecon ? "reconciliation-print-modal" : "statement-print-modal"}>
         <div className="flex items-center justify-between px-5 py-3 border-b no-print">
           <span className="text-xs font-bold text-slate-700">{isRecon ? "Mutabakat Önizleme" : "Ekstre Önizleme"}</span>
-          <div className="flex items-center gap-2"><button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="statement-print-now-btn"><Printer className="w-3.5 h-3.5" /> Yazdır / PDF Kaydet</button><button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button></div>
+          <div className="flex items-center gap-2">
+            {canApply && !isRecon && (
+              <label className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600" data-testid="statement-print-apply-filter">
+                <input type="checkbox" checked={applyFilter} onChange={(e) => setApplyFilter(e.target.checked)} />
+                Filtreyi uygula
+              </label>
+            )}
+            <button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="statement-print-now-btn"><Printer className="w-3.5 h-3.5" /> Yazdır / PDF Kaydet</button><button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
+          </div>
         </div>
         <div id="print-area" className="p-10 text-xs text-slate-800">
           <div className="flex justify-between items-start border-b-4 border-slate-900 pb-4">
@@ -214,9 +252,10 @@ export const StatementPrint = ({ contact, rows, company, onClose, variant = "sta
           )}
           <table className="w-full mt-6 border-collapse">
             <thead><tr className="bg-slate-900 text-white"><th className="text-left p-2 rounded-l">Tarih</th><th className="text-left p-2">Belge / Açıklama</th><th className="text-right p-2">Borç</th><th className="text-right p-2">Alacak</th><th className="text-right p-2 rounded-r">Bakiye</th></tr></thead>
-            <tbody>{rows.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}><td className="p-2 font-mono text-slate-500">{fmtDate(r.date)}</td><td className="p-2">{r.doc}</td><td className="p-2 text-right">{r.debit ? money(r.debit) : ""}</td><td className="p-2 text-right">{r.credit ? money(r.credit) : ""}</td><td className="p-2 text-right font-semibold">{money(r.balance)}</td></tr>)}</tbody>
-            <tfoot><tr className="border-t-2 border-slate-900 font-bold"><td className="p-2" colSpan={2}>TOPLAM</td><td className="p-2 text-right">{money(totD)}</td><td className="p-2 text-right">{money(totC)}</td><td className="p-2 text-right">{money(bal)}</td></tr></tfoot>
+            <tbody>{shown.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`} data-testid={`statement-print-row-${i}`}><td className="p-2 font-mono text-slate-500">{fmtDate(r.date)}</td><td className="p-2">{r.doc}<StatementGibBadge row={r} testId={`statement-print-gib-${i}`} className="ml-1.5" /></td><td className="p-2 text-right">{r.debit ? money(r.debit) : ""}</td><td className="p-2 text-right">{r.credit ? money(r.credit) : ""}</td><td className="p-2 text-right font-semibold">{money(r.balance)}</td></tr>)}</tbody>
+            <tfoot><tr className="border-t-2 border-slate-900 font-bold"><td className="p-2" colSpan={2}>TOPLAM</td><td className="p-2 text-right" data-testid="statement-print-total-debit">{money(totD)}</td><td className="p-2 text-right" data-testid="statement-print-total-credit">{money(totC)}</td><td className="p-2 text-right">{useFiltered ? <span data-testid="statement-print-net"><span className="block text-[9px] font-semibold uppercase text-slate-500">Filtrelenen net</span>{money(net)}</span> : money(bal)}</td></tr></tfoot>
           </table>
+          {useFiltered && <p className="mt-2 text-[10px] text-slate-500" data-testid="statement-print-filter-note">Filtre uygulandı. Toplamlar görünen satırlara göredir. Satır bakiyeleri yürüyen bakiyedir.</p>}
           <div className="mt-6 flex justify-end"><div className={`rounded-xl px-4 py-3 text-right ${bal > 0 ? "bg-rose-50" : "bg-emerald-50"}`}><div className="text-[10px] uppercase font-bold text-slate-400">Güncel Bakiye</div><div className={`text-xl font-black ${bal > 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(Math.abs(bal))} <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div></div></div>
           <div className="mt-10 text-slate-400 italic">Bu {isRecon ? "mutabakat mektubu" : "ekstre"} {company?.name} tarafından {new Date().toLocaleString("tr-TR")} tarihinde oluşturulmuştur. Mutabakat için lütfen 7 gün içinde geri dönüş yapınız.</div>
         </div>
