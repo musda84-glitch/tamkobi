@@ -234,7 +234,7 @@ def test_own_employee_id_generates_payroll():
         assert len(db.payrolls.docs) == 1
         assert len(replaces) == 1
         assert replaces[0]["upsert"] is True
-        assert replaces[0]["query"] == {"_id": stored["_id"]}
+        assert replaces[0]["query"] == {"_id": stored["_id"], "company_id": CO_A}
         assert replaces[0]["employee_id"] == EMP_A
         assert replaces[0]["company_id"] == CO_A
         assert NAME_B not in repr(out)
@@ -418,7 +418,7 @@ def test_paid_payroll_is_skipped_and_pending_is_upserted():
         assert len(pending_rows) == 1
         assert len(replaces) == 1
         assert replaces[0]["upsert"] is True
-        assert replaces[0]["query"] == {"_id": "pay_pending"}
+        assert replaces[0]["query"] == {"_id": "pay_pending", "company_id": CO_A}
         assert queries[0] == {"_id": EMP_A, "company_id": CO_A}
         assert queries[1] == {"_id": EMP_LEFT, "company_id": CO_A}
 
