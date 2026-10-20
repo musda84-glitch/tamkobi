@@ -1,4 +1,4 @@
-import { orderShowsProduction } from "./B2BPortalParts";
+import { orderShowsProduction, productionBadge } from "./B2BPortalParts";
 
 describe("orderShowsProduction", () => {
   it("shows production when active and order still open", () => {
@@ -21,5 +21,39 @@ describe("orderShowsProduction", () => {
       tracking: { status: "in_transit" },
       production: { status: "completed", active: false },
     })).toBe(false);
+  });
+});
+
+describe("productionBadge", () => {
+  it("keeps a planned order planned when total is 0", () => {
+    expect(productionBadge({
+      order_status: "pending",
+      production: { status: "planned", status_label: "Üretim tamamlandı", done: 0, total: 0, steps: [] },
+    })).toEqual({ label: "Üretim planlandı", tone: "amber" });
+  });
+
+  it("falls back to status_label when total is 0 and progress has no rule", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "completed", status_label: "Üretim tamamlandı", done: 0, total: 0, steps: [] },
+    })).toEqual({ label: "Üretim tamamlandı", tone: "slate" });
+  });
+
+  it("treats done above total as finished", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "in_production", status_label: "Üretimde", done: 4, total: 3, steps: [] },
+    })).toEqual({ label: "Üretim tamamlandı", tone: "emerald" });
+  });
+
+  it("follows done/total when the step list is empty", () => {
+    expect(productionBadge({
+      order_status: "approved",
+      production: { status: "completed", status_label: "Üretim tamamlandı", done: 2, total: 3, steps: [] },
+    })).toEqual({ label: "Üretimde", tone: "blue" });
+  });
+
+  it("uses the order status when there is no production", () => {
+    expect(productionBadge({ order_status: "pending" })).toEqual({ label: "Beklemede", tone: "slate" });
   });
 });
