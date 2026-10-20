@@ -4,15 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
-
-os.environ["MONGO_URL"] = ""
-os.environ["MYSQL_URL"] = ""
-os.environ["MYSQL_HOST"] = ""
-os.environ["MYSQL_USER"] = ""
-os.environ["MYSQL_PASSWORD"] = ""
-os.environ["MYSQL_DATABASE"] = ""
 
 import pytest
 from fastapi import FastAPI
