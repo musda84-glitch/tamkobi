@@ -182,7 +182,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('cheques.py', 'pay_issued_cheque', 'cheques', 'find_one'): 1,
     ('cheques.py', 'pay_issued_cheque', 'cheques', 'update_one'): 1,
     ('cheques.py', 'restore_cheque', 'bank_transactions', 'find_one'): 1,
-    ('cheques.py', 'update_cheque', 'bank_transactions', 'update_one'): 1,
     ('cheques.py', 'update_cheque', 'cheques', 'find_one'): 1,
     ('cheques.py', 'update_cheque', 'cheques', 'update_one'): 1,
     # company_audit.py
