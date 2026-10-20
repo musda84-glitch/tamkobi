@@ -553,8 +553,10 @@ def infer_notification_target(note: Optional[Dict[str, Any]]) -> Dict[str, str]:
 
 
 def present_notification(note: Dict[str, Any]) -> Dict[str, Any]:
-    """Liste yanıtına target ekler; saklanan belgeyi değiştirmez."""
+    """Liste yanıtına target ekler. Cihaz damgasını çıkarır; saklanan belge değişmez."""
     out = dict(note or {})
+    out.pop("pushed_device_ids", None)
+    out.pop("pushed_at", None)
     out["target"] = infer_notification_target(out)
     return out
 
@@ -1415,31 +1417,26 @@ def _device_ids_for_tokens(rows: Iterable[Dict[str, Any]], tokens: Iterable[str]
 
 
 async def _stamp_pushed_devices(db, note: Dict[str, Any], device_ids: Iterable[str]) -> None:
-    """Başarılı push sonrası bildirime cihaz listesini ve zamanı yazar."""
+    """Başarılı push sonrası bildirime cihaz listesini ve zamanı yazar.
+
+    Yazma tek update_one ile $addToSet kullanır; eşzamanlı damgalar birbirini silmez.
+    """
     fresh = _unique_device_ids(device_ids)
     note_id = str((note or {}).get("_id") or (note or {}).get("id") or "").strip()
     company_id = str((note or {}).get("company_id") or "").strip()
     if not fresh or not note_id or not company_id or getattr(db, "notifications", None) is None:
         return
-    prior = pushed_device_ids_of(note)
-    try:
-        current = await db.notifications.find_one({"_id": note_id, "company_id": company_id})
-    except Exception:
-        logger.exception("push device stamp read failed")
-        current = None
-    if isinstance(current, dict):
-        prior = pushed_device_ids_of(current)
-    merged = _unique_device_ids([*prior, *fresh])
+    merged = _unique_device_ids([*pushed_device_ids_of(note), *fresh])
     now = datetime.now(timezone.utc).isoformat()
     note["pushed_device_ids"] = merged
     note["pushed_at"] = now
     try:
         await db.notifications.update_one(
             {"_id": note_id, "company_id": company_id},
-            {"$set": {"pushed_device_ids": merged, "pushed_at": now}},
+            {"$addToSet": {"pushed_device_ids": {"$each": fresh}}, "$set": {"pushed_at": now}},
         )
     except Exception:
-        logger.exception("push device stamp failed")
+        logger.warning("push device stamp failed")
 
 
 async def replay_unread_to_token(

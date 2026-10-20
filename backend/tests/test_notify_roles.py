@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from unittest.mock import patch
 
 import notify
@@ -221,11 +222,11 @@ class _PushColl:
     async def find_one(self, query=None, *args, **kwargs):
         for doc in self.docs.values():
             if self._match(doc, query or {}):
-                return dict(doc)
+                return copy.deepcopy(doc)
         return None
 
     def find(self, query=None, *args, **kwargs):
-        rows = [dict(doc) for doc in self.docs.values() if self._match(doc, query or {})]
+        rows = [copy.deepcopy(doc) for doc in self.docs.values() if self._match(doc, query or {})]
 
         class Cursor:
             def sort(self, *args, **kwargs):
@@ -261,6 +262,16 @@ class _PushColl:
             return None
         if "$set" in (upd or {}):
             found.update(upd["$set"])
+        if "$addToSet" in (upd or {}):
+            for key, value in upd["$addToSet"].items():
+                current = found.get(key)
+                if not isinstance(current, list):
+                    current = []
+                    found[key] = current
+                items = value.get("$each") if isinstance(value, dict) and "$each" in value else [value]
+                for item in items or []:
+                    if item not in current:
+                        current.append(item)
         return None
 
     async def delete_many(self, query):
@@ -554,3 +565,71 @@ def test_error_ticket_does_not_mark_device_pushed():
     assert replay["sent"] == 1
     assert captured["messages"][0]["to"] == FRESH
     assert "phone-bad" not in stored["pushed_device_ids"]
+
+
+def test_get_notifications_hides_push_device_stamp():
+    """GET /notifications cihaz damgasını döndürmez; veritabanındaki belge durur."""
+    import inspect
+
+    import server
+
+    db = _PushDB()
+    user = db.add_user("usr_mgr", "manager")
+    secret = "dev-secret-9f3a"
+    stamped_at = "2026-10-20T12:00:00+00:00"
+    note = notification_doc("c1", "order_new", "Yeni sipariş", "WEB", link="/orders", ref_type="order", ref_id="ord-9")
+    note["pushed_device_ids"] = [secret]
+    note["pushed_at"] = stamped_at
+    db.notifications.docs[note["_id"]] = note
+    assert "present_notification" in inspect.getsource(server.list_notifications)
+
+    async def listed(unread_only=False):
+        previous = server.db
+        server.db = db
+        try:
+            return await server.list_notifications(user=user, unread_only=unread_only)
+        finally:
+            server.db = previous
+
+    rows = _run(listed())
+    unread = _run(listed(True))
+    for payload in (rows, unread):
+        assert len(payload) == 1
+        row = payload[0]
+        assert row["id"] == note["_id"]
+        assert row["title"] == "Yeni sipariş"
+        assert row["type"] == "order_new"
+        assert row["company_id"] == "c1"
+        assert row["message"] == "WEB"
+        assert row["target"]["type"] == "order"
+        assert "pushed_device_ids" not in row
+        assert "pushed_at" not in row
+        assert secret not in repr(row)
+    stored = db.notifications.docs[note["_id"]]
+    assert stored["pushed_device_ids"] == [secret]
+    assert stored["pushed_at"] == stamped_at
+    assert stored["_id"] == note["_id"]
+
+
+def test_concurrent_stamps_keep_both_device_ids():
+    db = _PushDB()
+    note = notification_doc("c1", "order_new", "Yeni sipariş", "WEB")
+    note["pushed_device_ids"] = ["phone-old"]
+    db.notifications.docs[note["_id"]] = note
+    left = dict(note)
+    right = dict(note)
+    left["pushed_device_ids"] = list(note["pushed_device_ids"])
+    right["pushed_device_ids"] = list(note["pushed_device_ids"])
+
+    async def go():
+        await asyncio.gather(
+            notify._stamp_pushed_devices(db, left, ["phone-a"]),
+            notify._stamp_pushed_devices(db, right, ["phone-b"]),
+        )
+        return await db.notifications.find_one({"_id": note["_id"]})
+
+    stored = _run(go())
+    assert left["pushed_device_ids"] == ["phone-old", "phone-a"]
+    assert right["pushed_device_ids"] == ["phone-old", "phone-b"]
+    assert set(stored["pushed_device_ids"]) == {"phone-old", "phone-a", "phone-b"}
+    assert stored["pushed_at"]

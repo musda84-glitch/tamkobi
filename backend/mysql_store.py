@@ -1190,12 +1190,16 @@ def apply_update(doc: dict, update: dict, query: Optional[dict] = None, is_inser
             cur.append(v)
             _set_path(out, k, cur, query)
     for k, v in (update.get("$addToSet") or {}).items():
+        items = list(v.get("$each") or []) if isinstance(v, dict) and "$each" in v and set(v.keys()) <= {"$each"} else [v]
         cur = scalar_at(out, k)
         if cur is MISSING or cur is None:
-            _set_path(out, k, [v], query)
-        elif isinstance(cur, list) and v not in cur:
-            cur.append(v)
-            _set_path(out, k, cur, query)
+            cur = []
+        if not isinstance(cur, list):
+            continue
+        for item in items:
+            if item not in cur:
+                cur.append(item)
+        _set_path(out, k, cur, query)
     for k, v in (update.get("$pull") or {}).items():
         cur = scalar_at(out, k)
         if isinstance(cur, list):
