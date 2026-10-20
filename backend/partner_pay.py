@@ -575,9 +575,11 @@ async def _partner_company_id(db, partner_id: Optional[str]) -> Optional[str]:
     if not partner_id:
         return None
     try:
+        # tenant-ok değil: partner_id'den company_id çözen çözücü; kapsamı tanımı gereği yok (bank_match_target.py:50, partner_pay.py:599 kullanır).
         partner = await db.partners.find_one({"_id": partner_id}, {"company_id": 1})
     except TypeError:
         try:
+            # tenant-ok değil: partner_id'den company_id çözen çözücü; kapsamı tanımı gereği yok (bank_match_target.py:50, partner_pay.py:599 kullanır).
             partner = await db.partners.find_one({"_id": partner_id})
         except Exception:
             return None
@@ -602,12 +604,14 @@ async def repair_legacy_expense_withdrawals(db, partner_id: Optional[str] = None
         q["company_id"] = company_id
     if partner_id:
         q["partner_id"] = partner_id
+    # tenant-ok değil: eski veri onarımı; partner_id/company_id parametresi verildiğinde zaten daralır, parametresiz çağrı bakım içindir.
     txs = await db.partner_transactions.find(q).to_list(20000)
     fixed = 0
     now = datetime.now(timezone.utc).isoformat()
     for tx in txs:
         if not is_legacy_expense_withdrawal(tx):
             continue
+        # tenant-ok değil: eski veri onarımı; partner_id/company_id parametresi verildiğinde zaten daralır, parametresiz çağrı bakım içindir.
         await db.partner_transactions.update_one(
             {"_id": tx["_id"]},
             {"$set": {"type": "credit", "legacy_expense_repaired_at": now}},
@@ -621,15 +625,15 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
     # Lazy: bank_match_target → partner_pay döngüsünü kırma
     from bank_match_target import repair_legacy_bank_match_directions
 
+    # tenant-ok değil: server.py:13676 imzası (db, partner_id); server.py PR'ında company_id kwarg ile kapanır.
     partner = await db.partners.find_one({"_id": partner_id})
     if not partner:
         return None
     company_id = partner.get("company_id")
+    cid = str(company_id or "")
     expense_rows_repaired = await repair_legacy_expense_withdrawals(db, partner_id, company_id=company_id)
     bank_match_rows_repaired = await repair_legacy_bank_match_directions(db, partner_id, company_id=company_id)
-    tx_q: Dict[str, Any] = {"partner_id": partner_id}
-    if company_id:
-        tx_q["company_id"] = company_id
+    tx_q: Dict[str, Any] = {"partner_id": partner_id, "company_id": cid}
     txs = await db.partner_transactions.find(tx_q).to_list(20000)
     live = ledger_totals(txs)
     prev = {
@@ -645,7 +649,7 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
     )
     if repaired:
         await db.partners.update_one(
-            {"_id": partner_id},
+            {"_id": partner_id, "company_id": cid},
             {"$set": {**live, "balance_synced_at": datetime.now(timezone.utc).isoformat()}},
         )
     return {
@@ -676,6 +680,8 @@ async def sync_company_partners(db, company_id: str) -> List[Dict[str, Any]]:
 
     Özet GET bunu çağırmaz. Hareket yazımı ve yeniden hesapla ucu çağırır.
     """
+    if not str(company_id or "").strip():
+        return []
     repaired = await repair_company_partner_moves(db, company_id)
     partners = await db.partners.find({"company_id": company_id}).to_list(200)
     ids = [p["_id"] for p in partners if p.get("_id")]
@@ -702,7 +708,7 @@ async def sync_company_partners(db, company_id: str) -> List[Dict[str, Any]]:
         drifted = any(abs(live[k] - prev[k]) > 0.005 for k in live)
         if drifted:
             await db.partners.update_one(
-                {"_id": p["_id"]},
+                {"_id": p["_id"], "company_id": company_id},
                 {"$set": {**live, "balance_synced_at": now}},
             )
         out.append({
@@ -737,7 +743,11 @@ async def move(db, company_id: str, partner_id: str, amount: float, tx_type: str
     provisional = {"type": tx_type, "amount": amount}
     if extra:
         provisional.update({k: v for k, v in extra.items() if v is not None})
-    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": posting_inc(provisional)})
+    write_cid = cid or str(partner.get("company_id") or "")
+    await db.partners.update_one(
+        {"_id": partner["_id"], "company_id": write_cid},
+        {"$inc": posting_inc(provisional)},
+    )
     ptx = PartnerTransaction(
         company_id=company_id,
         partner_id=partner["_id"],
@@ -752,6 +762,7 @@ async def move(db, company_id: str, partner_id: str, amount: float, tx_type: str
     doc = ptx.to_mongo()
     if extra:
         doc.update({k: v for k, v in extra.items() if v is not None})
+    doc["company_id"] = write_cid
     await db.partner_transactions.insert_one(doc)
     # Eski satır onarımı yazımda bir kez; özet GET'i bunu tekrarlamaz.
     await repair_company_partner_moves(db, company_id)
@@ -777,20 +788,22 @@ async def credit_expense(
 
 
 async def reverse_one(db, query: Dict[str, Any]) -> bool:
+    # tenant-ok değil: server.py:16965 ve :25100, bank_match_target.py:136/:139, employee_data_reset.py:72 company_id'siz sorgu geçirir; server.py PR'ında kapanır. query'de company_id varsa (expenses.py:212, tax_obligations.py:94, personnel_payments.py:733) olduğu gibi kullanılır.
     ptx = await db.partner_transactions.find_one(query)
     if not ptx:
         return False
+    cid = str(ptx.get("company_id") or "")
     amount = float(ptx.get("amount") or 0)
     t = ptx.get("type")
     if t in MUTABLE_TYPES:
         inc = {k: -v for k, v in posting_inc(ptx).items()}
-        await db.partners.update_one({"_id": ptx["partner_id"]}, {"$inc": inc})
+        await db.partners.update_one({"_id": ptx["partner_id"], "company_id": cid}, {"$inc": inc})
     elif t == "profit_share":
         await db.partners.update_one(
-            {"_id": ptx["partner_id"]},
+            {"_id": ptx["partner_id"], "company_id": cid},
             {"$inc": profit_share_inc(amount, bool(ptx.get("is_paid")), applying=False)},
         )
-    await db.partner_transactions.delete_one({"_id": ptx["_id"]})
+    await db.partner_transactions.delete_one({"_id": ptx["_id"], "company_id": cid})
     return True
 
 
@@ -880,6 +893,7 @@ async def accrue_monthly_salaries(
 
 
 async def accrue_due_for_all_companies(db, as_of: Optional[str] = None) -> Dict[str, Any]:
+    # tenant-ok değil: zamanlayıcı, tüm şirketler.
     cursor = db.partners.find({})
     partners = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
     seen = set()

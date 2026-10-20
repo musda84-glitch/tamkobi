@@ -121,10 +121,19 @@ async def find_linked(
 ) -> Dict[str, List[dict]]:
     """Bağlı banka + ortak + cari (contact_id'li banka) + masraf satırları.
 
-    company_id verilirse tüm sorgular şirket kapsamındadır (çapraz kiracı sızıntısı yok).
+    company_id boş veya None ise sorgu açılmaz; boş sonuç döner.
     """
-    cid = str(company_id) if company_id else None
+    empty = {
+        "bank_transactions": [],
+        "partner_transactions": [],
+        "cari_lines": [],
+        "expenses": [],
+    }
+    cid = str(company_id or "").strip()
+    if not cid:
+        return empty
     q = _link_query(source_type, source_id, cid)
+    q["company_id"] = cid
     bank = await db.bank_transactions.find(q).to_list(500)
     partner = await db.partner_transactions.find(q).to_list(500)
     # Cari satırları ayrı koleksiyon değil — contact_id taşıyan bank hareketleri
@@ -132,23 +141,20 @@ async def find_linked(
     expenses = []
     st = _norm_source_type(source_type)
     if st == "loan":
-        eq: Dict[str, Any] = {"loan_id": str(source_id)}
-        if cid:
-            eq["company_id"] = cid
-        expenses = await db.expenses.find(eq).to_list(200)
+        loan_eq = {"loan_id": str(source_id), "company_id": cid}
+        expenses = await db.expenses.find(loan_eq).to_list(200)
     elif st == "installment":
-        eq = {"installment_id": str(source_id)}
-        if cid:
-            eq["company_id"] = cid
-        expenses = await db.expenses.find(eq).to_list(50)
+        inst_eq = {"installment_id": str(source_id), "company_id": cid}
+        expenses = await db.expenses.find(inst_eq).to_list(50)
     elif st == "personnel_payment":
-        eq = {"$or": [
-            {"source_type": "personnel_payment", "source_id": str(source_id)},
-            {"personnel_movement_id": str(source_id)},
+        pay_eq = {"$and": [
+            {"$or": [
+                {"source_type": "personnel_payment", "source_id": str(source_id)},
+                {"personnel_movement_id": str(source_id)},
+            ]},
+            {"company_id": cid},
         ]}
-        if cid:
-            eq = {"$and": [eq, {"company_id": cid}]}
-        expenses = await db.expenses.find(eq).to_list(200)
+        expenses = await db.expenses.find(pay_eq).to_list(200)
     return {
         "bank_transactions": bank,
         "partner_transactions": partner,
@@ -185,13 +191,16 @@ async def _audit(db, *, company_id: Optional[str], actor: Optional[dict], action
 
 async def _recalc_touched_accounts(db, txs: List[dict]):
     cash_ids = set()
+    cash_company: Dict[str, str] = {}
     contact_ids = set()
     contact_company = {}
     for tx in txs:
+        company = str(tx.get("company_id") or "")
         for k in ("account_id", "target_account_id"):
             if tx.get(k):
                 cash_ids.add(tx[k])
-        company = tx.get("company_id")
+                if company and tx[k] not in cash_company:
+                    cash_company[tx[k]] = company
         for k in ("contact_id", "owner_contact_id"):
             if tx.get(k):
                 contact_ids.add(tx[k])
@@ -199,7 +208,10 @@ async def _recalc_touched_accounts(db, txs: List[dict]):
                     contact_company[tx[k]] = company
     cash_accs = []
     for aid in cash_ids:
-        acc = await db.bank_accounts.find_one({"_id": aid})
+        acc_cid = cash_company.get(aid) or ""
+        if not acc_cid:
+            continue
+        acc = await db.bank_accounts.find_one({"_id": aid, "company_id": acc_cid})
         if acc and str(acc.get("type") or "") == "cash_box":
             cash_accs.append(acc)
         elif acc:
@@ -227,6 +239,7 @@ async def _soft_delete_move(collection: str, doc: dict, entity_type: str, note: 
 
 async def _write_reverse_bank_entry(db, tx: dict, reason: str) -> dict:
     """mode=reverse: karşı hareket yaz (orijinal kalır, bağ aynı source_id)."""
+    cid = str(tx.get("company_id") or "")
     amt = float(tx.get("amount") or 0)
     t = tx.get("type")
     if t == "inflow":
@@ -255,6 +268,9 @@ async def _write_reverse_bank_entry(db, tx: dict, reason: str) -> dict:
     for k in ("source_type", "source_id", "bonus_id", "payroll_id", "loan_id", "installment_id"):
         if tx.get(k) is not None:
             doc[k] = tx[k]
+    if not cid:
+        return doc
+    doc["company_id"] = cid
     await db.bank_transactions.insert_one(doc)
     if _reverse_tx_effects:
         # Orijinal etkisini geri al (= reverse entry'nin etkisi)
@@ -271,11 +287,14 @@ async def _write_reverse_bank_entry(db, tx: dict, reason: str) -> dict:
                 doc["balance_posted"] = False
                 doc["match_status"] = "expected"
                 await db.bank_transactions.update_one(
-                    {"_id": doc["_id"]},
+                    {"_id": doc["_id"], "company_id": cid},
                     {"$set": {"balance_posted": False, "match_status": "expected"}},
                 )
         if doc.get("contact_id"):
-            await db.contacts.update_one({"_id": doc["contact_id"]}, {"$inc": {"balance": -change}})
+            await db.contacts.update_one(
+                {"_id": doc["contact_id"], "company_id": cid},
+                {"$inc": {"balance": -change}},
+            )
     return doc
 
 
@@ -345,8 +364,9 @@ async def reverse_linked(
             if mode == "reverse":
                 await _write_reverse_bank_entry(db, tx, reason or "kaynak silindi")
                 # Mark original so find_linked / idempotency skips double-reverse
+                tx_cid = str(tx.get("company_id") or "")
                 await db.bank_transactions.update_one(
-                    {"_id": tx["_id"]},
+                    {"_id": tx["_id"], "company_id": tx_cid},
                     {"$set": {"linked_reversed_at": _now(), "linked_reverse_reason": reason or "reverse"}},
                 )
             else:
@@ -368,12 +388,13 @@ async def reverse_linked(
         try:
             amount = float(ptx.get("amount") or 0)
             t = ptx.get("type")
+            ptx_cid = str(ptx.get("company_id") or "")
             if t in partner_pay.MUTABLE_TYPES:
                 inc = {k: -v for k, v in partner_pay.posting_inc(ptx).items()}
-                await db.partners.update_one({"_id": ptx["partner_id"]}, {"$inc": inc})
+                await db.partners.update_one({"_id": ptx["partner_id"], "company_id": ptx_cid}, {"$inc": inc})
             elif t == "profit_share":
                 await db.partners.update_one(
-                    {"_id": ptx["partner_id"]},
+                    {"_id": ptx["partner_id"], "company_id": ptx_cid},
                     {"$inc": partner_pay.profit_share_inc(amount, bool(ptx.get("is_paid")), applying=False)},
                 )
             if mode == "reverse":
@@ -390,7 +411,7 @@ async def reverse_linked(
                         extra={**link_fields(st, sid), "reverses_ptx_id": ptx["_id"], "source": "linked_reverse"},
                     )
                 await db.partner_transactions.update_one(
-                    {"_id": ptx["_id"]},
+                    {"_id": ptx["_id"], "company_id": ptx_cid},
                     {"$set": {"linked_reversed_at": _now()}},
                 )
             else:
@@ -411,8 +432,9 @@ async def reverse_linked(
             if mode == "delete":
                 await _soft_delete_move("expenses", exp, "expense", note=f"linked:{st}/{sid}")
             else:
+                exp_cid = str(exp.get("company_id") or "")
                 await db.expenses.update_one(
-                    {"_id": exp["_id"]},
+                    {"_id": exp["_id"], "company_id": exp_cid},
                     {"$set": {"payment_status": "cancelled", "linked_reversed_at": _now()}},
                 )
             reversed_exp.append(str(exp["_id"]))
@@ -464,11 +486,15 @@ async def restore_linked_from_related(db, related: Optional[List[dict]], actor: 
             elif coll == "partner_transactions":
                 amount = float(doc.get("amount") or 0)
                 t = doc.get("type")
+                doc_cid = str(doc.get("company_id") or "")
                 if t in partner_pay.MUTABLE_TYPES:
-                    await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": partner_pay.posting_inc(doc)})
+                    await db.partners.update_one(
+                        {"_id": doc["partner_id"], "company_id": doc_cid},
+                        {"$inc": partner_pay.posting_inc(doc)},
+                    )
                 elif t == "profit_share":
                     await db.partners.update_one(
-                        {"_id": doc["partner_id"]},
+                        {"_id": doc["partner_id"], "company_id": doc_cid},
                         {"$inc": partner_pay.profit_share_inc(amount, bool(doc.get("is_paid")), applying=True)},
                     )
                 applied += 1
@@ -511,12 +537,13 @@ async def undo_effects_keep_docs(db, related: List[dict]) -> None:
             for ptx in block.get("docs") or []:
                 amount = float(ptx.get("amount") or 0)
                 t = ptx.get("type")
+                ptx_cid = str(ptx.get("company_id") or "")
                 if t in partner_pay.MUTABLE_TYPES:
                     inc = {k: -v for k, v in partner_pay.posting_inc(ptx).items()}
-                    await db.partners.update_one({"_id": ptx["partner_id"]}, {"$inc": inc})
+                    await db.partners.update_one({"_id": ptx["partner_id"], "company_id": ptx_cid}, {"$inc": inc})
                 elif t == "profit_share":
                     await db.partners.update_one(
-                        {"_id": ptx["partner_id"]},
+                        {"_id": ptx["partner_id"], "company_id": ptx_cid},
                         {"$inc": partner_pay.profit_share_inc(amount, bool(ptx.get("is_paid")), applying=False)},
                     )
 
@@ -571,26 +598,34 @@ def assert_not_source_linked(tx: dict):
 
 
 # Stock helpers used by delete paths
-async def reverse_stock_movements_for(db, *, order_id: Optional[str] = None, work_order_id: Optional[str] = None, reason_prefix: str = "Geri alma") -> int:
+async def reverse_stock_movements_for(
+    db,
+    *,
+    order_id: Optional[str] = None,
+    work_order_id: Optional[str] = None,
+    reason_prefix: str = "Geri alma",
+    company_id: Optional[str] = None,
+) -> int:
     """Üretim/sayım kaynaklı stok hareketlerini tersine çevir (ürün bakiyesi + karşı hareket)."""
-    q: Dict[str, Any] = {}
+    cid = str(company_id or "").strip()
+    if not cid or not (order_id or work_order_id):
+        return 0
+    q: Dict[str, Any] = {"company_id": cid}
     if order_id:
         q["order_id"] = order_id
     if work_order_id:
         q["work_order_id"] = work_order_id
-    if not q:
-        return 0
     moves = await db.stock_movements.find(q).to_list(5000)
     n = 0
     for m in moves:
         change = float(m.get("change") or 0)
         pid = m.get("product_id")
-        if not pid or abs(change) < 1e-9:
+        mcid = str(m.get("company_id") or "")
+        if not pid or not mcid or abs(change) < 1e-9:
             continue
-        await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -change}})
-        await db.stock_movements.insert_one({
+        await db.products.update_one({"_id": pid, "company_id": mcid}, {"$inc": {"stock_quantity": -change}})
+        rev = {
             "_id": str(uuid.uuid4()),
-            "company_id": m.get("company_id"),
             "product_id": pid,
             "product_name": m.get("product_name"),
             "variant_id": m.get("variant_id"),
@@ -600,7 +635,9 @@ async def reverse_stock_movements_for(db, *, order_id: Optional[str] = None, wor
             "reverses_movement_id": m.get("_id"),
             "order_id": m.get("order_id"),
             "work_order_id": m.get("work_order_id"),
-        })
+        }
+        rev["company_id"] = mcid
+        await db.stock_movements.insert_one(rev)
         n += 1
     return n
 
@@ -610,6 +647,9 @@ async def reverse_applied_stock_count(db, sc: dict) -> int:
     if not sc or not sc.get("applied"):
         return 0
     if sc.get("status") not in ("completed", "done", "closed"):
+        return 0
+    cid = str(sc.get("company_id") or "").strip()
+    if not cid:
         return 0
     n = 0
     for i in sc.get("items") or []:
@@ -621,19 +661,22 @@ async def reverse_applied_stock_count(db, sc: dict) -> int:
             continue
         # Applied set stock to counted; reverse → back toward expected (= -diff)
         if i.get("variant_id"):
-            p = await db.products.find_one({"_id": pid})
+            p = await db.products.find_one({"_id": pid, "company_id": cid})
             if p:
                 variants = list(p.get("variants") or [])
                 for v in variants:
                     if v.get("variant_id") == i.get("variant_id"):
                         v["stock"] = float(v.get("stock") or 0) - diff
                 await db.products.update_one(
-                    {"_id": pid},
+                    {"_id": pid, "company_id": cid},
                     {"$set": {"variants": variants, "stock_quantity": sum(float(v.get("stock") or 0) for v in variants)}},
                 )
         else:
-            await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -diff}})
-        await db.stock_movements.insert_one({
+            await db.products.update_one(
+                {"_id": pid, "company_id": cid},
+                {"$inc": {"stock_quantity": -diff}},
+            )
+        movement = {
             "_id": str(uuid.uuid4()),
             "product_id": pid,
             "product_name": i.get("product_name"),
@@ -642,7 +685,9 @@ async def reverse_applied_stock_count(db, sc: dict) -> int:
             "reason": f"Sayım geri alma: {sc.get('name') or sc.get('_id')}",
             "date": _now(),
             "stock_count_id": sc.get("_id"),
-        })
+        }
+        movement["company_id"] = cid
+        await db.stock_movements.insert_one(movement)
         n += 1
     return n
 
@@ -651,6 +696,7 @@ async def list_isnet_missing_mode(db) -> Dict[str, Any]:
     """Ortamı seçilmemiş İşNet e-fatura kayıtları. Yalnızca okur."""
     import isnet
 
+    # tenant-ok değil: platform geneli salt okunur bakım raporu, şirketler arası tanımı gereği.
     rows = await db.einvoice_settings.find(
         {"provider": {"$in": ["isnet", "isnet_portal"]}}
     ).to_list(500)

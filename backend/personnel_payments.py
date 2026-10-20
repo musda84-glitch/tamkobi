@@ -291,9 +291,13 @@ async def _cover_salary(
         if entitled > 0.004:
             doc = _insert_payroll(emp, per, entitled, manual=False)
             doc.update(link)
+            doc["company_id"] = cid
             await db.payrolls.insert_one(doc)
             pid = doc["_id"]
-            cx.push("payroll_ins", lambda pid=pid: db.payrolls.delete_one({"_id": pid}))
+            cx.push(
+                "payroll_ins",
+                lambda pid=pid, cid=cid: db.payrolls.delete_one({"_id": pid, "company_id": cid}),
+            )
             effects.append({"collection": "payrolls", "id": pid, "action": "insert"})
             targets = [doc]
     targets.extend(other_rows)
@@ -348,7 +352,7 @@ async def _apply_payroll_payment(
         if gate["action"] == "already_paid":
             raise HTTPException(status_code=409, detail="Bu bordro zaten ödenmiş.")
         claimed_at = gate["claimed_at"]
-        fresh = await db.payrolls.find_one({"_id": pid}) or p
+        fresh = await db.payrolls.find_one({"_id": pid, "company_id": cid}) or p
         payable = employee_pay.payroll_payable(fresh)
         already = employee_pay.payroll_paid_amount(fresh)
         room = round(max(0.0, payable - already), 2)
@@ -366,6 +370,7 @@ async def _apply_payroll_payment(
         if stamp_link:
             upd.update(link)
         query = _payroll_lock_query(fresh, cid)
+        query["company_id"] = cid
         query["_pay_claimed_at"] = claimed_at
         res = await db.payrolls.update_one_atomic(
             query,
@@ -493,6 +498,7 @@ async def _cover_allowance(
 ) -> tuple[float, List[dict]]:
     left = round(amount, 2)
     effects: List[dict] = []
+    cid = _cid(emp)
     link = _link(movement_id)
     chunks = (
         ("meal", employee_pay.MEAL_CAT, _amt(balance.get("meal_due"))),
@@ -521,8 +527,9 @@ async def _cover_allowance(
             "created_at": _now(),
         }
         doc.update(link)
+        doc["company_id"] = cid
         await db.expenses.insert_one(doc)
-        cx.push("exp_ins", lambda eid=eid: db.expenses.delete_one({"_id": eid}))
+        cx.push("exp_ins", lambda eid=eid, cid=cid: db.expenses.delete_one({"_id": eid, "company_id": cid}))
         effects.append({"collection": "expenses", "id": eid, "action": "insert"})
         left = round(left - take, 2)
     return round(max(0.0, left), 2), effects
@@ -534,6 +541,7 @@ async def _insert_advance(
 ) -> List[dict]:
     if amount <= 0.004:
         return []
+    cid = _cid(emp)
     bid = str(uuid.uuid4())
     doc = {
         "_id": bid,
@@ -554,8 +562,9 @@ async def _insert_advance(
         "created_at": _now(),
     }
     doc.update(_link(movement_id))
+    doc["company_id"] = cid
     await db.bonus_payments.insert_one(doc)
-    cx.push("bonus_ins", lambda bid=bid: db.bonus_payments.delete_one({"_id": bid}))
+    cx.push("bonus_ins", lambda bid=bid, cid=cid: db.bonus_payments.delete_one({"_id": bid, "company_id": cid}))
     return [{"collection": "bonus_payments", "id": bid, "action": "insert", "paid_delta": round(amount, 2)}]
 
 
@@ -765,8 +774,9 @@ async def _cash_out(
         "created_at": _now(),
     }
     tx_doc.update(link)
+    tx_doc["company_id"] = cid
     await db.bank_transactions.insert_one(tx_doc)
-    cx.push("btx", lambda tx_id=tx_id: db.bank_transactions.delete_one({"_id": tx_id}))
+    cx.push("btx", lambda tx_id=tx_id, cid=cid: db.bank_transactions.delete_one({"_id": tx_id, "company_id": cid}))
     return acc_name
 
 
@@ -860,8 +870,8 @@ async def _close_personnel_debt(
         }},
     )
 
-    async def _undo(eid=eid, prev=prev):
-        await db.expenses.update_one({"_id": eid}, {"$set": prev})
+    async def _undo(eid=eid, prev=prev, cid=cid):
+        await db.expenses.update_one({"_id": eid, "company_id": cid}, {"$set": prev})
 
     cx.push("debt", _undo)
     return [{
@@ -903,8 +913,8 @@ async def _mark_linked_expense_paid(
     if number:
         ln["expense_number"] = number
 
-    async def _undo(eid=eid, prev=prev):
-        await db.expenses.update_one({"_id": eid}, {"$set": prev})
+    async def _undo(eid=eid, prev=prev, cid=cid):
+        await db.expenses.update_one({"_id": eid, "company_id": cid}, {"$set": prev})
 
     cx.push("exp_pay", _undo)
     return [{"collection": "expenses", "id": eid, "action": "unpay", "prev": prev}]
@@ -960,8 +970,9 @@ async def _insert_reimburse_expense(
         doc["personnel_movement_id"] = movement_id
         if ln.get("recurring_parent_id"):
             doc["recurring_parent_id"] = ln["recurring_parent_id"]
+    doc["company_id"] = cid
     await db.expenses.insert_one(doc)
-    cx.push("exp_ins", lambda eid=eid: db.expenses.delete_one({"_id": eid}))
+    cx.push("exp_ins", lambda eid=eid, cid=cid: db.expenses.delete_one({"_id": eid, "company_id": cid}))
     if not template:
         ln["expense_id"] = eid
         ln["expense_number"] = number
@@ -975,6 +986,7 @@ async def _charge_personnel_account(
     amount = round(ln["amount"], 2)
     if amount <= 0.004 or not ln.get("charge_to_account"):
         return []
+    cid = _cid(emp)
     effect = employee_pay.reimburse_account_effect(ln)
     if effect == employee_pay.REIMBURSE_EFFECT_ENTITLEMENT:
         btype, label = "bakiye", ENTITLEMENT_LABEL
@@ -1000,8 +1012,9 @@ async def _charge_personnel_account(
         "created_at": _now(),
     }
     doc.update(_link(movement_id))
+    doc["company_id"] = cid
     await db.bonus_payments.insert_one(doc)
-    cx.push("bonus_ins", lambda bid=bid: db.bonus_payments.delete_one({"_id": bid}))
+    cx.push("bonus_ins", lambda bid=bid, cid=cid: db.bonus_payments.delete_one({"_id": bid, "company_id": cid}))
     return [{"collection": "bonus_payments", "id": bid, "action": "insert", "paid_delta": amount}]
 
 
@@ -1010,6 +1023,7 @@ async def _ensure_reimburse_template(
 ) -> Optional[str]:
     if not ln.get("recurring"):
         return ln.get("recurring_parent_id")
+    cid = _cid(emp)
     day = ln.get("recurring_day")
     period = (pay_date or "")[:7]
     existing = await db.expenses.find_one({
@@ -1029,7 +1043,10 @@ async def _ensure_reimburse_template(
         return existing["_id"]
     tpl = await _insert_reimburse_expense(db, emp, ln, "", pay_date, None, cx=cx, template=True)
     if day and not tpl.get("recurrence_day"):
-        await db.expenses.update_one({"_id": tpl["_id"]}, {"$set": {"recurrence_day": day}})
+        await db.expenses.update_one(
+            {"_id": tpl["_id"], "company_id": cid},
+            {"$set": {"recurrence_day": day}},
+        )
     ln["recurring_parent_id"] = tpl["_id"]
     return tpl["_id"]
 
@@ -1039,6 +1056,7 @@ async def _apply_reimburse(
     *, cx: finance_txn.CompensatingTxn,
 ) -> List[dict]:
     """Yeni MSR aç veya mevcut kayda bağla; isteğe bağlı personel hesabı + tekrar."""
+    cid = _cid(emp)
     effects: List[dict] = []
     existing = await _load_reimburse_expense(db, emp, ln)
     if existing:
@@ -1065,7 +1083,7 @@ async def _apply_reimburse(
         await _ensure_reimburse_template(db, emp, ln, pay_date, cx=cx)
         if ln.get("recurring_parent_id") and ln.get("expense_id"):
             await db.expenses.update_one(
-                {"_id": ln["expense_id"]},
+                {"_id": ln["expense_id"], "company_id": cid},
                 {"$set": {"recurring_parent_id": ln["recurring_parent_id"]}},
             )
     return effects
@@ -1167,6 +1185,7 @@ async def _apply_payment_lines_body(
             raise HTTPException(status_code=400, detail=_BANK_MATCH_NO_DEBT)
 
     async def _body(cx: finance_txn.CompensatingTxn) -> dict:
+        cid = _cid(emp)
         saved_lines = []
         for ln in lines:
             movement_id = str(uuid.uuid4())
@@ -1250,8 +1269,12 @@ async def _apply_payment_lines_body(
             if existing_tx:
                 movement["bank_transaction_id"] = existing_tx["_id"]
                 movement["cash_mode"] = "bank_match"
+            movement["company_id"] = cid
             await db.personnel_movements.insert_one(movement)
-            cx.push("mov", lambda mid=movement_id: db.personnel_movements.delete_one({"_id": mid}))
+            cx.push(
+                "mov",
+                lambda mid=movement_id, cid=cid: db.personnel_movements.delete_one({"_id": mid, "company_id": cid}),
+            )
             saved_lines.append({
                 "id": movement_id,
                 "kind": ln["kind"],
@@ -1282,7 +1305,7 @@ async def _apply_payment_lines_body(
             "idempotent": False,
             "message": message,
         }
-        await db.personnel_receipts.insert_one({
+        receipt = {
             "_id": receipt_id,
             "company_id": emp.get("company_id"),
             "employee_id": emp.get("_id"),
@@ -1298,8 +1321,13 @@ async def _apply_payment_lines_body(
             "status": "issued",
             "result": result,
             "created_at": _now(),
-        })
-        cx.push("rcpt", lambda rid=receipt_id: db.personnel_receipts.delete_one({"_id": rid}))
+        }
+        receipt["company_id"] = cid
+        await db.personnel_receipts.insert_one(receipt)
+        cx.push(
+            "rcpt",
+            lambda rid=receipt_id, cid=cid: db.personnel_receipts.delete_one({"_id": rid, "company_id": cid}),
+        )
         return result
 
     return await finance_txn.CompensatingTxn(label=f"personnel-pay:{emp.get('_id')}").run(_body)
@@ -1403,13 +1431,15 @@ async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
     if status in ("reversed", "cancelled"):
         return {"status": "success", "idempotent": True, "message": "Ödeme zaten geri alınmış."}
     cid = str(mov.get("company_id") or "")
+    if not cid:
+        raise HTTPException(status_code=404, detail="Ödeme hareketi bulunamadı.")
     mid = mov["_id"]
     claim = await db.personnel_movements.update_one_atomic(
-        {"_id": mid, "status": {"$nin": ["reversed", "cancelled", "reversing"]}},
+        {"_id": mid, "company_id": cid, "status": {"$nin": ["reversed", "cancelled", "reversing"]}},
         {"$set": {"status": "reversing", "reversing_at": _now()}},
     )
     if _matched(claim) == 0:
-        fresh = await db.personnel_movements.find_one({"_id": mid}) or {}
+        fresh = await db.personnel_movements.find_one({"_id": mid, "company_id": cid}) or {}
         if str(fresh.get("status") or "") in ("reversed", "cancelled"):
             return {"status": "success", "idempotent": True, "message": "Ödeme zaten geri alınmış."}
         raise HTTPException(status_code=409, detail="Bu ödemenin geri alınması sürüyor.")
@@ -1419,11 +1449,14 @@ async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
             # Bank_sync kaydı ve bakiyesi bankadan geldi; silinmez, bakiye oynatılmaz.
             btx_id = mov.get("bank_transaction_id")
             if btx_id:
-                q = {"_id": btx_id, "company_id": cid} if cid else {"_id": btx_id}
-                await db.bank_transactions.update_one(q, {"$unset": {"personnel_movement_id": ""}})
+                await db.bank_transactions.update_one(
+                    {"_id": btx_id, "company_id": cid},
+                    {"$unset": {"personnel_movement_id": ""}},
+                )
             ikey = str(mov.get("idempotency_key") or "").strip()
-            if ikey and cid:
-                await db.idempotency_keys.delete_one({"_id": f"{cid}:{ikey}"})
+            if ikey:
+                key = f"{cid}:{ikey}"
+                await db.idempotency_keys.delete_one({"_id": key, "company_id": cid})
             rev = {"reversed": 0, "bank": 0, "partner": 0, "expenses": 0}
         else:
             rev = await linked_moves.reverse_linked(
@@ -1436,11 +1469,11 @@ async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
         rid = mov.get("receipt_id")
         if rid:
             await db.personnel_receipts.update_one(
-                {"_id": rid, "company_id": cid} if cid else {"_id": rid},
+                {"_id": rid, "company_id": cid},
                 {"$set": {"status": "cancelled", "cancelled_at": _now()}},
             )
         done = await db.personnel_movements.update_one_atomic(
-            {"_id": mid, "status": "reversing"},
+            {"_id": mid, "company_id": cid, "status": "reversing"},
             {"$set": {"status": "reversed", "reversed_at": _now()}, "$unset": {"reversing_at": ""}},
         )
         if _matched(done) == 0:
@@ -1448,7 +1481,7 @@ async def reverse_payment(db, mov: dict, actor: Optional[dict] = None) -> dict:
     except Exception:
         if applied == 0:
             await db.personnel_movements.update_one_atomic(
-                {"_id": mid, "status": "reversing"},
+                {"_id": mid, "company_id": cid, "status": "reversing"},
                 {"$set": {"status": status}, "$unset": {"reversing_at": ""}},
             )
         raise
@@ -1511,7 +1544,7 @@ async def movements_linked_to(db, doc: dict, collection: str) -> List[dict]:
         out.append(mov)
 
     for mid in movement_ids_on(doc):
-        _keep(await db.personnel_movements.find_one({"_id": mid}))
+        _keep(await db.personnel_movements.find_one({"_id": mid, "company_id": cid}))
 
     if doc_id and collection:
         q: Dict[str, Any] = {"effects": {"$elemMatch": {"id": doc_id, "collection": collection}}}
@@ -1523,14 +1556,13 @@ async def movements_linked_to(db, doc: dict, collection: str) -> List[dict]:
 
 
 async def month_occurrence_exists(db, parent_id: str, period: str, cid: str) -> bool:
-    if not parent_id or not period:
+    if not parent_id or not period or not str(cid or "").strip():
         return False
     q_exp: Dict[str, Any] = {
         "recurring_parent_id": parent_id,
         "date": {"$regex": f"^{period}"},
+        "company_id": cid,
     }
-    if cid:
-        q_exp["company_id"] = cid
     if await db.expenses.find_one(q_exp):
         return True
     q_mov: Dict[str, Any] = {
@@ -1538,9 +1570,8 @@ async def month_occurrence_exists(db, parent_id: str, period: str, cid: str) -> 
         "period": period,
         "kind": "reimburse",
         "status": {"$nin": list(_CLOSED_MOVE)},
+        "company_id": cid,
     }
-    if cid:
-        q_mov["company_id"] = cid
     return bool(await db.personnel_movements.find_one(q_mov))
 
 
@@ -1618,8 +1649,9 @@ async def delete_bonus_record(db, bonus: dict) -> bool:
     if not bonus or not bonus.get("_id"):
         return False
     bonus_id = bonus["_id"]
+    cid = str(bonus.get("company_id") or "")
     await reverse_linked_personnel_payments(db, bonus, collection="bonus_payments")
-    fresh = await db.bonus_payments.find_one({"_id": bonus_id})
+    fresh = await db.bonus_payments.find_one({"_id": bonus_id, "company_id": cid})
     if not fresh:
         return True
     related: List[dict] = []
