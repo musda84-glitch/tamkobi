@@ -2662,8 +2662,9 @@ async def list_notifications(company_id: Optional[str] = None, unread_only: bool
     return clean_docs([_notify.present_notification(n) for n in _notify.filter_notifications(rows, user)])
 
 @api_router.post("/notifications/{notif_id}/read")
-async def read_notification(notif_id: str):
-    await db.notifications.update_one({"_id": notif_id}, {"$set": {"is_read": True}})
+async def read_notification(notif_id: str, user: dict = Depends(get_current_user)):
+    doc = await tenant_access.get_tenant_doc(db, "notifications", notif_id, user, not_found="Bildirim bulunamadı.")
+    await db.notifications.update_one({"_id": notif_id, "company_id": doc["company_id"]}, {"$set": {"is_read": True}})
     return {"status": "success"}
 
 @api_router.post("/notifications/read-all")
@@ -2675,15 +2676,20 @@ async def read_all_notifications(company_id: Optional[str] = None, user: dict = 
     visible = _notify.filter_notifications(rows, user)
     ids = [n["_id"] for n in visible if n.get("_id")]
     if ids:
-        await db.notifications.update_many({"_id": {"$in": ids}}, {"$set": {"is_read": True}})
+        await db.notifications.update_many({"_id": {"$in": ids}, "company_id": cid}, {"$set": {"is_read": True}})
     return {"status": "success", "updated": len(ids)}
 
 @api_router.get("/notifications/{notif_id}/target")
 async def notification_target_status(notif_id: str, user: dict = Depends(get_current_user)):
     """Hedefi okuma anında çözer. Eski kaydı güncellemez; silinmişse Kayıt bulunamadı."""
-    rec = await db.notifications.find_one({"_id": notif_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
+    # Şirketi seçilmemiş süper yönetici resolve_company_id'de 400 alır; eski açılış yolu kalır.
+    if user.get("is_super_admin") and not str(user.get("active_company_id") or "").strip() and not tenant_access.user_allowed_company_ids(user):
+        rec = await tenant_access.get_tenant_doc(db, "notifications", notif_id, user, not_found="Bildirim bulunamadı.")
+    else:
+        cid = tenant_access.resolve_company_id(user, None)
+        rec = await db.notifications.find_one({"_id": notif_id, "company_id": cid})
+        if not rec:
+            raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
     tenant_access.assert_doc_company(user, rec, not_found="Bildirim bulunamadı.")
     import notify as _notify
     if not _notify.notification_visible(rec, user):
@@ -2700,7 +2706,7 @@ async def clear_notifications(company_id: Optional[str] = None, user: dict = Dep
     ids = [n["_id"] for n in visible if n.get("_id")]
     if not ids:
         return {"status": "success", "deleted": 0, "message": "Silinecek bildirim yok."}
-    r = await db.notifications.delete_many({"_id": {"$in": ids}})
+    r = await db.notifications.delete_many({"_id": {"$in": ids}, "company_id": cid})
     return {"status": "success", "deleted": int(getattr(r, "deleted_count", 0) or len(ids)), "message": "Bildirimler silindi."}
 
 @api_router.delete("/notifications/{notif_id}")
@@ -2765,8 +2771,9 @@ async def update_quote(quote_id: str, req: Dict[str, Any], user: dict = Depends(
     if "items" in allowed:
         await _fill_stock_codes(q.get("company_id"), allowed["items"])
         allowed["subtotal"], allowed["vat_total"], allowed["grand_total"] = _calc_items(allowed["items"])
-    await db.quotes.update_one({"_id": quote_id}, {"$set": allowed})
-    return clean_doc(await db.quotes.find_one({"_id": quote_id}))
+    cid = q["company_id"]
+    await db.quotes.update_one({"_id": quote_id, "company_id": cid}, {"$set": allowed})
+    return clean_doc(await db.quotes.find_one({"_id": quote_id, "company_id": cid}))
 
 @api_router.delete("/quotes/{quote_id}")
 async def delete_quote(quote_id: str, user: dict = Depends(get_current_user)):
@@ -2798,9 +2805,10 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None, us
     await db.invoices.insert_one(inv)
     if q.get("payment_plan"):
         await _create_invoice_installments(inv, q["payment_plan"].get("config", {}))
+    cid = q["company_id"]
     if q.get("contact_id"):
-        await db.contacts.update_one({"_id": q["contact_id"]}, {"$inc": {"balance": q["grand_total"]}})
-    await db.quotes.update_one({"_id": quote_id}, {"$set": {"status": "accepted", "invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
+        await db.contacts.update_one({"_id": q["contact_id"], "company_id": cid}, {"$inc": {"balance": q["grand_total"]}})
+    await db.quotes.update_one({"_id": quote_id, "company_id": cid}, {"$set": {"status": "accepted", "invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
     return {"status": "success", "invoice": clean_doc(inv), "message": f"{q['quote_number']} → {inv['invoice_number']} taslak fatura oluşturuldu."}
 
 def _quote_project_sync_fields(q: Dict[str, Any]) -> Dict[str, Any]:
@@ -3032,6 +3040,7 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user)):
 @api_router.put("/projects/{project_id}")
 async def update_project(project_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     prev = await tenant_access.get_tenant_doc(db, "projects", project_id, user, not_found="Proje bulunamadı.")
+    cid = prev["company_id"]
     allowed = {k: v for k, v in req.items() if k in {"name", "contact_id", "contact_name", "status", "budget", "start_date", "end_date", "description", "address", "images", "stage_photos", "tasks", "latitude", "longitude", "location_url", "radius_m"}}
     if "radius_m" in allowed:
         allowed["radius_m"] = _normalize_radius_m(allowed.get("radius_m"), 300) or 300
@@ -3052,12 +3061,12 @@ async def update_project(project_id: str, req: Dict[str, Any], user: dict = Depe
             )
             allowed.update({k: v for k, v in refreshed.items() if k != "show_production_steps"})
         elif prev.get("recipe_id"):
-            recipe = await db.recipes.find_one({"_id": prev["recipe_id"]})
+            recipe = await db.recipes.find_one({"_id": prev["recipe_id"], "company_id": cid})
             if recipe:
                 allowed["recipe_name"] = recipe.get("name") or recipe.get("code") or prev.get("recipe_name")
                 allowed["production_steps"] = pwo.customer_recipe_steps(recipe)
-    await db.projects.update_one({"_id": project_id}, {"$set": allowed})
-    p = await db.projects.find_one({"_id": project_id})
+    await db.projects.update_one({"_id": project_id, "company_id": cid}, {"$set": allowed})
+    p = await db.projects.find_one({"_id": project_id, "company_id": cid})
     if not p:
         raise HTTPException(status_code=404, detail="Proje bulunamadı.")
     if "tasks" in allowed:
@@ -3390,12 +3399,12 @@ async def create_survey(req: Dict[str, Any], user: dict = Depends(get_current_us
 
 @api_router.put("/surveys/{survey_id}")
 async def update_survey(survey_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "surveys", survey_id, user, not_found="Keşif bulunamadı.")
+    s = await tenant_access.get_tenant_doc(db, "surveys", survey_id, user, not_found="Keşif bulunamadı.")
     allowed = {k: v for k, v in req.items() if k in {"contact_id", "contact_name", "address", "survey_date", "assigned_to", "status", "notes", "measurements", "images", "project_id", "latitude", "longitude", "location_url", "radius_m"}}
     if "radius_m" in allowed:
         allowed["radius_m"] = _normalize_radius_m(allowed.get("radius_m"), 300) or 300
-    await db.surveys.update_one({"_id": survey_id}, {"$set": allowed})
-    s = await db.surveys.find_one({"_id": survey_id})
+    await db.surveys.update_one({"_id": survey_id, "company_id": s["company_id"]}, {"$set": allowed})
+    s = await db.surveys.find_one({"_id": survey_id, "company_id": s["company_id"]})
     if not s:
         raise HTTPException(status_code=404, detail="Keşif bulunamadı.")
     return clean_doc(s)
@@ -3447,8 +3456,9 @@ async def convert_survey_to_quote(survey_id: str, user: dict = Depends(get_curre
     items = [_survey_line_to_quote_item(m) for m in s.get("measurements", [])] or [{"name": "Keşif sonrası işçilik/malzeme", "quantity": 1, "unit": "Adet", "unit_price": 0, "vat_rate": 20, "discount_rate": 0}]
     quote = await _create_quote_core({"company_id": s["company_id"], "contact_id": s.get("contact_id"), "contact_name": s.get("contact_name"), "title": f"{s['survey_number']} keşfine dayalı teklif",
                                 "items": items, "notes": s.get("notes", ""), "project_id": s.get("project_id"), "survey_id": survey_id}, user)
-    await db.quotes.update_one({"_id": quote["id"]}, {"$set": {"images": s.get("images", [])}})
-    await db.surveys.update_one({"_id": survey_id}, {"$set": {"status": "quoted", "quote_id": quote["id"]}})
+    cid = s["company_id"]
+    await db.quotes.update_one({"_id": quote["id"], "company_id": cid}, {"$set": {"images": s.get("images", [])}})
+    await db.surveys.update_one({"_id": survey_id, "company_id": cid}, {"$set": {"status": "quoted", "quote_id": quote["id"]}})
     return {"status": "success", "quote": quote, "message": f"{s['survey_number']} → {quote['quote_number']} teklif oluşturuldu.", "advanced": True}
 
 @api_router.post("/auth/register")
@@ -5064,7 +5074,8 @@ async def get_contact(contact_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.put("/contacts/{contact_id}")
 async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    doc = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    cid = doc["company_id"]
     updated = {k: v for k, v in updated.items() if k not in ("id", "_id", "company_id", "balance", "b2b_token", "b2b_password_hash", "created_at")}
     if "is_active" in updated:
         updated["is_active"] = updated.get("is_active") not in (False, 0, "0", "false", "False", None)
@@ -5072,8 +5083,8 @@ async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = 
         updated["b2b_password_hash"] = hash_password(str(updated.pop("b2b_password")))
     else:
         updated.pop("b2b_password", None)
-    await db.contacts.update_one({"_id": contact_id}, {"$set": updated})
-    res = await db.contacts.find_one({"_id": contact_id})
+    await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": updated})
+    res = await db.contacts.find_one({"_id": contact_id, "company_id": cid})
     return clean_doc(res)
 
 @api_router.delete("/contacts/{contact_id}")
@@ -5089,9 +5100,9 @@ async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)
 @api_router.get("/contacts/{contact_id}/statement")
 async def get_contact_statement(contact_id: str, user: dict = Depends(get_current_user)):
     contact = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
-    
-    invoices = await db.invoices.find({"contact_id": contact_id}).to_list(100)
-    payments = await db.bank_transactions.find({"contact_id": contact_id}).to_list(100)
+    cid = contact["company_id"]
+    invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
+    payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
     
     return {
         "contact": clean_doc(contact),
@@ -7148,10 +7159,11 @@ async def b2b_cancel_request(token: str, order_id: str, req: Dict[str, Any] = No
 @api_router.get("/contacts/{contact_id}/aging")
 async def contact_aging(contact_id: str, user: dict = Depends(get_current_user)):
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    cid = c["company_id"]
     today = date.fromisoformat(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     rate = float(c.get("late_fee_rate", 0) or 0)
     rows = []
-    for i in await db.invoices.find({"contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}}).sort("issue_date", 1).to_list(500):
+    for i in await db.invoices.find({"company_id": cid, "contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}}).sort("issue_date", 1).to_list(500):
         remaining = round(i.get("grand_total", 0) - i.get("paid_amount", 0), 2)
         due = i.get("due_date") or i.get("issue_date")
         overdue = (today - date.fromisoformat(due)).days if due else 0
@@ -7163,33 +7175,35 @@ async def contact_aging(contact_id: str, user: dict = Depends(get_current_user))
 @api_router.post("/contacts/{contact_id}/apply-terms")
 async def apply_contact_terms(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    cid = c["company_id"]
     days = int(req.get("payment_term_days", 0) or 0)
     rate = float(req.get("late_fee_rate", 0) or 0)
-    await db.contacts.update_one({"_id": contact_id}, {"$set": {"payment_term_days": days, "late_fee_rate": rate}})
+    await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": {"payment_term_days": days, "late_fee_rate": rate}})
     updated = 0
     if req.get("apply_to_open_invoices"):
-        for i in await db.invoices.find({"contact_id": contact_id, "payment_status": {"$ne": "paid"}}).to_list(500):
+        for i in await db.invoices.find({"company_id": cid, "contact_id": contact_id, "payment_status": {"$ne": "paid"}}).to_list(500):
             new_due = (date.fromisoformat(i.get("issue_date")) + timedelta(days=days)).isoformat()
-            await db.invoices.update_one({"_id": i["_id"]}, {"$set": {"due_date": new_due}})
+            await db.invoices.update_one({"_id": i["_id"], "company_id": cid}, {"$set": {"due_date": new_due}})
             updated += 1
     return {"status": "success", "updated_invoices": updated, "message": f"Vade {days} gün olarak kaydedildi" + (f", {updated} açık faturanın vadesi güncellendi." if updated else ".")}
 
 @api_router.get("/contacts/{contact_id}/installments")
 async def list_contact_balance_installments(contact_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
-    rows = await db.installments.find({"contact_id": contact_id, "invoice_id": None}).sort("no", 1).to_list(200)
+    c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    rows = await db.installments.find({"company_id": c["company_id"], "contact_id": contact_id, "invoice_id": None}).sort("no", 1).to_list(200)
     return [_decorate_installment(r) for r in rows]
 
 @api_router.post("/contacts/{contact_id}/installments")
 async def create_contact_balance_installments(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
-    if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
+    cid = c["company_id"]
+    if await db.installments.count_documents({"company_id": cid, "contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
         raise HTTPException(status_code=400, detail="Ödemesi başlamış bakiye taksit planı yeniden oluşturulamaz.")
     total = float(req.get("total") or abs(c.get("balance", 0)))
     if total <= 0:
         raise HTTPException(status_code=400, detail="Taksitlendirilecek bakiye yok.")
     await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
-    await db.installments.delete_many({"contact_id": contact_id, "invoice_id": None})
+    await db.installments.delete_many({"company_id": cid, "contact_id": contact_id, "invoice_id": None})
     rows = _build_plan(total, req)
     now = datetime.now(timezone.utc).isoformat()
     direction = "receivable" if c.get("balance", 0) >= 0 else "payable"
@@ -7200,19 +7214,21 @@ async def create_contact_balance_installments(contact_id: str, req: Dict[str, An
 
 @api_router.delete("/contacts/{contact_id}/installments")
 async def delete_contact_balance_installments(contact_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
-    if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
+    c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    cid = c["company_id"]
+    if await db.installments.count_documents({"company_id": cid, "contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
     await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
-    await db.installments.delete_many({"contact_id": contact_id, "invoice_id": None})
+    await db.installments.delete_many({"company_id": cid, "contact_id": contact_id, "invoice_id": None})
     return {"status": "success"}
 
 @api_router.get("/contacts/{contact_id}/overview")
 async def get_contact_overview(contact_id: str, user: dict = Depends(get_current_user)):
     contact = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
-    invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).sort("issue_date", -1).to_list(200)
-    payments = await db.bank_transactions.find({"contact_id": contact_id}).sort("date", -1).to_list(200)
-    for ptx in await db.partner_transactions.find({"contact_id": contact_id}).to_list(200):
+    cid = contact["company_id"]
+    invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id, "status": {"$ne": "cancelled"}}).sort("issue_date", -1).to_list(200)
+    payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).sort("date", -1).to_list(200)
+    for ptx in await db.partner_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(200):
         is_out = ptx.get("type") != "withdrawal" or ptx.get("expense_id")
         payments.append({
             **ptx,
@@ -7223,7 +7239,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         })
     # Eski çekler: portföy satırı yoksa Ödemeler'de görünmeleri için sanal satır ekle.
     linked_cheque_ids = {p.get("cheque_id") for p in payments if p.get("cheque_id") and p.get("source") == "cheque"}
-    for ch in await db.cheques.find({"contact_id": contact_id, "status": {"$in": ["open", "collected", "paid", "endorsed"]}}).to_list(200):
+    for ch in await db.cheques.find({"company_id": cid, "contact_id": contact_id, "status": {"$in": ["open", "collected", "paid", "endorsed"]}}).to_list(200):
         if ch["_id"] in linked_cheque_ids:
             continue
         direction = ch.get("direction") or "received"
@@ -7249,11 +7265,11 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             "created_at": ch.get("created_at"),
             "virtual": True,
         })
-    expense_rows = await db.expenses.find({"contact_id": contact_id}).to_list(200)
+    expense_rows = await db.expenses.find({"company_id": cid, "contact_id": contact_id}).to_list(200)
     expense_ids = [e["_id"] for e in expense_rows]
     expense_txs = {}
     if expense_ids:
-        for bt in await db.bank_transactions.find({"expense_id": {"$in": expense_ids}}).to_list(200):
+        for bt in await db.bank_transactions.find({"company_id": cid, "expense_id": {"$in": expense_ids}}).to_list(200):
             expense_txs[str(bt.get("expense_id"))] = bt
     payments = contact_payments.append_contact_outflows(
         payments,
@@ -7276,17 +7292,17 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             o["einvoice_state"] = inv.get("einvoice_state") or o.get("einvoice_state")
             o["invoice_gib_status"] = inv.get("gib_status")
     await _annotate_orders_invoice_mismatch(orders, preloaded=inv_by_id)
-    sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
-    mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(200)
+    sms = await db.sms_logs.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(50)
+    mails = await db.mail_logs.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(200)
     email_deliveries = [m for m in mails if mail_tracking.within_days(m.get("created_at") or "")][:80]
-    wa = await db.whatsapp_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    quotes = await db.quotes.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    surveys = await db.surveys.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"contact_id": contact_id}).sort("due_date", 1).to_list(200)]
+    wa = await db.whatsapp_logs.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    quotes = await db.quotes.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    surveys = await db.surveys.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"company_id": cid, "contact_id": contact_id}).sort("due_date", 1).to_list(200)]
     live_cheque = cheques.open_portfolio_balance(cheques_rows)
     if abs(float(contact.get("cheque_bond_balance") or 0) - live_cheque) > 0.005:
         # BizimHesap chequeandbond snapshot'ı (ör. ERSAY 177.924,83) gerçek portföy değilse sıfırla.
-        await db.contacts.update_one({"_id": contact_id}, {"$set": {"cheque_bond_balance": live_cheque}})
+        await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": {"cheque_bond_balance": live_cheque}})
         contact["cheque_bond_balance"] = live_cheque
     # Ödeme silme / fatura iptali sonrası kaymış bakiyeyi hareketlerden onar.
     live_bal, bal_meta = await contact_balance.sync_contact_balance(db, contact_id)
@@ -7294,7 +7310,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         contact["balance"] = live_bal
         if bal_meta.get("opening_balance") is not None:
             contact["opening_balance"] = bal_meta["opening_balance"]
-    projects = await db.projects.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
+    projects = await db.projects.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails[:50]] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
     total_invoiced = sum(i.get("grand_total", 0) or 0 for i in sales)
@@ -7906,11 +7922,12 @@ async def update_purchase_order_status(po_id: str, req: Dict[str, Any], user: di
         raise HTTPException(status_code=400, detail=f"Geçersiz durum. İzin verilen: {', '.join(po_mod.PO_STATUSES)}")
     if doc.get("order_status") == "invoiced" and status != "invoiced":
         raise HTTPException(status_code=400, detail="Faturalanmış siparişin durumu değiştirilemez.")
+    cid = doc["company_id"]
     await db.purchase_orders.update_one(
-        {"_id": po_id},
+        {"_id": po_id, "company_id": cid},
         {"$set": {"order_status": status, "updated_at": datetime.now(timezone.utc).isoformat()}},
     )
-    return clean_doc(await db.purchase_orders.find_one({"_id": po_id}))
+    return clean_doc(await db.purchase_orders.find_one({"_id": po_id, "company_id": cid}))
 
 
 @api_router.post("/purchase-orders/{po_id}/convert-to-invoice")
@@ -8068,12 +8085,12 @@ async def copy_product(product_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, updated: Dict[str, Any], user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
+    doc = await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
     updated = {k: v for k, v in updated.items() if k not in ("id", "_id", "company_id")}
     updated = {**updated, "updated_at": datetime.now(timezone.utc).isoformat()}
-    await db.products.update_one({"_id": product_id}, {"$set": updated})
+    await db.products.update_one({"_id": product_id, "company_id": doc.get("company_id")}, {"$set": updated})
     if updated.get("category") or updated.get("unit"):
-        cur = await db.products.find_one({"_id": product_id}, {"company_id": 1})
+        cur = await db.products.find_one({"_id": product_id, "company_id": doc.get("company_id")}, {"company_id": 1})
         cid = str((cur or {}).get("company_id") or "").strip()
         if not cid:
             logger.warning("Ürün kategori/birim atlandı: kayıtta firma bilgisi yok (%s)", product_id)
@@ -8082,7 +8099,7 @@ async def update_product(product_id: str, updated: Dict[str, Any], user: dict = 
                 await _remember_category(cid, updated["category"])
             if updated.get("unit"):
                 await _remember_unit(cid, updated["unit"])
-    res = await db.products.find_one({"_id": product_id})
+    res = await db.products.find_one({"_id": product_id, "company_id": doc.get("company_id")})
     return clean_doc(res)
 
 
