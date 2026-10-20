@@ -24,9 +24,38 @@ def _date(value: Any) -> str:
     return str(value or "")[:10]
 
 
-def statement_rows(invoices: Optional[List[dict]], payments: Optional[List[dict]]) -> List[dict]:
-    """Personel ekstresiyle aynı borç/alacak sırası (iptal fatura ve virman hariç)."""
+def _cheque_statement_row(ch: dict) -> dict:
+    """Detaylı ekstredeki çek/senet satırı (buildStatementRows includeCheques)."""
+    received = ch.get("direction") in ("received", "inflow")
+    kind_name = "Senet" if ch.get("instrument") == "promissory" else "Çek"
+    label = "Alınan" if received else "Verilen"
+    doc = f"{label} {kind_name}"
+    if ch.get("serial_no"):
+        doc += f" • {ch.get('serial_no')}"
+    if ch.get("bank_name"):
+        doc += f" • {ch.get('bank_name')}"
+    amount = _num(ch.get("amount"))
+    return {
+        "date": _date(ch.get("due_date") or ch.get("issue_date") or ch.get("date")),
+        "doc": doc,
+        "debit": 0.0 if received else amount,
+        "credit": amount if received else 0.0,
+        "kind": "cheque",
+    }
+
+
+def statement_rows(
+    invoices: Optional[List[dict]],
+    payments: Optional[List[dict]],
+    cheques: Optional[List[dict]] = None,
+) -> List[dict]:
+    """Personel ekstresiyle aynı borç/alacak sırası (iptal fatura ve virman hariç).
+
+    cheques boşsa çıktı değişmez. Doluysa çek/senet satırları eklenir; cheque_id'si
+    zaten bir tahsilat/ödeme satırında olan kayıt ikinci kez yazılmaz.
+    """
     rows: List[dict] = []
+    linked_cheques = set()
     for inv in invoices or []:
         if not isinstance(inv, dict) or inv.get("status") == "cancelled":
             continue
@@ -43,6 +72,8 @@ def statement_rows(invoices: Optional[List[dict]], payments: Optional[List[dict]
     for pay in payments or []:
         if not isinstance(pay, dict) or pay.get("type") == "transfer":
             continue
+        if pay.get("cheque_id"):
+            linked_cheques.add(str(pay.get("cheque_id")))
         inflow = pay.get("type") == "inflow"
         amount = _num(pay.get("amount"))
         account = pay.get("account_name") or ""
@@ -58,6 +89,13 @@ def statement_rows(invoices: Optional[List[dict]], payments: Optional[List[dict]
             "credit": amount if inflow else 0.0,
             "kind": "payment",
         })
+    for ch in cheques or []:
+        if not isinstance(ch, dict):
+            continue
+        cheque_key = str(ch.get("_id") or ch.get("id") or "")
+        if cheque_key and cheque_key in linked_cheques:
+            continue
+        rows.append(_cheque_statement_row(ch))
     rows.sort(key=lambda r: r.get("date") or "")
     bal = 0.0
     out = []

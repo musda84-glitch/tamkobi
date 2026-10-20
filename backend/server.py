@@ -6294,6 +6294,70 @@ def b2b_invoice_lines_view(invoice: dict, products: Optional[dict] = None) -> di
     }
 
 
+_B2B_STATEMENT_LIMIT = 500
+_B2B_DEAD_STATUS = {"cancelled", "canceled", "void", "deleted", "iptal"}
+_B2B_CHEQUE_STATUSES = {"open", "collected", "paid", "endorsed"}
+
+
+def _b2b_statement_dead(doc: dict) -> bool:
+    """Silinmiş veya iptal edilmiş hareket ekstreye girmez."""
+    if not isinstance(doc, dict):
+        return True
+    status = str(doc.get("status") or "").strip().lower()
+    if status in _B2B_DEAD_STATUS:
+        return True
+    if doc.get("deleted_at"):
+        return True
+    if doc.get("is_deleted") in (True, 1, "1", "true", "True"):
+        return True
+    if doc.get("deleted") in (True, 1, "1", "true", "True"):
+        return True
+    return False
+
+
+def _b2b_public_statement_row(row: dict) -> dict:
+    """Bayiye yalnız ekstre alanları. Hesap, iç not, oluşturan ve maliyet yok."""
+    return {
+        "date": row.get("date") or "",
+        "doc": row.get("doc") or "",
+        "debit": row.get("debit") or 0,
+        "credit": row.get("credit") or 0,
+        "balance": row.get("balance") or 0,
+        "kind": row.get("kind") or "",
+    }
+
+
+async def _b2b_portal_statement(contact: dict, invoices: List[dict]) -> Dict[str, Any]:
+    """Fatura + kasa/banka hareketi. Bakiye statement_rows ile kurulur."""
+    company_id = contact.get("company_id")
+    contact_id = contact.get("_id")
+    raw_payments = await db.bank_transactions.find(
+        {"company_id": company_id, "contact_id": contact_id, "type": {"$ne": "transfer"}},
+    ).sort("date", -1).to_list(_B2B_STATEMENT_LIMIT)
+    payments = [row for row in raw_payments if not _b2b_statement_dead(row)]
+    cheques = []
+    for ch in await db.cheques.find(
+        {"company_id": company_id, "contact_id": contact_id},
+    ).sort("due_date", -1).to_list(_B2B_STATEMENT_LIMIT):
+        if _b2b_statement_dead(ch):
+            continue
+        status = str(ch.get("status") or "open").strip().lower()
+        if status not in _B2B_CHEQUE_STATUSES:
+            continue
+        # Taksit senedi ve skip_ledger cari bakiyeye yazılmaz; ekstreye de girmez.
+        if ch.get("skip_ledger") or ch.get("installment_id"):
+            continue
+        cheques.append(ch)
+    rows = [
+        _b2b_public_statement_row(row)
+        for row in statement_share.statement_rows(invoices, payments, cheques)
+    ]
+    return {
+        "rows": rows,
+        "payments": [row for row in rows if row.get("kind") != "invoice"],
+    }
+
+
 @api_router.get("/public/b2b/{token}")
 async def b2b_portal(token: str):
     c = await _b2b_contact(token)
@@ -6335,14 +6399,22 @@ async def b2b_portal(token: str):
                 it["manufacturer_code"] = p.get("manufacturer_code")
     await _enrich_b2b_orders_production(orders)
     orders = _sort_b2b_cart_orders(orders)
-    invoices = [_b2b_invoice_summary(i) for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
+    if bs.get("show_statement", True):
+        invoice_docs = await db.invoices.find(
+            {"company_id": c["company_id"], "contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}},
+        ).sort("issue_date", -1).to_list(_B2B_STATEMENT_LIMIT)
+        invoices = [_b2b_invoice_summary(i) for i in invoice_docs]
+        statement = await _b2b_portal_statement(c, invoice_docs)
+    else:
+        invoices = []
+        statement = {"rows": [], "payments": []}
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
     ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
     vpos_cfg = await db.vpos_configs.find_one({"company_id": c["company_id"]})
     return {"contact": {"name": c.get("name"), "balance": c.get("balance", 0), "discount": disc, "phone": c.get("phone"), "email": c.get("email"), "address": c.get("address"), "city": c.get("city"), "has_password": bool(c.get("b2b_password_hash"))},
             "company": {"name": company.get("name"), "phone": company.get("phone"), "email": company.get("email"), "logo_url": company.get("logo_url"), "iban": company.get("iban"), "bank_name": company.get("bank_name"), "price_decimals": clamp_price_decimals(company.get("price_decimals", 2))},
-            "products": products, "orders": orders, "invoices": invoices if bs.get("show_statement", True) else [], "installments": insts if bs.get("show_installments", True) else [],
+            "products": products, "orders": orders, "invoices": invoices, "statement": statement, "installments": insts if bs.get("show_installments", True) else [],
             "settings": {**{k: bs.get(k) for k in ("show_stock", "show_prices", "allow_orders", "show_statement", "show_installments", "min_order_amount", "welcome_note")}, "allow_ai_cart": ai_cart, "card_payment": b2b_card_payment_view(bs, vpos_cfg)},
             "legal": [{"slug": s, "title": legal_docs.TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in legal_docs.SLUGS],
             "card_order_required": _b2b_card_order_required(bs, vpos_cfg)}

@@ -862,7 +862,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', 'b2b_login', 'contacts', 'update_one'): 2,
     ('server.py', 'b2b_portal', 'cargo_shipments', 'find'): 1,
     ('server.py', 'b2b_portal', 'installments', 'find'): 1,
-    ('server.py', 'b2b_portal', 'invoices', 'find'): 1,
     ('server.py', 'b2b_portal', 'products', 'find'): 1,
     ('server.py', 'b2b_reset_get', 'contacts', 'find_one'): 1,
     ('server.py', 'b2b_reset_post', 'contacts', 'find_one'): 2,
