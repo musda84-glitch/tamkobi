@@ -7,6 +7,13 @@ const POLL_MS = 20_000;
 
 const MesaimGateContext = createContext(null);
 
+let refreshExternal = async () => {};
+
+/** Sağlayıcı dışından son kapı yenilemesi (axios interceptor bu dosyada değil). */
+export function refreshMesaimGate() {
+  return refreshExternal();
+}
+
 /** Personel çıkış sonrası / giriş öncesi yalnızca Mesaim erişimi (web). */
 export function MesaimGateProvider({ children }) {
   const { user, authenticated } = useAuth();
@@ -48,6 +55,13 @@ export function MesaimGateProvider({ children }) {
       window.removeEventListener("focus", onFocus);
     };
   }, [authenticated, refresh, user?.employee_id]);
+
+  useEffect(() => {
+    refreshExternal = refresh;
+    return () => {
+      if (refreshExternal === refresh) refreshExternal = async () => {};
+    };
+  }, [refresh]);
 
   const locked = mesaimExclusiveUntilCheckIn(user, today);
   const value = useMemo(() => ({ locked, today, ready, refresh }), [locked, today, ready, refresh]);

@@ -125,6 +125,7 @@ import comm_service
 import cargo_providers
 import cargo_label
 import rbac
+import mesaim_gate
 import expenses
 import tax_obligations
 import vehicles
@@ -260,6 +261,7 @@ app.add_middleware(
 
 api_router = APIRouter(prefix="/api")
 app.add_middleware(applog.RequestLogMiddleware)
+app.add_middleware(mesaim_gate.MesaimGateMiddleware)
 app.add_middleware(rbac.PermissionAndAuditMiddleware)
 
 def clean_doc(doc: dict) -> dict:
@@ -26096,6 +26098,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = None, user: dict 
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 shopfloor_accounts.init(db, get_current_user)
+mesaim_gate.init(db)
 company_audit.init(db, get_current_user)
 import tenant_db
 tenant_db.init(db, get_current_user)

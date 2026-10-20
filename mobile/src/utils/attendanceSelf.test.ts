@@ -53,6 +53,8 @@ describe("mesaimExclusiveUntilCheckIn", () => {
     expect(mesaimExclusiveUntilCheckIn({ role: "admin", employee_id: "e1" }, { check_out: "17:00" })).toBe(false);
     expect(mesaimExclusiveUntilCheckIn({ role: "manager", employee_id: "e1" }, {})).toBe(false);
     expect(mesaimExclusiveUntilCheckIn({ role: "personel" }, { check_out: "17:00" })).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn({ role: "personel", employee_id: "e1", skip_check_in: true }, { check_out: "17:00" })).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn({ role: "personel", employee_id: "e1", skip_check_in: true }, {})).toBe(false);
   });
 
   it("keeps Özet and Mesaim open while locking other paths to home", () => {

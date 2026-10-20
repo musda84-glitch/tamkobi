@@ -201,6 +201,9 @@ def _user(uid, role, *, employee_id=None, superadmin=False, companies=None, acti
     }
     if employee_id:
         doc["employee_id"] = employee_id
+        # Bu dosya satır kapsamını ölçer. Mesai kilidi personel kartlı kullanıcıyı
+        # girişsizken 403 yapar; kapsam örnekleri puantaj sisteminin dışındadır.
+        doc["skip_check_in"] = True
     return doc
 
 

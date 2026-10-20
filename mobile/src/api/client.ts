@@ -1,3 +1,4 @@
+import { isMesaimLockedBody, notifyMesaimLocked } from "../auth/mesaimLockSignal";
 import { saveApiBase } from "../auth/storage";
 import { ApiHttpError, apiErrorMessage } from "./errors";
 import {
@@ -146,10 +147,7 @@ export async function request<T>(
       data = { detail: text };
     }
   }
-  if (!res.ok) {
-    const message = apiErrorMessage({ status: res.status, response: { data, status: res.status } }, `HTTP ${res.status}`);
-    throw new ApiHttpError(res.status, (data as { detail?: unknown })?.detail, message);
-  }
+  if (!res.ok) failResponse(res.status, data, `HTTP ${res.status}`);
   return data as T;
 }
 
@@ -177,10 +175,14 @@ export async function upload<T>(client: ApiClient, path: string, form: FormData,
       data = { detail: text };
     }
   }
-  if (!res.ok) {
-    throw new ApiHttpError(res.status, (data as { detail?: unknown })?.detail, apiErrorMessage({ status: res.status, response: { data, status: res.status } }, `HTTP ${res.status}`));
-  }
+  if (!res.ok) failResponse(res.status, data, `HTTP ${res.status}`);
   return data as T;
+}
+
+function failResponse(status: number, data: unknown, fallback: string): never {
+  if (status === 403 && isMesaimLockedBody(data)) notifyMesaimLocked();
+  const message = apiErrorMessage({ status, response: { data, status } }, fallback);
+  throw new ApiHttpError(status, (data as { detail?: unknown } | null)?.detail, message);
 }
 
 export const get = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "GET", path, { query });

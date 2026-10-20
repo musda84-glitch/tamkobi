@@ -197,7 +197,7 @@ class MemDB:
         return None
 
 
-def _user(uid, company_ids, active, *, role="admin", superadmin=False, name=None, employee_id=None):
+def _user(uid, company_ids, active, *, role="admin", superadmin=False, name=None, employee_id=None, skip_check_in=False):
     doc = {
         "_id": uid,
         "id": uid,
@@ -212,6 +212,9 @@ def _user(uid, company_ids, active, *, role="admin", superadmin=False, name=None
     }
     if employee_id:
         doc["employee_id"] = employee_id
+    if skip_check_in:
+        # Atölye portal kullanıcısı satır kapsamını ölçer; mesai kilidinin konusu değildir.
+        doc["skip_check_in"] = True
     return doc
 
 
@@ -366,7 +369,7 @@ def api():
         _user("user-plain", [COMP_A], COMP_A, name="Duz Admin"),
         _user("user-sa", [], "", superadmin=True, name="Super"),
         _user("user-sa-a", [COMP_A], COMP_A, superadmin=True, name="Super A"),
-        _user("user-atolye", [COMP_A], COMP_A, role="personel", name="Atolye", employee_id="empA"),
+        _user("user-atolye", [COMP_A], COMP_A, role="personel", name="Atolye", employee_id="empA", skip_check_in=True),
     ])
     _seed(db)
     prev = _bind(db)

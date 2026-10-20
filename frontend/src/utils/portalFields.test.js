@@ -32,6 +32,13 @@ describe("portal field menu", () => {
     expect(ikFieldDenied("/vehicles", { role: "admin" })).toBe(false);
   });
 
+  test("mesaim lock hides every link except Mesaim, including Personelim", () => {
+    const user = { ...personel, features: { portal_atolye: true } };
+    expect(visibleIkLinks(user, { mesaimLocked: true }).map((l) => l.to)).toEqual(["/mesai"]);
+    expect(visibleIkLinks(user).map((l) => l.to)).toContain("/atolye");
+    expect(visibleIkLinks(user).map((l) => l.to)).toContain("/personelim");
+  });
+
   test("portal_orders opens only the orders menu for personnel", () => {
     const user = { role: "personel", features: { portal_orders: true } };
     const labels = visibleIkLinks(user).map((l) => l.to);

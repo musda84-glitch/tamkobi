@@ -37,8 +37,12 @@ export function hasPortalFeature(user, key) {
   return user.features?.[key] === true;
 }
 
-export function visibleIkLinks(user) {
-  return IK_PORTAL_LINKS.filter((link) => link.always || hasPortalFeature(user, link.feature));
+export function visibleIkLinks(user, opts) {
+  const mesaimLocked = Boolean(opts && opts.mesaimLocked);
+  return IK_PORTAL_LINKS.filter((link) => {
+    if (mesaimLocked && link.to !== "/mesai") return false;
+    return link.always || hasPortalFeature(user, link.feature);
+  });
 }
 
 export function ikFieldDenied(pathname, user) {
