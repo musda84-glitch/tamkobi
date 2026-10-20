@@ -30,6 +30,10 @@ export const COMPACT = {
 
 export type OverviewSectionKey = "today" | "panels" | "month" | "stock" | "production" | "projects";
 
+/**
+ * Kalıcı bölüm anahtarları (AsyncStorage). Bu metinler veri sözleşmesidir;
+ * yeniden adlandırma yasak: "today", "panels", "month", "stock", "production", "projects".
+ */
 export const DEFAULT_OVERVIEW_SECTION_ORDER: OverviewSectionKey[] = [
   "today",
   "panels",
@@ -38,6 +42,13 @@ export const DEFAULT_OVERVIEW_SECTION_ORDER: OverviewSectionKey[] = [
   "production",
   "projects",
 ];
+
+/** DEFAULT_OVERVIEW_SECTION_ORDER ile aynı küme. Kalıcı anahtar; yeniden adlandırma yasak. */
+export const OVERVIEW_SECTION_KEYS: readonly OverviewSectionKey[] = DEFAULT_OVERVIEW_SECTION_ORDER;
+
+export function isOverviewSectionKey(value: unknown): value is OverviewSectionKey {
+  return typeof value === "string" && (OVERVIEW_SECTION_KEYS as readonly string[]).includes(value);
+}
 
 export type OverviewKpi = {
   key: string;

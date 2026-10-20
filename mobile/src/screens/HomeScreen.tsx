@@ -9,6 +9,7 @@ import type { ActionTile } from "../components/ActionTiles";
 import { HomeOverviewPage } from "../components/home/HomeOverviewPage";
 import { HomePanels, type HomePanelProps } from "../components/home/HomePanels";
 import { HomeTilesPage } from "../components/home/HomeTilesPage";
+import { DEFAULT_OVERVIEW_SECTION_ORDER, type OverviewSectionKey } from "../components/home/overviewSections";
 import { Badge, Card, Muted, Row, Screen } from "../components/kit";
 import { goHref } from "../nav";
 import { colors } from "../theme";
@@ -26,6 +27,7 @@ import {
   serializeExtraTileIds,
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
+import { readHomeOverviewOrder } from "../utils/homeOverviewOrder";
 import { readHomeStartPage, startPageIndex } from "../utils/homeStartPage";
 import { idOf } from "../utils/money";
 import { resolveMediaUrl } from "../utils/media";
@@ -61,11 +63,15 @@ export function HomeScreen() {
   const [clearingNotes, setClearingNotes] = useState(false);
   const [startReady, setStartReady] = useState(false);
   const [startIndex, setStartIndex] = useState(0);
+  const [overviewOrder, setOverviewOrder] = useState<OverviewSectionKey[]>(() => [...DEFAULT_OVERVIEW_SECTION_ORDER]);
+  const [overviewOrderScope, setOverviewOrderScope] = useState("");
   const [page, setPage] = useState(0);
   const [frameHeight, setFrameHeight] = useState(0);
   const [dotsHeight, setDotsHeight] = useState(0);
 
   const showFinance = showHomeFinanceSummary(user);
+  const overviewScope = `${String(user?.id || "")}:${String(companyId || "")}`;
+  const visibleOverviewOrder = overviewOrderScope === overviewScope ? overviewOrder : DEFAULT_OVERVIEW_SECTION_ORDER;
   const showRefresh = showHomeRefreshTile(user);
   const showApprovals = showHomeApprovals(user);
   const role = (user?.role || "").toLowerCase();
@@ -172,6 +178,20 @@ export function HomeScreen() {
       setStartIndex(index);
       setPage(index);
       setStartReady(true);
+    });
+    return () => { live = false; };
+  }, [showFinance, user?.id, companyId]);
+
+  useEffect(() => {
+    if (!showFinance) return undefined;
+    let live = true;
+    const userId = String(user?.id || "");
+    const company = String(companyId || "");
+    const nextScope = `${userId}:${company}`;
+    readHomeOverviewOrder(userId, company).then((order) => {
+      if (!live) return;
+      setOverviewOrder(order);
+      setOverviewOrderScope(nextScope);
     });
     return () => { live = false; };
   }, [showFinance, user?.id, companyId]);
@@ -344,6 +364,7 @@ export function HomeScreen() {
               overview={overview}
               manager={manager}
               {...panelProps}
+              sectionOrder={visibleOverviewOrder}
             />
           </Screen>
         </View>

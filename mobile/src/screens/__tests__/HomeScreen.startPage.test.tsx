@@ -163,6 +163,7 @@ const overview = {
 };
 
 let startRaw: string | null = null;
+let orderRaw: string | null = null;
 
 function paths() {
   return (get as jest.Mock).mock.calls.map((call) => String(call[1]));
@@ -193,11 +194,15 @@ describe("HomeScreen start page", () => {
 
   beforeEach(() => {
     startRaw = null;
+    orderRaw = null;
     mockAuth.user = { id: "uid-1", name: "Mustafa Yılmaz", email: "m@tamkobi.com", role: "admin" };
     mockAuth.companyId = "cid-1";
-    (AsyncStorage.getItem as jest.Mock).mockImplementation(async (key: string) => (
-      String(key).includes("start_page") ? startRaw : null
-    ));
+    (AsyncStorage.getItem as jest.Mock).mockImplementation(async (key: string) => {
+      const id = String(key);
+      if (id.includes("start_page")) return startRaw;
+      if (id.includes("overview_order")) return orderRaw;
+      return null;
+    });
     (AsyncStorage.getItem as jest.Mock).mockClear();
     (AsyncStorage.setItem as jest.Mock).mockClear();
     (get as jest.Mock).mockImplementation(async (_client: unknown, path: string) => {
@@ -271,6 +276,7 @@ describe("HomeScreen start page", () => {
     expect(findTestIdPrefix(container, "home-task-")).toBeTruthy();
     expect(textOf(container)).toContain("Bugünkü işler");
     expect(storageKeys().some((key) => key.includes("start_page"))).toBe(false);
+    expect(storageKeys().some((key) => key.includes("overview_order"))).toBe(false);
     expect(paths().some((path) => path.includes("manager-summary"))).toBe(false);
 
     await act(async () => { root.unmount(); });
@@ -287,9 +293,40 @@ describe("HomeScreen start page", () => {
     expect(findTestIdPrefix(container, "home-notifications-")).toBeTruthy();
     expect(textOf(container)).toContain("Bugünkü işler");
     expect(storageKeys().some((key) => key.includes("start_page"))).toBe(false);
+    expect(storageKeys().some((key) => key.includes("overview_order"))).toBe(false);
     expect(paths().some((path) => path.includes("manager-summary"))).toBe(false);
   });
+
+  it("applies a saved overview order and keeps today first when nothing is stored", async () => {
+    orderRaw = JSON.stringify(["month", "today", "stock", "panels", "production", "projects"]);
+    await show();
+    expect(storageKeys()).toContain("tamkobi.home.overview_order.v1:uid-1:cid-1");
+    expect(sectionIds(container)[0]).toBe("home-overview-section-month");
+
+    await act(async () => { root.unmount(); });
+    container.parentNode?.removeChild(container);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    orderRaw = null;
+    (AsyncStorage.getItem as jest.Mock).mockClear();
+    await show();
+    expect(sectionIds(container)[0]).toBe("home-overview-section-today");
+  });
 });
+
+function sectionIds(node: unknown): string[] {
+  const out: string[] = [];
+  const walk = (current: unknown) => {
+    if (!current || typeof current !== "object") return;
+    const el = current as { getAttribute?: (name: string) => string | null; childNodes?: Iterable<unknown> };
+    const id = el.getAttribute?.("data-testid");
+    if (typeof id === "string" && id.startsWith("home-overview-section-")) out.push(id);
+    for (const child of el.childNodes || []) walk(child);
+  };
+  walk(node);
+  return out;
+}
 
 function findTestIdPrefix(node: any, prefix: string): any {
   if (!node) return null;
