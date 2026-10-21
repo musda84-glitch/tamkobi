@@ -446,6 +446,52 @@ def test_sso_handoff_one_time_and_expired():
     asyncio.run(run())
 
 
+def test_sso_b2b_and_unknown_host_reject_without_cookie_or_consume():
+    """b2b and any non app/ik/ynt/site kind must not mint a cookie or burn the code."""
+    import server
+    import sso_public
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    auth_handoff.reset_table_ready_for_tests()
+    db = _HandoffDb()
+
+    async def find_one(query=None, *args, **kwargs):
+        return None
+
+    db.users = SimpleNamespace(find_one=find_one)
+    app = FastAPI()
+    sso_public.mount_public_sso(app)
+
+    async def mint():
+        token = auth_utils.create_access_token("u1", "ada@example.com", "admin", aud="app")
+        blob = json.dumps({"access_token": token, "sa_return": ""})
+        return await auth_handoff.create_handoff(db, blob, purpose="impersonate")
+
+    b2b_code = asyncio.run(mint())
+    unknown_code = asyncio.run(mint())
+    with patch.object(server, "db", db):
+        b2b = TestClient(app, base_url="https://b2b.tamkobi.com")
+        denied = b2b.get(f"/sso?code={b2b_code}", follow_redirects=False)
+        with patch.object(sso_public.ha, "host_kind", return_value="unknown"):
+            mystery = TestClient(app, base_url="https://app.tamkobi.com")
+            unknown = mystery.get(f"/sso?code={unknown_code}", follow_redirects=False)
+
+    for response in (denied, unknown):
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Handoff bu host için geçerli değil"
+        cookies = ",".join(response.headers.get_list("set-cookie")).lower()
+        assert "access_token=" not in cookies
+        assert "sa_return=" not in cookies
+
+    assert db._pool.store[b2b_code]["used_at"] is None
+    assert db._pool.store[unknown_code]["used_at"] is None
+    redeemed = asyncio.run(auth_handoff.consume_handoff(db, b2b_code))
+    assert json.loads(redeemed)["access_token"]
+    assert db._pool.store[b2b_code]["used_at"] is not None
+    assert db._pool.store[unknown_code]["used_at"] is None
+
+
 def test_sso_exchange_rejects_aud_host_mismatch():
     import server
     from server import SsoExchangeRequest

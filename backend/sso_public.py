@@ -22,6 +22,8 @@ from auth_utils import (
 )
 
 _ROUTE_NAME = "public_sso_handoff"
+# Cookie handoff hosts. b2b uses URL tokens and has no JWT audience check.
+_SSO_KINDS = frozenset({ha.KIND_APP, ha.KIND_IK, ha.KIND_YNT, ha.KIND_SITE})
 
 
 def safe_next_path(raw: str, fallback: str) -> str:
@@ -42,12 +44,21 @@ def default_next_path(kind: str) -> str:
     return "/sistem/sirketler"
 
 
+def _sso_kind_or_401(request: Request) -> str:
+    """Allow app, ik, ynt, and site. Reject b2b and any other kind before consume."""
+    kind = ha.host_kind(request)
+    if kind not in _SSO_KINDS:
+        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
+    return kind
+
+
 async def complete_sso_exchange(
     db, code: str, request: Request, *, next_query: str = ""
 ) -> dict:
     """Consume the code once and describe the cookie + redirect. Raises 401 on reuse."""
     import json as _json
 
+    kind = _sso_kind_or_401(request)
     blob = await auth_handoff.consume_handoff(db, code)
     try:
         data = _json.loads(blob)
@@ -57,7 +68,6 @@ async def complete_sso_exchange(
     sa_ret = data.get("sa_return") or ""
     if not access:
         raise HTTPException(status_code=401, detail="Geçersiz handoff")
-    kind = ha.host_kind(request)
     try:
         payload = decode_access_payload(access)
     except Exception:

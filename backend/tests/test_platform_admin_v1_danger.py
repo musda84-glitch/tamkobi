@@ -703,6 +703,43 @@ def test_idempotency_replay_and_conflict(db):
     assert end_clash.status_code == 409
 
 
+def test_operator_email_lookup_is_one_lower_query(monkeypatch):
+    """Karışık harf, users tablosunu taramadan tek LOWER sorgusuyla bulunur."""
+    import mysql_store
+
+    coll = mysql_store.MySQLCollection(SimpleNamespace(), "users")
+    calls = []
+
+    async def load_sql(sql, params):
+        calls.append((" ".join(sql.split()), list(params)))
+        return [{
+            "_id": "usr_mix",
+            "email": "Mix@Example.com",
+            "is_super_admin": 1,
+            "is_active": True,
+        }]
+
+    async def find(*_args, **_kwargs):
+        raise AssertionError("users.find tablo taraması olmamalı")
+
+    async def find_one(*_args, **_kwargs):
+        raise AssertionError("ikinci sorgu olmamalı")
+
+    coll._load_sql = load_sql
+    coll.find = find
+    coll.find_one = find_one
+    monkeypatch.setattr(platform_admin_v1_danger.saas, "_db", SimpleNamespace(users=coll))
+
+    user = asyncio.run(platform_admin_v1_danger._find_user_by_email("  MIX@example.com "))
+    assert user["email"] == "Mix@Example.com"
+    assert len(calls) == 1
+    sql, params = calls[0]
+    assert "LOWER(" in sql.upper()
+    assert params == ["users", "mix@example.com"]
+    assert asyncio.run(platform_admin_v1_danger._find_user_by_email("   ")) is None
+    assert calls == [(sql, params)]
+
+
 def test_mixed_case_truthy_super_admin_passes_and_keeps_stored_email(db):
     """Giriş strip().lower() kullanır. Karışık kayıt ve truthy is_super_admin geçer.
 

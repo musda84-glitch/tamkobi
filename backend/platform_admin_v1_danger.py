@@ -72,26 +72,36 @@ def _email_key(value: Any) -> str:
     return value.strip().lower() if isinstance(value, str) else ""
 
 
+_USER_BY_LOWER_EMAIL_SQL = (
+    "SELECT doc FROM docs "
+    "WHERE collection=%s "
+    "AND LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.email')))) = %s "
+    "LIMIT 1"
+)
+
+
 async def _find_user_by_email(raw: str):
     """Login ve kullanıcı oluşturma strip().lower() yazar.
 
-    Önce kanonik e-posta, yoksa kayıtlı karışık büyük/küçük harf.
-    Dönüş belgedeki e-postadır; OTP sorgusu onu birebir arar.
+    Tek sorgu: LOWER(TRIM(email)) = strip().lower(). Belgedeki e-posta
+    olduğu gibi döner; sonraki OTP sorgusu onu birebir arar.
     """
     lowered = _email_key(raw)
     if not lowered:
         return None
-    user = await saas._db.users.find_one({"email": lowered})
-    if user:
-        return user
-    cursor = saas._db.users.find({})
-    rows = await cursor.to_list(None)
-    for row in rows or []:
-        if not isinstance(row, dict):
-            continue
-        if _email_key(row.get("email")) == lowered:
-            return row
-    return None
+    coll = saas._db.users
+    from mysql_store import MySQLCollection
+
+    if isinstance(coll, MySQLCollection):
+        rows = await coll._load_sql(_USER_BY_LOWER_EMAIL_SQL, ["users", lowered])
+        return rows[0] if rows else None
+    docs = getattr(coll, "docs", None)
+    if isinstance(docs, dict):
+        for row in docs.values():
+            if isinstance(row, dict) and _email_key(row.get("email")) == lowered:
+                return row
+        return None
+    return await coll.find_one({"email": lowered})
 
 
 async def _operator_or_403(payload: Dict[str, Any]) -> str:
