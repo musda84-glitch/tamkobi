@@ -48,19 +48,26 @@ function contactTotalPages(total, pageSize) {
   return Math.max(1, Math.ceil((Number(total) || 0) / size) || 1);
 }
 
+function withoutContactSearchParams(prev) {
+  const next = new URLSearchParams(prev);
+  next.delete("search");
+  next.delete("q");
+  return next.toString() === prev.toString() ? prev : next;
+}
+
 export default function ContactsPage() {
   const { activeCompany } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const detailContactId = searchParams.get("contact_id");
   const [contacts, setContacts] = useState([]);
   const [filterType, setFilterType] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [flags, setFlags] = useState({});
   const [finFilter, setFinFilter] = useState("all");
-  const [searchTerm, setSearchTerm] = useState(() => new URLSearchParams(window.location.search).get("search") || "");
+  const [searchTerm, setSearchTerm] = useState(() => searchParams.get("search") || "");
   const [loading, setLoading] = useState(true);
   const [messageContact, setMessageContact] = useState(null);
   const [locationContact, setLocationContact] = useState(null);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const detailContactId = searchParams.get("contact_id");
   const companyId = activeCompanyId(activeCompany);
   const serverPaging = isContactsServerPagingEnabled();
   const [page, setPage] = useState(1);
@@ -180,7 +187,18 @@ export default function ContactsPage() {
   }, [companyId, pageSize, filterType, statusFilter, finFilter, sort, searchTerm]);
 
 
+  const clearContactSearch = useCallback(() => {
+    setSearchTerm("");
+    if (!searchParams.get("search") && !searchParams.get("q")) return;
+    setSearchParams((prev) => withoutContactSearchParams(prev), { replace: true });
+  }, [searchParams, setSearchParams]);
+  const openContact = useCallback((contact) => {
+    setSearchTerm("");
+    setSearchParams({ contact_id: contact.id || contact._id });
+  }, [setSearchParams]);
+
   const openStatement = async (contact) => {
+    clearContactSearch();
     setSelectedContactStatement(contact);
     try {
       const res = await axios.get(`${API_URL}/contacts/${contact.id || contact._id}/statement`);
@@ -324,7 +342,7 @@ export default function ContactsPage() {
       <div className="space-y-2" data-testid="contacts-list">
         {filtered.length === 0 && !(serverPaging && loading) && <div className="bg-white rounded-xl border p-8 text-center text-sm text-slate-400" data-testid="contacts-empty">Filtreye uyan cari yok.</div>}
         {visibleContacts.map((contact) => (
-          <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => setSearchParams({ contact_id: contact.id })} onEdit={() => setEditContact(contact)} onMessage={() => setMessageContact(contact)} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
+          <ContactRow key={contact.id || contact._id} contact={contact} flag={flags[contact.id]} onOpen={() => openContact(contact)} onEdit={() => { clearContactSearch(); setEditContact(contact); }} onMessage={() => { clearContactSearch(); setMessageContact(contact); }} onStatement={() => openStatement(contact)} onLocation={() => setLocationContact(contact)} />
         ))}
         {serverPaging && (
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs pt-1" data-testid="contacts-pager">
