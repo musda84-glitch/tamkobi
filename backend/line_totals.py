@@ -178,6 +178,64 @@ def invoice_document_totals(
     }
 
 
+def _snap_last_amount(lines: List[Dict[str, float]], key: str, target: float) -> None:
+    """Kuruş farkını son satıra yükle; toplam hedefe kuruşu kuruşuna eşitlensin."""
+    if not lines:
+        return
+    current = round(sum(line[key] for line in lines), 2)
+    gap = round(float(target) - current, 2)
+    if abs(gap) < 0.001:
+        return
+    lines[-1][key] = round(lines[-1][key] + gap, 2)
+
+
+def general_discount_tax_bases(
+    items: Iterable[Mapping[str, Any]],
+    general_discount_rate: Any = 0,
+    general_discount_amount: Any = 0,
+) -> Dict[str, Any]:
+    """Belge iskontosu sonrası satır ve KDV oranı bazında matrah / KDV.
+
+    Matrah ``round(total * factor, 2)``, KDV ``_line_vat_after_factor`` ile
+    ``invoice_document_totals`` ile aynı kuruştur. Satır birim fiyatı ve
+    ``total`` değişmez. Oran grupları ile satırların toplamı belge ara toplamı
+    ve KDV'sine eşittir; kuruş farkı son satıra yazılır.
+    """
+    rows = [i for i in (items or []) if isinstance(i, Mapping)]
+    items_sum = sum(_f(i.get("total")) for i in rows)
+    gd_rate = _f(general_discount_rate)
+    gd_amt = _f(general_discount_amount)
+    gd = gd_amt if gd_amt else items_sum * gd_rate / 100.0
+    gd = round(min(max(gd, 0.0), items_sum), 2)
+    factor = (items_sum - gd) / items_sum if items_sum else 1.0
+    totals = invoice_document_totals(rows, general_discount_rate, general_discount_amount)
+    lines: List[Dict[str, float]] = []
+    for item in rows:
+        lines.append({
+            "rate": _f(item.get("vat_rate")),
+            "taxable": round(_f(item.get("total")) * factor, 2),
+            "vat": _line_vat_after_factor(item, factor),
+            "extension": round(_f(item.get("total")), 2),
+        })
+    _snap_last_amount(lines, "vat", totals["vat_total"])
+    _snap_last_amount(lines, "taxable", totals["subtotal"])
+    by_rate: Dict[float, Dict[str, float]] = {}
+    for line in lines:
+        bucket = by_rate.setdefault(line["rate"], {"rate": line["rate"], "taxable": 0.0, "vat": 0.0})
+        bucket["taxable"] = round(bucket["taxable"] + line["taxable"], 2)
+        bucket["vat"] = round(bucket["vat"] + line["vat"], 2)
+    return {
+        "factor": factor,
+        "discount": totals["general_discount_amount"],
+        "line_extension": round(items_sum, 2),
+        "subtotal": totals["subtotal"],
+        "vat_total": totals["vat_total"],
+        "grand_total": totals["grand_total"],
+        "lines": lines,
+        "by_rate": [by_rate[rate] for rate in sorted(by_rate, reverse=True)],
+    }
+
+
 def net_general_discount_for_payable(items: Iterable[Mapping[str, Any]], payable_incl: Any) -> float:
     """KDV hariç genel iskonto: invoice_document_totals grand_total ödenen brüte gelsin.
 

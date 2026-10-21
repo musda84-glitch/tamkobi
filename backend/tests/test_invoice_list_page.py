@@ -518,3 +518,26 @@ def test_mysql_pushdown_on_and_off_match():
     assert before.get("items")
     assert before.get("grand_total") == after.get("grand_total")
     assert before.get("contact_name") == after.get("contact_name")
+
+
+def test_lite_invoice_keeps_document_discount_totals():
+    """Liste satırı kalemsizdir; belge iskontosu ve toplamlar kalır."""
+    row = page.lite_invoice({
+        "_id": "inv-havale",
+        "invoice_number": "TA202600000100",
+        "items": [{"name": "Ürün", "total": 9999.17}],
+        "subtotal": 9599.20,
+        "vat_total": 1919.84,
+        "discount_total": 399.97,
+        "general_discount_amount": 399.97,
+        "grand_total": 11519.04,
+        "raw_xml": "<Invoice/>",
+    })
+    assert "items" not in row
+    assert "raw_xml" not in row
+    assert row["id"] == "inv-havale"
+    assert row["general_discount_amount"] == 399.97
+    assert row["discount_total"] == 399.97
+    assert row["subtotal"] == 9599.20
+    assert row["vat_total"] == 1919.84
+    assert row["grand_total"] == 11519.04

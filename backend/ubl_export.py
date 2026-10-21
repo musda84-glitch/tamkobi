@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 import tenant_access
+from line_totals import general_discount_tax_bases
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -417,6 +418,79 @@ def _amt(n: Any) -> str:
         return f"{float(n or 0):.2f}"
     except (TypeError, ValueError):
         return "0.00"
+
+
+def _allowance_reason(inv: Dict[str, Any]) -> str:
+    """ShopPHP havale indirimi ayrı sebep; diğer belge iskontoları genel iskonto."""
+    channel = str(inv.get("source_channel") or inv.get("channel") or "").lower()
+    notes = str(inv.get("notes") or "").lower()
+    if channel == "shopphp" or "havale" in notes:
+        return "Havale indirimi"
+    return "Genel iskonto"
+
+
+def _multiplier_factor(amount: float, base: float) -> str:
+    if base <= 0:
+        return "0"
+    text = f"{(amount / base):.6f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _add_document_allowance(root, inv: Dict[str, Any], amount: float, base: float, currency: str):
+    """UBL-TR: PaymentMeans sonrası, TaxTotal öncesi belge iskontosu."""
+    ac = _cac(root, "AllowanceCharge")
+    _cbc(ac, "ChargeIndicator", "false")
+    _cbc(ac, "AllowanceChargeReason", _allowance_reason(inv))
+    _cbc(ac, "MultiplierFactorNumeric", _multiplier_factor(amount, base))
+    _cbc(ac, "Amount", _amt(amount), currencyID=currency)
+    _cbc(ac, "BaseAmount", _amt(base), currencyID=currency)
+    return ac
+
+
+def _snap_tax_lines(lines: list, key: str, target: Optional[float]) -> None:
+    if target is None or not lines:
+        return
+    current = round(sum(float(line.get(key) or 0) for line in lines), 2)
+    gap = round(float(target) - current, 2)
+    if abs(gap) < 0.001:
+        return
+    lines[-1][key] = round(float(lines[-1].get(key) or 0) + gap, 2)
+
+
+def _stored_money(inv: Dict[str, Any], key: str) -> Optional[float]:
+    raw = inv.get(key)
+    if raw in (None, ""):
+        return None
+    try:
+        return round(float(raw), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tax_after_document_discount(inv: Dict[str, Any], items: list, discount: float) -> Optional[Dict[str, Any]]:
+    """İskonto varsa oran ve satır matrahı/KDV'si iskonto sonrası.
+
+    İskontosuz belgede None döner; çağıran mevcut satır hesabını kullanır.
+    """
+    if discount <= 0.004 or not items:
+        return None
+    bases = general_discount_tax_bases(items, inv.get("general_discount_rate") or 0, discount)
+    lines = bases.get("lines") or []
+    if not lines:
+        return None
+    _snap_tax_lines(lines, "vat", _stored_money(inv, "vat_total"))
+    _snap_tax_lines(lines, "taxable", _stored_money(inv, "subtotal"))
+    by_rate: Dict[float, Dict[str, float]] = {}
+    for line in lines:
+        rate = float(line.get("rate") or 0)
+        bucket = by_rate.setdefault(rate, {"rate": rate, "taxable": 0.0, "vat": 0.0})
+        bucket["taxable"] = round(bucket["taxable"] + float(line["taxable"]), 2)
+        bucket["vat"] = round(bucket["vat"] + float(line["vat"]), 2)
+    return {
+        "lines": lines,
+        "by_rate": [by_rate[rate] for rate in sorted(by_rate, reverse=True)],
+        "line_extension": float(bases.get("line_extension") or 0),
+    }
 
 
 def despatch_document_refs(inv: Dict[str, Any], fallback_date: str = "") -> list:
@@ -889,30 +963,48 @@ def build_invoice_ubl(
     _party("AccountingSupplierParty", seller_party, root, send_ready=send_ready)
     _party("AccountingCustomerParty", buyer_party, root, send_ready=send_ready)
     _add_payment_means(root, seller, inv, currency)
+    discounted_tax = _tax_after_document_discount(inv, items, discount)
+    if discounted_tax:
+        allowance_base = float(discounted_tax.get("line_extension") or 0)
+        if allowance_base <= 0:
+            allowance_base = round(subtotal + discount, 2)
+        _add_document_allowance(root, inv, discount, allowance_base, currency)
 
     tax_total = _cac(root, "TaxTotal")
     _cbc(tax_total, "TaxAmount", _amt(vat_total), currencyID=currency)
-    by_rate: Dict[float, float] = {}
-    taxable_by_rate: Dict[float, float] = {}
-    for it in items:
-        rate = float(it.get("vat_rate") or 0)
-        net = float(it.get("total") or 0)
-        by_rate[rate] = by_rate.get(rate, 0) + net * rate / 100
-        taxable_by_rate[rate] = taxable_by_rate.get(rate, 0) + net
-    if not by_rate and vat_total:
-        by_rate[20.0] = vat_total
-        taxable_by_rate[20.0] = subtotal
-    # İşNet .NET: TaxTotal.TaxSubtotal null → "Object reference not set..."
-    if not by_rate:
-        by_rate[0.0] = 0.0
-        taxable_by_rate[0.0] = subtotal
-    for rate, amount in sorted(by_rate.items(), key=lambda x: -x[0]):
-        sub = _cac(tax_total, "TaxSubtotal")
-        taxable = taxable_by_rate.get(rate, 0) or subtotal
-        _cbc(sub, "TaxableAmount", _amt(taxable), currencyID=currency)
-        _cbc(sub, "TaxAmount", _amt(amount), currencyID=currency)
-        _cbc(sub, "Percent", f"{rate:g}")
-        _tax_category_kdv(sub, rate=rate, inv=inv)
+    if discounted_tax:
+        grouped = list(discounted_tax.get("by_rate") or [])
+        if not grouped:
+            grouped = [{"rate": 0.0, "taxable": subtotal, "vat": vat_total}]
+        for row in grouped:
+            rate = float(row.get("rate") or 0)
+            sub = _cac(tax_total, "TaxSubtotal")
+            _cbc(sub, "TaxableAmount", _amt(row.get("taxable")), currencyID=currency)
+            _cbc(sub, "TaxAmount", _amt(row.get("vat")), currencyID=currency)
+            _cbc(sub, "Percent", f"{rate:g}")
+            _tax_category_kdv(sub, rate=rate, inv=inv)
+    else:
+        by_rate: Dict[float, float] = {}
+        taxable_by_rate: Dict[float, float] = {}
+        for it in items:
+            rate = float(it.get("vat_rate") or 0)
+            net = float(it.get("total") or 0)
+            by_rate[rate] = by_rate.get(rate, 0) + net * rate / 100
+            taxable_by_rate[rate] = taxable_by_rate.get(rate, 0) + net
+        if not by_rate and vat_total:
+            by_rate[20.0] = vat_total
+            taxable_by_rate[20.0] = subtotal
+        # İşNet .NET: TaxTotal.TaxSubtotal null → "Object reference not set..."
+        if not by_rate:
+            by_rate[0.0] = 0.0
+            taxable_by_rate[0.0] = subtotal
+        for rate, amount in sorted(by_rate.items(), key=lambda x: -x[0]):
+            sub = _cac(tax_total, "TaxSubtotal")
+            taxable = taxable_by_rate.get(rate, 0) or subtotal
+            _cbc(sub, "TaxableAmount", _amt(taxable), currencyID=currency)
+            _cbc(sub, "TaxAmount", _amt(amount), currencyID=currency)
+            _cbc(sub, "Percent", f"{rate:g}")
+            _tax_category_kdv(sub, rate=rate, inv=inv)
 
     # Tevkifat: WithholdingTaxTotal (TaxTypeCode = 601…615; 9015 değil)
     wp = withholding_parts(inv, vat_total)
@@ -932,7 +1024,11 @@ def build_invoice_ubl(
             _cbc(wsch, "TaxTypeCode", code)
 
     totals = _cac(root, "LegalMonetaryTotal")
-    _cbc(totals, "LineExtensionAmount", _amt(subtotal + discount if discount else subtotal), currencyID=currency)
+    if discounted_tax and items:
+        legal_line_ext = round(sum(float(it.get("total") or 0) for it in items), 2)
+    else:
+        legal_line_ext = subtotal + discount if discount else subtotal
+    _cbc(totals, "LineExtensionAmount", _amt(legal_line_ext), currencyID=currency)
     _cbc(totals, "TaxExclusiveAmount", _amt(subtotal), currencyID=currency)
     _cbc(totals, "TaxInclusiveAmount", _amt(subtotal + vat_total), currencyID=currency)
     # İşNet örnekleri AllowanceTotalAmount'u her zaman gönderir (0.00 dahil)
@@ -952,12 +1048,18 @@ def build_invoice_ubl(
         net = float(it.get("total") or 0)
         _cbc(line, "LineExtensionAmount", _amt(net), currencyID=currency)
         rate = float(it.get("vat_rate") or 0)
-        line_vat = round(net * rate / 100.0, 2)
+        if discounted_tax and i - 1 < len(discounted_tax["lines"]):
+            taxed = discounted_tax["lines"][i - 1]
+            line_taxable = float(taxed.get("taxable") or 0)
+            line_vat = float(taxed.get("vat") or 0)
+        else:
+            line_taxable = net
+            line_vat = round(net * rate / 100.0, 2)
         lt = _cac(line, "TaxTotal")
         _cbc(lt, "TaxAmount", _amt(line_vat), currencyID=currency)
         ls = _cac(lt, "TaxSubtotal")
         # İşNet resmi örnek / n11: satır TaxSubtotal'da tutar + TaxCategory zorunlu
-        _cbc(ls, "TaxableAmount", _amt(net), currencyID=currency)
+        _cbc(ls, "TaxableAmount", _amt(line_taxable), currencyID=currency)
         _cbc(ls, "TaxAmount", _amt(line_vat), currencyID=currency)
         _cbc(ls, "CalculationSequenceNumeric", "1")
         _cbc(ls, "Percent", f"{rate:g}")
