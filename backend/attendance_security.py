@@ -225,8 +225,11 @@ async def _punch_auth_state(db, employee: dict, mode: str, body: dict) -> dict:
         return {"ok": True, "enroll": False, "pin": "", "wrong": False}
     stored = ""
     emp_id = (employee or {}).get("_id")
+    cid = str((employee or {}).get("company_id") or "").strip()
     if emp_id is not None:
-        row = await db.employees.find_one({"_id": emp_id})
+        if not cid:
+            return {"ok": False, "enroll": False, "pin": "", "wrong": False}
+        row = await db.employees.find_one({"_id": emp_id, "company_id": cid})
         if row:
             stored = str(row.get("punch_pin_hash") or "")
     pin_ok = False
@@ -248,11 +251,12 @@ async def _punch_auth_state(db, employee: dict, mode: str, body: dict) -> dict:
 async def _enroll_punch_pin(db, employee: dict, pin: str) -> None:
     pin = clean_punch_pin(pin)
     emp_id = (employee or {}).get("_id")
-    if not pin or emp_id is None:
+    cid = str((employee or {}).get("company_id") or "").strip()
+    if not pin or emp_id is None or not cid:
         return
     hashed = hash_password(pin)
     res = await db.employees.update_one(
-        {"_id": emp_id, "$or": [
+        {"_id": emp_id, "company_id": cid, "$or": [
             {"punch_pin_hash": {"$exists": False}},
             {"punch_pin_hash": ""},
             {"punch_pin_hash": None},
@@ -261,10 +265,13 @@ async def _enroll_punch_pin(db, employee: dict, pin: str) -> None:
     )
     if getattr(res, "matched_count", 0):
         return
-    fresh = await db.employees.find_one({"_id": emp_id}) or {}
+    fresh = await db.employees.find_one({"_id": emp_id, "company_id": cid}) or {}
     if fresh.get("punch_pin_hash"):
         return
-    await db.employees.update_one({"_id": emp_id}, {"$set": {"punch_pin_hash": hashed, "updated_at": _now()}})
+    await db.employees.update_one(
+        {"_id": emp_id, "company_id": cid},
+        {"$set": {"punch_pin_hash": hashed, "updated_at": _now()}},
+    )
 
 
 def _matched_row(rows: list, company_id: str, employee_id: str, device_id: str) -> Optional[dict]:
@@ -283,12 +290,16 @@ def _matched_row(rows: list, company_id: str, employee_id: str, device_id: str) 
 
 async def _claim_slot(db, company_id: str, employee_id: str, device_id: str) -> bool:
     """Personel başına tek aktif cihaz. İlk insert yarışı DuplicateKeyError ile biter."""
-    slot_id = active_slot_id(company_id, employee_id)
+    cid = str(company_id or "").strip()
+    employee_id = str(employee_id or "").strip()
+    if not cid or not employee_id:
+        return False
+    slot_id = active_slot_id(cid, employee_id)
     now = _now()
     try:
         await db.attendance_devices.insert_one({
             "_id": slot_id,
-            "company_id": company_id,
+            "company_id": cid,
             "employee_id": employee_id,
             "device_id": device_id,
             "status": "slot",
@@ -298,8 +309,8 @@ async def _claim_slot(db, company_id: str, employee_id: str, device_id: str) -> 
         return True
     except DuplicateKeyError:
         pass
-    slot = await db.attendance_devices.find_one({"_id": slot_id}) or {}
-    if str(slot.get("company_id") or company_id) != str(company_id):
+    slot = await db.attendance_devices.find_one({"_id": slot_id, "company_id": cid}) or {}
+    if str(slot.get("company_id") or "") != cid:
         return False
     owner = str(slot.get("device_id") or "")
     if owner == device_id:
@@ -308,49 +319,63 @@ async def _claim_slot(db, company_id: str, employee_id: str, device_id: str) -> 
         return False
     fields = {
         "device_id": device_id,
-        "company_id": company_id,
+        "company_id": cid,
         "employee_id": employee_id,
         "status": "slot",
         "updated_at": now,
     }
     atomic = getattr(db.attendance_devices, "update_one_atomic", None)
     if atomic is not None:
-        res = await atomic({"_id": slot_id, "device_id": ""}, {"$set": fields})
+        res = await atomic(
+            {"_id": slot_id, "device_id": "", "company_id": cid},
+            {"$set": fields},
+        )
         return bool(getattr(res, "matched_count", 0))
-    await db.attendance_devices.update_one({"_id": slot_id, "device_id": ""}, {"$set": fields})
-    again = await db.attendance_devices.find_one({"_id": slot_id}) or {}
+    await db.attendance_devices.update_one(
+        {"_id": slot_id, "device_id": "", "company_id": cid},
+        {"$set": fields},
+    )
+    again = await db.attendance_devices.find_one({"_id": slot_id, "company_id": cid}) or {}
     return str(again.get("device_id") or "") == device_id
 
 
 async def _point_slot(db, company_id: str, employee_id: str, device_id: str) -> None:
-    slot_id = active_slot_id(company_id, employee_id)
+    cid = str(company_id or "").strip()
+    employee_id = str(employee_id or "").strip()
+    if not cid or not employee_id:
+        return
+    slot_id = active_slot_id(cid, employee_id)
     now = _now()
     fields = {
-        "company_id": company_id,
+        "company_id": cid,
         "employee_id": employee_id,
         "device_id": device_id,
         "status": "slot",
         "updated_at": now,
     }
-    current = await db.attendance_devices.find_one({"_id": slot_id})
+    current = await db.attendance_devices.find_one({"_id": slot_id, "company_id": cid})
     if current:
-        await db.attendance_devices.update_one({"_id": slot_id}, {"$set": fields})
+        await db.attendance_devices.update_one({"_id": slot_id, "company_id": cid}, {"$set": fields})
         return
     try:
-        await db.attendance_devices.insert_one({"_id": slot_id, "created_at": now, **fields})
+        await db.attendance_devices.insert_one({**fields, "_id": slot_id, "created_at": now, "company_id": cid})
     except DuplicateKeyError:
-        await db.attendance_devices.update_one({"_id": slot_id}, {"$set": fields})
+        await db.attendance_devices.update_one({"_id": slot_id, "company_id": cid}, {"$set": fields})
 
 
 async def _release_slot_if_idle(db, company_id: str, employee_id: str) -> None:
+    cid = str(company_id or "").strip()
+    employee_id = str(employee_id or "").strip()
+    if not cid or not employee_id:
+        return
     remaining = await db.attendance_devices.find({
-        "company_id": company_id, "employee_id": employee_id, "status": "active",
+        "company_id": cid, "employee_id": employee_id, "status": "active",
     }).to_list(5)
     if remaining:
         return
-    slot_id = active_slot_id(company_id, employee_id)
+    slot_id = active_slot_id(cid, employee_id)
     await db.attendance_devices.update_one(
-        {"_id": slot_id},
+        {"_id": slot_id, "company_id": cid},
         {"$set": {"device_id": "", "updated_at": _now()}},
     )
 
@@ -541,9 +566,10 @@ async def gate_self_punch(
         return {**decision, "bind_doc": None}
     if decision["pending"]:
         doc = _device_doc(company_id, employee, device_id, body, "pending")
-        existing = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": company_id})
-        if not existing:
-            await db.attendance_devices.insert_one(doc)
+        cid = str(company_id or "").strip()
+        existing = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": cid}) if cid else None
+        if cid and not existing:
+            await db.attendance_devices.insert_one({**doc, "company_id": cid})
         await _event(db, company_id, emp_id, device_id, "change_requested", decision["detail"])
         await _notify(
             notify, company_id,
@@ -590,29 +616,32 @@ async def gate_self_punch(
 
 async def _upsert_bound_device(db, doc: dict, issued: Optional[str]) -> dict:
     now = _now()
-    current = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": doc.get("company_id")})
+    cid = str((doc or {}).get("company_id") or "").strip()
+    if not cid or not (doc or {}).get("_id"):
+        return {"created": False, "device_token": None}
+    current = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": cid})
     if current and current.get("status") == "active" and current.get("device_token_hash"):
         await db.attendance_devices.update_one(
-            {"_id": doc["_id"]},
+            {"_id": doc["_id"], "company_id": cid},
             {"$set": {"updated_at": now, "last_seen_at": now}},
         )
         return {"created": False, "device_token": None}
     payload = {k: v for k, v in {**doc, "status": "active", "last_seen_at": now, "updated_at": now}.items() if k != "_id"}
     created = current is None or current.get("status") != "active"
     if current:
-        await db.attendance_devices.update_one({"_id": doc["_id"]}, {"$set": payload})
+        await db.attendance_devices.update_one({"_id": doc["_id"], "company_id": cid}, {"$set": payload})
     else:
         try:
-            await db.attendance_devices.insert_one({**payload, "_id": doc["_id"]})
+            await db.attendance_devices.insert_one({**payload, "_id": doc["_id"], "company_id": cid})
         except DuplicateKeyError:
-            fresh = await db.attendance_devices.find_one({"_id": doc["_id"]}) or {}
+            fresh = await db.attendance_devices.find_one({"_id": doc["_id"], "company_id": cid}) or {}
             if fresh.get("status") == "active" and fresh.get("device_token_hash"):
                 await db.attendance_devices.update_one(
-                    {"_id": doc["_id"]},
+                    {"_id": doc["_id"], "company_id": cid},
                     {"$set": {"updated_at": now, "last_seen_at": now}},
                 )
                 return {"created": False, "device_token": None}
-            await db.attendance_devices.update_one({"_id": doc["_id"]}, {"$set": payload})
+            await db.attendance_devices.update_one({"_id": doc["_id"], "company_id": cid}, {"$set": payload})
             created = fresh.get("status") != "active"
     if created:
         await _event(db, doc["company_id"], doc["employee_id"], doc["device_id"], "bound", "İlk telefon kaydedildi.")
@@ -661,11 +690,14 @@ async def release_new_bind(db, bound: Optional[dict]) -> None:
     bound = bound or {}
     if bound.get("created") and bound.get("doc"):
         doc = bound["doc"]
+        cid = str(doc.get("company_id") or "").strip()
+        if not cid:
+            return
         await db.attendance_devices.update_one(
-            {"_id": doc["_id"]},
+            {"_id": doc["_id"], "company_id": cid},
             {"$set": {"status": "revoked", "revoked_at": _now(), "updated_at": _now()}},
         )
-        await _release_slot_if_idle(db, doc["company_id"], doc["employee_id"])
+        await _release_slot_if_idle(db, cid, doc["employee_id"])
         return
     if bound.get("enrolled") and bound.get("enroll_id"):
         await db.attendance_devices.update_one(
@@ -675,26 +707,42 @@ async def release_new_bind(db, bound: Optional[dict]) -> None:
 
 
 async def claim_once(db, company_id: str, key: str) -> bool:
-    _id = f"{company_id}:{key}"
-    if await db.attendance_alerts.find_one({"_id": _id}):
+    cid = str(company_id or "").strip()
+    if not cid:
+        return False
+    _id = f"{cid}:{key}"
+    if await db.attendance_alerts.find_one({"_id": _id, "company_id": cid}):
         return False
     try:
         await db.attendance_alerts.insert_one({
-            "_id": _id, "company_id": company_id, "type": key.split(":")[0], "created_at": _now(),
+            "_id": _id, "company_id": cid, "type": key.split(":")[0], "created_at": _now(),
         })
     except Exception:
         return False
     return True
 
 
-async def _on_leave(db, employee_id: str, date: str) -> bool:
+async def _on_leave(db, employee_id: str, date: str, company_id: str = "") -> bool:
+    cid = str(company_id or "").strip()
+    if not cid or not employee_id:
+        return False
     row = await db.leave_requests.find_one({
         "employee_id": employee_id,
+        "company_id": cid,
         "status": "approved",
         "start_date": {"$lte": date},
         "end_date": {"$gte": date},
     })
-    return bool(row)
+    if row:
+        return True
+    legacy = await db.leave_requests.find_one({
+        "employee_id": employee_id,
+        "company_id": {"$exists": False},
+        "status": "approved",
+        "start_date": {"$lte": date},
+        "end_date": {"$gte": date},
+    })
+    return bool(legacy)
 
 
 async def run_reminders(
@@ -717,10 +765,21 @@ async def run_reminders(
         employees = await db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(300)
         for emp in employees:
             sch = merge_schedule(company, emp)
-            plan = await db.shift_plans.find_one({"employee_id": emp["_id"], "date": date})
+            cid = str(emp.get("company_id") or "").strip()
+            if not cid:
+                continue
+            plan = await db.shift_plans.find_one({"employee_id": emp["_id"], "date": date, "company_id": cid})
+            if not plan:
+                plan = await db.shift_plans.find_one({
+                    "employee_id": emp["_id"], "date": date, "company_id": {"$exists": False},
+                })
             shift = shift_context(sch, weekday, plan)
-            rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
-            on_leave = await _on_leave(db, emp["_id"], date)
+            rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": date, "company_id": cid}) or {}
+            if not rec:
+                rec = await db.attendance.find_one({
+                    "employee_id": emp["_id"], "date": date, "company_id": {"$exists": False},
+                }) or {}
+            on_leave = await _on_leave(db, emp["_id"], date, cid)
             base_ok = day_reminder_eligible(
                 skip_check_in=bool(sch.get("skip_check_in") or emp.get("skip_check_in")),
                 on_leave=on_leave,
@@ -850,16 +909,22 @@ async def approve_device(db, company_id: str, row_id: str, approver_id: str) -> 
         "employee_id": row.get("employee_id"),
         "status": "active",
     }).to_list(20)
+    cid = str(row.get("company_id") or "").strip()
+    if not cid:
+        return {"ok": False, "status": 404, "detail": "Cihaz kaydı bulunamadı."}
     for old in previous:
-        await db.attendance_devices.update_one({"_id": old["_id"]}, {"$set": {
+        old_cid = str(old.get("company_id") or "").strip()
+        if not old_cid:
+            continue
+        await db.attendance_devices.update_one({"_id": old["_id"], "company_id": old_cid}, {"$set": {
             "status": "revoked", "revoked_at": _now(), "revoked_by": approver_id, "updated_at": _now(),
         }})
-        await _event(db, company_id, old.get("employee_id"), old.get("device_id"), "revoked", "Yeni cihaz onaylandı, önceki iptal edildi.")
-    await db.attendance_devices.update_one({"_id": row_id}, {"$set": {
+        await _event(db, cid, old.get("employee_id"), old.get("device_id"), "revoked", "Yeni cihaz onaylandı, önceki iptal edildi.")
+    await db.attendance_devices.update_one({"_id": row_id, "company_id": cid}, {"$set": {
         "status": "active", "approved_at": _now(), "approved_by": approver_id, "updated_at": _now(),
     }})
-    await _point_slot(db, company_id, row.get("employee_id"), row.get("device_id"))
-    await _event(db, company_id, row.get("employee_id"), row.get("device_id"), "approved", "Yönetici cihaz değişikliğini onayladı.")
+    await _point_slot(db, cid, row.get("employee_id"), row.get("device_id"))
+    await _event(db, cid, row.get("employee_id"), row.get("device_id"), "approved", "Yönetici cihaz değişikliğini onayladı.")
     return {"ok": True, "status": 200, "detail": "Cihaz onaylandı."}
 
 
@@ -869,11 +934,14 @@ async def revoke_device(db, company_id: str, row_id: str, approver_id: str) -> d
         return {"ok": False, "status": 404, "detail": "Cihaz kaydı bulunamadı."}
     if row.get("status") == "revoked":
         return {"ok": True, "status": 200, "detail": "Cihaz zaten iptal."}
-    await db.attendance_devices.update_one({"_id": row_id}, {"$set": {
+    cid = str(row.get("company_id") or "").strip()
+    if not cid:
+        return {"ok": False, "status": 404, "detail": "Cihaz kaydı bulunamadı."}
+    await db.attendance_devices.update_one({"_id": row_id, "company_id": cid}, {"$set": {
         "status": "revoked", "revoked_at": _now(), "revoked_by": approver_id, "updated_at": _now(),
     }})
-    await _release_slot_if_idle(db, company_id, row.get("employee_id"))
-    await _event(db, company_id, row.get("employee_id"), row.get("device_id"), "revoked", "Yönetici cihaz kaydını iptal etti.")
+    await _release_slot_if_idle(db, cid, row.get("employee_id"))
+    await _event(db, cid, row.get("employee_id"), row.get("device_id"), "revoked", "Yönetici cihaz kaydını iptal etti.")
     return {"ok": True, "status": 200, "detail": "Cihaz iptal edildi."}
 
 
