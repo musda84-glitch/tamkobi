@@ -1,6 +1,6 @@
 """Sanal POS giden HTTP.
 
-PayTR ve iyzico ``open_async_client`` ile ``httpx.AsyncClient`` açar
+PayTR, iyzico ve Kuveyt Türk ``open_async_client`` ile ``httpx.AsyncClient`` açar
 (zaman aşımı ~20 sn). Testler adaptöre sahte client enjekte eder; bu
 fonksiyon o zaman çağrılmaz ve soket açılmaz. NestPay bu modülü kullanmaz.
 """
