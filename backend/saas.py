@@ -1496,6 +1496,10 @@ async def apply_detach_subsidiary(company_id: str) -> dict:
                 )
                 lookup[kid] = {**kid_doc, "license_id": company_id}
             stack.extend(_children_of(kid))
+        import gib_credits
+        # Bakiye bölünmez. Yeni lisans cüzdanı 0 açılır; hoş geldin kontörü yazılmaz.
+        # Eski anahtarda kalan bakiye (taşınmamışsa) olduğu gibi durur, üst cüzdandan kesilmez.
+        await gib_credits.ensure_wallet(company_id)
         invalidate(old_lid)
     invalidate(company_id)
     await _db.companies.update_one({"_id": company_id}, {"$set": updates})
@@ -1503,8 +1507,14 @@ async def apply_detach_subsidiary(company_id: str) -> dict:
 
 
 async def apply_set_company_parent(company_id: str, parent_id: str) -> dict:
-    """Mevcut şirketi başka bir şirketin altına bağlar (aynı lisans ya da tek başına lisansı üst lisansa taşır)."""
+    """Mevcut şirketi başka bir şirketin altına bağlar (aynı lisans ya da tek başına lisansı üst lisansa taşır).
+
+    Lisans anahtarı değişirse e-belge kontörü, şirket satırı güncellenmeden önce taşınır.
+    Böylece taşıma yarıda kalırsa aynı bağlama yeniden denendiğinde çift yazılmaz.
+    """
     plan = await prepare_company_parent(company_id, parent_id)
+    import gib_credits
+    await gib_credits.move_wallet_on_license_change(company_id, plan["child_lid"], plan["parent_lid"])
     await _db.companies.update_one({"_id": company_id}, {"$set": plan["updates"]})
     if plan["drop_child_license"]:
         await _db.company_licenses.delete_one({"_id": company_id})

@@ -18,6 +18,7 @@ import comm_service
 import demo
 import einvoice_assign
 import event_notify
+import gib_credits
 import mail_service
 import notify
 import platform_admin_v1
@@ -173,12 +174,14 @@ def db(monkeypatch):
         store._db, saas._db, saas._current_user, addons._db, event_notify._db,
         support_tickets._db, support_tickets._current_user, rbac._db,
         dict(einvoice_assign.KNOWN_PROVIDERS),
+        gib_credits._db,
     )
     store.init(fake)
     saas.init(fake, None)
     saas.invalidate()
     addons.init(fake)
     event_notify.init(fake)
+    gib_credits.init(fake)
     support_tickets.init(fake, None)
     rbac._db = fake
     einvoice_assign.register_providers({"isnet": {"name": "İşNet"}, "n11faturam": {"name": "n11"}})
@@ -190,6 +193,7 @@ def db(monkeypatch):
     support_tickets.init(prev[5], prev[6])
     rbac._db = prev[7]
     einvoice_assign.register_providers(prev[8])
+    gib_credits.init(prev[9])
     saas.invalidate()
 
 

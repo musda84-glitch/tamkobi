@@ -1,4 +1,5 @@
 """GİB e-fatura/e-arşiv kontör cüzdanı — lisans bazında, platform paket satışına bağlı."""
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -169,6 +170,159 @@ async def gift(company_id: str, credits: int, note: str = "Platform yüklemesi")
         "credits": credits, "note": note, "created_at": _now(),
     })
     return int((await get_wallet(company_id)).get("balance") or 0)
+
+
+def _ledger_row_id(transfer_id: str, side: str) -> str:
+    raw = f"{transfer_id}:{side}"
+    if len(raw) <= 180:
+        return raw
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _attach_transfer_token(company_id: str, old_wid: str, new_wid: str, seq: int) -> str:
+    raw = f"gib-wallet-attach:{company_id}:{old_wid}:{new_wid}:{seq}"
+    if len(raw) <= 160:
+        return raw
+    return "gib-wallet-attach:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def ensure_wallet(wallet_id: str) -> dict:
+    """Cüzdan yoksa bakiye 0 ile açar. Hoş geldin kontörü ve ledger yazmaz."""
+    wid = str(wallet_id or "").strip()
+    if not wid:
+        raise HTTPException(status_code=400, detail="Cüzdan anahtarı gerekli.")
+    found = await _db.gib_wallets.find_one({"_id": wid})
+    if found:
+        return found
+    now = _now()
+    doc = {"_id": wid, "balance": 0, "created_at": now, "updated_at": now}
+    try:
+        await _db.gib_wallets.insert_one(doc)
+    except Exception as exc:
+        from mysql_store import DuplicateKeyError
+        if not isinstance(exc, DuplicateKeyError):
+            raise
+        found = await _db.gib_wallets.find_one({"_id": wid})
+        if found:
+            return found
+        raise
+    return await _db.gib_wallets.find_one({"_id": wid}) or doc
+
+
+async def _next_attach_transfer_id(company_id: str, old_wid: str, new_wid: str) -> str:
+    route = f"{old_wid}->{new_wid}"
+    rows = await _db.gib_credit_ledger.find({
+        "company_id": company_id,
+        "wallet_id": old_wid,
+        "type": "transfer_out",
+    }).to_list(2000)
+    seq = 1 + sum(1 for row in rows if row.get("route") == route)
+    return _attach_transfer_token(company_id, old_wid, new_wid, seq)
+
+
+async def transfer_wallet_balance(old_wid: str, new_wid: str, *, company_id: str, transfer_id: str) -> dict:
+    """Eski bakiyeyi yeni cüzdana ekler, eskiyi 0'lar. Aynı transfer_id ikinci kez uygulanmaz.
+
+    Eski cüzdan yoksa sessizce döner. Yeni cüzdan yoksa hoş geldin kontörü olmadan açılır.
+    Ledger'da çıkış ve giriş aynı transfer_id, company_id ve amount ile durur.
+    credits işareti mevcut defterle aynıdır: çıkış eksi, giriş artı.
+    """
+    old_wid = str(old_wid or "").strip()
+    new_wid = str(new_wid or "").strip()
+    company_id = str(company_id or "").strip()
+    transfer_id = str(transfer_id or "").strip()
+    if not old_wid or not new_wid or not company_id or not transfer_id or old_wid == new_wid:
+        return {"transferred": 0, "applied": False}
+
+    out_id = _ledger_row_id(transfer_id, "out")
+    existing_out = await _db.gib_credit_ledger.find_one({"_id": out_id, "company_id": company_id})
+    if existing_out:
+        return {"transferred": 0, "applied": False, "duplicate": True}
+
+    old = await _db.gib_wallets.find_one({"_id": old_wid})
+    if not old:
+        return {"transferred": 0, "applied": False, "missing": True}
+
+    amount = int(old.get("balance") or 0)
+    if amount < 0:
+        amount = 0
+    now = _now()
+    await ensure_wallet(new_wid)
+    if amount <= 0:
+        await _db.gib_wallets.update_one({"_id": old_wid}, {"$set": {"balance": 0, "updated_at": now}})
+        return {"transferred": 0, "applied": True}
+
+    await _db.gib_wallets.update_one(
+        {"_id": new_wid},
+        {"$inc": {"balance": amount}, "$set": {"updated_at": now}},
+    )
+    await _db.gib_wallets.update_one(
+        {"_id": old_wid},
+        {"$set": {"balance": 0, "updated_at": now}},
+    )
+    route = f"{old_wid}->{new_wid}"
+    note_out = "Lisans birleştirme — kontör çıkışı"
+    note_in = "Lisans birleştirme — kontör girişi"
+    await _db.gib_credit_ledger.insert_one({
+        "_id": out_id,
+        "wallet_id": old_wid,
+        "company_id": company_id,
+        "type": "transfer_out",
+        "credits": -amount,
+        "amount": amount,
+        "transfer_id": transfer_id,
+        "route": route,
+        "note": note_out,
+        "created_at": now,
+    })
+    await _db.gib_credit_ledger.insert_one({
+        "_id": _ledger_row_id(transfer_id, "in"),
+        "wallet_id": new_wid,
+        "company_id": company_id,
+        "type": "transfer_in",
+        "credits": amount,
+        "amount": amount,
+        "transfer_id": transfer_id,
+        "route": route,
+        "note": note_in,
+        "created_at": now,
+    })
+    return {"transferred": amount, "applied": True, "transfer_id": transfer_id}
+
+
+async def move_wallet_on_license_change(company_id: str, old_license_id: str, new_license_id: str) -> dict:
+    """Lisans anahtarı değişince eski cüzdanı (license_id veya company_id) yeni anahtara taşır.
+
+    Eski cüzdan yoksa hata vermez ve hoş geldin kontörü açmaz.
+    """
+    company_id = str(company_id or "").strip()
+    new_wid = str(new_license_id or "").strip()
+    old_lid = str(old_license_id or "").strip()
+    if not company_id or not new_wid:
+        return {"transferred": 0, "applied": False}
+    source = ""
+    seen = set()
+    for key in (old_lid, company_id):
+        if not key or key == new_wid or key in seen:
+            continue
+        seen.add(key)
+        wallet = await _db.gib_wallets.find_one({"_id": key})
+        if wallet:
+            source = key
+            break
+    if not source:
+        return {"transferred": 0, "applied": False, "missing": True}
+    old = await _db.gib_wallets.find_one({"_id": source})
+    amount = int((old or {}).get("balance") or 0)
+    if amount <= 0:
+        await ensure_wallet(new_wid)
+        await _db.gib_wallets.update_one(
+            {"_id": source},
+            {"$set": {"balance": 0, "updated_at": _now()}},
+        )
+        return {"transferred": 0, "applied": True}
+    transfer_id = await _next_attach_transfer_id(company_id, source, new_wid)
+    return await transfer_wallet_balance(source, new_wid, company_id=company_id, transfer_id=transfer_id)
 
 
 @router.get("/account/gib-credits")
