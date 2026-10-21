@@ -13,9 +13,8 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("POST", "/auth/reset/{token}"),
     ("GET", "/auth/invite/{token}"),
     ("POST", "/auth/invite/{token}"),
-    # Bildirim — kullanıcıya özel
+    # Bildirim okundu — kullanıcıya özel
     ("POST", "/notifications/{notif_id}/read"),
-    ("DELETE", "/notifications/{notif_id}"),
     # Yardım makalesi şirkete bağlı değil; oturum (help_center) veya API anahtarı (platform v1) durur.
     ("GET", "/help/articles/{slug}"),
     # İsim / kanal / belge türü anahtarı (UUID kayıt değil)
