@@ -289,7 +289,7 @@ Base path salt okunur uçlarla aynıdır: `/api/platform/admin-v1/`. Kimlik doğ
 
 **Idempotency-Key zorunlu.** Başlık yoksa **400** `Idempotency-Key gerekli`. Kayıt ad alanı `platform_admin:<key_id>` dir; bir şirket kimliği varsayılmaz. Uç kimliği `METHOD path#sha256(canonical_json(gövde))[:16]` olur.
 
-- Aynı anahtar + aynı gövde: kayıtlı yanıt döner. İkinci iş yazılmaz, ikinci `admin_v1.write.*` audit’i yazılmaz.
+- Aynı anahtar + aynı gövde: kayıtlı yanıt döner. İkinci doğrulama, ikinci iş ve ikinci `admin_v1.write.*` audit’i çalışmaz.
 - Aynı anahtar + farklı gövde: **409** `Idempotency-Key farklı istekle kullanıldı`.
 
 Doğrulama yazmadan önce yapılır. **400** ve **404** hedef koleksiyonlara ve `idempotency_keys` kaydına yazmaz; yalnızca `authenticate` erişim audit’i (veya IP reddi audit’i) kalır. Beyaz liste dışı anahtar **400** `Desteklenmeyen alan: <ad>`. Boş gövde **400**.

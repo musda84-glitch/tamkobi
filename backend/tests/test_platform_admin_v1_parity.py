@@ -31,6 +31,7 @@ import superadmin_2fa
 import support_tickets
 import tenant_idor_allowlist as allowlist
 from test_platform_admin_v1 import (
+    FakeColl,
     FakeDB,
     _assert_no_extra_writes,
     _detail,
@@ -154,6 +155,10 @@ def db(monkeypatch):
     async def _noop(*_args, **_kwargs):
         return None
 
+    async def _index(self, *_args, **_kwargs):
+        return "idempo"
+
+    monkeypatch.setattr(FakeColl, "create_index", _index, raising=False)
     monkeypatch.setattr(demo, "seed_for_new_company", _noop)
     monkeypatch.setattr(notify, "dispatch_push", _noop)
     monkeypatch.setattr(comm_service, "encrypt", lambda value: "enc:" + (value or ""))
@@ -436,9 +441,9 @@ def test_validation_does_not_write(db):
         (sup, sup_secret, "POST", "/api/platform/admin-v1/support/tickets/missing/status", {"status": "closed", "operator_email": _OPERATOR}, "Destek talebi bulunamadı."),
         (integ, integ_secret, "POST", "/api/platform/admin-v1/integrators/products", {"code": "shop", "name": "Kopya"}, "Bu ürün kodu zaten var"),
     ]
-    for key, secret, method, path, body, detail in cases:
+    for i, (key, secret, method, path, body, detail) in enumerate(cases):
         before = _write_counts(db)
-        resp, _, _ = _send(client, secret, key["id"], method, path, body, idem=f"bad-{path}-{detail[:12]}")
+        resp, _, _ = _send(client, secret, key["id"], method, path, body, idem=f"bad-{i}")
         assert resp.status_code in (400, 404), resp.text
         assert _detail(resp) == detail, resp.text
         _assert_no_extra_writes(before, _write_counts(db))
@@ -563,7 +568,7 @@ def test_reads_scope_ip_mask_and_isolation(db):
     missing_co, _, _ = _get(client, reader_secret, reader["id"], "/api/platform/admin-v1/companies/missing/notify-prefs")
     assert missing_co.status_code == 404
     body = _get(client, reader_secret, reader["id"], log)[0].json()
-    raw = json.dumps(body)
+    raw = json.dumps(body, ensure_ascii=False)
     assert _MAIL_A not in raw
     assert _MAIL_B not in raw
     assert _PHONE_A not in raw

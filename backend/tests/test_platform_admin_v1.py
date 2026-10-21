@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import addons
 import comm_service
 import company_sms
+import event_notify
 import mail_service
 import platform_admin_v1
 import platform_mail
@@ -230,6 +231,7 @@ def db(monkeypatch):
     prev_deps = dict(saas_billing._deps)
     prev_sms = platform_sms._db
     prev_tickets = (support_tickets._db, support_tickets._current_user)
+    prev_notify = event_notify._db
     store.init(fake)
     saas.init(fake, None)
     saas.invalidate()
@@ -238,6 +240,7 @@ def db(monkeypatch):
     saas_billing.init(fake, {})
     platform_sms.init(fake)
     support_tickets.init(fake, prev_tickets[1])
+    event_notify.init(fake)
     monkeypatch.setattr(comm_service, "encrypt", lambda v: "enc:" + (v or ""))
     monkeypatch.setattr(comm_service, "decrypt", lambda v: (v or "").removeprefix("enc:"))
     yield fake
@@ -250,6 +253,7 @@ def db(monkeypatch):
     saas_billing._deps.update(prev_deps)
     platform_sms.init(prev_sms)
     support_tickets.init(prev_tickets[0], prev_tickets[1])
+    event_notify.init(prev_notify)
     saas.invalidate()
 
 
@@ -901,6 +905,8 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
         ("/api/platform/admin-v1/sms/logs", None),
         ("/api/platform/admin-v1/sms/failed-resets", None),
         ("/api/platform/admin-v1/companies/comp_sec/sms", None),
+        ("/api/platform/admin-v1/companies/comp_sec/notify-prefs", None),
+        ("/api/platform/admin-v1/companies/comp_sec/notify-mail-log", None),
         ("/api/platform/admin-v1/support/tickets", None),
     ]
     blobs = []
