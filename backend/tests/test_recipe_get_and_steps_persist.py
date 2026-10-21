@@ -30,6 +30,7 @@ def test_get_recipe_returns_material_steps():
 
     async def run():
         with patch.object(server, "db", fake_db), \
+             patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=dict(doc))), \
              patch.object(server, "_recipe_costs", return_value={"unit_cost": 1, "total_estimated_cost": 1}):
             return await server.get_recipe("r1")
 

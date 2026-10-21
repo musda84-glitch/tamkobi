@@ -10,6 +10,7 @@ import inspect
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -645,7 +646,7 @@ def test_missing_company_id_uses_active_company_only(api):
     assert db.writes == []
 
 
-def test_own_company_returns_only_own_records(api):
+def test_own_company_returns_only_own_records(api, monkeypatch):
     client, db = api
     headers = _auth("user-a")
     user_a = _user_a()
@@ -735,7 +736,7 @@ def test_own_company_returns_only_own_records(api):
     missing = client.get("/api/production/missing-plan", params={"company_id": COMP_A}, headers=headers)
     assert missing.status_code == 200, missing.text
     names = [row["product_name"] for row in missing.json()["items"]]
-    assert names == ["Plan A", "Eksik A"]
+    assert names == ["Plan A", "Urun A"]
     assert missing.json()["notification_count"] == 1
     assert missing.json()["count"] == 2
     assert missing.json()["link"] == "/production?tab=missing"
@@ -792,10 +793,18 @@ def test_own_company_returns_only_own_records(api):
     settings = client.get("/api/production/work-orders/shopfloor-settings", params={"company_id": COMP_A}, headers=headers)
     assert settings.json() == {"group_same_station": True}
 
+    # Duraklat penceresi Europe/Istanbul 09:00-18:00. Giriş yapmış kullanıcıda
+    # operatör, sorgu parametresi değil çağıranın adıdır (2b90a6fa). Saat
+    # dondurulunca allowed False sabit kalır ve istemci Op A seçemez.
+    monkeypatch.setattr(
+        attendance,
+        "local_now",
+        lambda schedule=None: datetime(2026, 10, 21, 20, 30, tzinfo=ZoneInfo("Europe/Istanbul")),
+    )
     pause = client.get("/api/production/work-orders/pause-policy", params={"company_id": COMP_A}, headers=headers)
     assert pause.status_code == 200, pause.text
     assert pause.json()["allowed"] is False
-    assert pause.json()["operator_name"] is None
+    assert pause.json()["operator_name"] == "user-a"
     _no_foreign(pause.text)
     named = client.get(
         "/api/production/work-orders/pause-policy",
@@ -803,8 +812,8 @@ def test_own_company_returns_only_own_records(api):
         headers=headers,
     )
     assert named.status_code == 200, named.text
-    assert named.json()["operator_name"] == "Op A"
-    assert named.json()["employee_id"] == "empA"
+    assert named.json()["operator_name"] == "user-a"
+    assert named.json()["employee_id"] is None
     _no_foreign(named.text)
 
     perf = client.get("/api/production/work-orders/performance", params={"company_id": COMP_A, **PERF_RANGE}, headers=headers)

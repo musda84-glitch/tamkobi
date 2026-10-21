@@ -683,8 +683,8 @@ def test_production_requirements_hides_other_company_recipe_and_stock(api):
     assert missing.status_code == 404
     assert missing.json()["detail"] == "Reçete bulunamadı."
 
-    unfiltered = _run(server._requirements(db.recipes.docs[0], 2))
-    assert next(row for row in unfiltered if row["product_id"] == "rawB")["in_stock"] == 50
+    closed = _run(server._requirements(db.recipes.docs[0], 2, stock_company_id=""))
+    assert next(row for row in closed if row["product_id"] == "rawB")["in_stock"] == 0
     filtered = _run(server._requirements(db.recipes.docs[0], 2, stock_company_id=COMP_A))
     assert next(row for row in filtered if row["product_id"] == "rawB")["in_stock"] == 0
     assert db.writes == []

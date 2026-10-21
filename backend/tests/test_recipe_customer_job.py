@@ -36,6 +36,7 @@ def test_update_recipe_allows_contact_and_job_file():
 
     existing = {
         "_id": "r1",
+        "company_id": "c1",
         "name": "Eski",
         "finished_product_id": "p1",
         "materials": [],
@@ -52,6 +53,7 @@ def test_update_recipe_allows_contact_and_job_file():
 
     async def run():
         with patch.object(server, "db", db), \
+             patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=existing)), \
              patch.object(server, "_fill_material_costs", AsyncMock()), \
              patch.object(server, "_recipe_costs", return_value={"total_estimated_cost": 0, "unit_cost": 0}):
             out = await server.update_recipe("r1", {
