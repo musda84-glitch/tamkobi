@@ -96,6 +96,45 @@ def _money(value: Any) -> float:
 FULFILLMENT_LINE_WARNING = (
     "Ürün veya miktar değişikliği toplama açık ya da sevk edilmiş siparişe uygulanmadı."
 )
+CLOSED_INVOICE_LINE_WARNING = (
+    "İptal, iade veya reddedilmiş faturaya ticari değişiklik uygulanmadı."
+)
+
+_CLOSED_INVOICE_STATUSES = frozenset({
+    "cancelled",
+    "canceled",
+    "void",
+    "rejected",
+    "refused",
+    "returned",
+    "partially_returned",
+    "iptal",
+    "iptal edildi",
+    "reddedildi",
+    "reddedilmis",
+    "iade",
+    "iade edildi",
+})
+
+
+def _fold_status(value: Any) -> str:
+    return str(value or "").strip().lower().replace("ı", "i").replace("i̇", "i")
+
+
+def invoice_closed_for_commercial_sync(invoice: Optional[Mapping[str, Any]]) -> bool:
+    """İptal, iade veya ret. GİB kilidi olmasa da kalem ve cari/stok etkisi yazılmaz."""
+    if not invoice:
+        return False
+    from invoice_status import is_cancelled_invoice
+
+    if is_cancelled_invoice(invoice):
+        return True
+    if _fold_status(invoice.get("status")) in _CLOSED_INVOICE_STATUSES:
+        return True
+    if invoice.get("returned") is True:
+        return True
+    response = _fold_status(invoice.get("gib_response"))
+    return response in ("rejected", "refused", "reddedildi", "reddedilmis")
 
 
 def _disc_rate(it: Mapping[str, Any]) -> float:

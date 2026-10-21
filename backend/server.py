@@ -33,7 +33,7 @@ import employee_pay
 import employee_data_reset
 from employee_sgk import norm_iban as _norm_iban, sgk_iban_update_error
 import b2b_production
-from order_edit import order_edit_block_reason
+from order_edit import _issued_edocument, order_edit_block_reason
 import order_mp_item_media as omp_media
 from order_dedupe import (
     dedupe_orders_by_marketplace_key,
@@ -79,9 +79,11 @@ from line_totals import (
     pick_fields,
 )
 from order_invoice_mismatch import (
+    CLOSED_INVOICE_LINE_WARNING,
     FULFILLMENT_LINE_WARNING,
     attach_invoice_mismatch_warnings,
     commercial_change_only,
+    invoice_closed_for_commercial_sync,
     order_is_shipped_for_sync,
     order_items_identity_signature,
     order_items_signature,
@@ -17103,14 +17105,11 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
     if o.get("dispatch_id"):
         dispatch = await db.invoices.find_one(_invoice_id_query(o["dispatch_id"], company_id))
     if not warehouse_only:
+        # Kesilmiş e-irsaliye, fatura GİB kilidinden bağımsız olarak kalem düzenlemesini kapatır.
+        if _issued_edocument(dispatch):
+            raise HTTPException(status_code=400, detail="E-belge kesilmiş sipariş düzenlenemez.")
         blocked = order_edit_block_reason(o, invoice, dispatch)
-        gib_keeps_order = (
-            blocked == "E-belge kesilmiş sipariş düzenlenemez."
-            and invoice
-            and _invoice_gib_locked(invoice)
-            and str(invoice.get("company_id") or "") == str(company_id or "")
-        )
-        if blocked and not gib_keeps_order:
+        if blocked:
             raise HTTPException(status_code=400, detail=blocked)
     marketplace = str(o.get("channel") or "").lower() in _MARKETPLACE_EDIT_BLOCK
     if marketplace and "items" in req:
@@ -18181,12 +18180,15 @@ async def _apply_commercial_lines_to_invoice(invoice: dict, items: list) -> Dict
     """GİB'siz faturanın kalem ve toplamlarını sipariş/teklif satırından yaz.
 
     Onaylı belgede cari ve stok, PUT /invoices ile aynı geri al / yeniden uygula
-    yoluyla hesaplanır. Taslakta etki yoktur.
+    yoluyla hesaplanır. Taslakta etki yoktur. İptal, iade ve ret fatura
+    atlanır; cari ve stok yeniden uygulanmaz.
     """
     if not invoice or not items:
         return _sync_result()
     if not _sync_claim("invoice", _doc_id(invoice)):
         return _sync_result()
+    if invoice_closed_for_commercial_sync(invoice):
+        return _sync_result(warning=CLOSED_INVOICE_LINE_WARNING)
     if _invoice_gib_locked(invoice):
         return _sync_result(gib_locked=True)
     company_id = invoice.get("company_id")
@@ -18257,13 +18259,20 @@ async def _propagate_order_commercial(order: dict, items: list) -> Dict[str, Any
         invoice = await _find_invoice_for_order(order)
         if invoice and not _quote_same_company(invoice, company_id):
             invoice = None
-        if invoice and _invoice_gib_locked(invoice):
+        if invoice and _invoice_gib_locked(invoice) and not invoice_closed_for_commercial_sync(invoice):
             return _sync_result(gib_locked=True)
-        if invoice and str(invoice.get("status") or "") == "draft" and not invoice.get("effects_applied"):
+        warning = None
+        if invoice and invoice_closed_for_commercial_sync(invoice):
+            closed = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (closed or {}).get("warning") or CLOSED_INVOICE_LINE_WARNING
+        elif invoice and await _order_invoice_line_sync_blocked(order, invoice, items):
+            warning = FULFILLMENT_LINE_WARNING
+        elif invoice and str(invoice.get("status") or "") == "draft" and not invoice.get("effects_applied"):
             _sync_claim("invoice", _doc_id(invoice))
             await _sync_draft_invoice_items(order, items)
         elif invoice:
-            await _apply_commercial_lines_to_invoice(invoice, items)
+            applied = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (applied or {}).get("warning")
         quote = await _find_quote_for_order(order, invoice)
         if quote and not quote_sync_skip_reason(quote, company_id):
             await _apply_commercial_lines_to_quote(
@@ -18272,9 +18281,21 @@ async def _propagate_order_commercial(order: dict, items: list) -> Dict[str, Any
                 note=_quote_note("order", str(order.get("order_number") or "")),
                 currency=str(order.get("currency") or invoice.get("currency") if invoice else order.get("currency") or ""),
             )
-        return _sync_result()
+        return _sync_result(warning=warning)
     finally:
         _sync_scope_leave(token)
+
+
+async def _order_invoice_line_sync_blocked(order: dict, invoice: dict, items: list) -> bool:
+    """Siparişten gelen ürün/miktar, açık toplama veya sevkte faturaya yazılmaz.
+
+    Fiyat, iskonto ve KDV (ürün ve miktar aynı) yazılır. Fatura→sipariş ile aynı kural.
+    """
+    if order_items_identity_signature(items) == order_items_identity_signature(invoice.get("items")):
+        return False
+    if order_is_shipped_for_sync(order):
+        return True
+    return await _invoice_sync_pick_session_open(order)
 
 
 def _carrier_invoice_for_quote(quote: dict, invoice: Optional[dict]) -> dict:
@@ -18301,12 +18322,16 @@ async def _propagate_quote_commercial(quote: dict) -> Dict[str, Any]:
     try:
         _sync_claim("quote", _doc_id(quote))
         invoice = await _find_invoice_for_quote(quote)
-        if invoice and _invoice_gib_locked(invoice):
-            return _sync_result(gib_locked=True)
-        if invoice:
-            await _apply_commercial_lines_to_invoice(invoice, items)
-        order = await _find_order_for_quote(quote, invoice)
         warning = None
+        if invoice and invoice_closed_for_commercial_sync(invoice):
+            closed = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (closed or {}).get("warning") or CLOSED_INVOICE_LINE_WARNING
+        elif invoice and _invoice_gib_locked(invoice):
+            return _sync_result(gib_locked=True)
+        elif invoice:
+            applied = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (applied or {}).get("warning")
+        order = await _find_order_for_quote(quote, invoice)
         if order:
             number = str(quote.get("quote_number") or "").strip() or "teklif"
             result = await _apply_order_from_commercial(
@@ -18315,7 +18340,8 @@ async def _propagate_quote_commercial(quote: dict) -> Dict[str, Any]:
                 items,
                 f"Teklif {number} düzenlemesinden güncellendi",
             )
-            warning = (result or {}).get("warning")
+            if not warning:
+                warning = (result or {}).get("warning")
         return _sync_result(warning=warning)
     finally:
         _sync_scope_leave(token)
