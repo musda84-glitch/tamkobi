@@ -277,9 +277,17 @@ def test_verified_identity_lists_link_only_after_accept(client, db):
     assert "<b>" not in notice["html"]
     assert "&lt;script&gt;" in notice["html"]
     assert "&lt;b&gt;" in notice["html"]
+    assert notice["subject"] == b2b_identity._NOTICE_SUBJECT
+    assert "<script>" not in notice["subject"]
+    assert "Firma" not in notice["subject"]
     import re
     accept_token = re.search(r"accept-link/([A-Za-z0-9_\-]+)", notice["html"]).group(1)
-    accepted = client.get(f"/api/public/b2b/accept-link/{accept_token}")
+    preview = client.get(f"/api/public/b2b/accept-link/{accept_token}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["status"] == "pending"
+    stored = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert not stored.get("accepted_at")
+    accepted = client.post(f"/api/public/b2b/accept-link/{accept_token}")
     assert accepted.status_code == 200, accepted.text
     stored = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
     assert stored["accepted_at"]
@@ -291,11 +299,15 @@ def test_verified_identity_lists_link_only_after_accept(client, db):
     )
     assert started.status_code == 200, started.text
     assert "ali@example.com" not in started.text or "gönderildi" in started.text
+    verify_mail = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_verify_email")
+    verify_token = re.search(r"verify-email/([A-Za-z0-9_\-]+)", verify_mail["html"]).group(1)
     verify_row = db.b2b_email_verifications.docs[-1]
-    assert verify_row["_id"] not in started.text
-    queued = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_verify_email")
+    assert verify_row["_id"] == b2b_identity.token_digest(verify_token)
+    assert verify_row["_id"] != verify_token
+    assert verify_token not in str(verify_row)
+    queued = verify_mail
     assert queued["status"] == "pending"
-    confirmed = client.get(f"/api/public/b2b/verify-email/{verify_row['_id']}")
+    confirmed = client.get(f"/api/public/b2b/verify-email/{verify_token}")
     assert confirmed.status_code == 200, confirmed.text
     listed = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {token}"})
     assert listed.status_code == 200, listed.text
@@ -366,7 +378,10 @@ def test_link_notice_queues_once_without_smtp(db, monkeypatch):
     assert len(notes) == 1
     assert notes[0]["status"] == "pending"
     assert notes[0]["to"] == ["ali@example.com"]
+    assert notes[0]["subject"] == b2b_identity._NOTICE_SUBJECT
+    assert "Firma B" not in notes[0]["subject"]
     assert "<i>" not in notes[0]["html"]
+    assert "&lt;i&gt;" in notes[0]["html"]
     assert "secret" not in notes[0]["text"]
     asyncio.run(run())
     assert len([row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice"]) == 1
@@ -480,6 +495,12 @@ def test_legacy_email_login_and_reset_queue(db, client, monkeypatch):
     assert "<b>" not in queued["html"]
     assert "&lt;script&gt;" in queued["html"]
     assert "&lt;b&gt;" in queued["html"]
+    import re
+    raw = re.search(r"/b2b/sifre/([A-Za-z0-9_\-]+)", queued["html"]).group(1)
+    stored = db.b2b_password_resets.docs[-1]
+    assert stored["_id"] == b2b_identity.token_digest(raw)
+    assert stored["_id"] != raw
+    assert raw not in str(stored)
 
 
 def test_unknown_login_uses_dummy_bcrypt_and_hides_ident(client, monkeypatch):
@@ -509,6 +530,239 @@ def test_unknown_login_uses_dummy_bcrypt_and_hides_ident(client, monkeypatch):
     assert "b2b:email:" in blob
     assert "b2b:tax:" in blob
     _ = applog
+
+
+def _identity_row(password_hash=HASH, verified=None):
+    return {
+        "_id": "id-ali",
+        "email": "ali@example.com",
+        "password_hash": password_hash,
+        "email_verified_at": verified,
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
+
+
+async def _portal_change(db, contact_id, current, new_plain):
+    contact = next(row for row in db.contacts.docs if row["_id"] == contact_id)
+    blocked = await b2b_identity.portal_current_password_error(db, contact, current, new_plain)
+    if blocked:
+        return blocked
+    new_hash = hash_password(new_plain)
+    await db.contacts.update_one(
+        {"_id": contact_id},
+        {"$set": {"b2b_password_hash": new_hash}},
+    )
+    fresh = next(row for row in db.contacts.docs if row["_id"] == contact_id)
+    return await b2b_identity.change_own_password(db, fresh, new_hash, current_plain=current)
+
+
+def test_change_password_cannot_take_over_identity(db, monkeypatch):
+    """Tedarikçi kurban e-postasını ve kendi cari şifresini koyup portal şifresini değiştirince kimlik durur."""
+    import asyncio
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1].joinpath("server.py").read_text(encoding="utf-8")
+    start = src.index("async def b2b_change_password")
+    end = src.index("\ndef _decorate_b2b_held_order", start)
+    body = src[start:end]
+    assert "current_plain=current" in body
+    assert "_mark_accepted" not in body
+    reset_src = src[src.index("async def _b2b_reset_doc"):src.index("\ndef _alias_key")]
+    assert "token_digest" in reset_src
+    assert '{"_id": token}' not in reset_src
+
+    db.b2b_identities.docs.append(_identity_row())
+    victim = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    victim["b2b_password_hash"] = HASH_B
+    db.b2b_sessions.docs.append({
+        "_id": "sess-victim",
+        "identity_id": "id-ali",
+        "email": "ali@example.com",
+        "expires_at": datetime.now(timezone.utc).isoformat(),
+        "contact_ids": ["cA"],
+    })
+    marked = []
+
+    async def spy(*_a, **_k):
+        marked.append(True)
+
+    monkeypatch.setattr(b2b_identity, "_mark_accepted", spy)
+    result = asyncio.run(_portal_change(db, "cB", PWD_B, "ele-gecir-9"))
+    assert result is None or result.get("password_hash") == HASH
+    identity = db.b2b_identities.docs[0]
+    assert identity["password_hash"] == HASH
+    assert verify_password(PWD, identity["password_hash"])
+    assert not verify_password("ele-gecir-9", identity["password_hash"])
+    fresh = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    assert verify_password("ele-gecir-9", fresh["b2b_password_hash"])
+    assert marked == []
+    assert db.b2b_sessions.docs
+    assert not any(row.get("accepted_at") for row in db.b2b_link_acceptances.docs)
+
+    monkeypatch.undo()
+    db.b2b_identities.docs[0]["password_hash"] = ""
+    fresh = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    fresh["b2b_password_hash"] = HASH_B
+    asyncio.run(b2b_identity._mark_accepted(db, "ali@example.com", fresh))
+    assert any(row.get("accepted_at") and row.get("contact_id") == "cB" for row in db.b2b_link_acceptances.docs)
+    monkeypatch.setattr(b2b_identity, "_mark_accepted", spy)
+    marked.clear()
+    asyncio.run(_portal_change(db, "cB", PWD_B, "ele-gecir-8"))
+    assert db.b2b_identities.docs[0]["password_hash"] == ""
+    assert marked == []
+
+    db.b2b_identities.docs.clear()
+    db.b2b_link_acceptances.docs.clear()
+    marked.clear()
+    lone = next(row for row in db.contacts.docs if row["_id"] == "cA")
+    lone["b2b_password_hash"] = HASH
+    asyncio.run(_portal_change(db, "cA", PWD, "yeni-cari-1"))
+    assert db.b2b_identities.docs == []
+    assert marked == []
+    assert not any(row.get("accepted_at") for row in db.b2b_link_acceptances.docs)
+
+    monkeypatch.undo()
+    db.b2b_identities.docs.append(_identity_row())
+    db.b2b_sessions.docs.append({
+        "_id": "sess-ok",
+        "identity_id": "id-ali",
+        "email": "ali@example.com",
+        "expires_at": datetime.now(timezone.utc).isoformat(),
+        "contact_ids": ["cA"],
+    })
+    asyncio.run(_portal_change(db, "cA", PWD, "yeni-kimlik-1"))
+    assert verify_password("yeni-kimlik-1", db.b2b_identities.docs[0]["password_hash"])
+    assert all(row.get("email") != "ali@example.com" for row in db.b2b_sessions.docs)
+    assert any(row.get("accepted_at") and row.get("contact_id") == "cA" for row in db.b2b_link_acceptances.docs)
+
+
+def test_accept_link_post_is_atomic_and_expires(client, db):
+    import asyncio
+    import re
+    db.b2b_identities.docs.append(_identity_row())
+    contact = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    upd = {"b2b_login_email": "ali@example.com", "b2b_enabled": True}
+
+    async def issue():
+        await b2b_identity.consider_link_notice(db, contact, {**contact, **upd}, upd)
+
+    asyncio.run(issue())
+    notice = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice")
+    raw = re.search(r"accept-link/([A-Za-z0-9_\-]+)", notice["html"]).group(1)
+    stored = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert stored["token_hash"] == b2b_identity.token_digest(raw)
+    assert stored.get("token_used_at") is None
+    expires = datetime.fromisoformat(stored["expires_at"])
+    delta = expires - datetime.now(timezone.utc)
+    assert timedelta(hours=71) < delta < timedelta(hours=73)
+    preview = client.get(f"/api/public/b2b/accept-link/{raw}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["status"] == "pending"
+    assert preview.json()["company_name"] == "Firma B"
+    assert not next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB").get("accepted_at")
+    stored["expires_at"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    expired_get = client.get(f"/api/public/b2b/accept-link/{raw}")
+    expired_post = client.post(f"/api/public/b2b/accept-link/{raw}")
+    assert expired_get.status_code == 400
+    assert "süresi doldu" in expired_get.json()["detail"]
+    assert expired_post.status_code == 400
+    assert "süresi doldu" in expired_post.json()["detail"]
+    assert not next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB").get("accepted_at")
+    stored["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat()
+    first = client.post(f"/api/public/b2b/accept-link/{raw}")
+    assert first.status_code == 200, first.text
+    used = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert used["accepted_at"]
+    assert used["token_used_at"]
+    assert used["token_hash"] is None
+    again = client.post(f"/api/public/b2b/accept-link/{raw}")
+    assert again.status_code == 400
+    preview_used = client.get(f"/api/public/b2b/accept-link/{raw}")
+    assert preview_used.status_code == 400
+
+
+def test_link_notice_daily_cap_per_recipient_and_company(db, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(b2b_identity, "_NOTICE_DAILY_PER_RECIPIENT", 1)
+    monkeypatch.setattr(b2b_identity, "_NOTICE_DAILY_PER_COMPANY", 100)
+    db.b2b_identities.docs.append(_identity_row())
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    db.notify_outbox.docs.append({
+        "_id": "old-notice",
+        "company_id": "coB",
+        "event": "b2b_link_notice",
+        "to": ["ali@example.com"],
+        "subject": b2b_identity._NOTICE_SUBJECT,
+        "created_at": yesterday,
+        "status": "pending",
+    })
+    contact_b = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    upd_b = {"b2b_login_email": "ali@example.com", "b2b_enabled": True}
+
+    async def notice(before, upd):
+        await b2b_identity.consider_link_notice(db, before, {**before, **upd}, upd)
+
+    asyncio.run(notice(contact_b, upd_b))
+    assert upd_b["b2b_link_notified_email"] == "ali@example.com"
+    contact_a = next(row for row in db.contacts.docs if row["_id"] == "cA")
+    upd_a = {"b2b_login_email": "ali@example.com", "b2b_enabled": True}
+    asyncio.run(notice(contact_a, upd_a))
+    assert "b2b_link_notified_email" not in upd_a
+    today = [row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice" and row.get("created_at") != yesterday]
+    assert len(today) == 1
+    assert today[0]["subject"] == b2b_identity._NOTICE_SUBJECT
+
+    monkeypatch.setattr(b2b_identity, "_NOTICE_DAILY_PER_RECIPIENT", 100)
+    monkeypatch.setattr(b2b_identity, "_NOTICE_DAILY_PER_COMPANY", 1)
+
+    async def send(to):
+        return await b2b_identity._send_link_notice(
+            db, to=to, company_name="<script>Evil</script>", contact_name="Cari",
+            company_id="coZ", token="raw-token-not-stored",
+        )
+
+    assert asyncio.run(send("bir@example.com")) is True
+    sent = next(row for row in db.notify_outbox.docs if row.get("to") == ["bir@example.com"])
+    assert sent["subject"] == b2b_identity._NOTICE_SUBJECT
+    assert "Evil" not in sent["subject"]
+    assert "<script>" not in sent["subject"]
+    assert "&lt;script&gt;" in sent["html"]
+    assert asyncio.run(send("iki@example.com")) is False
+    assert not any(row.get("to") == ["iki@example.com"] for row in db.notify_outbox.docs)
+
+
+def test_verify_start_is_rate_limited_and_reset_token_is_hashed(client, db):
+    import re
+    db.b2b_identities.docs.append(_identity_row())
+    res = _login(client)
+    assert res.status_code == 200, res.text
+    token = res.json()["select_token"]
+    headers = {"Authorization": f"B2bSession {token}"}
+    for _ in range(5):
+        started = client.post("/api/public/b2b/verify-email/start", headers=headers)
+        assert started.status_code == 200, started.text
+    locked = client.post("/api/public/b2b/verify-email/start", headers=headers)
+    assert locked.status_code == 429
+    assert locked.json()["detail"] == b2b_identity._VERIFY_LOCK
+    digest = b2b_identity._sha256("ali@example.com")
+    counters = [row for row in db.login_attempts.docs if digest in row["identifier"]]
+    assert any(row["identifier"].startswith("b2b:verify:acct:") for row in counters)
+    assert any(row["identifier"].startswith("b2b:verify:ip:") for row in counters)
+    assert "ali@example.com" not in "".join(row["identifier"] for row in counters)
+    assert len(db.b2b_email_verifications.docs) == 5
+    mails = [row for row in db.notify_outbox.docs if row.get("event") == "b2b_verify_email"]
+    assert len(mails) == len(db.b2b_email_verifications.docs) == 5
+    for mail, row in zip(mails, db.b2b_email_verifications.docs):
+        raw = re.search(r"verify-email/([A-Za-z0-9_\-]+)", mail["html"]).group(1)
+        assert row["_id"] == b2b_identity.token_digest(raw)
+        assert row["_id"] != raw
+        assert raw not in str(row)
+    past = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    for row in counters:
+        row["last_attempt"] = past
+    again = client.post("/api/public/b2b/verify-email/start", headers=headers)
+    assert again.status_code == 200, again.text
 
 
 def test_removed_b2b_tenant_keys_are_gone():

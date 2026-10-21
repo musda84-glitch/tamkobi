@@ -5535,12 +5535,15 @@ async def b2b_reset_post(token: str, req: Dict[str, Any]):
         )
         c["b2b_token"] = portal
     await b2b_identity.apply_password_reset(db, c, pwd, email=row.get("email"))
-    await db.b2b_password_resets.update_one({"_id": token}, {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}})
+    await db.b2b_password_resets.update_one(
+        {"_id": b2b_identity.token_digest(token)},
+        {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}},
+    )
     return {"status": "success", "message": "Şifreniz güncellendi.", "redirect": f"/portal/{c['b2b_token']}", "token": c["b2b_token"], "name": c.get("name")}
 
 
 async def _b2b_reset_doc(token: str) -> dict:
-    row = await db.b2b_password_resets.find_one({"_id": token})
+    row = await db.b2b_password_resets.find_one({"_id": b2b_identity.token_digest(token)})
     if not row:
         raise HTTPException(status_code=404, detail="Sıfırlama bağlantısı geçersiz.")
     if row.get("used_at"):
@@ -6649,7 +6652,7 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
         {"_id": c["_id"]},
         {"$set": {"b2b_password_hash": new_hash, "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
-    await b2b_identity.change_own_password(db, c, new_hash)
+    await b2b_identity.change_own_password(db, c, new_hash, current_plain=current)
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
 def _decorate_b2b_held_order(o: Dict[str, Any]) -> Dict[str, Any]:

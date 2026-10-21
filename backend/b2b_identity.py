@@ -30,8 +30,12 @@ router = APIRouter(prefix="/api")
 
 SESSION_MINUTES = 15
 VERIFY_HOURS = 24
+ACCEPT_HOURS = 72
 _LOCK_LIMIT = 5
 _LOCK_MINUTES = 15
+_NOTICE_DAILY_PER_RECIPIENT = 5
+_NOTICE_DAILY_PER_COMPANY = 20
+_NOTICE_SUBJECT = "B2B hesabınıza bir tedarikçi bağlanmak istiyor"
 
 _FAIL = "Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin."
 _PASSIVE = "Cari hesap pasif. B2B girişi kapalı."
@@ -39,6 +43,7 @@ _CLOSED = "B2B portalı şu an kapalı."
 _LINK_ONLY = "Bu portal yalnızca kişiye özel link ile açılır."
 _NEED = "E-posta / VKN ve şifre gerekli."
 _LOCK = "Çok fazla hatalı giriş denemesi. Lütfen 15 dakika sonra tekrar deneyin."
+_VERIFY_LOCK = "Çok fazla doğrulama isteği. Lütfen 15 dakika sonra tekrar deneyin."
 _SESSION_BAD = "Geçersiz veya süresi dolmuş oturum."
 _SESSION_EXPIRED = "Oturum süresi doldu. Yeniden giriş yapın."
 _NOT_LINKED = "Bu cari bu oturuma bağlı değil."
@@ -98,6 +103,11 @@ def _sha256(value: str) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
+def token_digest(token: str) -> str:
+    """URL'deki ham token'ın SHA-256 özeti. Veritabanında yalnız bu durur."""
+    return _sha256(str(token or "").strip())
+
+
 def _esc(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
 
@@ -123,6 +133,14 @@ def _ip_lock_id(ip: str, ident: str) -> str:
 
 def _acct_lock_id(ident: str) -> str:
     return f"b2b:acct:{_sha256(ident)}"
+
+
+def _verify_ip_id(ip: str, email: str) -> str:
+    return f"b2b:verify:ip:{ip}:{_sha256(email)}"
+
+
+def _verify_acct_id(email: str) -> str:
+    return f"b2b:verify:acct:{_sha256(email)}"
 
 
 async def _locked(db, identifier: str) -> bool:
@@ -765,20 +783,26 @@ async def portal_current_password_error(db, contact: dict, current: str, new_pla
     return None
 
 
-async def change_own_password(db, contact: dict, new_hash: str) -> Optional[dict]:
-    """Müşterinin kendi portal şifre değişimi. Tedarikçi yazımı bunu çağırmaz."""
+async def change_own_password(db, contact: dict, new_hash: str, *, current_plain: str = "") -> Optional[dict]:
+    """Portal şifre değişimi. Kimlik hash'i yalnız mevcut şifre kimlik hash'ine uyarsa yazılır.
+
+    Kimlik yoksa bu yoldan oluşturulmaz. password_hash boşsa, cari daha önce
+    kendi şifresiyle doğrulanmış tek kayıt olsa bile kimliğe yazılmaz.
+    _mark_accepted yalnız kimlik şifresi doğrulanınca çağrılır. Diğer durumda
+    çağıran yalnız cari hash'ini değiştirmiş olur.
+    """
     email = _norm_email((contact or {}).get("b2b_login_email") or (contact or {}).get("email"))
     if "@" not in email or not new_hash:
         return None
     identity = await db.b2b_identities.find_one({"email": email})
-    if identity:
-        await db.b2b_identities.update_one(
-            {"_id": identity["_id"]},
-            {"$set": {"password_hash": new_hash}},
-        )
-        identity["password_hash"] = new_hash
-    else:
-        identity = await _insert_identity(db, email, new_hash)
+    stored = str((identity or {}).get("password_hash") or "")
+    if not identity or not stored or not verify_password(str(current_plain or ""), stored):
+        return identity
+    await db.b2b_identities.update_one(
+        {"_id": identity["_id"]},
+        {"$set": {"password_hash": new_hash}},
+    )
+    identity["password_hash"] = new_hash
     await _drop_sessions(db, identity_id=identity.get("_id") or "", email=email)
     await _mark_accepted(db, email, contact)
     return identity
@@ -862,15 +886,9 @@ async def _consider_link_notice(db, before: dict, after: dict, upd: dict) -> Non
     if existing and existing.get("accepted_at"):
         upd["b2b_link_notified_email"] = email
         return
-    raw = secrets.token_urlsafe(32)
-    now = _iso()
-    fields = {"token_hash": _sha256(raw), "email": email, "contact_id": contact_id, "company_id": company_id}
-    if existing:
-        await db.b2b_link_acceptances.update_one({"_id": key}, {"$set": fields})
-    else:
-        await db.b2b_link_acceptances.insert_one({
-            "_id": key, "accepted_at": None, "created_at": now, **fields,
-        })
+    raw = await _issue_accept_token(db, email=email, contact_id=contact_id, company_id=company_id, existing=existing)
+    if not raw:
+        return
     company = await db.companies.find_one({"_id": company_id}) if company_id else None
     queued = await _send_link_notice(
         db,
@@ -884,12 +902,63 @@ async def _consider_link_notice(db, before: dict, after: dict, upd: dict) -> Non
         upd["b2b_link_notified_email"] = email
 
 
+def _day_start_iso() -> str:
+    moment = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return moment.isoformat()
+
+
+async def _notice_over_daily_cap(db, *, recipient: str, company_id: str) -> bool:
+    """Bağ bildirimi: alıcı ve şirket başına UTC gün tavanı."""
+    start = _day_start_iso()
+    cid = str(company_id or "").strip() or "platform"
+    company_n = await db.notify_outbox.count_documents({
+        "company_id": cid,
+        "event": "b2b_link_notice",
+        "created_at": {"$gte": start},
+    })
+    if company_n >= _NOTICE_DAILY_PER_COMPANY:
+        return True
+    # tenant-ok: bağ bildirimi alıcı başına günlük tavan, e-posta firmalar arasında sayılır
+    recipient_n = await db.notify_outbox.count_documents({"event": "b2b_link_notice", "to": recipient, "created_at": {"$gte": start}})
+    return recipient_n >= _NOTICE_DAILY_PER_RECIPIENT
+
+
+def _accept_token_fields(email: str, contact_id: str, company_id: str, raw: str) -> dict:
+    return {
+        "token_hash": token_digest(raw),
+        "email": email,
+        "contact_id": contact_id,
+        "company_id": company_id,
+        "expires_at": _iso(_now() + timedelta(hours=ACCEPT_HOURS)),
+        "token_used_at": None,
+    }
+
+
+async def _issue_accept_token(db, *, email: str, contact_id: str, company_id: str, existing: Optional[dict]) -> Optional[str]:
+    """72 saatlik onay token'ı yazar. Günlük tavan doluysa token döndürmez."""
+    if await _notice_over_daily_cap(db, recipient=email, company_id=company_id):
+        return None
+    raw = secrets.token_urlsafe(32)
+    key = _accept_key(email, company_id, contact_id)
+    fields = _accept_token_fields(email, contact_id, company_id, raw)
+    if existing:
+        await db.b2b_link_acceptances.update_one({"_id": key}, {"$set": fields})
+    else:
+        await db.b2b_link_acceptances.insert_one({
+            "_id": key, "accepted_at": None, "created_at": _iso(), **fields,
+        })
+    return raw
+
+
 async def _send_link_notice(db, *, to: str, company_name: str, contact_name: str, company_id: str, token: str) -> bool:
+    recipient = _norm_email(to)
+    if await _notice_over_daily_cap(db, recipient=recipient, company_id=company_id):
+        return False
     safe_company = _esc(company_name)
     safe_contact = _esc(contact_name)
     link = f"{host_audience.public_host_url(host_audience.KIND_B2B)}/api/public/b2b/accept-link/{token}"
     safe_link = _esc(link)
-    subject = f"{company_name} B2B hesabınıza bağlanmak istiyor"
+    subject = _NOTICE_SUBJECT
     body = (
         f"Merhaba,\n{company_name} firması {contact_name} carisini B2B hesabınıza bağlamak istiyor.\n"
         f"Onaylamak için bu bağlantıyı açın:\n{link}\n"
@@ -922,16 +991,13 @@ async def notify_unnotified_links(db, identity: dict) -> None:
         if _norm_email(contact.get("b2b_link_notified_email")) == email:
             continue
         company = await db.companies.find_one({"_id": company_id}) or {}
-        raw = secrets.token_urlsafe(32)
         key = _accept_key(email, company_id, cid)
         existing = await db.b2b_link_acceptances.find_one({"_id": key})
-        fields = {"token_hash": _sha256(raw), "email": email, "contact_id": cid, "company_id": company_id}
-        if existing:
-            await db.b2b_link_acceptances.update_one({"_id": key}, {"$set": fields})
-        else:
-            await db.b2b_link_acceptances.insert_one({
-                "_id": key, "accepted_at": None, "created_at": _iso(), **fields,
-            })
+        raw = await _issue_accept_token(
+            db, email=email, contact_id=cid, company_id=company_id, existing=existing,
+        )
+        if not raw:
+            continue
         queued = await _send_link_notice(
             db, to=email, company_name=company.get("name") or "Bir tedarikçi",
             contact_name=contact.get("name") or "", company_id=company_id, token=raw,
@@ -943,19 +1009,67 @@ async def notify_unnotified_links(db, identity: dict) -> None:
             )
 
 
-async def accept_supplier_link(db, token: str) -> dict:
-    digest = _sha256(str(token or "").strip())
-    if not digest:
+async def _accept_row(db, token: str) -> dict:
+    raw = str(token or "").strip()
+    if not raw:
         raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
-    row = await db.b2b_link_acceptances.find_one({"token_hash": digest})
+    row = await db.b2b_link_acceptances.find_one({"token_hash": token_digest(raw)})
     if not row or row.get("token_used_at"):
         raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    expires = row.get("expires_at")
+    if not expires:
+        raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    try:
+        if _parse_dt(expires) <= _now():
+            raise HTTPException(status_code=400, detail="Onay bağlantısının süresi doldu.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    return row
+
+
+async def preview_supplier_link(db, token: str) -> dict:
+    """GET onaylamaz. Onay sayfasının göstereceği bilgiyi döner."""
+    row = await _accept_row(db, token)
+    company_id = str(row.get("company_id") or "")
+    contact_id = str(row.get("contact_id") or "")
+    company = await db.companies.find_one({"_id": company_id}) if company_id else None
+    contact = None
+    if contact_id and company_id:
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+    return {
+        "status": "pending",
+        "message": "Bu bağlantı bir tedarikçi bağını onaylamak içindir. Onaylamak için formu gönderin.",
+        "company_name": (company or {}).get("name") or "",
+        "contact_name": (contact or {}).get("name") or "",
+        "expires_at": row.get("expires_at") or "",
+    }
+
+
+async def accept_supplier_link(db, token: str) -> dict:
+    """POST tek kullanımlık. token_hash ve token_used_at boş kaydı atomik tüketir."""
+    raw = str(token or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    digest = token_digest(raw)
     now = _iso()
-    await db.b2b_link_acceptances.update_one(
-        {"_id": row["_id"]},
-        {"$set": {"accepted_at": row.get("accepted_at") or now, "token_used_at": now, "token_hash": None}},
+    updated = await db.b2b_link_acceptances.find_one_and_update(
+        {"token_hash": digest, "token_used_at": None, "expires_at": {"$gt": now}},
+        {"$set": {"accepted_at": now, "token_used_at": now, "token_hash": None}},
     )
-    return {"status": "success", "message": "Tedarikçi bağlantısı onaylandı."}
+    if updated:
+        return {"status": "success", "message": "Tedarikçi bağlantısı onaylandı."}
+    row = await db.b2b_link_acceptances.find_one({"token_hash": digest})
+    if row and row.get("expires_at"):
+        try:
+            if _parse_dt(row.get("expires_at")) <= _now():
+                raise HTTPException(status_code=400, detail="Onay bağlantısının süresi doldu.")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
 
 
 async def start_email_verification(db, request: Request, req: Optional[dict] = None) -> dict:
@@ -964,12 +1078,19 @@ async def start_email_verification(db, request: Request, req: Optional[dict] = N
     email = _norm_email(identity.get("email"))
     if "@" not in email or not identity.get("_id"):
         raise HTTPException(status_code=400, detail="Doğrulanacak e-posta yok.")
+    ip_id = _verify_ip_id(applog.client_ip(request), email)
+    acct_id = _verify_acct_id(email)
+    if await _locked(db, ip_id) or await _locked(db, acct_id):
+        raise HTTPException(status_code=429, detail=_VERIFY_LOCK)
+    await _bump_failure(db, ip_id)
+    await _bump_failure(db, acct_id)
     if identity.get("email_verified_at"):
         return {"status": "ok", "message": "E-posta zaten doğrulanmış."}
     verify_token = secrets.token_urlsafe(32)
+    digest = token_digest(verify_token)
     moment = _now()
     await db.b2b_email_verifications.insert_one({
-        "_id": verify_token,
+        "_id": digest,
         "identity_id": identity["_id"],
         "email": email,
         "expires_at": (moment + timedelta(hours=VERIFY_HOURS)).isoformat(),
@@ -995,7 +1116,7 @@ async def start_email_verification(db, request: Request, req: Optional[dict] = N
     )
     if not queued:
         await db.b2b_email_verifications.update_one(
-            {"_id": verify_token},
+            {"_id": digest},
             {"$set": {"used_at": _iso(), "revoked": True}},
         )
         return {"status": "ok", "message": "Doğrulama e-postası şu an gönderilemedi. Daha sonra tekrar deneyin."}
@@ -1003,7 +1124,7 @@ async def start_email_verification(db, request: Request, req: Optional[dict] = N
 
 
 async def confirm_email_verification(db, token: str) -> dict:
-    row = await db.b2b_email_verifications.find_one({"_id": str(token or "").strip()})
+    row = await db.b2b_email_verifications.find_one({"_id": token_digest(token)})
     if not row or row.get("used_at"):
         raise HTTPException(status_code=400, detail="Doğrulama bağlantısı geçersiz.")
     try:
@@ -1042,13 +1163,14 @@ async def finish_b2b_forgot(db, ident: str, request: Request, ready: dict, out: 
     if not contact or "@" not in to:
         return out
     token = secrets.token_urlsafe(32)
+    digest = token_digest(token)
     now = _now()
     await db.b2b_password_resets.update_many(
         {"contact_id": contact["_id"], "used_at": None},
         {"$set": {"used_at": now.isoformat(), "revoked": True}},
     )
     await db.b2b_password_resets.insert_one({
-        "_id": token,
+        "_id": digest,
         "contact_id": contact["_id"],
         "company_id": contact["company_id"],
         "email": to,
@@ -1084,7 +1206,7 @@ async def finish_b2b_forgot(db, ident: str, request: Request, ready: dict, out: 
         logger.warning("b2b forgot-password queue failed: %s", type(exc).__name__)
     if not queued:
         await db.b2b_password_resets.update_one(
-            {"_id": token},
+            {"_id": digest},
             {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True}},
         )
         return password_reset.finalize_forgot_mail_result(out, mail_status="failed", mail_detail="queue_failed")
@@ -1130,7 +1252,7 @@ async def b2b_verify_email_post(token: str):
 
 @router.get("/public/b2b/accept-link/{token}")
 async def b2b_accept_link_get(token: str):
-    return await accept_supplier_link(get_db(), token)
+    return await preview_supplier_link(get_db(), token)
 
 
 @router.post("/public/b2b/accept-link/{token}")

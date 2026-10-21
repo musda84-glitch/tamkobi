@@ -815,19 +815,19 @@ COLLECTIONS = {
     },
     "b2b_link_acceptances": {
         "scope": SCOPE_PLATFORM,
-        "description": "Tedarikçi cari bağının müşteri onayı. accepted_at doluysa doğrulanmış kimlik listeler.",
-        "keys": ("_id", "email", "contact_id", "company_id", "accepted_at", "token_hash", "created_at"),
+        "description": "Tedarikçi cari bağının müşteri onayı. accepted_at doluysa doğrulanmış kimlik listeler. Onay token'ı 72 saat, tek kullanımlık; token_hash SHA-256.",
+        "keys": ("_id", "email", "contact_id", "company_id", "accepted_at", "token_hash", "token_used_at", "expires_at", "created_at"),
         "refs": ("b2b_identities.email", "contacts._id"),
     },
     "b2b_email_verifications": {
         "scope": SCOPE_PLATFORM,
-        "description": "B2B kimlik e-posta doğrulama bağlantıları.",
+        "description": "B2B kimlik e-posta doğrulama bağlantıları. _id ham token'ın SHA-256 özeti.",
         "keys": ("_id", "identity_id", "email", "expires_at", "used_at", "created_at"),
         "refs": ("b2b_identities._id",),
     },
     "b2b_password_resets": {
         "scope": SCOPE_TENANT,
-        "description": "B2B portal şifre sıfırlama tokenları.",
+        "description": "B2B portal şifre sıfırlama tokenları. _id ham token'ın SHA-256 özeti.",
         "keys": ("_id", "contact_id", "used_at"),
         "refs": ("contacts._id",),
     },
