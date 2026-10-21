@@ -630,6 +630,7 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
                 "finished_product_name": i.get("product_name"),
                 "planned_quantity": miss,
                 "source": "order_pick",
+                "sales_order_id": order_id,
                 "allow_without_recipe": True,
                 "notes": f"Sipariş {o.get('order_number')} eksik {miss:g} adet",
             })

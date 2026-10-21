@@ -22509,6 +22509,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 "planned_quantity": planned_qty,
                 "planned_date": planned_date,
                 "source": "sales_order",
+                "sales_order_id": real_oid,
                 "allow_without_recipe": True,
                 "notes": recipe_doc.get("notes") or f"Sipariş {order.get('order_number')}",
                 "station": default_station or None,
@@ -23080,6 +23081,11 @@ async def production_missing_plan_create(req: Dict[str, Any], user: dict = Depen
         order_refs = [s.get("order_number") for s in sources if s.get("order_number")]
         if not notes and order_refs:
             notes = "Sipariş " + ", ".join(order_refs[:4]) + " eksik kaleminden planlandı"
+        source_order_ids = []
+        for src in sources:
+            oid = str((src or {}).get("order_id") or "").strip()
+            if oid and oid not in source_order_ids:
+                source_order_ids.append(oid)
         try:
             payload = {
                 "company_id": company_id,
@@ -23091,6 +23097,8 @@ async def production_missing_plan_create(req: Dict[str, Any], user: dict = Depen
                 "allow_without_recipe": True,
                 "notes": notes or "Eksik ürün bildiriminden planlandı",
             }
+            if len(source_order_ids) == 1:
+                payload["sales_order_id"] = source_order_ids[0]
             if line.get("recipe_id"):
                 payload["recipe_id"] = line["recipe_id"]
             po = await create_production_order(payload)
@@ -23227,6 +23235,12 @@ _PO_LIST_PROJ = {
     "shortages": 1,
     "over_produced": 1,
     "needs_recipe": 1,
+    "project_id": 1,
+    "project_number": 1,
+    "sales_order_id": 1,
+    "sales_order_no": 1,
+    "customer_id": 1,
+    "customer_name": 1,
     "created_at": 1,
 }
 
@@ -23264,25 +23278,79 @@ async def list_production_orders(
             r["steps_summary"] = _production_steps_summary(ws)
     return clean_docs(rows)
 
+_ORDER_LINK_SOURCES = frozenset({"order", "order_pick", "sales_order"})
+
+
+def _link_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+async def _production_order_link_fields(req: Dict[str, Any], company_id: str) -> Dict[str, Any]:
+    """Sipariş kaynağından bağ alanları. İstek project_id aynı şirkette doğrulanmadan yazılmaz."""
+    source = _link_text(req.get("source"))
+    out: Dict[str, Any] = {}
+    if source in _ORDER_LINK_SOURCES:
+        sid = _link_text(req.get("sales_order_id") or req.get("source_order_id"))
+        order = None
+        if sid:
+            order = await db.orders.find_one({"_id": sid, "company_id": company_id})
+        if order and str(order.get("company_id") or "") == company_id:
+            out["sales_order_id"] = _link_text(order.get("_id") or sid)
+            number = _link_text(order.get("order_number") or order.get("sales_order_no"))
+            if number:
+                out["sales_order_no"] = number
+            customer_id = _link_text(order.get("customer_id") or order.get("contact_id"))
+            if customer_id:
+                out["customer_id"] = customer_id
+            customer = _link_text(order.get("customer_name"))
+            if customer:
+                out["customer_name"] = customer
+            order_project = _link_text(order.get("project_id"))
+            if order_project:
+                proj = await db.projects.find_one({"_id": order_project, "company_id": company_id})
+                if proj and str(proj.get("company_id") or "") == company_id:
+                    out["project_id"] = _link_text(proj.get("_id") or order_project)
+                    number = _link_text(proj.get("project_number") or order.get("project_number"))
+                    if number:
+                        out["project_number"] = number
+    raw_project = req.get("project_id")
+    if raw_project is not None and _link_text(raw_project):
+        pid = _link_text(raw_project)
+        proj = await db.projects.find_one({"_id": pid, "company_id": company_id})
+        if not proj or str(proj.get("company_id") or "") != company_id:
+            raise HTTPException(status_code=400, detail="Proje bu şirkete ait değil.")
+        out["project_id"] = _link_text(proj.get("_id") or pid)
+        number = _link_text(proj.get("project_number"))
+        if number:
+            out["project_number"] = number
+    return out
+
+
 @api_router.post("/production/orders")
 async def create_production_order(req: Dict[str, Any], user: Any = Depends(get_current_user)):
     company_id = tenant_access.resolve_caller_company(user, req.get("company_id"))
+    link = await _production_order_link_fields(req, company_id)
+    link_kwargs = {
+        key: link[key]
+        for key in ("project_id", "project_number", "sales_order_id", "sales_order_no", "customer_id", "customer_name")
+        if link.get(key)
+    }
     recipe = None
     if req.get("recipe_id"):
-        recipe = await db.recipes.find_one({"_id": req["recipe_id"]})
+        recipe = await db.recipes.find_one({"_id": req["recipe_id"], "company_id": company_id})
     elif req.get("finished_product_id") or req.get("product_id"):
         recipe = await db.recipes.find_one({"company_id": company_id, "finished_product_id": req.get("finished_product_id") or req.get("product_id"), "is_active": {"$ne": False}})
     qty = float(req.get("planned_quantity") or 1)
     if qty <= 0:
         raise HTTPException(status_code=400, detail="Miktar sıfırdan büyük olmalı.")
-    allow_without = bool(req.get("allow_without_recipe") or req.get("allow_no_recipe")) or req.get("source") in ("sales_order", "order_pick", "warehouse_pick")
+    allow_without = bool(req.get("allow_without_recipe") or req.get("allow_no_recipe")) or req.get("source") in ("sales_order", "order", "order_pick", "warehouse_pick")
     if not recipe:
         if not allow_without:
             raise HTTPException(status_code=400, detail="Bu ürün için reçete bulunamadı. Önce Üretim → Reçeteler bölümünden reçete oluşturun.")
         pid = req.get("finished_product_id") or req.get("product_id")
         if not pid:
             raise HTTPException(status_code=400, detail="Ürün gerekli.")
-        prod = await db.products.find_one({"_id": pid}) or {}
+        prod = await db.products.find_one({"_id": pid, "company_id": company_id}) or {}
         name = req.get("finished_product_name") or prod.get("name") or "Ürün"
         note = (req.get("notes") or "").strip()
         if note and "reçetesiz" not in note.lower():
@@ -23304,6 +23372,7 @@ async def create_production_order(req: Dict[str, Any], user: Any = Depends(get_c
             source=req.get("source", "order_pick"),
             notes=note,
             shortages=[],
+            **link_kwargs,
         )
         doc = order.to_mongo()
         doc["needs_recipe"] = True
@@ -23323,7 +23392,7 @@ async def create_production_order(req: Dict[str, Any], user: Any = Depends(get_c
     order = ProductionOrder(company_id=company_id, order_code=f"URT-{datetime.now().strftime('%Y')}-{str(uuid.uuid4().int)[:5]}", recipe_id=recipe["_id"], recipe_name=recipe.get("name"),
                             finished_product_id=recipe["finished_product_id"], finished_product_name=recipe.get("finished_product_name"), planned_quantity=qty,
                             target_warehouse_id=req.get("target_warehouse_id", "main_warehouse"), status="planned", total_cost=round(costs["unit_cost"] * qty, 2),
-                            planned_date=req.get("planned_date"), source=req.get("source", "manual"), notes=req.get("notes"), shortages=shortages)
+                            planned_date=req.get("planned_date"), source=req.get("source", "manual"), notes=req.get("notes"), shortages=shortages, **link_kwargs)
     doc = order.to_mongo()
     await db.production_orders.insert_one(doc)
     station_override = str(req.get("station") or req.get("default_station") or "").strip() or None
@@ -23354,6 +23423,26 @@ async def _generate_work_orders(
     steps = pwo.flatten_recipe_steps(recipe)
     now = datetime.now(timezone.utc).isoformat()
     job_meta = pwo.recipe_job_fields(recipe)
+    project_id = _link_text(order.get("project_id")) or None
+    project_number = _link_text(order.get("project_number")) or None
+    project_name = None
+    if project_id:
+        proj = await db.projects.find_one(
+            {"_id": project_id, "company_id": order["company_id"]},
+            {"name": 1, "project_number": 1, "company_id": 1},
+        )
+        if proj and str(proj.get("company_id") or "") == str(order.get("company_id") or ""):
+            project_name = _link_text(proj.get("name")) or None
+            if not project_number:
+                project_number = _link_text(proj.get("project_number")) or None
+        else:
+            project_id = None
+            project_number = None
+    customer_name = _link_text(order.get("customer_name")) or job_meta.get("customer_name")
+    recipe_id = _link_text(order.get("recipe_id")) or None
+    sales_order_id = _link_text(order.get("sales_order_id")) or None
+    sales_order_no = _link_text(order.get("sales_order_no")) or None
+    customer_id = _link_text(order.get("customer_id")) or None
     docs = []
     forced = str(station_override or "").strip() or None
     for idx, st in enumerate(steps):
@@ -23365,7 +23454,10 @@ async def _generate_work_orders(
                      "images": pwo.sanitize_step_images(st.get("images")),
                      "step_note": str(st.get("note") or "").strip(),
                      "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
-                     "customer_name": job_meta.get("customer_name"),
+                     "recipe_id": recipe_id,
+                     "project_id": project_id, "project_number": project_number, "project_name": project_name,
+                     "sales_order_id": sales_order_id, "sales_order_no": sales_order_no,
+                     "customer_id": customer_id, "customer_name": customer_name,
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
     if docs:
@@ -23417,18 +23509,46 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     company_ids = list({r.get("company_id") for r in rows if r.get("company_id")})
     companies = await db.companies.find({"_id": {"$in": company_ids}}, {"work_parks": 1}).to_list(len(company_ids) or 1) if company_ids else []
     parks_by_co = {c["_id"]: c.get("work_parks") for c in companies}
-    orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids) or 1) if order_ids else []
-    by_order = {o["_id"]: o for o in orders}
+    orders = (
+        await db.production_orders.find(
+            {"company_id": {"$in": company_ids}, "_id": {"$in": order_ids}},
+            {
+                "recipe_id": 1, "recipe_name": 1, "company_id": 1,
+                "project_id": 1, "project_number": 1,
+                "sales_order_id": 1, "sales_order_no": 1,
+                "customer_id": 1, "customer_name": 1,
+            },
+        ).to_list(len(order_ids) or 1)
+        if order_ids and company_ids else []
+    )
+    by_order = {(o.get("company_id"), o.get("_id")): o for o in orders if o.get("company_id") in company_ids}
     recipe_ids = list({o.get("recipe_id") for o in orders if o.get("recipe_id")})
+    for row in rows:
+        rid = str(row.get("recipe_id") or "").strip()
+        if rid:
+            recipe_ids.append(rid)
+    recipe_ids = list({rid for rid in recipe_ids if rid})
     recipes = (
         await db.recipes.find(
-            {"_id": {"$in": recipe_ids}},
-            {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1, "target_quantity": 1, "contact_name": 1},
+            {"company_id": {"$in": company_ids}, "_id": {"$in": recipe_ids}},
+            {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1, "target_quantity": 1, "contact_name": 1, "company_id": 1},
         ).to_list(len(recipe_ids) or 1)
-        if recipe_ids
+        if recipe_ids and company_ids
         else []
     )
-    by_recipe = {r["_id"]: r for r in recipes}
+    by_recipe = {(r.get("company_id"), r.get("_id")): r for r in recipes if r.get("company_id") in company_ids}
+    project_ids = [o.get("project_id") for o in orders if o.get("project_id")]
+    project_ids.extend(r.get("project_id") for r in rows if r.get("project_id"))
+    project_ids = list({pid for pid in project_ids if pid})
+    projects = (
+        await db.projects.find(
+            {"company_id": {"$in": company_ids}, "_id": {"$in": project_ids}},
+            {"name": 1, "project_number": 1, "company_id": 1},
+        ).to_list(len(project_ids) or 1)
+        if project_ids and company_ids
+        else []
+    )
+    by_project = {(p.get("company_id"), p.get("_id")): p for p in projects if p.get("company_id") in company_ids}
     mat_pids: list = []
     for rec in recipes:
         for m in rec.get("materials") or []:
@@ -23448,11 +23568,20 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     persist_images: list = []
     persist_step_note: list = []
     for r in rows:
-        o = by_order.get(r.get("order_id")) or {}
-        recipe = by_recipe.get(o.get("recipe_id")) or {}
+        o = by_order.get((r.get("company_id"), r.get("order_id"))) or {}
+        recipe_key = o.get("recipe_id") or r.get("recipe_id")
+        recipe = by_recipe.get((o.get("company_id") or r.get("company_id"), recipe_key)) or {}
         meta = pwo.recipe_job_fields(recipe)
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
+        project_key = o.get("project_id") or r.get("project_id")
+        project = by_project.get((o.get("company_id") or r.get("company_id"), project_key)) or {}
+        link = pwo.order_link_meta(o, project)
+        if link.get("customer_name"):
+            meta["customer_name"] = link["customer_name"]
+        for key, val in link.items():
+            if key != "customer_name" and val:
+                meta[key] = val
         all_mats = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1, products_by_id=products_by_id)
         steps = pwo.flatten_recipe_steps(recipe) if recipe else []
         step = pwo.recipe_step_for_work_order(steps, r) if steps else None
@@ -23523,6 +23652,8 @@ async def list_work_orders(
     station: Optional[str] = None,
     assigned_to: Optional[str] = None,
     order_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    recipe_id: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
     cid = tenant_access.resolve_company_id(user, company_id)
@@ -23555,6 +23686,11 @@ async def list_work_orders(
             import shopfloor_operators as _sfo_list
             want = _sfo_list.station_key(station)
             rows = [r for r in rows if _sfo_list.station_key(r.get("station")) == want]
+    if project_id or recipe_id:
+        rows = [
+            r for r in rows
+            if pwo.match_work_order_link_filter(r, project_id=project_id, recipe_id=recipe_id)
+        ]
     if not station:
         company = await db.companies.find_one({"_id": cid}, {"shopfloor_group_same_station": 1}) or {}
         if company.get("shopfloor_group_same_station"):

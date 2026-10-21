@@ -892,6 +892,7 @@ def test_portal_users_can_read_their_company_gets(api):
             "/api/production/work-orders/pause-policy",
             "/api/production/work-orders/shopfloor-settings",
             "/api/production/work-orders/performance",
+            "/api/production/work-orders/shopfloor-filters",
         ]),
         ("portal_sayim", ["/api/warehouses/stock-counts"]),
         ("portal_pick", ["/api/order-picks"]),

@@ -681,9 +681,16 @@ class ProductionOrder(BaseDocument):
     start_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     planned_date: Optional[str] = None
     end_date: Optional[str] = None
-    source: str = "manual"  # manual, stock_card, order
+    source: str = "manual"  # manual, stock_card, order, order_pick, sales_order
     notes: Optional[str] = None
     shortages: List[Dict[str, Any]] = []
+    # Sipariş / proje bağlantısı — boş olabilir; renk burada tutulmaz.
+    project_id: Optional[str] = None
+    project_number: Optional[str] = None
+    sales_order_id: Optional[str] = None
+    sales_order_no: Optional[str] = None
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 # Personel & Bordro

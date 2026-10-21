@@ -588,8 +588,130 @@ def preferred_atolye_step_note(
     return (rs or wo)[:500]
 
 
+_ORDER_LINK_KEYS = (
+    "recipe_id",
+    "project_id",
+    "project_number",
+    "project_name",
+    "sales_order_id",
+    "sales_order_no",
+    "customer_id",
+)
+
+
+def _link_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def order_link_meta(order: Optional[Dict[str, Any]] = None, project: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """Üretim emri ve aynı şirketteki projeden yanıtta doldurulacak bağ alanları."""
+    o = order or {}
+    p = project or {}
+    out: Dict[str, str] = {}
+    recipe_id = _link_text(o.get("recipe_id"))
+    if recipe_id:
+        out["recipe_id"] = recipe_id
+    for key in ("project_id", "project_number", "sales_order_id", "sales_order_no", "customer_id", "customer_name"):
+        val = _link_text(o.get(key))
+        if val:
+            out[key] = val
+    pname = _link_text(p.get("name") or p.get("project_name"))
+    if pname:
+        out["project_name"] = pname
+    pnum = _link_text(p.get("project_number"))
+    if pnum and not out.get("project_number"):
+        out["project_number"] = pnum
+    pid = _link_text(p.get("_id") or p.get("id"))
+    if pid and not out.get("project_id"):
+        out["project_id"] = pid
+    return out
+
+
+def match_work_order_link_filter(
+    row: Optional[Dict[str, Any]] = None,
+    *,
+    project_id: Any = None,
+    recipe_id: Any = None,
+) -> bool:
+    """project_id=none projesiz işler. Boş parametre süzmez."""
+    src = row or {}
+    want_project = _link_text(project_id)
+    if want_project:
+        have = _link_text(src.get("project_id"))
+        if want_project.casefold() == "none":
+            if have:
+                return False
+        elif have != want_project:
+            return False
+    want_recipe = _link_text(recipe_id)
+    if want_recipe and _link_text(src.get("recipe_id")) != want_recipe:
+        return False
+    return True
+
+
+def shopfloor_filter_catalog(rows: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Açık işlerden proje ve reçete seçenekleri. project_id none = projesiz."""
+    projects: Dict[str, Dict[str, Any]] = {}
+    recipes: Dict[str, Dict[str, Any]] = {}
+    unassigned = 0
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        pid = _link_text(row.get("project_id"))
+        if not pid:
+            unassigned += 1
+        else:
+            bucket = projects.setdefault(pid, {
+                "project_id": pid,
+                "project_number": _link_text(row.get("project_number")) or None,
+                "project_name": _link_text(row.get("project_name")) or None,
+                "job_count": 0,
+            })
+            bucket["job_count"] += 1
+            if not bucket.get("project_name"):
+                name = _link_text(row.get("project_name"))
+                if name:
+                    bucket["project_name"] = name
+            if not bucket.get("project_number"):
+                number = _link_text(row.get("project_number"))
+                if number:
+                    bucket["project_number"] = number
+        rid = _link_text(row.get("recipe_id"))
+        if not rid:
+            continue
+        recipe = recipes.setdefault(rid, {
+            "recipe_id": rid,
+            "recipe_name": _link_text(row.get("recipe_name")) or None,
+            "job_count": 0,
+        })
+        recipe["job_count"] += 1
+        if not recipe.get("recipe_name"):
+            name = _link_text(row.get("recipe_name"))
+            if name:
+                recipe["recipe_name"] = name
+    project_rows = sorted(
+        projects.values(),
+        key=lambda item: (
+            str(item.get("project_number") or ""),
+            str(item.get("project_name") or ""),
+            str(item.get("project_id") or ""),
+        ),
+    )
+    project_rows.append({
+        "project_id": "none",
+        "project_number": None,
+        "project_name": None,
+        "job_count": unassigned,
+    })
+    recipe_rows = sorted(
+        recipes.values(),
+        key=lambda item: (str(item.get("recipe_name") or ""), str(item.get("recipe_id") or "")),
+    )
+    return {"projects": project_rows, "recipes": recipe_rows}
+
+
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials / step_note doldur."""
+    """Liste yanıtında eksik iş dosyası / proje / sipariş alanlarını doldur. Yazmaz."""
     m = meta or {}
     if not row.get("job_file_name") and m.get("job_file_name"):
         row["job_file_name"] = m["job_file_name"]
@@ -597,6 +719,9 @@ def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = 
         row["recipe_name"] = m["recipe_name"]
     if not str(row.get("customer_name") or "").strip() and m.get("customer_name"):
         row["customer_name"] = m["customer_name"]
+    for key in _ORDER_LINK_KEYS:
+        if not str(row.get(key) or "").strip() and str(m.get(key) or "").strip():
+            row[key] = m[key]
     if m.get("station") and (not row.get("station") or str(row.get("station")).strip().casefold() == "genel"):
         row["station"] = m["station"]
     elif not row.get("station"):
