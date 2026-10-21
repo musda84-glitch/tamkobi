@@ -354,6 +354,105 @@ def test_reset_updates_identity_and_keeps_contact_hash(db):
     assert asyncio.run(check("yeni-sifre", "yeni-sifre")) == "Yeni şifre mevcut şifreyle aynı olamaz."
 
 
+def test_supplier_reset_does_not_accept_victim_contact(client, db, monkeypatch):
+    """Tedarikçi B kurban e-postasını carisine koyup sıfırlama tetikler.
+
+    Kurban sıfırlamayı tamamlayınca cB kabul edilmez ve listede görünmez.
+    Zaten kabul edilmiş cari bağında _mark_accepted çağrısı durur.
+    """
+    import asyncio
+    import re
+    import mail_service
+
+    def boom(*_a, **_k):
+        raise AssertionError("smtp")
+
+    monkeypatch.setattr(mail_service, "send_mail", boom)
+    db.b2b_identities.docs.append(_identity_row(verified=datetime.now(timezone.utc).isoformat()))
+    victim_a = next(row for row in db.contacts.docs if row["_id"] == "cA")
+    supplier_b = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    supplier_b["b2b_login_email"] = "ali@example.com"
+    supplier_b["b2b_password_hash"] = HASH_B
+    victim_a["b2b_password_hash"] = ""
+
+    async def prepare():
+        await b2b_identity._mark_accepted(db, "ali@example.com", victim_a)
+        await db.b2b_link_acceptances.insert_one({
+            "_id": b2b_identity._accept_key("ali@example.com", "coB", "cB"),
+            "email": "ali@example.com",
+            "contact_id": "cB",
+            "company_id": "coB",
+            "accepted_at": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    asyncio.run(prepare())
+    marked = []
+    real_mark = b2b_identity._mark_accepted
+
+    async def spy(store, email, contact):
+        marked.append(str((contact or {}).get("_id") or ""))
+        await real_mark(store, email, contact)
+
+    monkeypatch.setattr(b2b_identity, "_mark_accepted", spy)
+
+    async def trigger():
+        found = await b2b_identity.find_legacy_contact(db, "ali@example.com")
+        assert found["_id"] == "cB"
+        return await b2b_identity.finish_b2b_forgot(
+            db, "ali@example.com", None, {"ok": True},
+            {"status": "ok", "message": "x", "channel": "email"}, None,
+        )
+
+    queued_out = asyncio.run(trigger())
+    assert queued_out["status"] == "ok"
+    mail = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_password_reset")
+    raw = re.search(r"/b2b/sifre/([A-Za-z0-9_\-]+)", mail["html"]).group(1)
+    reset = next(row for row in db.b2b_password_resets.docs if row["_id"] == b2b_identity.token_digest(raw))
+    assert reset["contact_id"] == "cB"
+    assert reset["company_id"] == "coB"
+    assert reset["email"] == "ali@example.com"
+
+    async def complete():
+        contact = await db.contacts.find_one({"_id": "cB", "company_id": "coB"})
+        return await b2b_identity.apply_password_reset(
+            db, contact, "yeni-sifre-1", email=reset.get("email"),
+        )
+
+    identity = asyncio.run(complete())
+    assert marked == []
+    pending = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert not pending.get("accepted_at")
+    fresh_b = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    assert fresh_b["b2b_password_hash"] == HASH_B
+    assert verify_password("yeni-sifre-1", identity["password_hash"])
+    assert identity["email_verified_at"]
+
+    listed = _login(client, password="yeni-sifre-1")
+    assert listed.status_code == 200, listed.text
+    assert _names(listed.json()) == {"Firma A"}
+    denied = client.post(
+        "/api/public/b2b/select-supplier",
+        json={"select_token": listed.json()["select_token"], "contact_id": "cB"},
+    )
+    assert denied.status_code == 403
+    still = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert not still.get("accepted_at")
+    assert marked == []
+
+    async def reset_accepted():
+        contact = next(row for row in db.contacts.docs if row["_id"] == "cA")
+        return await b2b_identity.apply_password_reset(db, contact, "yeni-sifre-2", email="ali@example.com")
+
+    asyncio.run(reset_accepted())
+    assert marked == ["cA"]
+    assert any(
+        row.get("contact_id") == "cA" and row.get("accepted_at") for row in db.b2b_link_acceptances.docs
+    )
+    untouched = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert not untouched.get("accepted_at")
+
+
 def test_link_notice_queues_once_without_smtp(db, monkeypatch):
     import mail_service
     db.b2b_identities.docs.append({

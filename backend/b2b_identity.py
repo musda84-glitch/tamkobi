@@ -845,7 +845,12 @@ async def change_own_password(db, contact: dict, new_hash: str, *, current_plain
 
 
 async def apply_password_reset(db, contact: dict, plain_password: str, *, email: Optional[str] = None) -> dict:
-    """Kimlik şifresini yeniler, e-postayı doğrular, oturumları siler. Cari hash'ine dokunmaz."""
+    """Kimlik şifresini yeniler, e-postayı doğrular, oturumları siler. Cari hash'ine dokunmaz.
+
+    _mark_accepted yalnız bu cari bağın accepted_at değeri zaten doluysa çağrılır.
+    Bekleyen veya hiç açılmamış bağ şifre sıfırlamayla kabul edilmez; kabul
+    yalnız 72 saatlik onay linkinin POST'u ile yazılır.
+    """
     target = _norm_email(email or (contact or {}).get("b2b_login_email") or (contact or {}).get("email"))
     if "@" not in target:
         raise HTTPException(status_code=400, detail="B2B giriş e-postası tanımlı değil.")
@@ -862,7 +867,15 @@ async def apply_password_reset(db, contact: dict, plain_password: str, *, email:
     else:
         identity = await _insert_identity(db, target, new_hash, verified_at=verified)
     await _drop_sessions(db, identity_id=identity.get("_id") or "", email=target)
-    await _mark_accepted(db, target, contact)
+    contact_id = str((contact or {}).get("_id") or "")
+    company_id = str((contact or {}).get("company_id") or "")
+    existing = None
+    if contact_id and company_id:
+        existing = await db.b2b_link_acceptances.find_one(
+            {"_id": _accept_key(target, company_id, contact_id)}
+        )
+    if existing and existing.get("accepted_at"):
+        await _mark_accepted(db, target, contact)
     return identity
 
 
