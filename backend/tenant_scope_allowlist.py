@@ -117,55 +117,18 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('employee_pay.py', 'accrue_due_for_all_companies', 'employees', 'find'): 1,
     ('employee_pay.py', 'scheduler_loop', 'employees', 'find'): 1,
     # event_notify.py
-    ('event_notify.py', '_dedupe_seen', 'notify_event_dedupe', 'find_one'): 2,
-    ('event_notify.py', '_defer_rows', 'notify_outbox', 'update_one'): 1,
-    ('event_notify.py', '_enqueue_order_outbox', 'notify_outbox', 'find_one'): 1,
-    ('event_notify.py', '_load_claimed', 'notify_outbox', 'find'): 1,
-    ('event_notify.py', '_release_stale_sending', 'notify_outbox', 'find'): 1,
-    ('event_notify.py', '_release_stale_sending', 'notify_outbox', 'update_one'): 1,
-    ('event_notify.py', '_retry_rows', 'notify_outbox', 'update_one'): 1,
-    ('event_notify.py', '_sms_sent_today', 'notify_sms_daily', 'find_one'): 1,
-    ('event_notify.py', '_update_claimed', 'notify_outbox', 'update_one'): 1,
-    ('event_notify.py', 'enqueue_morning_summary_email', 'notify_outbox', 'find_one'): 1,
-    ('event_notify.py', 'flush_notify_outbox', 'notify_outbox', 'find'): 1,
-    ('event_notify.py', 'get_tenant_prefs', 'company_notify_tenant', 'find_one'): 1,
     # expenses.py
     # fx.py
     ('fx.py', '_upsert_rates', 'fx_rates', 'update_one'): 1,
     # gib_credits.py
     ('gib_credits.py', 'account_credits', 'gib_credit_ledger', 'find'): 1,
     # idempotency.py
-    ('idempotency.py', '_reclaim_stale_in_progress', 'idempotency_keys', 'update_one'): 1,
-    ('idempotency.py', '_try_insert', 'idempotency_keys', 'insert_one'): 1,
-    ('idempotency.py', 'abandon', 'idempotency_keys', 'delete_one'): 1,
-    ('idempotency.py', 'begin', 'idempotency_keys', 'delete_one'): 1,
-    ('idempotency.py', 'begin', 'idempotency_keys', 'find_one'): 2,
-    ('idempotency.py', 'clear_payment_applied', 'idempotency_keys', 'update_one'): 1,
-    ('idempotency.py', 'complete', 'idempotency_keys', 'update_one'): 1,
-    ('idempotency.py', 'mark_payment_applied', 'idempotency_keys', 'update_one'): 1,
-    ('idempotency.py', 'purge_expired', 'idempotency_keys', 'delete_one'): 1,
-    ('idempotency.py', 'purge_expired', 'idempotency_keys', 'find'): 1,
     # legal_docs.py
     # linked_moves.py
     ('linked_moves.py', 'list_isnet_missing_mode', 'einvoice_settings', 'find'): 1,
     # mail_accounts.py
     # migration.py
-    ('migration.py', '_invoice_doc', 'contacts', 'insert_one'): 1,
-    ('migration.py', 'bh_import', 'products', 'insert_one'): 1,
-    ('migration.py', 'bh_import', 'products', 'update_one'): 1,
-    ('migration.py', 'bh_import_customers', 'contacts', 'insert_one'): 1,
-    ('migration.py', 'bh_import_customers', 'contacts', 'update_one'): 1,
-    ('migration.py', 'migration_import', 'migration_uploads', 'delete_one'): 1,
-    ('migration.py', 'migration_rollback', 'contacts', 'delete_many'): 1,
-    ('migration.py', 'migration_rollback', 'migration_batches', 'update_one'): 1,
     # notify.py
-    ('notify.py', 'check_push_receipts', 'push_tokens', 'delete_many'): 1,
-    ('notify.py', 'drop_invalid_push_tokens', 'push_tokens', 'delete_many'): 1,
-    ('notify.py', 'insert_notification', 'notifications', 'insert_one'): 1,
-    ('notify.py', 'remove_push_token', 'push_tokens', 'delete_many'): 1,
-    ('notify.py', 'tokens_for_company', 'push_tokens', 'find'): 1,
-    ('notify.py', 'tokens_for_users', 'push_tokens', 'find'): 1,
-    ('notify.py', 'upsert_push_token', 'push_tokens', 'find_one'): 1,
     # order_list_page.py
     ('order_list_page.py', 'fetch_order_rows', 'orders', 'find'): 1,
     # order_pick.py
@@ -173,20 +136,9 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('order_time.py', 'collect_order_date_fixes', 'orders', 'find'): 1,
     ('order_time.py', 'collect_order_date_fixes', 'orders', 'update_one'): 1,
     # partner_pay.py
-    ('partner_pay.py', '_partner_company_id', 'partners', 'find_one'): 2,
-    ('partner_pay.py', 'accrue_due_for_all_companies', 'partners', 'find'): 1,
-    ('partner_pay.py', 'repair_legacy_expense_withdrawals', 'partner_transactions', 'find'): 1,
-    ('partner_pay.py', 'repair_legacy_expense_withdrawals', 'partner_transactions', 'update_one'): 1,
-    ('partner_pay.py', 'reverse_one', 'partner_transactions', 'find_one'): 1,
-    ('partner_pay.py', 'sync_partner_from_ledger', 'partners', 'find_one'): 1,
     # partner_tx_page.py
     ('partner_tx_page.py', '_load_partner_txs', 'partner_transactions', 'find'): 1,
     # phone_norm.py
-    ('phone_norm.py', 'backfill_phone_norm', 'employees', 'find'): 1,
-    ('phone_norm.py', 'backfill_phone_norm', 'employees', 'update_one'): 1,
-    ('phone_norm.py', 'find_user_by_phone', 'employees', 'find'): 1,
-    ('phone_norm.py', 'find_user_by_phone', 'employees', 'find_one'): 1,
-    ('phone_norm.py', 'find_user_by_phone', 'employees', 'update_one'): 1,
     # platform_admin_v1.py
     ('platform_admin_v1.py', 'admin_v1_sms_logs', 'sms_logs', 'count_documents'): 2,
     # platform_admin_v1_write.py
@@ -203,14 +155,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # product_list_page.py
     ('product_list_page.py', 'fetch_product_rows', 'products', 'find'): 1,
     # saas.py
-    ('saas.py', '_usage', 'files', 'find'): 1,
-    ('saas.py', 'apply_upgrade_resolution', 'upgrade_requests', 'find_one'): 2,
-    ('saas.py', 'apply_upgrade_resolution', 'upgrade_requests', 'update_one'): 1,
-    ('saas.py', 'overview_stats', 'upgrade_requests', 'count_documents'): 1,
-    ('saas.py', 'quota_usage', 'files', 'find'): 1,
-    ('saas.py', 'seed', 'products', 'find'): 1,
-    ('saas.py', 'seed', 'products', 'update_one'): 1,
-    ('saas.py', 'upgrade_request_rows', 'upgrade_requests', 'find'): 1,
     # saas_docs.py
     ('saas_docs.py', '_require_invoice_doc_access', 'invoices', 'find_one'): 1,
     ('saas_docs.py', 'invoice_pdf', 'contacts', 'find_one'): 1,
@@ -645,13 +589,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # tax_obligations.py
     # trade.py
     # trash.py
-    ('trash.py', '_clear_sync_tombstones', 'sync_tombstones', 'delete_many'): 1,
-    ('trash.py', 'get_trash_item', 'trash', 'find_one'): 1,
-    ('trash.py', 'purge_expired', 'trash', 'delete_many'): 1,
-    ('trash.py', 'purge_trash_item', 'trash', 'delete_one'): 1,
-    ('trash.py', 'purge_trash_item', 'trash', 'find_one'): 1,
-    ('trash.py', 'restore_trash_item', 'trash', 'delete_many'): 1,
-    ('trash.py', 'restore_trash_item', 'trash', 'find_one'): 1,
     # ubl_export.py
     ('ubl_export.py', 'invoice_xml_payload', 'contacts', 'find_one'): 1,
     # user_erase.py
@@ -660,11 +597,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('user_erase.py', '_linked_employee', 'employees', 'find_one'): 3,
     # vehicles.py
     # vpos/api.py
-    ('vpos/api.py', '_allocate_order_id', 'payment_intents', 'find_one'): 1,
-    ('vpos/api.py', 'iyzico_callback', 'payment_intents', 'find_one'): 1,
-    ('vpos/api.py', 'paytr_notify', 'payment_intents', 'find_one'): 1,
-    ('vpos/api.py', 'paytr_notify', 'vpos_configs', 'find_one'): 1,
-    ('vpos/api.py', 'vpos_callback', 'payment_intents', 'find_one'): 1,
     # warehouse_ship.py
     ('warehouse_ship.py', 'apply_warehouse_ship', 'orders', 'find_one'): 4,
     ('warehouse_ship.py', 'apply_warehouse_ship', 'orders', 'update_one'): 1,

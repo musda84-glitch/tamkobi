@@ -95,8 +95,9 @@ async def ensure_indexes(db) -> None:
 
 async def _try_insert(db, doc: dict) -> bool:
     """True = eklendi; False = duplicate."""
+    stored = {**doc, "company_id": str((doc or {}).get("company_id") or "").strip()}
     try:
-        await db.idempotency_keys.insert_one(doc)
+        await db.idempotency_keys.insert_one(stored)
         return True
     except _DUP_ERRORS:
         return False
@@ -122,18 +123,18 @@ async def begin(db, company_id: str, key: str, endpoint: str) -> Optional[Dict[s
     if await _try_insert(db, doc):
         return {"hit": False, "key": key, "company_id": cid}
 
-    existing = await db.idempotency_keys.find_one({"_id": _doc_id(cid, key)})
+    existing = await db.idempotency_keys.find_one({"_id": _doc_id(cid, key), "company_id": cid})
     if not existing:
         raise HTTPException(status_code=409, detail="Idempotency çakışması.")
 
     created = _as_utc(existing.get("created_at")) or now
     age_s = (now - created).total_seconds()
     if age_s > TTL_HOURS * 3600:
-        await db.idempotency_keys.delete_one({"_id": existing["_id"]})
+        await db.idempotency_keys.delete_one({"_id": existing["_id"], "company_id": cid})
         if await _try_insert(db, doc):
             return {"hit": False, "key": key, "company_id": cid}
         # Silme ile yeniden insert arasında yarış — mevcut kaydı oku
-        existing = await db.idempotency_keys.find_one({"_id": _doc_id(cid, key)})
+        existing = await db.idempotency_keys.find_one({"_id": _doc_id(cid, key), "company_id": cid})
         if not existing:
             raise HTTPException(status_code=409, detail="Idempotency çakışması.")
 
@@ -181,6 +182,7 @@ async def _reclaim_stale_in_progress(db, existing: dict, now: datetime) -> bool:
     """Bayat in_progress anahtarını tek istek devralsın (SELECT FOR UPDATE)."""
     q: Dict[str, Any] = {
         "_id": existing["_id"],
+        "company_id": str(existing.get("company_id") or ""),
         "status": "in_progress",
         "payment_applied": {"$ne": True},
     }
@@ -210,8 +212,9 @@ async def _reclaim_stale_in_progress(db, existing: dict, now: datetime) -> bool:
 async def complete(db, company_id: str, key: str, response: Any) -> None:
     if not key:
         return
+    cid = company_id_of(company_id)
     await db.idempotency_keys.update_one(
-        {"_id": _doc_id(str(company_id or "_"), key)},
+        {"_id": _doc_id(cid, key), "company_id": cid},
         {"$set": {"status": "completed", "response": response, "updated_at": _now().isoformat()}},
     )
 
@@ -220,8 +223,9 @@ async def mark_payment_applied(db, company_id: str, key: str, payment: Dict[str,
     """Para hareketi yazıldı. Çökme sonrası aynı ödeme tekrar kesilmesin."""
     if not key:
         return
+    cid = company_id_of(company_id)
     await db.idempotency_keys.update_one(
-        {"_id": _doc_id(company_id, key)},
+        {"_id": _doc_id(cid, key), "company_id": cid},
         {"$set": {
             "payment_applied": True,
             "payment": payment,
@@ -234,8 +238,9 @@ async def clear_payment_applied(db, company_id: str, key: str) -> None:
     """Yumuşak hata geri alındığında 'yazıldı' işaretini kaldır."""
     if not key:
         return
+    cid = company_id_of(company_id)
     await db.idempotency_keys.update_one(
-        {"_id": _doc_id(company_id, key)},
+        {"_id": _doc_id(cid, key), "company_id": cid},
         {"$set": {"payment_applied": False, "updated_at": _now().isoformat()}, "$unset": {"payment": ""}},
     )
 
@@ -245,7 +250,8 @@ async def abandon(db, company_id: str, key: str) -> None:
     if not key:
         return
     try:
-        await db.idempotency_keys.delete_one({"_id": _doc_id(str(company_id or "_"), key)})
+        cid = company_id_of(company_id)
+        await db.idempotency_keys.delete_one({"_id": _doc_id(cid, key), "company_id": cid})
     except Exception:
         logger.exception("Idempotency anahtarı silinemedi: %s", key)
 
@@ -255,10 +261,11 @@ async def purge_expired(db) -> int:
     cutoff = (_now() - timedelta(hours=TTL_HOURS)).isoformat()
     deleted = 0
     # created_at ISO string karşılaştırması lexicographic olarak güvenli (UTC)
+    # tenant-ok: saatlik temizlik, süresi dolmuş anahtarları tüm şirketlerde tarar
     stale = await db.idempotency_keys.find({"created_at": {"$lt": cutoff}}).to_list(5000)
     for doc in stale:
         try:
-            await db.idempotency_keys.delete_one({"_id": doc["_id"]})
+            await db.idempotency_keys.delete_one({"_id": doc["_id"]})  # tenant-ok: saatlik temizlik, bulunan anahtarın _id'si
             deleted += 1
         except Exception:
             logger.exception("idempotency purge silinemedi: %s", doc.get("_id"))
