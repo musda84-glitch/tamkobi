@@ -19,8 +19,10 @@ _db = None
 _current_user = None
 
 ACCOUNT_ATOLYE = "atolye"
+ACCOUNT_ATOLYE_DEVICE = "atolye_device"
 ACCOUNT_STANDARD = "standard"
 _ALLOWED_TYPES = frozenset({ACCOUNT_ATOLYE, ACCOUNT_STANDARD})
+_ATOLYE_TYPES = frozenset({ACCOUNT_ATOLYE, ACCOUNT_ATOLYE_DEVICE})
 
 PATH_DENIED = "Bu hesap yalnızca atölye ekranına erişebilir."
 STATION_DENIED = "Bu istasyon için yetkiniz yok."
@@ -38,14 +40,29 @@ async def _user_dep(request: Request) -> dict:
     return await _current_user(request)
 
 
-def is_atolye_user(user: Any) -> bool:
+def _account_type(user: Any) -> str:
     if not isinstance(user, dict):
-        return False
-    return str(user.get("account_type") or "").strip().casefold() == ACCOUNT_ATOLYE
+        return ""
+    return str(user.get("account_type") or "").strip().casefold()
+
+
+def is_device_user(user: Any) -> bool:
+    """Eşleşmiş atölye kiosk cihazı. İstasyon listesi principal üzerinde çözülmüş gelir."""
+    return _account_type(user) == ACCOUNT_ATOLYE_DEVICE
+
+
+def is_atolye_user(user: Any) -> bool:
+    """E-posta atölye hesabı veya atolye_device. İkisi de istasyon ve yol kilidine girer."""
+    return _account_type(user) in _ATOLYE_TYPES
 
 
 def public_account_type(user: Any) -> str:
-    return ACCOUNT_ATOLYE if is_atolye_user(user) else ACCOUNT_STANDARD
+    kind = _account_type(user)
+    if kind == ACCOUNT_ATOLYE:
+        return ACCOUNT_ATOLYE
+    if kind == ACCOUNT_ATOLYE_DEVICE:
+        return ACCOUNT_ATOLYE_DEVICE
+    return ACCOUNT_STANDARD
 
 
 def public_stations(user: Any) -> list:

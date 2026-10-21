@@ -279,4 +279,18 @@ async def get_user_from_token(token: str, db: Any, *, request: Any = None, path:
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Oturum süresi doldu")
     except jwt.InvalidTokenError:
+        principal = await _shopfloor_device_principal(token, db)
+        if principal is not None:
+            return principal
         raise HTTPException(status_code=401, detail="Geçersiz oturum anahtarı")
+
+
+async def _shopfloor_device_principal(token: str, db: Any) -> Optional[dict]:
+    """JWT olmayan cihaz token'ı. Normal kullanıcı akışı bu yola girmez."""
+    try:
+        import shopfloor_devices
+    except Exception:
+        return None
+    if not shopfloor_devices.looks_like_device_token(token):
+        return None
+    return await shopfloor_devices.principal_from_token(token, db)
