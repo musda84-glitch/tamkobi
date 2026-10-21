@@ -2862,10 +2862,11 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], user: dict = Depe
     }
     action = gcr.get("action") if gcr.get("action") in ("check_in", "check_out") else "check_in"
     when = (gcr.get("proposed_time") or "")[:5]
-    emp = await _db.employees.find_one({"_id": rec.get("employee_id")})
+    cid = rec["company_id"]
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid})
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
-    company = await _db.companies.find_one({"_id": rec.get("company_id")}) or {}
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp) if emp else merge_schedule(company)
     if approved:
         if not when:
@@ -2876,7 +2877,7 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], user: dict = Depe
             today_s = _today(schedule)
             if apply_date == today_s:
                 ydate = previous_ymd(today_s)
-                yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+                yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate, "company_id": cid}) or {}
                 if should_close_previous_day(when, schedule, rec, yest, today_s):
                     apply_date = ydate
                     apply_rec = yest or rec
@@ -2902,8 +2903,8 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], user: dict = Depe
         workplace = rec.get("workplace") or await workplace_for_employee(emp, company)
         if workplace:
             extra["workplace"] = workplace
-        await _db.attendance.update_one({"_id": rec["id"]}, {"$set": extra})
-        rec = _clean(await _db.attendance.find_one({"_id": rec["id"]}))
+        await _db.attendance.update_one({"_id": rec["id"], "company_id": cid}, {"$set": extra})
+        rec = _clean(await _db.attendance.find_one({"_id": rec["id"], "company_id": cid}))
         try:
             if action == "check_in":
                 await accrue_task_yevmiye(emp, rec, workplace, schedule)
@@ -2911,14 +2912,14 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], user: dict = Depe
                 await sync_yevmiye_adjustment(emp, rec, schedule)
         except Exception:
             pass
-        rec = _clean(await _db.attendance.find_one({"_id": rec["id"]}))
+        rec = _clean(await _db.attendance.find_one({"_id": rec["id"], "company_id": cid}))
         msg = f"Yönetici teyitli {geo_confirm_action_tr(action).lower()} {when} kaydedildi."
     else:
         await _db.attendance.update_one(
-            {"_id": att_id},
+            {"_id": att_id, "company_id": cid},
             {"$set": {"geo_confirm_request": gcr, "updated_at": _now()}},
         )
-        rec = _clean(await _db.attendance.find_one({"_id": att_id}))
+        rec = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
         msg = f"Yönetici teyitli {geo_confirm_action_tr(action).lower()} reddedildi."
     import notify as _notify
     await _notify.insert_notification(_db, {
@@ -3603,12 +3604,13 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], user: dict = De
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "decision_note": (req.get("note") or "")[:300],
     }
-    emp = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    cid = rec["company_id"]
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid}) or {}
     if deduct:
         ler = await apply_location_exit_wage_deduction(emp, rec, ler)
     amount = float(ler.get("deduction_amount") or 0)
     await _db.attendance.update_one(
-        {"_id": att_id},
+        {"_id": att_id, "company_id": cid},
         {"$set": {"location_exit_request": ler, "updated_at": _now()}},
     )
     import notify as _notify
@@ -3624,7 +3626,7 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], user: dict = De
         "is_read": False,
         "created_at": _now(),
     })
-    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})), "message": msg, "wage_deduction": deduct, "deduction_amount": amount}
+    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid})), "message": msg, "wage_deduction": deduct, "deduction_amount": amount}
 
 
 @router.post("/personnel/attendance/{att_id}/overtime-confirm-decision")
@@ -3640,8 +3642,9 @@ async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], user: dict =
         decision = parse_overtime_confirm_decision(req)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    emp = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
-    company = await _db.companies.find_one({"_id": rec.get("company_id")}) or {}
+    cid = rec["company_id"]
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid}) or {}
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     end_hm = str(ocr.get("schedule_end") or day_end_hm(schedule, rec.get("date")) or schedule.get("end") or "")[:5]
     out_hm = str(req.get("check_out") or req.get("proposed_out") or ocr.get("proposed_out") or now_hm(schedule))[:5]
@@ -3667,18 +3670,18 @@ async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], user: dict =
         }
         saved = await apply_day(emp, rec["date"], patch, source=rec.get("source") or "manager")
         await _db.attendance.update_one(
-            {"_id": att_id},
+            {"_id": att_id, "company_id": cid},
             {"$set": {
                 "overtime_confirm_request": ocr,
                 "auto_checkout": False,
                 "updated_at": _now(),
             }},
         )
-        saved = _clean(await _db.attendance.find_one({"_id": att_id}) or saved)
+        saved = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}) or saved)
         hours = float(saved.get("overtime_hours") or hours or 0)
         ocr["hours"] = round(hours, 2)
-        await _db.attendance.update_one({"_id": att_id}, {"$set": {"overtime_confirm_request": ocr}})
-        saved = _clean(await _db.attendance.find_one({"_id": att_id}) or saved)
+        await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": {"overtime_confirm_request": ocr}})
+        saved = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}) or saved)
     else:
         # Hayır: çıkış mesai bitişinde kalsın, fazla mesai yazılmasın
         if not rec.get("check_out") or rec.get("auto_checkout"):
@@ -3688,7 +3691,7 @@ async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], user: dict =
                 "auto_checkout": True,
             }, source=rec.get("source") or "auto")
         await _db.attendance.update_one(
-            {"_id": att_id},
+            {"_id": att_id, "company_id": cid},
             {"$set": {
                 "overtime_confirm_request": ocr,
                 "auto_checkout": True,
@@ -3696,7 +3699,7 @@ async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], user: dict =
                 "updated_at": _now(),
             }},
         )
-        saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+        saved = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
         hours = 0
     import notify as _notify
     msg = overtime_confirm_decision_message(decision, hours if decision == "yes" else 0, out_hm if decision == "yes" else end_hm)
@@ -3905,12 +3908,13 @@ async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], user: dict
     rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Yevmiye onaylamak için yönetici yetkisi gerekir.")
+    cid = rec["company_id"]
     adj = rec.get("yevmiye_adjustment_request") or {}
     if adj.get("status") != "pending":
         if str(adj.get("status") or "").strip().lower() in ("approved", "rejected"):
             raise HTTPException(status_code=400, detail="Bekleyen yevmiye düzeltmesi yok.")
-        emp_for_adj = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
-        company = await _db.companies.find_one({"_id": rec.get("company_id") or emp_for_adj.get("company_id")}) or {}
+        emp_for_adj = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid}) or {}
+        company = await _db.companies.find_one({"_id": cid}) or {}
         schedule = merge_schedule(company, emp_for_adj)
         payload = personnel_wage.pending_yevmiye_adjustment(emp_for_adj, rec, schedule, now=_now())
         if not payload:
@@ -3934,18 +3938,18 @@ async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], user: dict
     patch = {"yevmiye_adjustment_request": adj, "updated_at": _now()}
     if full_amt and not rec.get("yevmiye_full_amount"):
         patch["yevmiye_full_amount"] = full_amt
-    await _db.attendance.update_one({"_id": att_id}, {"$set": patch})
+    await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": patch})
     bid = rec.get("yevmiye_bonus_id")
     if bid:
         note = f"Görev yevmiye · {personnel_wage.wage_line(1, final_amt)}"
         if approved:
             note += f" (kart {full_amt} ₺, geç/erken düşüldü)"
         await _db.bonus_payments.update_one(
-            {"_id": bid, "status": {"$ne": "paid"}},
+            {"_id": bid, "company_id": cid, "status": {"$ne": "paid"}},
             {"$set": {"amount": final_amt, "daily_wage": final_amt if approved else (rec.get("yevmiye_full_amount") or full_amt), "note": note}},
         )
     import notify as _notify
-    emp_row = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    emp_row = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid}) or {}
     await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
         "company_id": rec["company_id"],
@@ -4063,8 +4067,9 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], user: dict = Depe
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "decision_note": (req.get("note") or "")[:300],
     }
-    emp = await _db.employees.find_one({"_id": rec.get("employee_id")})
-    company = await _db.companies.find_one({"_id": rec.get("company_id")}) or {}
+    cid = rec["company_id"]
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid})
+    company = await _db.companies.find_one({"_id": cid}) or {}
     if emp:
         schedule = merge_schedule(company, emp)
         saved = await apply_day(
@@ -4075,15 +4080,15 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], user: dict = Depe
         )
         try:
             await sync_yevmiye_adjustment(emp, saved, schedule)
-            saved = _clean(await _db.attendance.find_one({"_id": att_id})) or saved
+            saved = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid})) or saved
         except Exception:
             pass
     else:
         await _db.attendance.update_one(
-            {"_id": att_id},
+            {"_id": att_id, "company_id": cid},
             {"$set": {"early_leave_request": elr, "early_leave_approved": approved, "updated_at": _now()}},
         )
-        saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+        saved = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
     msg = leave_wage_decision_message("early_leave", approved, deduct)
     import notify as _notify
     await _notify.insert_notification(_db, {
@@ -4210,7 +4215,8 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], user: dict = D
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "decision_note": (req.get("note") or "")[:300],
     }
-    emp = await _db.employees.find_one({"_id": rec["employee_id"]})
+    cid = rec["company_id"]
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid})
     if emp:
         saved = await apply_day(
             emp,
@@ -4220,10 +4226,10 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], user: dict = D
         )
     else:
         await _db.attendance.update_one(
-            {"_id": att_id},
+            {"_id": att_id, "company_id": cid},
             {"$set": {"intraday_leave_request": ilr, "intraday_leave_approved": approved, "updated_at": _now()}},
         )
-        saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+        saved = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
     msg = leave_wage_decision_message("intraday_leave", approved, deduct)
     import notify as _notify
     await _notify.insert_notification(_db, {
@@ -4339,12 +4345,13 @@ async def decide_time_edit(att_id: str, req: Dict[str, Any], user: dict = Depend
     if user.get("role") != "admin" and (not emp or emp["_id"] != rec["employee_id"]):
         raise HTTPException(status_code=403, detail="Yalnızca kendi puantaj kaydınızı yanıtlayabilirsiniz.")
     result = apply_time_edit_decision(rec, (req or {}).get("decision"), _now())
+    cid = rec["company_id"]
     if result.get("restore") is not None:
-        emp_doc = await _db.employees.find_one({"_id": rec["employee_id"]})
+        emp_doc = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid})
         if emp_doc:
             await apply_day(emp_doc, rec["date"], result["restore"], source=rec.get("source") or "manager")
-    await _db.attendance.update_one({"_id": att_id}, {"$set": result["upd"]})
-    out = _clean(await _db.attendance.find_one({"_id": att_id}))
+    await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": result["upd"]})
+    out = _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
     out["message"] = "Saat onaylandı." if result.get("accepted") else "Saat düzeltmesi reddedildi; önceki saat geri yüklendi."
     return out
 
@@ -4407,9 +4414,10 @@ async def decide_attendance_dispute(att_id: str, req: Dict[str, Any], user: dict
     if accepted:
         upd["employee_confirmed"] = False
         upd["employee_confirmed_at"] = None
-    await _db.attendance.update_one({"_id": att_id}, {"$set": upd})
+    cid = rec["company_id"]
+    await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": upd})
     import notify as _notify
-    emp = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id"), "company_id": cid}) or {}
     title = "Puantaj itirazı düzeltildi" if accepted else "Puantaj itirazı reddedildi"
     msg = (
         f"{rec.get('employee_name')} — {rec.get('date') or ''} itirazı "
@@ -4429,7 +4437,7 @@ async def decide_attendance_dispute(att_id: str, req: Dict[str, Any], user: dict
     })
     return {
         "status": "success",
-        "record": _clean(await _db.attendance.find_one({"_id": att_id})),
+        "record": _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid})),
         "message": "İtiraz düzeltildi olarak kapatıldı." if accepted else "İtiraz reddedildi.",
     }
 
