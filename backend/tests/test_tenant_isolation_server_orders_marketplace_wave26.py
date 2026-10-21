@@ -420,7 +420,7 @@ def test_sync_draft_invoice_items_stays_in_company(iso):
     _add(db, "invoices", {"_id": "inv-1", "company_id": CO_A, "status": "draft", "items": [_item()], "invoice_number": "TA-A"})
     order = _order(CO_A, invoice_id="inv-1", is_invoiced=False)
     before = _digest(db, CO_B)
-    _run(server._sync_draft_invoice_items(order, [_item(product_name="KalemYeni", quantity=2, unit_price=15)]))
+    _run(server._sync_draft_invoice_items(order, [_item(name="KalemYeni", product_name="KalemYeni", quantity=2, unit_price=15)]))
     names = [it.get("name") or it.get("product_name") for it in _row(db, "invoices", CO_A, "inv-1")["items"]]
     assert "KalemYeni" in names
     assert _row(db, "invoices", CO_B, "inv-1")["invoice_number"] == SECRET_NOTE
@@ -433,7 +433,7 @@ def test_sync_draft_order_items_stays_in_company(iso):
     _add(db, "orders", _order(CO_A, invoice_id="inv-1", is_invoiced=False))
     invoice = {"_id": "inv-1", "company_id": CO_A, "status": "draft", "order_id": OID, "invoice_number": "TA-A"}
     before = _digest(db, CO_B)
-    _run(server._sync_draft_order_items(invoice, [_item(name="KalemYeni", quantity=2, unit_price=15, total=30)]))
+    _run(server._sync_draft_order_items(invoice, [_item(name="KalemYeni", product_name="KalemYeni", quantity=2, unit_price=15, total=30)]))
     names = [it.get("product_name") for it in _row(db, "orders", CO_A, OID)["items"]]
     assert "KalemYeni" in names
     assert _row(db, "orders", CO_B, OID)["customer_name"] == SECRET_NAME
@@ -928,8 +928,9 @@ def test_enrich_marketplace_claims_invoice_stays_in_company(iso):
     }
     before = _digest(db, CO_B)
     out = _run(server._enrich_marketplace_claims([claim]))
-    assert out[0]["can_expense_slip"] is True
-    assert out[0].get("expense_slip_number") != SECRET_NOTE
+    assert out[0]["invoice_id"] == "inv-1"
+    assert out[0].get("expense_slip_id") in (None, "")
+    assert out[0].get("expense_slip_number") in (None, "")
     assert _row(db, "invoices", CO_B, "inv-1")["expense_slip_number"] == SECRET_NOTE
     assert _digest(db, CO_B) == before
 
