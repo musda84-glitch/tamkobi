@@ -91,6 +91,34 @@ def declared_production_ips() -> List[str]:
 
 # Geriye dönük tek IP sabiti (birincil).
 DECLARED_PRODUCTION_IP = declared_production_ips()[0]
+
+
+def einvoice_source_ip() -> str:
+    """SOAP çıkış adresi. Boşsa işletim sisteminin varsayılan rotası kullanılır.
+
+    EINVOICE_SOURCE_IP, yoksa ISNET_SOURCE_IP. Üretimde eth0 üzerinde hem
+    85.95.240.136 hem 85.95.240.184 varken varsayılan rota .136'dır. İşNet
+    yalnız .184'ü beyaz listedeyse EINVOICE_SOURCE_IP=85.95.240.184 yazılır;
+    aksi halde SOAP TLS zaman aşımına düşer.
+    """
+    raw = (os.environ.get("EINVOICE_SOURCE_IP") or os.environ.get("ISNET_SOURCE_IP") or "").strip()
+    if not raw:
+        return ""
+    parts = raw.split(".")
+    if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+        return raw
+    logger.warning("EINVOICE_SOURCE_IP / ISNET_SOURCE_IP geçersiz; varsayılan rota kullanılacak")
+    return ""
+
+
+def _isnet_async_client(**kwargs: Any) -> httpx.AsyncClient:
+    """İşNet HTTP istemcisi. Kaynak IP tanımlıysa soket o adresten bağlanır."""
+    source = einvoice_source_ip()
+    if source and "transport" not in kwargs:
+        kwargs["transport"] = httpx.AsyncHTTPTransport(local_address=source)
+    return httpx.AsyncClient(**kwargs)
+
+
 # İşNet test portalı (http://efatura.isnet.net.tr) — resmi deneme hesabı
 TEST_PORTAL_USER = "12345678901"
 TEST_PORTAL_PASSWORD = "1234"
@@ -1305,12 +1333,13 @@ async def _soap_call(
         "SOAPAction": soap_action_header(service_interface, action),
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=timeout, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
     except httpx.RequestError as e:
         logger.warning(
-            "İşNet SOAP unreachable (%s): %s",
+            "İşNet SOAP unreachable (%s) src=%s: %s",
             action,
+            einvoice_source_ip() or "-",
             mask_sensitive_text(_soap_unreachable_hint(e) or str(e))[:2000],
         )
         raise HTTPException(
@@ -1381,7 +1410,7 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
     elapsed_ms = 0
     t0 = time.time()
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=15.0, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
         elapsed_ms = int((time.time() - t0) * 1000)
         http_status = resp.status_code
@@ -1416,6 +1445,7 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
         f"http_status={http_status if http_status is not None else 'NONE (TLS/TCP, HTTP oluşmadı)'}\n"
         f"elapsed_ms={elapsed_ms}\n"
         f"error={error or '-'}\n"
+        f"soap_source_ip={einvoice_source_ip() or '-'}\n"
         f"soap_host={LIVE_SOAP_HOST}\n"
         f"soap_resolved_ip={', '.join(soap_probe.get('ips') or []) or '?'}\n"
         f"soap_tcp_ok={soap_probe.get('tcp_ok')}\n"
