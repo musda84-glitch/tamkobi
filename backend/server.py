@@ -21718,13 +21718,12 @@ def _recipe_costs(recipe: Dict[str, Any]) -> Dict[str, Any]:
     return {"material_cost": round(mat, 2), "total_estimated_cost": total, "unit_cost": round(total / tq, 2)}
 
 async def _fill_material_costs(materials: List[Dict[str, Any]], company_id: Optional[str] = None):
+    if not company_id:
+        return
     for m in materials:
         if not m.get("product_id"):
             continue
-        q = {"_id": m["product_id"]}
-        if company_id:
-            q["company_id"] = company_id
-        p = await db.products.find_one(q)
+        p = await db.products.find_one({"_id": m["product_id"], "company_id": company_id})
         if p:
             m.setdefault("unit", p.get("unit", "Adet"))
             m.setdefault("product_name", p.get("name"))
@@ -21737,13 +21736,13 @@ async def _fill_material_costs(materials: List[Dict[str, Any]], company_id: Opti
             if not m.get("cost_per_unit"):
                 m["cost_per_unit"] = float(p.get("purchase_price", 0) or 0)
 
-async def _requirements(recipe: Dict[str, Any], quantity: float, *, stock_company_id: Optional[str] = None) -> List[Dict[str, Any]]:
+async def _requirements(recipe: Dict[str, Any], quantity: float, *, stock_company_id: Optional[str]) -> List[Dict[str, Any]]:
     mats = list(recipe.get("materials") or [])
     pids = [m.get("product_id") for m in mats if isinstance(m, dict) and m.get("product_id")]
-    stock_q: Dict[str, Any] = {"_id": {"$in": pids}}
-    if stock_company_id:
-        stock_q["company_id"] = stock_company_id
-    products = await db.products.find(stock_q).to_list(len(pids) or 1) if pids else []
+    if stock_company_id and pids:
+        products = await db.products.find({"_id": {"$in": pids}, "company_id": stock_company_id}).to_list(len(pids) or 1)
+    else:
+        products = []
     by_id = {p["_id"]: p for p in products}
     scaled = pwo.recipe_materials_for_qty(recipe, quantity, products_by_id=by_id)
     rows = []
@@ -21842,8 +21841,10 @@ async def create_recipe(recipe: Recipe, user: dict = Depends(get_current_user)):
     if not recipe.code:
         recipe.code = f"BOM-{str(uuid.uuid4().int)[:6]}"
     doc = _normalize_recipe_steps_payload(recipe.to_mongo())
+    doc["company_id"] = cid
     await _fill_material_costs(doc["materials"], doc.get("company_id"))
     doc.update(_recipe_costs(doc))
+    doc["company_id"] = cid
     await db.recipes.insert_one(doc)
     await db.products.update_one({"_id": recipe.finished_product_id, "company_id": cid}, {"$set": {"has_recipe": True}})
     return clean_doc(doc)
@@ -21854,11 +21855,14 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
     """Siparişteki tüm üretilebilir ürünler için tek seferlik 1 reçete + üretim emri."""
     req = req or {}
     try:
-        order = await db.orders.find_one({"_id": order_id})
+        allowed = list(tenant_access.user_allowed_company_ids(user))
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+        order = await db.orders.find_one({"_id": order_id, "company_id": {"$in": allowed}})
         if not order:
-            order = await db.orders.find_one({"id": order_id})
+            order = await db.orders.find_one({"id": order_id, "company_id": {"$in": allowed}})
         if not order:
-            order = await db.orders.find_one({"order_number": order_id})
+            order = await db.orders.find_one({"order_number": order_id, "company_id": {"$in": allowed}})
         if not order:
             raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
         order = await tenant_access.get_tenant_doc(db, "orders", order["_id"], user, not_found="Sipariş bulunamadı.")
@@ -21877,7 +21881,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         })
         catalog: List[Dict[str, Any]] = []
         if pids:
-            catalog.extend(await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 20))
+            catalog.extend(await db.products.find({"_id": {"$in": pids}, "company_id": company_id}).to_list(len(pids) + 20))
         if skus:
             found_ids = {str(p.get("_id")) for p in catalog}
             extra = await db.products.find({"company_id": company_id, "sku": {"$in": skus}}).to_list(len(skus) + 20)
@@ -21914,7 +21918,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 rid = recipe_doc.get("_id") or recipe_doc.get("id")
                 if rid:
                     await db.recipes.update_one(
-                        {"_id": rid},
+                        {"_id": rid, "company_id": company_id},
                         {"$set": {
                             "materials": recipe_doc.get("materials") or [],
                             "steps": recipe_doc.get("steps") or [],
@@ -21939,7 +21943,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 if po_id:
                     # Tüm atölye kartlarına zorla yaz — resolve ilk parkuru basmış olsa bile.
                     await db.work_orders.update_many(
-                        {"order_id": po_id},
+                        {"order_id": po_id, "company_id": company_id},
                         {"$set": {"station": default_station}},
                     )
                 out["station"] = default_station
@@ -21951,7 +21955,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 opr.apply_station_to_recipe_materials(existing, default_station, force=True)
             # Stok notu / istasyon güncellemesi reçeteye yazılsın (yeniden kullanım).
             await db.recipes.update_one(
-                {"_id": existing.get("_id") or existing.get("id")},
+                {"_id": existing.get("_id") or existing.get("id"), "company_id": company_id},
                 {"$set": {
                     "materials": existing.get("materials") or [],
                     "steps": existing.get("steps") or [],
@@ -21986,12 +21990,14 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         doc = _normalize_recipe_steps_payload(opr.recipe_mongo_doc(payload))
+        doc["company_id"] = company_id
         await _fill_material_costs(doc.get("materials") or [], doc.get("company_id"))
         doc.update(_recipe_costs(doc))
+        doc["company_id"] = company_id
         await db.recipes.insert_one(doc)
         if doc.get("finished_product_id") and not str(doc["finished_product_id"]).startswith("order-line-"):
             try:
-                await db.products.update_one({"_id": doc["finished_product_id"]}, {"$set": {"has_recipe": True}})
+                await db.products.update_one({"_id": doc["finished_product_id"], "company_id": company_id}, {"$set": {"has_recipe": True}})
             except Exception:
                 logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         recipe_out = clean_doc(dict(doc))
@@ -22026,6 +22032,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
 async def copy_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
     """Reçeteyi kopyala: yeni BOM kodu ve (Kopya) adı; malzemeler/adımlar korunur."""
     src = await tenant_access.get_tenant_doc(db, "recipes", recipe_id, user, not_found="Reçete bulunamadı.")
+    cid = src["company_id"]
     now = datetime.now(timezone.utc).isoformat()
     new_id = str(uuid.uuid4())
     name = str(src.get("name") or "Reçete").strip()
@@ -22062,11 +22069,12 @@ async def copy_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
         "copied_from": recipe_id,
         "is_active": True,
     })
-    await _fill_material_costs(doc.get("materials") or [], doc.get("company_id"))
+    await _fill_material_costs(doc.get("materials") or [], cid)
     doc.update(_recipe_costs(doc))
+    doc["company_id"] = cid
     await db.recipes.insert_one(doc)
     if doc.get("finished_product_id"):
-        await db.products.update_one({"_id": doc["finished_product_id"]}, {"$set": {"has_recipe": True}})
+        await db.products.update_one({"_id": doc["finished_product_id"], "company_id": cid}, {"$set": {"has_recipe": True}})
     out = clean_doc(doc)
     return {**out, "message": f"{out.get('code')} olarak kopyalandı."}
 
@@ -22074,6 +22082,7 @@ async def copy_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
 @api_router.put("/production/recipes/{recipe_id}")
 async def update_recipe(recipe_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     r = await tenant_access.get_tenant_doc(db, "recipes", recipe_id, user, not_found="Reçete bulunamadı.")
+    cid = r["company_id"]
     allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name", "one_time", "group_same_station"}}
     if "group_same_station" in allowed:
         allowed["group_same_station"] = bool(allowed["group_same_station"])
@@ -22084,10 +22093,10 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any], user: dict = Depend
     await _fill_material_costs(merged.get("materials", []), merged.get("company_id"))
     merged.update(_recipe_costs(merged))
     merged.pop("_id", None)
-    await db.recipes.update_one({"_id": recipe_id}, {"$set": merged})
-    out = clean_doc(await db.recipes.find_one({"_id": recipe_id}))
+    await db.recipes.update_one({"_id": recipe_id, "company_id": cid}, {"$set": merged})
+    out = clean_doc(await db.recipes.find_one({"_id": recipe_id, "company_id": cid}))
     if steps_changed:
-        rebuilt = await _rebuild_open_work_orders_for_recipe(recipe_id)
+        rebuilt = await _rebuild_open_work_orders_for_recipe(recipe_id, cid)
         if rebuilt:
             out["work_orders_rebuilt"] = rebuilt
             out["message"] = f"Reçete güncellendi; {rebuilt} açık üretim emrinin atölye adımları yenilendi."
@@ -22096,9 +22105,10 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any], user: dict = Depend
 @api_router.delete("/production/recipes/{recipe_id}")
 async def delete_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
     r = await tenant_access.get_tenant_doc(db, "recipes", recipe_id, user, not_found="Reçete bulunamadı.")
+    cid = r["company_id"]
     await trash.soft_delete("recipes", r, "recipe", r.get("name") or r.get("finished_product_name") or recipe_id)
-    if not await db.recipes.count_documents({"finished_product_id": r.get("finished_product_id")}):
-        await db.products.update_one({"_id": r.get("finished_product_id")}, {"$set": {"has_recipe": False}})
+    if not await db.recipes.count_documents({"finished_product_id": r.get("finished_product_id"), "company_id": cid}):
+        await db.products.update_one({"_id": r.get("finished_product_id"), "company_id": cid}, {"$set": {"has_recipe": False}})
     return {"status": "success", "message": "Reçete çöp kutusuna taşındı."}
 
 @api_router.get("/production/requirements")
@@ -22278,10 +22288,10 @@ async def production_missing_plan(company_id: Optional[str] = None, user: dict =
     sessions = {}
     orders_map = {}
     if order_ids:
-        for ses in await db.order_pick_sessions.find({"order_id": {"$in": order_ids}}).to_list(200):
+        for ses in await db.order_pick_sessions.find({"order_id": {"$in": order_ids}, "company_id": cid}).to_list(200):
             sessions[str(ses.get("order_id"))] = ses
         for o in await db.orders.find(
-            {"_id": {"$in": order_ids}},
+            {"_id": {"$in": order_ids}, "company_id": cid},
             {"order_number": 1, "customer_name": 1, "company_id": 1, "items": 1},
         ).to_list(200):
             orders_map[str(o.get("_id"))] = o
@@ -22424,7 +22434,7 @@ async def production_missing_plan(company_id: Optional[str] = None, user: dict =
     pids = [r["product_id"] for r in by_product.values() if r.get("product_id")]
     prod_map = {}
     if pids:
-        for p in await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 10):
+        for p in await db.products.find({"_id": {"$in": pids}, "company_id": cid}).to_list(len(pids) + 10):
             prod_map[str(p["_id"])] = p
 
     items = []
@@ -22519,7 +22529,7 @@ async def production_missing_plan_create(req: Dict[str, Any], user: dict = Depen
                 oid = s.get("order_id")
                 if not oid:
                     continue
-                ses = await db.order_pick_sessions.find_one({"order_id": oid})
+                ses = await db.order_pick_sessions.find_one({"order_id": oid, "company_id": company_id})
                 if not ses:
                     continue
                 existing = list(ses.get("production_orders") or [])
@@ -22533,7 +22543,7 @@ async def production_missing_plan_create(req: Dict[str, Any], user: dict = Depen
                     "needs_recipe": bool(po.get("needs_recipe")),
                 })
                 await db.order_pick_sessions.update_one(
-                    {"_id": ses["_id"]},
+                    {"_id": ses["_id"], "company_id": company_id},
                     {"$set": {"production_orders": existing, "sent_to_production_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}},
                 )
                 if s.get("notification_id"):
@@ -22727,7 +22737,7 @@ async def create_production_order(req: Dict[str, Any], user: Any = Depends(get_c
             station_override=station_override,
         )
         return {**clean_doc(doc), "requirements": [], "needs_recipe": True, "message": f"{order.order_code} üretim emri oluşturuldu (reçetesiz)."}
-    rows = await _requirements(recipe, qty)
+    rows = await _requirements(recipe, qty, stock_company_id=company_id)
     shortages = [x for x in rows if x["shortage"] > 0]
     if shortages and req.get("strict"):
         raise HTTPException(status_code=400, detail="Yetersiz hammadde: " + ", ".join(f"{x['product_name']} ({x['shortage']} {x['unit']})" for x in shortages))
@@ -22784,18 +22794,20 @@ async def _generate_work_orders(
         await db.work_orders.insert_many(docs)
 
 
-async def _rebuild_open_work_orders_for_recipe(recipe_id: str) -> int:
+async def _rebuild_open_work_orders_for_recipe(recipe_id: str, company_id: Optional[str]) -> int:
     """Reçete adımları değişince planlı/başlamamış üretim emirlerinin iş emirlerini yenile."""
-    recipe = await db.recipes.find_one({"_id": recipe_id})
+    if not company_id:
+        return 0
+    recipe = await db.recipes.find_one({"_id": recipe_id, "company_id": company_id})
     if not recipe:
         return 0
     orders = await db.production_orders.find(
-        {"recipe_id": recipe_id, "status": {"$in": ["planned", "in_production"]}},
+        {"recipe_id": recipe_id, "company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
     ).to_list(500)
     rebuilt = 0
     for o in orders:
         busy = await db.work_orders.count_documents(
-            {"order_id": o["_id"], "status": {"$in": ["in_progress", "paused", "done"]}}
+            {"order_id": o["_id"], "company_id": company_id, "status": {"$in": ["in_progress", "paused", "done"]}}
         )
         if busy:
             continue
@@ -23700,7 +23712,7 @@ async def update_production_order(order_id: str, req: Dict[str, Any], user: dict
     if recipe:
         costs = _recipe_costs(recipe)
         patch["total_cost"] = round(costs["unit_cost"] * qty, 2)
-        rows = await _requirements(recipe, qty)
+        rows = await _requirements(recipe, qty, stock_company_id=o["company_id"])
         patch["shortages"] = [x for x in rows if x["shortage"] > 0]
 
     await db.production_orders.update_one({"_id": order_id}, {"$set": patch})
@@ -23765,7 +23777,7 @@ async def produce_production_order_shortages(order_id: str, req: Dict[str, Any] 
     if not shortages and o.get("recipe_id"):
         recipe = await db.recipes.find_one({"_id": o["recipe_id"]})
         if recipe:
-            rows = await _requirements(recipe, float(o.get("planned_quantity") or 1))
+            rows = await _requirements(recipe, float(o.get("planned_quantity") or 1), stock_company_id=o["company_id"])
             shortages = [x for x in rows if float(x.get("shortage") or 0) > 0]
             await db.production_orders.update_one({"_id": order_id}, {"$set": {"shortages": shortages}})
 
@@ -23888,7 +23900,7 @@ async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = N
             "from_step": True,
         })
     if recipe and consume_qty > 0:
-        for row in await _requirements(recipe, consume_qty):
+        for row in await _requirements(recipe, consume_qty, stock_company_id=p_order["company_id"]):
             pid = str(row.get("product_id") or "").strip()
             if pid and pid in already_ids:
                 continue
@@ -26461,7 +26473,10 @@ async def _restore_expense(doc, _related):
         await expenses._post_payment(doc, doc.get("account_id"), doc.get("paid_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), partner_id=doc.get("partner_id"))
 
 async def _restore_recipe(doc, _related):
-    await db.products.update_one({"_id": doc.get("finished_product_id")}, {"$set": {"has_recipe": True}})
+    cid = doc.get("company_id")
+    if not cid:
+        return
+    await db.products.update_one({"_id": doc.get("finished_product_id"), "company_id": cid}, {"$set": {"has_recipe": True}})
 
 
 async def _restore_invoice(doc, _related):

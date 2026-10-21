@@ -44,6 +44,7 @@ def test_generate_work_orders_force_rebuilds():
 def test_update_recipe_normalizes_station_only_and_rebuilds():
     existing = {
         "_id": "r1",
+        "company_id": "c1",
         "name": "Eski",
         "finished_product_id": "p1",
         "materials": [{"product_id": "m1", "product_name": "MDF", "quantity": 1, "unit": "Adet", "steps": []}],
@@ -63,6 +64,7 @@ def test_update_recipe_normalizes_station_only_and_rebuilds():
 
     async def run():
         with patch.object(server, "db", fake_db), \
+             patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=existing)), \
              patch.object(server, "_fill_material_costs", AsyncMock()), \
              patch.object(server, "_recipe_costs", return_value={"total_estimated_cost": 0, "unit_cost": 0}), \
              patch.object(server, "_rebuild_open_work_orders_for_recipe", rebuild):
@@ -75,5 +77,5 @@ def test_update_recipe_normalizes_station_only_and_rebuilds():
     set_doc = fake_db.recipes.update_one.await_args[0][1]["$set"]
     assert set_doc["steps"][0]["name"] == "CNC OEMAK"
     assert set_doc["steps"][0]["station"] == "CNC OEMAK"
-    rebuild.assert_awaited_once_with("r1")
+    rebuild.assert_awaited_once_with("r1", "c1")
     assert out.get("work_orders_rebuilt") == 1
