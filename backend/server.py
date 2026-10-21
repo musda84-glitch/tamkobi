@@ -321,6 +321,36 @@ def _start_leased_background(name: str, factory):
     asyncio.get_event_loop().create_task(_runner())
 
 
+_WA_PHONE_NUMBER_ID_PARTIAL = {"phone_number_id": {"$type": "string", "$gt": ""}}
+
+
+async def _ensure_whatsapp_phone_number_id_index() -> None:
+    """phone_number_id için kısmi tekil indeks. Mükerrer grup varsa yalnız sayıyı logla, indeksi kurma."""
+    try:
+        # tenant-ok: kurulum indeksi; phone_number_id şirketler arası tekil, şirket filtresi yok
+        rows = await db.whatsapp_settings.aggregate([
+            {"$match": _WA_PHONE_NUMBER_ID_PARTIAL},
+            {"$group": {"_id": "$phone_number_id", "n": {"$sum": 1}}},
+        ]).to_list(None)
+        dup_groups = 0
+        for row in rows or []:
+            key = row.get("_id")
+            if not isinstance(key, str) or not key:
+                continue
+            if (row.get("n") or 0) > 1:
+                dup_groups += 1
+        if dup_groups:
+            logger.warning("whatsapp_settings phone_number_id mükerrer grup: %s", dup_groups)
+            return
+        await db.whatsapp_settings.create_index(
+            "phone_number_id",
+            unique=True,
+            partialFilterExpression=_WA_PHONE_NUMBER_ID_PARTIAL,
+        )
+    except Exception:
+        logger.warning("whatsapp_settings phone_number_id index oluşturma atlandı")
+
+
 @app.on_event("startup")
 async def startup_event():
     try:
@@ -395,6 +425,7 @@ async def startup_event():
             filled_companies = await company_numbers.backfill_missing_company_numbers(db)
             if filled_companies:
                 logger.info("Assigned company_no to %s existing companies", filled_companies)
+            await _ensure_whatsapp_phone_number_id_index()
             try:
                 import phone_norm as _phone_norm
                 await _phone_norm.backfill_phone_norm(db)
@@ -18922,6 +18953,11 @@ async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current
         clash = await db.whatsapp_settings.find_one({"verify_token": verify_token, "company_id": {"$ne": company_id}})
         if clash:
             raise HTTPException(status_code=409, detail="Bu doğrulama anahtarı başka bir şirkette kullanılıyor.")
+    phone_number_id = update["phone_number_id"]
+    if phone_number_id:
+        pn_clash = await db.whatsapp_settings.find_one({"phone_number_id": phone_number_id, "company_id": {"$ne": company_id}})
+        if pn_clash:
+            raise HTTPException(status_code=409, detail="Bu WhatsApp telefon numarası kimliği (phone_number_id) başka bir şirkette kullanılıyor.")
     if req.get("access_token"):
         update["access_token_enc"] = comm_service.encrypt(req["access_token"])
     if not update["phone_number_id"]:
@@ -18962,32 +18998,35 @@ async def _process_wa_webhook(payload: Dict[str, Any], *, raw_body: bytes = b"",
     ignored = 0
     known = 0
     rejected = 0
+    ambiguous = 0
     for entry in (payload or {}).get("entry", []) or []:
         for ch in entry.get("changes", []) or []:
             v = ch.get("value", {}) or {}
             pn_id = (v.get("metadata") or {}).get("phone_number_id")
+            if not pn_id:
+                ignored += 1
+                continue
             # tenant-ok: oturumsuz Meta webhook; phone_number_id ile şirket bulunur, sonraki yazılar bu company_id ile süzülür
-            s = await db.whatsapp_settings.find_one({"phone_number_id": pn_id}) if pn_id else None
+            matches = await db.whatsapp_settings.find({"phone_number_id": pn_id}).limit(2).to_list(2)
+            if len(matches) > 1:
+                ambiguous += 1
+                continue
+            s = matches[0] if matches else None
             company_id = str((s or {}).get("company_id") or "").strip()
             if not s or not company_id:
                 ignored += 1
                 continue
             known += 1
-            signature_verified = False
+            secret = ""
             if s.get("app_secret_enc"):
                 try:
                     secret = comm_service.decrypt(s.get("app_secret_enc") or "")
                 except Exception:
                     secret = ""
-                if not _wa_hub_signature_ok(secret, raw_body, signature):
-                    rejected += 1
-                    continue
-                signature_verified = True
-            else:
-                logger.warning(
-                    'WhatsApp webhook imzası doğrulanmadan kaydedildi {"signature_verified": False, "company_id": "%s"}',
-                    company_id,
-                )
+            if not _wa_hub_signature_ok(secret, raw_body, signature):
+                rejected += 1
+                continue
+            signature_verified = True
             names = {c.get("wa_id"): (c.get("profile") or {}).get("name") for c in v.get("contacts", [])}
             for m in v.get("messages", []) or []:
                 phone = comm_service.normalize_phone(m.get("from", ""))
@@ -19000,13 +19039,14 @@ async def _process_wa_webhook(payload: Dict[str, Any], *, raw_body: bytes = b"",
                                                    "to": phone or m.get("from"), "phone": phone or m.get("from"), "message": text, "direction": "inbound", "status": "received", "context": "whatsapp_api",
                                                    "wa_message_id": m.get("id"), "signature_verified": signature_verified, "created_at": datetime.now(timezone.utc).isoformat()})
                 saved += 1
-            if signature_verified:
-                logger.info(
-                    'WhatsApp webhook {"signature_verified": True, "company_id": "%s"}',
-                    company_id,
-                )
+            logger.info(
+                'WhatsApp webhook {"signature_verified": True, "company_id": "%s"}',
+                company_id,
+            )
+    if ambiguous:
+        logger.warning("WhatsApp webhook belirsiz eşleme sayacı: %s", ambiguous)
     if known and rejected == known:
-        raise HTTPException(status_code=401, detail="Webhook imzası doğrulanamadı.")
+        raise HTTPException(status_code=403, detail="Webhook imzası doğrulanamadı.")
     return {"status": "ok", "saved": saved, "ignored": ignored}
 
 

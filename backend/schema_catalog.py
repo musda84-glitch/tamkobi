@@ -731,7 +731,7 @@ COLLECTIONS = {
     },
     "whatsapp_settings": {
         "scope": SCOPE_TENANT,
-        "description": "WhatsApp Cloud API ayarları.",
+        "description": "WhatsApp Cloud API ayarları. phone_number_id boş olmayan string için kısmi tekil indeks; boş kayıtlar indekse girmez.",
         "keys": ("_id", "company_id", "phone_number_id", "verify_token"),
         "refs": ("companies._id",),
     },
