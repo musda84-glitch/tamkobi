@@ -394,9 +394,10 @@ async def _invoice_doc(company_id: str, data: dict, batch_id: str) -> dict:
     if not contact and data.get("contact_name"):
         contact = await _db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(data['contact_name'])}$", "$options": "i"}})
     if not contact:
-        contact = {"_id": str(uuid.uuid4()), "company_id": company_id, "type": "supplier" if data.get("invoice_type") == "purchase" else "customer", "name": data["contact_name"], "tax_number_or_id": data.get("contact_tax_id") or "", "balance": 0.0,
+        created = {"_id": str(uuid.uuid4()), "company_id": company_id, "type": "supplier" if data.get("invoice_type") == "purchase" else "customer", "name": data["contact_name"], "tax_number_or_id": data.get("contact_tax_id") or "", "balance": 0.0,
                    "category": "Aktarım", "is_e_invoice_user": False, "import_batch_id": batch_id, "source": "migration", "created_at": _now()}
-        await _db.contacts.insert_one(contact)
+        contact = created
+        await _db.contacts.insert_one(created)
     gt = float(data.get("grand_total") or 0)
     sub = float(data.get("subtotal") or 0) or round(gt / 1.2, 2)
     vat = float(data.get("vat_total") or 0) or round(gt - sub, 2)
@@ -444,7 +445,7 @@ async def migration_import(req: Dict[str, Any], user: dict = Depends(_user_dep))
         await coll.insert_one(doc)
         batch["inserted_ids"].append(doc["_id"])
     await _db.migration_batches.insert_one(batch)
-    await _db.migration_uploads.delete_one({"_id": upload["_id"]})
+    await _db.migration_uploads.delete_one({"_id": upload["_id"], "company_id": company_id})
     n_ins, n_upd = len(batch["inserted_ids"]), len(batch["updated"])
     return {"status": "success", "batch_id": batch["_id"], "inserted": n_ins, "updated": n_upd, "skipped": batch["skipped"], "failed": batch["failed"],
             "message": f"{ENTITIES[entity]['label']}: {n_ins} yeni, {n_upd} güncellendi, {batch['skipped']} atlandı, {batch['failed']} hatalı."}
@@ -476,14 +477,18 @@ async def migration_rollback(batch_id: str, user: dict = Depends(_user_dep)):
     b = await tenant_access.get_tenant_doc(_db, "migration_batches", batch_id, user, not_found="Parti bulunamadı.")
     if b.get("status") == "rolled_back":
         raise HTTPException(status_code=400, detail="Bu parti zaten geri alınmış.")
+    cid = str(b.get("company_id") or "").strip()
     coll = _db[ENTITIES[b["entity"]]["collection"]]
-    r = await coll.delete_many({"_id": {"$in": b.get("inserted_ids") or []}})
+    r = await coll.delete_many({"_id": {"$in": b.get("inserted_ids") or []}, "company_id": cid})
     extra = 0
     if b["entity"] == "invoices":
-        extra = (await _db.contacts.delete_many({"import_batch_id": batch_id})).deleted_count
+        extra = (await _db.contacts.delete_many({"import_batch_id": batch_id, "company_id": cid})).deleted_count
     for u in b.get("updated") or []:
-        await coll.update_one({"_id": u["id"]}, {"$set": u.get("prev") or {}})
-    await _db.migration_batches.update_one({"_id": batch_id}, {"$set": {"status": "rolled_back", "rolled_back_at": _now()}})
+        await coll.update_one({"_id": u["id"], "company_id": cid}, {"$set": u.get("prev") or {}})
+    await _db.migration_batches.update_one(
+        {"_id": batch_id, "company_id": cid},
+        {"$set": {"status": "rolled_back", "rolled_back_at": _now()}},
+    )
     return {"status": "success", "deleted": r.deleted_count, "reverted": len(b.get("updated") or []), "message": f"{r.deleted_count} kayıt silindi, {len(b.get('updated') or [])} güncelleme geri alındı" + (f", {extra} otomatik cari silindi" if extra else "") + "."}
 
 
@@ -792,12 +797,12 @@ async def bh_import(req: Dict[str, Any], user: dict = Depends(_user_dep)):
                 if on_dup == "skip":
                     batch["skipped"] += 1; continue
                 upd = {**data, "bizimhesap_id": ext_id}
-                await _db.products.update_one({"_id": existing["_id"]}, {"$set": upd})
+                await _db.products.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": upd})
                 batch["updated"].append({"id": existing["_id"], "prev": {k: existing.get(k) for k in upd}})
                 # indeks güncelle
                 by_bh[ext_id] = {**existing, **upd} if ext_id else existing
             else:
-                doc = _build_doc("products", company_id, data, batch["_id"]); doc["bizimhesap_id"] = ext_id; doc["source"] = "bizimhesap"
+                doc = _build_doc("products", company_id, data, batch["_id"]); doc["bizimhesap_id"] = ext_id; doc["source"] = "bizimhesap"; doc["company_id"] = company_id
                 await _db.products.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
                 if ext_id:
                     by_bh[ext_id] = doc
@@ -923,11 +928,12 @@ async def bh_import_customers(req: Dict[str, Any], user: dict = Depends(_user_de
             # Elle "Müşteri & Tedarikçi" yapılmış cariyi tek türe düşürmeyelim.
             upd = {**data, "bizimhesap_id": ext_id, "balance": bal, "opening_balance": bal, "opening_balance_source": "bizimhesap",
                    "type": "both" if existing.get("type") == "both" else ctype}
-            await _db.contacts.update_one({"_id": existing["_id"]}, {"$set": upd})
+            await _db.contacts.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": upd})
             batch["updated"].append({"id": existing["_id"], "prev": {k: existing.get(k) for k in upd}})
         else:
             doc = _build_doc("contacts", company_id, {**data, "balance": bal, "type": ctype}, batch["_id"])
             doc.update({"bizimhesap_id": ext_id, "source": "bizimhesap", "tax_number_or_id": data.get("tax_number_or_id") or "", "opening_balance": bal, "opening_balance_source": "bizimhesap"})
+            doc["company_id"] = company_id
             await _db.contacts.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
     await _db.migration_batches.insert_one(batch)
     last = {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "total_balance": round(total_bal, 2), "total_cheque": round(total_cheque, 2), "include_cheques": include_cheques, "types": types}

@@ -234,7 +234,7 @@ def test_restore_group_restores_siblings_same_company():
         restored.append(item["_id"])
         return item["doc"], 0, [(item["collection"], item["doc"]["_id"])]
 
-    user = {"is_super_admin": True}
+    user = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
     with patch.object(trash, "_db", mock_db), patch.object(
         trash.tenant_access, "user_may_access_company", return_value=True
     ), patch.object(trash, "_restore_one_trash_rec", side_effect=fake_restore), patch.object(

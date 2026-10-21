@@ -571,16 +571,23 @@ def is_legacy_expense_withdrawal(tx: Optional[Dict[str, Any]]) -> bool:
     return tx.get("source") == "expense"
 
 
-async def _partner_company_id(db, partner_id: Optional[str]) -> Optional[str]:
+async def _partner_company_id(db, partner_id: Optional[str], company_id: Optional[str] = None) -> Optional[str]:
     if not partner_id:
         return None
+    cid = str(company_id or "").strip()
     try:
-        # tenant-ok değil: partner_id'den company_id çözen çözücü; kapsamı tanımı gereği yok (bank_match_target.py:50, partner_pay.py:599 kullanır).
-        partner = await db.partners.find_one({"_id": partner_id}, {"company_id": 1})
+        if cid:
+            partner = await db.partners.find_one({"_id": partner_id, "company_id": cid}, {"company_id": 1})
+        else:
+            # tenant-ok: partner_id'den şirket çözer; company_id argümanı yok
+            partner = await db.partners.find_one({"_id": partner_id}, {"company_id": 1})
     except TypeError:
         try:
-            # tenant-ok değil: partner_id'den company_id çözen çözücü; kapsamı tanımı gereği yok (bank_match_target.py:50, partner_pay.py:599 kullanır).
-            partner = await db.partners.find_one({"_id": partner_id})
+            if cid:
+                partner = await db.partners.find_one({"_id": partner_id, "company_id": cid})
+            else:
+                # tenant-ok: partner_id'den şirket çözer; company_id argümanı yok
+                partner = await db.partners.find_one({"_id": partner_id})
         except Exception:
             return None
     except Exception:
@@ -599,34 +606,37 @@ async def repair_legacy_expense_withdrawals(db, partner_id: Optional[str] = None
     """
     if partner_id and not company_id:
         company_id = await _partner_company_id(db, partner_id)
-    q: Dict[str, Any] = {"type": "withdrawal"}
-    if company_id:
-        q["company_id"] = company_id
+    cid = str(company_id or "").strip()
+    if not cid:
+        return 0
+    q: Dict[str, Any] = {"type": "withdrawal", "company_id": cid}
     if partner_id:
         q["partner_id"] = partner_id
-    # tenant-ok değil: eski veri onarımı; partner_id/company_id parametresi verildiğinde zaten daralır, parametresiz çağrı bakım içindir.
     txs = await db.partner_transactions.find(q).to_list(20000)
     fixed = 0
     now = datetime.now(timezone.utc).isoformat()
     for tx in txs:
         if not is_legacy_expense_withdrawal(tx):
             continue
-        # tenant-ok değil: eski veri onarımı; partner_id/company_id parametresi verildiğinde zaten daralır, parametresiz çağrı bakım içindir.
         await db.partner_transactions.update_one(
-            {"_id": tx["_id"]},
+            {"_id": tx["_id"], "company_id": str(tx.get("company_id") or cid)},
             {"$set": {"type": "credit", "legacy_expense_repaired_at": now}},
         )
         fixed += 1
     return fixed
 
 
-async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, Any]]:
+async def sync_partner_from_ledger(db, partner_id: str, company_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Kayıtlı bakiyeyi hareketlerden yeniden hesapla; kaymayı onar."""
     # Lazy: bank_match_target → partner_pay döngüsünü kırma
     from bank_match_target import repair_legacy_bank_match_directions
 
-    # tenant-ok değil: server.py:13676 imzası (db, partner_id); server.py PR'ında company_id kwarg ile kapanır.
-    partner = await db.partners.find_one({"_id": partner_id})
+    cid_in = str(company_id or "").strip()
+    if cid_in:
+        partner = await db.partners.find_one({"_id": partner_id, "company_id": cid_in})
+    else:
+        # tenant-ok: company_id argümanı yok; ortak belgesinden şirket okunur, sonraki yazmalar bu company_id ile filtrelenir
+        partner = await db.partners.find_one({"_id": partner_id})
     if not partner:
         return None
     company_id = partner.get("company_id")
@@ -788,8 +798,12 @@ async def credit_expense(
 
 
 async def reverse_one(db, query: Dict[str, Any]) -> bool:
-    # tenant-ok değil: server.py:16965 ve :25100, bank_match_target.py:136/:139, employee_data_reset.py:72 company_id'siz sorgu geçirir; server.py PR'ında kapanır. query'de company_id varsa (expenses.py:212, tax_obligations.py:94, personnel_payments.py:733) olduğu gibi kullanılır.
-    ptx = await db.partner_transactions.find_one(query)
+    cid = str((query or {}).get("company_id") or "").strip()
+    if cid:
+        ptx = await db.partner_transactions.find_one({**query, "company_id": cid})
+    else:
+        # tenant-ok: company_id içermeyen eski çağrı; bulunan satırın company_id'si sonraki silme ve bakiye yazmasını sınırlar
+        ptx = await db.partner_transactions.find_one(query)
     if not ptx:
         return False
     cid = str(ptx.get("company_id") or "")
@@ -893,7 +907,7 @@ async def accrue_monthly_salaries(
 
 
 async def accrue_due_for_all_companies(db, as_of: Optional[str] = None) -> Dict[str, Any]:
-    # tenant-ok değil: zamanlayıcı, tüm şirketler.
+    # tenant-ok: zamanlayıcı, vadesi gelen ortak maaşını tüm şirketlerde tarar; her şirket kendi company_id'si ile işlenir
     cursor = db.partners.find({})
     partners = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
     seen = set()

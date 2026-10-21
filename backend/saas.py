@@ -396,10 +396,16 @@ async def seed():
         new_name = (c.get("name") or "").replace("Nexus", "TamKobi", 1)
         if new_name and new_name != c.get("name"):
             await _db.companies.update_one({"_id": c["_id"]}, {"$set": {"name": new_name}})
+    # tenant-ok: açılış, Nexus görünen adını tüm şirketlerde tarar
     async for p in _db.products.find({"name": {"$regex": r"^Nexus"}}):
         new_name = (p.get("name") or "").replace("Nexus", "TamKobi", 1)
         if new_name and new_name != p.get("name"):
-            await _db.products.update_one({"_id": p["_id"]}, {"$set": {"name": new_name}})
+            pcid = p.get("company_id")
+            if pcid:
+                await _db.products.update_one({"_id": p["_id"], "company_id": pcid}, {"$set": {"name": new_name}})
+            else:
+                # tenant-ok: açılış marka düzeltmesi, company_id'siz eski ürün
+                await _db.products.update_one({"_id": p["_id"]}, {"$set": {"name": new_name}})
     try:
         import logging
         import public_sites
@@ -617,7 +623,7 @@ async def quota_usage(company_id: str) -> Dict[str, Any]:
     q = {"company_id": {"$in": ids}}
     products = await _db.products.count_documents(q)
     contacts = await _db.contacts.count_documents(q)
-    files = await _db.files.find({"$or": [{"company_id": {"$in": ids}}, {"entity_id": {"$in": ids}}]}).to_list(50000)
+    files = await _db.files.find({"company_id": {"$in": ids}}).to_list(50000)
     storage = 0
     seen = set()
     for f in files:
@@ -823,7 +829,7 @@ async def require_super_admin(request: Request) -> dict:
 async def _usage(company_id: str) -> Dict[str, Any]:
     last = await _db.activity_logs.find_one({"company_id": company_id}, sort=[("created_at", -1)])
     q = {"company_id": company_id}
-    files = await _db.files.find({"$or": [{"company_id": company_id}, {"entity_id": company_id}]}).to_list(20000)
+    files = await _db.files.find({"company_id": company_id}).to_list(20000)
     storage = sum(int(f.get("size") or 0) for f in files if not f.get("is_deleted"))
     return {"users": await _db.users.count_documents(tenant_user_query(company_id)), "invoices": await _db.invoices.count_documents(q), "contacts": await _db.contacts.count_documents(q),
             "products": await _db.products.count_documents(q), "orders": await _db.orders.count_documents(q), "storage_bytes": storage, "last_activity": (last or {}).get("created_at")}
@@ -1001,6 +1007,7 @@ async def overview_stats() -> Dict[str, Any]:
             p = plans[l["plan_id"]]; mrr += float(p.get("price_yearly", 0)) / 12 if l.get("billing_period") == "yearly" else float(p.get("price_monthly", 0))
     module_usage = {k: sum(1 for r in rows if r["license"]["modules"].get(k)) for k in _ALL}
     expiring = sorted([r for r in rows if r["license"]["days_left"] is not None and r["license"]["days_left"] <= 7], key=lambda r: r["license"]["days_left"])
+    # tenant-ok: platform özeti, bekleyen yükseltme taleplerini tüm şirketlerde sayar
     pending = await _db.upgrade_requests.count_documents({"status": "pending"})
     open_tickets = await _db.support_tickets.count_documents({"status": {"$in": ["open", "in_progress", "waiting_customer"]}})
     return {"companies": len(rows), "users": await _db.users.count_documents({"is_super_admin": {"$ne": True}}), "platform_admins": await _db.users.count_documents({"is_super_admin": True}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "open_tickets": open_tickets, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
@@ -1742,7 +1749,11 @@ async def upgrade_request_rows(status: Optional[str] = None, company_id: Optiona
         q["status"] = status
     if company_id:
         q["company_id"] = company_id
-    return [_clean(r) for r in await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)]
+        rows = await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)
+    else:
+        # tenant-ok: platform yöneticisi tüm şirketlerin yükseltme taleplerini listeler
+        rows = await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)
+    return [_clean(r) for r in rows]
 
 
 @router.get("/system/upgrade-requests")
@@ -1752,19 +1763,24 @@ async def list_requests(status: Optional[str] = None, _: dict = Depends(require_
 
 async def apply_upgrade_resolution(req_id: str, status: str, note, apply):
     """Talep durumunu yazar. Onay + apply lisansı günceller ve uygulama içi bildirim bırakır. Mail/SMS yok."""
+    # tenant-ok: platform yöneticisi yükseltme talebini _id ile bulur; sonraki yazma kaydın company_id'si ile filtrelenir
     r = await _db.upgrade_requests.find_one({"_id": req_id})
     if not r:
         raise HTTPException(status_code=404, detail="Talep bulunamadı.")
     if status not in ("approved", "rejected", "pending"):
         raise HTTPException(status_code=400, detail="Geçersiz durum.")
-    await _db.upgrade_requests.update_one({"_id": req_id}, {"$set": {"status": status, "admin_note": note or "", "resolved_at": _now()}})
+    rcid = r.get("company_id")
+    await _db.upgrade_requests.update_one(
+        {"_id": req_id, "company_id": rcid},
+        {"$set": {"status": status, "admin_note": note or "", "resolved_at": _now()}},
+    )
     if status == "approved" and r.get("plan_id") and apply:
         lid = await license_id_of(r["company_id"])
         await _db.company_licenses.update_one({"_id": lid}, {"$set": {"plan_id": r["plan_id"], "status": "active", "module_overrides": {}, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
         invalidate(lid)
     import notify as _notify
     await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {note or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
-    return _clean(await _db.upgrade_requests.find_one({"_id": req_id}))
+    return _clean(await _db.upgrade_requests.find_one({"_id": req_id, "company_id": rcid}))
 
 
 @router.put("/system/upgrade-requests/{req_id}")

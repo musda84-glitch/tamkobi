@@ -294,9 +294,12 @@ def _safe_result(verdict: dict) -> dict:
     return result
 
 
-async def _conditional_update(intent_id: str, match: dict, fields: dict) -> bool:
+async def _conditional_update(intent_id: str, match: dict, fields: dict, company_id: Optional[str] = None) -> bool:
     coll = _require_db().payment_intents
     query = {"_id": intent_id, **match}
+    cid = str(company_id or "").strip()
+    if cid:
+        query["company_id"] = cid
     update = {"$set": fields}
     atomic = getattr(coll, "update_one_atomic", None)
     if atomic is not None:
@@ -306,21 +309,21 @@ async def _conditional_update(intent_id: str, match: dict, fields: dict) -> bool
     return int(getattr(res, "modified_count", 0) or 0) > 0
 
 
-async def _claim_finish(intent_id: str, final_status: str, result: dict) -> bool:
+async def _claim_finish(intent_id: str, final_status: str, result: dict, company_id: Optional[str] = None) -> bool:
     claim_id = uuid.uuid4().hex
     now = _iso()
     claimed = await _conditional_update(intent_id, {"status": "pending"}, {
         "status": "processing",
         "claim_id": claim_id,
         "updated_at": now,
-    })
+    }, company_id=company_id)
     if not claimed:
         return False
     return await _conditional_update(intent_id, {"status": "processing", "claim_id": claim_id}, {
         "status": final_status,
         "result": result,
         "updated_at": _iso(),
-    })
+    }, company_id=company_id)
 
 
 async def _finalize_paid_b2b_order(intent_id: str) -> None:
@@ -766,7 +769,7 @@ def _payment_ctx(
 async def _allocate_order_id(db) -> str:
     for _ in range(5):
         candidate = secrets.token_hex(16)
-        # tenant-ok değil: order_id tüm platformda benzersiz olmalı (paytr_notify yalnız order_id ile arar); şirket filtresi eklemek çakışma riskini açar. Okuma yalnız varlık kontrolü, belge döndürmez.
+        # tenant-ok: order_id tüm platformda benzersiz olmalı; şirket filtresi çakışma riskini açar. Okuma yalnız varlık kontrolü, belge döndürmez.
         if not await db.payment_intents.find_one({"order_id": candidate}):
             return candidate
     raise HTTPException(status_code=500, detail="Sipariş numarası üretilemedi.")
@@ -838,14 +841,14 @@ async def _begin_payment(
     try:
         started = await get_adapter(family).start(runtime, intent, ctx, client=_outbound_client)
     except VposStartError as exc:
-        await _claim_finish(intent_id, "failed", _start_failure_result(exc))
+        await _claim_finish(intent_id, "failed", _start_failure_result(exc), company_id=company_id)
         logger.warning("vpos start failed id=%s error=%s", intent_id, exc.error)
         raise HTTPException(status_code=502, detail="Ödeme başlatılamadı.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Sanal POS formu hazırlanamadı.") from exc
     ref = str(started.pop("provider_ref", "") or "")
     if ref:
-        wrote = await _conditional_update(intent_id, {"status": "pending"}, {"provider_ref": ref, "updated_at": _iso()})
+        wrote = await _conditional_update(intent_id, {"status": "pending"}, {"provider_ref": ref, "updated_at": _iso()}, company_id=company_id)
         if not wrote:
             raise HTTPException(status_code=502, detail="Ödeme başlatılamadı.")
     if audit_label:
@@ -1027,7 +1030,7 @@ async def vpos_callback(intent_id: str, request: Request):
         raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
     form = _form_dict(await request.form())
     db = _require_db()
-    # tenant-ok değil: banka okUrl/failUrl geri çağrısı oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve hash doğrulanır.
+    # tenant-ok: banka okUrl/failUrl geri çağrısı oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve hash doğrulanır.
     intent = await db.payment_intents.find_one({"_id": intent_id})
     if not intent:
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
@@ -1045,7 +1048,7 @@ async def vpos_callback(intent_id: str, request: Request):
             "status": "expired",
             "result": {"error": "expired"},
             "updated_at": _iso(),
-        })
+        }, company_id=intent_cid)
         logger.info("vpos callback id=%s status=expired", intent_id)
         return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     cfg = None
@@ -1054,7 +1057,7 @@ async def vpos_callback(intent_id: str, request: Request):
         cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": intent_cid})
     same_company = bool(cfg) and str(cfg.get("company_id") or "") == intent_cid
     if not same_company:
-        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
+        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"}, company_id=intent_cid)
         logger.info("vpos callback id=%s status=failed error=company_mismatch", intent_id)
         return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     family = str(cfg.get("family") or "nestpay")
@@ -1065,7 +1068,7 @@ async def vpos_callback(intent_id: str, request: Request):
         store_key = await _decrypt_secret(str(cfg.get("store_key_enc") or ""), "store key")
         adapter = get_adapter(family)
     except (HTTPException, KeyError):
-        await _claim_finish(intent_id, "failed", {"error": "config"})
+        await _claim_finish(intent_id, "failed", {"error": "config"}, company_id=intent_cid)
         logger.info("vpos callback id=%s status=failed error=config", intent_id)
         return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     verdict = adapter.verify_callback({**cfg, "store_key": store_key}, intent, form)
@@ -1083,7 +1086,7 @@ async def vpos_callback(intent_id: str, request: Request):
     else:
         result = _safe_result(verdict)
         final = "failed"
-    wrote = await _claim_finish(intent_id, final, result)
+    wrote = await _claim_finish(intent_id, final, result, company_id=intent_cid)
     if wrote and final == "paid":
         await _record_paid_collection(intent_id, company_id=intent_cid)
     if wrote:
@@ -1105,7 +1108,7 @@ async def paytr_notify(config_id: str, request: Request):
         raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
     form = _form_dict(await request.form())
     db = _require_db()
-    # tenant-ok değil: PayTR sunucu bildirimi oturumsuz; config_id URL'den gelir, şirket cfg'den çözülür ve hash bu cfg sırlarıyla doğrulanır.
+    # tenant-ok: PayTR sunucu bildirimi oturumsuz; config_id URL'den gelir, şirket cfg'den çözülür ve hash bu cfg sırlarıyla doğrulanır.
     cfg = await db.vpos_configs.find_one({"_id": config_id})
     if not cfg or str(cfg.get("family") or "") != "paytr":
         raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.")
@@ -1119,7 +1122,7 @@ async def paytr_notify(config_id: str, request: Request):
         logger.info("vpos paytr notify config=%s bad_hash=1", config_id)
         raise HTTPException(status_code=400, detail="Bildirim doğrulanamadı.")
     oid = str(form.get("merchant_oid") or "")
-    # tenant-ok değil: PayTR yalnız merchant_oid döner; intent order_id ile bulunur, sonra vpos_config_id + company_id eşleşmesi (same) şart. order_id global benzersiz olduğundan şirket filtresi anlamsız; yine de hash doğrulamasından SONRA çalışır.
+    # tenant-ok: PayTR yalnız merchant_oid döner; intent order_id ile bulunur, sonra vpos_config_id + company_id eşleşmesi (same) şart. order_id global benzersiz olduğundan şirket filtresi anlamsız; yine de hash doğrulamasından SONRA çalışır.
     intent = await db.payment_intents.find_one({"order_id": oid}) if oid else None
     if not intent:
         logger.info("vpos paytr notify config=%s missing=1", config_id)
@@ -1146,7 +1149,7 @@ async def paytr_notify(config_id: str, request: Request):
     else:
         final = "failed"
         result = {"error": error or "declined"}
-    wrote = await _claim_finish(intent_id, final, result)
+    wrote = await _claim_finish(intent_id, final, result, company_id=intent_cid)
     if wrote and final == "paid":
         await _record_paid_collection(intent_id, company_id=intent_cid)
     if wrote:
@@ -1164,7 +1167,7 @@ async def iyzico_callback(intent_id: str, request: Request):
         raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
     form = _form_dict(await request.form())
     db = _require_db()
-    # tenant-ok değil: iyzico Checkout Form dönüşü oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve token + retrieve yanıtı doğrulanır.
+    # tenant-ok: iyzico Checkout Form dönüşü oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve token + retrieve yanıtı doğrulanır.
     intent = await db.payment_intents.find_one({"_id": intent_id})
     if not intent:
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
@@ -1186,7 +1189,7 @@ async def iyzico_callback(intent_id: str, request: Request):
         cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": intent_cid})
     same_company = bool(cfg) and str(cfg.get("company_id") or "") == intent_cid
     if not same_company or str(cfg.get("family") or "") != "iyzico":
-        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
+        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"}, company_id=intent_cid)
         logger.info("vpos iyzico callback id=%s status=failed error=company_mismatch", intent_id)
         return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     try:
@@ -1208,7 +1211,7 @@ async def iyzico_callback(intent_id: str, request: Request):
     else:
         final = "failed"
         result = {"error": error or "declined"}
-    wrote = await _claim_finish(intent_id, final, result)
+    wrote = await _claim_finish(intent_id, final, result, company_id=intent_cid)
     if wrote and final == "paid":
         await _record_paid_collection(intent_id, company_id=intent_cid)
     if wrote:
@@ -1251,7 +1254,7 @@ async def _kuveytturk_return(intent_id: str, request: Request):
         cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": intent_cid})
     same_company = bool(cfg) and str(cfg.get("company_id") or "") == intent_cid
     if not same_company or str(cfg.get("family") or "") != "kuveytturk":
-        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
+        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"}, company_id=intent_cid)
         logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", "company_mismatch")
         return await _result_redirect(app_base, intent_id, company_id=intent_cid)
     try:
@@ -1274,7 +1277,7 @@ async def _kuveytturk_return(intent_id: str, request: Request):
     else:
         final = "failed"
         result = {"error": error or "declined"}
-    wrote = await _claim_finish(intent_id, final, result)
+    wrote = await _claim_finish(intent_id, final, result, company_id=intent_cid)
     if wrote and final == "paid":
         await _record_paid_collection(intent_id, company_id=intent_cid)
     code = str(verdict.get("proc_return_code") or error or final)[:32]

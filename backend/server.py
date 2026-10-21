@@ -2803,6 +2803,7 @@ async def unregister_push_token(req: Dict[str, Any], user: dict = Depends(get_cu
         db,
         str(req.get("token") or ""),
         str(user.get("id") or user.get("_id") or ""),
+        company_id=str(user.get("active_company_id") or ""),
     )
     return {"status": "success", "deleted": deleted}
 
@@ -13882,7 +13883,7 @@ async def recalculate_partners(company_id: Optional[str] = None, user: dict = De
 async def partner_ledger_check(partner_id: str, user: dict = Depends(get_current_user)):
     """Kart bakiyesi ile hareket toplamını karşılaştır; sapmayı onar."""
     p = await tenant_access.get_tenant_doc(db, "partners", partner_id, user, not_found="Ortak bulunamadı.")
-    meta = await partner_pay.sync_partner_from_ledger(db, partner_id)
+    meta = await partner_pay.sync_partner_from_ledger(db, partner_id, company_id=p["company_id"])
     if not meta:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     txs = await db.partner_transactions.find({"partner_id": partner_id, "company_id": p["company_id"]}).sort("date", -1).to_list(5000)
@@ -17338,7 +17339,7 @@ async def create_bonus(req: Dict[str, Any], request: Request, user: dict = Depen
                 account_name, status_val = f"{pname} (Ortak)", "paid"
 
                 async def _undo_p():
-                    await partner_pay.reverse_one(db, {"bonus_id": bonus_id})
+                    await partner_pay.reverse_one(db, {"bonus_id": bonus_id, "company_id": emp["company_id"]})
 
                 cx.push("partner", _undo_p)
             elif account_id:
@@ -25963,7 +25964,7 @@ async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict, id
             paid_from = f"{pname} (Ortak)"
 
             async def _undo_partner():
-                await partner_pay.reverse_one(db, {"payroll_id": payroll_id})
+                await partner_pay.reverse_one(db, {"payroll_id": payroll_id, "company_id": payroll.get("company_id")})
 
             cx.push("partner", _undo_partner)
         elif account_id:

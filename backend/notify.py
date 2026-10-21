@@ -955,11 +955,16 @@ async def _visible_token_rows(db, rows: Iterable[Dict[str, Any]], note: Dict[str
     return kept
 
 
-async def tokens_for_users(db, user_ids: Iterable[str]) -> List[Dict[str, Any]]:
+async def tokens_for_users(db, user_ids: Iterable[str], company_id: Optional[str] = None) -> List[Dict[str, Any]]:
     ids = [str(i) for i in user_ids if i]
     if not ids:
         return []
-    rows = await db.push_tokens.find({"user_id": {"$in": ids}}).to_list(400)
+    cid = str(company_id or "").strip()
+    if cid:
+        rows = await db.push_tokens.find({"user_id": {"$in": ids}, "company_id": cid}).to_list(400)
+    else:
+        # tenant-ok: company_id verilmeyen çağrı kullanıcı kimlikleriyle token arar
+        rows = await db.push_tokens.find({"user_id": {"$in": ids}}).to_list(400)
     return _dedupe_token_rows(rows)
 
 
@@ -976,18 +981,7 @@ async def tokens_for_company(
     cid = str(company_id or "").strip()
     if not cid:
         return []
-    users = await db.users.find({
-        "is_active": {"$ne": False},
-        "is_super_admin": {"$ne": True},
-        "$or": [{"active_company_id": cid}, {"company_ids": cid}],
-    }).to_list(300)
-    uids: List[str] = []
-    for user in users:
-        uids.extend(user_ids_of(user))
-    query: Dict[str, Any] = {"$or": [{"company_id": cid}]}
-    if uids:
-        query["$or"].append({"user_id": {"$in": uids}})
-    rows = await db.push_tokens.find(query).to_list(400)
+    rows = await db.push_tokens.find({"company_id": cid}).to_list(400)
     deduped = _dedupe_token_rows(rows)
     if note is None:
         return deduped
@@ -1052,7 +1046,7 @@ async def upsert_push_token(
         raise ValueError("Geçerli bir Expo push token gerekli.")
     now = datetime.now(timezone.utc).isoformat()
     user_id = str(user_id or "").strip()
-    existing = await db.push_tokens.find_one({"token": token})
+    existing = await db.push_tokens.find_one({"token": token, "company_id": company_id})
     should_replay = not (existing or {}).get("replayed_at")
     sets: Dict[str, Any] = {
         "user_id": user_id,
@@ -1065,7 +1059,7 @@ async def upsert_push_token(
     if should_replay:
         sets["replayed_at"] = now
     await db.push_tokens.update_one(
-        {"token": token},
+        {"token": token, "company_id": company_id},
         {
             "$set": sets,
             "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": now},
@@ -1075,14 +1069,20 @@ async def upsert_push_token(
     return {"status": "ok", "token": token, "replay": should_replay}
 
 
-async def remove_push_token(db, token: str, user_id: Optional[str] = None) -> int:
+async def remove_push_token(db, token: str, user_id: Optional[str] = None, company_id: Optional[str] = None) -> int:
     token = str(token or "").strip()
     if not token:
         return 0
+    cid = str(company_id or "").strip()
     q: Dict[str, Any] = {"token": token}
     if user_id:
         q["user_id"] = str(user_id)
-    r = await db.push_tokens.delete_many(q)
+    if cid:
+        q["company_id"] = cid
+        r = await db.push_tokens.delete_many(q)
+    else:
+        # tenant-ok: company_id verilmeyen eski çağrı token ile siler
+        r = await db.push_tokens.delete_many(q)
     return int(getattr(r, "deleted_count", 0) or 0)
 
 
@@ -1181,6 +1181,7 @@ async def drop_invalid_push_tokens(db, tokens: Iterable[str], tickets: Iterable[
                 doomed.append(token_list[i])
     if not doomed:
         return 0
+    # tenant-ok: Expo DeviceNotRegistered ticket'ındaki token listesi; şirket alanı yok
     r = await db.push_tokens.delete_many({"token": {"$in": doomed}})
     return int(getattr(r, "deleted_count", 0) or 0)
 
@@ -1352,6 +1353,7 @@ async def check_push_receipts(db, *, limit: int = PUSH_RECEIPT_BATCH) -> Dict[st
                 seen_tokens.add(token)
                 uniq_tokens.append(token)
         if uniq_tokens:
+            # tenant-ok: Expo receipt DeviceNotRegistered token listesi; şirket alanı yok
             r = await db.push_tokens.delete_many({"token": {"$in": uniq_tokens}})
             dropped = int(getattr(r, "deleted_count", 0) or 0)
     except Exception:
@@ -1489,7 +1491,7 @@ async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
         recipients = await direct_recipient_ids(db, note)
     else:
         recipients = await recipient_user_ids(db, note)
-    user_rows = await tokens_for_users(db, recipients)
+    user_rows = await tokens_for_users(db, recipients, str(note.get("company_id") or ""))
     # Kişisel bildirim yalnız alıcının token'ına gider. Şirket yayını, token
     # satırındaki kullanıcının görebildiği cihazlarla sınırlıdır.
     company_rows: List[Dict[str, Any]] = []
@@ -1527,19 +1529,21 @@ async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
 
 async def insert_notification(db, doc: Dict[str, Any]) -> Dict[str, Any]:
     """Uygulama içi kaydı yazar ve kayıtlı telefonlara Expo push gönderir."""
-    if not doc.get("_id"):
-        doc["_id"] = str(uuid.uuid4())
-    if not doc.get("created_at"):
-        doc["created_at"] = datetime.now(timezone.utc).isoformat()
-    if "is_read" not in doc:
-        doc["is_read"] = False
-    if "roles" not in doc:
-        doc["roles"] = roles_for_type(doc.get("type") or "")
-    if not (isinstance(doc.get("target"), dict) and doc["target"].get("type") and doc["target"].get("route")):
-        doc["target"] = infer_notification_target(doc)
-        if not doc.get("link") and doc["target"].get("route"):
-            doc["link"] = doc["target"]["route"]
-    await db.notifications.insert_one(doc)
+    stored = {**doc, "company_id": str(doc.get("company_id") or "").strip()}
+    if not stored.get("_id"):
+        stored["_id"] = str(uuid.uuid4())
+    if not stored.get("created_at"):
+        stored["created_at"] = datetime.now(timezone.utc).isoformat()
+    if "is_read" not in stored:
+        stored["is_read"] = False
+    if "roles" not in stored:
+        stored["roles"] = roles_for_type(stored.get("type") or "")
+    if not (isinstance(stored.get("target"), dict) and stored["target"].get("type") and stored["target"].get("route")):
+        stored["target"] = infer_notification_target(stored)
+        if not stored.get("link") and stored["target"].get("route"):
+            stored["link"] = stored["target"]["route"]
+    await db.notifications.insert_one(stored)
+    doc = stored
     try:
         await dispatch_push(db, doc)
     except Exception:

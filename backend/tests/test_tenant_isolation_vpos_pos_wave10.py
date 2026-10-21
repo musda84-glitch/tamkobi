@@ -108,19 +108,13 @@ _REMOVED = (
     ("vpos/collect.py", "post_collection", "payment_intents", "update_one"),
     ("vpos/collect.py", "post_collection", "vpos_configs", "find_one"),
 )
-_KEPT = (
-    ("vpos/api.py", "_allocate_order_id", "payment_intents", "find_one"),
-    ("vpos/api.py", "iyzico_callback", "payment_intents", "find_one"),
-    ("vpos/api.py", "paytr_notify", "payment_intents", "find_one"),
-    ("vpos/api.py", "paytr_notify", "vpos_configs", "find_one"),
-    ("vpos/api.py", "vpos_callback", "payment_intents", "find_one"),
-)
+_KEPT = ()
 _NOTES = (
-    "# tenant-ok değil: banka okUrl/failUrl geri çağrısı oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve hash doğrulanır.",
-    "# tenant-ok değil: iyzico Checkout Form dönüşü oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve token + retrieve yanıtı doğrulanır.",
-    "# tenant-ok değil: PayTR sunucu bildirimi oturumsuz; config_id URL'den gelir, şirket cfg'den çözülür ve hash bu cfg sırlarıyla doğrulanır.",
-    "# tenant-ok değil: PayTR yalnız merchant_oid döner; intent order_id ile bulunur, sonra vpos_config_id + company_id eşleşmesi (same) şart. order_id global benzersiz olduğundan şirket filtresi anlamsız; yine de hash doğrulamasından SONRA çalışır.",
-    "# tenant-ok değil: order_id tüm platformda benzersiz olmalı (paytr_notify yalnız order_id ile arar); şirket filtresi eklemek çakışma riskini açar. Okuma yalnız varlık kontrolü, belge döndürmez.",
+    "# tenant-ok: banka okUrl/failUrl geri çağrısı oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve hash doğrulanır.",
+    "# tenant-ok: iyzico Checkout Form dönüşü oturumsuz; company_id intent'ten çıkar, ardından cfg.company_id ile eşleşme (company_mismatch) ve token + retrieve yanıtı doğrulanır.",
+    "# tenant-ok: PayTR sunucu bildirimi oturumsuz; config_id URL'den gelir, şirket cfg'den çözülür ve hash bu cfg sırlarıyla doğrulanır.",
+    "# tenant-ok: PayTR yalnız merchant_oid döner; intent order_id ile bulunur, sonra vpos_config_id + company_id eşleşmesi (same) şart. order_id global benzersiz olduğundan şirket filtresi anlamsız; yine de hash doğrulamasından SONRA çalışır.",
+    "# tenant-ok: order_id tüm platformda benzersiz olmalı; şirket filtresi çakışma riskini açar. Okuma yalnız varlık kontrolü, belge döndürmez.",
 )
 
 
