@@ -58,9 +58,12 @@ export function apiErrorMessage(err: unknown, fallback = "İşlem başarısız."
 export class ApiHttpError extends Error {
   status: number;
   detail: unknown;
-  constructor(status: number, detail: unknown, message: string) {
+  /** Ham yanıt gövdesi (ör. 401 remaining_attempts). İstek gövdesi ve PIN buraya yazılmaz. */
+  body?: unknown;
+  constructor(status: number, detail: unknown, message: string, body?: unknown) {
     super(message);
     this.status = status;
     this.detail = detail;
+    if (arguments.length >= 4) this.body = body;
   }
 }

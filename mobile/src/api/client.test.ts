@@ -171,4 +171,91 @@ describe("request", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     bindMesaimGateRefresh(null);
   });
+
+  it("merges optional headers without replacing Authorization or Accept", async () => {
+    const fetchMock = jest.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
+      expect(init?.headers?.Authorization).toBe("Bearer abc");
+      expect(init?.headers?.Accept).toBe("application/json");
+      expect(init?.headers?.["X-Tamkobi-Client"]).toBe("mobile");
+      expect(init?.headers?.["Content-Type"]).toBe("application/json");
+      expect(init?.headers?.["X-Shopfloor-Operator"]).toBe("op-tok");
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ ok: true }),
+      };
+    });
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    await request(client, "POST", "/production/work-orders/wo/start", {
+      body: { operator_name: "Ali" },
+      headers: {
+        Authorization: "Bearer leaked",
+        Accept: "text/plain",
+        "X-Shopfloor-Operator": "op-tok",
+      },
+    });
+  });
+
+  it("keeps the original header set when headers are omitted", async () => {
+    const fetchMock = jest.fn(async (_url: string, init?: { headers?: Record<string, string>; body?: string }) => {
+      expect(init?.headers).toEqual({
+        Accept: "application/json",
+        "X-Tamkobi-Client": "mobile",
+        "Content-Type": "application/json",
+        Authorization: "Bearer abc",
+      });
+      expect(init?.body).toBe(JSON.stringify({ a: 1 }));
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ ok: true }),
+      };
+    });
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    const { post } = await import("./client");
+    await post(client, "/production/work-orders/wo/start", { a: 1 });
+  });
+
+  it("post forwards the shopfloor header as a fifth argument", async () => {
+    const fetchMock = jest.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
+      expect(init?.headers?.Authorization).toBe("Bearer abc");
+      expect(init?.headers?.["X-Shopfloor-Operator"]).toBe("op-tok");
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ ok: true }),
+      };
+    });
+    // @ts-expect-error test mock
+    global.fetch = fetchMock;
+    const { post, postWithHeaders } = await import("./client");
+    await post(client, "/production/work-orders/wo/start", { operator_name: "Ali" }, undefined, {
+      "X-Shopfloor-Operator": "op-tok",
+    });
+    await postWithHeaders(client, "/production/work-orders/wo/pause", { operator_name: "Ali" }, {
+      "X-Shopfloor-Operator": "op-tok",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("puts the raw 401 body on ApiHttpError", async () => {
+    // @ts-expect-error test mock
+    global.fetch = async () => ({
+      ok: false,
+      status: 401,
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ detail: "PIN hatalı", remaining_attempts: 2 }),
+    });
+    await expect(request(client, "POST", "/production/work-orders/shopfloor-unlock", { body: { pin: "0000" } })).rejects.toMatchObject({
+      status: 401,
+      detail: "PIN hatalı",
+      message: "PIN hatalı",
+      body: { detail: "PIN hatalı", remaining_attempts: 2 },
+    });
+  });
 });

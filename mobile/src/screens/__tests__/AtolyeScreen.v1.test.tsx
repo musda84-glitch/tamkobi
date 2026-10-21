@@ -315,48 +315,24 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
     });
   }
 
-  async function unlockAli() {
-    await clickId("shopfloor-operator");
-    await clickId("shopfloor-operator-opt-emp-ali");
-    expect(findByTestId(container, "shopfloor-pin-modal")).toBeTruthy();
-    expect(textOf(findByTestId(container, "shopfloor-pin-modal"))).toContain("Mesaim girişi yapılmamış personel operatör olamaz.");
-    await act(async () => {
-      reactProps(findByTestId(container, "shopfloor-pin-input"))?.onChange?.({ target: { value: "1234" } });
-    });
-    await clickId("shopfloor-pin-submit");
-    await settle();
-  }
-
   it("does not render ProductionAiAdvisor", async () => {
     await renderScreen();
     expect(findByTestId(container, "production-ai-advisor")).toBeNull();
   });
 
-  it("keeps actions closed until the operator enters a PIN", async () => {
+  it("treats a normal account as its linked operator without a PIN", async () => {
     await renderScreen();
-    const gate = findByTestId(container, "shopfloor-no-operator");
-    expect(gate).toBeTruthy();
-    expect(findByTestId(gate, "shopfloor-operator")).toBeTruthy();
-    expect(textOf(gate)).toContain("Operatör seç ve PIN gir");
-    expect(textOf(gate)).toContain("Başla / Devam / Bitir operatör girişinden sonra açılır");
-    expect(reactProps(findByTestId(container, "wo-start-mine-ready"))?.disabled).toBe(true);
-    expect(reactProps(findByTestId(container, "wo-finish-other-run"))?.disabled).toBe(true);
-    expect(reactProps(findByTestId(container, "wo-trash-mine-ready"))?.disabled).toBe(true);
-    expect(Number(reactProps(findByTestId(container, "wo-trash-mine-ready"))?.style?.opacity)).toBeLessThan(1);
-    expect(allTestIds(container).filter((id) => id.startsWith("wo-need-operator-")).sort()).toEqual([
-      "wo-need-operator-mine-paused",
-      "wo-need-operator-mine-ready",
-      "wo-need-operator-other-paused",
-      "wo-need-operator-other-ready",
-      "wo-need-operator-other-run",
-      "wo-need-operator-wait-1",
-    ]);
-    const runCard = findByTestId(container, "wo-card-other-run");
-    const runIds = allTestIds(runCard);
-    expect(textOf(runCard).split("Önce operatör seçin").length - 1).toBe(1);
-    expect(runIds.indexOf("wo-finish-other-run")).toBeGreaterThanOrEqual(0);
-    expect(runIds.indexOf("wo-finish-other-run")).toBeLessThan(runIds.indexOf("wo-need-operator-other-run"));
-    expect(reactProps(findByTestId(runCard, "wo-need-operator-other-run"))?.style?.textAlign).toBe("center");
+    expect(findByTestId(container, "shopfloor-no-operator")).toBeNull();
+    expect(findByTestId(container, "shopfloor-operator")).toBeNull();
+    expect(findByTestId(container, "shopfloor-pin-modal")).toBeNull();
+    expect(findByTestId(container, "shopfloor-pinpad")).toBeNull();
+    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ali Usta · Kendi oturumunuz — seçim gerekmez");
+    expect(reactProps(findByTestId(container, "wo-start-mine-ready"))?.disabled).toBe(false);
+    expect(reactProps(findByTestId(container, "wo-finish-other-run"))?.disabled).toBe(false);
+    expect(reactProps(findByTestId(container, "wo-trash-mine-ready"))?.disabled).toBe(false);
+    expect(allTestIds(container).some((id) => id.startsWith("wo-need-operator-"))).toBe(false);
+    const paths = (get as jest.Mock).mock.calls.map((call) => String(call[1]));
+    expect(paths.some((path) => path.includes("shopfloor-operators"))).toBe(false);
     const kpis = findByTestId(container, "shopfloor-kpis");
     expect(reactProps(kpis)?.style?.flexDirection).toBe("row");
     expect(reactProps(kpis)?.style?.gap).toBe(8);
@@ -364,31 +340,20 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
       expect(reactProps(findByTestId(kpis, id))?.style?.flex).toBe(1);
     }
 
-    await clickId("wo-trash-mine-ready");
-    await clickId("wo-start-mine-ready");
-    expect((post as jest.Mock).mock.calls.some((call) => String(call[1]).includes("trash-request"))).toBe(false);
-    expect((post as jest.Mock).mock.calls.some((call) => String(call[1]).includes("/start"))).toBe(false);
-
-    await unlockAli();
-    expect(findByTestId(container, "shopfloor-no-operator")).toBeNull();
-    expect(textOf(findByTestId(container, "shopfloor-operator-name"))).toContain("Ali Usta");
-    expect(textOf(container)).toContain("değiştir");
-    expect(reactProps(findByTestId(container, "wo-start-mine-ready"))?.disabled).toBe(false);
-    expect(reactProps(findByTestId(container, "wo-finish-other-run"))?.disabled).toBe(false);
-    expect(reactProps(findByTestId(container, "wo-trash-mine-ready"))?.disabled).toBe(false);
-    expect(allTestIds(container).some((id) => id.startsWith("wo-need-operator-"))).toBe(false);
-
     await clickId("wo-start-mine-ready");
     expect(post).toHaveBeenCalledWith(
       expect.anything(),
       "/production/work-orders/mine-ready/start",
       expect.objectContaining({ operator_name: "Ali Usta" }),
     );
+    const startCall = (post as jest.Mock).mock.calls.find((call) => String(call[1]).includes("/start"));
+    expect(startCall).toHaveLength(3);
+    expect(JSON.stringify(startCall)).not.toContain("X-Shopfloor-Operator");
+    expect((post as jest.Mock).mock.calls.some((call) => String(call[1]).includes("shopfloor-unlock"))).toBe(false);
   });
 
   it("filters in-progress and paused cards from the active counter, then clears", async () => {
     await renderScreen();
-    await unlockAli();
     expect(reactProps(findByTestId(container, "shopfloor-kpi-active"))?.accessibilityState).toEqual({ selected: false });
     await clickId("shopfloor-kpi-active");
     expect(reactProps(findByTestId(container, "shopfloor-kpi-active"))?.accessibilityState).toEqual({ selected: true });
@@ -407,7 +372,6 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
 
   it("keeps Benim İşlerim on top and sorts inside station groups only when grouping is on", async () => {
     await renderScreen();
-    await unlockAli();
     const ids = allTestIds(container);
     expect(ids.indexOf("shopfloor-mine")).toBeGreaterThanOrEqual(0);
     expect(ids.indexOf("shopfloor-mine")).toBeLessThan(ids.indexOf("wo-card-other-run"));
@@ -421,7 +385,6 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     await renderScreen();
-    await unlockAli();
 
     expect(cardIds(container)).toEqual([
       "wo-card-mine-paused",
@@ -480,7 +443,7 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
     expect(reactProps(findDeepestText(findByTestId(container, "wo-card-mine-ready"), "Tabla"))?.numberOfLines).toBe(2);
   });
 
-  it("still lists assigned duties, trash-completed and the PIN modal", async () => {
+  it("still lists assigned duties and trash-completed without a PIN modal", async () => {
     await renderScreen();
     expect(findByTestId(container, "shopfloor-duties")).toBeTruthy();
     expect(textOf(findByTestId(container, "shopfloor-duties"))).toContain("Atanan Görevler");
@@ -499,10 +462,9 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
       expect.objectContaining({ company_id: "co-1" }),
     );
 
-    await clickId("shopfloor-operator");
-    await clickId("shopfloor-operator-opt-emp-ali");
-    expect(findByTestId(container, "shopfloor-pin-modal")).toBeTruthy();
-    expect(findByTestId(container, "shopfloor-pin-submit")).toBeTruthy();
+    expect(findByTestId(container, "shopfloor-pin-modal")).toBeNull();
+    expect(findByTestId(container, "shopfloor-pinpad")).toBeNull();
+    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Kendi oturumunuz — seçim gerekmez");
   });
 
   it("shows only today's finished cards when the done counter is selected", async () => {

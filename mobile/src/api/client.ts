@@ -122,11 +122,18 @@ export async function request<T>(
   client: ApiClient,
   method: string,
   path: string,
-  opts?: { body?: unknown; query?: Query }
+  opts?: { body?: unknown; query?: Query; headers?: Record<string, string> }
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", "X-Tamkobi-Client": "mobile" };
   if (opts?.body !== undefined) headers["Content-Type"] = "application/json";
   if (client.token) headers.Authorization = `Bearer ${client.token}`;
+  if (opts?.headers) {
+    for (const [key, value] of Object.entries(opts.headers)) {
+      const lower = key.toLowerCase();
+      if (lower === "authorization" || lower === "accept") continue;
+      headers[key] = value;
+    }
+  }
   let res: Response;
   try {
     res = await fetchApi(client, withQuery(path, opts?.query), {
@@ -182,12 +189,21 @@ export async function upload<T>(client: ApiClient, path: string, form: FormData,
 function failResponse(status: number, data: unknown, fallback: string): never {
   if (status === 403 && isMesaimLockedBody(data)) notifyMesaimLocked();
   const message = apiErrorMessage({ status, response: { data, status } }, fallback);
-  throw new ApiHttpError(status, (data as { detail?: unknown } | null)?.detail, message);
+  throw new ApiHttpError(status, (data as { detail?: unknown } | null)?.detail, message, data);
 }
 
-export const get = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "GET", path, { query });
-export const post = <T,>(c: ApiClient, path: string, body?: unknown, query?: Query) =>
-  request<T>(c, "POST", path, { body: body ?? {}, query });
+export const get = <T,>(c: ApiClient, path: string, query?: Query, headers?: Record<string, string>) =>
+  request<T>(c, "GET", path, { query, headers });
+export const post = <T,>(c: ApiClient, path: string, body?: unknown, query?: Query, headers?: Record<string, string>) =>
+  request<T>(c, "POST", path, { body: body ?? {}, query, headers });
+/** 4. argüman query olarak kalır; ek başlıklar 5. argüman veya bu yardımcı ile gider. */
+export const postWithHeaders = <T,>(
+  c: ApiClient,
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+  query?: Query,
+) => request<T>(c, "POST", path, { body: body ?? {}, query, headers });
 export const put = <T,>(c: ApiClient, path: string, body?: unknown, query?: Query) =>
   request<T>(c, "PUT", path, { body: body ?? {}, query });
 export const del = <T,>(c: ApiClient, path: string, query?: Query) => request<T>(c, "DELETE", path, { query });
