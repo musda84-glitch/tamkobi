@@ -110,6 +110,9 @@ def _apply_kwargs(body: dict, actor: Optional[dict]) -> dict:
         "personnel_pay_kind": body.get("personnel_pay_kind") or None,
         "link_existing_id": body.get("link_existing_id") or body.get("existing_tx_id") or None,
         "expense_id": body.get("expense_id") or None,
+        "mode": body.get("mode") or None,
+        "pos_gross": body.get("pos_gross"),
+        "pos_commission": body.get("pos_commission"),
     }
 
 
@@ -138,8 +141,9 @@ async def replace_matched_transaction(
     """Eşleşmiş bank_sync hareketini yeni hedefe al.
 
     Eski eşleşme, hedef geçersizse hiç bozulmaz. Kilit {_id, match_status:matched}
-    → rematching; modified_count==0 ise 409. _apply_match hata verirse eski eşleşme
-    geri kurulmaz; hareket unmatched kalır ve match_status rematching bırakılmaz.
+    → rematching; modified_count==0 ise 409. Kilitten sonra hareket DB'den taze
+    okunur ve _unmatch'e o verilir. _apply_match hata verirse eski eşleşme geri
+    kurulmaz; hareket açıkça unmatched kalır, loglanır, rematching bırakılmaz.
     """
     if (tx or {}).get("source") != "bank_sync":
         raise HTTPException(status_code=400, detail="Yalnız banka senkron hareketi yeniden eşleştirilebilir.")
@@ -157,7 +161,11 @@ async def replace_matched_transaction(
     if int(getattr(locked, "modified_count", 0) or 0) == 0:
         raise HTTPException(status_code=409, detail="Bu hareket yeniden eşleştiriliyor.")
     try:
-        await unmatch(tx, actor)
+        locked_tx = await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": company_id})
+        if not locked_tx:
+            await _clear_rematching(db, tx["_id"], company_id=company_id)
+            raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
+        await unmatch(locked_tx, actor)
         fresh = await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": company_id})
         if not fresh:
             raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
@@ -175,13 +183,16 @@ async def replace_matched_transaction(
             personnel_pay_kind=kwargs["personnel_pay_kind"],
             link_existing_id=kwargs["link_existing_id"],
             expense_id=kwargs["expense_id"],
+            mode=kwargs["mode"],
+            pos_gross=kwargs["pos_gross"],
+            pos_commission=kwargs["pos_commission"],
         )
     except Exception as exc:
         # Eski eşleşme geri kurulmaz. Hareket unmatched kalır; rematching'de bırakılmaz.
         await _clear_rematching(db, tx["_id"], company_id=company_id)
+        logger.exception("bank rematch apply failed tx=%s; left unmatched", tx.get("_id"))
         if isinstance(exc, HTTPException):
             raise
-        logger.exception("bank rematch apply failed tx=%s", tx.get("_id"))
         raise HTTPException(
             status_code=400,
             detail=f"Yeniden eşleştirme tamamlanamadı: {exc}",

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+import account_balance
+
 from .nestpay import format_amount
 
 logger = logging.getLogger("vpos.collect")
@@ -157,10 +159,7 @@ async def _ensure_fee(db, fee: dict, *, company_id: str) -> None:
     effects = existing.get("effects") if isinstance(existing.get("effects"), dict) else {}
     if effects.get("account"):
         return
-    await db.bank_accounts.update_one(
-        {"_id": account_id, "company_id": cid},
-        {"$inc": {"current_balance": amount}},
-    )
+    await account_balance.apply_balance_delta(db, account_id, amount, company_id=cid)
     try:
         await db.bank_transactions.update_one(
             {"_id": fee_id, "company_id": cid},
@@ -168,10 +167,7 @@ async def _ensure_fee(db, fee: dict, *, company_id: str) -> None:
         )
     except Exception:
         try:
-            await db.bank_accounts.update_one(
-                {"_id": account_id, "company_id": cid},
-                {"$inc": {"current_balance": -amount}},
-            )
+            await account_balance.apply_balance_delta(db, account_id, -amount, company_id=cid)
         except Exception:
             logger.exception("vpos collection fee rollback failed tx=%s", fee_id)
         raise
@@ -192,10 +188,7 @@ async def _apply_balances(db, tx_id: str, account_id: str, contact_id: str, amou
     effects = _effects_of(fresh)
     applied_account_now = False
     if not effects["account"]:
-        await db.bank_accounts.update_one(
-            {"_id": account_id, "company_id": cid},
-            {"$inc": {"current_balance": amount}},
-        )
+        await account_balance.apply_balance_delta(db, account_id, amount, company_id=cid)
         effects["account"] = True
         applied_account_now = True
         await _save_effects(db, tx_id, effects, company_id=cid)
@@ -208,9 +201,8 @@ async def _apply_balances(db, tx_id: str, account_id: str, contact_id: str, amou
         except Exception:
             if applied_account_now:
                 try:
-                    await db.bank_accounts.update_one(
-                        {"_id": account_id, "company_id": cid},
-                        {"$inc": {"current_balance": -amount}},
+                    await account_balance.apply_balance_delta(
+                        db, account_id, -amount, company_id=cid,
                     )
                     effects["account"] = False
                     await _save_effects(db, tx_id, effects, company_id=cid)

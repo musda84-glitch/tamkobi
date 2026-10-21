@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+import account_balance
 from bank_guard import assert_manual_allowed, assert_collection_allowed
 import partner_pay
 import trash
@@ -335,7 +336,7 @@ async def _bank_move(company_id: str, account_id: str, *, inflow: bool, amount: 
         raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
     await assert_manual_allowed(_db, account_id)
     change = amount if inflow else -amount
-    await _db.bank_accounts.update_one({"_id": account_id, "company_id": company_id}, {"$inc": {"current_balance": change}})
+    await account_balance.apply_balance_delta(_db, account_id, change, company_id=company_id)
     # contact_id yok: tahsil/ödeme kasa hareketidir; cari zaten çek girişinde işlendi.
     await _db.bank_transactions.insert_one({
         "_id": str(uuid.uuid4()), "company_id": company_id, "account_id": account_id,
@@ -358,9 +359,8 @@ async def _unwind_bank(cheque_id: str, *, company_id: str):
         amt = float(tx.get("amount") or 0)
         if tx.get("account_id") and amt and tx.get("cheque_kind") != "portfolio":
             change = -amt if tx.get("type") == "inflow" else amt
-            await _db.bank_accounts.update_one(
-                {"_id": tx["account_id"], "company_id": cid},
-                {"$inc": {"current_balance": change}},
+            await account_balance.apply_balance_delta(
+                _db, tx["account_id"], change, company_id=cid,
             )
         await _db.bank_transactions.delete_one({"_id": tx["_id"], "company_id": cid})
 

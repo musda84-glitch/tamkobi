@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
+import account_balance
 import expenses
 import partner_pay
 import tenant_access
@@ -89,7 +90,9 @@ async def _reverse_legacy_bank(ob: dict):
         return
     bt = await _db.bank_transactions.find_one({"tax_obligation_id": ob["_id"], "company_id": cid})
     if bt:
-        await _db.bank_accounts.update_one({"_id": bt["account_id"], "company_id": cid}, {"$inc": {"current_balance": bt["amount"]}})
+        await account_balance.apply_balance_delta(
+            _db, bt["account_id"], float(bt.get("amount") or 0), company_id=cid,
+        )
         await _db.bank_transactions.delete_one({"_id": bt["_id"], "company_id": cid})
     await partner_pay.reverse_one(_db, {"tax_obligation_id": ob["_id"], "company_id": cid})
 

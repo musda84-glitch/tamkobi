@@ -95,7 +95,7 @@ def test_reset_deletes_ops_keeps_employee():
         {"_id": "a2", "employee_id": "e1", "date": "2026-10-02"},
         {"_id": "a3", "employee_id": "other"},
     ])
-    db.bank_accounts.docs.append({"_id": "acc1", "current_balance": 100})
+    db.bank_accounts.docs.append({"_id": "acc1", "company_id": "c1", "current_balance": 100})
     db.bank_transactions.docs.append({"_id": "t1", "bonus_id": "b1", "amount": 5})
 
     counts = asyncio.run(edr.reset_operational_data(db, db.employees.docs[0], confirm=True))

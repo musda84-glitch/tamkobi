@@ -14583,11 +14583,23 @@ async def _sync_bank_connection_core(
             acc_patch["bank_reported_at"] = datetime.now(timezone.utc).isoformat()
         except (TypeError, ValueError):
             bank_balance = None
-    # Görünen bakiye hareket $inc'i ile yürür; bankanın bildirdiği ayrı alanda kalır.
-    if balance_delta:
-        await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": balance_delta}})
-    if acc_patch:
-        await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$set": acc_patch})
+    # Entegre hesap: senkron sonunda görünen bakiye bankanın bildirdiği bakiyedir.
+    # bank_reported_balance yoksa current_balance'a dokunulmaz ($inc yok).
+    reported = acc_patch.get("bank_reported_balance")
+    if reported is not None:
+        try:
+            current = round(float(acc.get("current_balance") or 0), 2)
+        except (TypeError, ValueError):
+            current = 0.0
+        target = round(float(reported), 2)
+        if abs(current - target) >= 0.01:
+            acc_patch["current_balance"] = target
+    cid_sync = str(doc.get("company_id") or "").strip()
+    if acc_patch and cid_sync:
+        await db.bank_accounts.update_one(
+            {"_id": acc["_id"], "company_id": cid_sync},
+            {"$set": acc_patch},
+        )
     for fresh in new_txs:
         await _consume_expected_settlement(fresh)
 
@@ -15117,7 +15129,9 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
                 raise HTTPException(status_code=400, detail="Hedef hesap da banka entegrasyonuna bağlı; karşı hareket o bankadan otomatik gelir. Bu hareketi yalnızca 'Virman' kategorisiyle eşleştirin.")
             target_name = tacc.get("account_name")
             counter_amount = amount if not is_inflow else -amount
-            await db.bank_accounts.update_one({"_id": t_id}, {"$inc": {"current_balance": counter_amount}})
+            await account_balance.apply_balance_delta(
+                db, t_id, counter_amount, company_id=tx["company_id"],
+            )
             await db.bank_transactions.insert_one({
                 "_id": str(uuid.uuid4()), "company_id": tx["company_id"], "account_id": t_id, "account_name": target_name,
                 "type": "inflow" if not is_inflow else "outflow", "category": category or "Hesaplar Arası Virman", "amount": amount, "currency": tx.get("currency", "TRY"),
@@ -15294,7 +15308,8 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
         await pos_settlement.reverse(db, tx)
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
-    if tx.get("contact_id"):
+    # link_existing cari bakiyesine yazmaz; geri alma da yazmasın.
+    if tx.get("contact_id") and not tx.get("linked_existing"):
         await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": amount if is_inflow else -amount}})
     if tx.get("related_invoice_id"):
         inv = await db.invoices.find_one({"_id": tx["related_invoice_id"]})
@@ -15308,10 +15323,20 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
             from bank_match_target import reverse_partner_match
             await reverse_partner_match(db, tx)
         else:
-            counter = await db.bank_transactions.find_one({"related_bank_tx_id": tx["_id"], "source": "bank_match"})
+            unmatch_cid = str(tx.get("company_id") or "").strip()
+            counter = None
+            if unmatch_cid:
+                counter = await db.bank_transactions.find_one({
+                    "company_id": unmatch_cid,
+                    "related_bank_tx_id": tx["_id"],
+                    "source": "bank_match",
+                })
             if counter:
-                await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
-                await db.bank_transactions.delete_one({"_id": counter["_id"]})
+                reverse_delta = -amount if counter.get("type") == "inflow" else amount
+                await account_balance.apply_balance_delta(
+                    db, counter.get("account_id"), reverse_delta, company_id=unmatch_cid,
+                )
+                await db.bank_transactions.delete_one({"_id": counter["_id"], "company_id": unmatch_cid})
     # Eşleştirmeden oluşan masrafı / personel ödemesini kaldır (banka bakiyesine tekrar dokunma)
     eid = tx.get("expense_id")
     if eid and not pos_settlement_match:
@@ -15344,13 +15369,13 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
         strip_match_suffix(tx.get("description") or ""),
         tx.get("matched_by_name"),
     )
-    await db.bank_transactions.update_one({"_id": tx["_id"]}, {
+    await db.bank_transactions.update_one({"_id": tx["_id"], "company_id": tx.get("company_id")}, {
         "$set": {
             "match_status": "unmatched",
             "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
             "description": cleaned_desc,
         },
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "expense_number": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "personnel_movement_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": "", "match_kind": "", "pos_gross": "", "pos_commission": ""}})
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "related_manual_tx_id": "", "linked_existing": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "expense_number": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "personnel_movement_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": "", "match_kind": "", "pos_gross": "", "pos_commission": ""}})
     rule_action = "none"
     try:
         rule_action = await _release_rule_for_tx(tx, actor=actor) or "none"

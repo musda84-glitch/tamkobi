@@ -4,6 +4,7 @@ from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+import account_balance
 from bank_guard import assert_manual_allowed, apply_customer_card_owner_effect
 import partner_pay
 import fx
@@ -195,7 +196,7 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     exp_ccy = (exp.get("currency") or "TRY").upper()
     posted = exp["total"] if acc_ccy == exp_ccy else fx.try_amount(exp, exp.get("total"))
     posted_ccy = acc_ccy if acc_ccy == exp_ccy else "TRY"
-    await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$inc": {"current_balance": -posted}})
+    await account_balance.apply_balance_delta(_db, account_id, -posted, company_id=cid)
     tx_doc = {
         "_id": str(uuid.uuid4()),
         "company_id": cid,
@@ -245,7 +246,9 @@ async def _reverse_payment(exp: dict, *, company_id: str):
         return
     bt = await _db.bank_transactions.find_one({"expense_id": exp["_id"], "company_id": cid})
     if bt:
-        await _db.bank_accounts.update_one({"_id": bt["account_id"], "company_id": cid}, {"$inc": {"current_balance": bt["amount"]}})
+        await account_balance.apply_balance_delta(
+            _db, bt["account_id"], float(bt.get("amount") or 0), company_id=cid,
+        )
         if bt.get("owner_contact_id"):
             await _db.contacts.update_one(
                 {"_id": bt["owner_contact_id"], "company_id": cid},
