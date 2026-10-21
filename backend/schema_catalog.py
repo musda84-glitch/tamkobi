@@ -950,7 +950,7 @@ COLLECTIONS = {
     "personnel_receipts": {
         "scope": SCOPE_TENANT,
         "description": "Personel ödeme fişi: satır toplamı ve kalan.",
-        "keys": ("_id", "company_id", "employee_id", "period", "date", "lines", "total", "status"),
+        "keys": ("_id", "company_id", "employee_id", "receipt_no", "period", "date", "lines", "total", "status"),
         "refs": ("companies._id", "employees._id"),
     },
     "shopfloor_pin_attempts": {
