@@ -1685,32 +1685,30 @@ def build_structured_invoice(
 
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
     currency = invoice.get("currency") or "TRY"
-    items = list(invoice.get("items") or [])
-    # Belge iskontosu satır birim fiyatına yazılmaz. TotalDiscountAmount budur;
-    # satır DiscountAmount yalnız satır iskontosu (yoksa None).
-    discount = _round2(invoice.get("discount_total") or invoice.get("general_discount_amount") or 0)
-    prepared = []
-    for idx, it in enumerate(items, start=1):
-        qty = _round2(it.get("quantity") or 1)
-        unit = _round2(it.get("unit_price") or 0)
-        vat_rate = _round2(it.get("vat_rate") if it.get("vat_rate") is not None else 20)
-        disc = _round2(it.get("discount_amount") or 0)
-        if it.get("total") not in (None, ""):
-            # Kayıtlı satır neti (satır iskontosu düşülmüş, belge iskontosu düşülmemiş).
-            line_ext = _round2(it.get("total"))
-        else:
-            line_ext = it.get("line_total") or it.get("amount") or (qty * unit)
-            line_ext = _round2(line_ext)
-            if it.get("vat_included") or str(it.get("price_mode") or "").lower() in ("incl", "gross"):
-                line_ext = _round2(line_ext / (1 + vat_rate / 100.0)) if vat_rate else line_ext
-            if disc and disc < line_ext:
-                line_ext = _round2(line_ext - disc)
-        prepared.append((idx, it, qty, unit, vat_rate, disc, line_ext))
+    items = invoice.get("items") or []
+    from line_totals import document_general_discount, general_discount_tax_bases
 
-    tax_lines = None
-    if discount > 0.004 and prepared:
-        from line_totals import general_discount_tax_bases
-
+    # Belge iskontosu yalnız general_discount_amount örtüşürse. Aksi halde satır
+    # formülü ve TotalDiscountAmount main ile aynı kalır (discount_total).
+    doc_discount = document_general_discount(invoice, items)
+    details = []
+    if doc_discount > 0.004:
+        prepared = []
+        for idx, it in enumerate(items, start=1):
+            qty = _round2(it.get("quantity") or 1)
+            unit = _round2(it.get("unit_price") or 0)
+            vat_rate = _round2(it.get("vat_rate") if it.get("vat_rate") is not None else 20)
+            disc = _round2(it.get("discount_amount") or 0)
+            if it.get("total") not in (None, ""):
+                line_ext = _round2(it.get("total"))
+            else:
+                line_ext = it.get("line_total") or it.get("amount") or (qty * unit)
+                line_ext = _round2(line_ext)
+                if it.get("vat_included") or str(it.get("price_mode") or "").lower() in ("incl", "gross"):
+                    line_ext = _round2(line_ext / (1 + vat_rate / 100.0)) if vat_rate else line_ext
+                if disc and disc < line_ext:
+                    line_ext = _round2(line_ext - disc)
+            prepared.append((idx, it, qty, unit, vat_rate, disc, line_ext))
         synthetic = []
         for _idx, it, _qty, _unit, _vat_rate, _disc, line_ext in prepared:
             row = dict(it)
@@ -1720,55 +1718,88 @@ def build_structured_invoice(
         tax_lines = general_discount_tax_bases(
             synthetic,
             invoice.get("general_discount_rate") or 0,
-            discount,
+            doc_discount,
+            subtotal=invoice.get("subtotal"),
+            vat_total=invoice.get("vat_total"),
         )["lines"]
-        stored_vat = invoice.get("vat_total")
-        if stored_vat not in (None, "") and tax_lines:
-            target = _round2(stored_vat)
-            gap = round(target - sum(float(line["vat"]) for line in tax_lines), 2)
-            if abs(gap) >= 0.001:
-                tax_lines[-1]["vat"] = round(float(tax_lines[-1]["vat"]) + gap, 2)
-
-    details = []
-    for pos, (idx, it, qty, unit, vat_rate, disc, line_ext) in enumerate(prepared):
-        if tax_lines is not None and pos < len(tax_lines):
-            vat_amt = _round2(tax_lines[pos]["vat"])
-        else:
+        for pos, (idx, it, qty, unit, vat_rate, disc, line_ext) in enumerate(prepared):
+            vat_amt = _round2(tax_lines[pos]["vat"]) if pos < len(tax_lines) else _round2(
+                it.get("vat_amount") if it.get("vat_amount") is not None else line_ext * vat_rate / 100.0
+            )
+            code = str(it.get("product_code") or it.get("sku") or it.get("product_id") or f"PRD-{idx}")
+            name = str(it.get("name") or it.get("product_name") or f"Kalem {idx}")
+            details.append(
+                {
+                    "CurrencyCode": currency,
+                    "DiscountAmount": disc or None,
+                    "LineExtensionAmount": line_ext,
+                    "Product": {
+                        "ExternalProductCode": code,
+                        "MeasureUnit": _measure_unit(it.get("unit") or it.get("measure_unit")),
+                        "ProductCode": code,
+                        "ProductName": name,
+                        "UnitPrice": unit,
+                    },
+                    "Quantity": qty,
+                    "VATAmount": vat_amt,
+                    "VATRate": vat_rate,
+                    "Mensei": "TR",
+                }
+            )
+        line_ext_sum = _round2(sum(d["LineExtensionAmount"] for d in details))
+        subtotal = _round2(invoice.get("subtotal"))
+        if not subtotal:
+            subtotal = _round2(line_ext_sum - doc_discount)
+        vat_total = _round2(invoice.get("vat_total"))
+        if not vat_total:
+            vat_total = _round2(sum(d["VATAmount"] for d in details))
+        discount = doc_discount
+        total_line_extension = line_ext_sum
+    else:
+        for idx, it in enumerate(items, start=1):
+            qty = _round2(it.get("quantity") or 1)
+            unit = _round2(it.get("unit_price") or 0)
+            vat_rate = _round2(it.get("vat_rate") if it.get("vat_rate") is not None else 20)
+            line_ext = it.get("line_total") or it.get("amount") or (qty * unit)
+            line_ext = _round2(line_ext)
+            if it.get("vat_included") or str(it.get("price_mode") or "").lower() in ("incl", "gross"):
+                line_ext = _round2(line_ext / (1 + vat_rate / 100.0)) if vat_rate else line_ext
+            disc = _round2(it.get("discount_amount") or 0)
+            if disc and disc < line_ext:
+                line_ext = _round2(line_ext - disc)
             vat_amt = _round2(it.get("vat_amount") if it.get("vat_amount") is not None else line_ext * vat_rate / 100.0)
-        code = str(it.get("product_code") or it.get("sku") or it.get("product_id") or f"PRD-{idx}")
-        name = str(it.get("name") or it.get("product_name") or f"Kalem {idx}")
-        details.append(
-            {
-                "CurrencyCode": currency,
-                "DiscountAmount": disc or None,
-                "LineExtensionAmount": line_ext,
-                "Product": {
-                    "ExternalProductCode": code,
-                    "MeasureUnit": _measure_unit(it.get("unit") or it.get("measure_unit")),
-                    "ProductCode": code,
-                    "ProductName": name,
-                    "UnitPrice": unit,
-                },
-                "Quantity": qty,
-                "VATAmount": vat_amt,
-                "VATRate": vat_rate,
-                "Mensei": "TR",
-            }
-        )
+            code = str(it.get("product_code") or it.get("sku") or it.get("product_id") or f"PRD-{idx}")
+            name = str(it.get("name") or it.get("product_name") or f"Kalem {idx}")
+            details.append(
+                {
+                    "CurrencyCode": currency,
+                    "DiscountAmount": disc or None,
+                    "LineExtensionAmount": line_ext,
+                    "Product": {
+                        "ExternalProductCode": code,
+                        "MeasureUnit": _measure_unit(it.get("unit") or it.get("measure_unit")),
+                        "ProductCode": code,
+                        "ProductName": name,
+                        "UnitPrice": unit,
+                    },
+                    "Quantity": qty,
+                    "VATAmount": vat_amt,
+                    "VATRate": vat_rate,
+                    "Mensei": "TR",
+                }
+            )
+        subtotal = _round2(invoice.get("subtotal"))
+        if not subtotal:
+            subtotal = _round2(sum(d["LineExtensionAmount"] for d in details))
+        vat_total = _round2(invoice.get("vat_total"))
+        if not vat_total:
+            vat_total = _round2(sum(d["VATAmount"] for d in details))
+        discount = _round2(invoice.get("discount_total") or 0)
+        total_line_extension = subtotal
 
     if not details:
         raise HTTPException(status_code=400, detail="Faturada en az bir kalem gerekli (İşNet yapısal gönderim).")
 
-    line_ext_sum = _round2(sum(d["LineExtensionAmount"] for d in details))
-    subtotal = _round2(invoice.get("subtotal"))
-    if not subtotal:
-        subtotal = _round2(line_ext_sum - discount) if discount > 0.004 else line_ext_sum
-    vat_total = _round2(invoice.get("vat_total"))
-    if not vat_total:
-        vat_total = _round2(sum(d["VATAmount"] for d in details))
-    # Belge iskontosunda satır LineExtension tutarı iskonto öncesi kalır;
-    # TotalLineExtensionAmount bu toplamdır. TotalDiscountAmount belge iskontosu.
-    total_line_extension = line_ext_sum if discount > 0.004 else (subtotal or line_ext_sum)
     payable = _round2(invoice.get("grand_total") or (subtotal + vat_total))
     tax_incl = _round2(subtotal + vat_total)
 

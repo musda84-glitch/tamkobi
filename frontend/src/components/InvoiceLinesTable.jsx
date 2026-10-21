@@ -17,9 +17,54 @@ function positiveMoney(value) {
   return Number.isFinite(n) && n > 0.004 ? round2(n) : 0;
 }
 
-/** Belge iskontosu: general_discount_amount, yoksa discount_total. KDV hariç. */
-function documentDiscount(inv) {
-  return positiveMoney(inv?.general_discount_amount) || positiveMoney(inv?.discount_total);
+const WIRE_HINTS = ["havale", "eft", "wire transfer", "banka havalesi"];
+const NON_WIRE_TYPES = new Set(["card", "cash", "credit", "other", "mixed"]);
+
+function foldPayment(value) {
+  return String(value || "")
+    .replace(/İ/g, "i")
+    .replace(/I/g, "ı")
+    .toLowerCase()
+    .replace(/i\u0307/g, "i")
+    .replace(/ç/g, "c")
+    .replace(/ğ/g, "g")
+    .replace(/ı/g, "i")
+    .replace(/ö/g, "o")
+    .replace(/ş/g, "s")
+    .replace(/ü/g, "u")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Havale/EFT etiketi yalnız ödeme yöntemi havale veya EFT ise. Kanal ve not yetmez. */
+export function wireTransferPayment(inv) {
+  const kind = String(inv?.payment_type || "").trim().toLowerCase();
+  if (kind === "transfer") return true;
+  if (NON_WIRE_TYPES.has(kind)) return false;
+  const blob = foldPayment(`${inv?.payment_method || ""} ${inv?.odeme_sekli || ""}`);
+  return WIRE_HINTS.some((hint) => blob.includes(hint));
+}
+
+export function discountFooterLabel(inv) {
+  return wireTransferPayment(inv) ? "Genel iskonto (havale indirimi)" : "Genel iskonto";
+}
+
+/**
+ * Belge iskontosu yalnız general_discount_amount. Satır iskontosu discount_total
+ * satır tutarından düşülmüşse gösterilmez. Ara toplam varsa sum(total) − iskonto
+ * ile örtüşmelidir.
+ */
+function documentDiscount(inv, items) {
+  const gd = positiveMoney(inv?.general_discount_amount);
+  if (!gd) return 0;
+  const sum = round2((items || []).reduce((acc, it) => acc + lineNet(it), 0));
+  if (sum <= 0 || gd > sum + 0.001) return 0;
+  const raw = inv?.subtotal;
+  if (raw == null || raw === "") return gd;
+  const subtotal = Number(raw);
+  if (!Number.isFinite(subtotal)) return gd;
+  if (Math.abs(round2(sum - gd) - round2(subtotal)) > 0.05) return 0;
+  return gd;
 }
 
 function lineNet(it) {
@@ -83,7 +128,7 @@ export function InvoiceLinesTable({
       </div>
     );
   }
-  const discount = documentDiscount(inv);
+  const discount = documentDiscount(inv, items);
   const showDiscount = discount > 0;
   const discounted = showDiscount ? discountedGrosses(items, inv, discount) : [];
   const trail = (showDiscount ? 1 : 0) + (extraHeader || renderExtraCell ? 1 : 0);
@@ -130,7 +175,7 @@ export function InvoiceLinesTable({
         {showDiscount ? (
           <tfoot className="border-t border-slate-200">
             <SummaryRow
-              label="Genel iskonto (havale indirimi)"
+              label={discountFooterLabel(inv)}
               amount={discount}
               currency={currency}
               colSpan={4}

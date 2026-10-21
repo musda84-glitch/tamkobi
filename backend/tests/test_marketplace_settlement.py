@@ -601,6 +601,8 @@ def test_shopphp_draft_invoice_keeps_list_price_and_payable_grand():
         doc = _run(server._attach_draft_invoice_on_intake(order, source="marketplace"))
     assert doc["grand_total"] == pytest.approx(11519.04)
     assert doc["general_discount_amount"] == pytest.approx(399.97)
+    assert doc["payment_type"] == "transfer"
+    assert doc["payment_method"] == "Havale"
     assert doc["items"][0]["unit_price_incl"] == pytest.approx(11999)
     assert doc["items"][0]["unit_price"] == pytest.approx(9999.1667, abs=0.01)
     assert inserted["doc"]["grand_total"] == pytest.approx(11519.04)

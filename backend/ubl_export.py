@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 import tenant_access
-from line_totals import general_discount_tax_bases
+from line_totals import document_general_discount, general_discount_tax_bases, wire_transfer_payment
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -421,10 +421,8 @@ def _amt(n: Any) -> str:
 
 
 def _allowance_reason(inv: Dict[str, Any]) -> str:
-    """ShopPHP havale indirimi ayrı sebep; diğer belge iskontoları genel iskonto."""
-    channel = str(inv.get("source_channel") or inv.get("channel") or "").lower()
-    notes = str(inv.get("notes") or "").lower()
-    if channel == "shopphp" or "havale" in notes:
+    """Havale/EFT ödemesinde havale indirimi; kupon ve promosyon genel iskonto."""
+    if wire_transfer_payment(inv):
         return "Havale indirimi"
     return "Genel iskonto"
 
@@ -447,16 +445,6 @@ def _add_document_allowance(root, inv: Dict[str, Any], amount: float, base: floa
     return ac
 
 
-def _snap_tax_lines(lines: list, key: str, target: Optional[float]) -> None:
-    if target is None or not lines:
-        return
-    current = round(sum(float(line.get(key) or 0) for line in lines), 2)
-    gap = round(float(target) - current, 2)
-    if abs(gap) < 0.001:
-        return
-    lines[-1][key] = round(float(lines[-1].get(key) or 0) + gap, 2)
-
-
 def _stored_money(inv: Dict[str, Any], key: str) -> Optional[float]:
     raw = inv.get(key)
     if raw in (None, ""):
@@ -474,21 +462,19 @@ def _tax_after_document_discount(inv: Dict[str, Any], items: list, discount: flo
     """
     if discount <= 0.004 or not items:
         return None
-    bases = general_discount_tax_bases(items, inv.get("general_discount_rate") or 0, discount)
+    bases = general_discount_tax_bases(
+        items,
+        inv.get("general_discount_rate") or 0,
+        discount,
+        subtotal=_stored_money(inv, "subtotal"),
+        vat_total=_stored_money(inv, "vat_total"),
+    )
     lines = bases.get("lines") or []
     if not lines:
         return None
-    _snap_tax_lines(lines, "vat", _stored_money(inv, "vat_total"))
-    _snap_tax_lines(lines, "taxable", _stored_money(inv, "subtotal"))
-    by_rate: Dict[float, Dict[str, float]] = {}
-    for line in lines:
-        rate = float(line.get("rate") or 0)
-        bucket = by_rate.setdefault(rate, {"rate": rate, "taxable": 0.0, "vat": 0.0})
-        bucket["taxable"] = round(bucket["taxable"] + float(line["taxable"]), 2)
-        bucket["vat"] = round(bucket["vat"] + float(line["vat"]), 2)
     return {
         "lines": lines,
-        "by_rate": [by_rate[rate] for rate in sorted(by_rate, reverse=True)],
+        "by_rate": list(bases.get("by_rate") or []),
         "line_extension": float(bases.get("line_extension") or 0),
     }
 
@@ -829,7 +815,10 @@ def build_invoice_ubl(
     grand = float(inv.get("grand_total") or 0)
     if not grand:
         grand = round(subtotal + vat_total - withhold_amt, 2)
+    # AllowanceTotalAmount eski faturalarda satır iskontosu toplamıdır (main ile aynı).
+    # Belge iskontosu yalnız general_discount_amount ve ara toplam örtüşürse uygulanır.
     discount = float(inv.get("discount_total") or inv.get("general_discount_amount") or 0)
+    document_discount = document_general_discount(inv, items)
     issue_date = _date(inv.get("issue_date"))
 
     root = ET.Element(_q(INVOICE_NS, "Invoice"))
@@ -963,12 +952,12 @@ def build_invoice_ubl(
     _party("AccountingSupplierParty", seller_party, root, send_ready=send_ready)
     _party("AccountingCustomerParty", buyer_party, root, send_ready=send_ready)
     _add_payment_means(root, seller, inv, currency)
-    discounted_tax = _tax_after_document_discount(inv, items, discount)
+    discounted_tax = _tax_after_document_discount(inv, items, document_discount)
     if discounted_tax:
         allowance_base = float(discounted_tax.get("line_extension") or 0)
         if allowance_base <= 0:
-            allowance_base = round(subtotal + discount, 2)
-        _add_document_allowance(root, inv, discount, allowance_base, currency)
+            allowance_base = round(subtotal + document_discount, 2)
+        _add_document_allowance(root, inv, document_discount, allowance_base, currency)
 
     tax_total = _cac(root, "TaxTotal")
     _cbc(tax_total, "TaxAmount", _amt(vat_total), currencyID=currency)
@@ -1026,13 +1015,15 @@ def build_invoice_ubl(
     totals = _cac(root, "LegalMonetaryTotal")
     if discounted_tax and items:
         legal_line_ext = round(sum(float(it.get("total") or 0) for it in items), 2)
+        allowance_total = document_discount
     else:
         legal_line_ext = subtotal + discount if discount else subtotal
+        allowance_total = discount
     _cbc(totals, "LineExtensionAmount", _amt(legal_line_ext), currencyID=currency)
     _cbc(totals, "TaxExclusiveAmount", _amt(subtotal), currencyID=currency)
     _cbc(totals, "TaxInclusiveAmount", _amt(subtotal + vat_total), currencyID=currency)
     # İşNet örnekleri AllowanceTotalAmount'u her zaman gönderir (0.00 dahil)
-    _cbc(totals, "AllowanceTotalAmount", _amt(discount), currencyID=currency)
+    _cbc(totals, "AllowanceTotalAmount", _amt(allowance_total), currencyID=currency)
     _cbc(totals, "PayableAmount", _amt(grand), currencyID=currency)
 
     if not items:

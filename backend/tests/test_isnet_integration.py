@@ -814,6 +814,87 @@ def test_build_structured_invoice_document_discount_matches_line_sums():
     assert mixed_payload["TotalVATAmount"] == pytest.approx(27)
 
 
+def test_build_structured_invoice_inv_01_line_discount_matches_main():
+    """inv_01 ve gider pusulası kopyası: satır iskontosu belge iskontosu değildir."""
+    import importlib.util
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    raw = subprocess.check_output(["git", "show", "main:backend/isnet.py"], cwd=repo)
+    path = Path(tempfile.mkdtemp()) / "isnet_main_inv01.py"
+    path.write_bytes(raw)
+    spec = importlib.util.spec_from_file_location("isnet_main_inv01", path)
+    main = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(main)
+
+    items = [
+        {
+            "product_id": "prod_01",
+            "name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)",
+            "quantity": 25,
+            "unit": "Adet",
+            "unit_price": 1899.0,
+            "vat_rate": 20,
+            "total": 45101.25,
+        },
+        {
+            "product_id": "prod_02",
+            "name": "TamKobi RGB Mekanik Gaming Klavye (Blue Switch)",
+            "quantity": 10,
+            "unit": "Adet",
+            "unit_price": 1450.0,
+            "vat_rate": 20,
+            "total": 14500.0,
+        },
+    ]
+    company = {"tax_number": "4810173324"}
+    contact = {"name": "Trend Mağazacılık", "tax_number_or_id": "8710293841"}
+    cases = (
+        {
+            "_id": "inv_01",
+            "invoice_type": "sales",
+            "e_type": "e_invoice",
+            "invoice_number": "NX202600000104",
+            "issue_date": "2026-10-21",
+            "gib_uuid": "11111111-1111-4111-8111-111111111111",
+            "gib_scenario": "TICARIFATURA",
+            "items": items,
+            "subtotal": 59601.25,
+            "vat_total": 11920.25,
+            "discount_total": 2373.75,
+            "grand_total": 71521.50,
+            "notes": "Vade: 15 gün. E-Fatura GİB portalı onaylıdır.",
+            "source_channel": "manual",
+        },
+        {
+            "_id": "gp_01",
+            "invoice_type": "purchase",
+            "e_type": "expense_slip",
+            "invoice_number": "GP202600000001",
+            "issue_date": "2026-10-21",
+            "gib_uuid": "22222222-2222-4222-8222-222222222222",
+            "items": items,
+            "subtotal": 59601.25,
+            "vat_total": 11920.25,
+            "discount_total": 2373.75,
+            "grand_total": 71521.50,
+            "notes": "Gider pusulası · kaynak fatura NX202600000104",
+        },
+    )
+    for inv in cases:
+        current = isnet.build_structured_invoice(inv, company, contact, is_earchive=False)
+        baseline = main.build_structured_invoice(inv, company, contact, is_earchive=False)
+        assert current == baseline
+        assert current["TotalDiscountAmount"] == pytest.approx(2373.75)
+        assert current["TotalLineExtensionAmount"] == pytest.approx(59601.25)
+        assert current["InvoiceDetails"][0]["LineExtensionAmount"] == pytest.approx(47475.0)
+        assert current["InvoiceDetails"][0]["VATAmount"] == pytest.approx(9495.0)
+        assert current["InvoiceDetails"][1]["LineExtensionAmount"] == pytest.approx(14500.0)
+        assert current["InvoiceDetails"][1]["VATAmount"] == pytest.approx(2900.0)
+
+
 def test_build_structured_invoice_without_discount_keeps_line_vat():
     inv = {
         "invoice_number": "TA2026000000130",
