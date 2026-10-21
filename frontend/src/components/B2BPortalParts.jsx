@@ -124,7 +124,7 @@ export const b2bOrderGross = (o) => {
 };
 
 
-export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
+export const B2BHeader = ({ company, contact, token, onPasswordChanged, switcher = null }) => {
   const bal = contact.balance || 0;
   const [open, setOpen] = useState(false);
   const hasPassword = contact.has_password !== false;
@@ -144,12 +144,13 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   };
   return (
     <header className="bg-slate-900 text-white" data-testid="b2b-header">
-      <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {company.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" className="h-9 sm:h-10 w-9 sm:w-auto bg-white rounded-lg p-1 object-contain shrink-0" /> : <Building2 className="w-7 h-7 text-slate-400 shrink-0" />}
           <div className="min-w-0"><div className="font-bold leading-tight text-sm sm:text-base truncate">{company.name} <span className="text-[10px] bg-emerald-600 rounded px-1.5 py-0.5 ml-1 align-middle">B2B</span></div><div className="text-[11px] sm:text-xs text-slate-400 truncate">{[company.phone, company.email].filter(Boolean).join(" • ")}</div></div>
         </div>
-        <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs">
+        {switcher}
+        <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs min-w-0 w-full sm:w-auto">
           <div className="min-w-0">
             <div className="font-bold text-sm truncate" data-testid="b2b-contact-name">{contact.name}</div>
             {token && (
