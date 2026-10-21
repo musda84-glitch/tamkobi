@@ -21,6 +21,8 @@ DEFAULT_PACKS = [
     {"id": "gib_5000", "name": "5.000 Kontör", "credits": 5000, "price": 7500, "tagline": "Kurumsal hacim"},
 ]
 WELCOME_CREDITS = 50
+# Bu tutarın üstü admin-v1'de danger prepare/confirm ister. Altı doğrudan yazılır.
+GIFT_DIRECT_MAX = 1000
 SALES_CLOSED_DETAIL = "GİB kontör satışı şu an kapalı. Entegratör anlaşması tamamlanınca platform yöneticisi satışları açacaktır."
 
 

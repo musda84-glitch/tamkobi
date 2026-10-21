@@ -5,6 +5,7 @@ Kimliğe bürünme, silme, şifre/2FA, kullanıcı ve anahtar yönetimi burada y
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
@@ -80,6 +81,54 @@ def _require_bool(payload: Dict[str, Any], field: str) -> None:
         raise HTTPException(status_code=400, detail=f"{field} zorunlu.")
     if not isinstance(payload[field], bool):
         raise HTTPException(status_code=400, detail=f"{field} boolean olmalı.")
+
+
+_SECRET_BODY_KEYS = ("password", "api_key", "merchant_key", "merchant_salt", "legal_iban")
+_AUDIT_BLOCK = ("password", "secret", "api_key", "merchant_key", "merchant_salt", "token", "credential")
+
+
+def body_has_secret(payload: Dict[str, Any]) -> bool:
+    """Gövde sır alanı taşıyor mu. Alanın varlığı yeter; boş ve yalnızca boşluk da sırdır.
+
+    clear_key yalnız True iken sırdır. false mevcut sırrı silmez.
+    """
+    if payload.get("clear_key") is True:
+        return True
+    for key in _SECRET_BODY_KEYS:
+        if key in payload:
+            return True
+    return False
+
+
+async def require_secret_scope(key_doc: dict) -> None:
+    """Parola / API anahtarı yazan gövde admin.secrets:write ister. Sır döndürülmez.
+
+    Anahtar _auth'un döndürdüğü belgedir; başlıktan yeniden okunmaz.
+    """
+    scopes = list(key_doc.get("scopes") or []) if isinstance(key_doc, dict) else []
+    if store.SCOPE_ADMIN_SECRETS_WRITE not in scopes:
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+
+
+async def _run_prepare(prepare: _Prepare, payload: Dict[str, Any], key_doc: dict):
+    """prepare(payload) ya da prepare(payload, key_doc). İkinci argüman _auth belgesidir."""
+    try:
+        parameters = inspect.signature(prepare).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if len(parameters) >= 2:
+        return await prepare(payload, key_doc)
+    return await prepare(payload)
+
+
+def audit_field_names(names: List[str]) -> List[str]:
+    out = []
+    for name in names:
+        low = name.lower()
+        if any(part in low for part in _AUDIT_BLOCK):
+            continue
+        out.append(name)
+    return out
 
 
 async def _company_or_404(company_id: str) -> None:
@@ -239,7 +288,7 @@ async def _write(
         and str(existing.get("endpoint") or "") == endpoint
     ):
         return existing["response"]
-    changed = await prepare(payload)
+    changed = await _run_prepare(prepare, payload, key_doc)
 
     async def run_fn():
         outcome = await fn(payload, key_doc)

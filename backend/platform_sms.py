@@ -242,6 +242,11 @@ async def save_platform_sms(req: Dict[str, Any], _: dict = Depends(saas.require_
     msgheader = str(req.get("msgheader") if req.get("msgheader") is not None else cur.get("msgheader") or "").strip()
     is_active = bool(req["is_active"]) if "is_active" in req else bool(cur.get("is_active", False))
     password_raw = str(req.get("password") or "").strip()
+    stored_provider = comm_service.normalize_sms_provider(cur.get("provider"))
+    rebinding = provider != stored_provider or usercode != str(cur.get("usercode") or "").strip()
+    # Kayıtlı API şifresi başka satıcıya veya kullanıcı koduna gitmez. Yeni şifre yoksa hesap kapanır.
+    if rebinding and not password_raw:
+        is_active = False
     patch: Dict[str, Any] = {
         "provider": provider,
         "usercode": usercode,
@@ -249,8 +254,13 @@ async def save_platform_sms(req: Dict[str, Any], _: dict = Depends(saas.require_
         "is_active": is_active,
         "updated_at": _now_iso(),
     }
+    unset = None
     if password_raw:
         patch["password_enc"] = comm_service.encrypt(password_raw)
+        patch["verified"] = False
+        patch["verify_message"] = ""
+    elif rebinding:
+        unset = {"password_enc": ""}
         patch["verified"] = False
         patch["verify_message"] = ""
     herr = comm_service.validate_msgheader(msgheader) if msgheader else None
@@ -260,7 +270,10 @@ async def save_platform_sms(req: Dict[str, Any], _: dict = Depends(saas.require_
         raise HTTPException(status_code=400, detail="Aktif SMS için kullanıcı kodu gerekli.")
     if is_active and not (password_raw or cur.get("password_enc")):
         raise HTTPException(status_code=400, detail="Aktif SMS için API şifresi gerekli.")
-    await _db.platform_settings.update_one({"_id": SETTINGS_ID}, {"$set": patch}, upsert=True)
+    write: Dict[str, Any] = {"$set": patch}
+    if unset:
+        write["$unset"] = unset
+    await _db.platform_settings.update_one({"_id": SETTINGS_ID}, write, upsert=True)
     return _public_view(await load_settings())
 
 

@@ -91,6 +91,8 @@ describe("pathAllowedOnHost / preferredHostForPath", () => {
   test("b2b and ik paths", () => {
     expect(preferredHostForPath("/portal/abc")).toBe("b2b");
     expect(preferredHostForPath("/b2b/giris")).toBe("b2b");
+    expect(preferredHostForPath("/b2b/tedarikci")).toBe("b2b");
+    expect(pathAllowedOnHost("/b2b/tedarikci", "b2b")).toBe(true);
     expect(preferredHostForPath("/personelim")).toBe("ik");
     expect(preferredHostForPath("/mesai")).toBe("ik");
     expect(preferredHostForPath("/hakkimizda")).toBe("site");

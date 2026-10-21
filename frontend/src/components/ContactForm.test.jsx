@@ -96,3 +96,41 @@ test("new form has no delete button", async () => {
   });
   expect(document.querySelector("[data-testid='cf-delete']")).toBeNull();
 });
+
+function setControl(el, value) {
+  const proto = window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+test("portal giriş alanı e-posta veya VKN kabul eder", async () => {
+  mockGet.mockResolvedValue({ data: {} });
+  mockPut.mockResolvedValue({ data: { id: "cnt_1" } });
+  await act(async () => {
+    root.render(<ContactForm companyId="c1" contact={contact} onClose={() => {}} />);
+  });
+  await act(async () => {
+    document.querySelector("[data-testid='cf-tab-b2b']").click();
+  });
+  const field = document.querySelector("[data-testid='cf-b2b_login_email']");
+  expect(field.getAttribute("type")).toBe("text");
+  expect(field.getAttribute("inputmode")).toBeNull();
+  expect(document.querySelector("[data-testid='cf-b2b-login-hint']").textContent).toBe(
+    "Boş bırakılırsa cari e-postası; carinin VKN/TCKN'si ile de giriş yapılabilir.",
+  );
+  expect(document.body.textContent).toContain("Portal Giriş E-postası / VKN");
+
+  await act(async () => { setControl(field, "abc"); });
+  await act(async () => { document.querySelector("[data-testid='cf-save']").click(); });
+  expect(document.querySelector("[data-testid='cf-b2b-login-error']").textContent).toMatch(/VKN/);
+  expect(mockPut).not.toHaveBeenCalled();
+
+  await act(async () => { setControl(document.querySelector("[data-testid='cf-b2b_login_email']"), "123 456 7890"); });
+  await act(async () => { document.querySelector("[data-testid='cf-save']").click(); });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelector("[data-testid='cf-b2b-login-error']")).toBeNull();
+  expect(mockPut).toHaveBeenCalled();
+  const body = mockPut.mock.calls[0][1];
+  expect(body.b2b_login_email).toBe("1234567890");
+});

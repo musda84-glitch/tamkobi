@@ -2,7 +2,7 @@
 import React, { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer, LogOut } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
@@ -19,6 +19,7 @@ import { DocumentFormModal } from "./DocumentFormModal";
 import { B2BCardPay } from "./B2BCardPay";
 import { StatementTxList } from "./StatementTxList";
 import { StatementPrint } from "./StatementShare";
+import { logoutB2B } from "../utils/b2bSession";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -124,7 +125,7 @@ export const b2bOrderGross = (o) => {
 };
 
 
-export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
+export const B2BHeader = ({ company, contact, token, onPasswordChanged, switcher = null }) => {
   const bal = contact.balance || 0;
   const [open, setOpen] = useState(false);
   const hasPassword = contact.has_password !== false;
@@ -144,12 +145,13 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   };
   return (
     <header className="bg-slate-900 text-white" data-testid="b2b-header">
-      <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {company.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" className="h-9 sm:h-10 w-9 sm:w-auto bg-white rounded-lg p-1 object-contain shrink-0" /> : <Building2 className="w-7 h-7 text-slate-400 shrink-0" />}
           <div className="min-w-0"><div className="font-bold leading-tight text-sm sm:text-base truncate">{company.name} <span className="text-[10px] bg-emerald-600 rounded px-1.5 py-0.5 ml-1 align-middle">B2B</span></div><div className="text-[11px] sm:text-xs text-slate-400 truncate">{[company.phone, company.email].filter(Boolean).join(" • ")}</div></div>
         </div>
-        <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs">
+        {switcher}
+        <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs min-w-0 w-full sm:w-auto">
           <div className="min-w-0">
             <div className="font-bold text-sm truncate" data-testid="b2b-contact-name">{contact.name}</div>
             {token && (
@@ -158,7 +160,18 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
               </button>
             )}
           </div>
-          <div className="text-right shrink-0"><div className="text-slate-400">Bakiye</div><div className={`font-bold ${bal > 0 ? "text-rose-300" : "text-emerald-300"}`} data-testid="b2b-balance">{fmt(Math.abs(bal))} {bal > 0 ? "borç" : bal < 0 ? "alacak" : ""}</div>{contact.discount > 0 && <span className="inline-block mt-0.5 bg-emerald-600/30 text-emerald-200 rounded px-1.5 text-[10px]">Size özel %{contact.discount} indirim</span>}</div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="text-right shrink-0"><div className="text-slate-400">Bakiye</div><div className={`font-bold ${bal > 0 ? "text-rose-300" : "text-emerald-300"}`} data-testid="b2b-balance">{fmt(Math.abs(bal))} {bal > 0 ? "borç" : bal < 0 ? "alacak" : ""}</div>{contact.discount > 0 && <span className="inline-block mt-0.5 bg-emerald-600/30 text-emerald-200 rounded px-1.5 text-[10px]">Size özel %{contact.discount} indirim</span>}</div>
+            <button
+              type="button"
+              onClick={logoutB2B}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 px-3 py-1.5 min-h-9 text-xs font-bold text-white hover:bg-white/10 whitespace-nowrap shrink-0"
+              data-testid="b2b-header-logout"
+              aria-label="Çıkış"
+            >
+              <LogOut className="w-3.5 h-3.5" /> Çıkış
+            </button>
+          </div>
         </div>
       </div>
       {open && (

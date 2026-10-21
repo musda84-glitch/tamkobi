@@ -5,6 +5,7 @@ import { LogIn, ShoppingCart, FileSpreadsheet, Truck, Wallet, KeyRound, ArrowLef
 import { API_URL } from "../context/AuthContext";
 import { LegalConsent, allLegalChecked, emptyLegalConsent, loadStoredLegalConsent, saveStoredLegalConsent } from "../components/LegalConsent";
 import { REMEMBER_B2B_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
+import { b2bNav, isSafeB2BPath, writeB2BSession } from "../utils/b2bSession";
 
 export default function B2BLoginPage() {
   const [f, setF] = useState({ email: "", password: "" });
@@ -47,8 +48,24 @@ export default function B2BLoginPage() {
       const r = await axios.post(`${API_URL}/public/b2b/login`, f);
       if (remember) saveRememberedEmail(REMEMBER_B2B_KEY, f.email);
       else clearRememberedEmail(REMEMBER_B2B_KEY);
-      toast.success(`Hoş geldiniz, ${r.data.name}`);
-      window.location.href = r.data.redirect;
+      const who = r.data?.name || "";
+      toast.success(who ? `Hoş geldiniz, ${who}` : "Hoş geldiniz");
+      const suppliers = Array.isArray(r.data?.suppliers) ? r.data.suppliers : [];
+      const selectToken = String(r.data?.select_token || "").trim();
+      if (suppliers.length > 1) {
+        if (!selectToken) {
+          setErr("Oturum açılamadı. Tekrar deneyin.");
+          return;
+        }
+        writeB2BSession(selectToken, f.email);
+        b2bNav.go("/b2b/tedarikci");
+        return;
+      }
+      if (!isSafeB2BPath(r.data?.redirect)) {
+        setErr("Portal adresi alınamadı.");
+        return;
+      }
+      b2bNav.go(r.data.redirect);
     } catch (e2) { setErr(e2.response?.data?.detail || "Giriş yapılamadı."); } finally { setBusy(false); }
   };
   const forgot = async (e) => {
@@ -60,9 +77,12 @@ export default function B2BLoginPage() {
     } catch (e2) { setErr(e2.response?.data?.detail || "İstek gönderilemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 grid grid-cols-1 lg:grid-cols-2" data-testid="b2b-login-page">
+    <div className="min-h-screen overflow-x-hidden bg-slate-950 text-slate-100 grid grid-cols-1 lg:grid-cols-2" data-testid="b2b-login-page">
       <div className="hidden lg:flex flex-col justify-between p-12 bg-[radial-gradient(circle_at_20%_20%,rgba(16,185,129,0.25),transparent_45%),radial-gradient(circle_at_80%_80%,rgba(59,130,246,0.2),transparent_40%)]">
-        <div className="font-bold text-lg">Bayi <span className="text-emerald-400">Portalı</span></div>
+        <div className="font-bold text-lg flex items-center gap-2">
+          <img src="/brand/tamkobi-mark.svg" alt="" className="w-8 h-8" />
+          TamKobi <span className="text-emerald-400">B2B</span>
+        </div>
         <div className="space-y-6 max-w-md">
           <h1 className="text-4xl font-black leading-tight">Siparişinizi dakikalar içinde verin.</h1>
           <ul className="space-y-3 text-sm text-slate-300">
@@ -86,8 +106,17 @@ export default function B2BLoginPage() {
             <button type="button" onClick={() => { setMode("login"); setErr(""); setResetInfo(null); }} className="w-full text-[11px] text-slate-500 flex items-center justify-center gap-1" data-testid="b2b-forgot-back"><ArrowLeft className="w-3 h-3" /> Girişe dön</button>
           </form>
         ) : (
-          <form onSubmit={submit} className="w-full max-w-sm bg-white text-slate-900 rounded-3xl p-8 space-y-4 shadow-2xl">
-            <div><div className="text-[10px] uppercase tracking-[0.2em] text-emerald-600 font-semibold">B2B Müşteri Girişi</div><h2 className="text-xl font-bold mt-1">Hesabınıza giriş yapın</h2><p className="text-xs text-slate-500 mt-1">Tedarikçinizin size verdiği e-posta / VKN ve şifre ile.</p></div>
+          <form onSubmit={submit} className="w-full max-w-sm bg-white text-slate-900 rounded-3xl p-6 sm:p-8 space-y-4 shadow-2xl">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <img src="/brand/tamkobi-mark.svg" alt="TamKobi" className="w-9 h-9 shrink-0" data-testid="b2b-tamkobi-logo" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-lg font-bold leading-tight">TamKobi <span className="text-emerald-600">B2B</span></div>
+                  <p className="text-[11px] text-slate-500 truncate">b2b.tamkobi.com — Bayi / Müşteri Portalı</p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">Tedarikçinizin size verdiği e-posta / VKN ve şifre ile.</p>
+            </div>
             <div><label className="block text-xs font-semibold mb-1">E-posta veya VKN</label><input required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-email" /></div>
             <div><label className="block text-xs font-semibold mb-1">Şifre</label><input type="password" required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-password" /></div>
             <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" data-testid="b2b-remember-row">
@@ -99,9 +128,9 @@ export default function B2BLoginPage() {
             </div>
             <LegalConsent value={consent} onChange={persistConsent} prefix="b2b-login-" required className="bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
             {err && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="b2b-login-error">{err}</div>}
-            <button disabled={busy || !allLegalChecked(consent)} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="b2b-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Portala Giriş"}</button>
+            <button disabled={busy || !allLegalChecked(consent)} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="b2b-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Giriş Yap"}</button>
             <button type="button" onClick={() => { setMode("forgot"); setErr(""); }} className="w-full text-[11px] text-emerald-700 font-semibold" data-testid="b2b-forgot-open">Şifremi unuttum</button>
-            <p className="text-[11px] text-slate-400 text-center">Şifrenizi bilmiyorsanız tedarikçinizden B2B erişimi isteyin.</p>
+            <p className="text-[11px] text-slate-400 text-center">Tek hesapla çalıştığınız tüm tedarikçilerin portalına erişin.</p>
           </form>
         )}
       </div>
