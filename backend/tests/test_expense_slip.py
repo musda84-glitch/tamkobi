@@ -76,7 +76,7 @@ def test_create_expense_slip_from_issued_sales_invoice():
     assert inserted["contact_name"] == "ERSAY HOME"
     assert inserted.get("withholding_rate") == 0
     link = mock_db.invoices.update_one.await_args.args
-    assert link[0] == {"_id": "inv_nx"}
+    assert link[0] == {"_id": "inv_nx", "company_id": "comp"}
     assert link[1]["$set"]["expense_slip_number"] == "GP-2026-0007"
 
 

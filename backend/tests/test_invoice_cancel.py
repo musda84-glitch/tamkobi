@@ -81,7 +81,7 @@ def test_cancel_invoice_reverses_and_marks_cancelled():
     assert "iptal" in result["message"].lower()
     assert "sipariş" in result["message"].lower()
     args, kwargs = mock_db.invoices.update_one.await_args
-    assert args[0] == {"_id": "inv_c1"}
+    assert args[0] == {"_id": "inv_c1", "company_id": None}
     assert args[1]["$set"]["status"] == "cancelled"
     assert args[1]["$set"]["gib_status"] == "Gelen E-Fatura İptal"
 
@@ -143,7 +143,7 @@ def test_cancel_issued_dispatch_unlinks_refs():
     ), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
         result = _run(server.cancel_invoice("d_irs", {}, user={"is_super_admin": True}))
 
-    un_disp.assert_awaited_once_with("d_irs")
+    un_disp.assert_awaited_once_with("d_irs", None)
     assert result["status"] == "success"
     assert "irsaliye" in result["message"].lower()
     assert mock_db.invoices.update_one.await_args.args[1]["$set"]["status"] == "cancelled"

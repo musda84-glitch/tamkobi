@@ -7367,7 +7367,7 @@ async def create_contact_balance_installments(contact_id: str, req: Dict[str, An
     total = float(req.get("total") or abs(c.get("balance", 0)))
     if total <= 0:
         raise HTTPException(status_code=400, detail="Taksitlendirilecek bakiye yok.")
-    await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
+    await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None, "company_id": cid})
     await db.installments.delete_many({"company_id": cid, "contact_id": contact_id, "invoice_id": None})
     rows = _build_plan(total, req)
     now = datetime.now(timezone.utc).isoformat()
@@ -7383,7 +7383,7 @@ async def delete_contact_balance_installments(contact_id: str, user: dict = Depe
     cid = c["company_id"]
     if await db.installments.count_documents({"company_id": cid, "contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
-    await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
+    await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None, "company_id": cid})
     await db.installments.delete_many({"company_id": cid, "contact_id": contact_id, "invoice_id": None})
     return {"status": "success"}
 
@@ -9257,12 +9257,15 @@ async def _store_product_image_bytes(
     return out
 
 
-async def _attach_product_image_from_url(product_id: str, image_url: Optional[str]) -> Optional[str]:
+async def _attach_product_image_from_url(
+    product_id: str, image_url: Optional[str], company_id: Optional[str] = None,
+) -> Optional[str]:
     """Pazaryeri/uzak URL'den görseli indirip stok kartına yükle. Hata olursa None (kart oluşturulmaya devam eder)."""
     url = str(image_url or "").strip()
     if not url.startswith(("http://", "https://")):
         return None
-    product = await db.products.find_one({"_id": product_id})
+    cid = str(company_id or "").strip()
+    product = await db.products.find_one({"_id": product_id, "company_id": cid})
     if not product:
         return None
     try:
@@ -9313,7 +9316,8 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
 
 @api_router.put("/products/{product_id}/images")
 async def update_product_images(product_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
+    product = await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
+    cid = str(product.get("company_id") or "").strip()
     images = req.get("images", [])
     image_url = req.get("image_url") or (images[0] if images else None)
     update: Dict[str, Any] = {"images": images, "image_url": image_url}
@@ -9323,8 +9327,8 @@ async def update_product_images(product_id: str, req: Dict[str, Any], user: dict
             # Still allow if it's a valid URL string; gallery may temporarily lag
             pass
         update["label_image_url"] = label
-    await db.products.update_one({"_id": product_id}, {"$set": update})
-    updated = await db.products.find_one({"_id": product_id})
+    await db.products.update_one({"_id": product_id, "company_id": cid}, {"$set": update})
+    updated = await db.products.find_one({"_id": product_id, "company_id": cid})
     if not updated:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
     return clean_doc(updated)
@@ -9356,6 +9360,7 @@ async def serve_file(
     path = rbac.normalized_file_storage_path(path)
     if not path:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    # tenant-ok: depolama yolu oturumsuz dosya anahtarıdır; oturum yokken şirket bilinmez, hassas alanda yetki kayıt company_id ile doğrulanır
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not rbac.file_public_area(path):
         if record is None:
@@ -9458,8 +9463,9 @@ async def update_product_variants(product_id: str, req: VariantsUpdateRequest, u
     }
     if has_variants:
         update["stock_quantity"] = sum(v.get("stock", 0) for v in variants)
-    await db.products.update_one({"_id": product_id}, {"$set": update})
-    updated = await db.products.find_one({"_id": product_id})
+    cid = str(product.get("company_id") or "").strip()
+    await db.products.update_one({"_id": product_id, "company_id": cid}, {"$set": update})
+    updated = await db.products.find_one({"_id": product_id, "company_id": cid})
     return clean_doc(updated)
 
 @api_router.post("/products/quick-stock-adjust")
@@ -9726,12 +9732,13 @@ async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
         field = f"despatch_{key}"
         if defaults.get(key) and not doc.get(field):
             patch[field] = defaults[key]
+    cid = str(doc.get("company_id") or "").strip()
     if len(patch) > 1 or not doc.get("despatch_defaults"):
-        await db.invoices.update_one({"_id": doc["_id"]}, {"$set": patch})
-        doc = await db.invoices.find_one({"_id": doc["_id"]}) or doc
+        await db.invoices.update_one({"_id": doc["_id"], "company_id": cid}, {"$set": patch})
+        doc = await db.invoices.find_one({"_id": doc["_id"], "company_id": cid}) or doc
     try:
         result = await e_invoice.issue_invoice(doc["_id"], company_id=doc["company_id"], e_type="e_dispatch")
-        refreshed = await db.invoices.find_one({"_id": doc["_id"]}) or doc
+        refreshed = await db.invoices.find_one({"_id": doc["_id"], "company_id": cid}) or doc
         return {"sent": True, "result": result, "dispatch": clean_doc(refreshed)}
     except HTTPException as e:
         return {"sent": False, "reason": "send_failed", "detail": e.detail, "dispatch": clean_doc(doc)}
@@ -9743,10 +9750,11 @@ async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
 @api_router.post("/invoices/{invoice_id}/create-dispatch")
 async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("invoice_type") == "dispatch":
         raise HTTPException(status_code=400, detail="Bu belge zaten bir irsaliye.")
     if inv.get("dispatch_id"):
-        d = await db.invoices.find_one({"_id": inv["dispatch_id"]})
+        d = await db.invoices.find_one({"_id": inv["dispatch_id"], "company_id": cid})
         if d:
             # Taslak kaldıysa İşNet'e göndermeyi dene
             if d.get("status") == "draft" and d.get("e_type") == "e_dispatch" and not d.get("gib_uuid"):
@@ -9765,7 +9773,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
                     }
             return {"status": "exists", "dispatch": clean_doc(d), "message": f"Bu faturanın irsaliyesi zaten var: {d['invoice_number']}"}
     number = await _next_number("IRS", db.invoices)
-    contact = await db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    contact = await db.contacts.find_one({"_id": inv.get("contact_id"), "company_id": cid}) if inv.get("contact_id") else None
     settings = await db.einvoice_settings.find_one({"company_id": inv["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
     doc = {"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
@@ -9783,7 +9791,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
            "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(doc)
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
+    await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     sent = await _send_dispatch_to_isnet_if_configured(doc)
     if sent.get("sent"):
         return {
@@ -9840,10 +9848,10 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
     """
     req = req or {}
     mode = str(req.get("mode") or "same_contact").strip()
-    await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    loaded = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if mode not in ("same_contact", "different_contact", "to_supplier_order"):
         raise HTTPException(status_code=400, detail="Geçersiz kopyalama modu.")
-    inv = await db.invoices.find_one({"_id": invoice_id})
+    inv = await db.invoices.find_one({"_id": invoice_id, "company_id": str(loaded.get("company_id") or "").strip()})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     reason = _invoice_copy_block_reason(inv)
@@ -9888,6 +9896,7 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
         doc = po.to_mongo()
         doc["copied_from_invoice_id"] = invoice_id
         doc["copied_from_invoice_number"] = src_no
+        doc["company_id"] = company_id
         await db.purchase_orders.insert_one(doc)
         out = clean_doc(doc)
         return {
@@ -9946,7 +9955,7 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
     )
     created = await _create_invoice_core(draft, user)
     await db.invoices.update_one(
-        {"_id": created["id"]},
+        {"_id": created["id"], "company_id": company_id},
         {"$set": {
             "copied_from": invoice_id,
             "copied_from_number": src_no,
@@ -9955,7 +9964,7 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
             "einvoice_state": "draft",
         }},
     )
-    out = clean_doc(await db.invoices.find_one({"_id": created["id"]}))
+    out = clean_doc(await db.invoices.find_one({"_id": created["id"], "company_id": company_id}))
     return {
         "status": "success",
         "kind": "invoice",
@@ -9968,8 +9977,9 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
 async def _create_expense_slip_from_invoice_core(invoice_id: str, user: dict):
     """Kesilmiş belgeden aynı cari ve kalemlerle alış gider pusulası düzenler."""
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("expense_slip_id"):
-        existing = await db.invoices.find_one({"_id": inv["expense_slip_id"]})
+        existing = await db.invoices.find_one({"_id": inv["expense_slip_id"], "company_id": cid})
         if existing and existing.get("status") != "cancelled":
             return {"status": "exists", "invoice": clean_doc(existing), "message": f"Gider pusulası zaten var: {existing.get('invoice_number')}"}
     reason = _expense_slip_block_reason(inv)
@@ -10012,7 +10022,7 @@ async def _create_expense_slip_from_invoice_core(invoice_id: str, user: dict):
     }
     await db.invoices.insert_one(doc)
     await _apply_invoice_effects(doc)
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": {"expense_slip_id": doc["_id"], "expense_slip_number": number}})
+    await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"expense_slip_id": doc["_id"], "expense_slip_number": number}})
     return {"status": "success", "invoice": clean_doc(doc), "message": f"{number} gider pusulası kesildi."}
 
 
@@ -10026,8 +10036,9 @@ async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, 
     d = await tenant_access.get_tenant_doc(db, "invoices", dispatch_id, user, not_found="İrsaliye bulunamadı.")
     if not d or d.get("invoice_type") != "dispatch":
         raise HTTPException(status_code=404, detail="İrsaliye bulunamadı.")
+    cid = str(d.get("company_id") or "").strip()
     if d.get("converted_invoice_id"):
-        ex = await db.invoices.find_one({"_id": d["converted_invoice_id"]})
+        ex = await db.invoices.find_one({"_id": d["converted_invoice_id"], "company_id": cid})
         if ex:
             return {"status": "exists", "invoice": clean_doc(ex), "message": f"Bu irsaliye zaten faturalandı: {ex['invoice_number']}"}
     existing = await dispatch_invoice.find_existing_invoice_for_dispatch(db, d)
@@ -10077,7 +10088,7 @@ async def _merge_dispatches_core(dispatch_ids, user: dict, company_id: Optional[
         raise HTTPException(status_code=400, detail="Birleştirilecek irsaliye seçin.")
     loaded = []
     for did in seen:
-        row = await db.invoices.find_one({"_id": did})
+        row = await db.invoices.find_one({"_id": did, "company_id": company_id})
         if not row or row.get("invoice_type") != "dispatch" or str(row.get("company_id") or "") != str(company_id):
             raise HTTPException(status_code=404, detail="İrsaliye bulunamadı.")
         loaded.append(row)
@@ -10212,6 +10223,7 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     if invoice.status in ["approved", "sent_to_gib"]:
         await _apply_invoice_effects(doc)
         doc["effects_applied"] = True
+    doc["company_id"] = invoice.company_id
     await db.invoices.insert_one(doc)
     return clean_doc(doc)
 
@@ -10327,16 +10339,17 @@ async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + satış stok düşümü / alış stok girişi. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("contact_id"):
         change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
-        await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
+        await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
     # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
     skip_stock = bool(inv.get("stock_effects_from_dispatch"))
     if inv.get("invoice_type") == "sales" and not skip_stock:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
-                await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
             await _apply_lot_delta(item, -1.0, inv.get("company_id"))
     elif _purchase_tracks_stock(inv):
         # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
@@ -10344,10 +10357,10 @@ async def _apply_invoice_effects(inv: dict):
             for item in inv.get("items", []):
                 pid, qty = _invoice_item_pid_qty(item)
                 if pid:
-                    await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
                 await _apply_lot_delta(item, +1.0, inv.get("company_id"))
         if inv.get("_id"):
-            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"stock_effects_applied": True}})
+            await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
         inv["stock_effects_applied"] = True
 
 
@@ -10355,24 +10368,25 @@ async def _reverse_invoice_effects(inv: dict):
     """Onaylı fatura etkilerini geri al: cari + satış/alış stok. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("contact_id"):
         change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
-        await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
+        await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
     skip_stock = bool(inv.get("stock_effects_from_dispatch"))
     if inv.get("invoice_type") == "sales" and not skip_stock:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
-                await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
+                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
             await _apply_lot_delta(item, +1.0, inv.get("company_id"))
     elif _purchase_tracks_stock(inv) and inv.get("stock_effects_applied") is not False:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
-                await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
+                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
             await _apply_lot_delta(item, -1.0, inv.get("company_id"))
         if inv.get("_id"):
-            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"stock_effects_applied": False}})
+            await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
         inv["stock_effects_applied"] = False
 
 
@@ -10393,7 +10407,8 @@ async def _post_incoming_purchase_invoice(invoice_id: str, inv: dict) -> dict:
     Gelen belge GİB'den alınmıştır; e-Fatura / e-Arşiv / kağıt olarak yeniden kesilmez.
     Çift tıklama veya zaten işlenmiş fatura ikinci bakiye/stok hareketi yazmaz.
     """
-    fresh = await db.invoices.find_one({"_id": invoice_id}) or inv
+    cid = str((inv or {}).get("company_id") or "").strip()
+    fresh = await db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or inv
     inv = dict(fresh)
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş gelen fatura işlenemez.")
@@ -10408,6 +10423,7 @@ async def _post_incoming_purchase_invoice(invoice_id: str, inv: dict) -> dict:
     claim = await db.invoices.update_one(
         {
             "_id": invoice_id,
+            "company_id": cid,
             "status": "draft",
             "effects_applied": {"$ne": True},
             "posting_lock": {"$ne": True},
@@ -10435,7 +10451,7 @@ async def _post_incoming_purchase_invoice(invoice_id: str, inv: dict) -> dict:
         if paid <= 0.01:
             payment_status = "unpaid"
         await db.invoices.update_one(
-            {"_id": invoice_id},
+            {"_id": invoice_id, "company_id": cid},
             {"$set": {
                 "status": "approved",
                 "effects_applied": True,
@@ -10450,7 +10466,7 @@ async def _post_incoming_purchase_invoice(invoice_id: str, inv: dict) -> dict:
         )
     except Exception:
         await db.invoices.update_one(
-            {"_id": invoice_id},
+            {"_id": invoice_id, "company_id": cid},
             {"$set": {"posting_lock": False}},
         )
         raise
@@ -10520,10 +10536,8 @@ def _invoice_approve_claim_query(invoice_id: str, company_id: Any, now: datetime
 
 async def _approve_invoice_already_ok(inv: dict) -> dict:
     if inv.get("order_id"):
-        order_q: Dict[str, Any] = {"_id": inv["order_id"], "is_invoiced": True}
-        if inv.get("company_id"):
-            order_q["company_id"] = inv["company_id"]
-        if not (await db.orders.find_one(order_q)):
+        cid = str(inv.get("company_id") or "").strip()
+        if not (await db.orders.find_one({"_id": inv["order_id"], "is_invoiced": True, "company_id": cid})):
             await _mark_order_invoiced_from_invoice(inv)
     return {"status": "success", "message": "Fatura zaten onaylı."}
 
@@ -10578,14 +10592,12 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
         await _mark_order_invoiced_from_invoice(inv)
         settlement = None
         if inv.get("order_id"):
-            order_q: Dict[str, Any] = {"_id": inv["order_id"]}
-            if company_id:
-                order_q["company_id"] = company_id
-            order = await db.orders.find_one(order_q)
+            order_cid = str(company_id or "").strip()
+            order = await db.orders.find_one({"_id": inv["order_id"], "company_id": order_cid})
             if order:
                 contact = None
                 if inv.get("contact_id"):
-                    contact = await db.contacts.find_one({"_id": inv["contact_id"]})
+                    contact = await db.contacts.find_one({"_id": inv["contact_id"], "company_id": order_cid})
                 if not contact:
                     contact = await _ensure_order_contact(order)
                 try:
@@ -10715,6 +10727,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
     from despatch_shipment import is_incoming_dispatch
 
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
     if inv.get("status") == "cancelling":
@@ -10730,15 +10743,15 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
         if not allowed or set(req.keys()) - {"due_date", "notes"}:
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
-        await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
-        return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
+        await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": allowed})
+        return clean_doc(await db.invoices.find_one({"_id": invoice_id, "company_id": cid}))
     editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}
     if _is_dispatch_doc(inv):
         editable = editable | _DESPATCH_EDIT_KEYS
     allowed = {k: v for k, v in req.items() if k in editable}
     reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
-        _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
+        _c = await db.contacts.find_one({"_id": allowed["contact_id"], "company_id": cid})
         if _c:
             ship = str(allowed.get("shipping_address") or "").strip()
             if not ship or ship == "-":
@@ -10926,24 +10939,23 @@ def _doc_is_gib_issued(inv: dict) -> bool:
     return str(inv.get("gib_status_code") or "").strip() in ("1300", "1220", "1200")
 
 
-async def _unlink_dispatch_refs(dispatch_id: str):
+async def _unlink_dispatch_refs(dispatch_id: str, company_id: Optional[str] = None):
     """Sipariş ve faturadaki irsaliye bağını kopar."""
+    cid = str(company_id or "").strip()
     await db.orders.update_many(
-        {"dispatch_id": dispatch_id},
+        {"dispatch_id": dispatch_id, "company_id": cid},
         {"$unset": {"dispatch_id": "", "dispatch_number": ""}},
     )
     await db.invoices.update_many(
-        {"dispatch_id": dispatch_id, "invoice_type": {"$ne": "dispatch"}},
+        {"dispatch_id": dispatch_id, "invoice_type": {"$ne": "dispatch"}, "company_id": cid},
         {"$unset": {"dispatch_id": "", "dispatch_number": ""}},
     )
 
 
 async def _unlink_orders_from_invoice(invoice_id: str, company_id: Optional[str] = None):
-    q: Dict[str, Any] = {"invoice_id": invoice_id}
-    if company_id:
-        q["company_id"] = company_id
+    cid = str(company_id or "").strip()
     await db.orders.update_many(
-        q,
+        {"invoice_id": invoice_id, "company_id": cid},
         {"$unset": {"invoice_id": "", "invoice_number": ""}, "$set": {"is_invoiced": False}},
     )
 
@@ -10990,18 +11002,12 @@ async def _invoice_finance_block(inv: dict) -> Optional[str]:
     if not inv:
         return None
     iid = inv.get("_id")
-    cid = inv.get("company_id")
+    cid = str(inv.get("company_id") or "").strip()
     if float(inv.get("paid_amount") or 0) > 0.01 or inv.get("payment_status") in ("paid", "partially_paid", "partial"):
         return "Ödemesi olan fatura silinemez. Önce tahsilatı / ödemeyi geri alın."
-    inst_q: Dict[str, Any] = {"invoice_id": iid, "status": "paid"}
-    if cid:
-        inst_q["company_id"] = cid
-    if await db.installments.count_documents(inst_q):
+    if await db.installments.count_documents({"invoice_id": iid, "status": "paid", "company_id": cid}):
         return "Ödenmiş taksiti olan fatura silinemez. Önce taksit tahsilatlarını geri alın."
-    tx_q: Dict[str, Any] = {"related_invoice_id": iid}
-    if cid:
-        tx_q["company_id"] = cid
-    if await db.bank_transactions.count_documents(tx_q):
+    if await db.bank_transactions.count_documents({"related_invoice_id": iid, "company_id": cid}):
         return "Kasa / banka hareketi olan fatura silinemez."
     did = inv.get("dispatch_id")
     if did and cid:
@@ -11105,15 +11111,14 @@ async def _soft_delete_invoice_doc(
         if applied:
             await _reverse_invoice_effects(inv)
         if unlink:
-            await _unlink_orders_from_invoice(invoice_id, inv.get("company_id"))
+            await _unlink_orders_from_invoice(invoice_id, company_id)
             await dispatch_invoice.release_invoice_dispatches(db, inv)
             if _is_dispatch_doc(inv):
-                await _unlink_dispatch_refs(invoice_id)
-            await _cancel_promissory_for_query({"invoice_id": invoice_id})
-        inst_q: Dict[str, Any] = {"invoice_id": invoice_id}
-        if inv.get("company_id"):
-            inst_q["company_id"] = inv["company_id"]
-        inst_docs = await db.installments.find(inst_q).to_list(500)
+                await _unlink_dispatch_refs(invoice_id, company_id)
+            await _cancel_promissory_for_query({"invoice_id": invoice_id, "company_id": company_id})
+        inst_docs = await db.installments.find(
+            {"invoice_id": invoice_id, "company_id": str(company_id or "").strip()},
+        ).to_list(500)
         related = [{"collection": "installments", "docs": inst_docs}] if inst_docs else None
         kind = note or ("Taslak fatura" if is_draft else "Kağıt fatura")
         return await trash.soft_delete(
@@ -11290,7 +11295,9 @@ async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user
         if applied:
             await _reverse_invoice_effects(inv)
         # Kasada duran tahsilat/ödeme satırlarının cari etkisini de geri al (kasa bakiyesi kalır).
-        pay_rows = await db.bank_transactions.find({"related_invoice_id": invoice_id}).to_list(200)
+        pay_rows = await db.bank_transactions.find(
+            {"related_invoice_id": invoice_id, "company_id": company_id},
+        ).to_list(200)
         for ptx in pay_rows:
             cid = ptx.get("contact_id")
             if not cid or ptx.get("source") == "expense":
@@ -11298,30 +11305,35 @@ async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user
             amt = float(ptx.get("amount") or 0)
             # create'te inflow → balance −amt; iptalde geri al → +amt
             await db.contacts.update_one(
-                {"_id": cid},
+                {"_id": cid, "company_id": company_id},
                 {"$inc": {"balance": amt if ptx.get("type") == "inflow" else -amt}},
             )
             await db.bank_transactions.update_one(
-                {"_id": ptx["_id"]},
+                {"_id": ptx["_id"], "company_id": company_id},
                 {"$unset": {"related_invoice_id": "", "related_invoice_number": ""},
                  "$set": {"category": "İptal fatura tahsilatı" if ptx.get("type") == "inflow" else "İptal fatura ödemesi"}},
             )
-        for ptx in await db.partner_transactions.find({"related_invoice_id": invoice_id}).to_list(100):
+        for ptx in await db.partner_transactions.find(
+            {"related_invoice_id": invoice_id, "company_id": company_id},
+        ).to_list(100):
             delta = _contact_balance_delta_for_partner_tx(ptx)
             if delta and ptx.get("contact_id"):
-                await db.contacts.update_one({"_id": ptx["contact_id"]}, {"$inc": {"balance": -delta}})
+                await db.contacts.update_one(
+                    {"_id": ptx["contact_id"], "company_id": company_id},
+                    {"$inc": {"balance": -delta}},
+                )
             await db.partner_transactions.update_one(
-                {"_id": ptx["_id"]},
+                {"_id": ptx["_id"], "company_id": company_id},
                 {"$unset": {"related_invoice_id": ""}},
             )
-        await _unlink_orders_from_invoice(invoice_id, inv.get("company_id"))
+        await _unlink_orders_from_invoice(invoice_id, company_id)
         await dispatch_invoice.release_invoice_dispatches(db, inv)
         if _is_dispatch_doc(inv):
-            await _unlink_dispatch_refs(invoice_id)
-        await _cancel_promissory_for_query({"invoice_id": invoice_id})
+            await _unlink_dispatch_refs(invoice_id, company_id)
+        await _cancel_promissory_for_query({"invoice_id": invoice_id, "company_id": company_id})
         # Ödenmiş / bekleyen taksit planını iptal say; sipariş silinebilsin diye fatura bağını temizle.
         await db.installments.update_many(
-            {"invoice_id": invoice_id, "status": {"$ne": "paid"}},
+            {"invoice_id": invoice_id, "status": {"$ne": "paid"}, "company_id": company_id},
             {"$set": {"status": "cancelled"}},
         )
         now = datetime.now(timezone.utc).isoformat()
@@ -11340,13 +11352,13 @@ async def _cancel_invoice_core(invoice_id: str, req: Dict[str, Any] = None, user
             updates["gib_status"] = "Gelen E-Fatura İptal"
             if inv.get("edoc_id"):
                 await db.incoming_edocs.update_one(
-                    {"_id": inv["edoc_id"]},
+                    {"_id": inv["edoc_id"], "company_id": company_id},
                     {"$set": {"status": "cancelled", "cancelled_at": now, "cancel_reason": note}},
                 )
         elif inv.get("e_type") and inv.get("e_type") != "paper":
             updates["einvoice_state"] = "cancelled"
         await db.invoices.update_one(
-            {"_id": invoice_id},
+            {"_id": invoice_id, "company_id": company_id},
             {"$set": updates, "$unset": {"cancelling_at": ""}},
         )
     except Exception:
@@ -11382,6 +11394,7 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
 
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if inv.get("status") in ("cancelled", "cancelling"):
         raise HTTPException(status_code=409, detail=_INVOICE_CANCELLED_DETAIL)
     if inv.get("status") == "approving":
@@ -11395,8 +11408,8 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
             raise HTTPException(status_code=409, detail="Bu irsaliye GİB tarafından kabul edilmiş; tekrar gönderilemez.")
         patch = shipment_patch_from_request(req)
         if patch:
-            await db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
-            inv = await db.invoices.find_one({"_id": invoice_id}) or inv
+            await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": patch})
+            inv = await db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or inv
         if not req.get("e_type"):
             req = {**req, "e_type": "e_dispatch"}
     if not _is_dispatch_doc(inv) and not _is_incoming_purchase_invoice(inv) and (inv.get("status") or "draft") == "draft":
@@ -11405,7 +11418,7 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None, user:
         # İrsaliye bakiyeye yazılmaz; effects_applied işaretleme de yapılmaz.
         if not _is_dispatch_doc(inv):
             await _apply_invoice_effects(inv)
-            await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
+            await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"effects_applied": True}})
     return await e_invoice.issue_invoice(
         invoice_id,
         company_id=inv["company_id"],
@@ -11476,12 +11489,15 @@ async def _set_invoice_item_product(inv: dict, idx: int, product_id: Optional[st
         upd: Dict[str, Any] = {"$set": prod_patch}
         if add_ops:
             upd.update(add_ops)
-        await db.products.update_one({"_id": p["_id"]}, upd)
+        await db.products.update_one({"_id": p["_id"], "company_id": str(inv.get("company_id") or "").strip()}, upd)
     else:
         item["product_id"] = ""
         item["matched_product_name"] = None
     items[idx] = item
-    await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"items": items}})
+    await db.invoices.update_one(
+        {"_id": inv["_id"], "company_id": str(inv.get("company_id") or "").strip()},
+        {"$set": {"items": items}},
+    )
     inv = dict(inv)
     inv["items"] = items
     return inv
@@ -11594,6 +11610,7 @@ async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, An
 @api_router.post("/invoices/{invoice_id}/accept-incoming")
 async def accept_incoming_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if not _is_incoming_purchase_invoice(inv):
         raise HTTPException(status_code=400, detail="Bu işlem yalnızca GİB'den gelen alış e-faturaları içindir.")
     if inv.get("status") == "cancelled":
@@ -11606,7 +11623,7 @@ async def accept_incoming_invoice(invoice_id: str, user: dict = Depends(get_curr
     now = datetime.now(timezone.utc).isoformat()
     if inv.get("status") == "draft" and not incoming_purchase_ledger_posted(inv):
         await _post_incoming_purchase_invoice(invoice_id, inv)
-        inv = await db.invoices.find_one({"_id": invoice_id}) or inv
+        inv = await db.invoices.find_one({"_id": invoice_id, "company_id": cid}) or inv
     updates = {
         "gib_response": "accepted",
         "gib_status": "Gelen E-Fatura Onaylandı",
@@ -11616,9 +11633,12 @@ async def accept_incoming_invoice(invoice_id: str, user: dict = Depends(get_curr
     if inv.get("status") == "draft":
         updates["status"] = "approved"
         updates["approved_at"] = now
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
+    await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": updates})
     if inv.get("edoc_id"):
-        await db.incoming_edocs.update_one({"_id": inv["edoc_id"]}, {"$set": {"status": "approved", "approved_at": now, "invoice_id": invoice_id}})
+        await db.incoming_edocs.update_one(
+            {"_id": inv["edoc_id"], "company_id": cid},
+            {"$set": {"status": "approved", "approved_at": now, "invoice_id": invoice_id}},
+        )
     return {"status": "success", "message": "Gelen e-fatura onaylandı. Ticari kabul yanıtı GİB'e iletilir (entegratör bağlıysa)."}
 
 
@@ -11626,6 +11646,7 @@ async def accept_incoming_invoice(invoice_id: str, user: dict = Depends(get_curr
 async def reject_incoming_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
     if not _is_incoming_purchase_invoice(inv):
         raise HTTPException(status_code=400, detail="Bu işlem yalnızca GİB'den gelen alış e-faturaları içindir.")
     resp = _incoming_purchase_response(inv)
@@ -11640,7 +11661,7 @@ async def reject_incoming_invoice(invoice_id: str, req: Dict[str, Any] = None, u
         await _reverse_invoice_effects(inv)
     now = datetime.now(timezone.utc).isoformat()
     reason = (req.get("reason") or "").strip()[:300]
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": {
+    await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {
         "status": "cancelled",
         "gib_response": "rejected",
         "gib_status": "Gelen E-Fatura Reddedildi",
@@ -11650,7 +11671,10 @@ async def reject_incoming_invoice(invoice_id: str, req: Dict[str, Any] = None, u
         "reject_reason": reason,
     }})
     if inv.get("edoc_id"):
-        await db.incoming_edocs.update_one({"_id": inv["edoc_id"]}, {"$set": {"status": "rejected", "rejected_at": now, "reject_reason": reason}})
+        await db.incoming_edocs.update_one(
+            {"_id": inv["edoc_id"], "company_id": cid},
+            {"$set": {"status": "rejected", "rejected_at": now, "reject_reason": reason}},
+        )
     return {"status": "success", "message": "Gelen e-fatura reddedildi. Ticari ret yanıtı GİB'e iletilir (entegratör bağlıysa; süre 8 gündür)."}
 
 async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], user: dict):
@@ -11808,12 +11832,18 @@ async def _attach_promissory(docs: list, req: Dict[str, Any]):
         docs, include_down_payment=bool(req.get("promissory_include_down_payment")),
     )
     ids = [d["_id"] for d in docs]
-    refreshed = [_decorate_installment(r) for r in await db.installments.find({"_id": {"$in": ids}}).sort("no", 1).to_list(200)]
+    companies = {str(d.get("company_id") or "").strip() for d in docs if str(d.get("company_id") or "").strip()}
+    cid = next(iter(companies)) if len(companies) == 1 else ""
+    refreshed = [_decorate_installment(r) for r in await db.installments.find(
+        {"_id": {"$in": ids}, "company_id": cid},
+    ).sort("no", 1).to_list(200)]
     return {"installments": refreshed, "promissory_notes": notes}
 
 
 async def _cancel_promissory_for_query(query: Dict[str, Any]):
-    rows = await db.installments.find(query, {"_id": 1}).to_list(500)
+    scoped = dict(query or {})
+    scoped["company_id"] = str(scoped.get("company_id") or "").strip()
+    rows = await db.installments.find(scoped, {"_id": 1}).to_list(500)
     await cheques.cancel_promissory_for_installments([r["_id"] for r in rows])
 
 
@@ -11857,12 +11887,33 @@ def _decorate_installment(d: Dict[str, Any]) -> Dict[str, Any]:
 async def _create_invoice_installments(inv: Dict[str, Any], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows = _build_plan(inv.get("grand_total", 0) - inv.get("paid_amount", 0), cfg)
     now = datetime.now(timezone.utc).isoformat()
-    docs = [{"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_id": inv["_id"], "invoice_number": inv.get("invoice_number"), "invoice_type": inv.get("invoice_type"),
-             "direction": "receivable" if inv.get("invoice_type") == "sales" else "payable", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
-             "no": r["no"], "label": r["label"], "total_count": len(rows), "due_date": r["due_date"], "amount": r["amount"], "paid_amount": 0, "status": "pending", "created_at": now} for r in rows]
+    cid = inv["company_id"]
+    docs = []
+    for r in rows:
+        docs.append({
+            "_id": str(uuid.uuid4()),
+            "company_id": cid,
+            "invoice_id": inv["_id"],
+            "invoice_number": inv.get("invoice_number"),
+            "invoice_type": inv.get("invoice_type"),
+            "direction": "receivable" if inv.get("invoice_type") == "sales" else "payable",
+            "contact_id": inv.get("contact_id"),
+            "contact_name": inv.get("contact_name"),
+            "no": r["no"],
+            "label": r["label"],
+            "total_count": len(rows),
+            "due_date": r["due_date"],
+            "amount": r["amount"],
+            "paid_amount": 0,
+            "status": "pending",
+            "created_at": now,
+        })
     if docs:
         await db.installments.insert_many(docs)
-    await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"installment_plan": {"count": len(rows), "paid_count": 0, "config": cfg, "created_at": now}}})
+    await db.invoices.update_one(
+        {"_id": inv["_id"], "company_id": cid},
+        {"$set": {"installment_plan": {"count": len(rows), "paid_count": 0, "config": cfg, "created_at": now}}},
+    )
     return [_decorate_installment(d) for d in docs]
 
 @api_router.post("/installments/preview")
@@ -11871,29 +11922,32 @@ async def preview_installments(req: Dict[str, Any]):
 
 @api_router.get("/invoices/{invoice_id}/installments")
 async def list_invoice_installments(invoice_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
-    rows = await db.installments.find({"invoice_id": invoice_id}).sort("no", 1).to_list(200)
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
+    rows = await db.installments.find({"invoice_id": invoice_id, "company_id": cid}).sort("no", 1).to_list(200)
     return [_decorate_installment(r) for r in rows]
 
 @api_router.post("/invoices/{invoice_id}/installments")
 async def create_invoice_installments(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
-    if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
+    cid = str(inv.get("company_id") or "").strip()
+    if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid", "company_id": cid}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan yeniden oluşturulamaz.")
-    await _cancel_promissory_for_query({"invoice_id": invoice_id})
-    await db.installments.delete_many({"invoice_id": invoice_id})
+    await _cancel_promissory_for_query({"invoice_id": invoice_id, "company_id": cid})
+    await db.installments.delete_many({"invoice_id": invoice_id, "company_id": cid})
     await _create_invoice_installments(inv, req)
-    raw = await db.installments.find({"invoice_id": invoice_id}).sort("no", 1).to_list(200)
+    raw = await db.installments.find({"invoice_id": invoice_id, "company_id": cid}).sort("no", 1).to_list(200)
     return await _attach_promissory(raw, req)
 
 @api_router.delete("/invoices/{invoice_id}/installments")
 async def delete_invoice_installments(invoice_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
-    if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    cid = str(inv.get("company_id") or "").strip()
+    if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid", "company_id": cid}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
-    await _cancel_promissory_for_query({"invoice_id": invoice_id})
-    await db.installments.delete_many({"invoice_id": invoice_id})
-    await db.invoices.update_one({"_id": invoice_id}, {"$unset": {"installment_plan": ""}})
+    await _cancel_promissory_for_query({"invoice_id": invoice_id, "company_id": cid})
+    await db.installments.delete_many({"invoice_id": invoice_id, "company_id": cid})
+    await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$unset": {"installment_plan": ""}})
     return {"status": "success"}
 
 @api_router.get("/installments")
@@ -11952,7 +12006,7 @@ async def pay_installment(
         if gate["action"] == "already_paid":
             return gate["response"]
         claimed_at = gate["claimed_at"]
-        fresh = await db.installments.find_one({"_id": inst_id}) or inst
+        fresh = await db.installments.find_one({"_id": inst_id, "company_id": company_id}) or inst
         remaining = round(fresh["amount"] - fresh.get("paid_amount", 0), 2)
         amount = round(float(req.get("amount") or remaining), 2)
         if amount <= 0 or amount > remaining + 0.01:
@@ -20572,7 +20626,7 @@ async def create_product_from_marketplace(req: Dict[str, Any], user: Any = Depen
     stored_image = None
     if image_src:
         try:
-            stored_image = await _attach_product_image_from_url(doc["_id"], image_src)
+            stored_image = await _attach_product_image_from_url(doc["_id"], image_src, company_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("product-create image attach skipped: %s", e)
             stored_image = None
