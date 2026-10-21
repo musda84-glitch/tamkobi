@@ -24,6 +24,89 @@ import { archivedAssignedDuties, dutyFromCurrent, openAssignedDuties, pendingDut
 import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { isAtolyeAccount, isValidPin } from "../utils/shopfloorOperatorSession";
+
+function canEditShopfloorPin(user) {
+  if (!user || isAtolyeAccount(user)) return false;
+  if (user.is_super_admin) return true;
+  const role = String(user.role || "").trim().toLowerCase();
+  if (role === "admin" || role === "owner" || role === "yönetici" || role === "yonetici") return true;
+  const level = String(user.permissions?.["/personnel"] || "");
+  return level === "edit" || level === "delete";
+}
+
+function ShopfloorPinFields({ card, canEdit, reload }) {
+  const emp = card?.employee || {};
+  const empId = emp.id || emp._id;
+  const initial = Boolean(card?.has_shopfloor_pin || emp.has_shopfloor_pin);
+  const [hasPin, setHasPin] = useState(initial);
+  const [pin, setPin] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setHasPin(Boolean(card?.has_shopfloor_pin || emp.has_shopfloor_pin)); }, [card, emp.has_shopfloor_pin]);
+  const clear = () => { setPin(""); setConfirm(""); };
+  const save = async () => {
+    if (!canEdit || !empId || busy) return;
+    if (!isValidPin(pin) || pin !== confirm) {
+      toast.error(pin !== confirm ? "PIN tekrarı eşleşmiyor." : "PIN 4 haneli olmalı.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/employees/${empId}/shopfloor-pin`, { pin });
+      setHasPin(r.data?.has_shopfloor_pin !== false);
+      clear();
+      toast.success(r.data?.message || "Atölye PIN kaydedildi.");
+      if (reload) reload();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "PIN kaydedilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    if (!canEdit || !empId || busy) return;
+    if (!window.confirm("Atölye PIN kaldırılsın mı?")) return;
+    setBusy(true);
+    try {
+      const r = await axios.delete(`${API_URL}/personnel/employees/${empId}/shopfloor-pin`);
+      setHasPin(Boolean(r.data?.has_shopfloor_pin));
+      clear();
+      toast.success(r.data?.message || "Atölye PIN kaldırıldı.");
+      if (reload) reload();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "PIN kaldırılamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-3 bg-white border border-slate-200 rounded-xl p-3 space-y-2" data-testid="emp-shopfloor-pin">
+      <div className="font-bold text-slate-800">Atölye PIN</div>
+      <div>
+        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${hasPin ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`} data-testid="emp-shopfloor-pin-badge">
+          {hasPin ? "Tanımlı" : "Tanımsız"}
+        </span>
+      </div>
+      {canEdit ? (
+        <div className="space-y-2">
+          <div>
+            <label className="block font-semibold mb-1">Yeni PIN</label>
+            <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value)} className="w-full border rounded-lg p-2" data-testid="emp-shopfloor-pin-new" />
+          </div>
+          <div>
+            <label className="block font-semibold mb-1">Yeni PIN (tekrar)</label>
+            <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={confirm} onChange={(e) => setConfirm(e.target.value)} className="w-full border rounded-lg p-2" data-testid="emp-shopfloor-pin-confirm" />
+          </div>
+          <div className="flex gap-2">
+            <button type="button" disabled={busy} onClick={save} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold" data-testid="emp-shopfloor-pin-save">PIN&apos;i değiştir</button>
+            <button type="button" disabled={busy} onClick={remove} className="px-3 py-2 border border-rose-200 text-rose-700 rounded-lg font-semibold" data-testid="emp-shopfloor-pin-remove">PIN&apos;i kaldır</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Ödemeler", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem", KeyRound]];
@@ -164,6 +247,7 @@ const UserTab = ({ card, reload, onResetData }) => {
         >
           <RotateCcw className="w-3.5 h-3.5" /> Personel verilerini sıfırla
         </button>
+        <ShopfloorPinFields card={card} canEdit={canEditShopfloorPin(me)} reload={reload} />
       </div>
     );
   }
@@ -189,6 +273,7 @@ const UserTab = ({ card, reload, onResetData }) => {
       >
         <RotateCcw className="w-3.5 h-3.5" /> Personel verilerini sıfırla
       </button>
+      <ShopfloorPinFields card={card} canEdit={canEditShopfloorPin(me)} reload={reload} />
     </form>
   );
 };

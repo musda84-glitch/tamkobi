@@ -7,6 +7,24 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { groupMenuItems } from "../navGroups";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
+function stationChoices(stationsRaw, parksRaw) {
+  const parks = Array.isArray(parksRaw) ? parksRaw : [];
+  const parkNames = new Set(parks.map((park) => String(park?.name || park || "").trim().toLocaleLowerCase("tr")).filter(Boolean));
+  const list = Array.isArray(stationsRaw) ? stationsRaw : (Array.isArray(stationsRaw?.stations) ? stationsRaw.stations : []);
+  const out = [];
+  const seen = new Set();
+  list.forEach((item) => {
+    const name = String(typeof item === "string" ? item : (item?.name || item?.station || "")).trim();
+    if (!name) return;
+    const key = name.toLocaleLowerCase("tr");
+    if (seen.has(key)) return;
+    seen.add(key);
+    const park = typeof item === "object" && item ? String(item.park || item.park_name || "").trim() : "";
+    out.push({ name, park: park || (parkNames.has(key) ? "Parkur" : "") });
+  });
+  return out;
+}
+
 const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle", delete: "Sil" };
 const LEVEL_CLS = {
   none: "bg-slate-100 text-slate-500",
@@ -24,15 +42,24 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
   const [pwd, setPwd] = useState("");
   const [companiesFor, setCompaniesFor] = useState(null);
   const [editUser, setEditUser] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", role: "sales", employee_id: "" });
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", role: "sales", employee_id: "", atolye: false, shopfloor_stations: [], linkedEmployee: false });
   const [employees, setEmployees] = useState([]);
+  const [stations, setStations] = useState([]);
   const assignable = Array.isArray(data?.assignable_companies) ? data.assignable_companies : [];
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) return undefined;
+    let cancelled = false;
     axios.get(`${API_URL}/personnel/employees`, { params: { company_id: companyId } })
-      .then((r) => setEmployees(Array.isArray(r.data) ? r.data : (r.data?.items || [])))
-      .catch(() => setEmployees([]));
+      .then((r) => { if (!cancelled) setEmployees(Array.isArray(r.data) ? r.data : (r.data?.items || [])); })
+      .catch(() => { if (!cancelled) setEmployees([]); });
+    Promise.all([
+      axios.get(`${API_URL}/production/work-orders/stations`, { params: { company_id: companyId } }).catch(() => ({ data: [] })),
+      axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
+    ]).then(([st, parks]) => {
+      if (!cancelled) setStations(stationChoices(st.data, parks.data?.parks));
+    });
+    return () => { cancelled = true; };
   }, [companyId]);
 
   const openEdit = (u) => {
@@ -42,12 +69,38 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
       email: u.email || "",
       phone: u.phone || "",
       role: u.role || "sales",
-      employee_id: u.employee_id || "",
+      employee_id: u.account_type === "atolye" ? "" : (u.employee_id || ""),
+      atolye: u.account_type === "atolye",
+      shopfloor_stations: Array.isArray(u.shopfloor_stations) ? u.shopfloor_stations : [],
+      linkedEmployee: Boolean(u.employee_id),
+    });
+  };
+  const toggleAtolye = (on) => {
+    setEditForm((form) => ({
+      ...form,
+      atolye: on,
+      employee_id: on ? "" : form.employee_id,
+      shopfloor_stations: on ? form.shopfloor_stations : [],
+    }));
+  };
+  const toggleStation = (name) => {
+    setEditForm((form) => {
+      const has = (form.shopfloor_stations || []).includes(name);
+      return {
+        ...form,
+        shopfloor_stations: has
+          ? form.shopfloor_stations.filter((item) => item !== name)
+          : [...(form.shopfloor_stations || []), name],
+      };
     });
   };
   const saveEdit = async (e) => {
     e.preventDefault();
     if (!editUser) return;
+    if (editForm.atolye && !(editForm.shopfloor_stations || []).length) {
+      toast.error("Atölye hesabı için en az bir istasyon seçin.");
+      return;
+    }
     setBusy(true);
     try {
       await axios.put(`${API_URL}/users/${editUser.id}`, {
@@ -55,8 +108,13 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
         email: editForm.email,
         phone: editForm.phone,
         role: editForm.role,
-        employee_id: editForm.employee_id || null,
+        employee_id: editForm.atolye ? null : (editForm.employee_id || null),
         company_id: companyId,
+      });
+      await axios.put(`${API_URL}/users/${editUser.id}/shopfloor-account`, {
+        company_id: companyId,
+        account_type: editForm.atolye ? "atolye" : "standard",
+        shopfloor_stations: editForm.atolye ? editForm.shopfloor_stations : [],
       });
       toast.success("Kullanıcı güncellendi.");
       setEditUser(null);
@@ -198,7 +256,7 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
           {data.users.map((u) => (
             <tr key={u.id} data-testid={`user-row-${u.email}`}>
               <td className="py-2 font-mono text-[11px] font-semibold text-slate-700" data-testid={`user-number-${u.email}`}>{u.user_number || "—"}</td>
-              <td className="py-2"><div className="font-semibold text-slate-900">{u.name}</div><div className="text-slate-500">{u.email}</div></td>
+              <td className="py-2"><div className="font-semibold text-slate-900">{u.name}{u.account_type === "atolye" ? <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 text-[10px] font-bold" data-testid={`user-atolye-${u.email}`}>Atölye</span> : null}</div><div className="text-slate-500">{u.email}</div></td>
               <td className="py-2 font-mono text-[11px] text-slate-600" data-testid={`user-phone-${u.email}`}>{u.phone || "—"}</td>
               <td className="py-2" data-testid={`user-emp-${u.email}`}>
                 {u.employee_name
@@ -261,13 +319,32 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
             <div><label className="block font-semibold mb-1">Rol</label><select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="user-edit-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
             <div>
               <label className="block font-semibold mb-1">Personel eşlemesi</label>
-              <select value={editForm.employee_id} onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="user-edit-employee">
+              <select value={editForm.atolye ? "" : editForm.employee_id} disabled={!!editForm.atolye} onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })} className="w-full border rounded-lg p-2 bg-white disabled:bg-slate-100" data-testid="user-edit-employee">
                 <option value="">— Bağlı değil —</option>
                 {employees.map((emp) => (
                   <option key={emp.id || emp._id} value={emp.id || emp._id}>{emp.full_name || emp.name || emp.id}</option>
                 ))}
               </select>
             </div>
+            <label className="flex items-center gap-2 font-semibold" data-testid="user-edit-atolye-wrap">
+              <input type="checkbox" checked={!!editForm.atolye} onChange={(e) => toggleAtolye(e.target.checked)} data-testid="user-edit-atolye" />
+              Atölye kullanıcısı
+            </label>
+            {editForm.atolye && editForm.linkedEmployee ? (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5" data-testid="user-edit-atolye-employee-warn">Atölye hesabı personel kartına bağlı kullanıcıya açılamaz. Kayıtta personel eşlemesi kaldırılır.</p>
+            ) : null}
+            {editForm.atolye ? (
+              <div className="space-y-1" data-testid="user-edit-stations">
+                <div className="font-semibold">İstasyonlar</div>
+                {stations.length === 0 ? <p className="text-slate-400">İstasyon bulunamadı.</p> : stations.map((st) => (
+                  <label key={st.name} className="flex items-center gap-2" data-testid={`user-edit-station-${st.name}`}>
+                    <input type="checkbox" checked={(editForm.shopfloor_stations || []).includes(st.name)} onChange={() => toggleStation(st.name)} />
+                    <span>{st.name}</span>
+                    {st.park ? <span className="text-[10px] text-slate-500" data-testid={`user-edit-station-park-${st.name}`}>{st.park}</span> : null}
+                  </label>
+                ))}
+              </div>
+            ) : null}
             <div className="flex justify-end gap-2 pt-1">
               <button type="button" onClick={() => setEditUser(null)} className="px-3 py-2 border rounded-lg font-semibold">İptal</button>
               <button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="user-edit-save">

@@ -288,4 +288,5 @@ async def put_shopfloor_account(
         "user_id": user_id,
         "account_type": account_type,
         "shopfloor_stations": canonical,
+        "has_shopfloor_pin": bool(target.get("shopfloor_pin_hash")),
     }

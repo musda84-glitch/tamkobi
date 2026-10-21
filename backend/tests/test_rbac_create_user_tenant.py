@@ -50,6 +50,7 @@ _RESPONSE_KEYS = {
     "created_at",
     "role_name",
     "message",
+    "has_shopfloor_pin",
 }
 
 
@@ -197,6 +198,7 @@ def _assert_response(out, *, email, name, company_id, employee_id):
     assert out["user_number"].startswith("U-")
     assert out["created_at"]
     assert out["message"] == f"{name} eklendi. {email} ile giriş yapabilir."
+    assert out["has_shopfloor_pin"] is False
 
 
 def test_other_company_employee_does_not_create_user(monkeypatch):

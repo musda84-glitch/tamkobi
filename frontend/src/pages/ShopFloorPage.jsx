@@ -3,13 +3,15 @@ import axios from "axios";
 import { toast } from "sonner";
 import { useMesaimGate } from "../context/MesaimGateContext";
 import { bindMesaimLockedInterceptor } from "../utils/mesaimLockClient";
-import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText, Trash2, ArrowDownUp } from "lucide-react";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, X, Loader2, FileText, Trash2, ArrowDownUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan, workOrderQtyLabel } from "../utils/shopFloorActions";
+import { operatorStationLock, operatorStationLockMessage, pausedForLabel, shopFloorCardActions, shopFloorCardBorder, shopFloorPausePhaseLabel, sortWorkOrdersByStatus, workOrderFinishPlan, workOrderQtyLabel } from "../utils/shopFloorActions";
+import ShopfloorPinPad from "../components/ShopfloorPinPad";
+import { clearOperatorSession, isAtolyeAccount, isOperatorSessionError, isSessionExpired, isValidPin, loadOperatorSession, operatorHeaders, saveOperatorSession, unlockErrorMessage } from "../utils/shopfloorOperatorSession";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { formatTrQty } from "../utils/money";
@@ -43,23 +45,24 @@ function WoStepBar({ w }) {
 }
 
 export default function ShopFloorPage() {
-  const { activeCompany } = useAuth();
+  const { activeCompany, user } = useAuth();
+  const atolye = isAtolyeAccount(user);
+  const userId = String(user?.id || user?._id || "");
   const { refresh: refreshMesaimGate } = useMesaimGate();
   const companyId = activeCompanyId(activeCompany);
   useEffect(() => bindMesaimLockedInterceptor(axios, refreshMesaimGate), [refreshMesaimGate]);
   const [wos, setWos] = useState([]);
   /** İstasyon filtresinden bağımsız in_progress listesi — operatör kilit kontrolü için */
   const [lockWos, setLockWos] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [operators, setOperators] = useState([]);
   const [stations, setStations] = useState([]);
   const [operator, setOperator] = useState("");
-  const [operatorPickerOpen, setOperatorPickerOpen] = useState(false);
-  const [pickedEmp, setPickedEmp] = useState(null);
+  const [operatorSession, setOperatorSession] = useState(null);
+  const [linkedName, setLinkedName] = useState("");
   const [station, setStation] = useState(() => localStorage.getItem("nx_station") || "");
   const [groupSameStation, setGroupSameStation] = useState(() => localStorage.getItem("nx_group_same_station") === "1");
   const [groupBusy, setGroupBusy] = useState(false);
-  const [pendingEmp, setPendingEmp] = useState(null);
-  const [pin, setPin] = useState("");
+  const [pendingOp, setPendingOp] = useState(null);
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockErr, setUnlockErr] = useState("");
   const [kiosk, setKiosk] = useState(false);
@@ -79,6 +82,10 @@ export default function ShopFloorPage() {
 
   const loadPausePolicy = useCallback(async (opName) => {
     if (!opName) {
+      if (!atolye) {
+        setPausePolicy({ allowed: true, phase: "mesai", reason: null, deadline: null });
+        return;
+      }
       setPausePolicy({ allowed: false, phase: "outside", reason: "Önce operatör seçin.", deadline: null });
       return;
     }
@@ -90,7 +97,7 @@ export default function ShopFloorPage() {
     } catch {
       setPausePolicy({ allowed: true, phase: "mesai", reason: null, deadline: null });
     }
-  }, [companyId]);
+  }, [companyId, atolye]);
 
   const load = useCallback(async () => {
     if (!companyId) {
@@ -101,7 +108,7 @@ export default function ShopFloorPage() {
     try {
       const bust = `_=${Date.now()}`;
       const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
-      const [w, lockRows, e, s, parks, me] = await Promise.all([
+      const [w, lockRows, ops, s, parks, me] = await Promise.all([
         axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}&${bust}`, {
           headers,
         }),
@@ -109,7 +116,9 @@ export default function ShopFloorPage() {
         station
           ? axios.get(`${API_URL}/production/work-orders?company_id=${companyId}&status=in_progress&${bust}`, { headers }).catch(() => ({ data: [] }))
           : Promise.resolve(null),
-        axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`).catch(() => ({ data: [] })),
+        atolye
+          ? axios.get(`${API_URL}/production/work-orders/shopfloor-operators`, { params: { company_id: companyId } }).catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
         axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
         axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
@@ -117,14 +126,15 @@ export default function ShopFloorPage() {
       const list = Array.isArray(w.data) ? w.data : [];
       setWos(list);
       setLockWos(station ? (Array.isArray(lockRows?.data) ? lockRows.data : []) : list);
-      setEmployees(shopFloorOperators(e.data || []));
+      setOperators(Array.isArray(ops?.data) ? ops.data : []);
       setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
+      setLinkedName(String(me.data?.employee?.full_name || "").trim());
       setLoadError("");
     } catch {
       setLoadError("Yetkiniz yok / yüklenemedi");
     }
-  }, [companyId, station]);
+  }, [companyId, station, atolye]);
   // Mobil bitişin tablete yansıması: 5 sn poll + sekme/focus'ta anında yenile
   useLivePoll(load, { intervalMs: 5000 });
   useEffect(() => {
@@ -151,62 +161,97 @@ export default function ShopFloorPage() {
     return () => clearInterval(t);
   }, []);
 
-  const requestOperator = (name) => {
-    if (!name) { setOperator(""); setPendingEmp(null); setPin(""); setUnlockErr(""); return; }
-    if (name === operator) return;
-    const emp = employees.find((e) => e.full_name === name);
-    if (!emp) return;
-    setPendingEmp(emp); setPin(""); setUnlockErr("");
-  };
-  const onOperatorPick = (name) => {
-    if (operator && name === operator) {
-      setOperatorPickerOpen(false);
-      setPickedEmp(null);
+  const ownName = linkedName || String(user?.name || "").trim();
+  useEffect(() => {
+    if (!atolye) {
+      setOperator(ownName);
+      setOperatorSession(null);
+      setPendingOp(null);
       return;
     }
-    if (!name) {
-      setPickedEmp(null);
-      setOperatorPickerOpen(false);
-      if (!operator) requestOperator("");
+    if (!companyId || !userId) return;
+    const saved = loadOperatorSession(companyId, userId);
+    if (!saved || isSessionExpired(saved, new Date())) {
+      if (saved) {
+        clearOperatorSession(companyId, userId);
+        toast.error("Operatör oturumu sona erdi, yeniden PIN girin.");
+      }
+      setOperatorSession(null);
+      setOperator("");
       return;
     }
-    const emp = employees.find((e) => e.full_name === name);
-    if (!emp) return;
-    setPickedEmp(emp);
-    requestOperator(name);
-  };
-  const openPinModal = () => {
-    if (!pickedEmp) return;
-    requestOperator(pickedEmp.full_name);
+    setOperatorSession(saved);
+    setOperator(saved.operator_name || "");
+  }, [atolye, companyId, userId, ownName]);
+  useEffect(() => {
+    if (!atolye || !operatorSession) return;
+    if (!isSessionExpired(operatorSession, now)) return;
+    clearOperatorSession(companyId, userId);
+    setOperatorSession(null);
+    setOperator("");
+    setPendingOp(null);
+    setUnlockErr("");
+    toast.error("Operatör oturumu sona erdi, yeniden PIN girin.");
+  }, [now, atolye, operatorSession, companyId, userId]);
+
+  const endOperatorSession = () => {
+    clearOperatorSession(companyId, userId);
+    setOperatorSession(null);
+    setOperator("");
+    setPendingOp(null);
+    setUnlockErr("");
+    toast.error("Operatör oturumu sona erdi, yeniden PIN girin.");
   };
   const logoutOperator = () => {
-    setOperator("");
-    setPendingEmp(null);
-    setPin("");
+    if (atolye) clearOperatorSession(companyId, userId);
+    setOperatorSession(null);
+    setOperator(atolye ? "" : ownName);
+    setPendingOp(null);
     setUnlockErr("");
-    setPickedEmp(null);
-    setOperatorPickerOpen(false);
   };
   const cancelUnlock = () => {
-    setPendingEmp(null); setPin(""); setUnlockErr("");
-    setOperatorPickerOpen(false);
-    if (operator) setPickedEmp(null);
+    setPendingOp(null);
+    setUnlockErr("");
   };
-  const unlockOperator = async (e) => {
-    e.preventDefault();
-    if (!pendingEmp) return;
-    setUnlockBusy(true); setUnlockErr("");
+  const submitPin = async (pin) => {
+    if (!atolye || !pendingOp || unlockBusy) return;
+    if (!isValidPin(pin)) {
+      setUnlockErr("PIN 4 haneli olmalı.");
+      return;
+    }
+    setUnlockBusy(true);
+    setUnlockErr("");
     try {
-      const r = await axios.post(`${API_URL}/production/work-orders/shopfloor-unlock`, { company_id: companyId, employee_id: pendingEmp.id, password: pin });
-      setOperator(r.data.operator_name); setPendingEmp(null); setPin("");
-      setPickedEmp(null); setOperatorPickerOpen(false);
-      toast.success(`${r.data.operator_name} olarak giriş yapıldı.`);
-    } catch (err) { const msg = err.response?.data?.detail || "Şifre doğrulanamadı."; setUnlockErr(msg); toast.error(msg); setPin(""); }
-    finally { setUnlockBusy(false); }
+      const r = await axios.post(`${API_URL}/production/work-orders/shopfloor-unlock`, {
+        company_id: companyId,
+        operator_type: pendingOp.operator_type,
+        operator_id: pendingOp.id,
+        pin,
+      });
+      const session = {
+        token: r.data?.operator_token || "",
+        operator_name: r.data?.operator_name || pendingOp.name || "",
+        operator_type: r.data?.operator_type || pendingOp.operator_type || "",
+        operator_id: r.data?.operator_id || pendingOp.id,
+        expires_at: r.data?.expires_at || "",
+      };
+      saveOperatorSession(companyId, userId, session);
+      setOperatorSession(session);
+      setOperator(session.operator_name);
+      setPendingOp(null);
+      toast.success(`${session.operator_name} olarak giriş yapıldı.`);
+    } catch (err) {
+      const msg = unlockErrorMessage(err);
+      setUnlockErr(msg);
+      toast.error(msg);
+    } finally {
+      setUnlockBusy(false);
+    }
   };
 
   const act = async (w, action, body) => {
-    if (!operator) { toast.error("Önce operatör (personel) seçin."); return; }
+    if (atolye && !operator) { toast.error("Önce operatör (personel) seçin."); return; }
+    if (atolye && isSessionExpired(operatorSession, new Date())) { endOperatorSession(); return; }
     const id = woId(w);
     if (!id) { toast.error("İş emri kimliği bulunamadı."); return; }
     if (action === "start") {
@@ -217,7 +262,10 @@ export default function ShopFloorPage() {
       }
     }
     try {
-      const r = await axios.post(`${API_URL}/production/work-orders/${id}/${action}`, { operator_name: operator, ...(body || {}) });
+      const payload = { operator_name: operator, ...(body || {}) };
+      const r = atolye
+        ? await axios.post(`${API_URL}/production/work-orders/${id}/${action}`, payload, { headers: operatorHeaders(operatorSession) })
+        : await axios.post(`${API_URL}/production/work-orders/${id}/${action}`, payload);
       toast.success(r.data.message);
       setFinishing(null);
       // Anında yansıt (mobil/diğer sekme ile yarışmadan önce)
@@ -236,7 +284,10 @@ export default function ShopFloorPage() {
         });
       }
       load();
-    } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); }
+    } catch (err) {
+      if (atolye && isOperatorSessionError(err)) { endOperatorSession(); return; }
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    }
   };
   const openFinish = (w) => {
     const plan = workOrderFinishPlan(w);
@@ -357,7 +408,7 @@ export default function ShopFloorPage() {
       toast.message("Bu iş emri için silme talebi zaten yönetici onayında.");
       return;
     }
-    if (!operator) {
+    if (atolye && !operator) {
       toast.error("Önce operatör seçin.");
       return;
     }
@@ -368,17 +419,23 @@ export default function ShopFloorPage() {
   const confirmTrashRequest = async (e) => {
     e?.preventDefault?.();
     if (!trashTarget?.id) return;
+    if (atolye && isSessionExpired(operatorSession, new Date())) { endOperatorSession(); cancelTrashRequest(); return; }
     setTrashReqBusy(true);
     setTrashReqErr("");
     try {
-      const r = await axios.post(`${API_URL}/production/work-orders/${woId(trashTarget)}/trash-request`, {
-        company_id: companyId,
-        operator_name: operator,
-      });
+      const payload = { company_id: companyId, operator_name: operator };
+      const r = atolye
+        ? await axios.post(`${API_URL}/production/work-orders/${woId(trashTarget)}/trash-request`, payload, { headers: operatorHeaders(operatorSession) })
+        : await axios.post(`${API_URL}/production/work-orders/${woId(trashTarget)}/trash-request`, payload);
       toast.success(r.data?.message || "Silme talebi yöneticiye gönderildi.");
       cancelTrashRequest();
       load();
     } catch (err) {
+      if (atolye && isOperatorSessionError(err)) {
+        endOperatorSession();
+        cancelTrashRequest();
+        return;
+      }
       const msg = err.response?.data?.detail || "Talep gönderilemedi.";
       setTrashReqErr(msg);
       toast.error(msg);
@@ -395,7 +452,7 @@ export default function ShopFloorPage() {
   const Card = ({ w }) => {
     const [l, c] = STATUS[w.status] || STATUS.waiting;
     const actions = shopFloorCardActions(w.status, pauseAllowed);
-    const needsOperator = !operator;
+    const needsOperator = atolye && !operator;
     const stationLock = (actions.start || actions.resume)
       ? operatorStationLock(lockWos, operator, w.station, w.id || w._id)
       : null;
@@ -626,63 +683,66 @@ export default function ShopFloorPage() {
       </div>
     </div>); };
 
-  const operatorSelectValue = pendingEmp ? pendingEmp.full_name : (operator || pickedEmp?.full_name || "");
-  const operatorSelect = (
-    <select value={operatorSelectValue} onChange={(e) => onOperatorPick(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold min-w-[220px]" data-testid="shopfloor-operator"><option value="">Operatör seçin…</option>{employees.map((e) => <option key={e.id} value={e.full_name}>{e.full_name} — {e.position}</option>)}</select>
-  );
   const statClass = (on, tone) => (on ? tone : "border-slate-200 bg-white");
+  const stationBadges = Array.isArray(user?.shopfloor_stations) ? user.shopfloor_stations.filter(Boolean) : [];
 
   return (
     <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto p-4 sm:p-6" : "space-y-3"} data-testid="shopfloor-page">
+      {atolye ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" data-testid="shopfloor-atolye-banner">
+          <span className="font-semibold text-slate-900" data-testid="shopfloor-atolye-account">{user?.name || "Atölye"} · Atölye kullanıcısı</span>
+          {stationBadges.map((name) => (
+            <span key={name} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700" data-testid={`shopfloor-station-badge-${name}`}>{name}</span>
+          ))}
+        </div>
+      ) : null}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          {operator && !operatorPickerOpen ? (
+          {(atolye ? !!operator : true) ? (
             <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800" data-testid="shopfloor-operator-chip">
               <User className="w-4 h-4 shrink-0" />
-              <span>{operator}</span>
-              <span aria-hidden="true">·</span>
-              <button type="button" onClick={() => setOperatorPickerOpen(true)} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-change">değiştir</button>
-              <span aria-hidden="true">·</span>
-              <button type="button" onClick={logoutOperator} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-logout">Çıkış</button>
+              {atolye ? (
+                <>
+                  <span>{operator}</span>
+                  <span aria-hidden="true">·</span>
+                  <button type="button" onClick={logoutOperator} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-change">değiştir</button>
+                  <span aria-hidden="true">·</span>
+                  <button type="button" onClick={logoutOperator} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-logout">Çıkış</button>
+                </>
+              ) : (
+                <span>Operatör: {operator || "—"} · Kendi oturumunuz — seçim gerekmez</span>
+              )}
             </span>
-          ) : null}
-          {operator && operatorPickerOpen ? (
-            <div className="flex items-center gap-2">
-              {operatorSelect}
-              <button type="button" onClick={cancelUnlock} className="px-3 py-2.5 rounded-xl border-2 border-slate-300 bg-white font-semibold text-slate-700" data-testid="shopfloor-operator-change-cancel">Vazgeç</button>
-            </div>
           ) : null}
           <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
           <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
           <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
         </div>
       </div>
-      {!operator && (
-        <div className="flex flex-col gap-3 rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5" data-testid="shopfloor-no-operator">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white">
-              <User className="h-5 w-5" />
+      {atolye && !operator && (
+        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-4 shadow-sm sm:px-6 sm:py-5" data-testid="shopfloor-no-operator">
+          <h2 className="text-lg font-bold text-amber-950">Operatör seçin</h2>
+          <p className="text-sm text-amber-800 mb-3">Başla / Devam / Bitir operatör PIN girişinden sonra açılır.</p>
+          {operators.length === 0 ? (
+            <p className="text-sm font-semibold text-amber-900" data-testid="shopfloor-operators-empty">PIN tanımlı ve mesaiye giriş yapmış operatör yok</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {operators.map((op) => (
+                <button
+                  key={`${op.operator_type || "op"}-${op.id}`}
+                  type="button"
+                  onClick={() => { setPendingOp(op); setUnlockErr(""); }}
+                  className="text-left rounded-xl border-2 border-white bg-white px-3 py-3 shadow-sm hover:border-orange-300"
+                  data-testid={`shopfloor-operator-card-${op.id}`}
+                >
+                  <div className="font-bold text-slate-900">{op.name}</div>
+                  {op.station ? <div className="text-xs text-slate-500 mt-0.5">{op.station}</div> : null}
+                  <div className="text-[11px] font-semibold text-emerald-700 mt-1">PIN tanımlı</div>
+                </button>
+              ))}
             </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-bold text-amber-950">Operatör seç ve PIN gir</h2>
-              <p className="text-sm text-amber-800">Başla / Devam / Bitir operatör girişinden sonra açılır.</p>
-            </div>
-          </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-            {operatorSelect}
-            <button
-              type="button"
-              onClick={openPinModal}
-              disabled={!pickedEmp}
-              title={pickedEmp ? undefined : "Önce operatör seçin"}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 font-bold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-300 disabled:hover:bg-orange-300"
-              data-testid="shopfloor-pin-open"
-            >
-              <KeyRound className="h-4 w-4" />
-              PIN gir
-            </button>
-          </div>
+          )}
         </div>
       )}
       {operator && !pauseAllowed && (
@@ -840,27 +900,18 @@ export default function ShopFloorPage() {
         </div>
         );
       })()}
-      {pendingEmp && (
+      {atolye && pendingOp && (
         <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(cancelUnlock)}>
-          <form onSubmit={unlockOperator} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="shopfloor-pin-modal">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2"><KeyRound className="w-5 h-5 text-emerald-600" /> Operatör şifresi</h3>
-                <p className="text-sm text-slate-500 mt-1">{pendingEmp.full_name} — {pendingEmp.position}</p>
-                <p className="text-[11px] text-amber-700 mt-1">Mesaim girişi yapılmamış personel operatör olamaz.</p>
-              </div>
-              <button type="button" onClick={cancelUnlock} className="text-slate-400 hover:text-slate-700" data-testid="shopfloor-pin-cancel"><X className="w-5 h-5" /></button>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">Şifre</label>
-              <input type="password" autoFocus value={pin} onChange={(e) => setPin(e.target.value)} className="w-full border-2 rounded-xl p-3 text-lg font-semibold tracking-widest" required minLength={4} data-testid="shopfloor-pin-input" />
-            </div>
-            {unlockErr && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="shopfloor-pin-error">{unlockErr}</div>}
-            <div className="flex gap-2">
-              <button type="button" onClick={cancelUnlock} className="flex-1 py-3 border-2 rounded-xl font-semibold">Vazgeç</button>
-              <button type="submit" disabled={unlockBusy || pin.length < 4} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="shopfloor-pin-submit">{unlockBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} Giriş</button>
-            </div>
-          </form>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6" data-testid="shopfloor-pin-modal">
+            <ShopfloorPinPad
+              operatorName={pendingOp.name}
+              station={pendingOp.station}
+              error={unlockErr}
+              busy={unlockBusy}
+              onSubmit={submitPin}
+              onCancel={cancelUnlock}
+            />
+          </div>
         </div>
       )}
       {trashTarget && (

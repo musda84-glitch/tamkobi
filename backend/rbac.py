@@ -767,6 +767,12 @@ def _clean(d: dict) -> dict:
     d.pop("password_hash", None)
     if "cashier_pin_hash" in d:
         d["has_cashier_pin"] = bool(d.pop("cashier_pin_hash"))
+    # 4 haneli PIN hash'i yanıtta kalamaz; düz metin ve sürüm de dönmez.
+    d["has_shopfloor_pin"] = bool(d.get("shopfloor_pin_hash"))
+    d.pop("shopfloor_pin_hash", None)
+    d.pop("punch_pin_hash", None)
+    d.pop("shopfloor_pin", None)
+    d.pop("shopfloor_pin_ver", None)
     return d
 
 
