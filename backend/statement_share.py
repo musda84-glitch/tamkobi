@@ -88,6 +88,23 @@ def _cheque_statement_row(ch: dict) -> dict:
     }
 
 
+def partner_statement_payment(ptx: dict) -> dict:
+    """Ortak cari hareketini ekstre tahsilat/ödeme satırına çevirir.
+
+    Yön, cari özetindeki kuralın aynısı: withdrawal (masraf değil) tahsilat,
+    diğerleri ödeme. Etiket ``Ortaklar Hesabı · <Ortak adı>``.
+    """
+    src = dict(ptx or {})
+    is_out = src.get("type") != "withdrawal" or src.get("expense_id")
+    name = str(src.get("partner_name") or "").strip()
+    src["type"] = "outflow" if is_out else "inflow"
+    src["category"] = "Cari Ödeme" if is_out else "Cari Tahsilat"
+    src["account_name"] = "Ortaklar Hesabı" if not name else f"Ortaklar Hesabı · {name}"
+    src["partner_name"] = name
+    src["source"] = "partner"
+    return src
+
+
 def statement_rows(
     invoices: Optional[List[dict]],
     payments: Optional[List[dict]],

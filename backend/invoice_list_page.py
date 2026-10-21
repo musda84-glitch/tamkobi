@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
+import contact_list_page
+
 PAGE_SIZE_DEFAULT = 50
 PAGE_SIZE_MAX = 200
 IDS_CAP = 5000
@@ -270,17 +272,38 @@ def matches_search(inv: dict, q: Any) -> bool:
     return needle in search_blob(inv)
 
 
+def contact_payment_settled(inv: dict) -> bool:
+    """Cari bakiyesi faturayı kapatmışsa true. effective_open yoksa payment_status kalır."""
+    if not inv or "effective_open" not in inv or inv.get("effective_open") is None:
+        return False
+    status = str(inv.get("status") or "")
+    if status in ("draft", "cancelled", "canceled", "void"):
+        return False
+    if inv.get("invoice_type") == "dispatch" or inv.get("e_type") == "e_dispatch":
+        return False
+    try:
+        open_amt = float(inv.get("effective_open"))
+    except (TypeError, ValueError):
+        return False
+    return open_amt <= 0.009
+
+
 def matches_pay(inv: dict, pay: str, *, today: str) -> bool:
     """InvoiceToolbar applyInvoiceFilters ödeme kolu."""
     if pay == "all":
         return True
+    settled = contact_payment_settled(inv)
     if pay == "overdue":
-        if inv.get("payment_status") == "paid":
+        if inv.get("payment_status") == "paid" or settled:
             return False
         due = inv.get("due_date")
         if not js_truthy(due):
             return False
         return str(due) < str(today)
+    if pay == "paid":
+        return inv.get("payment_status") == "paid" or settled
+    if pay == "unpaid" and settled:
+        return False
     current = inv.get("payment_status") or "unpaid"
     return current == pay
 
@@ -383,6 +406,8 @@ def _or_zero(value: Any) -> float:
 
 
 def _pay_rank(inv: dict) -> int:
+    if contact_payment_settled(inv):
+        return PAY_RANK["paid"]
     status = inv.get("payment_status")
     if status in PAY_RANK:
         return PAY_RANK[status]
@@ -592,6 +617,7 @@ async def _load(db, company_id: str, **kwargs) -> List[dict]:
         etype=etype,
     )
     docs = await fetch_invoice_rows(db, company_id, query)
+    await contact_list_page.stamp_invoice_effective_open(db, company_id, docs)
     view_kwargs = dict(kwargs)
     view_kwargs["tab"] = tab
     view_kwargs["etype"] = etype

@@ -6,9 +6,10 @@ import { fmtDate, formatTrAmount } from "../utils/money";
 import { MoneyInput } from "./MoneyInput";
 import { MobileFilterField, MobileFilterSheet, mobileChipClass, mobileChipRowClass, mobileFilterFieldClass } from "./MobileFilterSheet";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
-import { invoicesForDisplay } from "../utils/invoiceStatus";
+import { contactPaymentSettled, invoicesForDisplay } from "../utils/invoiceStatus";
 
-const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { label: "Tarih", value: (r) => fmtDate(r.issue_date) }, { label: "Vade", value: (r) => fmtDate(r.due_date) }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi" }, { key: "gib_status", label: "GİB" }];
+export const invoicePayExportLabel = (r) => ((r?.payment_status === "paid" || contactPaymentSettled(r)) ? "Ödendi" : r?.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi");
+const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { label: "Tarih", value: (r) => fmtDate(r.issue_date) }, { label: "Vade", value: (r) => fmtDate(r.due_date) }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: invoicePayExportLabel }, { key: "gib_status", label: "GİB" }];
 
 export const SORT_OPTIONS = [
   ["date_desc", "Tarih/saat (yeni → eski)"], ["date_asc", "Tarih/saat (eski → yeni)"],
@@ -57,7 +58,10 @@ export const applyInvoiceFilters = (invoices, f) => {
   const source = invoicesForDisplay(invoices, !!f.showCancelled);
   const list = source.filter((inv) => {
     if (q && !`${inv.invoice_number} ${inv.contact_name} ${inv.contact_tax_id || ""} ${inv.notes || ""}`.toLowerCase().includes(q)) return false;
-    if (f.pay === "overdue") { if (inv.payment_status === "paid" || !inv.due_date || inv.due_date >= today) return false; }
+    const settled = contactPaymentSettled(inv);
+    if (f.pay === "overdue") { if (inv.payment_status === "paid" || settled || !inv.due_date || inv.due_date >= today) return false; }
+    else if (f.pay === "paid") { if (!(inv.payment_status === "paid" || settled)) return false; }
+    else if (f.pay === "unpaid") { if (settled || (inv.payment_status || "unpaid") !== "unpaid") return false; }
     else if (f.pay !== "all" && (inv.payment_status || "unpaid") !== f.pay) return false;
     if (f.etype !== "all" && inv.e_type !== f.etype) return false;
     if (f.from && inv.issue_date < f.from) return false;
@@ -79,8 +83,8 @@ export const applyInvoiceFilters = (invoices, f) => {
     number_asc: (a, b) => (a.invoice_number || "").localeCompare(b.invoice_number || ""),
     gib_asc: (a, b) => (a.gib_status || "").localeCompare(b.gib_status || "", "tr"),
     gib_desc: (a, b) => (b.gib_status || "").localeCompare(a.gib_status || "", "tr"),
-    pay_asc: (a, b) => (PAY_RANK[a.payment_status] ?? 0) - (PAY_RANK[b.payment_status] ?? 0),
-    pay_desc: (a, b) => (PAY_RANK[b.payment_status] ?? 0) - (PAY_RANK[a.payment_status] ?? 0),
+    pay_asc: (a, b) => ((contactPaymentSettled(a) ? 2 : PAY_RANK[a.payment_status] ?? 0) - (contactPaymentSettled(b) ? 2 : PAY_RANK[b.payment_status] ?? 0)),
+    pay_desc: (a, b) => ((contactPaymentSettled(b) ? 2 : PAY_RANK[b.payment_status] ?? 0) - (contactPaymentSettled(a) ? 2 : PAY_RANK[a.payment_status] ?? 0)),
   }[f.sort] || (() => 0);
   return [...list].sort(cmp);
 };

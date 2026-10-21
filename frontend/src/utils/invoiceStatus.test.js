@@ -5,6 +5,7 @@ import {
   isApprovingInvoice,
   APPROVING_INVOICE_BADGE,
   invoiceRowActionsDisabled,
+  contactPaymentSettled,
 } from "./invoiceStatus";
 
 test("active invoices stay visible", () => {
@@ -59,4 +60,14 @@ test("approving invoice shows Faturalaştırılıyor badge and disables row acti
   expect(invoiceRowActionsDisabled(approving)).toBe(true);
   expect(invoiceRowActionsDisabled(draft)).toBe(false);
   expect(invoicesForDisplay([approving, draft], false).map((i) => i.invoice_number)).toEqual(["TA-APP", "TA-DR"]);
+});
+
+test("açık kalan 0 iken cari ödemesi faturayı kapatmış sayılır", () => {
+  const closed = { status: "approved", invoice_type: "purchase", payment_status: "unpaid", effective_open: 0, grand_total: 70000 };
+  const open = { status: "approved", invoice_type: "purchase", payment_status: "unpaid", grand_total: 70000 };
+  const draft = { status: "draft", invoice_type: "purchase", payment_status: "unpaid", effective_open: 0 };
+  expect(contactPaymentSettled(closed)).toBe(true);
+  expect(contactPaymentSettled(open)).toBe(false);
+  expect(contactPaymentSettled(draft)).toBe(false);
+  expect(contactPaymentSettled({ ...closed, effective_open: 40000 })).toBe(false);
 });

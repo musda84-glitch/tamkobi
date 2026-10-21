@@ -39,3 +39,21 @@ test("cari satırında Link ve PDF yok; Ekstre kalır", async () => {
   expect(host.querySelector('[data-testid="statement-btn-11111111111"]')).not.toBeNull();
   await act(async () => { root.unmount(); });
 });
+
+test("vadesi geçti rozeti overdue 0 iken çıkmaz", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <ContactRow
+        contact={{ tax_number_or_id: "222", name: "TEKBİR ORMAN", type: "supplier", balance: 0 }}
+        flag={{ overdue_count: 0, overdue_amount: 0, installment_due_count: 0 }}
+        onOpen={() => {}}
+        onMessage={() => {}}
+        onStatement={() => {}}
+        onLocation={() => {}}
+      />,
+    );
+  });
+  expect(host.textContent).not.toContain("Vadesi geçti");
+  await act(async () => { root.unmount(); });
+});

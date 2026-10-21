@@ -48,6 +48,7 @@ import {
   isContactLedgerPay,
 } from "../utils/contactPayMenu";
 import { isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
+import { contactPaymentSettled } from "../utils/invoiceStatus";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { openChequeBalance } from "../utils/chequeBalance";
 import { statusTr, channelTr } from "../utils/labels";
@@ -1020,7 +1021,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" || isDisp ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{isDisp ? <div className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide" data-testid={`detail-inv-dispatch-nobal-${inv.invoice_number}`}>İrsaliye · bakiye dışı{(inv.invoice_ref_number || inv.converted_invoice_number) ? ` · fatura ${inv.invoice_ref_number || inv.converted_invoice_number}` : ""}</div> : inv.status === "draft" ? <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div> : null}</td>,
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
-                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDisp ? "bg-slate-100 text-slate-600" : inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{isDisp ? "Bakiye yok" : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
+                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDisp ? "bg-slate-100 text-slate-600" : (inv.payment_status === "paid" || contactPaymentSettled(inv)) ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{isDisp ? "Bakiye yok" : (inv.payment_status === "paid" || contactPaymentSettled(inv)) ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
                   }; return (
                   <React.Fragment key={inv.id || inv.invoice_number}>
                   <tr className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
@@ -1131,7 +1132,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           )}
           {tab === "payments" && (() => {
-            const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : p.account_name);
+            const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : (isPartnerPay(p) && p.partner_name ? `Ortaklar Hesabı · ${p.partner_name}` : p.account_name));
             const payDesc = (p) => (isContactLedgerPay(p) ? (p.description || p.category) : `${p.category || ""} • ${p.description || ""}`.replace(/^ • | • $/g, ""));
             const payActions = (p, prefix) => (
               <div className="flex flex-wrap justify-end gap-1">

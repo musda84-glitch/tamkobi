@@ -5169,23 +5169,7 @@ async def global_search(q: str, company_id: Optional[str] = None, user: dict = D
 async def contact_flags(company_id: Optional[str] = None, days: int = 7, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    horizon = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
-    flags: Dict[str, Dict[str, Any]] = {}
-    def f(contact_id):
-        return flags.setdefault(contact_id, {"overdue_amount": 0.0, "overdue_count": 0, "installment_due_amount": 0.0, "installment_due_count": 0, "installment_overdue_count": 0})
-    async for i in db.invoices.find({"company_id": cid, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}}, {"contact_id": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1}):
-        due = i.get("due_date") or i.get("issue_date")
-        if i.get("contact_id") and due and due < today:
-            x = f(i["contact_id"]); x["overdue_amount"] = round(x["overdue_amount"] + i.get("grand_total", 0) - i.get("paid_amount", 0), 2); x["overdue_count"] += 1
-    async for it in db.installments.find({"company_id": cid, "status": {"$ne": "paid"}}, {"contact_id": 1, "amount": 1, "paid_amount": 1, "due_date": 1}):
-        if not it.get("contact_id"):
-            continue
-        x = f(it["contact_id"])
-        if it.get("due_date", "") <= horizon:
-            x["installment_due_amount"] = round(x["installment_due_amount"] + it.get("amount", 0) - it.get("paid_amount", 0), 2); x["installment_due_count"] += 1
-        if it.get("due_date", "") < today:
-            x["installment_overdue_count"] += 1
-    return flags
+    return await contact_list_page.compute_flags(db, cid, today=today, days=days)
 
 @api_router.get("/contacts/{contact_id}")
 async def get_contact(contact_id: str, user: dict = Depends(get_current_user)):
@@ -5231,17 +5215,30 @@ async def get_contact_statement(contact_id: str, user: dict = Depends(get_curren
     return {
         "contact": clean_doc(contact),
         "invoices": clean_docs(invoices),
-        "payments": clean_docs(payments)
+        "payments": clean_docs(payments + await _partner_statement_payments(contact_id, cid)),
     }
+
+
+async def _partner_statement_payments(contact_id: str, company_id: str):
+    """Ekstreye ortak cari hareketi. Yalnız bu şirketin satırları."""
+    cid = str(company_id or "").strip()
+    if not cid or not str(contact_id or "").strip():
+        return []
+    rows = await db.partner_transactions.find(
+        {"company_id": cid, "contact_id": contact_id},
+    ).to_list(200)
+    return [statement_share.partner_statement_payment(ptx) for ptx in rows or []]
 
 
 async def _statement_bundle(contact_id: str):
     contact = await db.contacts.find_one({"_id": contact_id})
     if not contact:
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
-    invoices = await db.invoices.find({"contact_id": contact_id}).to_list(200)
-    payments = await db.bank_transactions.find({"contact_id": contact_id}).to_list(200)
+    cid = str(contact.get("company_id") or "").strip()
+    invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id}).to_list(200)
+    payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(200)
     company = await db.companies.find_one({"_id": contact.get("company_id")}) or {}
+    payments = list(payments) + await _partner_statement_payments(contact_id, cid)
     rows = statement_share.statement_rows(invoices, payments)
     return contact, statement_share.public_statement_view(contact, company, rows)
 
@@ -7287,9 +7284,12 @@ async def contact_aging(contact_id: str, user: dict = Depends(get_current_user))
     cid = c["company_id"]
     today = date.fromisoformat(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     rate = float(c.get("late_fee_rate", 0) or 0)
+    raw_invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}}).sort("issue_date", 1).to_list(500)
+    opens = contact_list_page.effective_open_map(raw_invoices, c.get("balance"), balance_known=True)
     rows = []
-    for i in await db.invoices.find({"company_id": cid, "contact_id": contact_id, "payment_status": {"$ne": "paid"}, "status": {"$ne": "cancelled"}}).sort("issue_date", 1).to_list(500):
-        remaining = round(i.get("grand_total", 0) - i.get("paid_amount", 0), 2)
+    for i in raw_invoices:
+        gross = round(i.get("grand_total", 0) - i.get("paid_amount", 0), 2)
+        remaining = opens.get(str(i.get("_id") or ""), gross)
         due = i.get("due_date") or i.get("issue_date")
         overdue = (today - date.fromisoformat(due)).days if due else 0
         fee = round(remaining * rate / 100 / 30 * overdue, 2) if overdue > 0 and rate else 0.0
@@ -7360,6 +7360,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
             "type": "outflow" if is_out else "inflow",
             "category": "Cari Ödeme" if is_out else "Cari Tahsilat",
             "account_name": ptx.get("account_name") or "Ortaklar Hesabı",
+            "partner_name": ptx.get("partner_name") or "",
             "source": "partner",
         })
     # Eski çekler: portföy satırı yoksa Ödemeler'de görünmeleri için sanal satır ekle.
@@ -7436,6 +7437,7 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         contact["balance"] = live_bal
         if bal_meta.get("opening_balance") is not None:
             contact["opening_balance"] = bal_meta["opening_balance"]
+    contact_list_page.apply_effective_open(invoices, contact.get("balance"), balance_known=True)
     projects = await db.projects.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails[:50]] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]

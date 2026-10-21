@@ -10,6 +10,15 @@ function fold(value) {
     .replace(/i̇/g, "i");
 }
 
+/** Cari seviyesindeki ödeme faturayı kapatmışsa true. Alan yoksa payment_status kalır. */
+export function contactPaymentSettled(inv) {
+  if (!inv || inv.effective_open == null || inv.effective_open === "") return false;
+  if (inv.status === "draft" || isCancelledInvoice(inv)) return false;
+  if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") return false;
+  const open = Number(inv.effective_open);
+  return Number.isFinite(open) && open <= 0.009;
+}
+
 export function isCancelledInvoice(inv) {
   if (!inv) return false;
   if (CANCELLED_INVOICE_STATUSES.has(fold(inv.status))) return true;
