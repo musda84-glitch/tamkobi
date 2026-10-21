@@ -231,7 +231,7 @@ export default function VehiclesPage() {
 
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-        <table className="min-w-[720px] w-full text-xs">
+        <table className="min-w-[18rem] w-full text-xs sm:min-w-[40rem]">
           <thead className="bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide">
             <tr>
               <th className="text-left px-3 py-2.5 font-semibold">Plaka</th>
