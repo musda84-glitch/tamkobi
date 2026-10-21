@@ -374,15 +374,24 @@ export function canIssueInvoice(inv) {
   return !isGibIssued(inv);
 }
 
-/** Taslak satış faturası — POST /approve (cari + stok). E-belge ayrı adımdır. */
+/** Taslak satış veya elle girilmiş alış — POST /approve (cari + stok). Gelen e-fatura alış kendi akışında kalır. */
 export function canFaturalastirDraftInvoice(inv) {
   if (!inv) return false;
   if (inv.status === "approving" || inv.status === "cancelling") return false;
   if (inv.status !== "draft") return false;
-  if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
+  if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.e_type === "expense_slip") return false;
   if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") return false;
   return !isGibIssued(inv);
+}
+
+/** Onay penceresi. Satış metni aynı kalır; elle girilmiş alış taslağı ayrı cümle kullanır. */
+export function draftInvoiceApproveConfirmText(inv) {
+  const no = inv?.invoice_number || "Belge";
+  if (inv?.invoice_type === "purchase") {
+    return `${no} alış taslağı onaylansın mı?\nCari bakiyesi ve stok işlenecek.`;
+  }
+  return `${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`;
 }
 
 /** Elektronik Fatura Onayı / send-to-gib: yalnız onaylı (faturalaşmış) belgeler. */
@@ -666,6 +675,26 @@ export const InvoiceContextMenu = (props) => {
             </p>
           )}
         </div>
+      ) : canFaturalastirDraft ? (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-draft-faturalastir">
+          {onEdit && editable && (
+            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
+          )}
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">
+            {isPurchase ? "TASLAĞI ONAYLA" : "TASLAĞI FATURALAŞTIR"}
+          </div>
+          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-faturalastir-note">
+            {isPurchase ? "Cari bakiyesi ve stok işlenir" : FATURALASTIR_CONFIRM_DETAIL}
+          </p>
+          <Item
+            icon={FileText}
+            color="text-emerald-600"
+            label={isPurchase ? "Taslağı Onayla (Cariye İşle)" : "Taslağı Faturalaştır"}
+            sub={isPurchase ? "Cari bakiyesi ve stok işlenir" : "Cari bakiyesi ve stok — e-belge ayrı adım"}
+            onClick={() => (onApproveDraft || onIssue)?.(inv)}
+            testId="ctx-draft-approve"
+          />
+        </div>
       ) : isPurchase ? (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-purchase-actions">
           {onEdit && editable && (
@@ -693,24 +722,6 @@ export const InvoiceContextMenu = (props) => {
           ) : (
             <p className="px-3 pb-2 text-[10px] text-amber-700">İşNet e-İrsaliye yapılandırılmamış veya kapalı.</p>
           )}
-        </div>
-      ) : canFaturalastirDraft ? (
-        <div className="border-b border-slate-100 pb-1" data-testid="ctx-draft-faturalastir">
-          {onEdit && editable && (
-            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
-          )}
-          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">TASLAĞI FATURALAŞTIR</div>
-          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-faturalastir-note">
-            {FATURALASTIR_CONFIRM_DETAIL}
-          </p>
-          <Item
-            icon={FileText}
-            color="text-emerald-600"
-            label="Taslağı Faturalaştır"
-            sub="Cari bakiyesi ve stok — e-belge ayrı adım"
-            onClick={() => (onApproveDraft || onIssue)?.(inv)}
-            testId="ctx-draft-approve"
-          />
         </div>
       ) : showIssueTypes ? (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-issue-types">

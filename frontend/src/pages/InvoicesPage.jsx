@@ -4,7 +4,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, draftInvoiceApproveConfirmText, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
 import { COMMERCIAL_BADGE_CLASS, incomingCommercialStatusLabel } from "../utils/edocInbox";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "../components/IncomingInvoiceFaturalastirButton";
@@ -957,16 +957,25 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editParam]);
 
+  const approvingDraftRef = useRef(new Set());
+  const [approvingDraftId, setApprovingDraftId] = useState(null);
   const handleApproveDraft = async (inv) => {
     if (!inv) return;
-    const no = inv.invoice_number || "Belge";
-    if (!window.confirm(`${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`)) return;
+    const id = inv.id || inv._id;
+    if (!id || approvingDraftRef.current.has(id)) return;
+    if (!window.confirm(draftInvoiceApproveConfirmText(inv))) return;
+    if (approvingDraftRef.current.has(id)) return;
+    approvingDraftRef.current.add(id);
+    setApprovingDraftId(id);
     try {
-      const res = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+      const res = await axios.post(`${API_URL}/invoices/${id}/approve`);
       toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    } finally {
+      approvingDraftRef.current.delete(id);
+      setApprovingDraftId((cur) => (cur === id ? null : cur));
     }
   };
   const handleDeleteInvoice = async (inv) => {
@@ -1167,6 +1176,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
   const handleIssueFromMenu = (inv, eType) => {
+    if (inv?.status === "draft" && canFaturalastirDraftInvoice(inv)) {
+      return handleApproveDraft(inv);
+    }
     if (eType === "e_dispatch" || inv?.invoice_type === "dispatch" || inv?.e_type === "e_dispatch") {
       openDespatchSend(inv);
       return;
@@ -1873,6 +1885,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                         isCancelledInvoice(inv)
                           ? "bg-rose-100 text-rose-800"
+                          : inv.status === "draft"
+                          ? "bg-slate-100 text-slate-600"
                           : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "bg-amber-100 text-amber-800"
                           : inv.payment_status === "paid"
@@ -1883,6 +1897,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       }`} data-testid={`inv-pay-${inv.invoice_number}`}>
                         {isCancelledInvoice(inv)
                           ? "İptal"
+                          : inv.status === "draft"
+                          ? "Taslak"
                           : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "İşlenmedi"
                           : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
@@ -1987,6 +2003,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           <DraftInvoiceFaturalastirButton
                             inv={inv}
                             onApprove={handleApproveDraft}
+                            disabled={approvingDraftId === (inv.id || inv._id)}
                             testId={`draft-faturalastir-btn-${inv.invoice_number}`}
                           />
                         ) : null}

@@ -5,6 +5,7 @@ import {
   canEditInvoice,
   canIssueInvoice,
   canFaturalastirDraftInvoice,
+  draftInvoiceApproveConfirmText,
   canRunInvoiceIssueFlow,
   INVOICE_ISSUE_TYPE_OPTIONS,
   canDownloadGibDocuments,
@@ -271,7 +272,6 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
     expect(canFaturalastirDraftInvoice(draft)).toBe(true);
     expect(canRunInvoiceIssueFlow(draft)).toBe(false);
     expect(canFaturalastirDraftInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
-    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "purchase", e_type: "paper" })).toBe(false);
     expect(canFaturalastirDraftInvoice({
       status: "draft",
       invoice_type: "sales",
@@ -292,6 +292,62 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
     expect(canDeleteInvoice({ status: "approving", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
     expect(canCancelInvoice({ status: "cancelling", invoice_type: "sales", e_type: "e_archive" })).toBe(false);
     expect(canEditInvoice({ status: "cancelling", invoice_type: "sales", e_type: "paper" })).toBe(false);
+  });
+
+  test("manual purchase drafts approve in place; incoming purchases do not", () => {
+    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "purchase", e_type: "paper" })).toBe(true);
+    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "purchase", e_type: "" })).toBe(true);
+    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "purchase" })).toBe(true);
+    expect(canIssueInvoice({ status: "draft", invoice_type: "purchase", e_type: "paper" })).toBe(false);
+    expect(canIssueInvoice({ status: "draft", invoice_type: "purchase", e_type: "" })).toBe(false);
+    expect(canIssueInvoice({ status: "approved", invoice_type: "purchase", e_type: "paper" })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      direction: "incoming",
+      e_type: "paper",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      edoc_id: "edoc-1",
+      e_type: "paper",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      e_type: "e_invoice",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "approving",
+      invoice_type: "purchase",
+      e_type: "paper",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "cancelling",
+      invoice_type: "purchase",
+      e_type: "paper",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      e_type: "expense_slip",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({
+      status: "draft",
+      invoice_type: "dispatch",
+      e_type: "e_dispatch",
+    })).toBe(false);
+    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "sales", e_type: "e_archive" })).toBe(true);
+    expect(canFaturalastirDraftInvoice({ status: "draft", invoice_type: "sales", e_type: "paper" })).toBe(true);
+    expect(draftInvoiceApproveConfirmText({
+      invoice_number: "AL202600000107",
+      invoice_type: "purchase",
+    })).toBe("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi ve stok işlenecek.");
+    expect(draftInvoiceApproveConfirmText({
+      invoice_number: "TA-1",
+      invoice_type: "sales",
+    })).toBe("TA-1 taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.");
   });
 
   test("Faturalaştır type options include GİB and paper", () => {

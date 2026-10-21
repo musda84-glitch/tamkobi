@@ -10539,6 +10539,14 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
             raise HTTPException(status_code=409, detail=_INVOICE_APPROVE_BUSY)
         return await _approve_invoice_already_ok(fresh)
     try:
+        # Elle girilmiş alışta stok bayrağı yoktur. Gelen e-fatura bu dala girmez;
+        # _post_incoming_purchase_invoice kendi girişini yapar.
+        if (
+            inv.get("invoice_type") == "purchase"
+            and inv.get("e_type") not in ("expense_slip", "e_dispatch")
+            and inv.get("stock_effects_applied") is not True
+        ):
+            inv["stock_effects_applied"] = False
         await _apply_invoice_effects(inv)
         issued_notes = ubl_export.strip_issued_invoice_note(inv.get("notes"))
         approved_set = {
