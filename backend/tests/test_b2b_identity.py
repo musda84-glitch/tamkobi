@@ -689,10 +689,61 @@ def test_supplier_contact_password_does_not_accept_link(client, db, monkeypatch)
     assert _names(again.json()) == {"Firma A"}
     held = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {stolen_token}"})
     assert held.status_code == 200, held.text
-    assert "Firma B" not in _names(held.json())
+    assert "Firma A" not in _names(held.json())
     assert not any(
         row.get("contact_id") == "cB" and row.get("accepted_at") for row in db.b2b_link_acceptances.docs
     )
+
+
+def test_contact_password_session_cannot_elevate_into_identity(client, db):
+    """B'nin cari şifresiyle açtığı oturum kurbanın kimliğine bağlanmaz."""
+    import re
+    db.b2b_identities.docs.append(_identity_row())
+    for row in db.contacts.docs:
+        if row["_id"] == "cB":
+            row["b2b_password_hash"] = HASH_B
+    stolen = _login(client, password=PWD_B)
+    assert stolen.status_code == 200, stolen.text
+    assert _names(stolen.json()) == {"Firma B"}
+    stolen_token = stolen.json()["select_token"]
+    session = next(row for row in db.b2b_sessions.docs if row["_id"] == b2b_identity._sha256(stolen_token))
+    assert not session.get("identity_id")
+    assert session.get("contact_ids") == ["cB"]
+    blocked = client.post(
+        "/api/public/b2b/verify-email/start",
+        headers={"Authorization": f"B2bSession {stolen_token}"},
+    )
+    assert blocked.status_code == 403, blocked.text
+    assert not any(row.get("event") == "b2b_verify_email" for row in db.notify_outbox.docs)
+
+    victim = _login(client)
+    assert victim.status_code == 200, victim.text
+    assert _names(victim.json()) == {"Firma A"}
+    started = client.post(
+        "/api/public/b2b/verify-email/start",
+        headers={"Authorization": f"B2bSession {victim.json()['select_token']}"},
+    )
+    assert started.status_code == 200, started.text
+    mail = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_verify_email")
+    raw = re.search(r"verify-email/([A-Za-z0-9_\-]+)", mail["html"]).group(1)
+    confirmed = client.post(f"/api/public/b2b/verify-email/{raw}")
+    assert confirmed.status_code == 200, confirmed.text
+    assert db.b2b_identities.docs[0]["email_verified_at"]
+
+    held = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {stolen_token}"})
+    assert held.status_code == 200, held.text
+    assert _names(held.json()) == {"Firma B"}
+    foreign = client.post(
+        "/api/public/b2b/select-supplier",
+        json={"select_token": stolen_token, "contact_id": "cA"},
+    )
+    assert foreign.status_code == 403
+    own = client.post(
+        "/api/public/b2b/select-supplier",
+        json={"select_token": stolen_token, "contact_id": "cB"},
+    )
+    assert own.status_code == 200, own.text
+    assert own.json()["redirect"] == "/portal/portal-secret-b"
 
 
 def test_accept_link_post_is_atomic_and_expires(client, db):

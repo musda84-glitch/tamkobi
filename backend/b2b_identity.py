@@ -680,7 +680,7 @@ async def authenticate(db, req: dict, request: Request) -> dict:
                 _burn_unknown(password)
             await _reject_credentials(db, ip_id, acct_id, ident, request)
         await _accept_matches(db, ident, meta, identity_password_ok=bool(identity_ok))
-        bound = identity if identity and (identity_ok or not verified) else None
+        bound = identity if identity_ok else None
         return await _finish_login(
             db, request, ident, identity=bound, email=ident, links=links,
             ip_id=ip_id, acct_id=acct_id,
@@ -733,19 +733,51 @@ async def _finish_login(db, request, ident, *, identity, email, links, ip_id, ac
     return body
 
 
-async def select_supplier(db, req: dict) -> dict:
-    token = str((req or {}).get("select_token") or "").strip()
-    contact_id = str((req or {}).get("contact_id") or "").strip()
-    if not contact_id:
-        raise HTTPException(status_code=400, detail="Cari seçilmedi.")
-    row, identity = await _load_session_identity(db, token)
+def _session_has_identity(row: dict) -> bool:
+    return bool(str((row or {}).get("identity_id") or ""))
+
+
+async def _stored_contact_links(db, row: dict) -> list:
+    """Kimliğe bağlı olmayan oturum. Liste kimlikten yeniden hesaplanmaz."""
+    ids = [str(item) for item in (row.get("contact_ids") or []) if item]
+    if not ids:
+        return []
+    # tenant-ok: B2B oturumu yalnız girişte saklanan cari id'lerini okur
+    found = await db.contacts.find({"_id": {"$in": ids}}).to_list(len(ids) + 5)
+    order = {cid: index for index, cid in enumerate(ids)}
+    found = [item for item in found if str(item.get("_id")) in order]
+    found.sort(key=lambda item: order[str(item.get("_id"))])
+    probe = _probe(
+        {"email": _norm_email(row.get("email")), "email_verified_at": None, "password_hash": ""},
+        matched=ids,
+    )
+    links = []
+    for contact in found:
+        built = await _describe_contact(db, probe, contact, set())
+        if built["link"]:
+            links.append(built["link"])
+    return links
+
+
+async def _links_for_session(db, row: dict, identity: dict) -> list:
+    if not _session_has_identity(row):
+        return await _stored_contact_links(db, row)
     links, _meta = await _links_for_identity(db, identity, matched=row.get("contact_ids") or [])
     legacy, _legacy_meta = await _legacy_links(
         db, _norm_email(identity.get("email")), "",
         verified=bool(identity.get("email_verified_at")),
         matched=row.get("contact_ids") or [],
     )
-    links = links + [item for item in legacy if item["contact_id"] not in {row["contact_id"] for row in links}]
+    return links + [item for item in legacy if item["contact_id"] not in {row["contact_id"] for row in links}]
+
+
+async def select_supplier(db, req: dict) -> dict:
+    token = str((req or {}).get("select_token") or "").strip()
+    contact_id = str((req or {}).get("contact_id") or "").strip()
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="Cari seçilmedi.")
+    row, identity = await _load_session_identity(db, token)
+    links = await _links_for_session(db, row, identity)
     chosen = next((item for item in links if str(item.get("contact_id")) == contact_id), None)
     if not chosen:
         raise HTTPException(status_code=403, detail=_NOT_LINKED)
@@ -756,13 +788,7 @@ async def select_supplier(db, req: dict) -> dict:
 async def list_suppliers_for_session(db, request: Request) -> dict:
     token = _session_token(request)
     row, identity = await _load_session_identity(db, token)
-    links, _meta = await _links_for_identity(db, identity, matched=row.get("contact_ids") or [])
-    legacy, _legacy_meta = await _legacy_links(
-        db, _norm_email(identity.get("email")), "",
-        verified=bool(identity.get("email_verified_at")),
-        matched=row.get("contact_ids") or [],
-    )
-    links = links + [item for item in legacy if item["contact_id"] not in {row["contact_id"] for row in links}]
+    links = await _links_for_session(db, row, identity)
     return {"suppliers": [_public_link(item) for item in links]}
 
 
@@ -1088,9 +1114,11 @@ async def accept_supplier_link(db, token: str) -> dict:
 
 async def start_email_verification(db, request: Request, req: Optional[dict] = None) -> dict:
     token = _session_token(request, req)
-    _row, identity = await _load_session_identity(db, token)
+    row, identity = await _load_session_identity(db, token)
+    if not _session_has_identity(row) or not identity.get("_id"):
+        raise HTTPException(status_code=403, detail="Bu oturum kimliğe bağlı değil.")
     email = _norm_email(identity.get("email"))
-    if "@" not in email or not identity.get("_id"):
+    if "@" not in email:
         raise HTTPException(status_code=400, detail="Doğrulanacak e-posta yok.")
     ip_id = _verify_ip_id(applog.client_ip(request), email)
     acct_id = _verify_acct_id(email)
