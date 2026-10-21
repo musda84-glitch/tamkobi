@@ -8414,7 +8414,8 @@ async def create_stock_lot(req: Dict[str, Any], user: dict = Depends(get_current
         notes=req.get("notes"),
     )
     doc = lot.to_mongo()
-    await db.stock_lots.insert_one(doc)
+    doc["company_id"] = product["company_id"]
+    await db.stock_lots.insert_one({**doc, "company_id": product["company_id"]})
     # Lot girişi ürün toplam stoğunu da artırır (seri/lot kartı üzerinden)
     await db.products.update_one(
         {"_id": product["_id"], "company_id": product["company_id"]},
@@ -8436,6 +8437,7 @@ async def create_stock_lot(req: Dict[str, Any], user: dict = Depends(get_current
 @api_router.put("/stock-lots/{lot_id}")
 async def update_stock_lot(lot_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     lot = await tenant_access.get_tenant_doc(db, "stock_lots", lot_id, user, not_found="Lot bulunamadı.")
+    cid = lot["company_id"]
     allowed = {k: v for k, v in req.items() if k in {
         "lot_number", "serial_number", "production_date", "expiry_date", "quantity",
         "warehouse_id", "notes", "is_active",
@@ -8445,19 +8447,26 @@ async def update_stock_lot(lot_id: str, req: Dict[str, Any], user: dict = Depend
         delta = new_qty - float(lot.get("quantity") or 0)
         allowed["quantity"] = new_qty
         if delta:
-            await db.products.update_one({"_id": lot["product_id"]}, {"$inc": {"stock_quantity": delta}})
+            await db.products.update_one(
+                {"_id": lot["product_id"], "company_id": cid},
+                {"$inc": {"stock_quantity": delta}},
+            )
     allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.stock_lots.update_one({"_id": lot_id}, {"$set": allowed})
-    return clean_doc(await db.stock_lots.find_one({"_id": lot_id}))
+    await db.stock_lots.update_one({"_id": lot_id, "company_id": cid}, {"$set": allowed})
+    return clean_doc(await db.stock_lots.find_one({"_id": lot_id, "company_id": cid}))
 
 
 @api_router.delete("/stock-lots/{lot_id}")
 async def delete_stock_lot(lot_id: str, user: dict = Depends(get_current_user)):
     lot = await tenant_access.get_tenant_doc(db, "stock_lots", lot_id, user, not_found="Lot bulunamadı.")
+    cid = lot["company_id"]
     qty = float(lot.get("quantity") or 0)
     if qty > 0:
-        await db.products.update_one({"_id": lot["product_id"]}, {"$inc": {"stock_quantity": -qty}})
-    await db.stock_lots.delete_one({"_id": lot_id})
+        await db.products.update_one(
+            {"_id": lot["product_id"], "company_id": cid},
+            {"$inc": {"stock_quantity": -qty}},
+        )
+    await db.stock_lots.delete_one({"_id": lot_id, "company_id": cid})
     return {"status": "success", "message": "Lot silindi."}
 
 
@@ -8801,14 +8810,14 @@ async def _pos_return_core(req: Dict[str, Any], request: Request, user: Optional
             pid, qty = _invoice_item_pid_qty(item)
             if pid and qty:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-            await _apply_lot_delta(item, +1.0)
+            await _apply_lot_delta(item, +1.0, inv.get("company_id"))
 
         async def _undo_stock():
             for item in inv.get("items", []):
                 pid, qty = _invoice_item_pid_qty(item)
                 if pid and qty:
                     await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-                await _apply_lot_delta(item, -1.0)
+                await _apply_lot_delta(item, -1.0, inv.get("company_id"))
 
         cx.push("stock", _undo_stock)
 
@@ -9026,6 +9035,7 @@ async def list_product_movements(product_id: str, limit: int = 80, user: dict = 
     product = tenant_access.assert_doc_company(user, product, not_found="Ürün bulunamadı.")
     cap = max(1, min(int(limit or 80), 200))
     company_id = product.get("company_id")
+    move_company = str(company_id or "").strip()
     pids = stock_moves.product_ids_of(product, product_id)
     sku = (product.get("sku") or "").strip()
     barcode = (product.get("barcode") or "").strip()
@@ -9039,7 +9049,9 @@ async def list_product_movements(product_id: str, limit: int = 80, user: dict = 
         item_or.append({"items.product_name": name})
         item_or.append({"items.name": name})
     stored, invoices, orders, transfers = await asyncio.gather(
-        db.stock_movements.find({"product_id": {"$in": pids}}).sort("date", -1).to_list(cap),
+        db.stock_movements.find(
+            {"company_id": move_company, "product_id": {"$in": pids}},
+        ).sort("date", -1).to_list(cap) if move_company else asyncio.sleep(0, result=[]),
         db.invoices.find(
             {
                 "company_id": company_id,
@@ -10240,27 +10252,30 @@ def _incoming_purchase_response(inv: dict) -> str:
     return "pending"
 
 
-async def _apply_lot_delta(item: dict, sign: float):
+async def _apply_lot_delta(item: dict, sign: float, company_id):
     """sign=-1 satış düşümü, sign=+1 iade/geri alma. Seri lotlarda miktar 0/1."""
     lot_id = item.get("lot_id")
     qty = float(item.get("quantity") or 0)
     if not lot_id or qty <= 0:
         return
-    lot = await db.stock_lots.find_one({"_id": lot_id})
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    lot = await db.stock_lots.find_one({"_id": lot_id, "company_id": cid})
     if not lot:
         return
     delta = sign * qty
     if lot.get("tracking_type") == "serial":
         new_qty = 1.0 if sign > 0 else 0.0
         await db.stock_lots.update_one(
-            {"_id": lot_id},
+            {"_id": lot_id, "company_id": cid},
             {"$set": {"quantity": new_qty, "is_active": new_qty > 0, "updated_at": datetime.now(timezone.utc).isoformat()}},
         )
     else:
-        await db.stock_lots.update_one({"_id": lot_id}, {"$inc": {"quantity": delta}})
-        refreshed = await db.stock_lots.find_one({"_id": lot_id})
+        await db.stock_lots.update_one({"_id": lot_id, "company_id": cid}, {"$inc": {"quantity": delta}})
+        refreshed = await db.stock_lots.find_one({"_id": lot_id, "company_id": cid})
         if refreshed and float(refreshed.get("quantity") or 0) <= 0:
-            await db.stock_lots.update_one({"_id": lot_id}, {"$set": {"is_active": False}})
+            await db.stock_lots.update_one({"_id": lot_id, "company_id": cid}, {"$set": {"is_active": False}})
 
 
 def _invoice_payment_status(paid_amount: float, grand_total: float) -> str:
@@ -10303,7 +10318,7 @@ async def _apply_invoice_effects(inv: dict):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-            await _apply_lot_delta(item, -1.0)
+            await _apply_lot_delta(item, -1.0, inv.get("company_id"))
     elif _purchase_tracks_stock(inv):
         # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
         if inv.get("stock_effects_applied") is False:
@@ -10311,7 +10326,7 @@ async def _apply_invoice_effects(inv: dict):
                 pid, qty = _invoice_item_pid_qty(item)
                 if pid:
                     await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-                await _apply_lot_delta(item, +1.0)
+                await _apply_lot_delta(item, +1.0, inv.get("company_id"))
         if inv.get("_id"):
             await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"stock_effects_applied": True}})
         inv["stock_effects_applied"] = True
@@ -10330,13 +10345,13 @@ async def _reverse_invoice_effects(inv: dict):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-            await _apply_lot_delta(item, +1.0)
+            await _apply_lot_delta(item, +1.0, inv.get("company_id"))
     elif _purchase_tracks_stock(inv) and inv.get("stock_effects_applied") is not False:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
                 await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-            await _apply_lot_delta(item, -1.0)
+            await _apply_lot_delta(item, -1.0, inv.get("company_id"))
         if inv.get("_id"):
             await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"stock_effects_applied": False}})
         inv["stock_effects_applied"] = False
@@ -16401,7 +16416,9 @@ async def list_stock_counts(company_id: Optional[str] = None, user: dict = Depen
 @api_router.post("/warehouses/stock-counts")
 async def create_stock_count(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
-    wh = await db.warehouses.find_one({"_id": req.get("warehouse_id")}) if req.get("warehouse_id") else None
+    wh = None
+    if req.get("warehouse_id"):
+        wh = await db.warehouses.find_one({"_id": req.get("warehouse_id"), "company_id": company_id})
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "name": req.get("name") or f"Sayım {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')}",
            "warehouse_id": req.get("warehouse_id"), "warehouse_name": wh.get("name") if wh else "Tüm Depolar", "status": "open", "items": [],
            "created_at": datetime.now(timezone.utc).isoformat(), "completed_at": None}
@@ -16452,7 +16469,10 @@ async def scan_stock_count(count_id: str, req: Dict[str, Any], user: dict = Depe
         items.append(item)
     item["counted"] = max(0, item.get("counted", 0) + qty)
     item["scanned"] = True
-    await db.stock_counts.update_one({"_id": count_id}, {"$set": {"items": items}})
+    await db.stock_counts.update_one(
+        {"_id": count_id, "company_id": doc["company_id"]},
+        {"$set": {"items": items}},
+    )
     return {"status": "success", "item": item, "message": f"{item['product_name']} → sayılan: {item['counted']}"}
 
 @api_router.put("/warehouses/stock-counts/{count_id}/items")
@@ -16465,8 +16485,11 @@ async def set_stock_count_item(count_id: str, req: Dict[str, Any], user: dict = 
         if i["product_id"] == req.get("product_id") and i.get("variant_id") == req.get("variant_id"):
             i["counted"] = max(0, float(req.get("counted", 0)))
             i["scanned"] = True
-    await db.stock_counts.update_one({"_id": count_id}, {"$set": {"items": items}})
-    return clean_doc(await db.stock_counts.find_one({"_id": count_id}))
+    await db.stock_counts.update_one(
+        {"_id": count_id, "company_id": doc["company_id"]},
+        {"$set": {"items": items}},
+    )
+    return clean_doc(await db.stock_counts.find_one({"_id": count_id, "company_id": doc["company_id"]}))
 
 @api_router.post("/warehouses/stock-counts/{count_id}/complete")
 async def complete_stock_count(count_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -16475,25 +16498,46 @@ async def complete_stock_count(count_id: str, req: Dict[str, Any], user: dict = 
         raise HTTPException(status_code=400, detail="Açık sayım bulunamadı.")
     apply = bool(req.get("apply", True))
     only_scanned = bool(req.get("only_scanned", True))
+    cid = doc["company_id"]
     adjusted = 0
     for i in doc.get("items", []):
         if only_scanned and not i.get("scanned"):
             continue
         diff = i["counted"] - i["expected"]
         if apply and abs(diff) > 0.0001:
+            p = await db.products.find_one({"_id": i["product_id"], "company_id": cid})
+            if not p:
+                continue
             if i.get("variant_id"):
-                p = await db.products.find_one({"_id": i["product_id"]})
                 variants = p.get("variants", [])
                 for v in variants:
                     if v.get("variant_id") == i["variant_id"]:
                         v["stock"] = i["counted"]
-                await db.products.update_one({"_id": i["product_id"]}, {"$set": {"variants": variants, "stock_quantity": sum(v.get("stock", 0) for v in variants)}})
+                await db.products.update_one(
+                    {"_id": i["product_id"], "company_id": cid},
+                    {"$set": {"variants": variants, "stock_quantity": sum(v.get("stock", 0) for v in variants)}},
+                )
             else:
-                await db.products.update_one({"_id": i["product_id"]}, {"$set": {"stock_quantity": i["counted"]}})
-            await db.stock_movements.insert_one({"_id": str(uuid.uuid4()), "product_id": i["product_id"], "product_name": i["product_name"], "variant_id": i.get("variant_id"),
-                                                 "change": diff, "new_stock": i["counted"], "reason": f"Stok Sayımı: {doc['name']}", "date": datetime.now(timezone.utc).isoformat()})
+                await db.products.update_one(
+                    {"_id": i["product_id"], "company_id": cid},
+                    {"$set": {"stock_quantity": i["counted"]}},
+                )
+            await db.stock_movements.insert_one({
+                "_id": str(uuid.uuid4()),
+                "company_id": cid,
+                "product_id": i["product_id"],
+                "product_name": i["product_name"],
+                "variant_id": i.get("variant_id"),
+                "change": diff,
+                "new_stock": i["counted"],
+                "reason": f"Stok Sayımı: {doc['name']}",
+                "date": datetime.now(timezone.utc).isoformat(),
+            })
             adjusted += 1
-    await db.stock_counts.update_one({"_id": count_id}, {"$set": {"status": "completed", "applied": apply, "completed_at": datetime.now(timezone.utc).isoformat(), "adjusted_count": adjusted}})
+    await db.stock_counts.update_one(
+        {"_id": count_id, "company_id": cid},
+        {"$set": {"status": "completed", "applied": apply, "completed_at": datetime.now(timezone.utc).isoformat(), "adjusted_count": adjusted}},
+    )
     return {"status": "success", "adjusted": adjusted, "message": f"Sayım tamamlandı. {adjusted} kalemde stok güncellendi." if apply else "Sayım kaydedildi (stok değiştirilmedi)."}
 
 @api_router.delete("/warehouses/stock-counts/{count_id}")
@@ -21514,7 +21558,8 @@ async def list_warehouses(company_id: Optional[str] = None, user: dict = Depends
 async def create_warehouse(wh: Warehouse, user: dict = Depends(get_current_user)):
     wh.company_id = tenant_access.resolve_company_id(user, wh.company_id)
     doc = wh.to_mongo()
-    await db.warehouses.insert_one(doc)
+    doc["company_id"] = wh.company_id
+    await db.warehouses.insert_one({**doc, "company_id": wh.company_id})
     return clean_doc(doc)
 
 @api_router.get("/warehouses/transfers")
@@ -21533,13 +21578,18 @@ async def create_warehouse_transfer(transfer: WarehouseTransfer, user: dict = De
     for wh_id in (transfer.source_warehouse_id, transfer.target_warehouse_id):
         if not wh_id:
             continue
-        wh_doc = await db.warehouses.find_one({"_id": wh_id})
-        if wh_doc and wh_doc.get("company_id") != cid:
+        wh_doc = await db.warehouses.find_one({"_id": wh_id, "company_id": cid})
+        if wh_doc:
+            continue
+        # Kayıt başka şirkete aitse 404. Kayıt yoksa (main_warehouse gibi sabit id) davranış aynı kalır.
+        other_warehouse = await db.warehouses.find_one({"_id": wh_id, "company_id": {"$ne": cid}})
+        if other_warehouse:
             raise HTTPException(status_code=404, detail="Depo bulunamadı.")
     if not transfer.transfer_number:
         transfer.transfer_number = f"TRF-{datetime.now().strftime('%Y%m')}-{str(uuid.uuid4().int)[:6]}"
     doc = transfer.to_mongo()
-    await db.warehouse_transfers.insert_one(doc)
+    doc["company_id"] = cid
+    await db.warehouse_transfers.insert_one({**doc, "company_id": cid})
 
     await db.products.update_one(
         {"_id": transfer.product_id, "company_id": cid},
