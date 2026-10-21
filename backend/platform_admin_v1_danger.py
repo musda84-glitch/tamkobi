@@ -68,17 +68,46 @@ def _ttl_minutes(payload: Dict[str, Any]) -> int:
     return value
 
 
+def _email_key(value: Any) -> str:
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+async def _find_user_by_email(raw: str):
+    """Login ve kullanıcı oluşturma strip().lower() yazar.
+
+    Önce kanonik e-posta, yoksa kayıtlı karışık büyük/küçük harf.
+    Dönüş belgedeki e-postadır; OTP sorgusu onu birebir arar.
+    """
+    lowered = _email_key(raw)
+    if not lowered:
+        return None
+    user = await saas._db.users.find_one({"email": lowered})
+    if user:
+        return user
+    cursor = saas._db.users.find({})
+    rows = await cursor.to_list(None)
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if _email_key(row.get("email")) == lowered:
+            return row
+    return None
+
+
 async def _operator_or_403(payload: Dict[str, Any]) -> str:
     if "operator_email" not in payload:
         raise HTTPException(status_code=400, detail="operator_email zorunlu.")
     email = payload["operator_email"]
     if not isinstance(email, str) or not email.strip():
         raise HTTPException(status_code=400, detail="operator_email zorunlu.")
-    cleaned = email.strip()
-    user = await saas._db.users.find_one({"email": cleaned})
-    if not user or user.get("is_super_admin") is not True or user.get("is_active") is False:
+    user = await _find_user_by_email(email)
+    # is_super_admin eski kayıtlarda 1 olabilir; yalnız açık False pasif sayılır.
+    if not user or not user.get("is_super_admin") or user.get("is_active") is False:
         raise HTTPException(status_code=403, detail="Operatör yetkili değil.")
-    return cleaned
+    stored = user.get("email")
+    if not isinstance(stored, str) or not stored.strip():
+        raise HTTPException(status_code=403, detail="Operatör yetkili değil.")
+    return stored
 
 
 def _session_ttl_minutes(doc: dict) -> Optional[int]:

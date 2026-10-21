@@ -88,7 +88,8 @@ def test_subdomain_templates_have_required_listen_and_noindex():
     assert SUBDOMAINS.count("/etc/letsencrypt/live/app.tamkobi.com/fullchain.pem") == 3
     assert "live/b2b.tamkobi.com" not in SUBDOMAINS
     assert "live/ik.tamkobi.com" not in SUBDOMAINS
-    assert SUBDOMAINS.count("proxy_set_header X-Forwarded-Host $host;") == 3
+    assert SUBDOMAINS.count("proxy_set_header X-Forwarded-Host $host;") == 6
+    assert SUBDOMAINS.count("location = /sso {") == 3
 
     ssl_ex = (NGINX_DIR / "tamkobi-ssl.conf.example").read_text(encoding="utf-8")
     assert ssl_ex.count("listen 85.95.240.184:443 ssl http2;") >= 2

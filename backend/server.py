@@ -640,60 +640,14 @@ class SsoExchangeRequest(BaseModel):
 @api_router.post("/auth/sso-exchange")
 async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response: Response):
     """One-time handoff code → host-only access_token (+ optional sa_return)."""
-    import json as _json
-    import auth_handoff
-    import host_audience as _ha
-    from auth_utils import SUPERADMIN_ACCESS_SECONDS, decode_access_payload
+    import sso_public
 
-    blob = await auth_handoff.consume_handoff(db, req.code)
-    try:
-        data = _json.loads(blob)
-    except Exception:
-        # Legacy: raw JWT only
-        data = {"access_token": blob, "sa_return": ""}
-    access = data.get("access_token") or ""
-    sa_ret = data.get("sa_return") or ""
-    if not access:
-        raise HTTPException(status_code=401, detail="Geçersiz handoff")
-    kind = _ha.host_kind(request)
-    try:
-        payload = decode_access_payload(access)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Geçersiz handoff token")
-    tok_aud = payload.get("aud")
-    if kind == _ha.KIND_APP and tok_aud != _ha.AUD_APP:
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    if kind == _ha.KIND_IK and tok_aud != _ha.AUD_IK:
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    if kind == _ha.KIND_YNT and tok_aud != _ha.AUD_YNT:
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    if kind == _ha.KIND_SITE and tok_aud not in (None, _ha.AUD_SITE):
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    # Validate token is decodable + user exists (aud already checked against host)
-    user = await get_user_from_token(access, db)
-    max_age = SUPERADMIN_ACCESS_SECONDS if user.get("is_super_admin") else 7200
-    response.set_cookie(
-        key="access_token",
-        value=access,
-        **auth_cookie_kwargs(request, max_age=max_age),
-    )
-    if sa_ret and kind == _ha.KIND_APP:
-        response.set_cookie(
-            key="sa_return",
-            value=sa_ret,
-            **auth_cookie_kwargs(request, max_age=7200),
-        )
-    if kind == _ha.KIND_APP:
-        next_path = "/panel"
-    elif kind == _ha.KIND_IK:
-        next_path = "/personelim"
-    elif kind == _ha.KIND_YNT:
-        next_path = "/sistem/sirketler"
-    else:
-        next_path = "/sistem/sirketler"
+    done = await sso_public.complete_sso_exchange(db, req.code, request)
+    sso_public.apply_sso_cookies(response, request, done)
+    user = done["user"]
     return {
         "status": "success",
-        "redirect": next_path,
+        "redirect": done["redirect"],
         "user": {"id": user.get("id"), "email": user.get("email"), "is_super_admin": user.get("is_super_admin")},
     }
 
@@ -27786,3 +27740,15 @@ async def mobile_manifest():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await client.close_async()
+
+
+import sso_public as _sso_public
+
+# Import-time mount, then again at the end of startup so a SPA catch-all
+# registered while the app is loading cannot sit in front of GET /sso.
+_sso_public.mount_public_sso(app)
+
+
+@app.on_event("startup")
+async def _mount_public_sso_last():
+    _sso_public.mount_public_sso(app)
