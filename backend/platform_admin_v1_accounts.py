@@ -225,6 +225,13 @@ _USER_UPDATE = ("name", "email", "phone", "is_active", "password")
 _SCOPE_OUTSIDE = "İstenen kapsam çağıran anahtarın kapsamının dışında."
 _DANGER_CREATE_DETAIL = "platform_admin anahtarı danger/key.admin_create ile oluşturulur."
 _DANGER_SCOPES_DETAIL = "platform_admin anahtarının kapsamı danger/key.admin_scopes ile değişir."
+_DANGER_USER_CREATE = "Panel yöneticisi danger/platform_user.create ile oluşturulur."
+_DANGER_USER_PASSWORD = "Şifre danger/platform_user.password ile değişir."
+_DANGER_USER_EMAIL = "E-posta danger/platform_user.email ile değişir."
+_DANGER_PRODUCT_CREATE = "Yazma kapsamı danger/key.product_create ile verilir."
+_DANGER_PRODUCT_SCOPES = "Yazma kapsamı danger/key.product_scopes ile verilir."
+_PRODUCT_READ_SCOPES = frozenset(item for item in store.DEFAULT_SCOPES if not str(item).endswith(":write"))
+_PRODUCT_WRITE_SCOPES = frozenset(item for item in store.DEFAULT_SCOPES if str(item).endswith(":write"))
 
 
 def _reject_blank_password(payload: Dict[str, Any]) -> None:
@@ -237,7 +244,7 @@ def _reject_blank_password(payload: Dict[str, Any]) -> None:
 
 
 def scope_set(scopes: Any) -> set:
-    if isinstance(scopes, str) or not isinstance(scopes, (list, tuple)):
+    if isinstance(scopes, str) or not isinstance(scopes, (list, tuple, set, frozenset)):
         return set()
     return {str(item).strip() for item in scopes if str(item).strip()}
 
@@ -252,31 +259,51 @@ def assert_caller_has_keys_write(doc: dict) -> None:
         raise HTTPException(status_code=403, detail="Kapsam yetersiz")
 
 
-async def caller_key_doc(request: Request) -> dict:
-    key_id = (request.headers.get("X-Platform-Key") or "").strip()
-    doc = await store._db.platform_api_keys.find_one({"_id": key_id}) if key_id else None
-    if not doc or doc.get("revoked_at"):
+def assert_product_scopes(requested: Any, caller_scopes: Any, *, danger: bool, danger_detail: str) -> None:
+    """Ürün anahtarı çağıranın tutmadığı kapsamı alamaz. Yazma kapsamı danger ister.
+
+    license:verify ve heartbeat, keys:write ile verilebilir. usage:write yalnız
+    danger akışında ve bilinen ürün yazma kapsamı olarak verilir.
+    """
+    requested_set = scope_set(requested)
+    writes = {item for item in requested_set if item.endswith(":write")}
+    if writes and not danger:
+        raise HTTPException(status_code=403, detail=danger_detail)
+    exempt = set(_PRODUCT_READ_SCOPES)
+    if danger:
+        exempt.update(item for item in writes if item in _PRODUCT_WRITE_SCOPES)
+    assert_scope_subset(requested_set - exempt, caller_scopes)
+
+
+async def caller_key_doc(key_doc: dict) -> dict:
+    """_auth belgesi. Başlıktan ikinci bir okuma yapılmaz."""
+    if not isinstance(key_doc, dict) or not str(key_doc.get("_id") or "").strip() or key_doc.get("revoked_at"):
         raise HTTPException(status_code=403, detail="Kapsam yetersiz")
-    return doc
+    return key_doc
+
+
+def _requested_scopes(payload: Dict[str, Any]) -> List[str]:
+    if "scopes" not in payload or payload.get("scopes") is None:
+        return list(store.DEFAULT_SCOPES)
+    return [str(item).strip() for item in payload["scopes"]]
 
 
 @router.post("/platform/admin-v1/platform-users")
 async def admin_v1_create_platform_user(request: Request):
-    async def prepare(payload: Dict[str, Any]) -> List[str]:
+    async def prepare(payload: Dict[str, Any], key_doc: dict) -> List[str]:
         _reject_unknown(payload, _USER_CREATE)
         if body_has_secret(payload):
-            await require_secret_scope(request)
+            await require_secret_scope(key_doc)
         _reject_blank_password(payload)
         for field in ("name", "email", "password"):
             if not isinstance(payload.get(field), str) or not str(payload.get(field)).strip():
                 raise HTTPException(status_code=400, detail=f"{field} zorunlu.")
         if "is_active" in payload:
             _require_bool(payload, "is_active")
-        return audit_field_names(_present(payload, _USER_CREATE))
+        raise HTTPException(status_code=403, detail=_DANGER_USER_CREATE)
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
-        row = await saas.system_create_user(payload, {})
-        return _item(row), audit_field_names(_present(payload, _USER_CREATE))
+        raise HTTPException(status_code=403, detail=_DANGER_USER_CREATE)
 
     return await _write(
         request,
@@ -291,12 +318,12 @@ async def admin_v1_create_platform_user(request: Request):
 
 @router.put("/platform/admin-v1/platform-users/{user_id}")
 async def admin_v1_update_platform_user(user_id: str, request: Request):
-    async def prepare(payload: Dict[str, Any]) -> List[str]:
+    async def prepare(payload: Dict[str, Any], key_doc: dict) -> List[str]:
         _reject_unknown(payload, _USER_UPDATE)
         if not payload:
             raise HTTPException(status_code=400, detail="Gövde boş olamaz.")
         if body_has_secret(payload):
-            await require_secret_scope(request)
+            await require_secret_scope(key_doc)
         _reject_blank_password(payload)
         if "is_active" in payload:
             _require_bool(payload, "is_active")
@@ -306,11 +333,20 @@ async def admin_v1_update_platform_user(user_id: str, request: Request):
         user = await saas._db.users.find_one({"_id": user_id})
         if not user or not user.get("is_super_admin"):
             raise HTTPException(status_code=404, detail="Panel yöneticisi bulunamadı.")
+        if "password" in payload:
+            raise HTTPException(status_code=403, detail=_DANGER_USER_PASSWORD)
+        if "email" in payload:
+            raise HTTPException(status_code=403, detail=_DANGER_USER_EMAIL)
         return audit_field_names(_present(payload, _USER_UPDATE))
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
-        row = await saas.system_update_user(user_id, payload, {})
-        return _item(row), audit_field_names(_present(payload, _USER_UPDATE))
+        if "password" in payload:
+            raise HTTPException(status_code=403, detail=_DANGER_USER_PASSWORD)
+        if "email" in payload:
+            raise HTTPException(status_code=403, detail=_DANGER_USER_EMAIL)
+        safe = {key: value for key, value in payload.items() if key not in ("password", "email")}
+        row = await saas.system_update_user(user_id, safe, {})
+        return _item(row), audit_field_names(_present(safe, _USER_UPDATE))
 
     return await _write(
         request,
@@ -333,7 +369,7 @@ async def admin_v1_create_api_key(request: Request):
     platform_admin anahtarı burada oluşmaz; danger/key.admin_create ister.
     """
 
-    async def prepare(payload: Dict[str, Any]) -> List[str]:
+    async def prepare(payload: Dict[str, Any], key_doc: dict) -> List[str]:
         _reject_unknown(payload, _KEY_CREATE)
         kind = payload.get("kind") or store.KEY_KIND_PRODUCT
         if kind not in (store.KEY_KIND_PRODUCT, store.KEY_KIND_PLATFORM_ADMIN):
@@ -348,6 +384,13 @@ async def admin_v1_create_api_key(request: Request):
             scopes = payload["scopes"]
             if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s.strip() for s in scopes):
                 raise HTTPException(status_code=400, detail="scopes metin listesi olmalı.")
+        caller = await caller_key_doc(key_doc)
+        assert_product_scopes(
+            _requested_scopes(payload),
+            caller.get("scopes") or [],
+            danger=False,
+            danger_detail=_DANGER_PRODUCT_CREATE,
+        )
         if kind == store.KEY_KIND_PRODUCT:
             instance_id = payload.get("instance_id")
             if not isinstance(instance_id, str) or not instance_id.strip():
@@ -391,7 +434,7 @@ async def admin_v1_create_api_key(request: Request):
 
 @router.put("/platform/admin-v1/api-keys/{key_id}/scopes")
 async def admin_v1_api_key_scopes(key_id: str, request: Request):
-    async def prepare(payload: Dict[str, Any]) -> List[str]:
+    async def prepare(payload: Dict[str, Any], key_doc: dict) -> List[str]:
         _reject_unknown(payload, ("scopes",))
         scopes = payload.get("scopes")
         if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s.strip() for s in scopes):
@@ -401,6 +444,13 @@ async def admin_v1_api_key_scopes(key_id: str, request: Request):
             raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
         if (existing.get("kind") or store.KEY_KIND_PRODUCT) == store.KEY_KIND_PLATFORM_ADMIN:
             raise HTTPException(status_code=400, detail=_DANGER_SCOPES_DETAIL)
+        caller = await caller_key_doc(key_doc)
+        assert_product_scopes(
+            [str(item).strip() for item in scopes],
+            caller.get("scopes") or [],
+            danger=False,
+            danger_detail=_DANGER_PRODUCT_SCOPES,
+        )
         return ["scopes"]
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
@@ -430,13 +480,13 @@ async def admin_v1_api_key_scopes(key_id: str, request: Request):
 
 @router.post("/platform/admin-v1/api-keys/{key_id}/rotate")
 async def admin_v1_rotate_api_key(key_id: str, request: Request):
-    async def prepare(payload: Dict[str, Any]) -> List[str]:
+    async def prepare(payload: Dict[str, Any], key_doc: dict) -> List[str]:
         _reject_unknown(payload, ())
         existing = await store._db.platform_api_keys.find_one({"_id": key_id})
         if not existing:
             raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
         if (existing.get("kind") or store.KEY_KIND_PRODUCT) == store.KEY_KIND_PLATFORM_ADMIN:
-            caller = await caller_key_doc(request)
+            caller = await caller_key_doc(key_doc)
             assert_scope_subset(existing.get("scopes") or [], caller.get("scopes") or [])
         return ["rotate"]
 

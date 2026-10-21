@@ -183,7 +183,7 @@ class FakeColl:
                 self._sort = key if isinstance(key, list) else [(key, direction)]
                 return self
 
-            async def to_list(self, n):
+            def _rows(self):
                 out = [doc for doc in self._docs if _match(doc, self._q)]
                 if self._sort:
                     for field, direction in reversed(self._sort):
@@ -191,9 +191,23 @@ class FakeColl:
                         missing = [doc for doc in out if doc.get(field) is None]
                         present.sort(key=lambda doc, field=field: doc.get(field), reverse=int(direction) < 0)
                         out = present + missing
+                return out
+
+            async def to_list(self, n):
+                out = self._rows()
                 if n is None:
                     return out
                 return out[:n]
+
+            def __aiter__(self):
+                self._iter = iter(self._rows())
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration from None
 
         return C(list(self.docs.values()), q)
 
@@ -232,6 +246,8 @@ def db(monkeypatch):
     prev_sms = platform_sms._db
     prev_tickets = (support_tickets._db, support_tickets._current_user)
     prev_notify = event_notify._db
+    import storage_manager
+    prev_storage = storage_manager._db
     store.init(fake)
     saas.init(fake, None)
     saas.invalidate()
@@ -241,6 +257,7 @@ def db(monkeypatch):
     platform_sms.init(fake)
     support_tickets.init(fake, prev_tickets[1])
     event_notify.init(fake)
+    storage_manager._db = fake
     monkeypatch.setattr(comm_service, "encrypt", lambda v: "enc:" + (v or ""))
     monkeypatch.setattr(comm_service, "decrypt", lambda v: (v or "").removeprefix("enc:"))
     yield fake
@@ -254,6 +271,7 @@ def db(monkeypatch):
     platform_sms.init(prev_sms)
     support_tickets.init(prev_tickets[0], prev_tickets[1])
     event_notify.init(prev_notify)
+    storage_manager._db = prev_storage
     saas.invalidate()
 
 
@@ -280,9 +298,21 @@ def with_peer(app, ip: str):
     return application
 
 
+def _include_optional_admin(app):
+    import platform_admin_v1_accounts
+    app.include_router(platform_admin_v1_accounts.router)
+    for name in ("platform_admin_v1_integrations", "platform_admin_v1_content"):
+        try:
+            module = __import__(name)
+        except ModuleNotFoundError:
+            continue
+        app.include_router(module.router)
+
+
 def _app():
     app = FastAPI()
     app.include_router(platform_admin_v1.router)
+    _include_optional_admin(app)
     app.include_router(saas.router)
     app.include_router(saas_billing.router)
     app.include_router(platform_sms.router)
@@ -909,6 +939,23 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
         ("/api/platform/admin-v1/companies/comp_sec/notify-mail-log", None),
         ("/api/platform/admin-v1/support/tickets", None),
     ]
+    # Yeni :read kapsamları. Rota bu dalda yoksa istek atılmaz; rota gelince audit şarttır.
+    _new_reads = (
+        ("/api/platform/admin-v1/addons", store.SCOPE_ADMIN_SETTINGS_READ),
+        ("/api/platform/admin-v1/storage", store.SCOPE_ADMIN_STORAGE_READ),
+        ("/api/platform/admin-v1/sites", store.SCOPE_ADMIN_CMS_READ),
+        ("/api/platform/admin-v1/maintenance", store.SCOPE_ADMIN_MAINTENANCE_READ),
+        ("/api/platform/admin-v1/ai", store.SCOPE_ADMIN_AI_READ),
+        ("/api/platform/admin-v1/einvoice/isnet/egress", store.SCOPE_ADMIN_EINVOICE_READ),
+        ("/api/platform/admin-v1/database", store.SCOPE_ADMIN_DB_READ),
+    )
+    mounted = {getattr(route, "path", "") for route in _app().routes}
+    deferred = set()
+    for path, scope in _new_reads:
+        if path in mounted:
+            paths.append((path, None))
+        else:
+            deferred.add(scope)
     blobs = []
     for path, params in paths:
         response, headers, _ = _get(client, secret, pub["id"], path, params=params)
@@ -940,7 +987,9 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
     for scope in ALL_SCOPES:
         if not str(scope).endswith(":read"):
             continue
-        assert any(row["action"] == f"admin_v1.{scope}" for row in _audits(db))
+        if scope in deferred:
+            continue
+        assert any(row["action"] == f"admin_v1.{scope}" for row in _audits(db)), scope
     for row in _audits(db):
         if not str(row.get("action") or "").startswith("admin_v1."):
             continue
