@@ -220,12 +220,19 @@ _USER_HINT = "kullanıcı e-postasını birebir yazın"
 _COMPANY_TEXT_ERROR = "Onay için şirket adını birebir yazın."
 _USER_TEXT_ERROR = "Onay için kullanıcının e-postasını birebir yazın."
 
+_PLAN_HINT = "paket adını birebir yazın"
+_PRODUCT_HINT = "ürün adını birebir yazın"
+_PLAN_TEXT_ERROR = "Onay için paket adını birebir yazın."
+_PRODUCT_TEXT_ERROR = "Onay için ürün adını birebir yazın."
+
 _ACTIONS = (
     "company.reset_data",
     "company.delete",
     "user.erase",
     "user.password_reset",
     "superadmin.2fa_reset",
+    "plan.delete",
+    "product.delete",
 )
 _PREPARE_COMMON = ("target_id", "reason", "operator_email")
 _PREPARE_EXTRA = {
@@ -234,6 +241,8 @@ _PREPARE_EXTRA = {
     "user.erase": (),
     "user.password_reset": ("user_id", "email"),
     "superadmin.2fa_reset": (),
+    "plan.delete": (),
+    "product.delete": (),
 }
 _PHRASE_ACTIONS = ("company.reset_data", "user.erase")
 _CONFIRM_COMMON = ("confirmation_token", "confirm_text", "operator_otp")
@@ -260,6 +269,10 @@ def _as_dt(value: Any) -> Optional[datetime]:
 def _target_type(action: str) -> str:
     if action in ("user.erase", "superadmin.2fa_reset"):
         return "user"
+    if action == "plan.delete":
+        return "plan"
+    if action == "product.delete":
+        return "product"
     return "company"
 
 
@@ -274,12 +287,20 @@ def _phrase_for(action: str) -> Optional[str]:
 def _hint_for(action: str) -> str:
     if action.startswith("company."):
         return _COMPANY_HINT
+    if action == "plan.delete":
+        return _PLAN_HINT
+    if action == "product.delete":
+        return _PRODUCT_HINT
     return _USER_HINT
 
 
 def _text_error(action: str) -> str:
     if action.startswith("company."):
         return _COMPANY_TEXT_ERROR
+    if action == "plan.delete":
+        return _PLAN_TEXT_ERROR
+    if action == "product.delete":
+        return _PRODUCT_TEXT_ERROR
     return _USER_TEXT_ERROR
 
 
@@ -326,6 +347,10 @@ def _preview_summary(action: str, preview: Dict[str, Any]) -> Dict[str, Any]:
         return {"documents": preview.get("documents") or 0, "users": preview.get("users") or 0}
     if action == "user.erase":
         return dict(preview)
+    if action == "plan.delete":
+        return {"companies": preview.get("companies") or 0}
+    if action == "product.delete":
+        return {"code": preview.get("code")}
     return {"email": preview.get("email")}
 
 
@@ -338,6 +363,10 @@ def _result_summary(action: str, result: Dict[str, Any]) -> Dict[str, Any]:
         return {"deleted": result.get("deleted") or {}}
     if action == "user.password_reset":
         return {"email": result.get("email"), "mail_status": result.get("mail_status")}
+    if action == "plan.delete":
+        return {"status": result.get("status")}
+    if action == "product.delete":
+        return {"code": result.get("code")}
     return {"email": result.get("email")}
 
 
@@ -419,6 +448,32 @@ async def _validate_2fa(user_id: str, operator_email: str) -> dict:
     }
 
 
+async def _validate_plan(plan_id: str) -> dict:
+    plan = await saas.validate_plan_delete(plan_id)
+    label = (plan.get("name") or "").strip()
+    return {
+        "label": label,
+        "fp": _fp({"id": plan_id, "name": label}),
+        "preview": {"companies": 0},
+        "scopes": None,
+    }
+
+
+async def _validate_product(product_id: str) -> dict:
+    doc = await store._get_product_doc(product_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı")
+    if doc.get("code") == store.PRODUCT_TAMKOBI:
+        raise HTTPException(status_code=400, detail="tamkobi ürünü silinemez")
+    label = (doc.get("name") or doc.get("code") or "").strip()
+    return {
+        "label": label,
+        "fp": _fp({"id": str(doc.get("_id") or ""), "name": label, "code": doc.get("code") or ""}),
+        "preview": {"code": doc.get("code")},
+        "scopes": None,
+    }
+
+
 async def _validate_action(action: str, target_id: str, operator_email: str, params: Dict[str, Any]) -> dict:
     if action == "company.reset_data":
         return await _validate_reset(target_id, params.get("scopes"))
@@ -428,13 +483,17 @@ async def _validate_action(action: str, target_id: str, operator_email: str, par
         return await _validate_erase(target_id, operator_email)
     if action == "user.password_reset":
         return await _validate_password(target_id, params.get("user_id") or "", params.get("email") or "")
+    if action == "plan.delete":
+        return await _validate_plan(target_id)
+    if action == "product.delete":
+        return await _validate_product(target_id)
     return await _validate_2fa(target_id, operator_email)
 
 
 def _text_matches(action: str, label: str, text: Any) -> bool:
     if not isinstance(text, str):
         return False
-    if action.startswith("company."):
+    if action.startswith("company.") or action in ("plan.delete", "product.delete"):
         return text.strip() == (label or "").strip()
     return text.strip().lower() == (label or "").strip().lower()
 
@@ -542,6 +601,18 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
             requested_by=str(actor.get("email") or ""),
             deliver="outbox",
         )
+    if action == "plan.delete":
+        return await saas.apply_delete_plan(target_id)
+    if action == "product.delete":
+        doc = await store._get_product_doc(target_id)
+        code = (doc or {}).get("code")
+        try:
+            await store.delete_product(target_id, actor_id=str(actor.get("_id") or ""), ip=ip)
+        except LookupError:
+            raise HTTPException(status_code=409, detail=_TARGET_CHANGED) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"status": "success", "id": (doc or {}).get("_id"), "code": code}
     result = await superadmin_2fa.reset_user_totp(saas._db, target_id)
     return {
         "status": "success",

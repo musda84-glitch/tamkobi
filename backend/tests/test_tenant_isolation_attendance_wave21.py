@@ -202,7 +202,7 @@ def _bind(db, monkeypatch, user):
     async def _push(*_args, **_kwargs):
         return {"sent": 0}
 
-    async def _signal(_emp_id, ok):
+    async def _signal(_emp_id, ok, company_id=None):
         return location_consent.location_signal_view({"location_last_ok": bool(ok)})
 
     attendance._db = db

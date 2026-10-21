@@ -307,8 +307,7 @@ async def admin_get(ticket_id: str, _: dict = Depends(saas.require_super_admin))
     return public_ticket(doc, staff=True)
 
 
-@router.post("/system/support-tickets/{ticket_id}/messages")
-async def admin_reply(ticket_id: str, req: Dict[str, Any], request: Request, admin: dict = Depends(saas.require_super_admin)):
+async def apply_staff_reply(ticket_id: str, req: Dict[str, Any], admin: dict) -> dict:
     doc = await _db.support_tickets.find_one({"_id": ticket_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Destek talebi bulunamadı.")
@@ -332,8 +331,12 @@ async def admin_reply(ticket_id: str, req: Dict[str, Any], request: Request, adm
     return public_ticket(await _db.support_tickets.find_one({"_id": ticket_id}), staff=True)
 
 
-@router.post("/system/support-tickets/{ticket_id}/status")
-async def admin_status(ticket_id: str, req: Dict[str, Any], admin: dict = Depends(saas.require_super_admin)):
+@router.post("/system/support-tickets/{ticket_id}/messages")
+async def admin_reply(ticket_id: str, req: Dict[str, Any], request: Request, admin: dict = Depends(saas.require_super_admin)):
+    return await apply_staff_reply(ticket_id, req, admin)
+
+
+async def apply_staff_status(ticket_id: str, req: Dict[str, Any], admin: dict) -> dict:
     doc = await _db.support_tickets.find_one({"_id": ticket_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Destek talebi bulunamadı.")
@@ -348,3 +351,8 @@ async def admin_status(ticket_id: str, req: Dict[str, Any], admin: dict = Depend
     if status != doc.get("status"):
         await _notify(doc["company_id"], f"Destek {doc.get('number')}", f"Talep durumu: {STATUS_LABELS[status]}.", ticket_id)
     return public_ticket(await _db.support_tickets.find_one({"_id": ticket_id}), staff=True)
+
+
+@router.post("/system/support-tickets/{ticket_id}/status")
+async def admin_status(ticket_id: str, req: Dict[str, Any], admin: dict = Depends(saas.require_super_admin)):
+    return await apply_staff_status(ticket_id, req, admin)

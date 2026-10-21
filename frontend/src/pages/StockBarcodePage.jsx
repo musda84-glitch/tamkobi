@@ -853,7 +853,8 @@ export default function StockBarcodePage() {
               {movesBusy && <div className="py-8 text-center text-slate-400">Yükleniyor…</div>}
               {!movesBusy && moves.length === 0 && <div className="py-8 text-center text-slate-400">Bu ürüne ait stok hareketi yok.</div>}
               {!movesBusy && moves.length > 0 && (
-                <table className="w-full text-left">
+                <div className="overflow-x-auto">
+                <table className="min-w-[640px] w-full md:min-w-full text-left">
                   <thead className="text-[10px] uppercase text-slate-500 border-b">
                     <tr>
                       <th className="py-1.5">Tarih</th>
@@ -877,6 +878,7 @@ export default function StockBarcodePage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           </div>
@@ -898,7 +900,8 @@ export default function StockBarcodePage() {
               </select>
             </div>
             <div className="border rounded-xl overflow-hidden">
-              <table className="w-full text-left">
+              <div className="overflow-x-auto">
+              <table className="min-w-[800px] w-full md:min-w-full text-left">
                 <thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-2 py-1.5">Ürün</th><th className="px-2 py-1.5 text-right">Stok / Min</th><th className="px-2 py-1.5 text-right">Sipariş</th><th className="px-2 py-1.5 text-right">Birim fiyat</th><th className="px-2 py-1.5">Tedarikçi</th></tr></thead>
                 <tbody>
                   {reorder.lines.map((l, i) => (
@@ -917,6 +920,7 @@ export default function StockBarcodePage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <button type="button" onClick={() => setReorder(null)} className="px-3 py-1.5 border rounded-lg">İptal</button>
@@ -1485,7 +1489,7 @@ export default function StockBarcodePage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2" data-testid="new-product-trade-fields">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" data-testid="new-product-trade-fields">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Menşei</label>
                   <input
@@ -1521,7 +1525,7 @@ export default function StockBarcodePage() {
               <div className="border border-indigo-100 bg-indigo-50/50 rounded-xl p-3 space-y-2" data-testid="new-product-package-fields">
                 <div className="font-bold text-slate-800 text-[11px]">Paket bilgisi (kargo)</div>
                 <p className="text-[10px] text-slate-500">Kargo oluştururken stok kartından otomatik çekilir. Desi ≈ (en × boy × yükseklik) / 3000.</p>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1 text-[10px]">Paket</label>
                     <input type="number" min={1} max={50} value={newProduct.package_count} onChange={(e) => setNewProduct({ ...newProduct, package_count: e.target.value })} className="w-full bg-white border border-slate-200 rounded-lg p-2" data-testid="new-product-package-count" />

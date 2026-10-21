@@ -196,8 +196,8 @@ export default function SetupPage() {
             >
               <h1 className="text-xl font-black">Veritabanı</h1>
               <p className="text-sm text-slate-500">MySQL sunucu bilgilerini girin. Veritabanı yoksa ve kullanıcının yetkisi varsa oluşturulur.</p>
-              <div className="grid grid-cols-3 gap-2">
-                <label className="col-span-2 text-xs font-semibold">Sunucu
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label className="sm:col-span-2 text-xs font-semibold">Sunucu
                   <input required value={form.db_host} onChange={(e) => set("db_host", e.target.value)} className="mt-1 w-full border rounded-xl p-2.5 text-sm" data-testid="setup-db-host" />
                 </label>
                 <label className="text-xs font-semibold">Port

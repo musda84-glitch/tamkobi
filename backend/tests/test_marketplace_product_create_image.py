@@ -80,9 +80,10 @@ def _reset_db():
 
 
 def test_create_product_attaches_remote_image():
-    async def _attach(pid, url):
+    async def _attach(pid, url, company_id=None):
         assert url == "https://cdn.example/p/ty.jpg"
         assert pid
+        assert company_id == "c1"
         return "/api/files/c1/products/a.webp"
 
     async def _find_one(q, *a, **k):

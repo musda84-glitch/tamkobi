@@ -14,7 +14,12 @@ def test_start_work_order_allows_waiting():
         "assigned_name": None,
         "paused_seconds": 0,
     }
+    class FakeCursor:
+        async def to_list(self, n):
+            return []
+
     fake_db = MagicMock()
+    fake_db.work_orders.find = MagicMock(return_value=FakeCursor())
     fake_db.production_orders.update_one = AsyncMock()
     captured = {}
 

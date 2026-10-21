@@ -638,7 +638,7 @@ COLLECTIONS = {
     "work_orders": {
         "scope": SCOPE_TENANT,
         "description": "İş emri / istasyon adımları.",
-        "keys": ("_id", "company_id", "order_id", "station", "status", "assigned_to", "job_file_name", "recipe_name"),
+        "keys": ("_id", "company_id", "order_id", "station", "status", "assigned_to", "operator_employee_id", "partial_qty_total", "scrap_reason_code", "drawing_file_id", "job_file_name", "recipe_name"),
         "refs": ("production_orders._id", "employees._id"),
     },
     # --- Entegrasyon / iletişim ---
@@ -969,6 +969,12 @@ COLLECTIONS = {
         "scope": SCOPE_TENANT,
         "description": "Atölye kiosk cihazı. Token düz metin saklanmaz; token_hash benzersizdir.",
         "keys": ("_id", "company_id", "label", "station_mode", "stations", "status", "token_hash", "created_by", "created_at", "last_seen"),
+        "refs": ("companies._id",),
+    },
+    "shopfloor_operator_sessions": {
+        "scope": SCOPE_TENANT,
+        "description": "Atölye operatör oturumunun son aktivitesi. Token ve PIN yazılmaz.",
+        "keys": ("_id", "company_id", "aid", "oid", "last_activity", "created_at"),
         "refs": ("companies._id",),
     },
     "shopfloor_device_codes": {

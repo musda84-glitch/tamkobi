@@ -302,6 +302,10 @@ async def perform_install(req: InstallRequest) -> dict:
         await srv.db.products.create_index("sku")
         await srv.db.products.create_index("barcode")
         await srv.db.contacts.create_index("tax_number_or_id")
+        try:
+            await srv.db.contacts.create_index([("company_id", 1), ("company_title", 1)])
+        except Exception:
+            pass
         await srv.db.invoices.create_index("invoice_number")
         await srv.db.orders.create_index("order_number")
         try:

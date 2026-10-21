@@ -17,7 +17,13 @@ def test_shopfloor_settings_get():
                 user={"company_ids": ["c1"], "active_company_id": "c1"},
             )
 
-    assert asyncio.run(run()) == {"group_same_station": True}
+    body = asyncio.run(run())
+    assert body["group_same_station"] is True
+    assert body["idle_lock_minutes"] == 30
+    assert body["undo_finish_minutes"] == 5
+    assert body["takeover_confirm"] == "device"
+    assert body["scrap_reason_required"] is False
+    assert any(item.get("code") == "other" for item in body["scrap_reasons"])
 
 
 def test_shopfloor_settings_put_regroups():
