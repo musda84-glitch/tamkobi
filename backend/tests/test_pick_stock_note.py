@@ -145,6 +145,7 @@ def test_sync_stock_notes_backfills_existing_session():
     }
     ses = {
         "_id": "ses1",
+        "company_id": "c1",
         "items": [
             {"line_index": 0, "product_id": "p1", "ordered_qty": 2, "picked_qty": 1},
             {"line_index": 1, "product_id": "p2", "ordered_qty": 1, "picked_qty": 0, "note": ""},

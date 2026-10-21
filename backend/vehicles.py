@@ -158,30 +158,31 @@ async def create_vehicle(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     now = _now()
     doc = {
         "_id": f"veh_{uuid.uuid4().hex[:10]}",
-        "company_id": company_id,
         **fields,
         "created_at": now,
         "updated_at": now,
     }
-    await _db.vehicles.insert_one(doc)
-    return {**_clean(doc), "message": f"{fields['plate']} kaydedildi."}
+    doc["company_id"] = company_id
+    await _db.vehicles.insert_one({**doc, "company_id": company_id})
+    return {**_clean({**doc, "company_id": company_id}), "message": f"{fields['plate']} kaydedildi."}
 
 
 @router.put("/vehicles/{vehicle_id}")
 async def update_vehicle(vehicle_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "vehicles", vehicle_id, user, not_found="Araç bulunamadı.")
+    cid = doc.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     fields = validate_vehicle(req, partial=True)
     if "plate_key" in fields and fields["plate_key"] != doc.get("plate_key"):
-        dup = await _db.vehicles.find_one({
-            "company_id": doc["company_id"],
-            "plate_key": fields["plate_key"],
-            "_id": {"$ne": vehicle_id},
-        })
+        dup = await _db.vehicles.find_one({"company_id": cid, "plate_key": fields["plate_key"], "_id": {"$ne": vehicle_id}})
         if dup:
             raise HTTPException(status_code=400, detail=f"Bu plaka zaten kayıtlı: {dup.get('plate')}")
     fields["updated_at"] = _now()
-    await _db.vehicles.update_one({"_id": vehicle_id}, {"$set": fields})
-    fresh = await _db.vehicles.find_one({"_id": vehicle_id})
+    await _db.vehicles.update_one({"_id": vehicle_id, "company_id": cid}, {"$set": fields})
+    fresh = await _db.vehicles.find_one({"_id": vehicle_id, "company_id": cid})
+    if not fresh:
+        raise HTTPException(status_code=404, detail="Araç bulunamadı.")
     return {**_clean(fresh), "message": "Araç güncellendi."}
 
 

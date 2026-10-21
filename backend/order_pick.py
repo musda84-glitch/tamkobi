@@ -178,11 +178,14 @@ def _overlay_stock_notes(ses: dict, order: Optional[dict]) -> dict:
 
 async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
     out = []
+    cid = str(company_id or "").strip()
     for idx, it in enumerate(order_items or []):
         pid = it.get("product_id")
-        prod = await _db.products.find_one({"_id": pid}) if pid else None
-        if not prod:
-            prod = await _product_by_code(company_id, it.get("sku") or "") or await _product_by_code(company_id, it.get("barcode") or "")
+        prod = None
+        if cid and pid:
+            prod = await _db.products.find_one({"_id": pid, "company_id": cid})
+        if not prod and cid:
+            prod = await _product_by_code(cid, it.get("sku") or "") or await _product_by_code(cid, it.get("barcode") or "")
         barcode = it.get("barcode") or it.get("variant_barcode") or ""
         sku = it.get("sku") or it.get("variant_sku") or ""
         if not barcode:
@@ -277,8 +280,11 @@ async def _sync_product_label_fields(ses: dict) -> dict:
             line["product_name"] = name
             changed = True
     if changed:
+        cid = str(ses.get("company_id") or "").strip()
+        if not cid:
+            return ses
         await _db.order_pick_sessions.update_one(
-            {"_id": ses["_id"]},
+            {"_id": ses["_id"], "company_id": cid},
             {"$set": {"items": items, "updated_at": _now()}},
         )
         ses["items"] = items
@@ -301,8 +307,11 @@ async def _sync_stock_notes(ses: dict, order: dict) -> dict:
         line["note"] = note
         changed = True
     if changed:
+        cid = str(ses.get("company_id") or "").strip()
+        if not cid:
+            return ses
         await _db.order_pick_sessions.update_one(
-            {"_id": ses["_id"]},
+            {"_id": ses["_id"], "company_id": cid},
             {"$set": {"items": items, "updated_at": _now()}},
         )
         ses["items"] = items
@@ -324,13 +333,16 @@ def _progress(items: list) -> dict:
 async def _session_for(order: dict, create: bool = True) -> dict:
     """Açık oturumu getir; yoksa oluştur. Sevk edilmiş B2B/panel için son oturumu aç."""
     sid_order = order["_id"]
+    cid = order.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Toplama oturumu yok.")
     shipped = str(order.get("order_status") or "") == "shipped"
     ses = await _db.order_pick_sessions.find_one(
-        {"order_id": sid_order, "status": {"$nin": ["shipped", "delivered"]}},
+        {"order_id": sid_order, "company_id": cid, "status": {"$nin": ["shipped", "delivered"]}},
     )
     if not ses and shipped and can_mark_delivered(order):
         ses = await _db.order_pick_sessions.find_one(
-            {"order_id": sid_order},
+            {"order_id": sid_order, "company_id": cid},
             sort=[("updated_at", -1), ("created_at", -1)],
         )
     if ses:
@@ -338,8 +350,8 @@ async def _session_for(order: dict, create: bool = True) -> dict:
         return await _sync_product_label_fields(ses)
     if shipped or not create:
         raise HTTPException(status_code=404, detail="Toplama oturumu yok.")
-    items = await _enrich_items(order["company_id"], order.get("items") or [])
-    ses = {
+    items = await _enrich_items(cid, order.get("items") or [])
+    created = {
         "_id": str(uuid.uuid4()),
         "company_id": order["company_id"],
         "order_id": sid_order,
@@ -351,9 +363,12 @@ async def _session_for(order: dict, create: bool = True) -> dict:
         "created_at": _now(),
         "updated_at": _now(),
     }
-    await _db.order_pick_sessions.insert_one(ses)
-    await _db.orders.update_one({"_id": sid_order}, {"$set": {"pick_status": "open", "pick_session_id": ses["_id"]}})
-    return ses
+    await _db.order_pick_sessions.insert_one(created)
+    await _db.orders.update_one(
+        {"_id": sid_order, "company_id": cid},
+        {"$set": {"pick_status": "open", "pick_session_id": created["_id"]}},
+    )
+    return created
 
 
 def _public(ses: dict, order: Optional[dict] = None) -> dict:
@@ -444,6 +459,9 @@ def _match_line(items: list, code: str, product: Optional[dict]) -> Optional[dic
 @router.post("/order-picks/{order_id}/scan")
 async def scan_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    cid = o.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     code = str(req.get("barcode") or "").strip()
     qty = float(req.get("quantity") or 1)
@@ -451,9 +469,9 @@ async def scan_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_us
         qty = 1
     if not code:
         raise HTTPException(status_code=400, detail="Barkod boş.")
-    prod = await _product_by_code(o["company_id"], code)
+    prod = await _product_by_code(cid, code)
     # Reload so overlapping scans do not clobber each other with a stale items array.
-    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
+    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"], "company_id": cid}) or ses
     line = _match_line(ses["items"], code, prod)
     if not line:
         raise HTTPException(status_code=404, detail=f"Bu barkod siparişte yok: {code}")
@@ -474,22 +492,31 @@ async def scan_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_us
         )
     line["picked_qty"] = round(picked + qty, 3)
     if o.get("order_status") == "pending":
-        await _db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "preparing"}})
+        await _db.orders.update_one({"_id": order_id, "company_id": cid}, {"$set": {"order_status": "preparing"}})
         o["order_status"] = "preparing"
-    await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"items": ses["items"], "status": "picking", "updated_at": _now(), "last_scan": code}})
-    await _db.orders.update_one({"_id": order_id}, {"$set": {"pick_status": "picking", "order_status": o["order_status"]}})
+    await _db.order_pick_sessions.update_one(
+        {"_id": ses["_id"], "company_id": cid},
+        {"$set": {"items": ses["items"], "status": "picking", "updated_at": _now(), "last_scan": code}},
+    )
+    await _db.orders.update_one(
+        {"_id": order_id, "company_id": cid},
+        {"$set": {"pick_status": "picking", "order_status": o["order_status"]}},
+    )
     return {**_public(ses, o), "matched": line["product_name"], "message": f"{line['product_name']} · {line['picked_qty']:g}/{ordered:g}"}
 
 
 @router.post("/order-picks/{order_id}/adjust")
 async def adjust_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    cid = o.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     pid = str(req.get("product_id") or "")
     name = str(req.get("product_name") or "")
     idx = req.get("line_index")
     qty = float(req.get("picked_qty") if req.get("picked_qty") is not None else 0)
-    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
+    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"], "company_id": cid}) or ses
     line = None
     if idx is not None:
         try:
@@ -504,13 +531,19 @@ async def adjust_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_
         raise HTTPException(status_code=404, detail="Kalem bulunamadı.")
     ordered = float(line.get("ordered_qty") or 0)
     line["picked_qty"] = max(0.0, min(qty, ordered))
-    await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"items": ses["items"], "updated_at": _now()}})
+    await _db.order_pick_sessions.update_one(
+        {"_id": ses["_id"], "company_id": cid},
+        {"$set": {"items": ses["items"], "updated_at": _now()}},
+    )
     return _public(ses, o)
 
 
 @router.post("/order-picks/{order_id}/notify-missing")
 async def notify_missing(order_id: str, user: dict = Depends(_user_dep)):
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    cid = o.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     missing = [i for i in ses["items"] if float(i.get("picked_qty") or 0) + 1e-9 < float(i.get("ordered_qty") or 0)]
     if not missing:
@@ -534,9 +567,9 @@ async def notify_missing(order_id: str, user: dict = Depends(_user_dep)):
     title = f"Depo eksik: {o.get('order_number')}"
     msg = f"{o.get('customer_name')} siparişi {o.get('order_number')} toplanırken eksik: {lines}"
     link = f"/production?tab=missing&order={order_id}"
-    note = await attendance.notify_managers(o["company_id"], "order_pick_missing", title, msg, link=link)
+    note = await attendance.notify_managers(cid, "order_pick_missing", title, msg, link=link)
     await _db.order_pick_sessions.update_one(
-        {"_id": ses["_id"]},
+        {"_id": ses["_id"], "company_id": cid},
         {"$set": {
             "notified_missing_at": _now(),
             "updated_at": _now(),
@@ -545,7 +578,7 @@ async def notify_missing(order_id: str, user: dict = Depends(_user_dep)):
         }},
     )
     await _db.notifications.update_one(
-        {"title": title, "company_id": o["company_id"], "type": "order_pick_missing"},
+        {"title": title, "company_id": cid, "type": "order_pick_missing"},
         {"$set": {
             "link": link,
             "ref_type": "order_pick",
@@ -572,6 +605,9 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
     if not _create_production_order:
         raise HTTPException(status_code=500, detail="Üretim bağlantısı yok.")
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    cid = o.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     created, skipped = [], []
     existing = list(ses.get("production_orders") or [])
@@ -589,7 +625,7 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
             continue
         try:
             po = await _create_production_order({
-                "company_id": o["company_id"],
+                "company_id": cid,
                 "finished_product_id": pid,
                 "finished_product_name": i.get("product_name"),
                 "planned_quantity": miss,
@@ -613,10 +649,9 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
             skipped.append({"product_name": i["product_name"], "reason": str(e)[:160]})
     if created:
         await _db.order_pick_sessions.update_one(
-            {"_id": ses["_id"]},
+            {"_id": ses["_id"], "company_id": cid},
             {"$set": {"production_orders": existing, "sent_to_production_at": _now(), "updated_at": _now()}},
         )
-        cid = o["company_id"]
         title = f"Üretime alındı: {o.get('order_number')}"
         message = (
             f"{len(created)} kalem üretime gönderildi: "
@@ -627,7 +662,7 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
             import event_notify
             write_inapp = await event_notify.inapp_enabled(cid, "order_pick_production")
         except Exception:
-            logger.exception("order_pick_production inapp gate failed company=%s", cid)
+            logger.exception("order_pick_production inapp gate failed")
             write_inapp = True
         if write_inapp:
             try:
@@ -640,7 +675,7 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
                     target={"type": "order", "id": "", "route": "/production?tab=orders"},
                 ))
             except Exception:
-                logger.exception("order_pick_production in-app failed company=%s", cid)
+                logger.exception("order_pick_production in-app failed")
         try:
             import event_notify
             await event_notify.queue_event_email(
@@ -651,7 +686,7 @@ async def send_missing_to_production(order_id: str, user: dict = Depends(_user_d
                 dedupe_key=f"order_pick_production:{order_id}:{len(existing)}",
             )
         except Exception:
-            logger.exception("order_pick_production email queue failed company=%s", cid)
+            logger.exception("order_pick_production email queue failed")
     if not created and not skipped:
         return {"status": "ok", "message": "Eksik kalem yok.", "created": [], "skipped": []}
     if not created and skipped:
@@ -670,6 +705,9 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None, user: dict = 
     if mode not in ("ready", "partial", "ship", "deliver"):
         raise HTTPException(status_code=400, detail="mode ready, partial, ship veya deliver olmalı.")
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
+    cid = o.get("company_id")
+    if not str(cid or "").strip():
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
 
     if mode == "deliver":
         if not can_mark_delivered(o):
@@ -680,28 +718,28 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None, user: dict = 
         ses = await _session_for(o, create=False)
         now = _now()
         await _db.order_pick_sessions.update_one(
-            {"_id": ses["_id"]},
+            {"_id": ses["_id"], "company_id": cid},
             {"$set": {"status": "delivered", "delivered_at": now, "updated_at": now, "complete_mode": "deliver"}},
         )
         await _db.orders.update_one(
-            {"_id": order_id},
+            {"_id": order_id, "company_id": cid},
             {"$set": {"pick_status": "delivered", "order_status": "delivered", "delivered_at": now}},
         )
         # Kargo kartı "Yolda" kalmasın — bağlı shipment varsa teslim et.
         try:
             await _db.cargo_shipments.update_many(
-                {"order_id": order_id, "status": {"$nin": ["delivered", "returned"]}},
+                {"order_id": order_id, "company_id": cid, "status": {"$nin": ["delivered", "returned"]}},
                 {"$set": {"status": "delivered", "delivered_at": now, "updated_at": now}},
             )
         except Exception:
             pass
-        updated = await _db.orders.find_one({"_id": order_id}) or {**o, "order_status": "delivered"}
+        updated = await _db.orders.find_one({"_id": order_id, "company_id": cid}) or {**o, "order_status": "delivered"}
         if _push_order_to_shopphp:
             try:
                 await _push_order_to_shopphp(updated, reason="status")
             except Exception:
                 pass
-        ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
+        ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"], "company_id": cid}) or ses
         return {**_public(ses, updated), "message": "Sipariş teslim edildi."}
 
     ses = await _session_for(o, create=True)
@@ -710,9 +748,15 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None, user: dict = 
         raise HTTPException(status_code=400, detail="Tüm kalemler okutulmadan tam sevk yapılamaz. Kısmi teslim kullanın veya force=true.")
     pick_status = {"ready": "ready", "partial": "partial", "ship": "shipped"}[mode]
     order_status = {"ready": "preparing", "partial": "preparing", "ship": "shipped"}[mode]
-    await _db.order_pick_sessions.update_one({"_id": ses["_id"]}, {"$set": {"status": pick_status, "completed_at": _now(), "updated_at": _now(), "complete_mode": mode}})
-    await _db.orders.update_one({"_id": order_id}, {"$set": {"pick_status": pick_status, "order_status": order_status, "picked_at": _now()}})
-    updated = await _db.orders.find_one({"_id": order_id}) or {**o, "order_status": order_status}
+    await _db.order_pick_sessions.update_one(
+        {"_id": ses["_id"], "company_id": cid},
+        {"$set": {"status": pick_status, "completed_at": _now(), "updated_at": _now(), "complete_mode": mode}},
+    )
+    await _db.orders.update_one(
+        {"_id": order_id, "company_id": cid},
+        {"$set": {"pick_status": pick_status, "order_status": order_status, "picked_at": _now()}},
+    )
+    updated = await _db.orders.find_one({"_id": order_id, "company_id": cid}) or {**o, "order_status": order_status}
     if mode == "ship" and _push_order_to_shopphp:
         try:
             await _push_order_to_shopphp(updated, reason="status")
@@ -724,9 +768,9 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None, user: dict = 
         try:
             draft = await _create_draft_invoice_for_order(updated, source="ship")
             if draft:
-                updated = await _db.orders.find_one({"_id": order_id}) or updated
+                updated = await _db.orders.find_one({"_id": order_id, "company_id": cid}) or updated
                 await _db.order_pick_sessions.update_one(
-                    {"_id": ses["_id"]},
+                    {"_id": ses["_id"], "company_id": cid},
                     {"$set": {"draft_invoice_id": draft.get("_id"), "draft_invoice_number": draft.get("invoice_number")}},
                 )
             else:
@@ -752,7 +796,7 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None, user: dict = 
     elif mode == "ship" and draft_error:
         msg = f"Sipariş sevk edildi · {draft_error}"
     # Refresh session status for public payload
-    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
+    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"], "company_id": cid}) or ses
     out = {**_public(ses, updated), "message": msg}
     if draft:
         out["draft_invoice_id"] = draft.get("_id")
