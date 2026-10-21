@@ -249,6 +249,17 @@ def test_card_statement_matches_title_when_name_differs():
     assert hit["_id"] == "c1"
 
 
+def test_card_label_score_requires_word_boundary():
+    """Kısa veya yaygın kelime, daha uzun kelimenin içinde geçtiği için eşleşmez."""
+    gold = [{"_id": "g", "name": "Gold", "company_title": "", "tax_number_or_id": ""}]
+    assert match_statement_contact("GOLDSMITH JEWELRY 1234", gold) is None
+    assert match_statement_contact("MARIGOLD MARKET", gold) is None
+    assert match_statement_contact("GOLD MARKET POS", gold)["_id"] == "g"
+    market = [{"_id": "m", "name": "Market", "company_title": "", "tax_number_or_id": ""}]
+    assert match_statement_contact("SUPERMARKET 4401", market) is None
+    assert match_statement_contact("MARKET POS 12", market)["_id"] == "m"
+
+
 def test_edoc_enrich_matches_title_inside_company():
     import edocs
 

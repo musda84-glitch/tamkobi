@@ -48,12 +48,19 @@ def fold_text(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").translate(_TR_FOLD).lower()).strip()
 
 
+def _has_word(token: str, hay: str) -> bool:
+    """Katlanmış metin, açıklamada tam kelime (veya ardışık kelimeler) olarak geçmeli."""
+    if not token:
+        return False
+    return re.search(rf"(?:^| ){re.escape(token)}(?: |$)", hay) is not None
+
+
 def _label_score(label: str, hay: str) -> int:
     folded = fold_text(label)
-    if folded and len(folded) >= 4 and folded in hay:
+    if folded and len(folded) >= 4 and _has_word(folded, hay):
         return 100 + len(folded)
     tokens = [t for t in folded.split() if len(t) >= 4 and t not in _NAME_SKIP]
-    if tokens and all(t in hay for t in tokens[:2]):
+    if tokens and all(_has_word(t, hay) for t in tokens[:2]):
         return 50 + sum(len(t) for t in tokens[:2])
     return 0
 
