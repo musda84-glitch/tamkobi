@@ -22,20 +22,27 @@ def name_tokens(name: str) -> list[str]:
     return [t for t in _WORD.sub(" ", (name or "").lower()).split() if len(t) > 2 and t not in _STOP]
 
 
-def contact_matches_text(contact_name: str, counterparty: str = "", description: str = "") -> bool:
-    """Cari adı banka açıklamasında / karşı tarafta geçiyorsa eşleşir."""
-    hay = f"{counterparty} {description}".lower()
-    name = (contact_name or "").strip()
-    if not name or not hay.strip():
-        return False
-    compact = re.sub(r"\s+", " ", name.lower())
-    if len(compact) >= 5 and compact in hay:
-        return True
-    tokens = name_tokens(name)
-    if tokens and all(t in hay for t in tokens[:2]):
-        return True
-    if len(tokens) == 1 and len(tokens[0]) >= 4 and tokens[0] in hay:
-        return True
+def contact_matches_text(
+    contact_name: str,
+    counterparty: str = "",
+    description: str = "",
+    contact_title: str = "",
+) -> bool:
+    """Cari adı veya ticari ünvan banka metninde geçiyorsa eşleşir.
+
+    İmza geriye uyumlu. Türkçe katlama ve Ltd/Şti/A.Ş. stop listesi
+    contact_search üzerinden uygulanır; yalnız stop-word eşleşmez.
+    """
+    from contact_match import contact_texts_match
+
+    return contact_texts_match(contact_name, contact_title, counterparty, description)
+
+
+def contact_matches_text_any(names, counterparty: str = "", description: str = "") -> bool:
+    """Birden fazla aday metin (ad, ünvan); herhangi biri tutarsa eşleşir."""
+    for raw in names or []:
+        if contact_matches_text(str(raw or ""), counterparty, description):
+            return True
     return False
 
 

@@ -392,7 +392,8 @@ async def _invoice_doc(company_id: str, data: dict, batch_id: str) -> dict:
     if data.get("contact_tax_id"):
         contact = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": data["contact_tax_id"]})
     if not contact and data.get("contact_name"):
-        contact = await _db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(data['contact_name'])}$", "$options": "i"}})
+        rx = {"$regex": f"^{re.escape(data['contact_name'])}$", "$options": "i"}
+        contact = await _db.contacts.find_one({"company_id": company_id, "$or": [{"name": rx}, {"company_title": rx}]})
     if not contact:
         contact = {"_id": str(uuid.uuid4()), "company_id": company_id, "type": "supplier" if data.get("invoice_type") == "purchase" else "customer", "name": data["contact_name"], "tax_number_or_id": data.get("contact_tax_id") or "", "balance": 0.0,
                    "category": "Aktarım", "is_e_invoice_user": False, "import_batch_id": batch_id, "source": "migration", "created_at": _now()}
@@ -913,7 +914,8 @@ async def bh_import_customers(req: Dict[str, Any], user: dict = Depends(_user_de
         data = {k: v for k, v in fields.items() if v is not None}
         ctype = bh_contact_type(c, bal, forced_type)
         types[ctype] = types.get(ctype, 0) + 1
-        ors = ([{"bizimhesap_id": ext_id}] if ext_id else []) + ([{"tax_number_or_id": taxno}] if taxno and taxno not in ("11111111111", "1111111111") else []) + [{"name": {"$regex": f"^{re.escape(title)}$", "$options": "i"}}]
+        title_rx = {"$regex": f"^{re.escape(title)}$", "$options": "i"}
+        ors = ([{"bizimhesap_id": ext_id}] if ext_id else []) + ([{"tax_number_or_id": taxno}] if taxno and taxno not in ("11111111111", "1111111111") else []) + [{"name": title_rx}, {"company_title": title_rx}]
         existing = await _db.contacts.find_one({"company_id": company_id, "$or": ors})
         total_bal += bal
         total_cheque += cheque
