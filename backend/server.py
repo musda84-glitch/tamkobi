@@ -25256,6 +25256,7 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
 
 @api_router.post("/personnel/employees/{emp_id}/shopfloor-pin")
 async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     return await shopfloor_pin.set_employee_pin(emp_id, req, user)
 
 @api_router.get("/personnel/payrolls")

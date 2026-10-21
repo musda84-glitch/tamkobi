@@ -747,6 +747,15 @@ def test_tenant_isolation(api):
     assert pin.status_code == 404, pin.text
     assert pin.json()["detail"] == "Çalışan bulunamadı."
     assert _emp_doc(db, "emp-b")["shopfloor_pin_hash"] == before
+    ver_before = int(_emp_doc(db, "emp-b")["shopfloor_pin_ver"])
+    deleted = client.delete(
+        "/api/personnel/employees/emp-b/shopfloor-pin",
+        headers=_auth("admin-a"),
+    )
+    assert deleted.status_code == 404, deleted.text
+    assert deleted.json()["detail"] == "Çalışan bulunamadı."
+    assert _emp_doc(db, "emp-b")["shopfloor_pin_hash"] == before
+    assert int(_emp_doc(db, "emp-b")["shopfloor_pin_ver"]) == ver_before
     other = client.post(
         "/api/production/work-orders/wo-b/start",
         json={"operator_token": _op_token()},

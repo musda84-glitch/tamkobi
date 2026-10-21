@@ -902,6 +902,7 @@ async def delete_my_shopfloor_pin(user: dict = Depends(_user_dep)):
 
 @router.delete("/personnel/employees/{emp_id}/shopfloor-pin")
 async def delete_employee_shopfloor_pin(emp_id: str, user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found=NOT_FOUND_EMP)
     return await clear_employee_pin(emp_id, user)
 
 
