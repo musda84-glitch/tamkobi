@@ -16,7 +16,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice, invoiceDeleteConfirmMessage } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice, draftInvoiceApproveConfirmText, invoiceDeleteConfirmMessage, ManualPurchaseStockBadge } from "./InvoiceContextMenu";
 import { invoiceCancelConfirmText } from "../utils/invoiceBulkActions";
 import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "./IncomingInvoiceFaturalastirButton";
@@ -151,6 +151,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("invoices");
   const [busy, setBusy] = useState(null);
+  const approvingDraftRef = useRef(new Set());
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [orderDetail, setOrderDetail] = useState(null);
   const [editOrder, setEditOrder] = useState(null);
@@ -749,16 +750,20 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
   const approveDraftInvoice = async (inv) => {
     if (!inv) return;
-    const no = inv.invoice_number || "Belge";
-    if (!window.confirm(`${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`)) return;
-    setBusy(inv.id || inv._id);
+    const id = inv.id || inv._id;
+    if (!id || approvingDraftRef.current.has(id)) return;
+    if (!window.confirm(draftInvoiceApproveConfirmText(inv))) return;
+    if (approvingDraftRef.current.has(id)) return;
+    approvingDraftRef.current.add(id);
+    setBusy(id);
     try {
-      const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+      const r = await axios.post(`${API_URL}/invoices/${id}/approve`);
       toast.success(r.data?.message || "Faturalaştı — cari bakiyesi işlendi.");
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
     } finally {
+      approvingDraftRef.current.delete(id);
       setBusy(null);
     }
   };
@@ -1014,13 +1019,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <SortableHeader {...colState} leading={<th className="py-2 w-8" aria-hidden="true" />} />
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={detailInvColSpan} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
+                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const payDraft = !isDisp && inv.status === "draft"; const payLabel = isDisp ? "Bakiye yok" : payDraft ? "Taslak" : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"; const payCls = isDisp || payDraft ? "bg-slate-100 text-slate-600" : inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"; const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => openEditInvoice(inv)} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
-                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
+                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span> <ManualPurchaseStockBadge inv={inv} testId={`detail-inv-stock-badge-${inv.invoice_number}`} /></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" || isDisp ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{isDisp ? <div className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide" data-testid={`detail-inv-dispatch-nobal-${inv.invoice_number}`}>İrsaliye · bakiye dışı{(inv.invoice_ref_number || inv.converted_invoice_number) ? ` · fatura ${inv.invoice_ref_number || inv.converted_invoice_number}` : ""}</div> : inv.status === "draft" ? <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div> : null}</td>,
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
-                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDisp ? "bg-slate-100 text-slate-600" : inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{isDisp ? "Bakiye yok" : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
+                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${payCls}`} data-testid={`detail-inv-pay-${inv.invoice_number}`}>{payLabel}</span></td>,
                   }; return (
                   <React.Fragment key={inv.id || inv.invoice_number}>
                   <tr className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
