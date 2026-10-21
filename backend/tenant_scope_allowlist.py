@@ -102,26 +102,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('attendance.py', 'sync_yevmiye_adjustment', 'bonus_payments', 'find_one'): 1,
     ('attendance.py', 'workplaces_by_employee', 'employees', 'find'): 1,
     # attendance_security.py
-    ('attendance_security.py', '_claim_slot', 'attendance_devices', 'find_one'): 2,
-    ('attendance_security.py', '_claim_slot', 'attendance_devices', 'update_one'): 1,
-    ('attendance_security.py', '_enroll_punch_pin', 'employees', 'find_one'): 1,
-    ('attendance_security.py', '_enroll_punch_pin', 'employees', 'update_one'): 2,
-    ('attendance_security.py', '_on_leave', 'leave_requests', 'find_one'): 1,
-    ('attendance_security.py', '_point_slot', 'attendance_devices', 'find_one'): 1,
-    ('attendance_security.py', '_point_slot', 'attendance_devices', 'insert_one'): 1,
-    ('attendance_security.py', '_point_slot', 'attendance_devices', 'update_one'): 2,
-    ('attendance_security.py', '_punch_auth_state', 'employees', 'find_one'): 1,
-    ('attendance_security.py', '_release_slot_if_idle', 'attendance_devices', 'update_one'): 1,
-    ('attendance_security.py', '_upsert_bound_device', 'attendance_devices', 'find_one'): 1,
-    ('attendance_security.py', '_upsert_bound_device', 'attendance_devices', 'insert_one'): 1,
-    ('attendance_security.py', '_upsert_bound_device', 'attendance_devices', 'update_one'): 4,
-    ('attendance_security.py', 'approve_device', 'attendance_devices', 'update_one'): 2,
-    ('attendance_security.py', 'claim_once', 'attendance_alerts', 'find_one'): 1,
-    ('attendance_security.py', 'gate_self_punch', 'attendance_devices', 'insert_one'): 1,
-    ('attendance_security.py', 'release_new_bind', 'attendance_devices', 'update_one'): 1,
-    ('attendance_security.py', 'revoke_device', 'attendance_devices', 'update_one'): 1,
-    ('attendance_security.py', 'run_reminders', 'attendance', 'find_one'): 1,
-    ('attendance_security.py', 'run_reminders', 'shift_plans', 'find_one'): 1,
     # balance_reconciliation.py
     ('balance_reconciliation.py', 'conflicting_connection_iban', 'bank_accounts', 'find'): 1,
     # bank_guard.py
@@ -146,7 +126,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('company_reset.py', '_count_stock_movements', 'stock_movements', 'count_documents'): 1,
     ('company_reset.py', 'wipe_company_business_data', 'stock_movements', 'delete_many'): 1,
     # data_export.py
-    ('data_export.py', 'export_my_data', 'employees', 'find_one'): 3,
     # demo.py
     ('demo.py', 'tag_legacy_seed', 'partner_transactions', 'update_many'): 1,
     # e_invoice.py
@@ -191,8 +170,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('idempotency.py', 'purge_expired', 'idempotency_keys', 'delete_one'): 1,
     ('idempotency.py', 'purge_expired', 'idempotency_keys', 'find'): 1,
     # legal_docs.py
-    ('legal_docs.py', 'get_b2b_legal', 'contacts', 'find_one'): 1,
-    ('legal_docs.py', 'list_b2b_legal', 'contacts', 'find_one'): 1,
     # linked_moves.py
     ('linked_moves.py', 'list_isnet_missing_mode', 'einvoice_settings', 'find'): 1,
     # mail_accounts.py

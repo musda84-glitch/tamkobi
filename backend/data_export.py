@@ -200,6 +200,23 @@ def export_blocked(user: Optional[dict] = None, features: Optional[dict] = None)
     return personel_blocked(user)
 
 
+def _hr_query(emp_id, member_ids: list) -> dict:
+    """Üye şirketlerin personel satırları ve şirket alanı boş eski satırlar.
+
+    Üye olunmayan şirketin company_id değeri eşleşmez.
+    """
+    company = {"$in": list(member_ids)} if member_ids else "__none__"
+    return {
+        "employee_id": emp_id,
+        "$or": [
+            {"company_id": company},
+            {"company_id": {"$exists": False}},
+            {"company_id": None},
+            {"company_id": ""},
+        ],
+    }
+
+
 @router.get("/me/data-export")
 async def export_my_data(request: Request, company_id: Optional[str] = None):
     user = await _token_user(request)
@@ -216,9 +233,10 @@ async def export_my_data(request: Request, company_id: Optional[str] = None):
             detail="Rolünüz kişisel veri ZIP indirme yetkisine sahip değil.",
         )
     uid = str(user.get("id") or user.get("_id"))
-    cids = [c for c in (user.get("company_ids") or []) if c]
+    member_ids = [c for c in (user.get("company_ids") or []) if c]
+    cids = list(member_ids)
     if company_id:
-        if company_id not in cids:
+        if company_id not in member_ids:
             raise HTTPException(status_code=403, detail="Bu şirketin verisine erişiminiz yok.")
         cids = [company_id]
     companies = []
@@ -228,18 +246,20 @@ async def export_my_data(request: Request, company_id: Optional[str] = None):
             companies.append(co)
     inv_q = {"company_id": {"$in": cids}} if cids else {"company_id": "__none__"}
     invoices = await _safe_find(_db.invoices, inv_q, INVOICE_LIMIT)
+    emp_company = {"$in": member_ids} if member_ids else "__none__"
     emp = None
     if user.get("employee_id"):
-        emp = await _db.employees.find_one({"_id": user["employee_id"]})
+        emp = await _db.employees.find_one({"_id": user["employee_id"], "company_id": emp_company})
     if not emp:
-        emp = await _db.employees.find_one({"user_id": uid})
+        emp = await _db.employees.find_one({"user_id": uid, "company_id": emp_company})
     if not emp and user.get("email"):
-        emp = await _db.employees.find_one({"email": user["email"]})
+        emp = await _db.employees.find_one({"email": user["email"], "company_id": emp_company})
     emp_id = emp.get("_id") if emp else None
-    attendance = await _safe_find(_db.attendance, {"employee_id": emp_id}, LOG_LIMIT) if emp_id else []
-    leaves = await _safe_find(_db.leave_requests, {"employee_id": emp_id}, 500) if emp_id else []
-    payrolls = await _safe_find(_db.payrolls, {"employee_id": emp_id}, 500) if emp_id else []
-    bonuses = await _safe_find(_db.bonus_payments, {"employee_id": emp_id}, 500) if emp_id else []
+    hr_q = _hr_query(emp_id, member_ids) if emp_id else None
+    attendance = await _safe_find(_db.attendance, hr_q, LOG_LIMIT) if hr_q else []
+    leaves = await _safe_find(_db.leave_requests, hr_q, 500) if hr_q else []
+    payrolls = await _safe_find(_db.payrolls, hr_q, 500) if hr_q else []
+    bonuses = await _safe_find(_db.bonus_payments, hr_q, 500) if hr_q else []
     activity = await _safe_find(_db.activity_logs, {"user_id": uid}, LOG_LIMIT)
     headers = [invoice_header_row(i) for i in invoices]
     lines = []
