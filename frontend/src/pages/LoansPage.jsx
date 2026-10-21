@@ -96,7 +96,7 @@ export default function LoansPage() {
           <div key={l.id} className="bg-white rounded-2xl border border-slate-200/90 shadow-sm" data-testid={`loan-card-${l.id}`}>
             <div className="p-4 flex flex-wrap items-center gap-4 cursor-pointer" onClick={() => setOpen(open === l.id ? null : l.id)}>
               <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center"><Landmark className="w-5 h-5" /></div>
-              <div className="min-w-[200px]"><div className="font-bold text-slate-900 text-sm">{l.name}</div><div className="text-xs text-slate-500">{l.bank} · {TYPES[l.loan_type]} · {l.term_months} ay{l.interest_rate ? ` · %${l.interest_rate}` : ""}</div></div>
+              <div className="min-w-0 sm:min-w-[200px]"><div className="font-bold text-slate-900 text-sm">{l.name}</div><div className="text-xs text-slate-500">{l.bank} · {TYPES[l.loan_type]} · {l.term_months} ay{l.interest_rate ? ` · %${l.interest_rate}` : ""}</div></div>
               <div className="text-xs"><div className="text-slate-400">Anapara</div><b>{fmt(l.principal)} ₺</b></div>
               <div className="text-xs"><div className="text-slate-400">Kalan Borç</div><b className="text-rose-600">{fmt(l.remaining_debt)} ₺</b></div>
               <div className="text-xs"><div className="text-slate-400">Sonraki Taksit</div><b className={l.next_installment && l.next_installment.due_date < today ? "text-rose-600" : ""}>{l.next_installment ? `${fmtDate(l.next_installment.due_date)} · ${fmt(l.next_installment.amount)} ₺` : "Tamamlandı"}</b></div>

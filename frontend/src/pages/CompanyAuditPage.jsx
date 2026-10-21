@@ -127,7 +127,7 @@ export default function CompanyAuditPage() {
             {(data?.actions || []).map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
           </select>
         </label>
-        <label className="text-[11px] text-slate-500 font-semibold flex-1 min-w-[180px]">Ara
+        <label className="text-[11px] text-slate-500 font-semibold flex-1 min-w-0 sm:min-w-[180px]">Ara
           <span className="relative block mt-1">
             <Search className="w-3.5 h-3.5 absolute left-2 top-2 text-slate-400" />
             <input value={filters.q} onChange={(e) => set("q", e.target.value)} placeholder="Kayıt, özet, kullanıcı" className={`${inputCls} w-full pl-7`} data-testid="audit-search" />

@@ -396,10 +396,16 @@ async def seed():
         new_name = (c.get("name") or "").replace("Nexus", "TamKobi", 1)
         if new_name and new_name != c.get("name"):
             await _db.companies.update_one({"_id": c["_id"]}, {"$set": {"name": new_name}})
+    # tenant-ok: açılış, Nexus görünen adını tüm şirketlerde tarar
     async for p in _db.products.find({"name": {"$regex": r"^Nexus"}}):
         new_name = (p.get("name") or "").replace("Nexus", "TamKobi", 1)
         if new_name and new_name != p.get("name"):
-            await _db.products.update_one({"_id": p["_id"]}, {"$set": {"name": new_name}})
+            pcid = p.get("company_id")
+            if pcid:
+                await _db.products.update_one({"_id": p["_id"], "company_id": pcid}, {"$set": {"name": new_name}})
+            else:
+                # tenant-ok: açılış marka düzeltmesi, company_id'siz eski ürün
+                await _db.products.update_one({"_id": p["_id"]}, {"$set": {"name": new_name}})
     try:
         import logging
         import public_sites
@@ -617,7 +623,7 @@ async def quota_usage(company_id: str) -> Dict[str, Any]:
     q = {"company_id": {"$in": ids}}
     products = await _db.products.count_documents(q)
     contacts = await _db.contacts.count_documents(q)
-    files = await _db.files.find({"$or": [{"company_id": {"$in": ids}}, {"entity_id": {"$in": ids}}]}).to_list(50000)
+    files = await _db.files.find({"company_id": {"$in": ids}}).to_list(50000)
     storage = 0
     seen = set()
     for f in files:
@@ -660,13 +666,8 @@ async def check_storage_limit(company_id: str, extra_bytes: int = 0):
         raise HTTPException(status_code=403, detail=f"Resim depolama kotası doldu ({round(used / (1024 * 1024), 1)}/{limit_mb} MB). Paketinizi yükseltin ({lic['plan_name']}).")
 
 
-async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], attach_user: Optional[dict] = None) -> dict:
-    """Open another isolated legal entity under the same subscription/license.
-
-    When admin_email + admin_password are provided, the new company gets its own
-    login (dedicated admin user) and is not auto-attached to the caller's account.
-    Without credentials, legacy behavior attaches parent company admins (shared login).
-    """
+async def validate_licensed_company(parent_company_id: str, req: Dict[str, Any]) -> dict:
+    """Alt şirket ekleme ön kontrolleri. Yazmaz."""
     parent = await _db.companies.find_one({"_id": parent_company_id})
     if not parent:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
@@ -685,6 +686,30 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
             raise HTTPException(status_code=400, detail="Yönetici şifresi en az 6 karakter olmalı.")
         if await _db.users.find_one({"email": admin_email}):
             raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var. Farklı bir giriş e-postası kullanın.")
+    return {
+        "parent": parent,
+        "name": name,
+        "admin_email": admin_email,
+        "admin_password": admin_password,
+        "admin_name": admin_name,
+        "separate_login": separate_login,
+    }
+
+
+async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], attach_user: Optional[dict] = None) -> dict:
+    """Open another isolated legal entity under the same subscription/license.
+
+    When admin_email + admin_password are provided, the new company gets its own
+    login (dedicated admin user) and is not auto-attached to the caller's account.
+    Without credentials, legacy behavior attaches parent company admins (shared login).
+    """
+    spec = await validate_licensed_company(parent_company_id, req)
+    parent = spec["parent"]
+    name = spec["name"]
+    admin_email = spec["admin_email"]
+    admin_password = spec["admin_password"]
+    admin_name = spec["admin_name"]
+    separate_login = spec["separate_login"]
     lid = await license_id_of(parent_company_id)
     cid = f"comp_{uuid.uuid4().hex[:8]}"
     await _db.companies.insert_one({
@@ -804,7 +829,7 @@ async def require_super_admin(request: Request) -> dict:
 async def _usage(company_id: str) -> Dict[str, Any]:
     last = await _db.activity_logs.find_one({"company_id": company_id}, sort=[("created_at", -1)])
     q = {"company_id": company_id}
-    files = await _db.files.find({"$or": [{"company_id": company_id}, {"entity_id": company_id}]}).to_list(20000)
+    files = await _db.files.find({"company_id": company_id}).to_list(20000)
     storage = sum(int(f.get("size") or 0) for f in files if not f.get("is_deleted"))
     return {"users": await _db.users.count_documents(tenant_user_query(company_id)), "invoices": await _db.invoices.count_documents(q), "contacts": await _db.contacts.count_documents(q),
             "products": await _db.products.count_documents(q), "orders": await _db.orders.count_documents(q), "storage_bytes": storage, "last_activity": (last or {}).get("created_at")}
@@ -982,6 +1007,7 @@ async def overview_stats() -> Dict[str, Any]:
             p = plans[l["plan_id"]]; mrr += float(p.get("price_yearly", 0)) / 12 if l.get("billing_period") == "yearly" else float(p.get("price_monthly", 0))
     module_usage = {k: sum(1 for r in rows if r["license"]["modules"].get(k)) for k in _ALL}
     expiring = sorted([r for r in rows if r["license"]["days_left"] is not None and r["license"]["days_left"] <= 7], key=lambda r: r["license"]["days_left"])
+    # tenant-ok: platform özeti, bekleyen yükseltme taleplerini tüm şirketlerde sayar
     pending = await _db.upgrade_requests.count_documents({"status": "pending"})
     open_tickets = await _db.support_tickets.count_documents({"status": {"$in": ["open", "in_progress", "waiting_customer"]}})
     return {"companies": len(rows), "users": await _db.users.count_documents({"is_super_admin": {"$ne": True}}), "platform_admins": await _db.users.count_documents({"is_super_admin": True}), "by_status": by_status, "by_plan": by_plan, "mrr": round(mrr, 2), "module_usage": module_usage, "expiring": expiring[:10], "pending_requests": pending, "open_tickets": open_tickets, "recent": sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)[:5]}
@@ -997,6 +1023,11 @@ async def system_modules(_: dict = Depends(require_super_admin)):
     return await catalog_with_prices()
 
 
+async def write_module_prices(prices: Dict[str, float]) -> dict:
+    await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"module_prices": prices, "updated_at": _now()}}, upsert=True)
+    return await catalog_with_prices()
+
+
 @router.put("/system/modules/prices")
 async def save_module_prices(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
     raw = req.get("prices") or req
@@ -1009,8 +1040,7 @@ async def save_module_prices(req: Dict[str, Any], _: dict = Depends(require_supe
             prices[key] = max(0, float(v))
         except (TypeError, ValueError):
             continue
-    await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"module_prices": prices, "updated_at": _now()}}, upsert=True)
-    return await catalog_with_prices()
+    return await write_module_prices(prices)
 
 
 @router.get("/system/plans")
@@ -1034,15 +1064,18 @@ def _plan_payload(req: Dict[str, Any], base: Optional[dict] = None) -> Dict[str,
             "modules": mods, "color": req.get("color", b.get("color", "slate")), "sort": int(req.get("sort", b.get("sort", 99)) or 99), "is_public": bool(req.get("is_public", b.get("is_public", True))), "is_popular": bool(req.get("is_popular", b.get("is_popular", False)))}
 
 
-@router.post("/system/plans")
-async def create_plan(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+async def apply_create_plan(req: Dict[str, Any]) -> dict:
     doc = {"_id": f"plan_{uuid.uuid4().hex[:6]}", "code": (req.get("code") or uuid.uuid4().hex[:6]).lower(), **_plan_payload(req), "created_at": _now()}
     await _db.saas_plans.insert_one(doc)
     return _clean(doc)
 
 
-@router.put("/system/plans/{plan_id}")
-async def update_plan(plan_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+@router.post("/system/plans")
+async def create_plan(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_create_plan(req)
+
+
+async def apply_update_plan(plan_id: str, req: Dict[str, Any]) -> dict:
     p = await _db.saas_plans.find_one({"_id": plan_id})
     if not p:
         raise HTTPException(status_code=404, detail="Paket bulunamadı.")
@@ -1055,16 +1088,34 @@ async def update_plan(plan_id: str, req: Dict[str, Any], _: dict = Depends(requi
     return _clean(await _db.saas_plans.find_one({"_id": plan_id}))
 
 
-@router.delete("/system/plans/{plan_id}")
-async def delete_plan(plan_id: str, _: dict = Depends(require_super_admin)):
+@router.put("/system/plans/{plan_id}")
+async def update_plan(plan_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_update_plan(plan_id, req)
+
+
+async def validate_plan_delete(plan_id: str) -> dict:
+    """Silme ön kontrolleri. Yazmaz."""
     n = await _db.company_licenses.count_documents({"plan_id": plan_id})
     if n:
         raise HTTPException(status_code=400, detail=f"Bu paketi kullanan {n} şirket var; önce paketlerini değiştirin.")
     if plan_id == CUSTOM_PLAN_ID:
         raise HTTPException(status_code=400, detail="Özel paket silinemez.")
+    plan = await _db.saas_plans.find_one({"_id": plan_id})
+    if not plan:
+        raise HTTPException(status_code=404, detail="Paket bulunamadı.")
+    return plan
+
+
+async def apply_delete_plan(plan_id: str) -> dict:
+    await validate_plan_delete(plan_id)
     if not (await _db.saas_plans.delete_one({"_id": plan_id})).deleted_count:
         raise HTTPException(status_code=404, detail="Paket bulunamadı.")
     return {"status": "success"}
+
+
+@router.delete("/system/plans/{plan_id}")
+async def delete_plan(plan_id: str, _: dict = Depends(require_super_admin)):
+    return await apply_delete_plan(plan_id)
 
 
 @router.get("/system/companies")
@@ -1320,13 +1371,12 @@ async def system_add_licensed_company(company_id: str, req: Dict[str, Any], _: d
     return await _company_row(doc)
 
 
-@router.put("/system/companies/{company_id}/parent")
-async def set_company_parent(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
-    """Attach an existing company under another (same license, or merge a standalone onto the parent's license)."""
+async def prepare_company_parent(company_id: str, parent_id: str) -> Dict[str, Any]:
+    """Üst şirket bağlama ön kontrolleri. Yazmaz."""
     c = await _db.companies.find_one({"_id": company_id})
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    parent_id = (req.get("parent_company_id") or "").strip()
+    parent_id = (parent_id or "").strip()
     if not parent_id:
         raise HTTPException(status_code=400, detail="Bağlı olunacak şirket seçin.")
     if parent_id == company_id:
@@ -1346,16 +1396,33 @@ async def set_company_parent(company_id: str, req: Dict[str, Any], _: dict = Dep
             raise HTTPException(status_code=400, detail="Bu şirketin kendi lisansında başka şirketler var; önce onları taşıyın.")
         await check_company_limit(parent_id)
         updates["license_id"] = parent_lid
-    await _db.companies.update_one({"_id": company_id}, {"$set": updates})
-    if child_lid != parent_lid and child_lid == company_id:
+    return {
+        "updates": updates,
+        "child_lid": child_lid,
+        "parent_lid": parent_lid,
+        "drop_child_license": child_lid != parent_lid and child_lid == company_id,
+    }
+
+
+async def apply_set_company_parent(company_id: str, parent_id: str) -> dict:
+    """Mevcut şirketi başka bir şirketin altına bağlar (aynı lisans ya da tek başına lisansı üst lisansa taşır)."""
+    plan = await prepare_company_parent(company_id, parent_id)
+    await _db.companies.update_one({"_id": company_id}, {"$set": plan["updates"]})
+    if plan["drop_child_license"]:
         await _db.company_licenses.delete_one({"_id": company_id})
-        invalidate(child_lid)
-    invalidate(parent_lid)
+        invalidate(plan["child_lid"])
+    invalidate(plan["parent_lid"])
     return await _company_row(await _db.companies.find_one({"_id": company_id}))
 
 
-@router.post("/system/companies")
-async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+@router.put("/system/companies/{company_id}/parent")
+async def set_company_parent(company_id: str, req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    """Attach an existing company under another (same license, or merge a standalone onto the parent's license)."""
+    return await apply_set_company_parent(company_id, req.get("parent_company_id") or "")
+
+
+async def validate_new_company(req: Dict[str, Any]) -> None:
+    """Firma açma ön kontrolleri. Yazmaz."""
     name = (req.get("name") or "").strip(); email = (req.get("admin_email") or "").strip().lower(); pwd = req.get("admin_password") or ""
     if not name or "@" not in email:
         raise HTTPException(status_code=400, detail="Şirket adı ve yönetici e-postası gerekli.")
@@ -1366,6 +1433,12 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     plan_id = req.get("plan_id") or "plan_standard"
     if not await _db.saas_plans.find_one({"_id": plan_id}):
         raise HTTPException(status_code=400, detail="Geçersiz paket.")
+
+
+async def apply_create_company(req: Dict[str, Any]) -> dict:
+    await validate_new_company(req)
+    name = (req.get("name") or "").strip(); email = (req.get("admin_email") or "").strip().lower(); pwd = req.get("admin_password") or ""
+    plan_id = req.get("plan_id") or "plan_standard"
     cid = f"comp_{uuid.uuid4().hex[:8]}"
     await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "created_at": _now(), "allow_platform_access": False})
     uid = f"usr_{uuid.uuid4().hex[:8]}"
@@ -1383,6 +1456,11 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
         pass
     invalidate(cid)
     return await _company_row(await _db.companies.find_one({"_id": cid}))
+
+
+@router.post("/system/companies")
+async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_admin)):
+    return await apply_create_company(req)
 
 
 async def validate_company_delete(company_id: str) -> dict:
@@ -1671,7 +1749,11 @@ async def upgrade_request_rows(status: Optional[str] = None, company_id: Optiona
         q["status"] = status
     if company_id:
         q["company_id"] = company_id
-    return [_clean(r) for r in await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)]
+        rows = await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)
+    else:
+        # tenant-ok: platform yöneticisi tüm şirketlerin yükseltme taleplerini listeler
+        rows = await _db.upgrade_requests.find(q).sort("created_at", -1).to_list(limit)
+    return [_clean(r) for r in rows]
 
 
 @router.get("/system/upgrade-requests")
@@ -1681,19 +1763,24 @@ async def list_requests(status: Optional[str] = None, _: dict = Depends(require_
 
 async def apply_upgrade_resolution(req_id: str, status: str, note, apply):
     """Talep durumunu yazar. Onay + apply lisansı günceller ve uygulama içi bildirim bırakır. Mail/SMS yok."""
+    # tenant-ok: platform yöneticisi yükseltme talebini _id ile bulur; sonraki yazma kaydın company_id'si ile filtrelenir
     r = await _db.upgrade_requests.find_one({"_id": req_id})
     if not r:
         raise HTTPException(status_code=404, detail="Talep bulunamadı.")
     if status not in ("approved", "rejected", "pending"):
         raise HTTPException(status_code=400, detail="Geçersiz durum.")
-    await _db.upgrade_requests.update_one({"_id": req_id}, {"$set": {"status": status, "admin_note": note or "", "resolved_at": _now()}})
+    rcid = r.get("company_id")
+    await _db.upgrade_requests.update_one(
+        {"_id": req_id, "company_id": rcid},
+        {"$set": {"status": status, "admin_note": note or "", "resolved_at": _now()}},
+    )
     if status == "approved" and r.get("plan_id") and apply:
         lid = await license_id_of(r["company_id"])
         await _db.company_licenses.update_one({"_id": lid}, {"$set": {"plan_id": r["plan_id"], "status": "active", "module_overrides": {}, "updated_at": _now()}, "$setOnInsert": {"created_at": _now(), "started_at": _now(), "company_id": lid}}, upsert=True)
         invalidate(lid)
     import notify as _notify
     await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": r["company_id"], "type": "license", "title": f"Paket talebiniz {'onaylandı' if status == 'approved' else 'reddedildi'}", "message": f"{r.get('plan_name')} paketi talebiniz {'onaylandı ve aktif edildi' if status == 'approved' else 'reddedildi'}. {note or ''}".strip(), "ref_type": "license", "ref_id": req_id, "is_read": False, "created_at": _now()})
-    return _clean(await _db.upgrade_requests.find_one({"_id": req_id}))
+    return _clean(await _db.upgrade_requests.find_one({"_id": req_id, "company_id": rcid}))
 
 
 @router.put("/system/upgrade-requests/{req_id}")

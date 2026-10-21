@@ -500,7 +500,7 @@ export default function EdocInboxPage() {
           ))}
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="edoc-detail">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 min-w-0" data-testid="edoc-detail">
           {!sel ? (
             <div className="text-slate-400 p-6 text-center">Detay için soldan belge seçin.</div>
           ) : (
@@ -583,7 +583,8 @@ export default function EdocInboxPage() {
                 ) : null}
               </div>
 
-              <table className="w-full">
+              <div className="overflow-x-auto">
+              <table className="min-w-[800px] w-full">
                 <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
                   <tr>
                     <th className="px-2 py-1.5 text-left">Kalem (tedarikçi)</th>
@@ -644,6 +645,7 @@ export default function EdocInboxPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
 
               {sel.status === "pending" && (sel.lines || []).some((l) => !l.product_id) && (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" data-testid="edoc-stock-match-bar">

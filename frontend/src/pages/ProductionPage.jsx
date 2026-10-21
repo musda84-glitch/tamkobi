@@ -286,7 +286,7 @@ export default function ProductionPage() {
       {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Üretim & Reçeteler</h1><p className="text-xs sm:text-sm text-slate-500">Eksik ürün bildirimi → üretim planla → emir ver → hammadde düşsün, mamul stoğa girsin</p></div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button onClick={() => navigate("/atolye")} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="goto-shopfloor-btn"><MonitorPlay className="w-4 h-4" /> Üretim Ekranı</button>
           <button onClick={() => { setRecipeModal({}); if (!recipesLoaded) loadRecipes(); }} className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 bg-white rounded-xl text-xs font-semibold hover:bg-slate-50" data-testid="new-recipe-btn"><BookOpen className="w-4 h-4" /> Yeni Reçete</button>
           <button onClick={() => { setOrderModal(true); if (!recipesLoaded) loadRecipes(); }} className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700" data-testid="new-production-order-btn"><Plus className="w-4 h-4" /> Üretim Emri Ver</button>
@@ -301,7 +301,7 @@ export default function ProductionPage() {
           <button onClick={() => setTab("missing")} className="ml-auto px-2 py-1 text-amber-800 font-semibold underline" data-testid="goto-missing-tab">Eksik ürün planına git</button>
         </div>
       )}
-      <div className="flex items-center gap-1 border-b border-slate-200" data-testid="production-tabs">
+      <div className="flex items-center gap-1 border-b border-slate-200 overflow-x-auto" data-testid="production-tabs">
         {[
           ["missing", "Eksik Ürün Bildirimleri", BellRing, missingCount],
           ["orders", "Üretim Emirleri", Factory, ordersTabCount],
@@ -341,7 +341,8 @@ export default function ProductionPage() {
               <button type="button" onClick={clearOrderMissingFilter} className="ml-auto px-2 py-1 rounded-lg border border-indigo-200 bg-white font-semibold hover:bg-indigo-100" data-testid="missing-order-filter-clear">Filtreyi kaldır</button>
             </div>
           ) : null}
-          <table className="w-full text-xs text-left">
+          <div className="overflow-x-auto">
+          <table className="min-w-[960px] w-full text-xs text-left">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold border-b">
               <tr>
                 <th className="px-3 py-2 w-8"></th>
@@ -442,12 +443,14 @@ export default function ProductionPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {tab === "orders" && (
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-          <table className="w-full text-xs text-left">
+          <div className="overflow-x-auto">
+          <table className="min-w-[960px] w-full text-xs text-left">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="px-4 py-2">Emir</th><th className="px-4 py-2">Ürün</th><th className="px-4 py-2 text-right">Plan / Üretilen</th><th className="px-4 py-2">Tarih</th><th className="px-4 py-2 text-right">Maliyet</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2 text-right">İşlem</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400" data-testid="po-loading">Yükleniyor…</td></tr>}
@@ -564,6 +567,7 @@ export default function ProductionPage() {
                 </tr>); })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

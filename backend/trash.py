@@ -64,9 +64,10 @@ async def soft_delete(collection: str, doc: dict, entity_type: str, label: str, 
 
 
 async def purge_expired(company_id: Optional[str] = None) -> int:
-    q: Dict[str, Any] = {"expires_at": {"$lt": _now().isoformat()}}
-    if company_id:
-        q["company_id"] = company_id
+    cid = str(company_id or "").strip()
+    if not cid:
+        return 0
+    q: Dict[str, Any] = {"expires_at": {"$lt": _now().isoformat()}, "company_id": cid}
     r = await _db.trash.delete_many(q)
     return r.deleted_count
 
@@ -103,24 +104,27 @@ async def list_trash(company_id: Optional[str] = None, entity_type: Optional[str
 
 @router.get("/trash/{trash_id}")
 async def get_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
-    rec = await _db.trash.find_one({"_id": trash_id})
+    cid = tenant_access.resolve_company_id(user)
+    rec = await _db.trash.find_one({"_id": trash_id, "company_id": cid})
     if not rec:
-        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
-    cid = rec.get("company_id") or (rec.get("doc") or {}).get("company_id")
-    if cid is not None and not tenant_access.user_may_access_company(user, str(cid)):
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
     doc = dict(rec.get("doc") or {})
     doc["id"] = doc.pop("_id", None)
     return {**_summary(rec), "doc": doc}
 
 
-async def _clear_sync_tombstones(collection: str, doc_ids: List[Any]) -> None:
+async def _clear_sync_tombstones(collection: str, doc_ids: List[Any], company_id: Optional[str] = None) -> None:
     """Geri alınan kayıtların eski tombstone'larını sil — artımlı sync tekrar 'silindi' demesin."""
     ids = [str(i) for i in doc_ids if i is not None]
-    if not ids or collection in ("sync_tombstones", "trash"):
+    cid = str(company_id or "").strip()
+    if not ids or not cid or collection in ("sync_tombstones", "trash"):
         return
     try:
-        await _db.sync_tombstones.delete_many({"collection": collection, "doc_id": {"$in": ids}})
+        await _db.sync_tombstones.delete_many({
+            "collection": collection,
+            "doc_id": {"$in": ids},
+            "company_id": cid,
+        })
     except Exception:
         logging.getLogger(__name__).exception("Beklenmeyen hata (trash.py)")
 
@@ -159,11 +163,9 @@ async def _restore_one_trash_rec(rec: dict) -> tuple:
 
 @router.post("/trash/{trash_id}/restore")
 async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
-    rec = await _db.trash.find_one({"_id": trash_id})
+    cid = tenant_access.resolve_company_id(user)
+    rec = await _db.trash.find_one({"_id": trash_id, "company_id": cid})
     if not rec:
-        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
-    cid = _trash_company_id(rec)
-    if cid is not None and not tenant_access.user_may_access_company(user, cid):
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
     records = [rec]
     group = rec.get("restore_group")
@@ -187,7 +189,7 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
         restored_related += rel_n
         related_ids.extend(rel_ids)
     for cname, did in related_ids:
-        await _clear_sync_tombstones(cname, [did])
+        await _clear_sync_tombstones(cname, [did], cid)
     for item, doc in restored_docs:
         hook = _hooks.get(item["entity_type"])
         if not hook:
@@ -199,7 +201,7 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
             for r in item.get("related") or []:
                 await _db[r["collection"]].delete_many({"_id": {"$in": [d["_id"] for d in r.get("docs") or []]}})
             raise HTTPException(status_code=400, detail=f"Geri getirilemedi: {e.detail}")
-    await _db.trash.delete_many({"_id": {"$in": [r["_id"] for r in records]}})
+    await _db.trash.delete_many({"_id": {"$in": [r["_id"] for r in records]}, "company_id": cid})
     label = TYPE_LABELS.get(rec["entity_type"], rec["entity_type"])
     extra = restored_related
     grouped = len(records) - 1
@@ -214,13 +216,11 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
 
 @router.delete("/trash/{trash_id}")
 async def purge_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
-    rec = await _db.trash.find_one({"_id": trash_id})
+    cid = tenant_access.resolve_company_id(user)
+    rec = await _db.trash.find_one({"_id": trash_id, "company_id": cid})
     if not rec:
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
-    cid = rec.get("company_id") or (rec.get("doc") or {}).get("company_id")
-    if cid is not None and not tenant_access.user_may_access_company(user, str(cid)):
-        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
-    r = await _db.trash.delete_one({"_id": trash_id})
+    r = await _db.trash.delete_one({"_id": trash_id, "company_id": cid})
     if not r.deleted_count:
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
     return {"status": "success", "message": "Kayıt kalıcı olarak silindi."}

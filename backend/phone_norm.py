@@ -48,13 +48,16 @@ async def ensure_unique_phone_norm(
     raise ValueError(PHONE_TAKEN_MSG)
 
 
-async def backfill_phone_norm(db) -> Dict[str, int]:
+async def backfill_phone_norm(db, company_id: Optional[str] = None) -> Dict[str, int]:
     """Idempotent: set phone_norm on users/employees where missing and phone normalizes."""
     updated_users = updated_emps = 0
+    cid = str(company_id or "").strip()
+    phone_q: Dict[str, Any] = {
+        "phone": {"$exists": True, "$nin": [None, ""]},
+        "$or": [{"phone_norm": {"$exists": False}}, {"phone_norm": None}, {"phone_norm": ""}],
+    }
     try:
-        rows = await db.users.find(
-            {"phone": {"$exists": True, "$nin": [None, ""]}, "$or": [{"phone_norm": {"$exists": False}}, {"phone_norm": None}, {"phone_norm": ""}]}
-        ).to_list(5000)
+        rows = await db.users.find(phone_q).to_list(5000)
     except Exception:
         rows = []
     for u in rows:
@@ -67,9 +70,11 @@ async def backfill_phone_norm(db) -> Dict[str, int]:
         except Exception:
             pass
     try:
-        erows = await db.employees.find(
-            {"phone": {"$exists": True, "$nin": [None, ""]}, "$or": [{"phone_norm": {"$exists": False}}, {"phone_norm": None}, {"phone_norm": ""}]}
-        ).to_list(5000)
+        if cid:
+            erows = await db.employees.find({**phone_q, "company_id": cid}).to_list(5000)
+        else:
+            # tenant-ok: açılış backfill'i company_id almaz, tüm personel telefonlarını normalize eder
+            erows = await db.employees.find(phone_q).to_list(5000)
     except Exception:
         erows = []
     for e in erows:
@@ -77,7 +82,10 @@ async def backfill_phone_norm(db) -> Dict[str, int]:
         if not norm:
             continue
         try:
-            await db.employees.update_one({"_id": e["_id"]}, {"$set": {"phone_norm": norm}})
+            await db.employees.update_one(
+                {"_id": e["_id"], "company_id": str(e.get("company_id") or cid)},
+                {"$set": {"phone_norm": norm}},
+            )
             updated_emps += 1
         except Exception:
             pass
@@ -112,14 +120,19 @@ async def find_user_by_phone(db, phone_raw: Any) -> Optional[dict]:
                 pass
             return u
     # Employee phone → user_id
+    # tenant-ok: şifremi unuttum telefon araması şirket seçmeden kullanıcıyı bulur
     emp = await db.employees.find_one({"phone_norm": phone})
     if not emp:
+        # tenant-ok: şifremi unuttum telefon araması şirket seçmeden kullanıcıyı bulur
         emps = await db.employees.find({"phone": {"$exists": True, "$nin": [None, ""]}}).to_list(PHONE_SCAN_LIMIT)
         for e in emps:
             if phone_norm_of(e.get("phone")) == phone:
                 emp = e
                 try:
-                    await db.employees.update_one({"_id": e["_id"]}, {"$set": {"phone_norm": phone}})
+                    await db.employees.update_one(
+                        {"_id": e["_id"], "company_id": str(e.get("company_id") or "")},
+                        {"$set": {"phone_norm": phone}},
+                    )
                 except Exception:
                     pass
                 break

@@ -85,12 +85,6 @@ _REMOVED = (
 _KEPT = (
     ("employee_pay.py", "accrue_due_for_all_companies", "employees", "find"),
     ("employee_pay.py", "scheduler_loop", "employees", "find"),
-    ("partner_pay.py", "accrue_due_for_all_companies", "partners", "find"),
-    ("partner_pay.py", "repair_legacy_expense_withdrawals", "partner_transactions", "find"),
-    ("partner_pay.py", "repair_legacy_expense_withdrawals", "partner_transactions", "update_one"),
-    ("partner_pay.py", "_partner_company_id", "partners", "find_one"),
-    ("partner_pay.py", "reverse_one", "partner_transactions", "find_one"),
-    ("partner_pay.py", "sync_partner_from_ledger", "partners", "find_one"),
     ("linked_moves.py", "list_isnet_missing_mode", "einvoice_settings", "find"),
 )
 
@@ -418,7 +412,7 @@ def test_partner_money_stays_in_company():
         name = await partner_pay.move(db, CO_A, "partner-shared", 5, "withdrawal", "cekis")
         undone = await partner_pay.reverse_one(db, {"_id": "ptx-shared", "company_id": CO_A})
         _doc(db, "partners", "partner-shared", CO_A)["balance"] = 1.0
-        synced = await partner_pay.sync_partner_from_ledger(db, "partner-shared")
+        synced = await partner_pay.sync_partner_from_ledger(db, "partner-shared", company_id=CO_A)
         company = await partner_pay.sync_company_partners(db, CO_A)
         return name, undone, synced, company
 
@@ -545,7 +539,7 @@ def test_wave9_baseline_keys_removed():
     present = [key for key in _REMOVED if key in base]
     assert present == []
     assert len(_REMOVED) == 49
-    assert len(_KEPT) == 9
+    assert len(_KEPT) == 3
     for key in _KEPT:
         assert key in base
     assert not any(key[0] == "server.py" for key in _REMOVED)

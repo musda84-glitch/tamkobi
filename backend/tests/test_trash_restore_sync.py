@@ -17,9 +17,9 @@ def test_clear_sync_tombstones_deletes_matching():
     db = MagicMock()
     db.sync_tombstones.delete_many = AsyncMock()
     trash.init(db)
-    _run(trash._clear_sync_tombstones("bank_transactions", ["tx1", "tx2"]))
+    _run(trash._clear_sync_tombstones("bank_transactions", ["tx1", "tx2"], "co1"))
     db.sync_tombstones.delete_many.assert_awaited_once_with(
-        {"collection": "bank_transactions", "doc_id": {"$in": ["tx1", "tx2"]}}
+        {"collection": "bank_transactions", "doc_id": {"$in": ["tx1", "tx2"]}, "company_id": "co1"}
     )
 
 
@@ -81,4 +81,4 @@ def test_restore_clears_tombstone_and_stamps_updated_at():
     assert inserted.get("restored_at")
     assert inserted.get("updated_at")
     tombs.delete_many.assert_awaited()
-    trash_coll.delete_many.assert_awaited_once_with({"_id": {"$in": ["trash1"]}})
+    trash_coll.delete_many.assert_awaited_once_with({"_id": {"$in": ["trash1"]}, "company_id": "co1"})
