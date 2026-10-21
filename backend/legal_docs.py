@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import platform_public
 import saas
+import tenant_scope
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -234,20 +235,47 @@ async def get_platform_legal(slug: str):
     return render_platform_doc(slug, company, brand, st)
 
 
+async def _b2b_legal_contact(token: str) -> dict:
+    """B2B oturumunda contact_id ve company_id birlikte aranır.
+
+    Oturum yoksa portal jetonu yeter; company_id boş kayıt dönmez.
+    """
+    token = str(token or "").strip()
+    if not token:
+        raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
+    scope = tenant_scope.current()
+    if scope is not None and scope.kind == "b2b":
+        contact_id = str(scope.contact_id or "").strip()
+        cid = str(scope.company_id or "").strip()
+        if not contact_id or not cid:
+            raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
+        contact = await _db.contacts.find_one({
+            "_id": contact_id,
+            "company_id": cid,
+            "b2b_token": token,
+            "b2b_enabled": True,
+        })
+    else:
+        contact = await _db.contacts.find_one({
+            "b2b_token": token,
+            "b2b_enabled": True,
+            "company_id": {"$nin": [None, ""]},
+        })
+    if not contact or not str(contact.get("company_id") or "").strip():
+        raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
+    return contact
+
+
 @router.get("/public/b2b/{token}/legal")
 async def list_b2b_legal(token: str):
-    c = await _db.contacts.find_one({"b2b_token": token, "b2b_enabled": True})
-    if not c:
-        raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
+    c = await _b2b_legal_contact(token)
     company = await _db.companies.find_one({"_id": c["company_id"]}) or {}
     return {"docs": [{"slug": s, "title": TITLES[s], "path": f"/yasal/{s}?b2b={token}"} for s in SLUGS], "seller": party_from_company(company)}
 
 
 @router.get("/public/b2b/{token}/legal/{slug}")
 async def get_b2b_legal(token: str, slug: str):
-    c = await _db.contacts.find_one({"b2b_token": token, "b2b_enabled": True})
-    if not c:
-        raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
+    c = await _b2b_legal_contact(token)
     company = await _db.companies.find_one({"_id": c["company_id"]}) or {}
     return render_doc(slug, company)
 
