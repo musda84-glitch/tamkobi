@@ -17091,9 +17091,9 @@ async def match_order_item_product(order_id: str, req: Dict[str, Any], user: dic
     if aliases:
         prod_upd["$addToSet"] = {"marketplace_aliases": {"$each": list(dict.fromkeys(aliases))}}
     if prod_upd:
-        await db.products.update_one({"_id": p["_id"]}, prod_upd)
+        await db.products.update_one({"_id": p["_id"], "company_id": o.get("company_id")}, prod_upd)
     stamp = datetime.now(timezone.utc).isoformat()
-    await db.orders.update_one({"_id": order_id}, {"$set": {"items": items, "updated_at": stamp}})
+    await db.orders.update_one({"_id": order_id, "company_id": o.get("company_id")}, {"$set": {"items": items, "updated_at": stamp}})
     updated = {**o, "items": items, "updated_at": stamp}
     return {
         "status": "success",
@@ -17117,10 +17117,10 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
     company_id = o.get("company_id")
     invoice = None
     if o.get("invoice_id"):
-        invoice = await db.invoices.find_one(_invoice_id_query(o["invoice_id"], company_id))
+        invoice = await db.invoices.find_one({"_id": o["invoice_id"], "company_id": company_id})
     dispatch = None
     if o.get("dispatch_id"):
-        dispatch = await db.invoices.find_one(_invoice_id_query(o["dispatch_id"], company_id))
+        dispatch = await db.invoices.find_one({"_id": o["dispatch_id"], "company_id": company_id})
     if not warehouse_only:
         # Kesilmiş e-irsaliye, fatura GİB kilidinden bağımsız olarak kalem düzenlemesini kapatır.
         if _issued_edocument(dispatch):
@@ -17146,7 +17146,7 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
         if wname:
             update["warehouse_name"] = wname[:120]
         elif wid:
-            wh = await db.warehouses.find_one({"_id": wid})
+            wh = await db.warehouses.find_one({"_id": wid, "company_id": company_id})
             if wh:
                 update["warehouse_name"] = str(wh.get("name") or "")[:120]
     if "items" in req:
@@ -17166,7 +17166,7 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
         k: o.get(k)
         for k in ("items", "subtotal", "vat_total", "discount_total", "grand_total", "total_amount", "updated_at")
     }
-    await db.orders.update_one({"_id": order_id}, {"$set": update})
+    await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": update})
     warning = None
     if update.get("items"):
         refreshed = {**o, **update}
@@ -17181,7 +17181,7 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
             raise
         except Exception:
             logging.getLogger(__name__).exception("Sipariş ticari senkronu başarısız: %s", order_id)
-    updated = await db.orders.find_one({"_id": order_id})
+    updated = await db.orders.find_one({"_id": order_id, "company_id": company_id})
     out = {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
     if warning:
         out["order_sync_warning"] = warning
@@ -17403,16 +17403,17 @@ async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
             await db.bank_accounts.update_one({"_id": account_id, "company_id": emp["company_id"]}, {"$set": {"current_balance": bal}})
         except Exception:
             logging.getLogger(__name__).exception("Prim güncelleme kasa recalc: %s", account_id)
+    cid = rec["company_id"]
     if paying:
         res = await db.bonus_payments.update_one_atomic(
-            {"_id": bonus_id, "status": {"$ne": "paid"}},
+            {"_id": bonus_id, "company_id": cid, "status": {"$ne": "paid"}},
             {"$set": upd},
         )
         if res.matched_count == 0:
             raise HTTPException(status_code=409, detail="Bu prim/avans zaten ödenmiş.")
     else:
-        await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
-    return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
+        await db.bonus_payments.update_one({"_id": bonus_id, "company_id": cid}, {"$set": upd})
+    return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id, "company_id": cid}))
 
 
 @api_router.put("/personnel/bonuses/{bonus_id}")
@@ -17791,9 +17792,7 @@ async def _sync_draft_invoice_items(order: dict, items: list) -> None:
     """Bekleyen sipariş kalemleri değişince bağlı taslak faturayı güncelle."""
     if not order or not order.get("invoice_id") or order.get("is_invoiced") or not items:
         return
-    inv_q: Dict[str, Any] = {"_id": order["invoice_id"]}
-    if order.get("company_id"):
-        inv_q["company_id"] = order["company_id"]
+    inv_q: Dict[str, Any] = {"_id": order["invoice_id"], "company_id": order.get("company_id")}
     invoice = await db.invoices.find_one(inv_q)
     if not invoice or invoice.get("status") != "draft":
         return
@@ -17811,7 +17810,7 @@ async def _sync_draft_invoice_items(order: dict, items: list) -> None:
     except (TypeError, ValueError):
         gd_amt = 0.0
     totals = invoice_document_totals(inv_items, gd_rate, gd_amt)
-    await db.invoices.update_one({"_id": invoice["_id"]}, {"$set": {
+    await db.invoices.update_one({"_id": invoice["_id"], "company_id": order.get("company_id")}, {"$set": {
         "items": inv_items,
         "subtotal": totals["subtotal"],
         "vat_total": totals["vat_total"],
@@ -17829,9 +17828,7 @@ async def _sync_draft_order_items(invoice: dict, items: list) -> None:
     order_id = invoice.get("order_id") or invoice.get("source_order_id")
     if not order_id:
         return
-    ord_q: Dict[str, Any] = {"_id": order_id}
-    if invoice.get("company_id"):
-        ord_q["company_id"] = invoice["company_id"]
+    ord_q: Dict[str, Any] = {"_id": order_id, "company_id": invoice.get("company_id")}
     order = await db.orders.find_one(ord_q)
     if not order or order.get("is_invoiced"):
         return
@@ -17843,7 +17840,7 @@ async def _sync_draft_order_items(invoice: dict, items: list) -> None:
     await _fill_stock_codes(invoice.get("company_id") or order.get("company_id"), ord_rows)
     ord_items = [it.model_dump() for it in _order_item_models(ord_rows)]
     subtotal, vat_total, discount_total, grand_total = order_document_totals(ord_items)
-    await db.orders.update_one({"_id": order["_id"]}, {"$set": {
+    await db.orders.update_one({"_id": order["_id"], "company_id": invoice.get("company_id") or order.get("company_id")}, {"$set": {
         "items": ord_items,
         "subtotal": subtotal,
         "vat_total": vat_total,
@@ -18368,21 +18365,22 @@ async def _propagate_quote_commercial(quote: dict) -> Dict[str, Any]:
 async def approve_order(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     req = req or {}
+    cid = str(o.get("company_id") or "").strip()
     update = {"order_status": "approved", "approved_at": datetime.now(timezone.utc).isoformat()}
     if req.get("cargo_carrier"):
         update["cargo_carrier"] = req["cargo_carrier"]
-    await db.orders.update_one({"_id": order_id}, {"$set": update})
-    updated = await db.orders.find_one({"_id": order_id})
+    await db.orders.update_one({"_id": order_id, "company_id": cid}, {"$set": update})
+    updated = await db.orders.find_one({"_id": order_id, "company_id": cid})
     try:
         draft = await _create_draft_invoice_for_order(updated)
         if draft:
-            updated = await db.orders.find_one({"_id": order_id}) or updated
+            updated = await db.orders.find_one({"_id": order_id, "company_id": cid}) or updated
             updated["draft_invoice_id"] = draft.get("_id")
             updated["draft_invoice_number"] = draft.get("invoice_number")
     except Exception:
         logging.getLogger(__name__).exception("Sipariş onayında taslak fatura oluşturulamadı: %s", order_id)
     push = await _push_order_to_marketplace(updated, reason="approve")
-    updated = await db.orders.find_one({"_id": order_id}) or updated
+    updated = await db.orders.find_one({"_id": order_id, "company_id": cid}) or updated
     out = clean_doc(updated)
     channel = str(updated.get("channel") or "")
     if push and push.get("ok"):
@@ -18405,8 +18403,9 @@ async def update_order_cargo_carrier(order_id: str, req: Dict[str, Any] = None, 
     if not code:
         raise HTTPException(status_code=400, detail="Kargo firması seçin.")
     name = str(req.get("cargo_carrier_name") or "").strip() or resolve_cargo_name(code)
-    await db.orders.update_one({"_id": order_id}, {"$set": {"cargo_carrier": code, "cargo_carrier_name": name}})
-    updated = await db.orders.find_one({"_id": order_id})
+    cid = str(o.get("company_id") or "").strip()
+    await db.orders.update_one({"_id": order_id, "company_id": cid}, {"$set": {"cargo_carrier": code, "cargo_carrier_name": name}})
+    updated = await db.orders.find_one({"_id": order_id, "company_id": cid})
     push = await _push_order_cargo_to_marketplace(updated)
     out = clean_doc(updated)
     channel = str((updated or {}).get("channel") or "")
@@ -18433,14 +18432,14 @@ async def return_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
         qty = float(it.get("quantity", 0))
         total += qty * float(it.get("unit_price", 0))
         if restock and it.get("product_id"):
-            await db.products.update_one({"_id": it["product_id"]}, {"$inc": {"stock_quantity": qty}})
-            await db.stock_movements.insert_one({"_id": str(uuid.uuid4()), "product_id": it["product_id"], "product_name": it.get("product_name"), "change": qty, "reason": f"İade: {o['order_number']}", "date": datetime.now(timezone.utc).isoformat()})
+            await db.products.update_one({"_id": it["product_id"], "company_id": o["company_id"]}, {"$inc": {"stock_quantity": qty}})
+            await db.stock_movements.insert_one({"_id": str(uuid.uuid4()), "company_id": o["company_id"], "product_id": it["product_id"], "product_name": it.get("product_name"), "change": qty, "reason": f"İade: {o['order_number']}", "date": datetime.now(timezone.utc).isoformat()})
     doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "order_id": order_id, "order_number": o["order_number"], "channel": o.get("channel"), "customer_name": o.get("customer_name"),
            "items": items, "reason": req.get("reason", ""), "refund_amount": round(total, 2), "restocked": restock, "status": "completed", "created_at": datetime.now(timezone.utc).isoformat()}
     await db.returns.insert_one(doc)
     partial = len(items) < len(o.get("items", []))
-    await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "partially_returned" if partial else "returned", "return_id": doc["_id"]}})
-    o_fresh = await db.orders.find_one({"_id": order_id})
+    await db.orders.update_one({"_id": order_id, "company_id": o["company_id"]}, {"$set": {"order_status": "partially_returned" if partial else "returned", "return_id": doc["_id"]}})
+    o_fresh = await db.orders.find_one({"_id": order_id, "company_id": o["company_id"]})
     settlement_rev = await _reverse_marketplace_settlement(o_fresh or o)
     out = {"status": "success", "return": clean_doc(doc), "message": f"{o['order_number']} için {total:,.2f} ₺ iade kaydedildi{' ve stok geri alındı' if restock else ''}."}
     if settlement_rev:
@@ -18796,6 +18795,7 @@ async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current
 @api_router.get("/comm/whatsapp/webhook")
 async def wa_webhook_verify(request: Request):
     q = request.query_params
+    # tenant-ok: oturumsuz Meta webhook doğrulaması; şirket verify_token ile bulunur, token kayıtta tekildir
     s = await db.whatsapp_settings.find_one({"verify_token": q.get("hub.verify_token")}) if q.get("hub.verify_token") else None
     if q.get("hub.mode") == "subscribe" and s:
         return Response(content=q.get("hub.challenge", ""), media_type="text/plain")
@@ -18825,6 +18825,7 @@ async def _process_wa_webhook(payload: Dict[str, Any], *, raw_body: bytes = b"",
         for ch in entry.get("changes", []) or []:
             v = ch.get("value", {}) or {}
             pn_id = (v.get("metadata") or {}).get("phone_number_id")
+            # tenant-ok: oturumsuz Meta webhook; phone_number_id ile şirket bulunur, sonraki yazılar bu company_id ile süzülür
             s = await db.whatsapp_settings.find_one({"phone_number_id": pn_id}) if pn_id else None
             company_id = str((s or {}).get("company_id") or "").strip()
             if not s or not company_id:
@@ -18922,13 +18923,14 @@ async def list_ecommerce_integrations(company_id: Optional[str] = None, user: di
 
 @api_router.put("/integrations/ecommerce/{channel_id}")
 async def update_ecommerce_integration(channel_id: str, data: Dict[str, Any], user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Kanal bulunamadı.")
+    cfg = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Kanal bulunamadı.")
     payload = dict(data or {})
     # UI «Siparişleri otomatik çek» → auto_sync_orders; arka plan döngüsü her ikisini de okur.
     if "auto_sync_orders" in payload:
         payload["auto_sync"] = bool(payload.get("auto_sync_orders"))
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": payload})
-    res = await db.integration_configs.find_one({"_id": channel_id})
+    cid = str(cfg.get("company_id") or "").strip()
+    await db.integration_configs.update_one({"_id": channel_id, "company_id": cid}, {"$set": payload})
+    res = await db.integration_configs.find_one({"_id": channel_id, "company_id": cid})
     return clean_doc(res)
 
 async def _collapse_marketplace_order_dupes(company_id: str, channel: str, order_number: str) -> Optional[dict]:
@@ -19045,7 +19047,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             payload = merge_keep_fields(existing, d)
             payload = _apply_stock_matches_to_order(payload, match_idx)
             payload = marketplace_providers.normalize_marketplace_order_prices(payload)
-            await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
+            await db.orders.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": payload})
             merged = {**existing, **payload}
             if not merged.get("contact_id"):
                 await _ensure_order_contact(merged)
@@ -19064,7 +19066,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
         d["created_at"] = d["updated_at"]
         try:
-            await db.orders.insert_one(d)
+            await db.orders.insert_one({**d, "company_id": company_id})
             contact = await _ensure_order_contact(d)
             inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
             await _try_shopphp_settlement(d, contact, inv)
@@ -19085,7 +19087,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 payload = merge_keep_fields(existing, d)
                 payload = _apply_stock_matches_to_order(payload, match_idx)
                 payload = marketplace_providers.normalize_marketplace_order_prices(payload)
-                await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
+                await db.orders.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": payload})
                 merged = {**existing, **payload}
                 if not merged.get("contact_id"):
                     await _ensure_order_contact(merged)
@@ -19102,14 +19104,14 @@ CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": 
 
 async def _ensure_order_contact(o: dict) -> Optional[dict]:
     """Sipariş için cari bul (ad / telefon / e-posta / VKN) yoksa otomatik müşteri carisi aç ve siparişe bağla."""
+    cid = o.get("company_id")
     if o.get("contact_id"):
-        c = await db.contacts.find_one({"_id": o["contact_id"]})
+        c = await db.contacts.find_one({"_id": o["contact_id"], "company_id": cid})
         if c:
             return c
     name = (o.get("customer_name") or "").strip()
     if not name:
         return None
-    cid = o.get("company_id")
     ors: List[Dict[str, Any]] = [{"name": name}]
     digits = re.sub(r"\D", "", o.get("customer_phone") or "")[-10:]
     if len(digits) == 10:
@@ -19129,9 +19131,9 @@ async def _ensure_order_contact(o: dict) -> Optional[dict]:
              "tax_office": o.get("customer_tax_office") or None, "email": (o.get("customer_email") or "").strip().lower() or None, "phone": o.get("customer_phone") or None, "address": o.get("shipping_address") or None, "city": o.get("city") or None,
              "balance": 0.0, "credit_limit": 0.0, "category": CHANNEL_CUSTOMER_CATEGORY.get((o.get("channel") or "").lower(), "Pazaryeri Müşterisi"), "is_e_invoice_user": False, "payment_term_days": 0, "late_fee_rate": 0.0,
              "b2b_enabled": False, "b2b_discount": 0.0, "source": f"order:{o.get('channel') or 'manual'}", "auto_created": True, "created_at": datetime.now(timezone.utc).isoformat()}
-        await db.contacts.insert_one(c)
+        await db.contacts.insert_one({**c, "company_id": cid})
         created = True
-    await db.orders.update_one({"_id": o["_id"]}, {"$set": {"contact_id": c["_id"], "contact_name": c.get("name")}})
+    await db.orders.update_one({"_id": o["_id"], "company_id": cid}, {"$set": {"contact_id": c["_id"], "contact_name": c.get("name")}})
     o["contact_id"], o["contact_name"] = c["_id"], c.get("name")
     c["_created"] = created
     return c
@@ -19179,7 +19181,7 @@ async def set_shopphp_rest_credentials(channel_id: str, req: Dict[str, Any], use
     upd: Dict[str, Any] = {"rest_email": (req.get("rest_email") or "").strip(), "rest_auto_push": bool(req.get("rest_auto_push", True))}
     if req.get("rest_password"):
         upd["rest_password_enc"] = comm_service.encrypt(req["rest_password"])
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": upd})
+    await db.integration_configs.update_one({"_id": channel_id, "company_id": cfg.get("company_id")}, {"$set": upd})
     return {"status": "success", "rest_email": upd["rest_email"], "rest_configured": bool(upd["rest_email"] and (upd.get("rest_password_enc") or cfg.get("rest_password_enc"))), "rest_auto_push": upd["rest_auto_push"]}
 
 def _shopphp_rest_client(cfg: dict) -> Optional["marketplace_providers.ShopPHPClient"]:
@@ -19222,7 +19224,7 @@ async def _push_trendyol_approve(order: dict) -> Dict[str, Any]:
     try:
         raw = await client.set_package_status(str(pkg_id), "Picking", lines)
         await db.orders.update_one(
-            {"_id": order["_id"]},
+            {"_id": order["_id"], "company_id": order.get("company_id")},
             {"$set": {"marketplace_status": "Picking", "marketplace_push": {"at": datetime.now(timezone.utc).isoformat(), "ok": True, "reason": "approve"}}},
         )
         return {"ok": True, "channel": "trendyol", "response": raw}
@@ -19262,7 +19264,7 @@ async def _push_trendyol_cargo(order: dict) -> Dict[str, Any]:
     try:
         raw = await client.update_cargo_provider(str(pkg_id), provider)
         await db.orders.update_one(
-            {"_id": order["_id"]},
+            {"_id": order["_id"], "company_id": order.get("company_id")},
             {"$set": {"marketplace_push": {"at": datetime.now(timezone.utc).isoformat(), "ok": True, "reason": "cargo"}}},
         )
         return {"ok": True, "channel": "trendyol", "response": raw}
@@ -19301,7 +19303,7 @@ async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_erro
         return None
     inv_no = None
     if order.get("invoice_id"):
-        inv = await db.invoices.find_one({"_id": order["invoice_id"]}, {"invoice_number": 1})
+        inv = await db.invoices.find_one({"_id": order["invoice_id"], "company_id": order.get("company_id")}, {"invoice_number": 1})
         inv_no = (inv or {}).get("invoice_number")
     carrier = order.get("cargo_carrier_name") or CARGO_NAME_TR.get(str(order.get("cargo_carrier") or "").lower(), order.get("cargo_carrier"))
     status = SHOPPHP_STATUS_CODES.get(order.get("order_status") or "")
@@ -19329,7 +19331,7 @@ async def _push_order_to_shopphp(order: dict, reason: str = "manual", raise_erro
     if errors:
         log["error"] = "; ".join(errors)
     await db.shopphp_push_logs.insert_one(log)
-    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"shopphp_push": {"at": log["created_at"], "ok": log["ok"], "error": log.get("error"), "sent": log["sent"]}}})
+    await db.orders.update_one({"_id": order["_id"], "company_id": order.get("company_id")}, {"$set": {"shopphp_push": {"at": log["created_at"], "ok": log["ok"], "error": log.get("error"), "sent": log["sent"]}}})
     if not log["ok"] and raise_errors:
         raise HTTPException(status_code=502, detail=log["error"])
     return log
@@ -19382,7 +19384,7 @@ async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any], u
             tname = tacc.get("account_name")
         update["transfer_settlement_account_id"] = tid
         update["transfer_settlement_account_name"] = tname
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": update})
+    await db.integration_configs.update_one({"_id": channel_id, "company_id": cfg["company_id"]}, {"$set": update})
     saved = await db.integration_configs.find_one({"_id": channel_id, "company_id": cfg["company_id"]}) or {}
     return {
         "status": "success",
@@ -19428,7 +19430,7 @@ async def _ensure_marketplace_contact(company_id: str, channel: str) -> Optional
         "auto_created": True,
         "created_at": now,
     }
-    await db.contacts.insert_one(c)
+    await db.contacts.insert_one({**c, "company_id": company_id})
     return c
 
 async def _consume_expected_settlement(bank_tx: dict) -> bool:
@@ -19439,8 +19441,10 @@ async def _consume_expected_settlement(bank_tx: dict) -> bool:
         amt = float(bank_tx.get("amount") or 0)
     except (TypeError, ValueError):
         return False
+    cid = str(bank_tx.get("company_id") or "").strip()
     rows = await db.bank_transactions.find({
         "account_id": bank_tx["account_id"],
+        "company_id": cid,
         "source": "marketplace_settlement_expected",
         "match_status": "expected",
     }).to_list(100)
@@ -19454,11 +19458,11 @@ async def _consume_expected_settlement(bank_tx: dict) -> bool:
             continue
     if not hit:
         return False
-    await db.bank_transactions.update_one({"_id": hit["_id"]}, {"$set": {
+    await db.bank_transactions.update_one({"_id": hit["_id"], "company_id": cid}, {"$set": {
         "match_status": "matched",
         "linked_bank_tx_id": bank_tx.get("_id"),
     }})
-    await db.bank_transactions.update_one({"_id": bank_tx["_id"]}, {"$set": {
+    await db.bank_transactions.update_one({"_id": bank_tx["_id"], "company_id": cid}, {"$set": {
         "match_status": "matched",
         "matched_via": "marketplace_settlement",
         "related_expected_tx_id": hit.get("_id"),
@@ -19817,6 +19821,7 @@ async def _upsert_by_external(coll, company_id: str, docs: list) -> int:
 @api_router.post("/integrations/ecommerce/{channel_id}/test-connection")
 async def test_ecommerce_connection(channel_id: str, user: dict = Depends(get_current_user)):
     config = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Entegrasyon yapılandırması bulunamadı.")
+    cid = str(config.get("company_id") or "").strip()
     if config.get("channel") == "shopphp":
         if not marketplace_providers.has_shopphp_credentials(config):
             return {"status": "error", "message": "Mağaza adresi ve Sipariş XML kodu (xml.php?c=siparisler&xmlc=…) gerekli. Kodu ya da tam XML adresini yapıştırabilirsiniz."}
@@ -19830,9 +19835,9 @@ async def test_ecommerce_connection(channel_id: str, user: dict = Depends(get_cu
             else:
                 prod_note = ", ürün XML kodu (c=shopphp) yok → Ürünler & Fiyat sekmesi çalışmaz"
         except HTTPException as e:
-            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail}})
+            await db.integration_configs.update_one({"_id": channel_id, "company_id": cid}, {"$set": {"status": "error", "last_error": e.detail}})
             return {"status": "error", "message": e.detail}
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
+        await db.integration_configs.update_one({"_id": channel_id, "company_id": cid}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
         return {"status": "success", "live": True, "message": f"ShopPHP XML bağlantısı başarılı: sipariş XML'inde {len(orders)} sipariş{prod_note}." + (" RSS beslemesi (c=rss) fiyat/stok içermediği için kullanılmaz." if r.get("rss") else "")}
     if not marketplace_providers.has_live_credentials(config):
         return {"status": "error", "message": "API Key, API Secret ve Satıcı ID (supplier/seller ID) eksiksiz doldurulmalı."}
@@ -19841,13 +19846,13 @@ async def test_ecommerce_connection(channel_id: str, user: dict = Depends(get_cu
         try:
             pkgs = await client.orders(days=1, size=1)
         except HTTPException as e:
-            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail}})
+            await db.integration_configs.update_one({"_id": channel_id, "company_id": cid}, {"$set": {"status": "error", "last_error": e.detail}})
             return {"status": "error", "message": e.detail}
         finally:
             await client.close()
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "last_error": None, "live": True}})
+        await db.integration_configs.update_one({"_id": channel_id, "company_id": cid}, {"$set": {"status": "connected", "is_active": True, "last_error": None, "live": True}})
         return {"status": "success", "live": True, "message": f"Trendyol Seller API bağlantısı doğrulandı (satıcı {config['supplier_id']}). Son 24 saatte {len(pkgs)} paket görüldü."}
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": False}})
+    await db.integration_configs.update_one({"_id": channel_id, "company_id": cid}, {"$set": {"status": "connected", "is_active": True, "live": False}})
     return {"status": "success", "live": False, "message": f"{config.get('channel_name')} için canlı API henüz bağlı değil; bilgiler kaydedildi (SİMÜLE mod)."}
 
 CHANNEL_CATALOG = {
@@ -19878,6 +19883,7 @@ async def add_ecommerce_channel(req: Dict[str, Any], user: dict = Depends(get_cu
         raise HTTPException(status_code=400, detail=f"{name} zaten ekli.")
     doc = {"_id": f"ecom_{code}_{uuid.uuid4().hex[:4]}" if code != "shopphp" else "ecom_shopphp", "company_id": company_id, "channel": code, "channel_name": name, "is_active": False, "api_key": "", "api_secret": "", "supplier_id": "", "store_url": "",
            "status": "not_configured", "live": False, "synced_orders": 0, "auto_invoice": False, "stock_sync": True, "created_at": datetime.now(timezone.utc).isoformat(), "live_api": LIVE_API_CHANNELS.get(code)}
+    # tenant-ok: kanal _id'si (collection, id) birincil anahtarıdır; shopphp sabit ecom_shopphp başka şirkette varsa yeni _id üretilir, belge çağırana dönmez
     if await db.integration_configs.find_one({"_id": doc["_id"]}):
         doc["_id"] = f"ecom_{code}_{uuid.uuid4().hex[:4]}"
     await db.integration_configs.insert_one(doc)
@@ -19888,7 +19894,7 @@ async def remove_ecommerce_channel(channel_id: str, user: dict = Depends(get_cur
     cfg = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Kanal bulunamadı.")
     if await db.orders.count_documents({"company_id": cfg["company_id"], "channel": cfg["channel"]}):
         raise HTTPException(status_code=400, detail="Bu kanala ait siparişler var; kanal silinemez, pasife alın.")
-    await db.integration_configs.delete_one({"_id": channel_id})
+    await db.integration_configs.delete_one({"_id": channel_id, "company_id": cfg.get("company_id")})
     return {"status": "success", "message": f"{cfg.get('channel_name')} kanalı kaldırıldı."}
 
 async def _sync_ecommerce_channel_core(
@@ -19901,6 +19907,7 @@ async def _sync_ecommerce_channel_core(
     if user is not None:
         config = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Entegrasyon bulunamadı.")
     else:
+        # tenant-ok: arka plan pazaryeri senkronu oturumsuz; kanal _id'si zamanlayıcının seçtiği kayıttır, şirket yüklenen config'ten okunur
         config = await db.integration_configs.find_one({"_id": channel_id})
         if not config:
             raise HTTPException(status_code=404, detail="Entegrasyon bulunamadı.")
@@ -19920,10 +19927,10 @@ async def _sync_ecommerce_channel_core(
         try:
             raw_orders = await marketplace_providers.shopphp_orders_xml(config)
         except HTTPException as e:
-            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
+            await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
         await _notify_marketplace_inserted(company_id, res)
         return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
     if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
@@ -19932,7 +19939,7 @@ async def _sync_ecommerce_channel_core(
         try:
             pkgs = await client.orders(days=sync_days)
         except HTTPException as e:
-            await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
+            await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
             await client.close()
             raise
         # İade / soru ikincil — sipariş çekimini kilitlemesin (yoğun mağazalarda zaman aşımı kök nedeni).
@@ -19957,7 +19964,7 @@ async def _sync_ecommerce_channel_core(
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_trendyol_order(p, company_id, channel) for p in pkgs])
         new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims]) if claims else 0
         new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions]) if questions else 0
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now, "last_sync_warnings": warnings[:5]}, "$inc": {"synced_orders": res["inserted"]}})
+        await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now, "last_sync_warnings": warnings[:5]}, "$inc": {"synced_orders": res["inserted"]}})
         await _notify_marketplace_inserted(company_id, res)
         cancelled = sum(1 for p in pkgs if (p.get("shipmentPackageStatus") or p.get("status")) == "Cancelled")
         msg = f"Trendyol canlı senkron ({sync_days} gün): {len(pkgs)} paket ({res['inserted']} yeni, {res['updated']} güncellendi, {cancelled} iptal), {len(claims)} iade talebi, {len(questions)} müşteri sorusu çekildi."
@@ -19967,7 +19974,7 @@ async def _sync_ecommerce_channel_core(
                 "message": msg}
     docs = marketplace_providers.simulated_orders(company_id, channel)
     res = await _upsert_marketplace_orders(company_id, docs)
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"last_synced_at": now, "live": False}})
+    await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"last_synced_at": now, "live": False}})
     await _notify_marketplace_inserted(company_id, res)
     return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
 
@@ -20012,6 +20019,7 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
 
 async def _run_bank_auto_sync_tick():
     from bank_auto_sync import should_background_sync
+    # tenant-ok: zamanlayıcı auto_sync açık tüm şirketlerin banka bağlantılarını tarar; her bağlantı _sync_bank_connection_core içinde kendi kaydından işlenir
     conns = await db.bank_connections.find({"auto_sync": {"$ne": False}}).to_list(200)
     for c in conns:
         if not should_background_sync(c):
@@ -20401,7 +20409,7 @@ async def _shopphp_refresh_cached_prices(company_id: str, sent: List[dict]) -> N
             c["quantity"] = u["stok"]
         if u.get("active") is not None:
             c["on_sale"] = c["approved"] = bool(int(u["active"]))
-    await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
+    await db.marketplace_product_cache.update_one({"_id": cache["_id"], "company_id": company_id}, {"$set": {"items": cache["items"]}})
 
 @api_router.post("/marketplace/products/equalize-from-stock")
 async def marketplace_equalize_from_stock(req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -20501,7 +20509,7 @@ async def marketplace_push_price_stock(req: Dict[str, Any], user: dict = Depends
             u = by_bc.get(c["barcode"])
             if u:
                 c.update({k2: u[k1] for k1, k2 in (("salePrice", "sale_price"), ("listPrice", "list_price"), ("quantity", "quantity")) if k1 in u})
-        await db.marketplace_product_cache.update_one({"_id": cache["_id"]}, {"$set": {"items": cache["items"]}})
+        await db.marketplace_product_cache.update_one({"_id": cache["_id"], "company_id": company_id}, {"$set": {"items": cache["items"]}})
     await db.marketplace_push_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "channel": channel, "items": items, "batch_request_id": (res or {}).get("batchRequestId"), "created_at": datetime.now(timezone.utc).isoformat()})
     return {"status": "success", "sent": len(items), "batch_request_id": (res or {}).get("batchRequestId"), "message": f"{len(items)} ürünün fiyat/stok bilgisi Trendyol'a gönderildi (toplu işlem no: {(res or {}).get('batchRequestId') or '-'}). Yansıması birkaç dakika sürebilir."}
 
@@ -20524,7 +20532,7 @@ async def marketplace_push_logs(company_id: Optional[str] = None, channel: str =
                         items = st.get("items") or []
                         fails = [{"barcode": (i.get("requestItem") or {}).get("barcode"), "reasons": i.get("failureReasons") or []} for i in items if i.get("status") == "FAILED"]
                         upd = {"status": st.get("status") or ("COMPLETED" if items and not fails else "PROCESSING"), "item_count": st.get("itemCount"), "failed_items": fails, "checked_at": datetime.now(timezone.utc).isoformat()}
-                        await db.marketplace_push_logs.update_one({"_id": lg["_id"]}, {"$set": upd}); lg.update(upd)
+                        await db.marketplace_push_logs.update_one({"_id": lg["_id"], "company_id": cid}, {"$set": upd}); lg.update(upd)
             finally:
                 await client.close()
     return [{"id": l["_id"], "created_at": l["created_at"], "batch_request_id": l.get("batch_request_id"), "sent": len(l.get("items") or []), "items": l.get("items"), "status": l.get("status") or "SENT", "failed_items": l.get("failed_items") or [], "errors": l.get("errors") or [], "unmatched": l.get("unmatched") or [], "checked_at": l.get("checked_at")} for l in logs]
@@ -20557,7 +20565,7 @@ async def create_product_from_marketplace(req: Dict[str, Any], user: Any = Depen
     doc["marketplace_aliases"] = aliases
     doc["source"] = f"marketplace:{req.get('channel') or ''}"
     doc["show_in_b2b"] = show_b2b
-    await db.products.insert_one(doc)
+    await db.products.insert_one({**doc, "company_id": company_id})
     await _remember_category(company_id, doc["category"])
     await _remember_unit(company_id, doc.get("unit"))
     image_src = req.get("image_url") or req.get("image")
@@ -20569,7 +20577,7 @@ async def create_product_from_marketplace(req: Dict[str, Any], user: Any = Depen
             logger.warning("product-create image attach skipped: %s", e)
             stored_image = None
     if stored_image:
-        updated = await db.products.find_one({"_id": doc["_id"]})
+        updated = await db.products.find_one({"_id": doc["_id"], "company_id": company_id})
         if updated:
             doc = updated
     msg = f"'{name}' stok kartı oluşturuldu ve pazaryeri ürünüyle eşleştirildi. Alış fiyatını girmeyi unutmayın."
@@ -20772,7 +20780,10 @@ async def _enrich_marketplace_claims(docs: List[Dict[str, Any]]) -> List[Dict[st
         c["expense_slip_number"] = c.get("expense_slip_number") or (linked or {}).get("expense_slip_number")
         can_slip = False
         if inv_id and not c.get("expense_slip_id"):
-            inv = await db.invoices.find_one({"_id": inv_id}, {"status": 1, "e_type": 1, "invoice_type": 1, "expense_slip_id": 1, "expense_slip_number": 1})
+            inv = await db.invoices.find_one(
+                {"_id": inv_id, "company_id": c.get("company_id")},
+                {"status": 1, "e_type": 1, "invoice_type": 1, "expense_slip_id": 1, "expense_slip_number": 1},
+            )
             if inv:
                 if inv.get("expense_slip_id"):
                     c["expense_slip_id"] = inv["expense_slip_id"]
@@ -20905,7 +20916,7 @@ async def expense_slip_for_marketplace_claim(claim_id: str, user: dict = Depends
     if not cargo_arrived:
         raise HTTPException(status_code=400, detail="Gider pusulası için iade kargosunun depoya ulaşması gerekir (WaitingInAction).")
     if c.get("expense_slip_id"):
-        existing = await db.invoices.find_one({"_id": c["expense_slip_id"]})
+        existing = await db.invoices.find_one({"_id": c["expense_slip_id"], "company_id": c.get("company_id")})
         if existing and existing.get("status") != "cancelled":
             return {"status": "exists", "invoice": clean_doc(existing), "message": f"Gider pusulası zaten var: {existing.get('invoice_number')}"}
     linked = await _order_for_marketplace_claim(c)
@@ -20917,7 +20928,7 @@ async def expense_slip_for_marketplace_claim(claim_id: str, user: dict = Depends
     slip_id = slip.get("id") or slip.get("_id")
     if slip_id:
         await db.marketplace_claims.update_one(
-            {"_id": claim_id},
+            {"_id": claim_id, "company_id": c.get("company_id")},
             {"$set": {"expense_slip_id": slip_id, "expense_slip_number": slip.get("invoice_number")}},
         )
     return result
@@ -20951,7 +20962,7 @@ async def answer_marketplace_question(question_id: str, req: Dict[str, Any], use
             if marketplace_providers.is_trendyol_qna_time_limit(e.detail):
                 now_blk = datetime.now(timezone.utc).isoformat()
                 await db.marketplace_questions.update_one(
-                    {"_id": question_id},
+                    {"_id": question_id, "company_id": qd.get("company_id")},
                     {"$set": {
                         "status": "ANSWER_EXPIRED",
                         "answer_blocked_reason": "unanswered_time_limit",
@@ -20963,8 +20974,14 @@ async def answer_marketplace_question(question_id: str, req: Dict[str, Any], use
         finally:
             await client.close()
     now = datetime.now(timezone.utc).isoformat()
-    await db.marketplace_questions.update_one({"_id": question_id}, {"$set": {"status": "ANSWERED", "answer": text, "answered_at": now, "answered_live": sent_live}})
-    return {**clean_doc(await db.marketplace_questions.find_one({"_id": question_id})), "message": "Cevap Trendyol'a gönderildi." if sent_live else "Cevap kaydedildi (canlı API bağlı değil)."}
+    await db.marketplace_questions.update_one(
+        {"_id": question_id, "company_id": qd.get("company_id")},
+        {"$set": {"status": "ANSWERED", "answer": text, "answered_at": now, "answered_live": sent_live}},
+    )
+    return {
+        **clean_doc(await db.marketplace_questions.find_one({"_id": question_id, "company_id": qd.get("company_id")})),
+        "message": "Cevap Trendyol'a gönderildi." if sent_live else "Cevap kaydedildi (canlı API bağlı değil).",
+    }
 
 @api_router.post("/orders/bulk-delete")
 async def bulk_delete_orders(req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -21515,7 +21532,7 @@ async def _enrich_orders_stock_matches(
             for oid, items in writes:
                 try:
                     await db.orders.update_one(
-                        {"_id": oid},
+                        {"_id": oid, "company_id": cid},
                         {"$set": {"items": items, "updated_at": datetime.now(timezone.utc).isoformat()}},
                     )
                 except Exception:
@@ -21618,9 +21635,9 @@ async def _list_orders_filtered(
         drop_ids = [i for i in drop_ids if i]
         if drop_ids:
             try:
-                asyncio.create_task(db.orders.delete_many({"_id": {"$in": drop_ids}}))
+                asyncio.create_task(db.orders.delete_many({"_id": {"$in": drop_ids}, "company_id": company_id}))
             except RuntimeError:
-                await db.orders.delete_many({"_id": {"$in": drop_ids}})
+                await db.orders.delete_many({"_id": {"$in": drop_ids}, "company_id": company_id})
             logger.warning("list_orders removed %s duplicate order row(s) for company %s", len(drop_ids), company_id)
     docs = deduped
     for o in docs:
@@ -21818,8 +21835,17 @@ async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict
     inv_ids = list({i for i in inv_ids if i})
     if not inv_ids:
         return docs
+    company_ids = list(dict.fromkeys(
+        str(o.get("company_id") or "").strip() for o in docs if str(o.get("company_id") or "").strip()
+    ))
+    if not company_ids:
+        company_filter: Any = {"$in": []}
+    elif len(company_ids) == 1:
+        company_filter = company_ids[0]
+    else:
+        company_filter = {"$in": company_ids}
     invs = await db.invoices.find(
-        {"_id": {"$in": inv_ids}},
+        {"_id": {"$in": inv_ids}, "company_id": company_filter},
         {
             "e_type": 1,
             "einvoice_state": 1,
@@ -21872,11 +21898,8 @@ async def _enrich_orders_production_flags(
             o["has_production_order"] = False
         return docs
     cid = str(company_id or next((o.get("company_id") for o in need if o.get("company_id")), "") or "").strip()
-    recipe_q: Dict[str, Any] = {"$or": or_q, "is_active": {"$ne": False}}
-    if cid:
-        recipe_q["company_id"] = cid
     recipes = await db.recipes.find(
-        recipe_q,
+        {"$or": or_q, "is_active": {"$ne": False}, "company_id": cid},
         {"sales_order_id": 1, "job_file_name": 1, "_id": 1},
     ).to_list(len(oids) + len(nums) + 50)
     by_sid: Dict[str, Any] = {}
@@ -21905,16 +21928,18 @@ async def _enrich_orders_production_flags(
 async def _mark_sales_order_sent_to_production(
     order_id: str,
     *,
+    company_id: str,
     recipe_id: Optional[str] = None,
     production_order_id: Optional[str] = None,
 ) -> None:
     if not order_id:
         return
+    cid = str(company_id).strip()
     patch = opr.production_mark_for_order(
         recipe_id=recipe_id,
         production_order_id=production_order_id,
     )
-    await db.orders.update_one({"_id": order_id}, {"$set": patch})
+    await db.orders.update_one({"_id": order_id, "company_id": cid}, {"$set": patch})
 
 @api_router.post("/orders")
 async def create_order(order: Order, user: dict = Depends(get_current_user)):
@@ -22438,6 +22463,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 real_oid,
                 recipe_id=existing.get("_id") or existing.get("id") or recipe_out.get("id"),
                 production_order_id=(po_out or {}).get("id") or (po_out or {}).get("_id"),
+                company_id=company_id,
             )
             return {
                 "status": "ok",
@@ -22476,6 +22502,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
             real_oid,
             recipe_id=doc.get("_id") or recipe_out.get("id"),
             production_order_id=(po_out or {}).get("id") or (po_out or {}).get("_id"),
+            company_id=company_id,
         )
         return {
             "status": "ok",

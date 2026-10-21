@@ -111,7 +111,7 @@ def test_sync_draft_order_items_updates_linked_order():
     ):
         _run(server._sync_draft_order_items(invoice, invoice["items"]))
 
-    assert order_sets["filt"] == {"_id": "ord_1"}
+    assert order_sets["filt"] == {"_id": "ord_1", "company_id": "comp_1"}
     assert order_sets["set"]["is_invoiced"] is False
     assert order_sets["set"]["invoice_id"] == "inv_draft_1"
     assert order_sets["set"]["grand_total"] == 120000.0
