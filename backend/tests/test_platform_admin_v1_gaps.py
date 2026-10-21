@@ -699,3 +699,126 @@ def test_storage_help_announcement_embed_and_attachment(gap, monkeypatch):
     assert disposition.startswith("attachment;")
     assert "inline" not in disposition.lower()
     assert attachment.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_site_public_url_stays_on_https_danger_flow(gap):
+    client, db = gap
+    asyncio.run(db.platform_settings.insert_one({
+        "_id": "platform",
+        "public_url": "https://tamkobi.com",
+        "brand_name": "TamKobi",
+    }))
+    asyncio.run(db.sites.insert_one({
+        "_id": "site_tamkobi",
+        "slug": "tamkobi",
+        "brand_name": "TamKobi",
+        "public_url": "https://tamkobi.com",
+        "theme": "vitrin",
+        "active": True,
+    }))
+
+    def urls():
+        return (
+            db.platform_settings.docs["platform"]["public_url"],
+            db.sites.docs["site_tamkobi"]["public_url"],
+        )
+
+    cms, cms_secret = _issue(db, [store.SCOPE_ADMIN_CMS_WRITE], name="cms-url")
+    path = "/api/platform/admin-v1/sites/tamkobi"
+    for idem, body in (
+        ("site-http", {"public_url": "http://evil.example"}),
+        ("site-https", {"public_url": "https://evil.example"}),
+        ("site-js", {"public_url": "javascript:alert(1)"}),
+        ("site-mixed", {"brand_name": "Kaçak", "public_url": "https://evil.example"}),
+    ):
+        denied, _ = _send(client, cms_secret, cms["id"], "PUT", path, body, idem=idem)
+        assert denied.status_code == 400, denied.text
+        assert _detail(denied) == "Desteklenmeyen alan: public_url"
+        assert urls() == ("https://tamkobi.com", "https://tamkobi.com")
+        assert db.sites.docs["site_tamkobi"]["brand_name"] == "TamKobi"
+        assert db.platform_settings.docs["platform"]["brand_name"] == "TamKobi"
+
+    renamed, _ = _send(
+        client, cms_secret, cms["id"], "PUT", path,
+        {"brand_name": "Yeni Marka"},
+        idem="site-brand",
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["item"]["brand_name"] == "Yeni Marka"
+    assert renamed.json()["item"]["public_url"] == "https://tamkobi.com"
+    assert urls() == ("https://tamkobi.com", "https://tamkobi.com")
+
+    narrow, narrow_secret = _issue(
+        db,
+        [store.SCOPE_ADMIN_CMS_WRITE, store.SCOPE_ADMIN_DANGEROUS],
+        name="cms-danger",
+    )
+    danger_path = "/api/platform/admin-v1/danger/settings.public_url/prepare"
+    missing_settings, _ = _send(
+        client, narrow_secret, narrow["id"], "POST", danger_path,
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "public_url": "https://evil.example",
+        },
+        idem="url-scope",
+    )
+    assert missing_settings.status_code == 403
+    assert _detail(missing_settings) == "Kapsam yetersiz"
+    assert urls() == ("https://tamkobi.com", "https://tamkobi.com")
+    assert db.platform_danger_confirmations.docs == {}
+
+    both, both_secret = _issue(
+        db,
+        [store.SCOPE_ADMIN_SETTINGS_WRITE, store.SCOPE_ADMIN_DANGEROUS],
+        name="settings-danger",
+    )
+    for idem, bad in (
+        ("url-http", "http://evil.example"),
+        ("url-js", "javascript:alert(1)"),
+        ("url-empty-host", "https://"),
+        ("url-userinfo", "https://user:pass@evil.example/x"),
+    ):
+        rejected, _ = _send(
+            client, both_secret, both["id"], "POST", danger_path,
+            {
+                "target_id": "platform",
+                "reason": _REASON,
+                "operator_email": _OPERATOR,
+                "public_url": bad,
+            },
+            idem=idem,
+        )
+        assert rejected.status_code == 400, rejected.text
+        assert _detail(rejected) == "public_url https olmalı."
+        assert urls() == ("https://tamkobi.com", "https://tamkobi.com")
+    assert db.platform_danger_confirmations.docs == {}
+
+    next_url = "https://app.example.test/giris?ref=1"
+    prepared, _ = _send(
+        client, both_secret, both["id"], "POST", danger_path,
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "public_url": next_url,
+        },
+        idem="url-prep",
+    )
+    assert prepared.status_code == 200, prepared.text
+    assert urls() == ("https://tamkobi.com", "https://tamkobi.com")
+    db.users.docs["usr_ops"]["totp_last_counter"] = None
+    confirmed, _ = _send(
+        client, both_secret, both["id"], "POST",
+        "/api/platform/admin-v1/danger/settings.public_url/confirm",
+        {
+            "confirmation_token": prepared.json()["confirmation_token"],
+            "confirm_text": next_url,
+            "operator_otp": _otp(),
+        },
+        idem="url-conf",
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["item"]["public_url"] == next_url
+    assert urls() == (next_url, next_url)

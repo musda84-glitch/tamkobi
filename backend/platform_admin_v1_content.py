@@ -37,7 +37,7 @@ _HELP_FIELDS = (
     "video_duration_sec", "product_tags", "page_keys", "category", "tags", "locale",
     "status", "featured", "sort", "assistant",
 )
-_SITE_FIELDS = ("brand_name", "public_url", "active", "theme")
+_SITE_FIELDS = ("brand_name", "active", "theme")
 _MAINT_FIELDS = (
     "enabled", "notify_popup", "notify_sms", "title", "body", "starts_at", "ends_at",
     "support_email", "support_phone", "audience", "company_ids",
