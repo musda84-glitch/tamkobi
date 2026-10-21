@@ -28,6 +28,7 @@ sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 import comm_service  # noqa: E402
 import platform_admin_v1  # noqa: E402
 import platform_admin_v1_accounts  # noqa: E402
+import platform_admin_v1_content  # noqa: E402
 import platform_admin_v1_danger  # noqa: E402
 import platform_admin_v1_integrations  # noqa: E402
 import platform_admin_v1_ops  # noqa: E402
@@ -47,6 +48,7 @@ _ROUTERS = (
     platform_admin_v1_danger.router,
     platform_admin_v1_accounts.router,
     platform_admin_v1_integrations.router,
+    platform_admin_v1_content.router,
 )
 
 _MUST_EXIST = (
@@ -58,6 +60,7 @@ _MUST_EXIST = (
     "/api/platform/admin-v1/danger/{action}/confirm",
     "/api/platform/admin-v1/companies/{company_id}/quotas",
     "/api/platform/admin-v1/api-keys",
+    "/api/platform/admin-v1/database",
     "/api/platform/admin-v1/sms/settings",
 )
 

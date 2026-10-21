@@ -8,6 +8,7 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
@@ -923,9 +924,9 @@ async def _validate_settings_public_url(params: Dict[str, Any]) -> dict:
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=400, detail="public_url zorunlu.")
     url = raw.strip()[:500]
-    from platform_admin_v1_write import _http_url
-    if not _http_url(url):
-        raise HTTPException(status_code=400, detail="public_url http veya https olmalı.")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="public_url https olmalı.")
     st = await saas_billing.settings()
     current = str(st.get("public_url") or "").strip()
     params["public_url"] = url

@@ -142,6 +142,24 @@ def same_server(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     )
 
 
+def whitelisted_table_counts(cfg: Dict[str, Any]) -> Dict[str, int]:
+    """Yalnızca KNOWN_TABLES satır sayıları. İstek metni SQL'e girmez."""
+    conn = mysql_backup.connect(dump_settings(cfg))
+    try:
+        cur = conn.cursor()
+        counts: Dict[str, int] = {}
+        for table in KNOWN_TABLES:
+            try:
+                cur.execute("SELECT COUNT(*) FROM `" + table + "`")
+                row = cur.fetchone()
+                counts[table] = int(row[0] if row else 0)
+            except Exception:
+                continue
+        return counts
+    finally:
+        conn.close()
+
+
 def table_counts(cfg: Dict[str, Any]) -> Dict[str, int]:
     conn = mysql_backup.connect(dump_settings(cfg))
     try:
