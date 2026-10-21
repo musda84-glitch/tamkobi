@@ -642,14 +642,38 @@ async def put_system_ai(req: Dict[str, Any], _: dict = Depends(saas.require_supe
     return await _system_ai_public()
 
 
+def _ai_endpoint(value: Any) -> str:
+    """Kayıtlı ve istenen uç noktayı aynı sohbet adresine çevirip karşılaştır."""
+    import ai_service
+    return ai_service.normalize_base_url(str(value or "")).rstrip("/")
+
+
+def _ai_host_override(body: Dict[str, Any], cfg: Dict[str, Any]) -> bool:
+    """Çağıran, kayıtlı sağlayıcı veya uç noktadan farklı bir adres istiyor mu."""
+    if "provider" in body and str(body.get("provider") or "").strip() != str(cfg.get("provider") or "").strip():
+        return True
+    if "base_url" in body and _ai_endpoint(body.get("base_url")) != _ai_endpoint(cfg.get("base_url")):
+        return True
+    return False
+
+
 @router.post("/system/ai/test")
 async def test_system_ai(req: Dict[str, Any] | None = None, _: dict = Depends(saas.require_super_admin)):
-    """Bağlantı testi. İstekte api_key varsa kaydetmeden önce denenebilir."""
+    """Bağlantı testi. İstekte api_key varsa kaydetmeden önce denenebilir.
+
+    Kayıtlı anahtar yalnız kayıtlı sağlayıcı ve uç noktayla gider. Farklı
+    adres için çağıran kendi api_key değerini göndermek zorundadır.
+    """
     import ai_service
     from emergentintegrations.llm.chat import UserMessage
     body = req or {}
     cfg = await ai_service.load_ai_settings()
     override_key = str(body.get("api_key") or "").strip()
+    if _ai_host_override(body, cfg) and not override_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Farklı sağlayıcı veya uç nokta için api_key gönderin. Kayıtlı anahtar yalnızca kayıtlı yapılandırmayla kullanılır.",
+        )
     provider = str(body.get("provider") or cfg.get("provider") or "emergent").strip()
     advisor_model = str(body.get("advisor_model") or cfg.get("advisor_model") or "").strip()
     extract_model = str(body.get("extract_model") or cfg.get("extract_model") or "").strip()
