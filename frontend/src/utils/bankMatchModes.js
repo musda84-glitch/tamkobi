@@ -4,6 +4,7 @@ export const BANK_MATCH_MODES = [
   ["transfer", "Kasa / Hesap (Virman)"],
   ["category", "Sadece Kategori"],
   ["expense", "Masraf"],
+  ["pos_settlement", "POS bloke çözümü"],
 ];
 
 /** Varsayılan personel masraf kategorisi (API değeri; UI etiketi "Personel"). */

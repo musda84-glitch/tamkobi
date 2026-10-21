@@ -272,6 +272,9 @@ async def list_account_transactions(
                 break
     start = (page_n - 1) * size
     page_rows = ordered[start:start + size]
+    if cid and page_rows:
+        import pos_settlement
+        page_rows = await pos_settlement.annotate(db, cid, page_rows)
     items = [_public_row(tx, aid, account) for tx in page_rows]
     return {
         "items": items,

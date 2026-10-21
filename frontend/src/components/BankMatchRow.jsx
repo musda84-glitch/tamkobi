@@ -135,7 +135,7 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
       <td className={`px-4 py-2 text-right font-bold whitespace-nowrap ${isIn ? "text-emerald-600" : "text-rose-600"}`}>{isIn ? "+" : "-"}{fmt(tx.amount)} ₺</td>
       <td className="px-4 py-2">
         <div className="flex flex-wrap gap-1.5 items-center">
-          <select value={mode} onChange={(e) => onModeChange(e.target.value)} className={sel} data-testid={`match-mode-${tx.id}`}>{BANK_MATCH_MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          <select value={mode} onChange={(e) => onModeChange(e.target.value)} className={sel} data-testid={`match-mode-${tx.id}`}>{BANK_MATCH_MODES.filter(([k]) => k !== "pos_settlement").map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           {mode === "contact" && (
             <ContactSearchSelect
               companyId={companyId}

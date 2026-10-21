@@ -17,6 +17,16 @@ import {
   isPersonnelExpenseCategory,
 } from "../utils/bankMatchModes";
 import { expensePersonnelDebtOpen } from "../utils/employeePay";
+import {
+  POS_COMMISSION_CATEGORY,
+  calcCommission,
+  commissionRate,
+  formatSummary,
+  grossFromRate,
+  isPosAccount,
+  round2,
+  validatePosSettlement,
+} from "../utils/posSettlement";
 
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -25,10 +35,30 @@ function initialMatchMode(tx) {
   const contact = tx?.suggested_contact_id || tx?.contact_id;
   const target = tx?.suggested_target_account_id || tx?.target_account_id;
   const matched = String(tx?.match_status || "") === "matched";
+  if (tx?.type === "inflow" && (tx?.suggested_match_kind === "pos_settlement" || tx?.match_kind === "pos_settlement")) {
+    return "pos_settlement";
+  }
   if (tx?.expense_id || tx?.as_expense) return "expense";
-  if (target && !contact) return "transfer";
+  if (target && !contact && tx?.match_kind !== "pos_settlement") return "transfer";
   if (matched && !contact && String(tx?.category || "").trim()) return "category";
   return "contact";
+}
+
+function seedPosAmounts(tx, accounts, accountId) {
+  const account = (accounts || []).find((a) => (a.id || a._id) === accountId && isPosAccount(a));
+  const net = round2(tx?.amount);
+  const rate = Number(tx?.suggested_pos_commission_rate);
+  const suggestedId = tx?.suggested_target_account_id || "";
+  const useRate = Number.isFinite(rate) && rate > 0 && rate < 1 && (!suggestedId || suggestedId === accountId || !accountId);
+  if (useRate && (accountId || suggestedId)) {
+    const g = grossFromRate(net, rate);
+    return { gross: g, commission: calcCommission(g, net) };
+  }
+  if (account && (account.current_balance || account.current_balance === 0)) {
+    const g = round2(account.current_balance);
+    return { gross: g, commission: calcCommission(g, net) };
+  }
+  return { gross: "", commission: "" };
 }
 
 /** Banka hareketi eşleştirme / düzeltme modalı — hareketler listesi ve entegrasyon paneli ortak. */
@@ -38,7 +68,10 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   const [mode, setMode] = useState(() => initialMatchMode(tx));
   const [contactId, setContactId] = useState(tx?.suggested_contact_id || tx?.contact_id || "");
   const [targetId, setTargetId] = useState(tx?.suggested_target_account_id || tx?.target_account_id || "");
-  const [category, setCategory] = useState(tx?.category || "");
+  const posStart = tx?.type === "inflow" && (tx?.suggested_match_kind === "pos_settlement" || tx?.match_kind === "pos_settlement");
+  const [category, setCategory] = useState(
+    posStart ? (tx?.suggested_category || POS_COMMISSION_CATEGORY) : (tx?.category || ""),
+  );
   const [expenseCats, setExpenseCats] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [employeeId, setEmployeeId] = useState("");
@@ -47,12 +80,17 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   const [openDebts, setOpenDebts] = useState([]);
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
+  const initialPosId = posStart ? (tx?.suggested_target_account_id || tx?.target_account_id || "") : "";
+  const initialPosSeed = posStart ? seedPosAmounts(tx, accounts, initialPosId) : { gross: "", commission: "" };
+  const [posAccountId, setPosAccountId] = useState(initialPosId);
+  const [posGross, setPosGross] = useState(initialPosSeed.gross);
+  const [posCommission, setPosCommission] = useState(initialPosSeed.commission);
 
   const needEmployee = mode === "expense" && isPersonnelExpenseCategory(category);
   const personnelCategoryOnly = mode === "category" && isPersonnelExpenseCategory(category);
 
   useEffect(() => {
-    if (mode !== "expense" || !companyId) return;
+    if ((mode !== "expense" && mode !== "pos_settlement") || !companyId) return;
     axios.get(`${API_URL}/expenses/categories`, { params: { company_id: companyId } })
       .then((r) => setExpenseCats((r.data || []).map((c) => c.name || c).filter(Boolean)))
       .catch(() => setExpenseCats([]));
@@ -83,10 +121,32 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   }, [needEmployee, personnelPayKind, employeeId]);
 
   const targets = accounts.filter((a) => (a.id || a._id) !== tx?.account_id && !a.is_integrated);
-  const canSubmit = personnelCategoryOnly ? false : (mode === "category" || mode === "expense"
-    ? !!category.trim() && (!needEmployee || (!!employeeId && !!personnelPayKind))
-    : mode === "transfer" ? !!targetId
-    : true);
+  const posAccounts = accounts.filter((a) => isPosAccount(a));
+  const selectedPos = posAccounts.find((a) => (a.id || a._id) === posAccountId);
+  const netAmount = round2(tx?.amount);
+  const posErrors = mode === "pos_settlement"
+    ? [
+      ...(posAccountId ? [] : ["POS hesabı seçin."]),
+      ...validatePosSettlement({
+        gross: posGross,
+        net: tx?.amount,
+        commission: posCommission,
+        posBalance: selectedPos ? selectedPos.current_balance : null,
+        isInflow: isIn,
+      }),
+    ]
+    : [];
+  const posCats = expenseCats.includes(POS_COMMISSION_CATEGORY)
+    ? expenseCats
+    : [POS_COMMISSION_CATEGORY, ...expenseCats];
+  const rateHint = commissionRate(posGross, posCommission);
+  let canSubmit = false;
+  if (personnelCategoryOnly) canSubmit = false;
+  else if (mode === "pos_settlement") canSubmit = posErrors.length === 0 && !!category.trim();
+  else if (mode === "category" || mode === "expense") {
+    canSubmit = !!category.trim() && (!needEmployee || (!!employeeId && !!personnelPayKind));
+  } else if (mode === "transfer") canSubmit = !!targetId;
+  else canSubmit = true;
 
   const resetPersonnel = () => {
     setEmployeeId("");
@@ -98,9 +158,17 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   const onModeChange = (next) => {
     setMode(next);
     if (next !== "contact") setContactId("");
-    if (next !== "expense" && next !== "category") setCategory("");
+    if (next !== "expense" && next !== "category" && next !== "pos_settlement") setCategory("");
     if (next !== "expense") resetPersonnel();
     if (next !== "transfer") setTargetId(tx?.suggested_target_account_id || tx?.target_account_id || "");
+    if (next === "pos_settlement") {
+      const nextId = tx?.suggested_target_account_id || (tx?.match_kind === "pos_settlement" ? (tx?.target_account_id || "") : "");
+      setPosAccountId(nextId);
+      const seeded = seedPosAmounts(tx, accounts, nextId);
+      setPosGross(seeded.gross);
+      setPosCommission(seeded.commission);
+      setCategory(tx?.suggested_category || POS_COMMISSION_CATEGORY);
+    }
   };
 
   const goExpenseMode = () => {
@@ -115,17 +183,26 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
     if (!txId || !canSubmit) return;
     setBusy(true);
     try {
-      const body = {
-        learn,
-        category: mode === "category" || mode === "expense" ? (category || null) : null,
-        contact_id: mode === "contact" ? contactId || null : null,
-        invoice_id: null,
-        target_account_id: mode === "transfer" ? targetId : null,
-        as_expense: mode === "expense",
-        employee_id: mode === "expense" && needEmployee ? employeeId || null : null,
-        personnel_pay_kind: mode === "expense" && needEmployee ? personnelPayKind || DEFAULT_PERSONNEL_PAY_KIND : null,
-        expense_id: mode === "expense" && needEmployee && personnelPayKind === "reimburse" && expenseId ? expenseId : null,
-      };
+      const body = mode === "pos_settlement"
+        ? {
+          learn,
+          mode: "pos_settlement",
+          target_account_id: posAccountId,
+          pos_gross: round2(posGross),
+          pos_commission: round2(posCommission),
+          category: category || POS_COMMISSION_CATEGORY,
+        }
+        : {
+          learn,
+          category: mode === "category" || mode === "expense" ? (category || null) : null,
+          contact_id: mode === "contact" ? contactId || null : null,
+          invoice_id: null,
+          target_account_id: mode === "transfer" ? targetId : null,
+          as_expense: mode === "expense",
+          employee_id: mode === "expense" && needEmployee ? employeeId || null : null,
+          personnel_pay_kind: mode === "expense" && needEmployee ? personnelPayKind || DEFAULT_PERSONNEL_PAY_KIND : null,
+          expense_id: mode === "expense" && needEmployee && personnelPayKind === "reimburse" && expenseId ? expenseId : null,
+        };
       if (replace) body.replace = true;
       const { data: matched } = await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
       const kindLabel = PERSONNEL_PAY_KINDS.find(([k]) => k === personnelPayKind)?.[1];
@@ -152,7 +229,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
     <div className="fixed inset-0 z-[95] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)} data-testid={`tx-match-modal-${txId}`}>
       <form
         onSubmit={submit}
-        className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl border border-slate-200"
+        className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 space-y-3 text-xs shadow-2xl border border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b pb-2">
@@ -172,7 +249,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         <div>
           <label className="block font-semibold mb-1">Eşleşme türü</label>
           <select value={mode} onChange={(e) => onModeChange(e.target.value)} className={sel} data-testid={`tx-match-mode-${txId}`}>
-            {BANK_MATCH_MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            {BANK_MATCH_MODES.filter(([k]) => k !== "pos_settlement" || isIn).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </div>
 
@@ -250,6 +327,109 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
           </div>
         )}
 
+        {mode === "pos_settlement" && (
+          <div className="space-y-2" data-testid={`tx-match-pos-${txId}`}>
+            <div>
+              <label className="block font-semibold mb-1">POS hesabı</label>
+              <select
+                value={posAccountId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setPosAccountId(nextId);
+                  const seeded = seedPosAmounts(
+                    nextId && nextId === (tx?.suggested_target_account_id || "") ? tx : { ...tx, suggested_pos_commission_rate: undefined, suggested_target_account_id: "" },
+                    accounts,
+                    nextId,
+                  );
+                  setPosGross(seeded.gross);
+                  setPosCommission(seeded.commission);
+                }}
+                className={`${sel} ${posErrors.length ? "border-rose-400 bg-rose-50" : ""}`}
+                data-testid={`tx-match-pos-account-${txId}`}
+              >
+                <option value="">POS hesabı seçin…</option>
+                {posAccounts.map((a) => {
+                  const id = a.id || a._id;
+                  return (
+                    <option key={id} value={id}>
+                      {a.account_name} — bloke bakiye {fmt(a.current_balance)}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">Brüt tutar</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={posGross}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setPosGross(raw);
+                  const g = Number(raw);
+                  if (raw !== "" && Number.isFinite(g)) setPosCommission(calcCommission(g, netAmount));
+                }}
+                className={`${sel} ${posErrors.length ? "border-rose-400 bg-rose-50" : ""}`}
+                data-testid={`tx-match-pos-gross-${txId}`}
+              />
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">Bankaya gelen (net)</label>
+              <input
+                readOnly
+                value={Number.isFinite(netAmount) ? netAmount : ""}
+                className={`${sel} bg-slate-100 text-slate-600`}
+                data-testid={`tx-match-pos-net-${txId}`}
+              />
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">
+                Komisyon/masraf
+                <span className="ml-1 font-normal text-slate-500" data-testid={`tx-match-pos-rate-${txId}`}>
+                  (%{((rateHint || 0) * 100).toLocaleString("tr-TR", { maximumFractionDigits: 2 })})
+                </span>
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={posCommission}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setPosCommission(raw);
+                  const c = Number(raw);
+                  if (raw !== "" && Number.isFinite(c) && Number.isFinite(netAmount)) {
+                    setPosGross(round2(netAmount + c));
+                  }
+                }}
+                className={`${sel} ${posErrors.length ? "border-rose-400 bg-rose-50" : ""}`}
+                data-testid={`tx-match-pos-commission-${txId}`}
+              />
+              <p className="mt-1 text-[11px] text-slate-500" data-testid={`tx-match-pos-bsmv-${txId}`}>BSMV dahil</p>
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">Masraf kategorisi</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className={`${sel} ${posErrors.length && !category.trim() ? "border-rose-400 bg-rose-50" : ""}`}
+                data-testid={`tx-match-pos-cat-${txId}`}
+              >
+                {posCats.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-slate-700" data-testid={`tx-match-pos-summary-${txId}`}>
+              {formatSummary({ posName: selectedPos?.account_name, gross: posGross, net: tx?.amount })}
+            </div>
+            {posErrors.length > 0 && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 text-rose-800 px-2 py-2 space-y-0.5" data-testid={`tx-match-pos-errors-${txId}`}>
+                {posErrors.map((err) => <p key={err}>{err}</p>)}
+              </div>
+            )}
+          </div>
+        )}
+
         {needEmployee && (
           <>
             <div>
@@ -306,7 +486,9 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
 
         <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
           <input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`tx-match-learn-${txId}`} />
-          Bu açıklama tekrar gelirse otomatik eşleştir (öğren)
+          {mode === "pos_settlement"
+            ? "Bu açıklama tekrar gelirse POS hesabını ve komisyon oranını öner (öğren)"
+            : "Bu açıklama tekrar gelirse otomatik eşleştir (öğren)"}
         </label>
 
         <div className="flex justify-end gap-2 pt-2 border-t">
