@@ -2,7 +2,9 @@
 
 Kayıtlı AI anahtarı çağıranın seçtiği sağlayıcıya veya uç noktaya gitmez.
 E-fatura, PayTR ve IBAN alanları boş veya yalnızca boşluk olsa da
-admin.secrets:write olmadan yazılmaz.
+admin.secrets:write olmadan yazılmaz. Sırın bağlı olduğu uç veya kullanıcı
+(AI, SMTP kapı dahil, IMAP, e-fatura adresi ve kullanıcı, SMS sağlayıcı)
+değişince de aynı kapsam gerekir; yeni sır yoksa kayıtlı sır düşer.
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ import ai_service  # noqa: E402
 import comm_service  # noqa: E402
 import gib_credits  # noqa: E402
 import platform_mail  # noqa: E402
+import platform_sms  # noqa: E402
 import public_sites  # noqa: E402
 import platform_store as store  # noqa: E402
 import saas  # noqa: E402
@@ -51,6 +54,8 @@ _OPERATOR = "ops@example.com"
 _TOTP = pyotp.random_base32()
 _REASON = "Canli adresi ve 2FA zorunlulugunu onayli degistir"
 _SMTP_SECRET = "stored-smtp-secret"
+_BOX_SECRET = "stored-box-secret"
+_SMS_SECRET = "stored-sms-secret"
 _NEW_URL = "https://app.example.test"
 
 
@@ -85,6 +90,7 @@ def sec(monkeypatch):
         "billing_deps": dict(saas_billing._deps),
         "extras": saas_extras._db,
         "mail": platform_mail._db,
+        "sms": platform_sms._db,
         "credits": gib_credits._db,
         "server": server.db,
     }
@@ -94,6 +100,7 @@ def sec(monkeypatch):
     saas_billing.init(fake, {})
     saas_extras.init(fake, {})
     platform_mail.init(fake)
+    platform_sms.init(fake)
     gib_credits.init(fake)
     server.db = fake
     monkeypatch.setattr(comm_service, "encrypt", lambda value: "enc:" + (value or ""))
@@ -158,6 +165,34 @@ def sec(monkeypatch):
             "password_enc": "enc:" + _SMTP_SECRET,
             "is_active": True,
         })
+        await fake.platform_mail_servers.insert_one({
+            "_id": "pms_other",
+            "name": "Diger",
+            "provider": "custom",
+            "smtp_host": "smtp.other.example",
+            "smtp_port": 587,
+            "smtp_user": "other@stored.example",
+            "password_enc": "enc:other-smtp",
+            "is_active": True,
+        })
+        await fake.platform_mailboxes.insert_one({
+            "_id": "pmb_sec",
+            "email": "box@stored.example",
+            "display_name": "Kutu",
+            "server_id": "pms_sec",
+            "smtp_user": "ada@stored.example",
+            "password_enc": "enc:" + _BOX_SECRET,
+            "is_active": True,
+            "purposes": ["general"],
+        })
+        await fake.platform_settings.insert_one({
+            "_id": "platform_sms",
+            "provider": "netgsm",
+            "usercode": "850000",
+            "msgheader": "TAMKOBI",
+            "is_active": True,
+            "password_enc": "enc:" + _SMS_SECRET,
+        })
 
     asyncio.run(seed())
     router = server.app.router
@@ -178,6 +213,7 @@ def sec(monkeypatch):
         saas_billing._deps.update(prev["billing_deps"])
         saas_extras.init(prev["extras"], {})
         platform_mail.init(prev["mail"])
+        platform_sms.init(prev["sms"])
         gib_credits.init(prev["credits"])
         server.db = prev["server"]
         saas.invalidate()
@@ -577,3 +613,166 @@ def test_settings_flags_require_danger(sec):
     assert flag_ok.status_code == 200, flag_ok.text
     assert _settings(db).get("require_superadmin_2fa") is True
     assert flag_ok.json()["item"]["require_superadmin_2fa"] is True
+
+
+def test_bound_user_and_port_changes_require_secrets_write(sec):
+    client, db, _calls = sec
+    writer, writer_secret = _issue(
+        db,
+        [
+            store.SCOPE_ADMIN_EINVOICE_WRITE,
+            store.SCOPE_ADMIN_SETTINGS_WRITE,
+            store.SCOPE_ADMIN_SMS_WRITE,
+        ],
+        name="binding-writer",
+    )
+    port_denied = _send(
+        client, writer_secret, writer["id"], "PUT",
+        "/api/platform/admin-v1/mail/servers/pms_sec",
+        {"smtp_port": 2525},
+        idem="smtp-port-denied",
+    )
+    assert port_denied.status_code == 403
+    assert _detail(port_denied) == "Kapsam yetersiz"
+    assert db.platform_mail_servers.docs["pms_sec"]["smtp_port"] == 587
+    assert db.platform_mail_servers.docs["pms_sec"]["password_enc"] == "enc:" + _SMTP_SECRET
+
+    for idem, body in (
+        ("box-server-denied", {"server_id": "pms_other"}),
+        ("box-user-denied", {"smtp_user": "eve@evil.example"}),
+        ("box-email-denied", {"email": "eve@evil.example"}),
+    ):
+        denied = _send(
+            client, writer_secret, writer["id"], "PUT",
+            "/api/platform/admin-v1/mail/mailboxes/pmb_sec",
+            body,
+            idem=idem,
+        )
+        assert denied.status_code == 403, body
+        assert _detail(denied) == "Kapsam yetersiz"
+    box = db.platform_mailboxes.docs["pmb_sec"]
+    assert box["server_id"] == "pms_sec"
+    assert box["smtp_user"] == "ada@stored.example"
+    assert box["email"] == "box@stored.example"
+    assert box["password_enc"] == "enc:" + _BOX_SECRET
+
+    label = _send(
+        client, writer_secret, writer["id"], "PUT",
+        "/api/platform/admin-v1/mail/mailboxes/pmb_sec",
+        {"display_name": "Vitrin", "email": "BOX@stored.example"},
+        idem="box-label",
+    )
+    assert label.status_code == 200, label.text
+    assert db.platform_mailboxes.docs["pmb_sec"]["password_enc"] == "enc:" + _BOX_SECRET
+    assert db.platform_mailboxes.docs["pmb_sec"]["email"] == "box@stored.example"
+    assert db.platform_mailboxes.docs["pmb_sec"]["display_name"] == "Vitrin"
+
+    user_denied = _send(
+        client, writer_secret, writer["id"], "PUT",
+        f"/api/platform/admin-v1/companies/{_COMPANY}/einvoice/credentials",
+        {"username": "attacker"},
+        idem="ei-user-denied",
+    )
+    assert user_denied.status_code == 403
+    assert db.einvoice_settings.docs["ei1"]["username"] == "nx-user"
+    assert db.einvoice_settings.docs["ei1"]["password_enc"] == _EI_PASS
+    urls_denied = _send(
+        client, writer_secret, writer["id"], "PUT",
+        f"/api/platform/admin-v1/companies/{_COMPANY}/einvoice/credentials",
+        {"efatura_url": "https://evil.example/efatura", "earsiv_url": "https://evil.example/earsiv"},
+        idem="ei-qnb-urls-denied",
+    )
+    assert urls_denied.status_code == 403
+    assert "efatura_url" not in db.einvoice_settings.docs["ei1"]
+    assert db.einvoice_settings.docs["ei1"]["password_enc"] == _EI_PASS
+
+    for idem, body in (
+        ("sms-provider-denied", {"provider": "verimor"}),
+        ("sms-user-denied", {"usercode": "attacker"}),
+    ):
+        denied = _send(
+            client, writer_secret, writer["id"], "PUT",
+            "/api/platform/admin-v1/sms/settings",
+            body,
+            idem=idem,
+        )
+        assert denied.status_code == 403, body
+    sms = db.platform_settings.docs["platform_sms"]
+    assert sms["provider"] == "netgsm"
+    assert sms["usercode"] == "850000"
+    assert sms["password_enc"] == "enc:" + _SMS_SECRET
+
+    header = _send(
+        client, writer_secret, writer["id"], "PUT",
+        "/api/platform/admin-v1/sms/settings",
+        {"msgheader": "TAMKOBI2", "provider": "netgsm"},
+        idem="sms-header",
+    )
+    assert header.status_code == 200, header.text
+    assert db.platform_settings.docs["platform_sms"]["msgheader"] == "TAMKOBI2"
+    assert db.platform_settings.docs["platform_sms"]["password_enc"] == "enc:" + _SMS_SECRET
+
+    paytr = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/paytr",
+        {"merchant_id": "222"},
+        idem="paytr-id",
+    )
+    assert paytr.status_code == 200, paytr.text
+    assert _settings(db)["paytr"]["merchant_id"] == "222"
+    assert _settings(db)["paytr"]["merchant_key_enc"] == _PAYTR_KEY
+
+    holder, holder_secret = _issue(
+        db,
+        [
+            store.SCOPE_ADMIN_EINVOICE_WRITE,
+            store.SCOPE_ADMIN_SETTINGS_WRITE,
+            store.SCOPE_ADMIN_SMS_WRITE,
+            store.SCOPE_ADMIN_SECRETS_WRITE,
+        ],
+        name="binding-secrets",
+    )
+    port_cleared = _send(
+        client, holder_secret, holder["id"], "PUT",
+        "/api/platform/admin-v1/mail/servers/pms_sec",
+        {"smtp_port": 2525},
+        idem="smtp-port-clear",
+    )
+    assert port_cleared.status_code == 200, port_cleared.text
+    assert db.platform_mail_servers.docs["pms_sec"]["smtp_port"] == 2525
+    assert "password_enc" not in db.platform_mail_servers.docs["pms_sec"]
+    assert _SMTP_SECRET not in port_cleared.text
+
+    box_cleared = _send(
+        client, holder_secret, holder["id"], "PUT",
+        "/api/platform/admin-v1/mail/mailboxes/pmb_sec",
+        {"server_id": "pms_other"},
+        idem="box-server-clear",
+    )
+    assert box_cleared.status_code == 200, box_cleared.text
+    assert db.platform_mailboxes.docs["pmb_sec"]["server_id"] == "pms_other"
+    assert "password_enc" not in db.platform_mailboxes.docs["pmb_sec"]
+    assert _BOX_SECRET not in box_cleared.text
+
+    user_cleared = _send(
+        client, holder_secret, holder["id"], "PUT",
+        f"/api/platform/admin-v1/companies/{_COMPANY}/einvoice/credentials",
+        {"username": "yeni-kullanici"},
+        idem="ei-user-clear",
+    )
+    assert user_cleared.status_code == 200, user_cleared.text
+    assert db.einvoice_settings.docs["ei1"]["username"] == "yeni-kullanici"
+    assert "password_enc" not in db.einvoice_settings.docs["ei1"]
+    assert "api_key_enc" not in db.einvoice_settings.docs["ei1"]
+
+    sms_cleared = _send(
+        client, holder_secret, holder["id"], "PUT",
+        "/api/platform/admin-v1/sms/settings",
+        {"provider": "verimor"},
+        idem="sms-provider-clear",
+    )
+    assert sms_cleared.status_code == 200, sms_cleared.text
+    saved = db.platform_settings.docs["platform_sms"]
+    assert saved["provider"] == "verimor"
+    assert saved["is_active"] is False
+    assert "password_enc" not in saved
+    assert _SMS_SECRET not in sms_cleared.text

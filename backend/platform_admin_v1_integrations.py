@@ -68,8 +68,8 @@ _MAILBOX_FIELDS = (
 
 _DANGER_PUBLIC_URL = "public_url danger/settings.public_url ile değişir."
 _DANGER_SUPERADMIN_2FA = "require_superadmin_2fa danger/settings.require_superadmin_2fa ile değişir."
-_ENDPOINT_EINVOICE = ("api_url", "efatura_url", "earsiv_url")
-_ENDPOINT_MAIL = ("smtp_host", "smtp_user")
+_ENDPOINT_EINVOICE = ("api_url", "efatura_url", "earsiv_url", "username")
+_ENDPOINT_MAIL = ("smtp_host", "smtp_port", "smtp_user")
 _SECRET_EINVOICE = ("password", "api_key")
 
 
@@ -97,6 +97,33 @@ def _endpoint_changed(current: dict, payload: dict, fields: tuple) -> bool:
             continue
         if _text(payload.get(field)) != _text(current.get(field)):
             return True
+    return False
+
+
+def _mailbox_binding_changed(current: dict, payload: dict) -> bool:
+    """IMAP kullanıcısı, SMTP kullanıcısı veya bağlı sunucu değişiyor mu.
+
+    E-posta karşılaştırması kayıtla aynı biçimde küçültülür; yalnız harf farkı yeni kullanıcı değildir.
+    """
+    if "email" in payload and platform_mail._norm_email(str(payload.get("email") or "")) != platform_mail._norm_email(str(current.get("email") or "")):
+        return True
+    if "smtp_user" in payload and payload.get("smtp_user") is not None and _text(payload.get("smtp_user")) != _text(current.get("smtp_user")):
+        return True
+    if "server_id" in payload and _text(payload.get("server_id")) != _text(current.get("server_id")):
+        return True
+    return False
+
+
+def _sms_binding_changed(current: dict, payload: dict) -> bool:
+    """Sağlayıcı sabit satıcı ucunu seçer; kullanıcı kodu o şifrenin hesabıdır.
+
+    Boş sağlayıcı save_platform_sms içinde kayıtlı sağlayıcıda kalır. Özel SMS adresi yoktur.
+    """
+    import comm_service
+    if payload.get("provider") and comm_service.normalize_sms_provider(payload.get("provider")) != comm_service.normalize_sms_provider(current.get("provider")):
+        return True
+    if "usercode" in payload and payload.get("usercode") is not None and _text(payload.get("usercode")) != _text(current.get("usercode")):
+        return True
     return False
 
 
@@ -253,6 +280,8 @@ async def admin_v1_sms_save(request: Request):
             await require_secret_scope(key_doc)
         if "is_active" in payload:
             _require_bool(payload, "is_active")
+        if _sms_binding_changed(await platform_sms.load_settings(), payload):
+            await require_secret_scope(key_doc)
         return audit_field_names(_present(payload, _SMS_FIELDS))
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
@@ -554,7 +583,9 @@ async def admin_v1_mailbox_update(box_id: str, request: Request):
             raise HTTPException(status_code=400, detail="Gövde boş olamaz.")
         if body_has_secret(payload):
             await require_secret_scope(key_doc)
-        await platform_mail._box(box_id)
+        current = await platform_mail._box(box_id)
+        if _mailbox_binding_changed(current, payload):
+            await require_secret_scope(key_doc)
         return audit_field_names(_present(payload, _MAILBOX_FIELDS))
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
