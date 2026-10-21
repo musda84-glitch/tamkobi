@@ -10,6 +10,7 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { GibContactLookup } from "./GibContactLookup";
 import { gibLookupToContactPatch, gibMukellefLabel, isCompleteTaxId, digitsTaxId } from "../utils/gibContactFill";
 import { B2BCardSettingsFields, CARD_COMPANY_DEFAULTS, CARD_SETTING_KEYS, cardInstallment, roundCardRate } from "./B2BCardSettingsFields";
+import { canonicalPortalLogin } from "../utils/b2bLoginId";
 
 function formatGibQueryStamp(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
@@ -54,6 +55,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [tab, setTab] = useState("general");
   const [f, setF] = useState({ ...EMPTY, ...(contact || {}), ...b2bSettingsFromContact(contact), b2b_password: "", tags: contact?.tags || [], is_active: contact?.is_active !== false });
   const [busy, setBusy] = useState(false);
+  const [loginErr, setLoginErr] = useState("");
   const [gibBusy, setGibBusy] = useState(false);
   const [gibMeta, setGibMeta] = useState(null);
   const [gibQueriedAt, setGibQueriedAt] = useState(null);
@@ -207,13 +209,20 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const save = async (e) => {
     e.preventDefault();
     if (!f.name || !f.tax_number_or_id) { setTab("general"); return toast.error("Cari adı ve VKN/TCKN zorunludur."); }
+    const loginCheck = canonicalPortalLogin(f.b2b_login_email);
+    if (!loginCheck.ok) {
+      setTab("b2b");
+      setLoginErr(loginCheck.message);
+      return;
+    }
+    setLoginErr("");
     setBusy(true);
     try {
       let mukellefRes = gibMeta;
       if (isCompleteTaxId(f.tax_number_or_id)) {
         mukellefRes = await fetchGibMukellef(f.tax_number_or_id, { quiet: true, force: true }) || gibMeta;
       }
-      const payload = { ...f, is_active: f.is_active !== false, tags: Array.isArray(f.tags) ? f.tags : String(f.tags).split(",").map((t) => t.trim()).filter(Boolean) };
+      const payload = { ...f, b2b_login_email: loginCheck.value, is_active: f.is_active !== false, tags: Array.isArray(f.tags) ? f.tags : String(f.tags).split(",").map((t) => t.trim()).filter(Boolean) };
       if (mukellefRes?.tax_id === digitsTaxId(payload.tax_number_or_id)) {
         payload.is_e_invoice_user = !!mukellefRes.is_e_invoice_user;
         if (mukellefRes.alias) payload.e_invoice_alias = mukellefRes.alias;
@@ -330,7 +339,20 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
           </div>}
           {tab === "b2b" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2">{C("b2b_enabled", "B2B sipariş portalı erişimi açık")}</div>
-            {F("b2b_discount", "B2B İskonto (%)", "number")}{F("b2b_login_email", "Portal Giriş E-postası", "email", { ph: "boş = cari e-postası / VKN" })}
+            {F("b2b_discount", "B2B İskonto (%)", "number")}
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Portal Giriş E-postası / VKN</label>
+              <input
+                type="text"
+                value={f.b2b_login_email ?? ""}
+                onChange={(e) => { setLoginErr(""); setF({ ...f, b2b_login_email: e.target.value }); }}
+                className={inp}
+                data-testid="cf-b2b_login_email"
+                autoComplete="off"
+              />
+              <p className="text-[11px] text-slate-500 mt-1" data-testid="cf-b2b-login-hint">Boş bırakılırsa cari e-postası; carinin VKN/TCKN'si ile de giriş yapılabilir.</p>
+              {loginErr ? <p className="text-[11px] text-rose-600 mt-1" data-testid="cf-b2b-login-error">{loginErr}</p> : null}
+            </div>
             {F("b2b_password", contact?.b2b_password_hash || contact?.has_b2b_password ? "Portal Şifresi (değiştirmek için yazın)" : "Portal Şifresi (min 6)", "password", { span: true })}
             <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t">
               {C("b2b_allow_orders", "Sipariş alımı")}

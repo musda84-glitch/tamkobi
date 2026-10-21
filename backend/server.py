@@ -5140,6 +5140,9 @@ async def create_contact(contact: Contact, user: dict = Depends(get_current_user
     contact.company_id = cid
     await saas.check_contact_limit(cid)
     doc = contact.to_mongo()
+    if "b2b_login_email" in doc:
+        doc["b2b_login_email"] = b2b_identity.canonical_b2b_login(doc.get("b2b_login_email"))
+    doc["tax_norm"] = b2b_identity.normalize_tax(doc.get("tax_number_or_id"))
     if doc.get("kvkk_accepted") and not doc.get("kvkk_accepted_at"):
         doc["kvkk_accepted_at"] = datetime.now(timezone.utc).isoformat()
     await db.contacts.insert_one(doc)
@@ -5205,7 +5208,9 @@ async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = 
     else:
         updated.pop("b2b_password", None)
     if "b2b_login_email" in updated:
-        updated["b2b_login_email"] = str(updated.get("b2b_login_email") or "").strip().lower()
+        updated["b2b_login_email"] = b2b_identity.canonical_b2b_login(updated.get("b2b_login_email"))
+    if "tax_number_or_id" in updated:
+        updated["tax_norm"] = b2b_identity.normalize_tax(updated.get("tax_number_or_id"))
     await b2b_identity.consider_link_notice(db, doc, {**doc, **updated}, updated)
     await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": updated})
     res = await db.contacts.find_one({"_id": contact_id, "company_id": cid})
@@ -5420,7 +5425,7 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any], user: dict = 
             raise HTTPException(status_code=400, detail="B2B şifresi en az 6 karakter olmalı.")
         upd["b2b_password_hash"] = hash_password(str(req["password"]))
     if req.get("login_email"):
-        upd["b2b_login_email"] = str(req["login_email"]).strip().lower()
+        upd["b2b_login_email"] = b2b_identity.canonical_b2b_login(req.get("login_email"))
     if isinstance(req.get("settings"), dict):
         upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
     await b2b_identity.consider_link_notice(db, c, {**c, **upd}, upd)
@@ -5461,7 +5466,7 @@ async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dic
             raise HTTPException(status_code=400, detail="B2B şifresi en az 6 karakter olmalı.")
         upd["b2b_password_hash"] = hash_password(str(req["password"]))
     if "login_email" in req:
-        upd["b2b_login_email"] = str(req.get("login_email") or "").strip().lower()
+        upd["b2b_login_email"] = b2b_identity.canonical_b2b_login(req.get("login_email"))
     if req.get("regenerate"):
         upd["b2b_token"] = token = uuid.uuid4().hex
     if isinstance(req.get("settings"), dict):
