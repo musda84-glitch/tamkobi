@@ -2812,20 +2812,17 @@ async def clear_notifications(company_id: Optional[str] = None, user: dict = Dep
     return {"status": "success", "deleted": int(getattr(r, "deleted_count", 0) or len(ids)), "message": "Bildirimler silindi."}
 
 @api_router.delete("/notifications/{notif_id}")
-async def delete_notification(notif_id: str, request: Request):
-    rec = await db.notifications.find_one({"_id": notif_id})
+async def delete_notification(notif_id: str, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, None)
+    rec = await db.notifications.find_one({"_id": notif_id, "company_id": cid})
     if not rec:
         raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        user = None
     import notify as _notify
     if not _notify.notification_can_delete(rec, user):
         if not rec.get("is_read"):
             raise HTTPException(status_code=400, detail="Yalnız okunan bildirimler silinebilir.")
         raise HTTPException(status_code=403, detail="Bu bildirimi silemezsiniz.")
-    await db.notifications.delete_one({"_id": notif_id})
+    await db.notifications.delete_one({"_id": notif_id, "company_id": cid})
     return {"status": "success", "message": "Bildirim silindi."}
 
 @api_router.post("/notifications/push-token")
