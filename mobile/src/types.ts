@@ -29,6 +29,10 @@ export type User = {
   is_super_admin?: boolean;
   employee_id?: string;
   skip_check_in?: boolean;
+  /** "atolye" ortak atölye hesabı; diğerleri standart kullanıcı. */
+  account_type?: string;
+  /** Atölye hesabına tanımlı istasyonlar. İş emri filtresi sunucudadır. */
+  shopfloor_stations?: string[];
 };
 
 export type License = {
