@@ -1404,6 +1404,49 @@ async def prepare_company_parent(company_id: str, parent_id: str) -> Dict[str, A
     }
 
 
+async def _page_companies(query: Dict[str, Any], projection: Dict[str, int]) -> List[dict]:
+    """Filtreli şirket sayfaları. Tüm koleksiyon tek seferde okunmaz."""
+    rows: List[dict] = []
+    skip = 0
+    page = 200
+    while True:
+        cursor = _db.companies.find(query, projection)
+        if hasattr(cursor, "skip") and hasattr(cursor, "limit"):
+            batch = await cursor.skip(skip).limit(page).to_list(page)
+        else:
+            batch = await cursor.to_list(None)
+        rows.extend(batch)
+        if not hasattr(cursor, "skip") or len(batch) < page:
+            break
+        skip += len(batch)
+    return rows
+
+
+async def _subsidiary_lookup(company_id: str) -> Dict[str, dict]:
+    """Alt şirket ağacı. Sorgu parent_company_id veya license_id ile sınırlıdır."""
+    projection = {"_id": 1, "license_id": 1, "parent_company_id": 1}
+    lookup: Dict[str, dict] = {}
+    stack = [company_id]
+    seen = set()
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        linked = await _page_companies(
+            {"$or": [{"parent_company_id": current}, {"license_id": current}]},
+            projection,
+        )
+        for doc in linked:
+            oid = doc.get("_id")
+            if not oid or oid == current:
+                continue
+            lookup[oid] = doc
+            if resolved_parent_id(doc) == current:
+                stack.append(oid)
+    return lookup
+
+
 async def apply_detach_subsidiary(company_id: str) -> dict:
     """Alt şirketin üst bağını koparır. Paylaşılan lisanstayken kendi lisans kopyasını açar.
 
@@ -1430,8 +1473,7 @@ async def apply_detach_subsidiary(company_id: str) -> dict:
         else:
             await _db.company_licenses.insert_one({"_id": company_id, **clone})
         updates["license_id"] = company_id
-        rows = await _db.companies.find({}).to_list(2000)
-        lookup = {d["_id"]: d for d in rows}
+        lookup = await _subsidiary_lookup(company_id)
 
         def _children_of(cid: str) -> List[str]:
             return [oid for oid, doc in lookup.items() if resolved_parent_id(doc) == cid]

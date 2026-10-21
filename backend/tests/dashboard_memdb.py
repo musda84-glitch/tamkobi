@@ -213,6 +213,19 @@ class MemColl:
                 return SimpleNamespace(deleted_count=1)
         return SimpleNamespace(deleted_count=0)
 
+    async def delete_many(self, query=None):
+        tenant_scope.check(self.name, "delete_many", query=query)
+        query = _split_field_ops(query or {})
+        kept = []
+        removed = 0
+        for doc in self.docs:
+            if match_query(doc, query):
+                removed += 1
+            else:
+                kept.append(doc)
+        self.docs[:] = kept
+        return SimpleNamespace(deleted_count=removed)
+
 
 class MemDB:
     def __init__(self):

@@ -454,12 +454,11 @@ def test_whitespace_password_requires_secret_scope_and_is_rejected(sec):
         {"password": "gercek-sifre"},
         idem="pw-real",
     )
-    assert real.status_code == 200, real.text
-    text = real.text
-    assert "gercek-sifre" not in text
-    assert "password_hash" not in text
-    assert db.users.docs[_USER]["password_hash"] != _OLD_HASH
-    assert db.users.docs[_USER]["password_hash"] != "gercek-sifre"
+    assert real.status_code == 403
+    assert _detail(real) == "Şifre danger/platform_user.password ile değişir."
+    assert "gercek-sifre" not in real.text
+    assert "password_hash" not in real.text
+    assert db.users.docs[_USER]["password_hash"] == _OLD_HASH
 
     created = _send(
         client, both_secret, both["id"], "POST",
@@ -470,3 +469,209 @@ def test_whitespace_password_requires_secret_scope_and_is_rejected(sec):
     assert created.status_code == 400
     assert _detail(created) == "Şifre boş olamaz."
     assert "bos@example.com" not in {row.get("email") for row in db.users.docs.values()}
+
+
+def _audit_blob(db) -> str:
+    parts = []
+    for coll_name in ("platform_audit_log", "activity_logs"):
+        coll = getattr(db, coll_name, None)
+        if coll is None:
+            continue
+        parts.append(json.dumps(list(coll.docs.values()), ensure_ascii=False))
+    return "\n".join(parts)
+
+
+def test_super_admin_create_and_secret_changes_require_danger(sec):
+    from auth_utils import verify_password
+
+    client, db = sec
+    both, both_secret = _issue(
+        db,
+        [store.SCOPE_ADMIN_USERS_WRITE, store.SCOPE_ADMIN_SECRETS_WRITE, store.SCOPE_ADMIN_DANGEROUS],
+        name="both",
+    )
+    before = {row.get("_id") for row in db.users.docs.values()}
+    created = _send(
+        client, both_secret, both["id"], "POST",
+        "/api/platform/admin-v1/platform-users",
+        {"name": "Yeni", "email": "yeni@example.com", "password": "guclu-sifre"},
+        idem="create-direct",
+    )
+    assert created.status_code == 403
+    assert _detail(created) == "Panel yöneticisi danger/platform_user.create ile oluşturulur."
+    assert "guclu-sifre" not in created.text
+    assert {row.get("_id") for row in db.users.docs.values()} == before
+
+    emailed = _send(
+        client, both_secret, both["id"], "PUT",
+        f"/api/platform/admin-v1/platform-users/{_USER}",
+        {"email": "baska@example.com"},
+        idem="email-direct",
+    )
+    assert emailed.status_code == 403
+    assert _detail(emailed) == "E-posta danger/platform_user.email ile değişir."
+    assert db.users.docs[_USER]["email"] == "panel@example.com"
+
+    renamed = _send(
+        client, both_secret, both["id"], "PUT",
+        f"/api/platform/admin-v1/platform-users/{_USER}",
+        {"name": "Panel Yeni"},
+        idem="name-ok",
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert db.users.docs[_USER]["name"] == "Panel Yeni"
+    assert "password_hash" not in renamed.text
+
+    _prepared, confirmed = _danger(
+        client, both_secret, both["id"], "platform_user.create",
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "name": "Yeni",
+            "email": "yeni@example.com",
+            "password": "guclu-sifre",
+        },
+        "yeni@example.com",
+        db,
+        prep_idem="user-create-prep",
+        conf_idem="user-create-conf",
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    item = confirmed.json()["item"]
+    assert item["email"] == "yeni@example.com"
+    assert "guclu-sifre" not in confirmed.text
+    assert "password" not in item
+    created_id = item["id"]
+    stored = db.users.docs[created_id]
+    assert stored["is_super_admin"] is True
+    assert stored["password_hash"] != "guclu-sifre"
+    assert verify_password("guclu-sifre", stored["password_hash"])
+    assert "guclu-sifre" not in _audit_blob(db)
+
+    _prepared, password_ok = _danger(
+        client, both_secret, both["id"], "platform_user.password",
+        {
+            "target_id": _USER,
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "password": "yeni-sifre-1",
+        },
+        "panel@example.com",
+        db,
+        prep_idem="user-pw-prep",
+        conf_idem="user-pw-conf",
+    )
+    assert password_ok.status_code == 200, password_ok.text
+    assert "yeni-sifre-1" not in password_ok.text
+    assert verify_password("yeni-sifre-1", db.users.docs[_USER]["password_hash"])
+    assert "yeni-sifre-1" not in _audit_blob(db)
+
+    _prepared, email_ok = _danger(
+        client, both_secret, both["id"], "platform_user.email",
+        {
+            "target_id": _USER,
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "email": "panel2@example.com",
+        },
+        "panel@example.com",
+        db,
+        prep_idem="user-mail-prep",
+        conf_idem="user-mail-conf",
+    )
+    assert email_ok.status_code == 200, email_ok.text
+    assert db.users.docs[_USER]["email"] == "panel2@example.com"
+
+
+def test_product_key_cannot_receive_scope_caller_lacks(sec):
+    client, db = sec
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_KEYS_WRITE], name="caller")
+    before = _ids(db)
+    denied = _send(client, secret, pub["id"], "POST", "/api/platform/admin-v1/api-keys", {
+        "product_id": _product_id(db, pub["id"]),
+        "name": "Fazla",
+        "kind": "product",
+        "instance_id": _COMPANY,
+        "scopes": ["help:read"],
+    }, idem="product-outside")
+    assert denied.status_code == 403
+    assert _detail(denied) == "İstenen kapsam çağıran anahtarın kapsamının dışında."
+    assert _ids(db) == before
+    assert "credential" not in denied.text
+
+    write = _send(client, secret, pub["id"], "POST", "/api/platform/admin-v1/api-keys", {
+        "product_id": _product_id(db, pub["id"]),
+        "name": "Yazma",
+        "kind": "product",
+        "instance_id": _COMPANY,
+        "scopes": ["usage:write"],
+    }, idem="product-write")
+    assert write.status_code == 403
+    assert _detail(write) == "Yazma kapsamı danger/key.product_create ile verilir."
+    assert _ids(db) == before
+
+    created = _send(client, secret, pub["id"], "POST", "/api/platform/admin-v1/api-keys", {
+        "product_id": _product_id(db, pub["id"]),
+        "name": "Okuma",
+        "kind": "product",
+        "instance_id": _COMPANY,
+        "scopes": ["license:verify"],
+    }, idem="product-read")
+    assert created.status_code == 200, created.text
+    key_id = created.json()["item"]["id"]
+    rescope = _send(
+        client, secret, pub["id"], "PUT",
+        f"/api/platform/admin-v1/api-keys/{key_id}/scopes",
+        {"scopes": ["usage:write", "license:verify"]},
+        idem="product-rescope",
+    )
+    assert rescope.status_code == 403
+    assert _detail(rescope) == "Yazma kapsamı danger/key.product_scopes ile verilir."
+    assert db.platform_api_keys.docs[key_id]["scopes"] == ["license:verify"]
+
+    danger_key, danger_secret = _issue(
+        db,
+        [store.SCOPE_ADMIN_KEYS_WRITE, store.SCOPE_ADMIN_DANGEROUS],
+        name="danger-keys",
+    )
+    outside = _send(
+        client, danger_secret, danger_key["id"], "POST",
+        "/api/platform/admin-v1/danger/key.product_create/prepare",
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "name": "Yabanci",
+            "product_id": _product_id(db, pub["id"]),
+            "instance_id": _COMPANY,
+            "scopes": ["help:read"],
+        },
+        idem="product-danger-outside",
+    )
+    assert outside.status_code == 403
+    assert _detail(outside) == "İstenen kapsam çağıran anahtarın kapsamının dışında."
+
+    _prepared, confirmed = _danger(
+        client, danger_secret, danger_key["id"], "key.product_create",
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "name": "Yazma Anahtari",
+            "product_id": _product_id(db, pub["id"]),
+            "instance_id": _COMPANY,
+            "scopes": ["usage:write"],
+        },
+        "Yazma Anahtari",
+        db,
+        prep_idem="product-danger-prep",
+        conf_idem="product-danger-conf",
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()["item"]
+    assert body["credential"]
+    assert body["scopes"] == ["usage:write"]
+    assert body["kind"] == "product"
+    assert "credential" not in _audit_blob(db)
+    assert body["credential"] not in _audit_blob(db)

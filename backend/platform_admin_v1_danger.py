@@ -16,6 +16,7 @@ from client_ip import request_ip
 import applog
 import company_reset
 import saas
+import saas_billing
 import saas_extras
 import superadmin_2fa
 import support_access
@@ -244,6 +245,13 @@ _ACTIONS = (
     "key.revoke",
     "key.admin_create",
     "key.admin_scopes",
+    "key.product_create",
+    "key.product_scopes",
+    "platform_user.create",
+    "platform_user.password",
+    "platform_user.email",
+    "settings.public_url",
+    "settings.require_superadmin_2fa",
     "maintenance.enable",
     "gib.gift",
 )
@@ -261,6 +269,13 @@ _PREPARE_EXTRA = {
     "key.revoke": (),
     "key.admin_create": ("name", "product_id", "scopes", "expires_at", "ip_allowlist"),
     "key.admin_scopes": ("scopes",),
+    "key.product_create": ("name", "product_id", "scopes", "instance_id", "expires_at", "ip_allowlist"),
+    "key.product_scopes": ("scopes",),
+    "platform_user.create": ("name", "email", "password", "is_active"),
+    "platform_user.password": ("password",),
+    "platform_user.email": ("email",),
+    "settings.public_url": ("public_url",),
+    "settings.require_superadmin_2fa": ("require_superadmin_2fa",),
     "maintenance.enable": (
         "title", "body", "starts_at", "ends_at", "notify_popup", "notify_sms",
         "audience", "company_ids", "support_email", "support_phone",
@@ -290,16 +305,18 @@ def _as_dt(value: Any) -> Optional[datetime]:
 
 
 def _target_type(action: str) -> str:
-    if action in ("user.erase", "user.delete", "superadmin.2fa_reset"):
+    if action in ("user.erase", "user.delete", "superadmin.2fa_reset") or action.startswith("platform_user."):
         return "user"
     if action == "plan.delete":
         return "plan"
     if action == "product.delete":
         return "product"
-    if action in ("key.revoke", "key.admin_create", "key.admin_scopes"):
+    if action in ("key.revoke", "key.admin_create", "key.admin_scopes", "key.product_create", "key.product_scopes"):
         return "api_key"
     if action == "maintenance.enable":
         return "maintenance"
+    if action.startswith("settings."):
+        return "settings"
     return "company"
 
 
@@ -322,10 +339,12 @@ def _hint_for(action: str) -> str:
         return _PLAN_HINT
     if action == "product.delete":
         return _PRODUCT_HINT
-    if action in ("key.revoke", "key.admin_create", "key.admin_scopes"):
+    if action in ("key.revoke", "key.admin_create", "key.admin_scopes", "key.product_create", "key.product_scopes"):
         return _KEY_HINT
     if action == "maintenance.enable":
         return _MAINTENANCE_HINT
+    if action.startswith("settings."):
+        return "yeni değeri birebir yazın"
     return _USER_HINT
 
 
@@ -336,10 +355,12 @@ def _text_error(action: str) -> str:
         return _PLAN_TEXT_ERROR
     if action == "product.delete":
         return _PRODUCT_TEXT_ERROR
-    if action in ("key.revoke", "key.admin_create", "key.admin_scopes"):
+    if action in ("key.revoke", "key.admin_create", "key.admin_scopes", "key.product_create", "key.product_scopes"):
         return _KEY_TEXT_ERROR
     if action == "maintenance.enable":
         return _MAINTENANCE_TEXT_ERROR
+    if action.startswith("settings."):
+        return "Onay için yeni değeri birebir yazın."
     return _USER_TEXT_ERROR
 
 
@@ -394,8 +415,16 @@ def _preview_summary(action: str, preview: Dict[str, Any]) -> Dict[str, Any]:
         return {"parent_company_id": preview.get("parent_company_id")}
     if action == "key.revoke":
         return {"name": preview.get("name"), "kind": preview.get("kind")}
-    if action in ("key.admin_create", "key.admin_scopes"):
+    if action in ("key.admin_create", "key.admin_scopes", "key.product_create", "key.product_scopes"):
         return {"name": preview.get("name"), "scopes": list(preview.get("scopes") or [])}
+    if action == "platform_user.create":
+        return {"email": preview.get("email"), "name": preview.get("name")}
+    if action in ("platform_user.password", "platform_user.email"):
+        return {"email": preview.get("email")}
+    if action == "settings.public_url":
+        return {"public_url": preview.get("public_url")}
+    if action == "settings.require_superadmin_2fa":
+        return {"require_superadmin_2fa": preview.get("require_superadmin_2fa")}
     if action == "maintenance.enable":
         return {"title": preview.get("title")}
     if action == "gib.gift":
@@ -422,8 +451,14 @@ def _result_summary(action: str, result: Dict[str, Any]) -> Dict[str, Any]:
         return {"parent_company_id": result.get("parent_company_id")}
     if action == "key.revoke":
         return {"id": result.get("id"), "revoked_at": result.get("revoked_at")}
-    if action in ("key.admin_create", "key.admin_scopes"):
+    if action in ("key.admin_create", "key.admin_scopes", "key.product_create", "key.product_scopes"):
         return {"id": result.get("id"), "scopes": list(result.get("scopes") or [])}
+    if action in ("platform_user.create", "platform_user.password", "platform_user.email"):
+        return {"id": result.get("id"), "email": result.get("email")}
+    if action == "settings.public_url":
+        return {"public_url": result.get("public_url")}
+    if action == "settings.require_superadmin_2fa":
+        return {"require_superadmin_2fa": result.get("require_superadmin_2fa")}
     if action == "maintenance.enable":
         return {"enabled": result.get("enabled")}
     if action == "gib.gift":
@@ -687,6 +722,241 @@ async def _validate_key_admin_scopes(key_id: str, params: Dict[str, Any]) -> dic
     }
 
 
+def _password_fp(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _clean_password(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=400, detail="Şifre boş olamaz.")
+    if len(value.strip()) < 6:
+        raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
+    return value
+
+
+def _clean_email(value: Any) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="Geçerli e-posta girin.")
+    email = value.strip().lower()
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="Geçerli e-posta girin.")
+    return email
+
+
+async def _caller_doc(caller_key_id: str, required: Tuple[str, ...]) -> dict:
+    from platform_admin_v1_accounts import scope_set
+
+    doc = await store._db.platform_api_keys.find_one({"_id": caller_key_id}) if caller_key_id else None
+    if not doc or doc.get("revoked_at"):
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+    held = scope_set(doc.get("scopes"))
+    for scope in required:
+        if scope not in held:
+            raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+    return doc
+
+
+async def _super_admin_or_404(user_id: str) -> dict:
+    user = await saas._db.users.find_one({"_id": user_id})
+    if not user or not user.get("is_super_admin"):
+        raise HTTPException(status_code=404, detail="Panel yöneticisi bulunamadı.")
+    return user
+
+
+async def _validate_platform_user_create(params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_USERS_WRITE, store.SCOPE_ADMIN_SECRETS_WRITE),
+    )
+    name = str(params.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name zorunlu.")
+    email = _clean_email(params.get("email"))
+    password = _clean_password(params.get("password"))
+    if "is_active" in params and not isinstance(params.get("is_active"), bool):
+        raise HTTPException(status_code=400, detail="is_active boolean olmalı.")
+    active = params.get("is_active") if isinstance(params.get("is_active"), bool) else True
+    if await saas._db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var.")
+    params["name"] = name
+    params["email"] = email
+    params["password"] = password
+    params["is_active"] = active
+    return {
+        "label": email,
+        "fp": _fp({"email": email, "name": name, "is_active": active, "password_fp": _password_fp(password)}),
+        "preview": {"email": email, "name": name},
+        "scopes": None,
+    }
+
+
+async def _validate_platform_user_password(user_id: str, params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_USERS_WRITE, store.SCOPE_ADMIN_SECRETS_WRITE),
+    )
+    user = await _super_admin_or_404(user_id)
+    password = _clean_password(params.get("password"))
+    params["password"] = password
+    email = (user.get("email") or "").strip().lower()
+    return {
+        "label": email,
+        "fp": _fp({"id": user_id, "email": email, "password_fp": _password_fp(password)}),
+        "preview": {"email": email},
+        "scopes": None,
+    }
+
+
+async def _validate_platform_user_email(user_id: str, params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_USERS_WRITE),
+    )
+    user = await _super_admin_or_404(user_id)
+    email = _clean_email(params.get("email"))
+    other = await saas._db.users.find_one({"email": email})
+    if other and other.get("_id") != user_id:
+        raise HTTPException(status_code=400, detail="Bu e-posta başka bir kullanıcıya ait.")
+    params["email"] = email
+    current = (user.get("email") or "").strip().lower()
+    return {
+        "label": current,
+        "fp": _fp({"id": user_id, "email": current, "next_email": email}),
+        "preview": {"email": current},
+        "scopes": None,
+    }
+
+
+async def _validate_product_create(params: Dict[str, Any]) -> dict:
+    from platform_admin_v1_accounts import assert_product_scopes, _DANGER_PRODUCT_CREATE
+    from platform_auth import normalize_ip_allowlist
+
+    caller = await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_KEYS_WRITE),
+    )
+    raw_scopes = _scope_list_or_400(params.get("scopes"))
+    assert_product_scopes(raw_scopes, caller.get("scopes") or [], danger=True, danger_detail=_DANGER_PRODUCT_CREATE)
+    try:
+        normalized = store._normalize_scopes(raw_scopes, kind=store.KEY_KIND_PRODUCT)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    params["scopes"] = normalized
+    product_id = str(params.get("product_id") or "").strip()
+    prod = await store._get_product_doc(product_id)
+    if not prod:
+        raise HTTPException(status_code=400, detail="Ürün bulunamadı")
+    name = str(params.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name zorunlu.")
+    instance_id = str(params.get("instance_id") or "").strip()
+    if not instance_id:
+        raise HTTPException(status_code=400, detail="Şirket anahtarı instance_id ister.")
+    if not await saas._db.companies.find_one({"_id": instance_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    params["name"] = name
+    params["product_id"] = str(prod.get("_id") or product_id)
+    params["instance_id"] = instance_id
+    try:
+        allow = normalize_ip_allowlist(params.get("ip_allowlist"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {
+        "label": name,
+        "fp": _fp({
+            "name": name,
+            "product_id": params["product_id"],
+            "instance_id": instance_id,
+            "scopes": normalized,
+            "expires_at": params.get("expires_at"),
+            "ip_allowlist": allow,
+            "caller_scopes": _caller_scope_fp(caller),
+        }),
+        "preview": {"name": name, "scopes": normalized},
+        "scopes": normalized,
+    }
+
+
+async def _validate_product_scopes(key_id: str, params: Dict[str, Any]) -> dict:
+    from platform_admin_v1_accounts import assert_product_scopes, _DANGER_PRODUCT_SCOPES
+
+    caller = await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_KEYS_WRITE),
+    )
+    doc = await store._db.platform_api_keys.find_one({"_id": key_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
+    if doc.get("revoked_at"):
+        raise HTTPException(status_code=400, detail="İptal edilmiş anahtarın kapsamı değişmez")
+    if (doc.get("kind") or store.KEY_KIND_PRODUCT) != store.KEY_KIND_PRODUCT:
+        raise HTTPException(status_code=400, detail="Bu işlem yalnız şirket anahtarı içindir.")
+    raw_scopes = _scope_list_or_400(params.get("scopes"))
+    assert_product_scopes(raw_scopes, caller.get("scopes") or [], danger=True, danger_detail=_DANGER_PRODUCT_SCOPES)
+    try:
+        normalized = store._normalize_scopes(raw_scopes, kind=store.KEY_KIND_PRODUCT)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    params["scopes"] = normalized
+    label = (doc.get("name") or key_id).strip()
+    return {
+        "label": label,
+        "fp": _fp({
+            "id": key_id,
+            "name": label,
+            "current_scopes": list(doc.get("scopes") or []),
+            "scopes": normalized,
+            "caller_scopes": _caller_scope_fp(caller),
+            "revoked_at": None,
+        }),
+        "preview": {"name": label, "scopes": normalized, "kind": store.KEY_KIND_PRODUCT},
+        "scopes": normalized,
+    }
+
+
+async def _validate_settings_public_url(params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_SETTINGS_WRITE),
+    )
+    raw = params.get("public_url")
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=400, detail="public_url zorunlu.")
+    url = raw.strip()[:500]
+    from platform_admin_v1_write import _http_url
+    if not _http_url(url):
+        raise HTTPException(status_code=400, detail="public_url http veya https olmalı.")
+    st = await saas_billing.settings()
+    current = str(st.get("public_url") or "").strip()
+    params["public_url"] = url
+    return {
+        "label": url,
+        "fp": _fp({"id": "platform", "public_url": current, "next": url}),
+        "preview": {"public_url": url},
+        "scopes": None,
+    }
+
+
+async def _validate_settings_2fa(params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_SETTINGS_WRITE),
+    )
+    flag = params.get("require_superadmin_2fa")
+    if not isinstance(flag, bool):
+        raise HTTPException(status_code=400, detail="require_superadmin_2fa boolean olmalı.")
+    st = await saas_billing.settings()
+    current = bool(st.get("require_superadmin_2fa"))
+    params["require_superadmin_2fa"] = flag
+    label = "true" if flag else "false"
+    return {
+        "label": label,
+        "fp": _fp({"id": "platform", "require_superadmin_2fa": current, "next": flag}),
+        "preview": {"require_superadmin_2fa": flag},
+        "scopes": None,
+    }
+
+
 async def _validate_maintenance(params: Dict[str, Any]) -> dict:
     import platform_notices
     title = str(params.get("title") or "").strip()
@@ -750,6 +1020,20 @@ async def _validate_action(action: str, target_id: str, operator_email: str, par
         return await _validate_key_admin_create(params)
     if action == "key.admin_scopes":
         return await _validate_key_admin_scopes(target_id, params)
+    if action == "key.product_create":
+        return await _validate_product_create(params)
+    if action == "key.product_scopes":
+        return await _validate_product_scopes(target_id, params)
+    if action == "platform_user.create":
+        return await _validate_platform_user_create(params)
+    if action == "platform_user.password":
+        return await _validate_platform_user_password(target_id, params)
+    if action == "platform_user.email":
+        return await _validate_platform_user_email(target_id, params)
+    if action == "settings.public_url":
+        return await _validate_settings_public_url(params)
+    if action == "settings.require_superadmin_2fa":
+        return await _validate_settings_2fa(params)
     if action == "maintenance.enable":
         return await _validate_maintenance(params)
     if action == "gib.gift":
@@ -762,8 +1046,9 @@ def _text_matches(action: str, label: str, text: Any) -> bool:
         return False
     if action.startswith("company.") or action in (
         "plan.delete", "product.delete", "key.revoke", "key.admin_create", "key.admin_scopes",
+        "key.product_create", "key.product_scopes",
         "maintenance.enable", "gib.gift",
-    ):
+    ) or action.startswith("settings."):
         return text.strip() == (label or "").strip()
     return text.strip().lower() == (label or "").strip().lower()
 
@@ -924,6 +1209,67 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
             "kind": pub.get("kind"),
             "scopes": list(pub.get("scopes") or []),
         }
+    if action == "key.product_create":
+        try:
+            pub, secret = await store.create_api_key(
+                product_id=str(params.get("product_id") or ""),
+                name=str(params.get("name") or ""),
+                scopes=list(params.get("scopes") or []),
+                instance_id=str(params.get("instance_id") or ""),
+                expires_at=params.get("expires_at"),
+                ip_allowlist=params.get("ip_allowlist"),
+                actor_id=str(actor.get("_id") or ""),
+                ip=ip,
+                kind=store.KEY_KIND_PRODUCT,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {
+            "id": pub["id"],
+            "name": pub.get("name"),
+            "kind": pub.get("kind"),
+            "scopes": list(pub.get("scopes") or []),
+            "credential": secret,
+        }
+    if action == "key.product_scopes":
+        try:
+            pub = await store.update_api_key_scopes(
+                target_id,
+                list(params.get("scopes") or []),
+                actor_id=str(actor.get("_id") or ""),
+                ip=ip,
+            )
+        except LookupError:
+            raise HTTPException(status_code=409, detail=_TARGET_CHANGED) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {
+            "id": pub["id"],
+            "name": pub.get("name"),
+            "kind": pub.get("kind"),
+            "scopes": list(pub.get("scopes") or []),
+        }
+    if action == "platform_user.create":
+        row = await saas.system_create_user({
+            "name": params.get("name"),
+            "email": params.get("email"),
+            "password": params.get("password"),
+            "is_active": params.get("is_active", True),
+        }, {})
+        return {"id": row.get("id"), "email": row.get("email"), "name": row.get("name")}
+    if action == "platform_user.password":
+        row = await saas.system_update_user(target_id, {"password": params.get("password")}, {})
+        return {"id": row.get("id"), "email": row.get("email")}
+    if action == "platform_user.email":
+        row = await saas.system_update_user(target_id, {"email": params.get("email")}, {})
+        return {"id": row.get("id"), "email": row.get("email")}
+    if action == "settings.public_url":
+        await saas_billing.put_settings({"public_url": params.get("public_url")}, {})
+        return {"public_url": params.get("public_url")}
+    if action == "settings.require_superadmin_2fa":
+        flag = bool(params.get("require_superadmin_2fa"))
+        await saas_billing.put_settings({"require_superadmin_2fa": flag}, {})
+        return {"require_superadmin_2fa": flag}
     if action == "maintenance.enable":
         import platform_notices
         body = {k: v for k, v in params.items() if not str(k).startswith("_")}
@@ -999,13 +1345,14 @@ async def admin_v1_danger_prepare(action: str, request: Request):
     target_id = peeked.get("target_id") if isinstance(peeked.get("target_id"), str) else ""
     held: Dict[str, Any] = {}
 
-    async def prepare(payload: Dict[str, Any]):
+    async def prepare(payload: Dict[str, Any], key_doc: dict):
         _known_action(action)
         _reject_unknown(payload, _PREPARE_COMMON + _PREPARE_EXTRA[action])
         reason = _clean_reason(payload)
         operator = await _operator_or_403(payload)
         tid = _require_target(payload)
         params: Dict[str, Any] = {}
+        caller_id = str((key_doc or {}).get("_id") or "")
         if action == "company.reset_data" and "scopes" in payload:
             scopes = payload["scopes"]
             if not isinstance(scopes, (str, list, tuple)):
@@ -1021,7 +1368,7 @@ async def admin_v1_danger_prepare(action: str, request: Request):
                     raise HTTPException(status_code=400, detail="email metin olmalı.")
                 params["email"] = payload["email"]
         if action == "key.revoke":
-            params["_caller_key_id"] = (request.headers.get("X-Platform-Key") or "").strip()
+            params["_caller_key_id"] = caller_id
         if action == "key.admin_create":
             if tid != "platform":
                 raise HTTPException(status_code=400, detail="target_id platform olmalı.")
@@ -1034,7 +1381,7 @@ async def admin_v1_danger_prepare(action: str, request: Request):
             params["name"] = name.strip()
             params["product_id"] = product_id.strip()
             params["scopes"] = _scope_list_or_400(payload.get("scopes"))
-            params["_caller_key_id"] = (request.headers.get("X-Platform-Key") or "").strip()
+            params["_caller_key_id"] = caller_id
             if "expires_at" in payload:
                 if payload["expires_at"] is not None and not isinstance(payload["expires_at"], str):
                     raise HTTPException(status_code=400, detail="expires_at metin ya da null olmalı.")
@@ -1045,7 +1392,69 @@ async def admin_v1_danger_prepare(action: str, request: Request):
                 params["ip_allowlist"] = payload["ip_allowlist"]
         if action == "key.admin_scopes":
             params["scopes"] = _scope_list_or_400(payload.get("scopes"))
-            params["_caller_key_id"] = (request.headers.get("X-Platform-Key") or "").strip()
+            params["_caller_key_id"] = caller_id
+        if action == "key.product_create":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            name = payload.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise HTTPException(status_code=400, detail="name zorunlu.")
+            product_id = payload.get("product_id")
+            if not isinstance(product_id, str) or not product_id.strip():
+                raise HTTPException(status_code=400, detail="product_id zorunlu.")
+            instance_id = payload.get("instance_id")
+            if not isinstance(instance_id, str) or not instance_id.strip():
+                raise HTTPException(status_code=400, detail="Şirket anahtarı instance_id ister.")
+            params["name"] = name.strip()
+            params["product_id"] = product_id.strip()
+            params["instance_id"] = instance_id.strip()
+            params["scopes"] = _scope_list_or_400(payload.get("scopes"))
+            params["_caller_key_id"] = caller_id
+            if "expires_at" in payload:
+                if payload["expires_at"] is not None and not isinstance(payload["expires_at"], str):
+                    raise HTTPException(status_code=400, detail="expires_at metin ya da null olmalı.")
+                params["expires_at"] = payload["expires_at"]
+            if "ip_allowlist" in payload:
+                if not isinstance(payload["ip_allowlist"], list):
+                    raise HTTPException(status_code=400, detail="ip_allowlist liste olmalı.")
+                params["ip_allowlist"] = payload["ip_allowlist"]
+        if action == "key.product_scopes":
+            params["scopes"] = _scope_list_or_400(payload.get("scopes"))
+            params["_caller_key_id"] = caller_id
+        if action == "platform_user.create":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            name = payload.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise HTTPException(status_code=400, detail="name zorunlu.")
+            params["name"] = name.strip()
+            params["email"] = payload.get("email")
+            params["password"] = payload.get("password")
+            params["_caller_key_id"] = caller_id
+            if "is_active" in payload:
+                if not isinstance(payload["is_active"], bool):
+                    raise HTTPException(status_code=400, detail="is_active boolean olmalı.")
+                params["is_active"] = payload["is_active"]
+        if action == "platform_user.password":
+            params["password"] = payload.get("password")
+            params["_caller_key_id"] = caller_id
+        if action == "platform_user.email":
+            params["email"] = payload.get("email")
+            params["_caller_key_id"] = caller_id
+        if action == "settings.public_url":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            if not isinstance(payload.get("public_url"), str):
+                raise HTTPException(status_code=400, detail="public_url zorunlu.")
+            params["public_url"] = payload.get("public_url")
+            params["_caller_key_id"] = caller_id
+        if action == "settings.require_superadmin_2fa":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            if not isinstance(payload.get("require_superadmin_2fa"), bool):
+                raise HTTPException(status_code=400, detail="require_superadmin_2fa boolean olmalı.")
+            params["require_superadmin_2fa"] = payload.get("require_superadmin_2fa")
+            params["_caller_key_id"] = caller_id
         if action == "gib.gift":
             credits = payload.get("credits")
             if isinstance(credits, bool) or not isinstance(credits, int) or credits <= 0:

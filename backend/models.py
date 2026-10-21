@@ -298,6 +298,8 @@ class Invoice(BaseDocument):
     direction: Optional[str] = None  # incoming = GİB'den gelen alış e-faturası (kesilmez)
     source: Optional[str] = None  # edoc_inbox, manual, …
     edoc_id: Optional[str] = None
+    # Elle alış: onayda stok girsin mi. Yoksa onay anında True sayılır. Satış/gelen belgede yok sayılır.
+    post_stock: Optional[bool] = None
     payment_status: str = "unpaid"  # unpaid, partially_paid, paid
     paid_amount: float = 0.0
     notes: Optional[str] = None

@@ -374,15 +374,95 @@ export function canIssueInvoice(inv) {
   return !isGibIssued(inv);
 }
 
-/** Taslak satış faturası — POST /approve (cari + stok). E-belge ayrı adımdır. */
+/** Elle girilmiş alış. Gelen e-fatura, gider pusulası ve irsaliye stok kutusuna girmez. */
+export function isManualPurchaseStockInvoice(inv) {
+  if (!inv || inv.invoice_type !== "purchase") return false;
+  if (isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.e_type === "expense_slip" || inv.e_type === "e_dispatch") return false;
+  return true;
+}
+
+/** Kutu işareti. Alan yoksa taslakta işaretli; onaylıda yalnız gerçek stok girişi işaretli sayılır. */
+export function manualPurchasePostsStock(inv) {
+  if (!isManualPurchaseStockInvoice(inv)) return false;
+  if (inv.post_stock === false) return false;
+  if (inv.post_stock === true) return true;
+  if (inv.stock_effects_applied === true) return true;
+  if (inv.status && inv.status !== "draft") return false;
+  return true;
+}
+
+function formatStockQty(qty) {
+  const n = Number(qty || 0);
+  if (!Number.isFinite(n)) return "0";
+  if (Number.isInteger(n)) return String(n);
+  return String(Math.round(n * 1000) / 1000);
+}
+
+/** "1 kalem (100 Koli)" — aynı birimler toplanır. */
+export function purchaseStockConfirmPhrase(inv) {
+  const items = Array.isArray(inv?.items) ? inv.items : [];
+  const rows = items.filter((it) => (it && (it.name || it.product_name || it.description)) || Number(it?.quantity || 0));
+  if (!rows.length) return "0 kalem";
+  const byUnit = new Map();
+  rows.forEach((it) => {
+    const unit = String(it.unit || it.unit_name || "Adet").trim() || "Adet";
+    byUnit.set(unit, (byUnit.get(unit) || 0) + Number(it.quantity || 0));
+  });
+  const parts = [...byUnit.entries()].map(([unit, qty]) => `${formatStockQty(qty)} ${unit}`);
+  return `${rows.length} kalem (${parts.join(", ")})`;
+}
+
+/** Liste rozeti. Taslak ve işaretliyse rozet yok. */
+export function manualPurchaseStockBadge(inv) {
+  if (!isManualPurchaseStockInvoice(inv)) return null;
+  if (inv.status === "cancelled" || inv.status === "cancelling") return null;
+  if (inv.stock_effects_applied === true) {
+    return { label: "Stokta", title: "Kalemler depoya girdi", tone: "in" };
+  }
+  const approved = inv.status && inv.status !== "draft" && inv.status !== "approving";
+  if (approved) return { label: "Stoksuz", title: "Yalnız cari işlendi", tone: "out" };
+  if (inv.status === "draft" && inv.post_stock === false) {
+    return { label: "Stoksuz", title: "Onayda seçilecek", tone: "out" };
+  }
+  return null;
+}
+
+export function ManualPurchaseStockBadge({ inv, testId }) {
+  const badge = manualPurchaseStockBadge(inv);
+  if (!badge) return null;
+  const cls = badge.tone === "in"
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : "bg-slate-100 text-slate-600 border-slate-300";
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold border ${cls}`} title={badge.title} data-testid={testId}>
+      {badge.label}
+    </span>
+  );
+}
+
+/** Taslak satış veya elle girilmiş alış — POST /approve (cari + stok). Gelen e-fatura alış kendi akışında kalır. */
 export function canFaturalastirDraftInvoice(inv) {
   if (!inv) return false;
   if (inv.status === "approving" || inv.status === "cancelling") return false;
   if (inv.status !== "draft") return false;
-  if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
+  if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.e_type === "expense_slip") return false;
   if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") return false;
   return !isGibIssued(inv);
+}
+
+/** Onay penceresi. Satış metni aynı kalır; elle alış metni Stoğa işle seçimine göre değişir. */
+export function draftInvoiceApproveConfirmText(inv) {
+  const no = inv?.invoice_number || "Belge";
+  if (isManualPurchaseStockInvoice(inv)) {
+    const post = inv?.post_stock !== false;
+    const body = post
+      ? `Cari bakiyesi işlenecek.\nStok işlenecek: ${purchaseStockConfirmPhrase(inv)} depoya girer.\nE-belge gönderimi ayrı adımdır.`
+      : "Cari bakiyesi işlenecek. Stok işlenmeyecek.\nE-belge gönderimi ayrı adımdır.";
+    return `${no} alış taslağı onaylansın mı?\n${body}\nOnaydan sonra 'Stoğa işle' değiştirilemez.`;
+  }
+  return `${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`;
 }
 
 /** Elektronik Fatura Onayı / send-to-gib: yalnız onaylı (faturalaşmış) belgeler. */
@@ -666,6 +746,26 @@ export const InvoiceContextMenu = (props) => {
             </p>
           )}
         </div>
+      ) : canFaturalastirDraft ? (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-draft-faturalastir">
+          {onEdit && editable && (
+            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
+          )}
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">
+            {isPurchase ? "TASLAĞI ONAYLA" : "TASLAĞI FATURALAŞTIR"}
+          </div>
+          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-faturalastir-note">
+            {isPurchase ? "Cari bakiyesi işlenir. Stok, Stoğa işle seçimine bağlıdır." : FATURALASTIR_CONFIRM_DETAIL}
+          </p>
+          <Item
+            icon={FileText}
+            color="text-emerald-600"
+            label={isPurchase ? "Taslağı Onayla (Cariye İşle)" : "Taslağı Faturalaştır"}
+            sub={isPurchase ? "Cari bakiyesi işlenir. Stok, Stoğa işle seçimine bağlıdır." : "Cari bakiyesi ve stok — e-belge ayrı adım"}
+            onClick={() => (onApproveDraft || onIssue)?.(inv)}
+            testId="ctx-draft-approve"
+          />
+        </div>
       ) : isPurchase ? (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-purchase-actions">
           {onEdit && editable && (
@@ -693,24 +793,6 @@ export const InvoiceContextMenu = (props) => {
           ) : (
             <p className="px-3 pb-2 text-[10px] text-amber-700">İşNet e-İrsaliye yapılandırılmamış veya kapalı.</p>
           )}
-        </div>
-      ) : canFaturalastirDraft ? (
-        <div className="border-b border-slate-100 pb-1" data-testid="ctx-draft-faturalastir">
-          {onEdit && editable && (
-            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
-          )}
-          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">TASLAĞI FATURALAŞTIR</div>
-          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-faturalastir-note">
-            {FATURALASTIR_CONFIRM_DETAIL}
-          </p>
-          <Item
-            icon={FileText}
-            color="text-emerald-600"
-            label="Taslağı Faturalaştır"
-            sub="Cari bakiyesi ve stok — e-belge ayrı adım"
-            onClick={() => (onApproveDraft || onIssue)?.(inv)}
-            testId="ctx-draft-approve"
-          />
         </div>
       ) : showIssueTypes ? (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-issue-types">
