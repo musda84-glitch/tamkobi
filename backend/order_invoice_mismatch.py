@@ -93,23 +93,109 @@ def _money(value: Any) -> float:
         return 0.0
 
 
+FULFILLMENT_LINE_WARNING = (
+    "Ürün veya miktar değişikliği toplama açık ya da sevk edilmiş siparişe uygulanmadı."
+)
+CLOSED_INVOICE_LINE_WARNING = (
+    "İptal, iade veya reddedilmiş faturaya ticari değişiklik uygulanmadı."
+)
+
+_CLOSED_INVOICE_STATUSES = frozenset({
+    "cancelled",
+    "canceled",
+    "void",
+    "rejected",
+    "refused",
+    "returned",
+    "partially_returned",
+    "iptal",
+    "iptal edildi",
+    "reddedildi",
+    "reddedilmis",
+    "iade",
+    "iade edildi",
+})
+
+
+def _fold_status(value: Any) -> str:
+    return str(value or "").strip().lower().replace("ı", "i").replace("i̇", "i")
+
+
+def invoice_closed_for_commercial_sync(invoice: Optional[Mapping[str, Any]]) -> bool:
+    """İptal, iade veya ret. GİB kilidi olmasa da kalem ve cari/stok etkisi yazılmaz."""
+    if not invoice:
+        return False
+    from invoice_status import is_cancelled_invoice
+
+    if is_cancelled_invoice(invoice):
+        return True
+    if _fold_status(invoice.get("status")) in _CLOSED_INVOICE_STATUSES:
+        return True
+    if invoice.get("returned") is True:
+        return True
+    response = _fold_status(invoice.get("gib_response"))
+    return response in ("rejected", "refused", "reddedildi", "reddedilmis")
+
+
+def _disc_rate(it: Mapping[str, Any]) -> float:
+    disc = it.get("discount_rate")
+    if disc in (None, ""):
+        disc = it.get("discount_percent") or 0
+    return _money(disc)
+
+
+def _line_identity(it: Mapping[str, Any]) -> Tuple:
+    return (
+        str(it.get("product_id") or ""),
+        str(it.get("product_name") or it.get("name") or "").strip(),
+        round(_money(it.get("quantity")), 4),
+    )
+
+
+def _line_price(it: Mapping[str, Any]) -> Tuple:
+    return (
+        round(_money(it.get("unit_price")), 4),
+        round(_disc_rate(it), 4),
+        round(_money(it.get("vat_rate")), 4),
+    )
+
+
+def order_items_identity_signature(items: Optional[Iterable[Mapping[str, Any]]]) -> Tuple:
+    """Ürün ve miktar. Toplama/sevk kilidini bozan fark."""
+    rows = []
+    for it in items or []:
+        if isinstance(it, Mapping):
+            rows.append(_line_identity(it))
+    return tuple(rows)
+
+
+def order_items_price_signature(items: Optional[Iterable[Mapping[str, Any]]]) -> Tuple:
+    """Fiyat, iskonto ve KDV. Ürün ile miktar bu imzada yoktur."""
+    rows = []
+    for it in items or []:
+        if isinstance(it, Mapping):
+            rows.append(_line_price(it))
+    return tuple(rows)
+
+
+def commercial_change_only(
+    before: Optional[Iterable[Mapping[str, Any]]],
+    after: Optional[Iterable[Mapping[str, Any]]],
+) -> bool:
+    """Ürün ve miktar aynı, fiyat/iskonto/KDV farklı."""
+    return (
+        order_items_identity_signature(before) == order_items_identity_signature(after)
+        and order_items_price_signature(before) != order_items_price_signature(after)
+    )
+
+
 def order_items_signature(items: Optional[Iterable[Mapping[str, Any]]]) -> Tuple:
     """Toplama satırını bozacak kalem farkı: ürün, ad, miktar, fiyat, iskonto, KDV."""
     rows = []
     for it in items or []:
         if not isinstance(it, Mapping):
             continue
-        disc = it.get("discount_rate")
-        if disc in (None, ""):
-            disc = it.get("discount_percent") or 0
-        rows.append((
-            str(it.get("product_id") or ""),
-            str(it.get("product_name") or it.get("name") or "").strip(),
-            round(_money(it.get("quantity")), 4),
-            round(_money(it.get("unit_price")), 4),
-            round(_money(disc), 4),
-            round(_money(it.get("vat_rate")), 4),
-        ))
+        rows.append(_line_identity(it) + _line_price(it))
     return tuple(rows)
 
 
@@ -142,8 +228,14 @@ def order_sync_skip_reason(
     *,
     items_changed: bool,
     pick_open: bool,
+    price_only: bool = False,
 ) -> Optional[str]:
-    """None ise sipariş belgesi güncellenebilir. Stok/cari/rezervasyon burada yoktur."""
+    """None ise sipariş belgesi güncellenebilir. Stok/cari/rezervasyon burada yoktur.
+
+    price_only: ürün ve miktar aynı, yalnız fiyat/iskonto/KDV değişti. Toplama
+    açık veya sevk edilmiş siparişe de yazılır. Ürün/miktar değişimi eskisi gibi
+    fulfillment ile atlanır.
+    """
     if not order or not invoice:
         return "missing"
     ic = str(invoice.get("company_id") or "")
@@ -160,6 +252,6 @@ def order_sync_skip_reason(
         return "closed"
     if not order_channel_syncable(order):
         return "marketplace"
-    if items_changed and (order_is_shipped_for_sync(order) or pick_open):
+    if items_changed and not price_only and (order_is_shipped_for_sync(order) or pick_open):
         return "fulfillment"
     return None

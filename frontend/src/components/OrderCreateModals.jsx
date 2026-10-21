@@ -162,7 +162,7 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
       }
       const r = await axios.put(`${API_URL}/orders/${order.id || order._id}`, payload);
       toast.success(r.data.message || "Sipariş güncellendi.");
-      onSaved();
+      onSaved?.(r.data);
       onClose();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Sipariş güncellenemedi.");

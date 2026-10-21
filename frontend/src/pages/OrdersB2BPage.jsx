@@ -42,6 +42,7 @@ import { channelTr, statusTr, orderStatusBadgeClass, marketplaceStatusTr } from 
 import { isWarehouseShipped, orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
+import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, ORDER_PAGE_SIZES, orderExportColumns } from "../components/OrdersToolbar";
@@ -1947,7 +1948,17 @@ function OrdersB2BPageImpl({ staffMode = false }) {
       {!staffMode && activeTab === "pricing" && <PricingCenter companyId={activeCompanyId(activeCompany)} />}
       {!staffMode && activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompanyId(activeCompany)} />}
       {newOrder && <NewOrderModal companyId={activeCompanyId(activeCompany)} products={productCatalog} onClose={closeNewOrder} onSaved={loadData} />}
-      {editOrder && <OrderEditModal order={editOrder} products={productCatalog} onClose={() => setEditOrder(null)} onSaved={loadData} />}
+      {editOrder && (
+        <OrderEditModal
+          order={editOrder}
+          products={productCatalog}
+          onClose={() => setEditOrder(null)}
+          onSaved={(data) => {
+            notifyOrderSyncWarning(data);
+            loadData();
+          }}
+        />
+      )}
       {produceFromOrder && (
         <ProductionOrderModal
           companyId={activeCompanyId(activeCompany)}

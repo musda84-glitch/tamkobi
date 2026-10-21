@@ -3,6 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
+import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
 import { COMMERCIAL_BADGE_CLASS, incomingCommercialStatusLabel } from "../utils/edocInbox";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
@@ -1074,6 +1075,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         const putRes = await axios.put(`${API_URL}/invoices/${editingInvoice.id}`, { ...upd, invoice_type });
         if (payload.status === "approved") await axios.post(`${API_URL}/invoices/${editingInvoice.id}/approve`);
         toast.success("Taslak fatura güncellendi.");
+        notifyOrderSyncWarning(putRes?.data);
         saved = putRes?.data || {
           ...editingInvoice,
           ...upd,

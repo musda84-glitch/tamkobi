@@ -33,7 +33,7 @@ import employee_pay
 import employee_data_reset
 from employee_sgk import norm_iban as _norm_iban, sgk_iban_update_error
 import b2b_production
-from order_edit import order_edit_block_reason
+from order_edit import _issued_edocument, order_edit_block_reason
 import order_mp_item_media as omp_media
 from order_dedupe import (
     dedupe_orders_by_marketplace_key,
@@ -79,11 +79,23 @@ from line_totals import (
     pick_fields,
 )
 from order_invoice_mismatch import (
+    CLOSED_INVOICE_LINE_WARNING,
+    FULFILLMENT_LINE_WARNING,
     attach_invoice_mismatch_warnings,
+    commercial_change_only,
+    invoice_closed_for_commercial_sync,
     order_is_shipped_for_sync,
+    order_items_identity_signature,
     order_items_signature,
     order_sync_skip_reason,
     pick_status_is_open,
+)
+from quote_order_sync import (
+    quote_sync_skip_reason,
+    same_company as _quote_same_company,
+    sync_claim as _sync_claim,
+    sync_scope_enter as _sync_scope_enter,
+    sync_scope_leave as _sync_scope_leave,
 )
 from stock_codes import fill_stock_codes as _fill_stock_codes_impl, _variant_source as _b2b_variant_source
 from auth_utils import (
@@ -2817,8 +2829,23 @@ async def update_quote(quote_id: str, req: Dict[str, Any], user: dict = Depends(
         await _fill_stock_codes(q.get("company_id"), allowed["items"])
         allowed["subtotal"], allowed["vat_total"], allowed["grand_total"] = _calc_items(allowed["items"])
     cid = q["company_id"]
+    prior_lines = {k: q.get(k) for k in ("items", "subtotal", "vat_total", "grand_total")}
     await db.quotes.update_one({"_id": quote_id, "company_id": cid}, {"$set": allowed})
-    return clean_doc(await db.quotes.find_one({"_id": quote_id, "company_id": cid}))
+    updated = await db.quotes.find_one({"_id": quote_id, "company_id": cid})
+    warning = None
+    if updated and "items" in allowed:
+        try:
+            propagated = await _propagate_quote_commercial(updated)
+            warning = (propagated or {}).get("warning")
+        except HTTPException:
+            await db.quotes.update_one({"_id": quote_id, "company_id": cid}, {"$set": prior_lines})
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception("Teklif ticari senkronu başarısız: %s", quote_id)
+    out = clean_doc(updated)
+    if warning and isinstance(out, dict):
+        out["order_sync_warning"] = warning
+    return out
 
 @api_router.delete("/quotes/{quote_id}")
 async def delete_quote(quote_id: str, user: dict = Depends(get_current_user)):
@@ -7250,7 +7277,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
     if updated.get("order_status") not in ("held_cart", "active_cart"):
-        await _sync_draft_invoice_items(updated, update.get("items") or [])
+        await _propagate_order_commercial(updated, update.get("items") or [])
         await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
     return {"status": "success", "order": clean_doc(_decorate_b2b_held_order(updated)), "message": f"{updated.get('held_label') or updated.get('order_number')} güncellendi."}
 
@@ -10640,6 +10667,57 @@ _DESPATCH_EDIT_KEYS = {
 }
 
 
+def _invoice_id_query(invoice_id: str, company_id: Any = None) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"_id": invoice_id}
+    if company_id:
+        q["company_id"] = company_id
+    return q
+
+
+async def _commit_invoice_effects_update(inv: dict, invoice_id: str, allowed: dict, reapply_effects: bool) -> dict:
+    """Onaylı faturada eski cari/stok etkisini geri al, yaz, yeniden uygula.
+
+    PUT /invoices ile sipariş/teklif senkronu aynı yolu kullanır. Hata olursa
+    belge eski hâline döner.
+    """
+    company_id = inv.get("company_id")
+    q = {"_id": invoice_id, "company_id": company_id}
+    if reapply_effects:
+        try:
+            await _reverse_invoice_effects(inv)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Onaylı fatura düzenleme: eski etkiler geri alınamadı %s", invoice_id
+            )
+            raise HTTPException(status_code=500, detail="Fatura etkileri geri alınamadı; düzenleme iptal.")
+    await db.invoices.update_one(q, {"$set": allowed})
+    updated = await db.invoices.find_one(q)
+    if reapply_effects and updated:
+        try:
+            await _apply_invoice_effects(updated)
+            paid = float(updated.get("paid_amount") or 0)
+            ps = _invoice_payment_status(paid, updated.get("grand_total") or 0)
+            if ps != updated.get("payment_status"):
+                await db.invoices.update_one(q, {"$set": {"payment_status": ps}})
+                updated["payment_status"] = ps
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Onaylı fatura düzenleme: yeni etkiler uygulanamadı %s — eski hâle dönülüyor", invoice_id
+            )
+            try:
+                await _reverse_invoice_effects(updated)
+                await db.invoices.update_one(q, {"$set": {
+                    k: inv.get(k) for k in allowed.keys() if k in inv
+                }})
+                await _apply_invoice_effects(inv)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
+                )
+            raise HTTPException(status_code=500, detail="Fatura etkileri uygulanamadı; değişiklik geri alındı.")
+    return updated
+
+
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     from despatch_shipment import is_incoming_dispatch
@@ -10723,46 +10801,22 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(merged.get("grand_total") or inv.get("grand_total") or 0, stamp["fx_rate"])
-    # Onaylı fatura: önce eski etkileri geri al, sonra yeni dokümana uygula (cari + stok)
-    if reapply_effects:
-        try:
-            await _reverse_invoice_effects(inv)
-        except Exception:
-            logging.getLogger(__name__).exception(
-                "Onaylı fatura düzenleme: eski etkiler geri alınamadı %s", invoice_id
-            )
-            raise HTTPException(status_code=500, detail="Fatura etkileri geri alınamadı; düzenleme iptal.")
-    await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
-    updated = await db.invoices.find_one({"_id": invoice_id})
-    if reapply_effects and updated:
-        try:
-            await _apply_invoice_effects(updated)
-            paid = float(updated.get("paid_amount") or 0)
-            ps = _invoice_payment_status(paid, updated.get("grand_total") or 0)
-            if ps != updated.get("payment_status"):
-                await db.invoices.update_one({"_id": invoice_id}, {"$set": {"payment_status": ps}})
-                updated["payment_status"] = ps
-        except Exception:
-            logging.getLogger(__name__).exception(
-                "Onaylı fatura düzenleme: yeni etkiler uygulanamadı %s — eski hâle dönülüyor", invoice_id
-            )
-            try:
-                await _reverse_invoice_effects(updated)
-                await db.invoices.update_one({"_id": invoice_id}, {"$set": {
-                    k: inv.get(k) for k in allowed.keys() if k in inv
-                }})
-                await _apply_invoice_effects(inv)
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
-                )
-            raise HTTPException(status_code=500, detail="Fatura etkileri uygulanamadı; değişiklik geri alındı.")
+    updated = await _commit_invoice_effects_update(inv, invoice_id, allowed, reapply_effects)
     # Geri alma (rollback) bu noktaya gelmez. GİB kilidi yukarıda döner; kalem zaten yazılmaz.
     line_or_discount = bool({"items", "general_discount_rate", "general_discount_amount"} & set(allowed))
+    warning = None
     if updated and line_or_discount and not _invoice_gib_locked(updated):
         rows = allowed.get("items") or updated.get("items") or []
         try:
-            wrote = await _sync_order_from_invoice(updated, rows)
+            token = _sync_scope_enter()
+            try:
+                _sync_claim("invoice", invoice_id)
+                result = await _sync_order_from_invoice(updated, rows)
+                await _sync_linked_quote(updated, rows, source="invoice")
+            finally:
+                _sync_scope_leave(token)
+            wrote = bool((result or {}).get("wrote")) if isinstance(result, dict) else bool(result)
+            warning = (result or {}).get("warning") if isinstance(result, dict) else None
             if wrote and updated.get("status") == "draft":
                 # Taslak bağ alanları: is_invoiced False, fatura no. Onaylıda yazılmaz.
                 await _stamp_draft_order_invoice_link(updated)
@@ -10770,7 +10824,10 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             logging.getLogger(__name__).exception(
                 "Fatura→sipariş senkronu başarısız: %s", invoice_id
             )
-    return clean_doc(updated)
+    out = clean_doc(updated)
+    if warning and isinstance(out, dict):
+        out["order_sync_warning"] = warning
+    return out
 
 FATURALASMIS_DELETE_MSG = "Faturalaşmış belge silinemez; iptal/iade kullanın."
 ONCE_FATURALASTIRIN = "Önce Faturalaştırın"
@@ -17065,9 +17122,17 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
         and "customer_order_number" not in req
         and "po_number" not in req
     )
-    invoice = await db.invoices.find_one({"_id": o["invoice_id"]}) if o.get("invoice_id") else None
-    dispatch = await db.invoices.find_one({"_id": o["dispatch_id"]}) if o.get("dispatch_id") else None
+    company_id = o.get("company_id")
+    invoice = None
+    if o.get("invoice_id"):
+        invoice = await db.invoices.find_one(_invoice_id_query(o["invoice_id"], company_id))
+    dispatch = None
+    if o.get("dispatch_id"):
+        dispatch = await db.invoices.find_one(_invoice_id_query(o["dispatch_id"], company_id))
     if not warehouse_only:
+        # Kesilmiş e-irsaliye, fatura GİB kilidinden bağımsız olarak kalem düzenlemesini kapatır.
+        if _issued_edocument(dispatch):
+            raise HTTPException(status_code=400, detail="E-belge kesilmiş sipariş düzenlenemez.")
         blocked = order_edit_block_reason(o, invoice, dispatch)
         if blocked:
             raise HTTPException(status_code=400, detail=blocked)
@@ -17105,12 +17170,30 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
             "grand_total": grand_total,
             "total_amount": grand_total if vat_total else subtotal,
         })
+    prior_lines = {
+        k: o.get(k)
+        for k in ("items", "subtotal", "vat_total", "discount_total", "grand_total", "total_amount", "updated_at")
+    }
     await db.orders.update_one({"_id": order_id}, {"$set": update})
+    warning = None
     if update.get("items"):
         refreshed = {**o, **update}
-        await _sync_draft_invoice_items(refreshed, update["items"])
+        try:
+            propagated = await _propagate_order_commercial(refreshed, update["items"])
+            warning = (propagated or {}).get("warning")
+        except HTTPException:
+            await db.orders.update_one(
+                {"_id": order_id, "company_id": company_id},
+                {"$set": prior_lines},
+            )
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception("Sipariş ticari senkronu başarısız: %s", order_id)
     updated = await db.orders.find_one({"_id": order_id})
-    return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
+    out = {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
+    if warning:
+        out["order_sync_warning"] = warning
+    return out
 
 # 2026 yaklaşık parametreler (kullanıcı ayarlardan değiştirebilir)
 SALARY_PARAMS = {"sgk_employee": 0.14, "unemployment_employee": 0.01, "stamp_tax": 0.00759, "sgk_employer": 0.155, "unemployment_employer": 0.02,
@@ -17836,7 +17919,13 @@ async def _stamp_draft_order_invoice_link(invoice: dict) -> None:
     await db.orders.update_one({"_id": order_id, "company_id": company_id}, {"$set": link})
 
 
-async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
+def _sync_result(wrote: bool = False, warning: Optional[str] = None, **extra) -> Dict[str, Any]:
+    out = {"wrote": bool(wrote), "warning": warning}
+    out.update(extra)
+    return out
+
+
+async def _sync_order_from_invoice(invoice: dict, items: list, note: Optional[str] = None) -> Dict[str, Any]:
     """Taslak ve GİB'e gitmemiş onaylı (kâğıt dahil) fatura kalemlerini bağlı siparişe yaz.
 
     Onaylı faturada is_invoiced olsa da kalemler güncellenir. Taslakta sipariş
@@ -17844,34 +17933,65 @@ async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
     `_sync_draft_order_items` yazar.
     is_invoiced, invoice_id, invoice_number ve order_status değişmez.
     Stok, cari ve rezervasyon yeniden uygulanmaz; o etkiler faturadadır.
-    Başka firma, iptal/iade, başka faturaya bağlı sipariş, pazaryeri ve
-    sevk/açık toplamada kalem değişimi yazılmaz (uyarı liste/detayda kalır).
+    Başka firma, iptal/iade, başka faturaya bağlı sipariş ve pazaryeri yazılmaz.
+    Ürün/miktar değişimi sevk veya açık toplamada atlanır ve uyarı döner.
+    Fiyat, iskonto ve KDV (ürün ve miktar aynı) o durumda da siparişe yazılır.
     """
     if not invoice or not items or _invoice_gib_locked(invoice):
-        return False
+        return _sync_result()
     order_id = invoice.get("order_id") or invoice.get("source_order_id")
     company_id = invoice.get("company_id")
     if not order_id or not company_id:
-        return False
+        return _sync_result()
     order = await db.orders.find_one({"_id": order_id, "company_id": company_id})
     if not order:
-        return False
+        return _sync_result()
+    return await _apply_order_from_commercial(
+        order,
+        invoice,
+        items,
+        note or _order_sync_note(invoice),
+    )
+
+
+async def _apply_order_from_commercial(order: dict, invoice: dict, items: list, note: str) -> Dict[str, Any]:
+    """Bağlı siparişin kalem ve toplamlarını yaz. Kaynak sipariş bu turda tekrar yazılmaz."""
+    if not order or not invoice or not items:
+        return _sync_result()
+    if not _sync_claim("order", order.get("_id") or order.get("id")):
+        return _sync_result()
+    company_id = order.get("company_id") or invoice.get("company_id")
+    if not company_id or str(order.get("company_id") or "") != str(invoice.get("company_id") or company_id):
+        return _sync_result()
+    if _invoice_gib_locked(invoice):
+        return _sync_result(gib_locked=True)
     # Taslak + faturalanmış sipariş: eski `_sync_draft_order_items` de dokunmaz.
     if invoice.get("status") == "draft" and order.get("is_invoiced"):
-        return False
+        return _sync_result()
     early = order_sync_skip_reason(order, invoice, items_changed=False, pick_open=False)
     if early:
-        return False
+        return _sync_result()
     ord_rows = invoice_items_to_order_items(items)
     await _fill_stock_codes(company_id, ord_rows)
     ord_items = [it.model_dump() for it in _order_item_models(ord_rows)]
     subtotal, vat_total, discount_total, grand_total = order_document_totals(ord_items)
-    items_changed = order_items_signature(ord_items) != order_items_signature(order.get("items"))
+    identity_changed = order_items_identity_signature(ord_items) != order_items_identity_signature(order.get("items"))
+    price_only = commercial_change_only(order.get("items"), ord_items)
+    full_changed = identity_changed or price_only
     pick_open = False
-    if items_changed and not order_is_shipped_for_sync(order):
+    if identity_changed and not order_is_shipped_for_sync(order):
         pick_open = await _invoice_sync_pick_session_open(order)
-    if order_sync_skip_reason(order, invoice, items_changed=items_changed, pick_open=pick_open):
-        return False
+    skip = order_sync_skip_reason(
+        order,
+        invoice,
+        items_changed=identity_changed,
+        pick_open=pick_open,
+        price_only=price_only,
+    )
+    if skip == "fulfillment":
+        return _sync_result(warning=FULFILLMENT_LINE_WARNING)
+    if skip:
+        return _sync_result()
     now = datetime.now(timezone.utc).isoformat()
     total_amount = grand_total if vat_total else subtotal
     patch: Dict[str, Any] = {
@@ -17882,7 +18002,7 @@ async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
         "total_amount": total_amount,
         "updated_at": now,
     }
-    if items_changed:
+    if full_changed:
         patch["items"] = ord_items
     currency = str(invoice.get("currency") or "").strip()
     if currency:
@@ -17895,7 +18015,7 @@ async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
         patch["fx_date"] = invoice.get("fx_date")
     rate = float(patch.get("fx_rate") if patch.get("fx_rate") not in (None, "") else (order.get("fx_rate") or 1))
     patch["local_total"] = round(float(grand_total) * rate, 2)
-    material = items_changed
+    material = bool(full_changed)
     for key in ("subtotal", "vat_total", "discount_total", "grand_total", "total_amount", "local_total"):
         if not _same_money(patch.get(key), order.get(key)):
             material = True
@@ -17907,8 +18027,7 @@ async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
         material = True
     if not material:
         # Kalem aynıysa onaylıda kayıt açma. Taslakta bağ alanları yine yazılsın.
-        return str(invoice.get("status") or "") == "draft"
-    note = _order_sync_note(invoice)
+        return _sync_result(wrote=str(invoice.get("status") or "") == "draft")
     await db.orders.update_one(
         {"_id": order["_id"], "company_id": company_id},
         {
@@ -17916,7 +18035,341 @@ async def _sync_order_from_invoice(invoice: dict, items: list) -> bool:
             "$push": {"order_history": {"updated_at": now, "message": note}},
         },
     )
-    return True
+    return _sync_result(wrote=True)
+
+
+def _doc_id(doc: Optional[dict]) -> str:
+    if not doc:
+        return ""
+    return str(doc.get("_id") or doc.get("id") or "")
+
+
+async def _find_company_doc(coll_name: str, doc_id: Any, company_id: Any) -> Optional[dict]:
+    if not doc_id or not company_id:
+        return None
+    coll = getattr(db, coll_name, None)
+    if coll is None:
+        return None
+    return await coll.find_one({"_id": doc_id, "company_id": company_id})
+
+
+async def _find_quote_for_invoice(invoice: dict) -> Optional[dict]:
+    company_id = invoice.get("company_id")
+    if not company_id:
+        return None
+    quotes = getattr(db, "quotes", None)
+    if quotes is None:
+        return None
+    qid = invoice.get("quote_id")
+    if qid:
+        found = await quotes.find_one({"_id": qid, "company_id": company_id})
+        if found:
+            return found
+    inv_id = _doc_id(invoice)
+    if not inv_id:
+        return None
+    return await quotes.find_one({"invoice_id": inv_id, "company_id": company_id})
+
+
+async def _find_invoice_for_order(order: dict) -> Optional[dict]:
+    return await _find_company_doc("invoices", order.get("invoice_id"), order.get("company_id"))
+
+
+async def _find_quote_for_order(order: dict, invoice: Optional[dict]) -> Optional[dict]:
+    company_id = order.get("company_id")
+    quotes = getattr(db, "quotes", None)
+    if quotes is None or not company_id:
+        return None
+    if order.get("quote_id"):
+        found = await quotes.find_one({"_id": order["quote_id"], "company_id": company_id})
+        if found:
+            return found
+    if invoice:
+        found = await _find_quote_for_invoice(invoice)
+        if found and _quote_same_company(found, company_id):
+            return found
+    inv_id = order.get("invoice_id")
+    if inv_id:
+        found = await quotes.find_one({"invoice_id": inv_id, "company_id": company_id})
+        if found:
+            return found
+    oid = _doc_id(order)
+    if oid:
+        return await quotes.find_one({"order_id": oid, "company_id": company_id})
+    return None
+
+
+async def _find_invoice_for_quote(quote: dict) -> Optional[dict]:
+    company_id = quote.get("company_id")
+    if not company_id:
+        return None
+    if quote.get("invoice_id"):
+        found = await _find_company_doc("invoices", quote["invoice_id"], company_id)
+        if found:
+            return found
+    invoices = getattr(db, "invoices", None)
+    if invoices is None:
+        return None
+    return await invoices.find_one({"quote_id": _doc_id(quote), "company_id": company_id})
+
+
+async def _find_order_for_quote(quote: dict, invoice: Optional[dict]) -> Optional[dict]:
+    company_id = quote.get("company_id")
+    if not company_id:
+        return None
+    if quote.get("order_id"):
+        found = await _find_company_doc("orders", quote["order_id"], company_id)
+        if found:
+            return found
+    orders = getattr(db, "orders", None)
+    if orders is None:
+        return None
+    qid = _doc_id(quote)
+    if qid:
+        found = await orders.find_one({"quote_id": qid, "company_id": company_id})
+        if found:
+            return found
+    if invoice:
+        oid = invoice.get("order_id") or invoice.get("source_order_id")
+        if oid:
+            return await _find_company_doc("orders", oid, company_id)
+    return None
+
+
+def _quote_note(source: str, number: str) -> str:
+    label = str(number or "").strip() or ("fatura" if source == "invoice" else "sipariş")
+    if source == "invoice":
+        return f"Fatura {label} düzenlemesinden güncellendi"
+    return f"Sipariş {label} düzenlemesinden güncellendi"
+
+
+def _quote_rows_from_commercial(items: list) -> list:
+    rows = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        disc = it.get("discount_rate")
+        if disc in (None, ""):
+            disc = it.get("discount_percent") or 0
+        rows.append({
+            "product_id": it.get("product_id") or "",
+            "name": it.get("name") or it.get("product_name") or "Kalem",
+            "quantity": it.get("quantity"),
+            "unit": it.get("unit") or "Adet",
+            "unit_price": it.get("unit_price"),
+            "vat_rate": it.get("vat_rate", 20),
+            "discount_rate": disc or 0,
+            "sku": it.get("sku") or "",
+            "barcode": it.get("barcode") or "",
+            "description": it.get("description") or it.get("note") or "",
+            "is_service": bool(it.get("is_service") or not it.get("product_id")),
+        })
+    return rows
+
+
+async def _apply_commercial_lines_to_quote(quote: dict, items: list, *, note: str, currency: str = "") -> Dict[str, Any]:
+    if not quote or not items:
+        return _sync_result()
+    if not _sync_claim("quote", _doc_id(quote)):
+        return _sync_result()
+    company_id = quote.get("company_id")
+    if quote_sync_skip_reason(quote, company_id):
+        return _sync_result()
+    rows = _quote_rows_from_commercial(items)
+    if not rows:
+        return _sync_result()
+    await _fill_stock_codes(company_id, rows)
+    subtotal, vat_total, grand_total = _calc_items(rows)
+    changed = order_items_signature(rows) != order_items_signature(quote.get("items"))
+    if not changed and _same_money(quote.get("grand_total"), grand_total):
+        if not currency or currency == (quote.get("currency") or "TRY"):
+            return _sync_result()
+    now = datetime.now(timezone.utc).isoformat()
+    patch: Dict[str, Any] = {
+        "items": rows,
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "grand_total": grand_total,
+        "updated_at": now,
+    }
+    if currency:
+        patch["currency"] = currency
+    await db.quotes.update_one(
+        {"_id": _doc_id(quote), "company_id": company_id},
+        {"$set": patch, "$push": {"quote_history": {"updated_at": now, "message": note}}},
+    )
+    return _sync_result(wrote=True)
+
+
+async def _apply_commercial_lines_to_invoice(invoice: dict, items: list) -> Dict[str, Any]:
+    """GİB'siz faturanın kalem ve toplamlarını sipariş/teklif satırından yaz.
+
+    Onaylı belgede cari ve stok, PUT /invoices ile aynı geri al / yeniden uygula
+    yoluyla hesaplanır. Taslakta etki yoktur. İptal, iade ve ret fatura
+    atlanır; cari ve stok yeniden uygulanmaz.
+    """
+    if not invoice or not items:
+        return _sync_result()
+    if not _sync_claim("invoice", _doc_id(invoice)):
+        return _sync_result()
+    if invoice_closed_for_commercial_sync(invoice):
+        return _sync_result(warning=CLOSED_INVOICE_LINE_WARNING)
+    if _invoice_gib_locked(invoice):
+        return _sync_result(gib_locked=True)
+    company_id = invoice.get("company_id")
+    if not company_id:
+        return _sync_result()
+    if invoice.get("invoice_type") not in (None, "", "sales"):
+        return _sync_result()
+    inv_rows = order_items_to_invoice_items(items)
+    await _fill_stock_codes(company_id, inv_rows)
+    price_mode = invoice.get("price_mode") or "excl"
+    force = 0 if invoice.get("invoice_type") == "dispatch" else None
+    rows = _recompute_invoice_items(inv_rows, price_mode, force_vat=force)
+    new_items = [pick_fields(r, INVOICE_ITEM_FIELDS) for r in rows]
+    try:
+        gd_rate = float(invoice.get("general_discount_rate") or 0)
+    except (TypeError, ValueError):
+        gd_rate = 0.0
+    try:
+        gd_amt = float(invoice.get("general_discount_amount") or 0)
+    except (TypeError, ValueError):
+        gd_amt = 0.0
+    totals = invoice_document_totals(new_items, gd_rate, gd_amt, invoice.get("withholding_rate") or 0)
+    allowed: Dict[str, Any] = {
+        "items": new_items,
+        "discount_total": totals["discount_total"],
+        "general_discount_amount": totals["general_discount_amount"],
+        "subtotal": totals["subtotal"],
+        "vat_total": totals["vat_total"],
+        "withholding_amount": totals["withholding_amount"],
+        "grand_total": totals["grand_total"],
+    }
+    merged = {**invoice, **allowed}
+    stamp = await fx.stamp(
+        company_id,
+        merged.get("currency"),
+        merged.get("issue_date") or invoice.get("issue_date"),
+        fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")),
+    )
+    allowed.update(stamp)
+    allowed["local_total"] = fx.local_of(allowed["grand_total"], stamp["fx_rate"])
+    changed = order_items_signature(new_items) != order_items_signature(invoice.get("items"))
+    if not changed and _same_money(invoice.get("grand_total"), allowed["grand_total"]):
+        return _sync_result()
+    reapply = bool(invoice.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
+    updated = await _commit_invoice_effects_update(invoice, _doc_id(invoice), allowed, reapply)
+    return _sync_result(wrote=bool(updated))
+
+
+async def _sync_linked_quote(invoice: dict, items: list, *, source: str) -> Dict[str, Any]:
+    quote = await _find_quote_for_invoice(invoice)
+    if not quote:
+        return _sync_result()
+    number = invoice.get("invoice_number") if source == "invoice" else ""
+    return await _apply_commercial_lines_to_quote(
+        quote,
+        items,
+        note=_quote_note("invoice", str(number or "")),
+        currency=str(invoice.get("currency") or ""),
+    )
+
+
+async def _propagate_order_commercial(order: dict, items: list) -> Dict[str, Any]:
+    """Sipariş kalemi GİB'siz faturaya ve bağlı teklife yazılır. Sipariş tekrar yazılmaz."""
+    token = _sync_scope_enter()
+    try:
+        _sync_claim("order", _doc_id(order))
+        company_id = order.get("company_id")
+        invoice = await _find_invoice_for_order(order)
+        if invoice and not _quote_same_company(invoice, company_id):
+            invoice = None
+        if invoice and _invoice_gib_locked(invoice) and not invoice_closed_for_commercial_sync(invoice):
+            return _sync_result(gib_locked=True)
+        warning = None
+        if invoice and invoice_closed_for_commercial_sync(invoice):
+            closed = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (closed or {}).get("warning") or CLOSED_INVOICE_LINE_WARNING
+        elif invoice and await _order_invoice_line_sync_blocked(order, invoice, items):
+            warning = FULFILLMENT_LINE_WARNING
+        elif invoice and str(invoice.get("status") or "") == "draft" and not invoice.get("effects_applied"):
+            _sync_claim("invoice", _doc_id(invoice))
+            await _sync_draft_invoice_items(order, items)
+        elif invoice:
+            applied = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (applied or {}).get("warning")
+        quote = await _find_quote_for_order(order, invoice)
+        if quote and not quote_sync_skip_reason(quote, company_id):
+            await _apply_commercial_lines_to_quote(
+                quote,
+                items,
+                note=_quote_note("order", str(order.get("order_number") or "")),
+                currency=str(order.get("currency") or invoice.get("currency") if invoice else order.get("currency") or ""),
+            )
+        return _sync_result(warning=warning)
+    finally:
+        _sync_scope_leave(token)
+
+
+async def _order_invoice_line_sync_blocked(order: dict, invoice: dict, items: list) -> bool:
+    """Siparişten gelen ürün/miktar, açık toplama veya sevkte faturaya yazılmaz.
+
+    Fiyat, iskonto ve KDV (ürün ve miktar aynı) yazılır. Fatura→sipariş ile aynı kural.
+    """
+    if order_items_identity_signature(items) == order_items_identity_signature(invoice.get("items")):
+        return False
+    if order_is_shipped_for_sync(order):
+        return True
+    return await _invoice_sync_pick_session_open(order)
+
+
+def _carrier_invoice_for_quote(quote: dict, invoice: Optional[dict]) -> dict:
+    """Sipariş skip kuralları fatura ister. Teklifin faturası yoksa aynı şirketin boş taşıyıcısı."""
+    if invoice:
+        return invoice
+    return {
+        "_id": quote.get("invoice_id") or "",
+        "company_id": quote.get("company_id"),
+        "status": "approved",
+        "invoice_number": quote.get("invoice_number") or "",
+    }
+
+
+async def _propagate_quote_commercial(quote: dict) -> Dict[str, Any]:
+    """Teklif kalemi, GİB'siz faturaya ve bağlı siparişe yazılır. Teklif tekrar yazılmaz."""
+    company_id = quote.get("company_id")
+    if quote_sync_skip_reason(quote, company_id):
+        return _sync_result()
+    items = list(quote.get("items") or [])
+    if not items:
+        return _sync_result()
+    token = _sync_scope_enter()
+    try:
+        _sync_claim("quote", _doc_id(quote))
+        invoice = await _find_invoice_for_quote(quote)
+        warning = None
+        if invoice and invoice_closed_for_commercial_sync(invoice):
+            closed = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (closed or {}).get("warning") or CLOSED_INVOICE_LINE_WARNING
+        elif invoice and _invoice_gib_locked(invoice):
+            return _sync_result(gib_locked=True)
+        elif invoice:
+            applied = await _apply_commercial_lines_to_invoice(invoice, items)
+            warning = (applied or {}).get("warning")
+        order = await _find_order_for_quote(quote, invoice)
+        if order:
+            number = str(quote.get("quote_number") or "").strip() or "teklif"
+            result = await _apply_order_from_commercial(
+                order,
+                _carrier_invoice_for_quote(quote, invoice),
+                items,
+                f"Teklif {number} düzenlemesinden güncellendi",
+            )
+            if not warning:
+                warning = (result or {}).get("warning")
+        return _sync_result(warning=warning)
+    finally:
+        _sync_scope_leave(token)
 
 
 @api_router.post("/orders/{order_id}/approve")

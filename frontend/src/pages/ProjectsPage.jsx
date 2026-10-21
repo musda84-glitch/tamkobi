@@ -27,6 +27,7 @@ import { DEFAULT_LOCATION_RADIUS_M, LOCATION_RADIUS_OPTIONS, normalizeRadiusM } 
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
+import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -573,7 +574,7 @@ export default function ProjectsPage({ section } = {}) {
       if (form.kind === "quote") {
         if (!lineItems.length) { toast.error("En az bir kalem ekleyin."); return; }
         if (form.id) {
-          await axios.put(`${API_URL}/quotes/${form.id}`, {
+          const saved = await axios.put(`${API_URL}/quotes/${form.id}`, {
             title: form.title,
             contact_id: form.contact_id,
             contact_name: form.contact_name,
@@ -582,6 +583,7 @@ export default function ProjectsPage({ section } = {}) {
             project_id: form.project_id || undefined,
             items: lineItems,
           });
+          notifyOrderSyncWarning(saved.data);
         } else {
           await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, project_id: form.project_id || undefined, items: lineItems });
         }
