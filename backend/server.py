@@ -14680,14 +14680,26 @@ async def _sync_bank_connection_core(
     *,
     user: Optional[dict] = None,
     request: Optional[Request] = None,
+    company_id: Optional[str] = None,
 ):
     """Banka senkronu. HTTP route kullanıcı doğrular; arka plan/sync-all kullanıcı olmadan çağırır."""
+    given_company = str(company_id or "").strip()
     if user is not None:
-        await tenant_access.get_tenant_doc(db, "bank_connections", conn_id, user, not_found="Bağlantı bulunamadı.")
-    doc = await db.bank_connections.find_one({"_id": conn_id})
+        verified = await tenant_access.get_tenant_doc(db, "bank_connections", conn_id, user, not_found="Bağlantı bulunamadı.")
+        if not given_company:
+            given_company = str(verified.get("company_id") or "").strip()
+    if given_company:
+        doc = await db.bank_connections.find_one({"_id": conn_id, "company_id": given_company})
+    else:
+        # tenant-ok: company_id verilmedi; bağlantı _id ile okunur, şirket belgeden çıkar, sonraki okuma ve yazmalar bu company_id ile süzülür
+        doc = await db.bank_connections.find_one({"_id": conn_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
-    acc = await db.bank_accounts.find_one({"_id": doc.get("linked_account_id")})
+    cid = str(doc.get("company_id") or "").strip()
+    if not cid:
+        logger.warning("banka senkronu atlandı: kayıtta firma bilgisi yok")
+        raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
+    acc = await db.bank_accounts.find_one({"_id": doc.get("linked_account_id"), "company_id": cid})
     if not acc:
         raise HTTPException(status_code=404, detail="Bağlı banka hesabı bulunamadı.")
     original_ref = (doc.get("bank_account_number") or "").strip()
@@ -14700,7 +14712,10 @@ async def _sync_bank_connection_core(
         result = await bank_providers.fetch_transactions(doc, since)
     except Exception as e:
         msg = f"Senkronizasyon hatası: {str(e)[:420]}"
-        await db.bank_connections.update_one({"_id": conn_id}, {"$set": {"status": "error", "last_error": msg}})
+        await db.bank_connections.update_one(
+            {"_id": conn_id, "company_id": cid},
+            {"$set": {"status": "error", "last_error": msg}},
+        )
         raise HTTPException(status_code=502, detail=msg)
 
     def _generic_bank_desc(s: Optional[str]) -> bool:
@@ -14715,7 +14730,11 @@ async def _sync_bank_connection_core(
     inserted, skipped, balance_delta = 0, 0, 0.0
     new_txs = []
     for t in result["transactions"]:
-        exists = await db.bank_transactions.find_one({"account_id": acc["_id"], "external_id": t["external_id"]})
+        exists = await db.bank_transactions.find_one({
+            "account_id": acc["_id"],
+            "external_id": t["external_id"],
+            "company_id": cid,
+        })
         if exists:
             # Eski "Banka Hareketi" vb. kayıtları bankadan gelen açıklama/karşı tarafla doldur
             patch: Dict[str, Any] = {}
@@ -14731,14 +14750,17 @@ async def _sync_bank_connection_core(
             ) and (not _generic_bank_desc(fresh_desc) or (fresh_cp and fresh_cp in fresh_desc)):
                 patch["description"] = fresh_desc
             if patch:
-                await db.bank_transactions.update_one({"_id": exists["_id"]}, {"$set": patch})
+                await db.bank_transactions.update_one(
+                    {"_id": exists["_id"], "company_id": cid},
+                    {"$set": patch},
+                )
             skipped += 1
             continue
-        suggestion = await _suggest_contact(doc["company_id"], t.get("counterparty", ""), t.get("description", ""))
+        suggestion = await _suggest_contact(cid, t.get("counterparty", ""), t.get("description", ""))
         is_credit = t["direction"] == "credit"
         balance_delta += t["amount"] if is_credit else -t["amount"]
         tx = BankTransaction(
-            company_id=doc["company_id"], account_id=acc["_id"], account_name=acc.get("account_name"),
+            company_id=cid, account_id=acc["_id"], account_name=acc.get("account_name"),
             type="inflow" if is_credit else "outflow",
             category="Banka Gelen Havale/EFT" if is_credit else "Banka Giden Ödeme",
             amount=t["amount"], currency=t.get("currency", "TRY"),
@@ -14751,6 +14773,7 @@ async def _sync_bank_connection_core(
             date=t["date"],
         )
         tx_doc = tx.to_mongo()
+        tx_doc["company_id"] = cid
         await db.bank_transactions.insert_one(tx_doc)
         new_txs.append(tx_doc)
         inserted += 1
@@ -14774,10 +14797,9 @@ async def _sync_bank_connection_core(
         target = round(float(reported), 2)
         if abs(current - target) >= 0.01:
             acc_patch["current_balance"] = target
-    cid_sync = str(doc.get("company_id") or "").strip()
-    if acc_patch and cid_sync:
+    if acc_patch and cid:
         await db.bank_accounts.update_one(
-            {"_id": acc["_id"], "company_id": cid_sync},
+            {"_id": acc["_id"], "company_id": cid},
             {"$set": acc_patch},
         )
     for fresh in new_txs:
@@ -14787,13 +14809,13 @@ async def _sync_bank_connection_core(
     skipped_before_start = 0
     if doc.get("auto_match"):
         pending = await db.bank_transactions.find({
-            "company_id": doc["company_id"],
+            "company_id": cid,
             "account_id": acc["_id"],
             "source": "bank_sync",
             "match_status": "unmatched",
         }).to_list(1000)
         actor = await _optional_actor(request) if request is not None else None
-        auto_matched, _, skipped_before_start = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True, actor=actor)
+        auto_matched, _, skipped_before_start = await _auto_process_bank_txs(cid, pending, via="auto", use_cari=True, actor=actor)
     now = datetime.now(timezone.utc).isoformat()
     conn_set: Dict[str, Any] = {
         "status": "simulated" if result["simulated"] else "connected",
@@ -14806,7 +14828,7 @@ async def _sync_bank_connection_core(
         conn_set["refresh_token"] = result["refresh_token"]
     if filled_iban:
         conn_set["bank_account_number"] = filled_iban
-    await db.bank_connections.update_one({"_id": conn_id}, {
+    await db.bank_connections.update_one({"_id": conn_id, "company_id": cid}, {
         "$set": conn_set,
         "$inc": {"synced_count": inserted, "auto_matched_count": auto_matched}
     })
@@ -14830,6 +14852,7 @@ async def _sync_bank_connection_core(
                 focus = await db.bank_transactions.find_one({
                     "_id": {"$in": new_ids},
                     "match_status": "unmatched",
+                    "company_id": cid,
                 })
                 focus_tx = str((focus or {}).get("_id") or new_ids[-1])
             else:
@@ -14844,14 +14867,14 @@ async def _sync_bank_connection_core(
         _event_notify = None
         try:
             import event_notify as _event_notify
-            write_inapp = await _event_notify.inapp_enabled(doc["company_id"], "bank_sync")
+            write_inapp = await _event_notify.inapp_enabled(cid, "bank_sync")
         except Exception:
-            logger.exception("bank_sync inapp gate failed company=%s", doc.get("company_id"))
+            logger.exception("bank_sync inapp gate failed company=%s", cid)
             write_inapp = True
             _event_notify = None
         if write_inapp:
             await _notify.insert_notification(db, _notify.notification_doc(
-                doc["company_id"], "bank_sync",
+                cid, "bank_sync",
                 f"{inserted} yeni banka hareketi",
                 detail,
                 link=movement["route"],
@@ -14866,7 +14889,7 @@ async def _sync_bank_connection_core(
             sync_run_id = str(result.get("sync_run_id") or "") if isinstance(result, dict) else ""
             dedupe_token = sync_run_id or (new_ids[-1] if new_ids else "")
             await _event_notify.queue_event_email(
-                doc["company_id"], "bank_sync",
+                cid, "bank_sync",
                 f"{inserted} yeni banka hareketi",
                 detail,
                 link=movement["route"],
@@ -14875,13 +14898,13 @@ async def _sync_bank_connection_core(
                 dedupe_key=f"bank_sync:{acc_id}:{dedupe_token}",
             )
         except Exception:
-            logger.exception("bank_sync email queue failed company=%s", doc.get("company_id"))
+            logger.exception("bank_sync email queue failed company=%s", cid)
     # Platform CRM e-postası şirket hareketine yazılmışsa temizle (Matek vb.)
     try:
         import bank_tx as _bank_tx
-        await _bank_tx.scrub_platform_actors(db, doc["company_id"])
+        await _bank_tx.scrub_platform_actors(db, cid)
     except Exception:
-        logger.exception("platform actor scrub failed for %s", doc.get("company_id"))
+        logger.exception("platform actor scrub failed for %s", cid)
     return {
         "status": "success",
         "simulated": result["simulated"],
@@ -14903,7 +14926,11 @@ async def _sync_bank_connection_core(
 
 @api_router.post("/banking/connections/{conn_id}/sync")
 async def sync_bank_connection(conn_id: str, request: Request, days: int = 7, user: dict = Depends(get_current_user)):
-    return await _sync_bank_connection_core(conn_id, days=days, user=user, request=request)
+    verified = await tenant_access.get_tenant_doc(db, "bank_connections", conn_id, user, not_found="Bağlantı bulunamadı.")
+    cid = str(verified.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
+    return await _sync_bank_connection_core(conn_id, days=days, user=user, request=request, company_id=cid)
 
 @api_router.post("/banking/sync-all")
 async def sync_all_connections(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
@@ -14911,8 +14938,11 @@ async def sync_all_connections(company_id: Optional[str] = None, user: dict = De
     conns = await db.bank_connections.find({"company_id": cid, "auto_sync": True}).to_list(100)
     results = []
     for c in conns:
+        conn_cid = str(c.get("company_id") or "").strip()
+        if not conn_cid:
+            continue
         try:
-            r = await _sync_bank_connection_core(c["_id"])
+            r = await _sync_bank_connection_core(c["_id"], company_id=conn_cid)
             results.append({"connection_id": c["_id"], "provider_name": c.get("provider_name"), **r})
         except HTTPException as e:
             results.append({"connection_id": c["_id"], "provider_name": c.get("provider_name"), "status": "error", "message": e.detail})
@@ -20162,17 +20192,27 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
 
 async def _run_bank_auto_sync_tick():
     from bank_auto_sync import should_background_sync
-    # tenant-ok: zamanlayıcı auto_sync açık tüm şirketlerin banka bağlantılarını tarar; her bağlantı _sync_bank_connection_core içinde kendi kaydından işlenir
+    # tenant-ok: zamanlayıcı auto_sync açık bağlantıları tüm şirketlerde tarar; her bağlantı kendi company_id'si ile işlenir, company_id boşsa atlanır
     conns = await db.bank_connections.find({"auto_sync": {"$ne": False}}).to_list(200)
+    skipped_no_company = 0
     for c in conns:
+        cid = str(c.get("company_id") or "").strip()
+        if not cid:
+            skipped_no_company += 1
+            continue
         if not should_background_sync(c):
             continue
         try:
-            await _sync_bank_connection_core(c["_id"])
+            await _sync_bank_connection_core(c["_id"], company_id=cid)
         except HTTPException:
             pass
         except Exception:
             logger.exception("banka otomatik senkron %s", c.get("_id"))
+    if skipped_no_company:
+        logger.warning(
+            "banka otomatik senkron: firma bilgisi olmayan bağlantı sayısı %s",
+            skipped_no_company,
+        )
 
 async def _bank_auto_sync_loop(interval_s: Optional[int] = None):
     """auto_sync açık, kimlik bilgisi olan banka bağlantılarını sık aralıkla çeker; yeni hareket → push."""

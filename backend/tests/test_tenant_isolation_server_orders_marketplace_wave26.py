@@ -101,7 +101,7 @@ _TENANT_OK = (
     "oturumsuz Meta webhook; phone_number_id",
     "kanal _id'si (collection, id) birincil anahtarıdır",
     "arka plan pazaryeri senkronu oturumsuz",
-    "zamanlayıcı auto_sync açık tüm şirketlerin banka bağlantılarını tarar",
+    "zamanlayıcı auto_sync açık bağlantıları tüm şirketlerde tarar",
 )
 
 
@@ -829,7 +829,7 @@ def test_run_bank_auto_sync_tick_scans_without_cross_write(iso, monkeypatch):
     db = iso
     seen = []
 
-    async def _core(conn_id):
+    async def _core(conn_id, **_kwargs):
         seen.append(conn_id)
         return None
 
