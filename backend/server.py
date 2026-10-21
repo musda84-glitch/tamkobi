@@ -109,6 +109,7 @@ import google_auth
 import tenant_access
 import shopfloor_accounts
 import shopfloor_pin
+import shopfloor_devices
 from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
@@ -342,6 +343,10 @@ async def startup_event():
             except Exception as _pe:
                 logger.warning("platform_products seed skipped: %s", _pe)
             await db.users.create_index("email", unique=True)
+            try:
+                await shopfloor_devices.ensure_indexes(db)
+            except Exception:
+                logger.warning("shopfloor_devices index oluşturma atlandı")
             await db.products.create_index("sku")
             await db.products.create_index("barcode")
             await db.contacts.create_index("tax_number_or_id")
@@ -437,7 +442,13 @@ async def get_current_user(request: Request) -> dict:
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Giriş yapmanız gerekiyor.")
 
+    if shopfloor_devices.looks_like_device_token(token):
+        principal = await shopfloor_devices.principal_from_token(token, db)
+        if principal is not None:
+            return principal
     user = await get_user_from_token(token, db, request=request, path=request.url.path)
+    if shopfloor_accounts.is_device_user(user):
+        return user
     # Revoked support sessions must not keep acting as the company
     try:
         import jwt as _jwt
@@ -544,7 +555,7 @@ class _ShopfloorAccountGuard(BaseHTTPMiddleware):
             return await call_next(request)
         if not shopfloor_accounts.is_atolye_user(user):
             return await call_next(request)
-        if shopfloor_accounts.atolye_path_allowed(request.method, path):
+        if shopfloor_accounts.atolye_path_allowed(request.method, path, user):
             return await call_next(request)
         shopfloor_accounts.log_denied(user)
         return JSONResponse(status_code=403, content={"detail": shopfloor_accounts.PATH_DENIED})
@@ -3956,6 +3967,8 @@ async def get_me(request: Request):
 
 @api_router.post("/auth/switch-company")
 async def switch_company(req: Dict[str, str], user: dict = Depends(get_current_user)):
+    if shopfloor_accounts.is_device_user(user) or not str(user.get("email") or "").strip():
+        raise HTTPException(status_code=403, detail="Bu oturum şirket değiştiremez.")
     new_comp_id = req.get("company_id")
     if not new_comp_id:
         raise HTTPException(status_code=400, detail="Şirket ID gereklidir.")
@@ -26769,6 +26782,7 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = None, user: dict 
 rbac.init(db, _mail_account, get_current_user)
 shopfloor_accounts.init(db, get_current_user)
 shopfloor_pin.init(db, get_current_user)
+shopfloor_devices.init(db, get_current_user)
 mesaim_gate.init(db)
 company_audit.init(db, get_current_user)
 import tenant_db
@@ -27028,6 +27042,7 @@ app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(shopfloor_accounts.router)
 app.include_router(shopfloor_pin.router)
+app.include_router(shopfloor_devices.router)
 app.include_router(company_audit.router)
 app.include_router(pos_cashier.router)
 app.include_router(desktop_release.router)

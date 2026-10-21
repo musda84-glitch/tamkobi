@@ -938,6 +938,18 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "at", "action", "actor_user_id", "atolye_user_id", "operator_type", "operator_id", "wo_id"),
         "refs": ("companies._id",),
     },
+    "shopfloor_devices": {
+        "scope": SCOPE_TENANT,
+        "description": "Atölye kiosk cihazı. Token düz metin saklanmaz; token_hash benzersizdir.",
+        "keys": ("_id", "company_id", "label", "station_mode", "stations", "status", "token_hash", "created_by", "created_at", "last_seen"),
+        "refs": ("companies._id",),
+    },
+    "shopfloor_device_codes": {
+        "scope": SCOPE_TENANT,
+        "description": "Tek kullanımlık atölye eşleştirme kodu. Düz metin saklanmaz; code_hash benzersizdir.",
+        "keys": ("_id", "company_id", "code_hash", "expires_at", "consumed_at", "device_id", "label", "station_mode", "stations", "created_by", "created_at"),
+        "refs": ("companies._id", "shopfloor_devices._id"),
+    },
     "work_order_trash_requests": {
         "scope": SCOPE_TENANT,
         "description": "Atölye iş emri silme talebi. Yönetici onayına kadar bekler.",

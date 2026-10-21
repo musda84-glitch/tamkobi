@@ -267,6 +267,7 @@ def issue_operator_token(
     pin_ver: int,
     exp: datetime,
     now: Optional[datetime] = None,
+    device_id: str = "",
 ) -> str:
     now = _aware(now)
     payload = {
@@ -281,10 +282,16 @@ def issue_operator_token(
         "iat": int(now.timestamp()),
         "exp": exp,
     }
+    did = str(device_id or "").strip()
+    if did:
+        payload["did"] = did
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def decode_operator_token(token: str, *, company_id: str, atolye_user_id: str, now: Optional[datetime] = None) -> dict:
+_DEVICE_UNSET = object()
+
+
+def _operator_claims(token: str, *, company_id: str, atolye_user_id: str, now: Optional[datetime] = None) -> dict:
     """aud + typ + cid + aid + exp. Hatalar genel mesaja map edilir; değer dönmez."""
     now = _aware(now)
     try:
@@ -310,6 +317,34 @@ def decode_operator_token(token: str, *, company_id: str, atolye_user_id: str, n
         raise PinResult(401, TOKEN_DETAIL)
     otype = str(payload.get("otype") or "")
     if otype not in ("employee", "user"):
+        raise PinResult(401, TOKEN_DETAIL)
+    return payload
+
+
+def _device_claim_active(row: Any, company_id: str, device_id: str) -> bool:
+    if not isinstance(row, dict):
+        return False
+    if str(row.get("_id") or "") != str(device_id or ""):
+        return False
+    if str(row.get("company_id") or "") != str(company_id or ""):
+        return False
+    return str(row.get("status") or "") == "active"
+
+
+def decode_operator_token(
+    token: str,
+    *,
+    company_id: str,
+    atolye_user_id: str,
+    now: Optional[datetime] = None,
+    device_row: Any = _DEVICE_UNSET,
+) -> dict:
+    """JWT doğrulaması. did claim varsa cihaz satırı active olmak zorunda."""
+    payload = _operator_claims(token, company_id=company_id, atolye_user_id=atolye_user_id, now=now)
+    did = str(payload.get("did") or "").strip()
+    if not did:
+        return payload
+    if not _device_claim_active(device_row, str(payload.get("cid") or ""), did):
         raise PinResult(401, TOKEN_DETAIL)
     return payload
 
@@ -675,6 +710,7 @@ async def unlock(req: Optional[dict], user: dict) -> dict:
     await _require_ready(target)
     schedule = await _schedule_for(company_id, target.get("employee"))
     exp = operator_session_expiry(schedule, now)
+    device_id = _actor_id(user) if shopfloor_accounts.is_device_user(user) else ""
     token = issue_operator_token(
         company_id=company_id,
         atolye_user_id=actor,
@@ -684,6 +720,7 @@ async def unlock(req: Optional[dict], user: dict) -> dict:
         pin_ver=int(target.get("pin_ver") or 0),
         exp=exp,
         now=now,
+        device_id=device_id,
     )
     _log(actor, company_id, target["operator_id"], "unlock_ok")
     await _audit(
@@ -772,7 +809,17 @@ async def resolve_operator(req: Any, user: Any, w: Optional[dict] = None, *, fal
         cid = str((w or {}).get("company_id") or user.get("active_company_id") or "").strip()
         aid = _actor_id(user)
         try:
-            payload = decode_operator_token(token, company_id=cid, atolye_user_id=aid, now=utcnow())
+            claims = _operator_claims(token, company_id=cid, atolye_user_id=aid, now=utcnow())
+            did = str(claims.get("did") or "").strip()
+            if did:
+                device_row = await _db.shopfloor_devices.find_one({
+                    "_id": did,
+                    "company_id": cid,
+                })
+                decode_operator_token(
+                    token, company_id=cid, atolye_user_id=aid, now=utcnow(), device_row=device_row,
+                )
+            payload = claims
         except PinResult as exc:
             raise HTTPException(status_code=exc.status_code, detail=TOKEN_DETAIL) from None
         if not await _pin_ver_matches(payload, cid):

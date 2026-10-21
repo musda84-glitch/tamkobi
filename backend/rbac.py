@@ -582,7 +582,8 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/vehicles", "/vehicles"), ("/api/pos", "/hizli-satis"), ("/api/vpos", "/settings"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm/sms/settings", "/settings"), ("/api/comm/sms/verify", "/settings"), ("/api/comm/sms/balance", "/settings"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
-                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
+                  ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/"),
+                  ("/api/shopfloor/devices", "/settings")]
 # Yalnız GET/HEAD görünürlük. module_for_path ve mutation_allowed bunu okumaz;
 # /api/e-invoice gibi mutasyon boşlukları bu listede kapanmaz.
 # En uzun önek kazanır: /api/integrations/cargo ve /api/integrations/ecommerce
@@ -628,6 +629,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/payments/status/",
     "/api/comm/whatsapp/webhook",
     "/api/mail/webhooks/ses",
+    "/api/shopfloor/devices/pair",
 )
 
 # Mali / gizli depolama alanları. Görsel alanlar (ürün, logo, teklif, proje, …) tokensız kalır.
@@ -726,10 +728,12 @@ def is_public_api_path(path: str, method: str = "GET", query_t: Optional[str] = 
     # impersonate/exit yalnızca POST
     if p == "/api/auth/impersonate/exit":
         return method_u == "POST"
+    if p == "/api/shopfloor/devices/pair":
+        return method_u == "POST"
     if p == "/api/platform/notices" or p == "/api/auth/me":
         return method_u in ("GET", "HEAD")
     for rule in PUBLIC_API_ALLOWLIST:
-        if rule in ("/api/auth/impersonate/exit", "/api/platform/notices", "/api/auth/me"):
+        if rule in ("/api/auth/impersonate/exit", "/api/platform/notices", "/api/auth/me", "/api/shopfloor/devices/pair"):
             continue  # method-specific above
         if rule.endswith("/"):
             if p == rule.rstrip("/") or p.startswith(rule):
@@ -868,7 +872,24 @@ async def ensure_roles(company_id: str):
             await _db.roles.update_one({"_id": cur["_id"]}, {"$set": {**upd, "updated_at": _now()}})
 
 
+def device_role_document() -> Dict[str, Any]:
+    """Atölye cihazı. Yönetici değildir; yalnız atölye modülü ve portal_atolye açıktır."""
+    perms = {module: "none" for module, _label in MODULES}
+    perms["/atolye"] = "edit"
+    features = {key: False for key, _label, _help in FEATURES}
+    features["portal_atolye"] = True
+    return {
+        "code": "atolye_device",
+        "name": "Atölye cihazı",
+        "is_system": False,
+        "permissions": perms,
+        "features": features,
+    }
+
+
 async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, Any]:
+    if str((user or {}).get("account_type") or "").strip().casefold() == "atolye_device":
+        return device_role_document()
     code = normalize_role_code(user.get("role", "admin"))
     cid = company_id or user.get("active_company_id") or "comp_nexus_main_01"
     await ensure_roles(cid)
