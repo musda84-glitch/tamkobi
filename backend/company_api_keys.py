@@ -130,7 +130,11 @@ def _revealed(doc: dict, secret: str) -> dict:
 
 
 async def ensure_indexes(db) -> None:
-    """key_hash benzersiz; şirket başına bir anahtar; bağlantı çifti benzersiz."""
+    """key_hash benzersiz; şirket başına bir anahtar; bağlantı çifti benzersiz.
+
+    Sunucu açılışında kurulur. STARTUP_INDEXES canlı meta_indexes anlık
+    görüntüsüdür; süreç bu kodla bir kez açılmadan oraya yazılmaz.
+    """
     keys = getattr(db, "company_api_keys", None)
     links = getattr(db, "company_links", None)
     if keys is not None and hasattr(keys, "create_index"):

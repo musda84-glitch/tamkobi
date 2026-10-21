@@ -42,9 +42,6 @@ STARTUP_INDEXES = (
     {"collection": "b2b_link_acceptances", "name": "token_hash", "fields": ("token_hash",), "unique": False},
     {"collection": "b2b_sessions", "name": "identity_id", "fields": ("identity_id",), "unique": False},
     {"collection": "help_articles", "name": "slug", "fields": ("slug",), "unique": True},
-    {"collection": "company_api_keys", "name": "key_hash", "fields": ("key_hash",), "unique": True},
-    {"collection": "company_api_keys", "name": "company_id", "fields": ("company_id",), "unique": True},
-    {"collection": "company_links", "name": "from_company_to_company", "fields": ("from_company", "to_company"), "unique": True},
 )
 
 # Core collections that a seeded local database is expected to contain.

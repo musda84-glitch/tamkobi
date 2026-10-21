@@ -146,7 +146,8 @@ def world():
 
 
 def _h(uid):
-    return {"x-user": uid}
+    """Oturum JWT'si tk_live_ değildir. Sahte kullanıcı x-user ile seçilir."""
+    return {"x-user": uid, "Authorization": "Bearer session"}
 
 
 def _create_key(client, uid, company_id):
