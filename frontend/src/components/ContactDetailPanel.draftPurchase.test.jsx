@@ -44,6 +44,7 @@ const PAPER = {
   currency: "TRY",
   gib_status: "Taslak",
   effects_applied: false,
+  items: [{ name: "Örnek A4 Fotokopi Kağıdı (koli)", quantity: 100, unit: "Koli" }],
 };
 const APPROVED = {
   id: "alok",
@@ -53,6 +54,7 @@ const APPROVED = {
   status: "approved",
   payment_status: "unpaid",
   effects_applied: true,
+  stock_effects_applied: true,
   grand_total: 100,
   issue_date: "2026-10-02",
   currency: "TRY",
@@ -197,7 +199,7 @@ test("kağıt alış taslağında yeşil onay butonu approve çağırır ve list
   expect(btn.getAttribute("title")).toBe("Taslağı Onayla");
   await act(async () => { btn.click(); });
   await flush(4);
-  expect(window.confirm).toHaveBeenCalledWith("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi ve stok işlenecek.");
+  expect(window.confirm).toHaveBeenCalledWith("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi işlenecek.\nStok işlenecek: 1 kalem (100 Koli) depoya girer.\nE-belge gönderimi ayrı adımdır.\nOnaydan sonra 'Stoğa işle' değiştirilemez.");
   expect(approvePosts()).toEqual([["/api/invoices/al107/approve"]]);
   expect(axios.get.mock.calls.filter((c) => String(c[0]).includes("/overview")).length).toBeGreaterThan(before);
 });
@@ -242,13 +244,13 @@ test("⋮ menüsünde alış onay öğesi aynı approve çağrısını yapar, FA
   expect(menu).toBeTruthy();
   expect(menu.textContent).toContain("TASLAĞI ONAYLA");
   expect(menu.textContent).toContain("Taslağı Onayla (Cariye İşle)");
-  expect(menu.textContent).toContain("Cari bakiyesi ve stok işlenir");
+  expect(menu.textContent).toContain("Cari bakiyesi işlenir. Stok, Stoğa işle seçimine bağlıdır.");
   expect(menu.textContent).not.toContain("FATURAYI KES");
   expect(menu.querySelector("[data-testid='ctx-issue-types']")).toBeNull();
   const item = menu.querySelector("[data-testid='ctx-draft-approve']");
   await act(async () => { item.click(); });
   await flush(4);
-  expect(window.confirm).toHaveBeenCalledWith("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi ve stok işlenecek.");
+  expect(window.confirm).toHaveBeenCalledWith("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi işlenecek.\nStok işlenecek: 1 kalem (100 Koli) depoya girer.\nE-belge gönderimi ayrı adımdır.\nOnaydan sonra 'Stoğa işle' değiştirilemez.");
   expect(approvePosts()).toEqual([["/api/invoices/al107/approve"]]);
 });
 
@@ -283,4 +285,19 @@ test("gelen e-fatura alışında yalnız mevcut Faturalaştır butonu vardır", 
   expect(menu.querySelector("[data-testid='ctx-draft-approve']")).toBeNull();
   expect(menu.textContent).not.toContain("FATURAYI KES");
   expect(menu.textContent).not.toContain("Taslağı Onayla (Cariye İşle)");
+});
+
+test("cari faturalarında stok rozeti türün yanında durur", async () => {
+  await renderPanel();
+  const inStock = host.querySelector("[data-testid='detail-inv-stock-badge-AL-OK']");
+  expect(inStock.textContent).toBe("Stokta");
+  expect(inStock.getAttribute("title")).toBe("Kalemler depoya girdi");
+  expect(inStock.className).toContain("border-emerald-200");
+  const none = host.querySelector("[data-testid='detail-inv-stock-badge-AL-PAID']");
+  expect(none.textContent).toBe("Stoksuz");
+  expect(none.getAttribute("title")).toBe("Yalnız cari işlendi");
+  expect(none.className).toContain("border-slate-300");
+  expect(host.querySelector("[data-testid='detail-inv-stock-badge-AL202600000107']")).toBeNull();
+  expect(host.querySelector("[data-testid='detail-inv-stock-badge-TA-1']")).toBeNull();
+  expect(host.querySelector("[data-testid='detail-inv-stock-badge-GLN-1']")).toBeNull();
 });

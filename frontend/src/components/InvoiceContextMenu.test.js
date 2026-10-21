@@ -343,7 +343,16 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
     expect(draftInvoiceApproveConfirmText({
       invoice_number: "AL202600000107",
       invoice_type: "purchase",
-    })).toBe("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi ve stok işlenecek.");
+      e_type: "paper",
+      items: [{ name: "Örnek A4 Fotokopi Kağıdı (koli)", quantity: 100, unit: "Koli" }],
+    })).toBe("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi işlenecek.\nStok işlenecek: 1 kalem (100 Koli) depoya girer.\nE-belge gönderimi ayrı adımdır.\nOnaydan sonra 'Stoğa işle' değiştirilemez.");
+    expect(draftInvoiceApproveConfirmText({
+      invoice_number: "AL202600000107",
+      invoice_type: "purchase",
+      e_type: "paper",
+      post_stock: false,
+      items: [{ name: "Örnek A4 Fotokopi Kağıdı (koli)", quantity: 100, unit: "Koli" }],
+    })).toBe("AL202600000107 alış taslağı onaylansın mı?\nCari bakiyesi işlenecek. Stok işlenmeyecek.\nE-belge gönderimi ayrı adımdır.\nOnaydan sonra 'Stoğa işle' değiştirilemez.");
     expect(draftInvoiceApproveConfirmText({
       invoice_number: "TA-1",
       invoice_type: "sales",

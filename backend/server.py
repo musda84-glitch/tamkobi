@@ -10186,7 +10186,10 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     doc = invoice.to_mongo()
     if invoice.invoice_type == "purchase" and (invoice.e_type == "e_invoice" or invoice.direction == "incoming" or invoice.source == "edoc_inbox" or invoice.edoc_id):
         doc["direction"] = "incoming"
+    if not _is_manual_purchase_stock_target(doc):
+        doc.pop("post_stock", None)
     if invoice.status in ["approved", "sent_to_gib"]:
+        _prepare_manual_purchase_stock(doc)
         await _apply_invoice_effects(doc)
         doc["effects_applied"] = True
     doc["company_id"] = invoice.company_id
@@ -10292,6 +10295,59 @@ _INVOICE_EFFECT_KEYS = frozenset({
 })
 
 
+_POST_STOCK_LOCK_STATUSES = ("approved", "sent_to_gib", "cancelled", "paid")
+_POST_STOCK_LOCK_DETAIL = "Onaylı faturada 'Stoğa işle' değiştirilemez."
+
+
+def _coerce_post_stock(value):
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return None
+
+
+def _is_manual_purchase_stock_target(inv: dict) -> bool:
+    """Elle alış: gelen e-fatura, gider pusulası ve irsaliye değil."""
+    if not inv or inv.get("invoice_type") != "purchase":
+        return False
+    if inv.get("e_type") in ("expense_slip", "e_dispatch"):
+        return False
+    if inv.get("invoice_type") == "dispatch":
+        return False
+    return not _is_incoming_purchase_invoice(inv)
+
+
+def _prepare_manual_purchase_stock(inv: dict) -> None:
+    """Onaydan hemen önce elle alışın stok kararını yazar.
+
+    Alan yoksa True. True ise stock_effects_applied=False (stok uygulanacak).
+    False ya da irsaliye stoğu zaten girdiyse bayrak silinir, stock_skipped=True
+    kalır; _purchase_tracks_stock False döner ve stok girmez.
+    Stok daha önce girdiyse (bayrak True) belgeye dokunulmaz.
+    """
+    if not _is_manual_purchase_stock_target(inv):
+        return
+    if inv.get("stock_effects_applied") is True:
+        return
+    if inv.get("post_stock") is None:
+        inv["post_stock"] = True
+    else:
+        inv["post_stock"] = bool(inv.get("post_stock"))
+    skip = (not inv.get("post_stock")) or bool(inv.get("stock_effects_from_dispatch"))
+    if skip:
+        inv.pop("stock_effects_applied", None)
+        inv["stock_skipped"] = True
+        return
+    inv.pop("stock_skipped", None)
+    inv["stock_effects_applied"] = False
+
+
 def _purchase_tracks_stock(inv: dict) -> bool:
     """Alış stok takibi: gelen e-belge veya stock_effects_applied bayrağı olan faturalar."""
     if inv.get("invoice_type") != "purchase":
@@ -10317,7 +10373,7 @@ async def _apply_invoice_effects(inv: dict):
             if pid:
                 await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
             await _apply_lot_delta(item, -1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv):
+    elif _purchase_tracks_stock(inv) and not skip_stock:
         # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
         if inv.get("stock_effects_applied") is False:
             for item in inv.get("items", []):
@@ -10345,7 +10401,7 @@ async def _reverse_invoice_effects(inv: dict):
             if pid:
                 await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
             await _apply_lot_delta(item, +1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv) and inv.get("stock_effects_applied") is not False:
+    elif _purchase_tracks_stock(inv) and not skip_stock and inv.get("stock_effects_applied") is not False:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
@@ -10539,14 +10595,8 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
             raise HTTPException(status_code=409, detail=_INVOICE_APPROVE_BUSY)
         return await _approve_invoice_already_ok(fresh)
     try:
-        # Elle girilmiş alışta stok bayrağı yoktur. Gelen e-fatura bu dala girmez;
-        # _post_incoming_purchase_invoice kendi girişini yapar.
-        if (
-            inv.get("invoice_type") == "purchase"
-            and inv.get("e_type") not in ("expense_slip", "e_dispatch")
-            and inv.get("stock_effects_applied") is not True
-        ):
-            inv["stock_effects_applied"] = False
+        # Gelen e-fatura bu dala girmez; _post_incoming_purchase_invoice kendi girişini yapar.
+        _prepare_manual_purchase_stock(inv)
         await _apply_invoice_effects(inv)
         issued_notes = ubl_export.strip_issued_invoice_note(inv.get("notes"))
         approved_set = {
@@ -10555,12 +10605,21 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
             "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"),
             "approved_at": datetime.now(timezone.utc).isoformat(),
         }
+        approved_unset = {"approving_at": ""}
+        if _is_manual_purchase_stock_target(inv) and inv.get("post_stock") is not None:
+            approved_set["post_stock"] = bool(inv.get("post_stock"))
+            if inv.get("stock_skipped"):
+                approved_set["stock_skipped"] = True
+                approved_unset["stock_effects_applied"] = ""
+            elif inv.get("stock_effects_applied") is True:
+                approved_set["stock_effects_applied"] = True
+                approved_unset["stock_skipped"] = ""
         if issued_notes != (inv.get("notes") or ""):
             approved_set["notes"] = issued_notes
             inv["notes"] = issued_notes
         await db.invoices.update_one(
             {"_id": invoice_id, "company_id": company_id},
-            {"$set": approved_set, "$unset": {"approving_at": ""}},
+            {"$set": approved_set, "$unset": approved_unset},
         )
         inv = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or inv
         await _mark_order_invoiced_from_invoice(inv)
@@ -10702,6 +10761,17 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
 
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     cid = str(inv.get("company_id") or "").strip()
+    if "post_stock" in req and not _is_manual_purchase_stock_target(inv):
+        req = {k: v for k, v in req.items() if k != "post_stock"}
+    if "post_stock" in req and inv.get("status") in _POST_STOCK_LOCK_STATUSES:
+        new_stock = _coerce_post_stock(req.get("post_stock"))
+        old_stock = inv.get("post_stock")
+        old_norm = None if old_stock is None else bool(old_stock)
+        if new_stock != old_norm:
+            raise HTTPException(status_code=409, detail=_POST_STOCK_LOCK_DETAIL)
+        req = {k: v for k, v in req.items() if k != "post_stock"}
+        if not req:
+            return clean_doc(dict(inv))
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
     if inv.get("status") == "cancelling":
@@ -10719,10 +10789,12 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id, "company_id": cid}))
-    editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}
+    editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code", "post_stock"}
     if _is_dispatch_doc(inv):
         editable = editable | _DESPATCH_EDIT_KEYS
     allowed = {k: v for k, v in req.items() if k in editable}
+    if "post_stock" in allowed:
+        allowed["post_stock"] = bool(_coerce_post_stock(allowed.get("post_stock")))
     reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
         _c = await db.contacts.find_one({"_id": allowed["contact_id"], "company_id": cid})
