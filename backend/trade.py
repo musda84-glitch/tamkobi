@@ -262,9 +262,10 @@ async def list_trade_files(company_id: Optional[str] = None, kind: Optional[str]
 async def create_trade_file(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     req = {**req, "company_id": company_id}
-    doc = _doc_from_req(req)
+    _doc_from_req(req)
     stamp = await fx.stamp(company_id, req.get("currency") or "USD", req.get("file_date"), fx.typed_rate(req.get("currency") or "USD", req.get("fx_rate"), req.get("fx_source")))
     doc = _doc_from_req({**req, **stamp})
+    doc["company_id"] = company_id
     if not doc["contact_name"] and not doc["contact_id"]:
         raise HTTPException(status_code=400, detail="Cari / firma adı gerekli.")
     if not doc["items"]:
@@ -293,8 +294,8 @@ async def update_trade_file(file_id: str, req: Dict[str, Any], user: dict = Depe
     stamp = await fx.stamp(merged.get("company_id") or cur["company_id"], merged.get("currency") or "USD", merged.get("file_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
     doc = _doc_from_req({**merged, **stamp}, cur)
     doc["updated_at"] = _now()
-    await _db.trade_files.update_one({"_id": file_id}, {"$set": doc})
-    return _clean(await _db.trade_files.find_one({"_id": file_id}))
+    await _db.trade_files.update_one({"_id": file_id, "company_id": cur["company_id"]}, {"$set": doc})
+    return _clean(await _db.trade_files.find_one({"_id": file_id, "company_id": cur["company_id"]}))
 
 
 @router.delete("/trade-files/{file_id}")
@@ -326,8 +327,8 @@ async def set_trade_status(file_id: str, req: Dict[str, Any], user: dict = Depen
         extra["declaration_no"] = req["declaration_no"]
     if req.get("declaration_date"):
         extra["declaration_date"] = req["declaration_date"]
-    await _db.trade_files.update_one({"_id": file_id}, {"$set": extra})
-    return _clean(await _db.trade_files.find_one({"_id": file_id}))
+    await _db.trade_files.update_one({"_id": file_id, "company_id": d["company_id"]}, {"$set": extra})
+    return _clean(await _db.trade_files.find_one({"_id": file_id, "company_id": d["company_id"]}))
 
 
 @router.post("/trade-files/{file_id}/convert-to-invoice")
@@ -336,8 +337,9 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None,
     d = await tenant_access.get_tenant_doc(_db, "trade_files", file_id, user, not_found="Dosya bulunamadı.")
     if not d:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    cid = d["company_id"]
     if d.get("invoice_id"):
-        ex = await _db.invoices.find_one({"_id": d["invoice_id"]})
+        ex = await _db.invoices.find_one({"_id": d["invoice_id"], "company_id": cid})
         if ex:
             return {"status": "exists", "invoice": _clean(ex), "message": f"Bu dosya zaten faturalandı: {ex.get('invoice_number')}"}
     if not d.get("contact_id"):
@@ -367,7 +369,9 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None,
         ))
     if not items:
         raise HTTPException(status_code=400, detail="Kalem yok.")
-    contact = await _db.contacts.find_one({"_id": d["contact_id"]}) or {}
+    contact = await _db.contacts.find_one({"_id": d["contact_id"], "company_id": cid})
+    if not contact:
+        raise HTTPException(status_code=400, detail="Fatura için önce cari bağlayın.")
     inv = Invoice(
         company_id=d["company_id"],
         invoice_type="sales" if kind == "export" else "purchase",
@@ -406,7 +410,7 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None,
         "declaration_date": d.get("declaration_date"), "dab_no": d.get("dab_no"),
         "bl_awb": d.get("bl_awb"), "certificate": d.get("certificate"),
     }
-    await _db.invoices.update_one({"_id": created["id"]}, {"$set": extra_inv})
+    await _db.invoices.update_one({"_id": created["id"], "company_id": cid}, {"$set": extra_inv})
     if kind == "import":
         priced = distribute_landed({**d, "items": d.get("items") or [], "landed_cost": d.get("landed_cost")})
         for it in priced:
@@ -418,9 +422,9 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None,
                 patch["gtip"] = it["gtip"]
             if it.get("origin_country") or d.get("country"):
                 patch["origin_country"] = it.get("origin_country") or d.get("country")
-            await _db.products.update_one({"_id": pid}, {"$set": patch})
-        await _db.trade_files.update_one({"_id": file_id}, {"$set": {"items": priced}})
-    await _db.trade_files.update_one({"_id": file_id}, {"$set": {
+            await _db.products.update_one({"_id": pid, "company_id": cid}, {"$set": patch})
+        await _db.trade_files.update_one({"_id": file_id, "company_id": cid}, {"$set": {"items": priced}})
+    await _db.trade_files.update_one({"_id": file_id, "company_id": cid}, {"$set": {
         "invoice_id": created["id"], "invoice_number": created["invoice_number"],
         "status": "invoiced", "updated_at": _now(),
     }})

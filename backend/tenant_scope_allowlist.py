@@ -196,12 +196,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # linked_moves.py
     ('linked_moves.py', 'list_isnet_missing_mode', 'einvoice_settings', 'find'): 1,
     # mail_accounts.py
-    ('mail_accounts.py', 'mark_needs_reauth', 'mail_accounts', 'update_one'): 1,
-    ('mail_accounts.py', 'save_mail_account', 'mail_accounts', 'find_one'): 1,
-    ('mail_accounts.py', 'save_mail_account', 'mail_accounts', 'insert_one'): 1,
-    ('mail_accounts.py', 'save_mail_account', 'mail_accounts', 'update_one'): 3,
-    ('mail_accounts.py', 'send_tracked_mail', 'mail_logs', 'insert_one'): 2,
-    ('mail_accounts.py', 'test_mail_account', 'mail_accounts', 'update_one'): 2,
     # migration.py
     ('migration.py', '_invoice_doc', 'contacts', 'insert_one'): 1,
     ('migration.py', 'bh_import', 'products', 'insert_one'): 1,
@@ -742,27 +736,12 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', 'upload_my_task_photo', 'projects', 'update_one'): 1,
     ('server.py', 'wa_webhook_verify', 'whatsapp_settings', 'find_one'): 1,
     # shopfloor_pause.py
-    ('shopfloor_pause.py', 'pause_policy_for_employee', 'attendance', 'find_one'): 1,
-    ('shopfloor_pause.py', 'pause_policy_for_employee', 'shift_plans', 'find_one'): 1,
-    ('shopfloor_pause.py', 'run_auto_pause_work_orders', 'attendance', 'find_one'): 1,
-    ('shopfloor_pause.py', 'run_auto_pause_work_orders', 'shift_plans', 'find_one'): 1,
-    ('shopfloor_pause.py', 'run_auto_pause_work_orders', 'work_orders', 'update_many'): 1,
     # staff_messages.py
     ('staff_messages.py', '_post_message', 'staff_messages', 'insert_one'): 2,
     # storage_manager.py
     ('storage_manager.py', 'ensure_account_folders', 'storage_folders', 'find_one'): 2,
     # tax_obligations.py
     # trade.py
-    ('trade.py', 'convert_trade_file', 'contacts', 'find_one'): 1,
-    ('trade.py', 'convert_trade_file', 'invoices', 'find_one'): 1,
-    ('trade.py', 'convert_trade_file', 'invoices', 'update_one'): 1,
-    ('trade.py', 'convert_trade_file', 'products', 'update_one'): 1,
-    ('trade.py', 'convert_trade_file', 'trade_files', 'update_one'): 2,
-    ('trade.py', 'create_trade_file', 'trade_files', 'insert_one'): 1,
-    ('trade.py', 'set_trade_status', 'trade_files', 'find_one'): 1,
-    ('trade.py', 'set_trade_status', 'trade_files', 'update_one'): 1,
-    ('trade.py', 'update_trade_file', 'trade_files', 'find_one'): 1,
-    ('trade.py', 'update_trade_file', 'trade_files', 'update_one'): 1,
     # trash.py
     ('trash.py', '_clear_sync_tombstones', 'sync_tombstones', 'delete_many'): 1,
     ('trash.py', 'get_trash_item', 'trash', 'find_one'): 1,

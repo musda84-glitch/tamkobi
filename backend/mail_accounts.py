@@ -69,12 +69,15 @@ def mask_mail_account(a: dict) -> dict:
     return a
 
 
-async def mark_needs_reauth(account_id: str, detail: str = NEEDS_REAUTH_MSG) -> None:
+async def mark_needs_reauth(account_id: str, detail: str = NEEDS_REAUTH_MSG, *, company_id: Optional[str] = None) -> None:
     if not account_id:
+        return
+    cid = str(company_id or "").strip()
+    if not cid:
         return
     try:
         await _db.mail_accounts.update_one(
-            {"_id": account_id},
+            {"_id": account_id, "company_id": cid},
             {"$set": {"status": "needs_reauth", "last_error": detail[:200]}},
         )
     except Exception:
@@ -91,7 +94,10 @@ async def ensure_mail_password(a: dict) -> str:
             (a or {}).get("_id") or (a or {}).get("id"),
             exc,
         )
-        await mark_needs_reauth(str((a or {}).get("_id") or (a or {}).get("id") or ""))
+        await mark_needs_reauth(
+            str((a or {}).get("_id") or (a or {}).get("id") or ""),
+            company_id=(a or {}).get("company_id"),
+        )
         raise HTTPException(status_code=409, detail=NEEDS_REAUTH_MSG) from exc
 
 
@@ -159,21 +165,23 @@ async def save_mail_account(req: Dict[str, Any], user: dict = Depends(_user_dep)
         data["status"] = "unverified"
         data["last_error"] = None
     if existing:
-        await _db.mail_accounts.update_one({"_id": existing["_id"]}, {"$set": data})
+        await _db.mail_accounts.update_one({"_id": existing["_id"], "company_id": cid}, {"$set": data})
     else:
         acc = MailAccount(**data)
-        await _db.mail_accounts.insert_one(acc.to_mongo())
+        stored = acc.to_mongo()
+        stored["company_id"] = cid
+        await _db.mail_accounts.insert_one(stored)
     a = await load_mail_account(cid)
     try:
         await comm_service.run_blocking(comm_service.imap_test, a)
         await comm_service.smtp_login_test(a)
-        await _db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "connected", "last_error": None}})
+        await _db.mail_accounts.update_one({"_id": a["_id"], "company_id": cid}, {"$set": {"status": "connected", "last_error": None}})
         test = {"ok": True, "message": "IMAP ve SMTP bağlantısı doğrulandı."}
     except Exception as e:
         err = f"Posta bağlantı hatası: {_err_text(e)}"
-        await _db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
+        await _db.mail_accounts.update_one({"_id": a["_id"], "company_id": cid}, {"$set": {"status": "error", "last_error": err}})
         test = {"ok": False, "message": err}
-    saved = await _db.mail_accounts.find_one({"_id": a["_id"]})
+    saved = await _db.mail_accounts.find_one({"_id": a["_id"], "company_id": cid})
     out = mask_mail_account(saved)
     assert "password" not in out and "password_enc" not in out
     return {**out, "test_result": test}
@@ -207,11 +215,11 @@ async def test_mail_account(
     a = await load_mail_account(cid)
     try:
         res = await comm_service.run_blocking(comm_service.imap_test, a)
-        await _db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "connected", "last_error": None}})
+        await _db.mail_accounts.update_one({"_id": a["_id"], "company_id": cid}, {"$set": {"status": "connected", "last_error": None}})
         return {"ok": True, "message": f"Bağlantı başarılı. {res.get('folders', 0)} klasör bulundu."}
     except Exception as e:
         err = f"IMAP bağlantı hatası: {_err_text(e)}"
-        await _db.mail_accounts.update_one({"_id": a["_id"]}, {"$set": {"status": "error", "last_error": err}})
+        await _db.mail_accounts.update_one({"_id": a["_id"], "company_id": cid}, {"$set": {"status": "error", "last_error": err}})
         return {"ok": False, "message": err}
 
 
@@ -324,6 +332,7 @@ async def send_tracked_mail(
         open_count=0,
     )
     doc = log.to_mongo()
+    doc["company_id"] = company_id
     html_body = mail_tracking.append_pixel(html or mail_tracking.text_to_html(body or ""), base_url, doc["_id"])
     try:
         await comm_service.smtp_send(a, list(to), subject or "", body or "", html=html_body, cc=cc or None, attachments=attachments)
