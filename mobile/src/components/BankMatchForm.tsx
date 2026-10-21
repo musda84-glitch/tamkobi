@@ -8,25 +8,40 @@ import { ContactSearchSelect } from "./ContactSearchSelect";
 import { GroupedSelect } from "./GroupedSelect";
 import { Field, Muted, PrimaryButton, Row } from "./kit";
 import { colors } from "../theme";
+import { MoneyInput } from "./MoneyInput";
 import {
   canSubmitMatch,
   DEFAULT_PERSONNEL_PAY_KIND,
+  draftForPosSettlement,
   employeeSelectGroups,
   isPersonnelExpenseCategory,
+  isPosAccount,
+  isPosInflowSuggestion,
   matchExpenseCategoryGroups,
   matchModesForTx,
   matchTargets,
   PERSONNEL_EXPENSE_CATEGORY,
   personnelCategoryOnly,
   personnelPayKindGroups,
+  posAccountGroups,
+  posCategoryGroups,
   transferSelectGroups,
   type BankMatchTx,
   type MatchDraft,
+  type MatchMode,
   type PersonnelPayKind,
 } from "../utils/bankMatch";
 import type { BankAccount, ExpenseCategory, Partner } from "../utils/finance";
 import { expensePersonnelDebtOpen, type Employee } from "../utils/personnel";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import {
+  calcCommission,
+  formatSummary,
+  grossFromRate,
+  round2,
+  validatePosSettlement,
+} from "../utils/posSettlement";
+import { parseTrNumber } from "../utils/trMoneyInput";
 
 function openDebtOptionLabel(exp: Record<string, unknown>): string {
   const num = String(exp.expense_number || exp.number || "MSR");
@@ -36,6 +51,7 @@ function openDebtOptionLabel(exp: Record<string, unknown>): string {
 }
 
 function hasSuggestion(tx: BankMatchTx): boolean {
+  if (isPosInflowSuggestion(tx)) return true;
   return Boolean(
     tx.suggested_contact_id || tx.suggested_contact_name
     || tx.suggested_target_account_id || tx.suggested_target_account_name
@@ -44,11 +60,19 @@ function hasSuggestion(tx: BankMatchTx): boolean {
 }
 
 function suggestionText(tx: BankMatchTx): string {
+  if (isPosInflowSuggestion(tx)) {
+    const name = String(tx.suggested_target_account_name || "").trim();
+    return name ? `POS bloke çözümü önerisi · ${name}` : "POS bloke çözümü önerisi";
+  }
   return [
     tx.suggested_contact_name,
     tx.suggested_target_account_name ? `${tx.suggested_target_account_name} (virman)` : "",
     tx.suggested_category,
   ].filter(Boolean).join(" · ");
+}
+
+function percentLabel(rate: number): string {
+  return (rate * 100).toLocaleString("tr-TR", { maximumFractionDigits: 2 });
 }
 
 export function BankMatchForm({
@@ -85,6 +109,8 @@ export function BankMatchForm({
   const { client, companyId } = useAuth();
   const [openDebts, setOpenDebts] = useState<Record<string, unknown>[]>([]);
   const [debtsReady, setDebtsReady] = useState(false);
+  const [rateOpen, setRateOpen] = useState(false);
+  const [rateText, setRateText] = useState("");
   const txId = idOf(tx);
 
   useEffect(() => {
@@ -116,6 +142,24 @@ export function BankMatchForm({
   }, [client, companyId, draft.mode, draft.personnel_pay_kind, draft.employee_id]);
 
   const targets = useMemo(() => matchTargets(accounts, tx), [accounts, tx]);
+  const posAccounts = useMemo(() => (accounts || []).filter((account) => isPosAccount(account)), [accounts]);
+  const posGroups = useMemo(() => posAccountGroups(accounts), [accounts]);
+  const posCatGroups = useMemo(() => posCategoryGroups(expenseCats), [expenseCats]);
+  const selectedPos = posAccounts.find((account) => idOf(account) === draft.target_account_id);
+  const suggestedRate = Number(tx.suggested_pos_commission_rate);
+  const hasSuggestedRate = tx.suggested_pos_commission_rate != null && Number.isFinite(suggestedRate);
+  const posErrors = draft.mode === "pos_settlement"
+    ? [
+      ...(draft.target_account_id ? [] : ["POS hesabı seçin."]),
+      ...validatePosSettlement({
+        gross: draft.pos_gross,
+        net: tx.amount,
+        commission: draft.pos_commission,
+        posBalance: selectedPos ? selectedPos.current_balance : null,
+        isInflow: tx.type === "inflow",
+      }),
+    ]
+    : [];
   const needPersonnel = draft.mode === "expense" && isPersonnelExpenseCategory(draft.category);
   const expenseCatGroups = useMemo(() => matchExpenseCategoryGroups(expenseCats), [expenseCats]);
   const employeeGroups = useMemo(() => employeeSelectGroups(employees), [employees]);
@@ -127,7 +171,78 @@ export function BankMatchForm({
   }, [openDebts]);
   const suggested = hasSuggestion(tx) ? suggestionText(tx) : "";
 
+  const applyRate = (rate: number) => {
+    const net = round2(tx.amount);
+    const gross = grossFromRate(net, rate);
+    const commission = calcCommission(gross, net);
+    if (!Number.isFinite(gross) || !Number.isFinite(commission)) return;
+    setDraft((d) => ({
+      ...d,
+      pos_gross: String(gross),
+      pos_commission: String(commission),
+    }));
+  };
+
+  const onGrossChange = (value: number | null) => {
+    if (value == null) {
+      setDraft({ ...draft, pos_gross: "", pos_commission: "" });
+      return;
+    }
+    const gross = round2(value);
+    const commission = calcCommission(gross, tx.amount);
+    setDraft({
+      ...draft,
+      pos_gross: Number.isFinite(gross) ? String(gross) : "",
+      pos_commission: Number.isFinite(commission) ? String(commission) : "",
+    });
+  };
+
+  const onCommissionChange = (value: number | null) => {
+    if (value == null) {
+      setDraft({ ...draft, pos_commission: "" });
+      return;
+    }
+    const commission = round2(value);
+    const net = round2(tx.amount);
+    const gross = Number.isFinite(net) && Number.isFinite(commission) ? round2(net + commission) : NaN;
+    setDraft({
+      ...draft,
+      pos_commission: Number.isFinite(commission) ? String(commission) : "",
+      pos_gross: Number.isFinite(gross) ? String(gross) : draft.pos_gross,
+    });
+  };
+
+  const applyEditedRate = () => {
+    const pct = parseTrNumber(rateText);
+    if (pct == null || !Number.isFinite(pct)) return;
+    applyRate(pct / 100);
+  };
+
+  const selectMode = (key: MatchMode) => {
+    setDraft((d) => {
+      if (key === "pos_settlement") {
+        if (d.mode === "pos_settlement") return d;
+        return draftForPosSettlement(tx, d);
+      }
+      return {
+        ...d,
+        mode: key,
+        contact_id: key === "contact" ? (d.contact_id || tx.suggested_contact_id || "") : "",
+        invoice_id: "",
+        target_account_id: key === "transfer" ? d.target_account_id : "",
+        category: key === "expense" || key === "category" ? d.category : "",
+        employee_id: "",
+        personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+        expense_id: "",
+      };
+    });
+  };
+
   const applySuggestion = () => {
+    if (isPosInflowSuggestion(tx)) {
+      setDraft((d) => draftForPosSettlement(tx, d));
+      return;
+    }
     if (tx.suggested_target_account_id) {
       setDraft((d) => ({
         ...d,
@@ -185,17 +300,7 @@ export function BankMatchForm({
             label={m.label}
             active={draft.mode === m.key}
             testID={`match-mode-${m.key}`}
-            onPress={() => setDraft((d) => ({
-              ...d,
-              mode: m.key,
-              contact_id: m.key === "contact" ? (d.contact_id || tx.suggested_contact_id || "") : "",
-              invoice_id: "",
-              target_account_id: m.key === "transfer" ? d.target_account_id : "",
-              category: m.key === "expense" || m.key === "category" ? d.category : "",
-              employee_id: "",
-              personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
-              expense_id: "",
-            }))}
+            onPress={() => selectMode(m.key)}
           />
         ))}
       </Row>
@@ -328,6 +433,103 @@ export function BankMatchForm({
           ) : null}
         </>
       ) : null}
+      {draft.mode === "pos_settlement" ? (
+        <View testID={`match-pos-${txId}`} style={{ gap: 4 }}>
+          <GroupedSelect
+            label="POS hesabı"
+            testID={`match-pos-account-${txId}`}
+            value={draft.target_account_id}
+            onChange={(v) => setDraft({ ...draft, target_account_id: v })}
+            groups={posGroups}
+            emptyLabel="POS hesabı seçin…"
+          />
+          <MoneyInput
+            label="Brüt tutar"
+            testID={`match-pos-gross-${txId}`}
+            value={draft.pos_gross}
+            onChange={onGrossChange}
+          />
+          <MoneyInput
+            label="Bankaya yatan net"
+            testID={`match-pos-net-${txId}`}
+            value={tx.amount}
+            editable={false}
+          />
+          <MoneyInput
+            label="Komisyon"
+            testID={`match-pos-commission-${txId}`}
+            value={draft.pos_commission}
+            onChange={onCommissionChange}
+          />
+          <Muted testID={`match-pos-rate-note-${txId}`}>Oran önerisi otomatik uygulanmaz</Muted>
+          <Row style={{ flexWrap: "wrap" }}>
+            {hasSuggestedRate ? (
+              <Chip
+                label={`geçen sefer %${percentLabel(suggestedRate)}`}
+                active={false}
+                testID={`match-pos-rate-${txId}`}
+                onPress={() => applyRate(suggestedRate)}
+              />
+            ) : null}
+            <Pressable
+              testID={`match-pos-rate-edit-${txId}`}
+              onPress={() => setRateOpen((open) => !open)}
+              style={{
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: "#fff",
+              }}
+            >
+              <Text style={{ fontWeight: "700", color: colors.text, fontSize: 12 }}>Oranı düzenle</Text>
+            </Pressable>
+          </Row>
+          {rateOpen ? (
+            <>
+              <Field
+                label="Oran (%)"
+                testID={`match-pos-rate-input-${txId}`}
+                value={rateText}
+                onChangeText={setRateText}
+                keyboardType="decimal-pad"
+                placeholder="ör. 3,5"
+              />
+              <PrimaryButton
+                title="Uygula"
+                testID={`match-pos-rate-apply-${txId}`}
+                color="#7C3AED"
+                onPress={applyEditedRate}
+              />
+            </>
+          ) : null}
+          <GroupedSelect
+            label="Kategori"
+            testID={`match-pos-cat-${txId}`}
+            value={draft.category}
+            onChange={(v) => setDraft({ ...draft, category: v })}
+            groups={posCatGroups}
+            emptyLabel="Kategori seçin…"
+          />
+          <Field
+            label="Tarih"
+            testID={`match-pos-date-${txId}`}
+            value={tx.date ? fmtDate(tx.date) : "—"}
+            editable={false}
+          />
+          <Text testID={`match-pos-summary-${txId}`} style={{ color: colors.text, fontWeight: "700", fontSize: 13 }}>
+            {formatSummary({ posName: selectedPos?.account_name, gross: draft.pos_gross, net: tx.amount })}
+          </Text>
+          {posErrors.length ? (
+            <View testID={`match-pos-errors-${txId}`}>
+              {posErrors.map((err) => (
+                <Text key={err} style={{ color: colors.danger, fontSize: 12, fontWeight: "700" }}>{err}</Text>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
       <Pressable
         testID={`match-learn-${txId}`}
         onPress={() => setDraft({ ...draft, learn: !draft.learn })}
@@ -335,7 +537,9 @@ export function BankMatchForm({
       >
         <Ionicons name={draft.learn ? "checkbox" : "square-outline"} size={20} color={draft.learn ? "#F59E0B" : colors.muted} />
         <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: 13 }}>
-          Bu açıklama tekrar gelirse otomatik eşleştir (öğren)
+          {draft.mode === "pos_settlement"
+            ? "Bu açıklama tekrar gelirse POS bloke çözümü olarak öner (öğren)"
+            : "Bu açıklama tekrar gelirse otomatik eşleştir (öğren)"}
         </Text>
       </Pressable>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700" }}>{error}</Text> : null}
@@ -362,7 +566,7 @@ export function BankMatchForm({
             title="Eşleştir"
             testID={`match-btn-${txId}`}
             color="#F59E0B"
-            disabled={!canSubmitMatch(draft) || (replace && draft.mode === "contact" && !draft.contact_id)}
+            disabled={!canSubmitMatch(draft, tx, selectedPos ? selectedPos.current_balance : null) || (replace && draft.mode === "contact" && !draft.contact_id)}
             loading={!!busy}
             onPress={onSubmit}
           />

@@ -2,12 +2,22 @@ import type { Contact, Invoice } from "../types";
 import type { BankAccount, BankTx, ExpenseCategory, Partner } from "./finance";
 import { paymentTargetGroups } from "./finance";
 import { fmtMoney, idOf } from "./money";
+import {
+  POS_COMMISSION_CATEGORY,
+  calcCommission,
+  isPosAccount,
+  round2,
+  validatePosSettlement,
+} from "./posSettlement";
+
+export { POS_COMMISSION_CATEGORY, isPosAccount };
 
 export const MATCH_MODES = [
   { key: "contact", label: "Cari" },
   { key: "transfer", label: "Kasa / Hesap (Virman)" },
   { key: "category", label: "Sadece Kategori" },
   { key: "expense", label: "Masraf" },
+  { key: "pos_settlement", label: "POS bloke çözümü" },
 ] as const;
 
 /** Varsayılan personel masraf kategorisi (API değeri; UI etiketi "Personel"). */
@@ -26,9 +36,10 @@ export const DEFAULT_PERSONNEL_PAY_KIND = "reimburse";
 
 export type PersonnelPayKind = (typeof PERSONNEL_PAY_KINDS)[number]["key"];
 
-/** Tüm eşleşme türleri (Masraf dahil). Girişte backend masrafı reddeder. */
-export function matchModesForTx(_tx?: { type?: string } | null) {
-  return MATCH_MODES;
+/** Eşleşme türleri. POS bloke çözümü yalnızca giriş (inflow) hareketinde döner. */
+export function matchModesForTx(tx?: { type?: string } | null) {
+  if (tx?.type === "inflow") return MATCH_MODES;
+  return MATCH_MODES.filter((mode) => mode.key !== "pos_settlement");
 }
 
 export type MatchMode = (typeof MATCH_MODES)[number]["key"];
@@ -85,6 +96,8 @@ export type MatchDraft = {
   personnel_pay_kind: PersonnelPayKind;
   expense_id?: string;
   learn: boolean;
+  pos_gross: string;
+  pos_commission: string;
 };
 
 export type SelectGroup = { label: string; options: { value: string; label: string; disabled?: boolean }[] };
@@ -107,8 +120,44 @@ export function expenseCategoryOptionLabel(name?: string | null): string {
   return n;
 }
 
-export function emptyMatchDraft(tx?: BankMatchTx | null): MatchDraft {
+/** Kayıtlı veya yazılan tutarı eşleşme taslağındaki metin alana çevirir. */
+export function formatPosAmount(value: unknown): string {
+  if (value == null || value === "") return "";
+  const n = round2(value);
+  return Number.isFinite(n) ? String(n) : "";
+}
+
+/** Brüt, bankaya yatan net ile başlar. Öneri oranı ve suggested_pos_gross yazılmaz. */
+export function posAmountsFromNet(amount: unknown): { pos_gross: string; pos_commission: string } {
+  const net = round2(amount);
+  if (!Number.isFinite(net)) return { pos_gross: "", pos_commission: "" };
+  return { pos_gross: String(net), pos_commission: String(calcCommission(net, net)) };
+}
+
+export function isPosInflowSuggestion(tx?: { type?: string | null; suggested_match_kind?: string | null } | null): boolean {
+  return tx?.type === "inflow" && tx?.suggested_match_kind === "pos_settlement";
+}
+
+/** Önerilen POS hesabı ve kategori. Komisyon oranı burada uygulanmaz. */
+export function draftForPosSettlement(tx: BankMatchTx, prev: MatchDraft): MatchDraft {
+  const amounts = posAmountsFromNet(tx.amount);
   return {
+    ...prev,
+    mode: "pos_settlement",
+    contact_id: "",
+    invoice_id: "",
+    target_account_id: tx.suggested_target_account_id || "",
+    category: String(tx.suggested_category || "").trim() || POS_COMMISSION_CATEGORY,
+    employee_id: "",
+    personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
+    expense_id: "",
+    pos_gross: amounts.pos_gross,
+    pos_commission: amounts.pos_commission,
+  };
+}
+
+export function emptyMatchDraft(tx?: BankMatchTx | null): MatchDraft {
+  const draft: MatchDraft = {
     mode: "contact",
     contact_id: tx?.suggested_contact_id || "",
     invoice_id: "",
@@ -118,7 +167,11 @@ export function emptyMatchDraft(tx?: BankMatchTx | null): MatchDraft {
     personnel_pay_kind: DEFAULT_PERSONNEL_PAY_KIND,
     expense_id: "",
     learn: true,
+    pos_gross: "",
+    pos_commission: "",
   };
+  if (isPosInflowSuggestion(tx)) return draftForPosSettlement(tx as BankMatchTx, draft);
+  return draft;
 }
 
 export function invoiceRemaining(inv?: Invoice | null): number {
@@ -144,8 +197,23 @@ export function matchTargets(accounts: BankAccount[], tx: BankMatchTx): BankAcco
   return (accounts || []).filter((a) => idOf(a) !== src && !a.is_integrated);
 }
 
-export function canSubmitMatch(d: MatchDraft): boolean {
+export function canSubmitMatch(
+  d: MatchDraft,
+  tx?: { type?: string | null; amount?: number | string | null } | null,
+  posBalance?: number | string | null,
+): boolean {
   if (personnelCategoryOnly(d)) return false;
+  if (d.mode === "pos_settlement") {
+    if (!d.target_account_id) return false;
+    if (!d.category.trim()) return false;
+    return validatePosSettlement({
+      gross: d.pos_gross,
+      net: tx?.amount,
+      commission: d.pos_commission,
+      posBalance,
+      isInflow: tx?.type === "inflow",
+    }).length === 0;
+  }
   if (d.mode === "category") return !!d.category.trim();
   if (d.mode === "expense") {
     if (!d.category.trim()) return false;
@@ -159,6 +227,16 @@ export function canSubmitMatch(d: MatchDraft): boolean {
 }
 
 export function matchPayload(d: MatchDraft) {
+  if (d.mode === "pos_settlement") {
+    return {
+      mode: "pos_settlement" as const,
+      target_account_id: d.target_account_id,
+      pos_gross: round2(d.pos_gross),
+      pos_commission: round2(d.pos_commission),
+      category: d.category.trim() || POS_COMMISSION_CATEGORY,
+      learn: !!d.learn,
+    };
+  }
   const personnel = d.mode === "expense" && isPersonnelExpenseCategory(d.category);
   return {
     learn: !!d.learn,
@@ -205,6 +283,9 @@ export function matchedViaTr(via?: string | null): string {
 }
 
 export function matchResultLabel(tx: BankMatchTx): string {
+  if (tx.match_kind === "pos_settlement") {
+    return [tx.target_account_name, tx.category].filter(Boolean).join(" · ") || "POS bloke";
+  }
   const parts = [
     tx.contact_name,
     tx.target_account_name ? `${tx.target_account_name} (virman)` : null,
@@ -248,6 +329,23 @@ export function invoiceSelectGroups(invoices: Invoice[]): SelectGroup[] {
 /** Web PaymentTargetSelect: Türkçe hesap türü + banka adı · maskeli hesap · entegre. */
 export function transferSelectGroups(accounts: BankAccount[], partners: Partner[] = []): SelectGroup[] {
   return paymentTargetGroups(accounts, partners);
+}
+
+/** POS bloke çözümü hesabı: yalnız pos / okc_pos, etikette bloke bakiyesi. */
+export function posAccountGroups(accounts: BankAccount[] = []): SelectGroup[] {
+  const options = (accounts || []).filter((account) => isPosAccount(account)).map((account) => ({
+    value: idOf(account),
+    label: `${account.account_name || "POS"} — bloke bakiye ${fmtMoney(account.current_balance)}`,
+  }));
+  return options.length ? [{ label: "POS hesapları", options }] : [];
+}
+
+/** Komisyon masraf kategorisi. Listede yoksa POS Komisyonu başa eklenir. */
+export function posCategoryGroups(rows: ExpenseCategory[] = []): SelectGroup[] {
+  const names = (rows || []).map((c) => String(c.name || c).trim()).filter(Boolean);
+  if (!names.includes(POS_COMMISSION_CATEGORY)) names.unshift(POS_COMMISSION_CATEGORY);
+  const options = names.map((name) => ({ value: name, label: name }));
+  return [{ label: "Kategoriler", options }];
 }
 
 /** Masraf kategorileri — Personel Masrafı etiketi Personel. */

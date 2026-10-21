@@ -12,12 +12,14 @@ import {
   invoiceRemaining,
   isPersonnelExpenseCategory,
   matchExpenseCategoryGroups,
+  matchModesForTx,
   matchPayload,
   matchResultLabel,
   matchTargets,
   matchedViaTr,
   openInvoices,
   personnelCategoryOnly,
+  posAccountGroups,
   ruleLabel,
   suggestionLabel,
   transferSelectGroups,
@@ -75,9 +77,17 @@ describe("matchTargets / remaining", () => {
 });
 
 describe("match draft / payload", () => {
-  it("drops Cari + Fatura from modes", () => {
-    expect(MATCH_MODES.map((m) => m.key)).toEqual(["contact", "transfer", "category", "expense"]);
+  it("drops Cari + Fatura from modes and keeps POS bloke çözümü", () => {
+    expect(MATCH_MODES.map((m) => m.key)).toEqual(["contact", "transfer", "category", "expense", "pos_settlement"]);
     expect(MATCH_MODES.map((m) => m.label)).not.toContain("Cari + Fatura");
+    expect(MATCH_MODES[MATCH_MODES.length - 1]).toEqual({ key: "pos_settlement", label: "POS bloke çözümü" });
+  });
+
+  it("shows POS bloke çözümü only for inflow", () => {
+    expect(matchModesForTx({ type: "inflow" }).map((m) => m.key)).toContain("pos_settlement");
+    expect(matchModesForTx({ type: "outflow" }).map((m) => m.key)).not.toContain("pos_settlement");
+    expect(matchModesForTx(null).map((m) => m.key)).not.toContain("pos_settlement");
+    expect(matchModesForTx({ type: "outflow" }).map((m) => m.key)).toEqual(["contact", "transfer", "category", "expense"]);
   });
 
   it("prefills suggested contact and requires fields per mode", () => {
@@ -105,6 +115,29 @@ describe("match draft / payload", () => {
       employee_id: "e1",
       personnel_pay_kind: "advance",
     })).toBe(true);
+  });
+
+  it("starts a POS suggestion at net and does not apply the rate or suggested gross", () => {
+    const d = emptyMatchDraft({
+      type: "inflow",
+      amount: 100,
+      suggested_match_kind: "pos_settlement",
+      suggested_pos_commission_rate: 0.1,
+      suggested_pos_gross: 111.11,
+      suggested_target_account_id: "pos-1",
+      suggested_target_account_name: "Sanal POS",
+      suggested_category: "POS Komisyonu",
+    });
+    expect(d.mode).toBe("pos_settlement");
+    expect(d.target_account_id).toBe("pos-1");
+    expect(d.category).toBe("POS Komisyonu");
+    expect(d.contact_id).toBe("");
+    expect(d.pos_gross).toBe("100");
+    expect(d.pos_commission).toBe("0");
+    expect(d.learn).toBe(true);
+    const plain = emptyMatchDraft({ type: "outflow", amount: 80, suggested_match_kind: "pos_settlement" });
+    expect(plain.mode).toBe("contact");
+    expect(plain.pos_gross).toBe("");
   });
 
   it("labels Personel and lists pay kinds", () => {
@@ -232,6 +265,46 @@ describe("match draft / payload", () => {
     expect(fuel.expense_id).toBeNull();
     expect(fuel.personnel_pay_kind).toBeNull();
     expect(fuel.employee_id).toBeNull();
+    const pos = matchPayload({
+      ...base,
+      mode: "pos_settlement",
+      contact_id: "c1",
+      invoice_id: "inv-1",
+      target_account_id: "pos-1",
+      category: "POS Komisyonu",
+      pos_gross: "111.11",
+      pos_commission: "11.11",
+      learn: true,
+    });
+    expect(pos).toEqual({
+      mode: "pos_settlement",
+      target_account_id: "pos-1",
+      pos_gross: 111.11,
+      pos_commission: 11.11,
+      category: "POS Komisyonu",
+      learn: true,
+    });
+    expect(pos).not.toHaveProperty("contact_id");
+    expect(pos).not.toHaveProperty("invoice_id");
+    expect(pos).not.toHaveProperty("as_expense");
+    expect(pos).not.toHaveProperty("link_existing_id");
+  });
+
+  it("submits POS bloke çözümü only when validation is clean and the category is set", () => {
+    const base = emptyMatchDraft({
+      type: "inflow",
+      amount: 100,
+      suggested_match_kind: "pos_settlement",
+      suggested_target_account_id: "pos-1",
+    });
+    expect(canSubmitMatch(base, { type: "inflow", amount: 100 }, 500)).toBe(true);
+    expect(canSubmitMatch({ ...base, category: "  " }, { type: "inflow", amount: 100 }, 500)).toBe(false);
+    expect(canSubmitMatch({ ...base, target_account_id: "" }, { type: "inflow", amount: 100 }, 500)).toBe(false);
+    expect(canSubmitMatch({ ...base, pos_gross: "50" }, { type: "inflow", amount: 100 }, 500)).toBe(false);
+    expect(canSubmitMatch({ ...base, pos_commission: "-1" }, { type: "inflow", amount: 100 }, 500)).toBe(false);
+    expect(canSubmitMatch(base, { type: "outflow", amount: 100 }, 500)).toBe(false);
+    expect(canSubmitMatch({ ...base, pos_gross: "600", pos_commission: "500" }, { type: "inflow", amount: 100 }, 500)).toBe(false);
+    expect(canSubmitMatch({ ...base, pos_gross: "" }, { type: "inflow", amount: 100 }, 500)).toBe(false);
   });
 });
 
@@ -243,6 +316,19 @@ describe("labels", () => {
     expect(matchedViaTr("auto")).toBe("Otomatik");
     expect(matchedViaTr(undefined)).toBe("Manuel");
     expect(matchResultLabel({ contact_name: "Ahmet", related_invoice_number: "SAT-1" })).toBe("Ahmet · SAT-1");
+    expect(matchResultLabel({
+      match_kind: "pos_settlement",
+      target_account_name: "Sanal POS",
+      category: "POS Komisyonu",
+    })).toBe("Sanal POS · POS Komisyonu");
+    const posAccounts = posAccountGroups([
+      { id: "b", type: "bank", account_name: "Vadesiz", current_balance: 9 },
+      { id: "p", type: "pos", account_name: "Sanal POS", current_balance: 10 },
+      { id: "o", type: "okc_pos", account_name: "ÖKC", current_balance: 3 },
+    ]);
+    expect(posAccounts[0].options.map((o) => o.value)).toEqual(["p", "o"]);
+    expect(posAccounts[0].options[0].label).toContain("bloke bakiye");
+    expect(posAccounts[0].options[0].label).toContain("Sanal POS");
     expect(suggestionLabel({ contact_name: "X", target_account_name: "Kasa", category: "Virman" })).toBe("X · Kasa (virman) · Virman");
     expect(ruleLabel({ pattern: "trendyol", contact_name: "Trendyol" })).toBe('"trendyol" → Trendyol');
   });
