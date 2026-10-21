@@ -474,15 +474,47 @@ def test_api_key_credential_once_then_revoke(gap):
 def test_platform_user_password_not_returned(gap):
     client, db = gap
     pub, secret = _full_key(db, name="users")
-    created, _ = _send(
+    direct, _ = _send(
         client, secret, pub["id"], "POST", "/api/platform/admin-v1/platform-users",
         {"name": "Yeni Admin", "email": "yeni@example.com", "password": "sifre-123"},
-        idem="user-1",
+        idem="user-direct",
     )
-    assert created.status_code == 200, created.text
-    assert "sifre-123" not in created.text
-    assert created.json()["item"]["is_super_admin"] is True
-    assert _audits(db, "admin_v1.write.platform_user.create")
+    assert direct.status_code == 403
+    assert _detail(direct) == "Panel yöneticisi danger/platform_user.create ile oluşturulur."
+    assert "sifre-123" not in direct.text
+    assert "yeni@example.com" not in {row.get("email") for row in db.users.docs.values()}
+
+    prepared, _ = _send(
+        client, secret, pub["id"], "POST", "/api/platform/admin-v1/danger/platform_user.create/prepare",
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "name": "Yeni Admin",
+            "email": "yeni@example.com",
+            "password": "sifre-123",
+        },
+        idem="user-prep",
+    )
+    assert prepared.status_code == 200, prepared.text
+    assert "sifre-123" not in prepared.text
+    confirmed, _ = _send(
+        client, secret, pub["id"], "POST", "/api/platform/admin-v1/danger/platform_user.create/confirm",
+        {
+            "confirmation_token": prepared.json()["confirmation_token"],
+            "confirm_text": "yeni@example.com",
+            "operator_otp": _otp(),
+        },
+        idem="user-ok",
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert "sifre-123" not in confirmed.text
+    item = confirmed.json()["item"]
+    assert item["email"] == "yeni@example.com"
+    assert "password" not in item
+    stored = next(row for row in db.users.docs.values() if row.get("email") == "yeni@example.com")
+    assert stored["is_super_admin"] is True
+    assert _audits(db, "admin_v1.danger.platform_user.create.confirm")
 
 
 def test_detach_subsidiary_via_danger(gap):

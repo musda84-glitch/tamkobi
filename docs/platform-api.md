@@ -471,6 +471,8 @@ Gövde: `confirmation_token`, `confirm_text`, `operator_otp`, phrase isteyen iş
 
 Sır taşıyan gövde alanları (`password`, `api_key`, `merchant_key`, `merchant_salt`, `legal_iban`, `clear_key: true`) özellik yazma kapsamına ek olarak `admin.secrets:write` ister. Alan gövdede varsa boş string ve yalnızca boşluk da sayılır. Eksikse **403** `Kapsam yetersiz` ve kayıt yazılmaz. `clear_key: false` sır sayılmaz. Panel kullanıcısında boş veya yalnızca boşluk `password`, kapsam varken **400** `Şifre boş olamaz.` döner ve hash yazılmaz. Okuma `configured` / `has_*` ve maskeli ipucu döner; düz sır dönmez. Audit `details.fields` bu alan adlarını listelemez.
 
+Kayıtlı sırrın bağlı olduğu uç veya kullanıcı değişince de `admin.secrets:write` gerekir. Aynı değerin yankısı ve sır taşımayan alanlar (model adı, başlık, `msgheader`, görünen ad) özellik kapsamıyla kalır. Kapsam yoksa **403** `Kapsam yetersiz` ve ne uç ne sır değişir. Kapsam varken yeni sır yoksa kayıtlı sır düşer. Alanlar: AI `provider` ve `base_url`; SMTP `smtp_host`, `smtp_port`, `smtp_user`; kutu `email`, `smtp_user`, `server_id`; e-fatura `api_url`, `efatura_url`, `earsiv_url`, `username`; SMS `provider` ve `usercode` (yeni şifre yoksa hesap pasifleşir). PayTR token adresi sabittir; `merchant_id` bu kurala girmez. `public_url` ve `require_superadmin_2fa` doğrudan yazılmaz; `danger/settings.public_url` ve `danger/settings.require_superadmin_2fa` gerekir.
+
 `is_public` paket bayrağı A4’teki `POST/PUT /plans` üzerindedir (`saas.apply_create_plan` / `apply_update_plan`). Ayrı uç yoktur.
 
 Yeni kapsamlar `ADMIN_SCOPES` içindedir. Bir `:write` diğerini kapsamaz. `admin.secrets:write` tek başına özellik ucunu açmaz.
@@ -526,27 +528,27 @@ Yeni kapsamlar `ADMIN_SCOPES` içindedir. Bir `:write` diğerini kapsamaz. `admi
 | uç | kapsam | iş |
 |----|--------|-----|
 | `GET /companies/{company_id}/einvoice` | `admin.einvoice:read` | `server._einvoice_view` maskeli. `username` yerine `username_configured` ve `username_hint`. `has_password`, `has_api_key`. `mode` İşNet SOAP ortamıdır (`test` \| `live`). `despatch_defaults` e-irsaliye varsayılanıdır. |
-| `PUT /companies/{company_id}/einvoice/credentials` | `admin.einvoice:write` | `server.save_einvoice_settings`. Sağlayıcı önceden atanmış olmalıdır. `password` ve `api_key` için `admin.secrets:write`. Audit `einvoice.credentials`. |
+| `PUT /companies/{company_id}/einvoice/credentials` | `admin.einvoice:write` | `server.save_einvoice_settings`. Sağlayıcı önceden atanmış olmalıdır. `password` ve `api_key` için `admin.secrets:write`. `api_url`, `efatura_url`, `earsiv_url` veya `username` değişince de `admin.secrets:write`; yeni sır yoksa `password_enc` ve `api_key_enc` düşer. Audit `einvoice.credentials`. |
 | `GET /einvoice/isnet/egress` | `admin.einvoice:read` | `isnet.isnet_ip_registration_info` (çıkış IP). |
-| `PUT /sms/settings` | `admin.sms:write` | `platform_sms.save_platform_sms`. Parola için `admin.secrets:write`. `msgheader` 3–11 karakter. Audit `sms.save`. |
+| `PUT /sms/settings` | `admin.sms:write` | `platform_sms.save_platform_sms`. Parola için `admin.secrets:write`. `provider` veya `usercode` değişince de `admin.secrets:write`; yeni şifre yoksa `password_enc` düşer ve hesap pasifleşir. `msgheader` 3–11 karakter. Audit `sms.save`. |
 | `POST /sms/verify` | `admin.sms:write` | `verify_platform_sms`. Audit `sms.verify`. |
 | `POST /sms/balance` | `admin.sms:write` | `platform_sms_balance`. Audit `sms.balance`. |
 | `POST /sms/send-test` | `admin.sms:write` | `phone` zorunlu. Audit `sms.send_test`. |
 | `GET /ai` | `admin.ai:read` | `saas_extras._system_ai_public` (`has_key`, `key_hint`). |
-| `PUT /ai` | `admin.ai:write` | `put_system_ai`. `api_key` ve `clear_key: true` için `admin.secrets:write`. Audit `ai.save`. |
+| `PUT /ai` | `admin.ai:write` | `put_system_ai`. `api_key` ve `clear_key: true` için `admin.secrets:write`. `provider` veya `base_url` değişince de `admin.secrets:write`; yeni `api_key` yoksa kayıtlı anahtar düşer. Audit `ai.save`. |
 | `POST /ai/test` | `admin.ai:write` | `test_system_ai`. Kayıtlı anahtar yalnız kayıtlı `provider` ve `base_url` ile gider. Farklı sağlayıcı veya uç nokta, gövdede dolu `api_key` yoksa **400** ve kayıtlı anahtar gönderilmez; `api_key` varsa `admin.secrets:write` gerekir ve yalnız o anahtar kullanılır. Audit `ai.test`. |
 | `GET /paytr` | `admin.settings:read` | `_paytr_public` (`has_key`, `has_salt`, `merchant_id`). |
 | `PUT /paytr` | `admin.settings:write` | `put_paytr`. `merchant_key` ve `merchant_salt` için `admin.secrets:write`. Audit `paytr.save`. |
 | `POST /paytr/test` | `admin.settings:write` | `test_paytr`. Audit `paytr.test`. |
 | `GET /settings` | `admin.settings:read` | `saas_billing.settings` maskeli. `legal_iban` yerine `legal_iban_configured` ve `legal_iban_hint`. `ai` ve `paytr` bu gövdede yoktur. |
-| `PUT /settings` | `admin.settings:write` | `saas_billing.put_settings`. `legal_iban` için `admin.secrets:write`. Audit `settings.save`. |
+| `PUT /settings` | `admin.settings:write` | `saas_billing.put_settings`. `legal_iban` için `admin.secrets:write`. `public_url` ve `require_superadmin_2fa` **403** ve danger uçlarına bırakılır. Audit `settings.save`. |
 | `GET /mail` | `admin.settings:read` | `platform_mail.mail_overview`. `has_password`; `password_enc` yok. Gelen kutusu okuma bu API’de yoktur. |
 | `POST /mail/servers` | `admin.settings:write` | `create_server`. Parola zorunlu ve `admin.secrets:write`. Audit `mail.server.create`. |
-| `PUT /mail/servers/{server_id}` | `admin.settings:write` | `update_server`. Audit `mail.server.update`. |
+| `PUT /mail/servers/{server_id}` | `admin.settings:write` | `update_server`. `smtp_host`, `smtp_port` veya `smtp_user` değişince `admin.secrets:write`; yeni parola yoksa `password_enc` düşer. Audit `mail.server.update`. |
 | `POST /mail/servers/{server_id}/delete` | `admin.settings:write` | `delete_server`. Audit `mail.server.delete`. |
 | `POST /mail/servers/{server_id}/test` | `admin.settings:write` | `test_server`. Audit `mail.server.test`. |
 | `POST /mail/mailboxes` | `admin.settings:write` | `create_mailbox`. Audit `mail.mailbox.create`. |
-| `PUT /mail/mailboxes/{box_id}` | `admin.settings:write` | `update_mailbox`. Audit `mail.mailbox.update`. |
+| `PUT /mail/mailboxes/{box_id}` | `admin.settings:write` | `update_mailbox`. `email`, `smtp_user` veya `server_id` değişince `admin.secrets:write`; yeni parola yoksa kutu `password_enc` düşer. Audit `mail.mailbox.update`. |
 | `POST /mail/mailboxes/{box_id}/delete` | `admin.settings:write` | `delete_mailbox`. Audit `mail.mailbox.delete`. |
 
 ### CMS, yardım, bakım, XSLT, kontör, veritabanı, ek
