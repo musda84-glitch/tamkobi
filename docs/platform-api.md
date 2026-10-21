@@ -336,7 +336,7 @@ Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.parent`. Gövde y
 
 ### PUT `/api/platform/admin-v1/companies/{company_id}/einvoice`
 
-Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.company.einvoice`. Gövde yalnız `provider` (metin). Boş değer atamayı kaldırır. Bilinmeyen kod **400** `Desteklenmeyen entegratör.`. İş `einvoice_assign.assign_company_provider` — `/system/companies/{id}/einvoice` aynı fonksiyonu çağırır ve tam `_einvoice_view` döndürmeye devam eder. Bu uç `public_assignment` döner: `company_id`, `provider`, `provider_name`, `assigned`, `status`, `has_password`, `has_api_key`. Kullanıcı adı, VKN, URL, `password_enc` ve `api_key_enc` yoktur. Sağlayıcı değişince şifreli alanlar silinir. Şifre veya API anahtarı yazmak bu uçta yoktur.
+Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.company.einvoice`. Gövde yalnız `provider` (zorunlu metin). Alan yoksa **400** `provider zorunlu.`. Trim sonrası boş değer (`""` veya yalnız boşluk) atamayı kaldırır; `assigned` false döner ve **400** `provider boş olamaz` üretilmez. `/system/companies/{id}/einvoice` de boş sağlayıcıyı kaldırma sayar. Bilinmeyen dolu kod **400** `Desteklenmeyen entegratör.` ve kayıt yazılmaz. İş `einvoice_assign.assign_company_provider` — `/system` aynı fonksiyonu çağırır ve tam `_einvoice_view` döndürmeye devam eder. Bu uç `public_assignment` döner: `company_id`, `provider`, `provider_name`, `assigned`, `status`, `has_password`, `has_api_key`. Kullanıcı adı, VKN, URL, `password_enc` ve `api_key_enc` yoktur. Sağlayıcı değişince veya atama kalkınca şifreli alanlar silinir. Şifre veya API anahtarı yazmak bu uçta yoktur.
 
 ### PUT `/api/platform/admin-v1/companies/{company_id}/notify-prefs`
 

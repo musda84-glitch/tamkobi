@@ -520,6 +520,78 @@ def test_company_isolation(db):
         assert _PASSWORD not in json.dumps(row, default=str)
 
 
+def test_einvoice_empty_provider_unassigns(db):
+    _seed(db)
+
+    async def plant_b():
+        await db.einvoice_settings.insert_one({
+            "_id": "ei_b",
+            "company_id": "comp_b",
+            "provider": "n11faturam",
+            "username": "beta-user",
+            "password_enc": "LEAK-B",
+            "status": "live",
+        })
+        db.einvoice_settings.docs["ei_a"]["provider"] = "isnet"
+        db.einvoice_settings.docs["ei_a"]["username"] = _LEAK_USER
+        db.einvoice_settings.docs["ei_a"]["password_enc"] = _LEAK_PASS
+        db.einvoice_settings.docs["ei_a"]["status"] = "live"
+
+    asyncio.run(plant_b())
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_INTEGRATORS_WRITE], name="ei-clear")
+    client = _client()
+    path = "/api/platform/admin-v1/companies/comp_a/einvoice"
+    snap_b = _blob(db, "einvoice_settings", "ei_b")
+    snap_company_b = _blob(db, "companies", "comp_b")
+    unknown, _, _ = _send(
+        client, secret, pub["id"], "PUT", path, {"provider": "yok"}, idem="ei-unknown",
+    )
+    assert unknown.status_code == 400
+    assert _detail(unknown) == "Desteklenmeyen entegratör."
+    assert db.einvoice_settings.docs["ei_a"]["provider"] == "isnet"
+    assert db.einvoice_settings.docs["ei_a"]["password_enc"] == _LEAK_PASS
+    assert not [
+        row for row in db.platform_audit_log.docs.values()
+        if row.get("action") == "admin_v1.write.company.einvoice"
+    ]
+    cleared, _, _ = _send(client, secret, pub["id"], "PUT", path, {"provider": ""}, idem="ei-clear")
+    assert cleared.status_code == 200, cleared.text
+    item = cleared.json()["item"]
+    assert item["provider"] == ""
+    assert item["assigned"] is False
+    assert item["has_password"] is False
+    assert item["has_api_key"] is False
+    assert _LEAK_PASS not in cleared.text
+    assert _LEAK_USER not in cleared.text
+    stored = db.einvoice_settings.docs["ei_a"]
+    assert stored["provider"] == ""
+    assert "password_enc" not in stored
+    assert stored.get("username") == ""
+    audits = [
+        row for row in db.platform_audit_log.docs.values()
+        if row.get("action") == "admin_v1.write.company.einvoice"
+    ]
+    assert len(audits) == 1
+    assert audits[0]["target_type"] == "company"
+    assert audits[0]["target_id"] == "comp_a"
+    assert audits[0]["details"]["fields"] == ["provider"]
+    assert _LEAK_PASS not in json.dumps(audits[0])
+    blank, _, _ = _send(
+        client, secret, pub["id"], "PUT", path, {"provider": "isnet"}, idem="ei-again",
+    )
+    assert blank.status_code == 200, blank.text
+    removed, _, _ = _send(
+        client, secret, pub["id"], "PUT", path, {"provider": "   "}, idem="ei-blank",
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["item"]["assigned"] is False
+    assert db.einvoice_settings.docs["ei_a"]["provider"] == ""
+    assert _blob(db, "einvoice_settings", "ei_b") == snap_b
+    assert _blob(db, "companies", "comp_b") == snap_company_b
+    assert db.einvoice_settings.docs["ei_b"]["provider"] == "n11faturam"
+    assert db.einvoice_settings.docs["ei_b"]["password_enc"] == "LEAK-B"
+
+
 def test_reads_scope_ip_mask_and_isolation(db):
     _seed(db)
     _plant_key(db, key_id="pk_product_r", secret="product-secret", kind="product", scopes=[store.SCOPE_ADMIN_NOTIFICATIONS_READ])

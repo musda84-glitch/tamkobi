@@ -256,8 +256,11 @@ async def _prepare_child(company_id: str, payload: Dict[str, Any]) -> List[str]:
 
 
 async def _prepare_einvoice(company_id: str, payload: Dict[str, Any]) -> List[str]:
+    """provider zorunlu metin. Trim sonrası boş değer atamayı kaldırır."""
     _reject_unknown(payload, ("provider",))
-    provider = _text(payload, "provider", required=True, max_len=40)
+    if "provider" not in payload:
+        raise HTTPException(status_code=400, detail="provider zorunlu.")
+    provider = _text(payload, "provider", required=False, max_len=40)
     if provider and provider not in einvoice_assign.KNOWN_PROVIDERS:
         raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
     await _company_or_404(company_id)
