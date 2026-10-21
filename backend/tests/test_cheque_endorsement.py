@@ -131,6 +131,7 @@ def test_endorse_posts_one_row_and_sync_does_not_drift(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     saved = _run(_receive(db, amount=250000, due="2026-11-30", number="CEK-2026-0004"))
     original_before = _balance(db, "ersay")
     card_before = _card(db, "ersay")
@@ -194,6 +195,7 @@ def test_two_cheques_card_stays_after_drift_reset(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     first = _run(_receive(db, amount=250000, due="2026-11-30", number="CEK-2026-0002"))
     second = _run(_receive(db, amount=250000, due="2026-12-15", number="CEK-2026-0003"))
     _run(cheques.endorse_cheque(first["id"], {"contact_id": "nur", "date": "2026-10-21"}, _user()))
@@ -225,6 +227,7 @@ def test_historical_virtual_then_backfill_once(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     await_id = "hist-1"
     _run(db.cheques.insert_one({
         "_id": await_id,
@@ -408,6 +411,7 @@ def test_overdue_endorsement_drops_off_card_original_drops_once(db, monkeypatch)
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     future = "2099-12-31"
     overdue = _run(_receive(db, amount=70, due="2020-01-01"))
     fresh = _run(_receive(db, amount=30, due=future))
@@ -433,6 +437,7 @@ def test_other_company_cheque_and_contact_are_hidden(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     _run(db.contacts.insert_one({
         "_id": "foreign",
         "company_id": CO_B,
@@ -476,6 +481,7 @@ def test_endorsement_row_cannot_be_edited_or_deleted(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     saved = _run(_receive(db, amount=25, due="2099-01-01"))
     _run(cheques.endorse_cheque(saved["id"], {"contact_id": "nur"}, _user()))
     tx = _endorsement_txs(db, saved["id"])[0]
@@ -494,6 +500,7 @@ def test_account_recalc_unchanged_by_endorse(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     _run(db.bank_accounts.insert_one({
         "_id": "acc-int",
         "company_id": CO,
@@ -557,6 +564,7 @@ def test_source_guard_rejects_portfolio_and_endorsement(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     saved = _run(_receive(db, amount=25, due="2099-01-01"))
     portfolio = next(tx for tx in db.bank_transactions.docs if tx.get("cheque_kind") == "portfolio")
     portfolio_detail = linked_moves.source_guard_detail(portfolio)
@@ -604,6 +612,7 @@ def test_cashflow_and_accountant_skip_accountless_cheque_rows(db, monkeypatch):
 
     _run(_contacts(db))
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(cheques, "_db", db)
     _run(db.bank_accounts.insert_one({
         "_id": "acc-cashflow",
         "company_id": CO,
