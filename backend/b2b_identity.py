@@ -844,12 +844,78 @@ async def change_own_password(db, contact: dict, new_hash: str, *, current_plain
     return identity
 
 
+async def _other_link_accepted(db, email: str, company_id: str, contact_id: str) -> bool:
+    """Aynı e-postada bu cariden başka kabul edilmiş bağ var mı."""
+    self_key = f"{company_id}:{contact_id}"
+    accepted = await _accepted_contact_ids(db, email)
+    return any(key != self_key for key in accepted)
+
+
+async def _single_email_carrier(db, email: str, contact_id: str) -> bool:
+    """Giriş e-postası veya carinin kendi e-postası bu adresi taşıyan tek cari."""
+    rows = list(await _contacts_for_login_email(db, email))
+    rows.extend(await _legacy_email_contacts(db, email))
+    ids = {str(row.get("_id") or "") for row in rows if row.get("_id")}
+    return ids == {str(contact_id)}
+
+
+def _own_email_matches(contact: dict, target: str) -> bool:
+    return _norm_email((contact or {}).get("email")) == target
+
+
+async def _reset_contact_should_accept(db, target: str, contact: dict) -> bool:
+    """Tek cari ya da carinin kendi e-postası hedefse kabul.
+
+    Başka bir cari bu e-posta için zaten kabul edilmişse yeni bağ yazılmaz.
+    A kabul edilmişken B üzerinden sıfırlama B'yi kabul ettirmez.
+    """
+    contact_id = str((contact or {}).get("_id") or "")
+    company_id = str((contact or {}).get("company_id") or "")
+    if not contact_id or not company_id or "@" not in target:
+        return False
+    if await _other_link_accepted(db, target, company_id, contact_id):
+        return False
+    if await _single_email_carrier(db, target, contact_id):
+        return True
+    return _own_email_matches(contact, target)
+
+
+async def _queue_unaccepted_reset_notice(db, target: str, contact: dict, existing: Optional[dict]) -> None:
+    """Kabul edilmemiş bağ için 72 saatlik onay linki. Posta yalnız notify_outbox."""
+    contact_id = str((contact or {}).get("_id") or "")
+    company_id = str((contact or {}).get("company_id") or "")
+    if not contact_id or not company_id or "@" not in target:
+        return
+    raw = await _issue_accept_token(
+        db, email=target, contact_id=contact_id, company_id=company_id, existing=existing,
+    )
+    if not raw:
+        return
+    company = await db.companies.find_one({"_id": company_id}) if company_id else None
+    queued = await _send_link_notice(
+        db,
+        to=target,
+        company_name=(company or {}).get("name") or "Bir tedarikçi",
+        contact_name=(contact or {}).get("name") or "",
+        company_id=company_id,
+        token=raw,
+    )
+    if not queued:
+        return
+    await db.contacts.update_one(
+        {"_id": contact_id, "company_id": company_id},
+        {"$set": {"b2b_link_notified_email": target}},
+    )
+
+
 async def apply_password_reset(db, contact: dict, plain_password: str, *, email: Optional[str] = None) -> dict:
     """Kimlik şifresini yeniler, e-postayı doğrular, oturumları siler. Cari hash'ine dokunmaz.
 
-    _mark_accepted yalnız bu cari bağın accepted_at değeri zaten doluysa çağrılır.
-    Bekleyen veya hiç açılmamış bağ şifre sıfırlamayla kabul edilmez; kabul
-    yalnız 72 saatlik onay linkinin POST'u ile yazılır.
+    Zaten kabul edilmiş bağda _mark_accepted sürer. Kabul edilmemiş bağ, başka
+    bir cari aynı e-posta için kabul edilmişken onaylanmaz. O bağ için mevcut
+    _issue_accept_token ile 72 saatlik link üretilir; posta yalnız notify_outbox'a
+    yazılır. Bu e-postayı taşıyan tek cariyse veya carinin kendi e-posta alanı
+    hedefle eşleşiyorsa ve başka kabul yoksa bağ kabul edilir.
     """
     target = _norm_email(email or (contact or {}).get("b2b_login_email") or (contact or {}).get("email"))
     if "@" not in target:
@@ -875,6 +941,13 @@ async def apply_password_reset(db, contact: dict, plain_password: str, *, email:
             {"_id": _accept_key(target, company_id, contact_id)}
         )
     if existing and existing.get("accepted_at"):
+        await _mark_accepted(db, target, contact)
+        return identity
+    try:
+        await _queue_unaccepted_reset_notice(db, target, contact, existing)
+    except Exception as exc:
+        logger.warning("b2b reset accept notice skipped: %s", type(exc).__name__)
+    if await _reset_contact_should_accept(db, target, contact):
         await _mark_accepted(db, target, contact)
     return identity
 
