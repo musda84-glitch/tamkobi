@@ -38,7 +38,7 @@ import migration  # noqa: E402
 import rbac  # noqa: E402
 import saas  # noqa: E402
 import server  # noqa: E402
-from mysql_store import match_query, new_upsert_doc  # noqa: E402
+from mysql_store import DuplicateKeyError, match_query, new_upsert_doc  # noqa: E402
 
 COMP_A = "comp-a"
 COMP_B = "comp-b"
@@ -704,6 +704,33 @@ def test_phone_number_id_is_unique_across_companies(api):
     assert cleared_b.status_code == 200, cleared_b.text
     assert next(d for d in db.whatsapp_settings.docs if d["_id"] == "setA")["phone_number_id"] == ""
     assert next(d for d in db.whatsapp_settings.docs if d["_id"] == "setB")["phone_number_id"] == ""
+
+
+def test_phone_number_id_unique_index_duplicate_is_409(api, caplog):
+    client, db, _graph_calls, _bh_calls = api
+    leaked_company = "RakipUnvan-57a6"
+    leaked_key = "pn-index-leak-57a6"
+    before = copy.deepcopy(db.whatsapp_settings.docs)
+
+    async def _raise_duplicate(query, update, upsert=False):
+        raise DuplicateKeyError(f"duplicate key phone_number_id={leaked_key} company={leaked_company}")
+
+    db.whatsapp_settings.update_one = _raise_duplicate
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+    res = client.put("/api/comm/whatsapp/settings", json={
+        "company_id": COMP_A,
+        "phone_number_id": "pn-yeni-57a6",
+        "verify_token": "verify-a",
+    }, headers=_auth("user-a"))
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == PN_CLASH
+    assert leaked_company not in res.text
+    assert leaked_key not in res.text
+    assert leaked_company not in caplog.text
+    assert leaked_key not in caplog.text
+    assert "pn-yeni-57a6" not in caplog.text
+    assert db.whatsapp_settings.docs == before
 
 
 def test_duplicate_phone_number_id_webhook_writes_nothing(api, caplog):

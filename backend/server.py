@@ -18932,6 +18932,9 @@ async def accountant_export(company_id: Optional[str] = None, month: Optional[st
     return Response(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}_{month}.csv"})
 
 # ----------------- WHATSAPP BUSINESS (CLOUD API) -----------------
+_WA_PHONE_NUMBER_ID_CLASH = "Bu WhatsApp telefon numarası kimliği (phone_number_id) başka bir şirkette kullanılıyor."
+
+
 async def _wa_settings_payload(company_id: str) -> dict:
     s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
     return {"company_id": company_id, "phone_number_id": s.get("phone_number_id", ""), "verify_token": s.get("verify_token", ""), "has_token": bool(s.get("access_token_enc")),
@@ -18957,7 +18960,7 @@ async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current
     if phone_number_id:
         pn_clash = await db.whatsapp_settings.find_one({"phone_number_id": phone_number_id, "company_id": {"$ne": company_id}})
         if pn_clash:
-            raise HTTPException(status_code=409, detail="Bu WhatsApp telefon numarası kimliği (phone_number_id) başka bir şirkette kullanılıyor.")
+            raise HTTPException(status_code=409, detail=_WA_PHONE_NUMBER_ID_CLASH)
     if req.get("access_token"):
         update["access_token_enc"] = comm_service.encrypt(req["access_token"])
     if not update["phone_number_id"]:
@@ -18966,7 +18969,11 @@ async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current
         update["app_secret_enc"] = ""
     elif str(req.get("app_secret") or "").strip():
         update["app_secret_enc"] = comm_service.encrypt(str(req.get("app_secret")).strip())
-    await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    try:
+        await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    except DuplicateKeyError:
+        # İndeks mesajı anahtar ve rakip şirket taşıyabilir; genel 409 dışında hiçbir şey dönülmez veya loglanmaz.
+        raise HTTPException(status_code=409, detail=_WA_PHONE_NUMBER_ID_CLASH) from None
     return await _wa_settings_payload(company_id)
 
 @api_router.get("/comm/whatsapp/webhook")
