@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -1402,6 +1402,59 @@ async def prepare_company_parent(company_id: str, parent_id: str) -> Dict[str, A
         "parent_lid": parent_lid,
         "drop_child_license": child_lid != parent_lid and child_lid == company_id,
     }
+
+
+async def apply_detach_subsidiary(company_id: str) -> dict:
+    """Alt şirketin üst bağını koparır. Paylaşılan lisanstayken kendi lisans kopyasını açar.
+
+    /system'de ayrı uç yoktur. admin-v1 danger `company.detach` bu fonksiyonu çağırır.
+    """
+    c = await _db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    parent = resolved_parent_id(c)
+    if not parent:
+        raise HTTPException(status_code=400, detail="Bu şirket bir üst şirkete bağlı değil.")
+    old_lid = c.get("license_id") or company_id
+    updates: Dict[str, Any] = {"parent_company_id": None, "updated_at": _now()}
+    if old_lid != company_id:
+        lic = await _db.company_licenses.find_one({"_id": old_lid}) or {}
+        clone = {k: v for k, v in lic.items() if k != "_id"}
+        clone["updated_at"] = _now()
+        note = str(clone.get("notes") or "").strip()
+        extra = "Bağımsız lisans (alt şirket ayrıldı)."
+        clone["notes"] = f"{note}\n{extra}".strip() if note else extra
+        existing = await _db.company_licenses.find_one({"_id": company_id})
+        if existing:
+            await _db.company_licenses.update_one({"_id": company_id}, {"$set": clone})
+        else:
+            await _db.company_licenses.insert_one({"_id": company_id, **clone})
+        updates["license_id"] = company_id
+        rows = await _db.companies.find({}).to_list(2000)
+        lookup = {d["_id"]: d for d in rows}
+
+        def _children_of(cid: str) -> List[str]:
+            return [oid for oid, doc in lookup.items() if resolved_parent_id(doc) == cid]
+
+        stack = _children_of(company_id)
+        seen = set()
+        while stack:
+            kid = stack.pop()
+            if kid in seen:
+                continue
+            seen.add(kid)
+            kid_doc = lookup.get(kid) or {}
+            if (kid_doc.get("license_id") or kid) == old_lid:
+                await _db.companies.update_one(
+                    {"_id": kid},
+                    {"$set": {"license_id": company_id, "updated_at": _now()}},
+                )
+                lookup[kid] = {**kid_doc, "license_id": company_id}
+            stack.extend(_children_of(kid))
+        invalidate(old_lid)
+    invalidate(company_id)
+    await _db.companies.update_one({"_id": company_id}, {"$set": updates})
+    return await _company_row(await _db.companies.find_one({"_id": company_id}))
 
 
 async def apply_set_company_parent(company_id: str, parent_id: str) -> dict:

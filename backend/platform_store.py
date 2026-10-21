@@ -43,6 +43,24 @@ SCOPE_ADMIN_SUPPORT_WRITE = "admin.support:write"
 SCOPE_ADMIN_NOTIFICATIONS_WRITE = "admin.notifications:write"
 SCOPE_ADMIN_IMPERSONATE = "admin.impersonate"
 SCOPE_ADMIN_DANGEROUS = "admin.dangerous"
+SCOPE_ADMIN_QUOTAS_WRITE = "admin.quotas:write"
+SCOPE_ADMIN_SETTINGS_READ = "admin.settings:read"
+SCOPE_ADMIN_SETTINGS_WRITE = "admin.settings:write"
+SCOPE_ADMIN_SECRETS_WRITE = "admin.secrets:write"
+SCOPE_ADMIN_CMS_READ = "admin.cms:read"
+SCOPE_ADMIN_CMS_WRITE = "admin.cms:write"
+SCOPE_ADMIN_MAINTENANCE_READ = "admin.maintenance:read"
+SCOPE_ADMIN_MAINTENANCE_WRITE = "admin.maintenance:write"
+SCOPE_ADMIN_USERS_WRITE = "admin.users:write"
+SCOPE_ADMIN_KEYS_WRITE = "admin.keys:write"
+SCOPE_ADMIN_STORAGE_READ = "admin.storage:read"
+SCOPE_ADMIN_STORAGE_WRITE = "admin.storage:write"
+SCOPE_ADMIN_AI_READ = "admin.ai:read"
+SCOPE_ADMIN_AI_WRITE = "admin.ai:write"
+SCOPE_ADMIN_SMS_WRITE = "admin.sms:write"
+SCOPE_ADMIN_EINVOICE_READ = "admin.einvoice:read"
+SCOPE_ADMIN_EINVOICE_WRITE = "admin.einvoice:write"
+SCOPE_ADMIN_DB_READ = "admin.db:read"
 ADMIN_SCOPES = (
     SCOPE_ADMIN_COMPANIES_READ,
     SCOPE_ADMIN_USERS_READ,
@@ -67,6 +85,24 @@ ADMIN_SCOPES = (
     SCOPE_ADMIN_NOTIFICATIONS_WRITE,
     SCOPE_ADMIN_IMPERSONATE,
     SCOPE_ADMIN_DANGEROUS,
+    SCOPE_ADMIN_QUOTAS_WRITE,
+    SCOPE_ADMIN_SETTINGS_READ,
+    SCOPE_ADMIN_SETTINGS_WRITE,
+    SCOPE_ADMIN_SECRETS_WRITE,
+    SCOPE_ADMIN_CMS_READ,
+    SCOPE_ADMIN_CMS_WRITE,
+    SCOPE_ADMIN_MAINTENANCE_READ,
+    SCOPE_ADMIN_MAINTENANCE_WRITE,
+    SCOPE_ADMIN_USERS_WRITE,
+    SCOPE_ADMIN_KEYS_WRITE,
+    SCOPE_ADMIN_STORAGE_READ,
+    SCOPE_ADMIN_STORAGE_WRITE,
+    SCOPE_ADMIN_AI_READ,
+    SCOPE_ADMIN_AI_WRITE,
+    SCOPE_ADMIN_SMS_WRITE,
+    SCOPE_ADMIN_EINVOICE_READ,
+    SCOPE_ADMIN_EINVOICE_WRITE,
+    SCOPE_ADMIN_DB_READ,
 )
 KEY_KIND_PRODUCT = "product"
 KEY_KIND_PLATFORM_ADMIN = "platform_admin"
@@ -467,6 +503,24 @@ async def rotate_api_key(key_id: str, *, actor_id: str, ip: str = "") -> Tuple[d
     )
     new_pub["rotated_from"] = key_id
     return new_pub, secret
+
+
+async def update_api_key_scopes(key_id: str, scopes: List[str], *, actor_id: str, ip: str = "") -> dict:
+    """Şirket veya platform anahtarının kapsam listesini değiştirir. Sırrı döndürmez."""
+    old = await _db.platform_api_keys.find_one({"_id": key_id})
+    if not old:
+        raise LookupError("Anahtar bulunamadı")
+    if old.get("revoked_at"):
+        raise ValueError("İptal edilmiş anahtarın kapsamı değişmez")
+    kind = old.get("kind") or KEY_KIND_PRODUCT
+    sc = _normalize_scopes(list(scopes), kind=kind)
+    await _db.platform_api_keys.update_one({"_id": key_id}, {"$set": {"scopes": sc}})
+    await write_audit(
+        actor_type="superadmin", actor_id=actor_id, ip=ip,
+        action="api_key.scopes", target_type="api_key", target_id=key_id,
+        details={"scopes": sc},
+    )
+    return _public_key({**old, "scopes": sc})
 
 
 async def revoke_api_key(key_id: str, *, actor_id: str, ip: str = "") -> dict:

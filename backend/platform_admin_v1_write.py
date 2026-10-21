@@ -82,6 +82,38 @@ def _require_bool(payload: Dict[str, Any], field: str) -> None:
         raise HTTPException(status_code=400, detail=f"{field} boolean olmalı.")
 
 
+_SECRET_BODY_KEYS = ("password", "api_key", "merchant_key", "merchant_salt", "legal_iban")
+_AUDIT_BLOCK = ("password", "secret", "api_key", "merchant_key", "merchant_salt", "token", "credential")
+
+
+def body_has_secret(payload: Dict[str, Any]) -> bool:
+    if payload.get("clear_key") is True:
+        return True
+    for key in _SECRET_BODY_KEYS:
+        if key in payload and str(payload.get(key) or "").strip():
+            return True
+    return False
+
+
+async def require_secret_scope(request: Request) -> None:
+    """Parola / API anahtarı yazan gövde admin.secrets:write ister. Sır döndürülmez."""
+    key_id = (request.headers.get("X-Platform-Key") or "").strip()
+    doc = await store._db.platform_api_keys.find_one({"_id": key_id})
+    scopes = list((doc or {}).get("scopes") or [])
+    if store.SCOPE_ADMIN_SECRETS_WRITE not in scopes:
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+
+
+def audit_field_names(names: List[str]) -> List[str]:
+    out = []
+    for name in names:
+        low = name.lower()
+        if any(part in low for part in _AUDIT_BLOCK):
+            continue
+        out.append(name)
+    return out
+
+
 async def _company_or_404(company_id: str) -> None:
     if not await saas._db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
