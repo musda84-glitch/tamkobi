@@ -732,3 +732,36 @@ def test_backfill_cli_requires_company_and_explicit_connection(monkeypatch):
     assert flagged["settings"]["password"] != "from-env"
     assert flagged["settings"]["db"] == "tam"
     assert flagged["settings"]["port"] == 3308
+
+
+def test_portfolio_with_account_is_not_locked():
+    import linked_moves
+
+    booked = {
+        "cheque_kind": "portfolio",
+        "cheque_id": "ch-booked",
+        "source": "cheque",
+        "account_id": "acc-1",
+        "account_name": "Kasa",
+        "category": "Alınan Çek",
+        "amount": 10,
+    }
+    assert cheques.cheque_ledger_lock_detail(booked) is None
+    linked_moves.assert_not_source_linked(booked)
+    open_row = {**booked, "account_id": None, "account_name": "Çek Portföyü"}
+    detail = cheques.cheque_ledger_lock_detail(open_row)
+    assert detail
+    assert "portföy" in detail
+
+
+def test_ciro_category_without_cheque_link_stays_cash():
+    plain = {
+        "account_id": None,
+        "type": "outflow",
+        "amount": 40,
+        "source": "manual",
+        "category": "Ciro edilen çek",
+    }
+    assert cheques.is_noncash_cheque_movement(plain) is False
+    assert cheques.is_noncash_cheque_movement({**plain, "source": "cheque"}) is True
+    assert cheques.is_noncash_cheque_movement({**plain, "cheque_id": "ch-9"}) is True

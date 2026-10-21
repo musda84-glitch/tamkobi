@@ -254,7 +254,9 @@ def is_noncash_cheque_movement(tx: Optional[dict]) -> bool:
         return True
     if str(tx.get("account_name") or "") == "Çek Portföyü":
         return True
-    if str(tx.get("category") or "").startswith("Ciro edilen"):
+    if str(tx.get("category") or "").startswith("Ciro edilen") and (
+        str(tx.get("source") or "") == "cheque" or str(tx.get("cheque_id") or "").strip()
+    ):
         return True
     return False
 
@@ -274,10 +276,10 @@ def cheque_ledger_lock_detail(tx: Optional[dict]) -> Optional[str]:
     account_name = str(tx.get("account_name") or "")
     has_account = bool(str(tx.get("account_id") or "").strip())
     endorsement = bool(cheque_id) and (kind == "endorsement" or category.startswith("Ciro edilen"))
-    portfolio = (
+    portfolio = not has_account and (
         kind == "portfolio"
-        or (not has_account and account_name == "Çek Portföyü")
-        or (not has_account and source == "cheque" and kind not in ("bank", "endorsement") and bool(cheque_id))
+        or account_name == "Çek Portföyü"
+        or (source == "cheque" and kind not in ("bank", "endorsement") and bool(cheque_id))
     )
     if endorsement:
         return f"Kaynak kayıttan geri alın (çek/senet ciro). Kaynak: /cheques · id={cheque_id}"
