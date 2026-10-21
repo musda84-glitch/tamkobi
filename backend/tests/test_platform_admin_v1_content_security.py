@@ -89,6 +89,11 @@ def sec(monkeypatch):
             'rapor.pdf";\r\nX-Injected: yes',
         ))
         await fake.support_tickets.insert_one(_ticket(
+            "t_tr", _PARENT,
+            "/api/files/" + _GOOD,
+            "şirket-özeti.pdf",
+        ))
+        await fake.support_tickets.insert_one(_ticket(
             "t_other", _PARENT, "/api/files/" + _SECRET + "?t=forged-token",
         ))
         await fake.support_tickets.insert_one(_ticket(
@@ -189,10 +194,35 @@ def test_support_attachment_requires_ticket_file_row(sec):
     assert good.content == b"%PDF-1.4 ok"
     assert seen[-1] == _GOOD
     disposition = good.headers.get("content-disposition") or ""
-    assert disposition == 'attachment; filename="rapor.pdfX-Injected: yes"'
+    assert disposition == (
+        'attachment; filename="rapor.pdfX-Injected: yes"; '
+        "filename*=UTF-8''rapor.pdfX-Injected%3A%20yes"
+    )
     assert "inline" not in disposition.lower()
     assert "\r" not in disposition
     assert "\n" not in disposition
     assert good.headers.get("x-injected") is None
     assert good.headers.get("x-content-type-options") == "nosniff"
     assert seen == [_HTML, _GOOD]
+
+
+def test_support_attachment_turkish_filename(sec):
+    client, db, seen = sec
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_SUPPORT_READ], name="support-tr")
+    response = _get(
+        client, secret, pub["id"],
+        "/api/platform/admin-v1/support/tickets/t_tr/attachments/m1/0",
+    )
+    assert response.status_code == 200, response.text
+    assert response.content == b"%PDF-1.4 ok"
+    disposition = response.headers.get("content-disposition") or ""
+    assert disposition == (
+        'attachment; filename="irket-zeti.pdf"; '
+        "filename*=UTF-8''%C5%9Firket-%C3%B6zeti.pdf"
+    )
+    disposition.encode("latin-1")
+    assert "ş" not in disposition
+    assert "ö" not in disposition
+    assert "inline" not in disposition.lower()
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert seen == [_GOOD]

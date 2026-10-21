@@ -701,6 +701,28 @@ def test_storage_help_announcement_embed_and_attachment(gap, monkeypatch):
     assert attachment.headers.get("x-content-type-options") == "nosniff"
 
 
+def test_site_content_rejects_unknown_field(gap):
+    client, db = gap
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_CMS_WRITE], name="cms-content")
+    path = "/api/platform/admin-v1/sites/tai/content"
+    denied, _ = _send(
+        client, secret, pub["id"], "PUT", path,
+        {"pages": {"home": {"hero_title": "Merhaba"}}, "password": "x"},
+        idem="content-unknown",
+    )
+    assert denied.status_code == 400, denied.text
+    assert _detail(denied) == "Desteklenmeyen alan: password"
+    assert db.site_content.docs.get("site_tai") is None
+
+    saved, _ = _send(
+        client, secret, pub["id"], "PUT", path,
+        {"pages": {"home": {"hero_title": "Merhaba"}}},
+        idem="content-ok",
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["item"]["pages"]["home"]["hero_title"] == "Merhaba"
+
+
 def test_site_public_url_stays_on_https_danger_flow(gap):
     client, db = gap
     asyncio.run(db.platform_settings.insert_one({

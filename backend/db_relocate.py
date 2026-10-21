@@ -30,6 +30,25 @@ from setup_state import data_dir, load_database_settings, sanitize_db_name, save
 CORE_TABLES = ("docs", "meta_indexes")
 KNOWN_TABLES = ("docs", "meta_indexes", "system_logs")
 PASSWORD_ENV = "TARGET_MYSQL_PASSWORD"
+# Üretimde None. Testler init() ile bellek veritabanını bağlar; o zaman
+# current_settings / satır sayıları canlı MySQL açmaz.
+_db = None
+
+
+def init(db) -> None:
+    global _db
+    _db = db
+
+
+def _bound_settings() -> Optional[Dict[str, Any]]:
+    if _db is None:
+        return None
+    coll = getattr(_db, "database_settings", None)
+    docs = getattr(coll, "docs", None)
+    if not isinstance(docs, dict):
+        return None
+    row = docs.get("current")
+    return row if isinstance(row, dict) else None
 
 
 def backup_dir() -> Path:
@@ -123,6 +142,9 @@ def public_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def current_settings() -> Dict[str, Any]:
+    row = _bound_settings()
+    if row and str(row.get("host") or "").strip() and str(row.get("user") or "").strip():
+        return store_settings(row)
     from mysql_store import mysql_settings_from_env
 
     return store_settings(mysql_settings_from_env())
@@ -144,6 +166,10 @@ def same_server(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
 
 def whitelisted_table_counts(cfg: Dict[str, Any]) -> Dict[str, int]:
     """Yalnızca KNOWN_TABLES satır sayıları. İstek metni SQL'e girmez."""
+    if _db is not None:
+        row = _bound_settings() or {}
+        raw = row.get("tables") if isinstance(row.get("tables"), dict) else {}
+        return {name: int(raw.get(name) or 0) for name in KNOWN_TABLES}
     conn = mysql_backup.connect(dump_settings(cfg))
     try:
         cur = conn.cursor()
