@@ -349,19 +349,43 @@ const PrintSettings = ({ companyId }) => {
   );
 };
 
-const WhatsAppSettings = ({ companyId }) => {
-  const [s, setS] = useState(null); const [token, setToken] = useState(""); const [appSecret, setAppSecret] = useState("");
+export const WhatsAppSettings = ({ companyId }) => {
+  const [s, setS] = useState(null);
+  const [token, setToken] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [saveError, setSaveError] = useState("");
   useEffect(() => { axios.get(`${API_URL}/comm/whatsapp/settings?company_id=${companyId}`).then((r) => setS(r.data)); }, [companyId]);
   if (!s) return null;
-  const save = async (e) => { e.preventDefault(); try { const r = await axios.put(`${API_URL}/comm/whatsapp/settings`, { ...s, company_id: companyId, access_token: token, app_secret: appSecret }); setS(r.data); setToken(""); setAppSecret(""); toast.success(r.data.status === "connected" ? "WhatsApp Cloud API bağlandı." : "Kaydedildi — anahtar girilmeden SİMÜLE."); } catch { toast.error("Kaydedilemedi."); } };
+  const phoneSaved = Boolean(String(s.phone_number_id || "").trim());
+  const secretMissing = phoneSaved && !s.has_app_secret;
+  const badgeIncomplete = secretMissing && s.status === "connected";
+  const badgeLabel = badgeIncomplete ? "EKSİK AYAR" : s.status === "connected" ? "BAĞLI" : "SİMÜLE";
+  const save = async (e) => {
+    e.preventDefault();
+    setSaveError("");
+    try {
+      const r = await axios.put(`${API_URL}/comm/whatsapp/settings`, { ...s, company_id: companyId, access_token: token, app_secret: appSecret });
+      setS(r.data);
+      setToken("");
+      setAppSecret("");
+      toast.success(r.data.status === "connected" ? "WhatsApp Cloud API bağlandı." : "Kaydedildi — anahtar girilmeden SİMÜLE.");
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      const message = typeof detail === "string" && detail.trim() ? detail : "Kaydedilemedi.";
+      setSaveError(message);
+      toast.error(message);
+    }
+  };
   return (
     <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 text-xs max-w-xl" data-testid="whatsapp-settings">
-      <div className="flex items-center justify-between"><h3 className="text-sm font-bold">WhatsApp Business (Meta Cloud API)</h3><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${s.status === "connected" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="wa-status">{s.status === "connected" ? "BAĞLI" : "SİMÜLE"}</span></div>
+      <div className="flex items-center justify-between"><h3 className="text-sm font-bold">WhatsApp Business (Meta Cloud API)</h3><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${badgeIncomplete || s.status !== "connected" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`} data-testid="wa-status">{badgeLabel}</span></div>
+      {secretMissing && <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2" data-testid="wa-app-secret-missing">App Secret girilmedi: gelen WhatsApp mesajları güvenlik nedeniyle reddedilir.</p>}
       <p className="text-slate-500">Meta for Developers → WhatsApp → API Setup'tan Phone Number ID ve kalıcı erişim token'ı alın. Webhook URL: <code className="bg-slate-100 px-1 rounded">{window.location.origin}{s.webhook_url}</code> (gelen mesajlar telefon numarasına göre cari kartına düşer).</p>
       <div><label className="block font-semibold mb-1">Phone Number ID</label><input value={s.phone_number_id} onChange={(e) => setS({ ...s, phone_number_id: e.target.value })} className={`${inputCls} font-mono`} data-testid="wa-phone-id-input" /></div>
       <div><label className="block font-semibold mb-1">Erişim Token {s.has_token && <span className="text-slate-400 font-normal">(kayıtlı)</span>}</label><input type="password" value={token} onChange={(e) => setToken(e.target.value)} className={inputCls} data-testid="wa-token-input" /></div>
       <div><label className="block font-semibold mb-1">App Secret {s.has_app_secret && <span className="text-slate-400 font-normal" data-testid="wa-has-app-secret">(kayıtlı)</span>}</label><input type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} className={inputCls} placeholder="Boş bırakılırsa değişmez" data-testid="wa-app-secret-input" autoComplete="off" /></div>
       <div><label className="block font-semibold mb-1">Webhook Verify Token</label><input value={s.verify_token} onChange={(e) => setS({ ...s, verify_token: e.target.value })} className={`${inputCls} font-mono`} placeholder="nexus-wa-verify" /></div>
+      {saveError ? <p className="text-rose-800 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2" data-testid="wa-save-error">{saveError}</p> : null}
       <div className="flex justify-end"><button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold" data-testid="save-wa-btn">Kaydet</button></div>
     </form>
   );

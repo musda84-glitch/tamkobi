@@ -415,7 +415,7 @@ def test_route_signatures_have_auth_and_no_nexus_default():
     assert "request" not in inspect.signature(server.read_all_notifications).parameters
     assert "request" not in inspect.signature(server.clear_notifications).parameters
     assert list(inspect.signature(server.pull_einvoice_incoming).parameters) == ["company_id", "days", "settings"]
-    assert list(inspect.signature(server._sync_bank_connection_core).parameters) == ["conn_id", "days", "user", "request"]
+    assert list(inspect.signature(server._sync_bank_connection_core).parameters) == ["conn_id", "days", "user", "request", "company_id"]
     assert list(inspect.signature(server._auto_process_bank_txs).parameters) == ["company_id", "txs", "via", "use_cari", "actor"]
     assert list(inspect.signature(attendance.run_missing_checkin_check).parameters) == ["company_id", "force"]
     assert list(inspect.signature(attendance.run_checkin_reminders).parameters) == ["company_id", "now_utc"]

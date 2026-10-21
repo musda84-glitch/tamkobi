@@ -142,14 +142,16 @@ def stamp(doc: Optional[Dict[str, Any]], user: Optional[Dict[str, Any]] = None) 
 
 async def scrub_platform_actors(db, company_id: Optional[str] = None) -> int:
     """Kayıtlı platform/CRM e-posta aktörlerini banka hareketlerinden temizle."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        return 0
     q: Dict[str, Any] = {
+        "company_id": cid,
         "$or": [
             {"created_by_name": {"$regex": r"tamkobi", "$options": "i"}},
             {"matched_by_name": {"$regex": r"tamkobi", "$options": "i"}},
-        ]
+        ],
     }
-    if company_id:
-        q = {"$and": [{"company_id": company_id}, q]}
     fixed = 0
     rows = await db.bank_transactions.find(q).to_list(20000)
     for tx in rows:
@@ -170,7 +172,7 @@ async def scrub_platform_actors(db, company_id: Optional[str] = None) -> int:
             op["$unset"] = unset
         if patch:
             op["$set"] = patch
-        await db.bank_transactions.update_one({"_id": tx["_id"]}, op)
+        await db.bank_transactions.update_one({"_id": tx["_id"], "company_id": cid}, op)
         fixed += 1
     return fixed
 

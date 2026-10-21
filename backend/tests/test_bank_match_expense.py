@@ -249,6 +249,6 @@ def test_unmatch_deletes_bank_match_expense():
     with patch.object(server, "db", mock_db):
         _run(server._unmatch(tx))
 
-    mock_db.expenses.delete_one.assert_awaited_once_with({"_id": "exp_m"})
+    mock_db.expenses.delete_one.assert_awaited_once_with({"_id": "exp_m", "company_id": "c1"})
     unset = mock_db.bank_transactions.update_one.await_args.args[1]["$unset"]
     assert "expense_id" in unset
