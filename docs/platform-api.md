@@ -491,6 +491,7 @@ Yeni kapsamlar `ADMIN_SCOPES` içindedir. Bir `:write` diğerini kapsamaz. `admi
 | `admin.cms:read` / `admin.cms:write` | site ve yardım merkezi |
 | `admin.maintenance:read` / `admin.maintenance:write` | bakım metni ve duyuru (açma danger) |
 | `admin.db:read` | veritabanı paneli, salt okunur |
+| `admin.reminders:write` | lisans bitiş hatırlatmalarını elle çalıştırma |
 | `admin.licenses:write` | eşik altı kontör hediyesi (mevcut lisans kapsamı) |
 | `admin.support:read` | destek eki indirme (mevcut) |
 | `admin.dangerous` | koparma, kullanıcı silme, anahtar iptali, bakım açma, eşik üstü kontör |
@@ -564,7 +565,8 @@ Yeni kapsamlar `ADMIN_SCOPES` içindedir. Bir `:write` diğerini kapsamaz. `admi
 | `GET /sites` | `admin.cms:read` | `public_sites.list_sites` |
 | `GET /sites/{slug}` | `admin.cms:read` | `get_site` |
 | `PUT /sites/{slug}` | `admin.cms:write` | `update_site`. `public_url` kabul edilmez (**400** `Desteklenmeyen alan: public_url`); canlı adres `danger/settings.public_url` (yalnız `https`, `admin.settings:write` + `admin.dangerous`). Audit `site.update`. |
-| `PUT /sites/{slug}/content` | `admin.cms:write` | `update_content`. Audit `site.content`. |
+| `PUT /sites/{slug}/content` | `admin.cms:write` | `update_content`. `tai` ve `tamkobi` aynı şema: `pages`, `services`, `references`, `products`, `faq` (`question`, `answer`, `order`, `published`), `demo_video` (`url`, `published`), `features` (`lines`). Paket vitrini (`is_public`) bu uçta değildir. Audit `site.content`. |
+| `POST /reminders/run` | `admin.reminders:write` | `saas_billing.run_reminders`. Gövde boş. Idempotency-Key zorunlu. Yanıt `item.count`, `item.checked_at`, `item.sent`. Audit `admin_v1.write.reminders.run` (`count`). |
 | `GET /sites/{slug}/inquiries` | `admin.cms:read` | `list_inquiries` |
 | `GET /help/articles` | `admin.cms:read` | `help_center.system_help_list` |
 | `POST /help/articles` | `admin.cms:write` | `system_help_create`. Audit `help.create`. |

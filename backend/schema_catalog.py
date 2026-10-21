@@ -118,8 +118,8 @@ COLLECTIONS = {
     },
     "site_content": {
         "scope": SCOPE_PLATFORM,
-        "description": "Kurumsal site metinleri, hizmet kartları, referanslar ve iletişim bilgisi.",
-        "keys": ("_id", "site_id", "pages", "services", "references", "products"),
+        "description": "tamkobi ve tai site metinleri: sayfalar, kartlar, SSS, demo videosu ve özellik satırları.",
+        "keys": ("_id", "site_id", "pages", "services", "references", "products", "faq", "demo_video", "features"),
         "refs": ("sites._id",),
     },
     "site_inquiries": {

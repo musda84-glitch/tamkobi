@@ -1,9 +1,11 @@
 """Çok siteli vitrin: tamkobi.com (paket vitrini) ve taiyazilim.com (kurumsal).
 
 Kimlik `sites` koleksiyonunda (id, slug, marka, canlı adres, tema, aktif).
-İçerik `site_content`, iletişim formu `site_inquiries`. tamkobi kaydı ilk
-çalıştırmada platform ayarındaki marka ve adresten oluşur; sonraki
-açılışlar bu kaydı ezmez.
+İçerik `site_content` her iki slug için aynı şemadır: sayfalar, kartlar,
+SSS, demo videosu ve özellik satırları. İletişim formu `site_inquiries`.
+tamkobi kaydı ilk çalıştırmada platform ayarındaki marka ve adresten oluşur;
+sonraki açılışlar bu kaydı ezmez. Paket vitrini (is_public) ayrıca durur;
+tamkobi teması vitrin olarak kalır.
 """
 from __future__ import annotations
 
@@ -186,6 +188,62 @@ def _cards(raw: Any, prefix: str, *, with_href: bool = False) -> List[dict]:
     return out
 
 
+def _order_value(value: Any, fallback: int) -> int:
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, int):
+        return value
+    text = str(value or "").strip()
+    if text.lstrip("-").isdigit():
+        return int(text)
+    return fallback
+
+
+def _faq_items(raw: Any) -> List[dict]:
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for i, item in enumerate(raw[:40]):
+        if not isinstance(item, dict):
+            continue
+        published = item.get("published")
+        out.append({
+            "question": _clip(item.get("question"), 300),
+            "answer": _clip(item.get("answer"), 4000),
+            "order": _order_value(item.get("order"), i),
+            "published": True if published is None else bool(published),
+        })
+    out.sort(key=lambda r: (r["order"], r["question"]))
+    return out
+
+
+def _feature_lines(raw: Any) -> dict:
+    src = raw.get("lines") if isinstance(raw, dict) else raw
+    lines: List[str] = []
+    if isinstance(src, list):
+        for item in src[:12]:
+            if isinstance(item, str):
+                text = _clip(item, 180)
+            elif isinstance(item, dict):
+                text = _clip(item.get("text") or item.get("line"), 180)
+            else:
+                text = ""
+            if text:
+                lines.append(text)
+    return {"lines": lines}
+
+
+def _demo_video(raw: Any) -> dict:
+    src = raw if isinstance(raw, dict) else {}
+    url = _clean_href(src.get("url"))
+    published = src.get("published")
+    if published is None:
+        published = bool(url)
+    else:
+        published = bool(published)
+    return {"url": url, "published": published}
+
+
 def normalize_content(raw: Optional[dict]) -> dict:
     raw = raw or {}
     pages_in = raw.get("pages") if isinstance(raw.get("pages"), dict) else {}
@@ -194,6 +252,9 @@ def normalize_content(raw: Optional[dict]) -> dict:
         "services": _cards(raw.get("services"), "svc"),
         "references": _cards(raw.get("references"), "ref"),
         "products": _cards(raw.get("products"), "prd", with_href=True),
+        "faq": _faq_items(raw.get("faq")),
+        "demo_video": _demo_video(raw.get("demo_video")),
+        "features": _feature_lines(raw.get("features")),
     }
 
 
@@ -209,11 +270,17 @@ def public_content(content: Optional[dict]) -> Optional[dict]:
     def _vis(rows):
         return [r for r in rows if r.get("published")]
 
+    video = norm["demo_video"]
+    if not video.get("published") or not video.get("url"):
+        video = {"url": "", "published": False}
     return {
         "pages": pages,
         "services": _vis(norm["services"]),
         "references": _vis(norm["references"]),
         "products": _vis(norm["products"]),
+        "faq": [row for row in norm["faq"] if row.get("published") and row.get("question")],
+        "demo_video": video,
+        "features": norm["features"],
     }
 
 
@@ -302,7 +369,7 @@ def _public_site(site: dict, content: Optional[dict]) -> dict:
         "active": bool(site.get("active", True)),
         "logo": TAI_LOGO if slug == SLUG_TAI else "/brand/tamkobi-mark.svg",
         "colors": TAI_COLORS if theme == THEME_CORPORATE else None,
-        "content": public_content(content) if theme == THEME_CORPORATE else None,
+        "content": public_content(content),
     }
     return out
 
@@ -628,11 +695,9 @@ async def list_sites(_: dict = Depends(saas.require_super_admin)):
 @router.get("/system/sites/{slug}")
 async def get_site(slug: str, _: dict = Depends(saas.require_super_admin)):
     site = await _require_site(slug)
-    content = None
-    if site.get("theme") == THEME_CORPORATE:
-        content = await _db.site_content.find_one({"_id": site["_id"]})
-        if content:
-            content = {**normalize_content(content), "id": content.get("_id")}
+    content = await _db.site_content.find_one({"_id": site["_id"]})
+    if content:
+        content = {**normalize_content(content), "id": content.get("_id")}
     return {**_admin_site(site), "content": content}
 
 
@@ -648,7 +713,6 @@ async def update_site(slug: str, req: Dict[str, Any], _: dict = Depends(saas.req
         upd["active"] = bool(req.get("active"))
     if slug == SLUG_TAMKOBI:
         upd["theme"] = THEME_VITRIN
-        upd["active"] = True
     elif "theme" in req and req.get("theme") in (THEME_VITRIN, THEME_CORPORATE):
         upd["theme"] = req.get("theme")
     url = upd.get("public_url", site.get("public_url") or "")
@@ -669,8 +733,6 @@ async def update_site(slug: str, req: Dict[str, Any], _: dict = Depends(saas.req
 @router.put("/system/sites/{slug}/content")
 async def update_content(slug: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
     site = await _require_site(slug)
-    if site.get("slug") != SLUG_TAI and site.get("theme") != THEME_CORPORATE:
-        raise HTTPException(status_code=400, detail="Paket vitrininin içeriği paketlerden gelir.")
     norm = normalize_content(req)
     doc = {"_id": site["_id"], "site_id": site["_id"], **norm, "updated_at": _now()}
     existing = await _db.site_content.find_one({"_id": site["_id"]})
@@ -701,9 +763,7 @@ async def public_site(request: Request, slug: Optional[str] = None):
         site = await site_for_host(host)
     if not site or not site.get("active", True):
         raise HTTPException(status_code=404, detail="Site bulunamadı.")
-    content = None
-    if site.get("theme") == THEME_CORPORATE:
-        content = await _db.site_content.find_one({"_id": site["_id"]})
+    content = await _db.site_content.find_one({"_id": site["_id"]})
     return _public_site(site, content)
 
 
