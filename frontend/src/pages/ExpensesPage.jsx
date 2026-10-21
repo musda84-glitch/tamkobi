@@ -361,7 +361,7 @@ export default function ExpensesPage() {
       {!companyId && <NoCompanyNotice />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Masraflar</h1><p className="text-xs sm:text-sm text-slate-500">Kira, fatura, yakıt, yemek, personel masrafları — kategori bazlı gider takibi ve kasa/banka entegrasyonu</p></div>
-        <div className="flex gap-2 self-start">
+        <div className="flex flex-wrap gap-2 self-start">
           <ExportButtons rows={rows} columns={EXP_COLS} filename="masraflar" title="Masraf Listesi" size="md" />
           {s?.recurring_count > 0 && <button onClick={runRecurring} className="flex items-center gap-1.5 px-3 py-2 border border-violet-200 text-violet-700 bg-violet-50 rounded-xl text-xs font-semibold" title="Vadesi gelen tekrarlayan masrafları oluştur" data-testid="exp-run-recurring"><RefreshCw className="w-3.5 h-3.5" /> Tekrarlayanları İşle ({s.recurring_count})</button>}
           <button onClick={() => setModal({ ...EMPTY })} className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-rose-600/20" data-testid="exp-new-btn"><Plus className="w-4 h-4" /> Yeni Masraf</button>
@@ -394,7 +394,8 @@ export default function ExpensesPage() {
         <div className="flex items-center gap-1 text-xs"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" /><select value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })} className={sel} data-testid="exp-sort"><option value="date_desc">Tarih (yeni)</option><option value="date_asc">Tarih (eski)</option><option value="amount_desc">Tutar (yüksek)</option><option value="amount_asc">Tutar (düşük)</option><option value="category">Kategori</option></select></div>
       </div>
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="exp-table">
-        <table className="w-full text-left text-xs text-slate-600">
+        <div className="overflow-x-auto">
+        <table className="min-w-[1100px] w-full text-left text-xs text-slate-600">
           <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-3">Masraf No / Tarih</th><th className="px-4 py-3">Kategori</th><th className="px-4 py-3">Açıklama</th><th className="px-4 py-3">Tedarikçi / Personel / Not</th><th className="px-4 py-3 text-right">Net / KDV</th><th className="px-4 py-3 text-right">Toplam</th><th className="px-4 py-3">Ödeme</th><th className="px-4 py-3 text-center">İşlemler</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {rows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="exp-empty">Bu filtrede masraf yok. "Yeni Masraf" ile ekleyin.</td></tr>}
@@ -442,6 +443,7 @@ export default function ExpensesPage() {
             })}
           </tbody>
         </table>
+        </div>
         {expensesHasMore && (
           <div ref={expensesSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="expenses-load-more">
             Daha fazla masraf yükleniyor…
