@@ -46,8 +46,12 @@ def _load_script():
 @pytest.fixture(autouse=True)
 def _reset_consume_index_state():
     gib_credits._consume_index_state = "pending"
+    gib_credits._welcome_index_state = "pending"
+    gib_credits._gift_index_state = "pending"
     yield
     gib_credits._consume_index_state = "pending"
+    gib_credits._welcome_index_state = "pending"
+    gib_credits._gift_index_state = "pending"
 
 
 class _Rows:
@@ -82,6 +86,8 @@ class _Ledger:
         return None
 
     async def insert_one(self, doc):
+        if any(row.get("_id") == doc.get("_id") for row in self.docs):
+            raise DuplicateKeyError("duplicate id")
         if doc.get("type") == "consume" and str(doc.get("invoice_id") or "").strip():
             for row in self.docs:
                 if (
@@ -568,3 +574,158 @@ def test_dedupe_script_parser_defaults_to_dry_run():
     assert mod.apply_requested(mod.build_parser().parse_args(["--dry-run"])) is False
     assert mod.apply_requested(mod.build_parser().parse_args(["--apply"])) is True
     assert mod.apply_requested(mod.build_parser().parse_args(["--apply", "--dry-run"])) is False
+
+
+class _FreshWallets:
+    def __init__(self, doc=None):
+        self.doc = dict(doc) if doc else None
+        self.inserts = 0
+        self.upserts = 0
+
+    async def find_one(self, query=None):
+        if not self.doc or (query or {}).get("_id") != self.doc.get("_id"):
+            return None
+        return dict(self.doc)
+
+    async def insert_one(self, doc):
+        self.inserts += 1
+        raise AssertionError("cüzdan insert_one kullanılmamalı")
+
+    async def update_one(self, query, update, upsert=False):
+        self.upserts += 1
+        wid = (query or {}).get("_id")
+        if self.doc and self.doc.get("_id") == wid:
+            inc = int(((update or {}).get("$inc") or {}).get("balance") or 0)
+            self.doc["balance"] = int(self.doc.get("balance") or 0) + inc
+            return
+        if not upsert:
+            return
+        if self.doc:
+            raise DuplicateKeyError("duplicate wallet")
+        created = {"_id": wid}
+        created.update((update or {}).get("$setOnInsert") or {})
+        self.doc = created
+
+
+class _RaceWallets(_FreshWallets):
+    def __init__(self, doc):
+        super().__init__(doc)
+        self.reads = 0
+
+    async def find_one(self, query=None):
+        self.reads += 1
+        if self.reads == 1:
+            return None
+        return await super().find_one(query)
+
+    async def update_one(self, query, update, upsert=False):
+        self.upserts += 1
+        raise DuplicateKeyError("duplicate wallet")
+
+
+def test_get_wallet_upserts_once_and_writes_one_welcome():
+    wallets = _FreshWallets()
+    ledger = _Ledger()
+    gib_credits.init(_DB(wallets, ledger))
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            first = await gib_credits.get_wallet(COMP)
+            second = await gib_credits.get_wallet(COMP)
+            return first, second
+
+    first, second = _run(go())
+    assert wallets.inserts == 0
+    assert wallets.upserts == 1
+    assert first["balance"] == gib_credits.WELCOME_CREDITS
+    assert second["balance"] == gib_credits.WELCOME_CREDITS
+    welcomes = [row for row in ledger.docs if row.get("type") == "welcome"]
+    assert len(welcomes) == 1
+    assert welcomes[0]["wallet_id"] == WALLET
+    assert welcomes[0]["credits"] == gib_credits.WELCOME_CREDITS
+    assert ledger.index["name"] == "uniq_gib_welcome_wallet"
+    assert ledger.index["partialFilterExpression"] == {"type": "welcome"}
+
+
+def test_get_wallet_duplicate_key_does_not_add_second_welcome():
+    wallets = _RaceWallets({"_id": WALLET, "balance": gib_credits.WELCOME_CREDITS})
+    ledger = _Ledger([
+        {"_id": f"welcome:{WALLET}", "wallet_id": WALLET, "company_id": COMP, "type": "welcome", "credits": 50},
+    ])
+    gib_credits.init(_DB(wallets, ledger))
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            return await gib_credits.get_wallet(COMP)
+
+    found = _run(go())
+    assert found["balance"] == gib_credits.WELCOME_CREDITS
+    assert wallets.upserts == 1
+    assert len([row for row in ledger.docs if row.get("type") == "welcome"]) == 1
+
+
+def test_welcome_and_gift_partial_indexes_ignore_unrelated_rows():
+    welcome_index = [(("wallet_id", "type"), True, dict(gib_credits.WELCOME_INDEX_FILTER))]
+    gift_index = [(("company_id", "wallet_id", "request_id"), True, dict(gib_credits.GIFT_REQUEST_INDEX_FILTER))]
+    welcome = {"_id": "w1", "wallet_id": WALLET, "type": "welcome", "company_id": COMP}
+    with pytest.raises(DuplicateKeyError):
+        unique_conflict(dict(welcome, _id="w2"), [welcome], welcome_index, "gib_credit_ledger")
+    purchase = {"_id": "p1", "wallet_id": WALLET, "type": "purchase", "company_id": COMP}
+    unique_conflict(dict(purchase, _id="p2"), [purchase], welcome_index, "gib_credit_ledger")
+    gift = {"_id": "g1", "company_id": COMP, "wallet_id": WALLET, "type": "gift", "request_id": "key-1", "credits": 3}
+    with pytest.raises(DuplicateKeyError):
+        unique_conflict(dict(gift, _id="g2"), [gift], gift_index, "gib_credit_ledger")
+    plain = {"_id": "g3", "company_id": COMP, "wallet_id": WALLET, "type": "gift", "credits": 3}
+    unique_conflict(dict(plain, _id="g4"), [plain], gift_index, "gib_credit_ledger")
+
+
+def test_gift_same_request_id_does_not_increase_balance_twice():
+    db = _bind_wallet(gib_credits.WELCOME_CREDITS)
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            first = await gib_credits.gift(COMP, 10, "ilk", request_id="gift-key-3a32")
+            db.gib_credit_ledger.blind_find = True
+            second = await gib_credits.gift(COMP, 10, "ikinci", request_id="gift-key-3a32")
+            db.gib_credit_ledger.blind_find = False
+            other = await gib_credits.gift(COMP, 4, "baska", request_id="gift-other-3a32")
+            plain_a = await gib_credits.gift(COMP, 1, "anahtarsiz")
+            plain_b = await gib_credits.gift(COMP, 1, "anahtarsiz")
+            return first, second, other, plain_a, plain_b
+
+    first, second, other, plain_a, plain_b = _run(go())
+    assert first == gib_credits.WELCOME_CREDITS + 10
+    assert second == first
+    assert other == first + 4
+    assert plain_b == other + 2
+    gifts = [row for row in db.gib_credit_ledger.docs if row.get("type") == "gift"]
+    keyed = [row for row in gifts if row.get("request_id") == "gift-key-3a32"]
+    assert len(keyed) == 1
+    assert keyed[0]["credits"] == 10
+    assert db.gib_wallets.doc["balance"] == plain_b
+    assert ledger_index_ready(db)
+
+
+def ledger_index_ready(db):
+    spec = db.gib_credit_ledger.index
+    return spec["name"] == "uniq_gib_gift_request" and spec["unique"] is True and spec["partialFilterExpression"]["request_id"] == {"$gt": ""}
+
+
+def test_danger_gift_uses_idempotency_key_as_request_id():
+    import platform_admin_v1_danger as danger
+
+    db = _bind_wallet(gib_credits.WELCOME_CREDITS)
+    request = type("Req", (), {"client": None, "headers": {"Idempotency-Key": "danger-gift-3a32"}})()
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            first = await danger._execute("gib.gift", COMP, {"credits": 25, "note": "tehlike"}, {}, request)
+            second = await danger._execute("gib.gift", COMP, {"credits": 25, "note": "tehlike"}, {}, request)
+            return first, second
+
+    first, second = _run(go())
+    assert first["balance"] == gib_credits.WELCOME_CREDITS + 25
+    assert second["balance"] == first["balance"]
+    gifts = [row for row in db.gib_credit_ledger.docs if row.get("type") == "gift"]
+    assert len(gifts) == 1
+    assert gifts[0]["request_id"] == "danger-gift-3a32"

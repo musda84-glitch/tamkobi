@@ -1280,9 +1280,15 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
         return await platform_notices.system_put_maintenance(body, admin)
     if action == "gib.gift":
         import gib_credits
+        import idempotency
         credits = int(params.get("credits") or 0)
         note = str(params.get("note") or "Platform yüklemesi")[:200]
-        bal = await gib_credits.gift(target_id, credits, note)
+        bal = await gib_credits.gift(
+            target_id,
+            credits,
+            note,
+            request_id=idempotency.header_key(request),
+        )
         return {"company_id": target_id, "credits": credits, "balance": bal}
     if action == "product.delete":
         doc = await store._get_product_doc(target_id)

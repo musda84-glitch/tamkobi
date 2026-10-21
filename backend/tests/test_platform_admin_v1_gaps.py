@@ -618,6 +618,28 @@ def test_maintenance_on_requires_danger_and_gift_threshold(gap):
     assert gift_ok.json()["item"]["balance"] == gib_credits.WELCOME_CREDITS + 10 + 1001
 
 
+def test_gift_same_key_after_idempotency_ttl_does_not_double(gap):
+    client, db = gap
+    pub, secret = _full_key(db, name="gift-ttl")
+    path = "/api/platform/admin-v1/companies/comp_parent/gib-credits/gift"
+    body = {"credits": 10, "note": "deneme"}
+    first, _ = _send(client, secret, pub["id"], "POST", path, body, idem="gift-ttl-3a32")
+    assert first.status_code == 200, first.text
+    assert first.json()["item"]["balance"] == gib_credits.WELCOME_CREDITS + 10
+    db.idempotency_keys.docs.clear()
+    second, _ = _send(client, secret, pub["id"], "POST", path, body, idem="gift-ttl-3a32")
+    assert second.status_code == 200, second.text
+    assert second.json()["item"]["balance"] == gib_credits.WELCOME_CREDITS + 10
+    ledger = list(db.gib_credit_ledger.docs.values())
+    gifts = [row for row in ledger if row.get("type") == "gift"]
+    welcomes = [row for row in ledger if row.get("type") == "welcome"]
+    assert len(gifts) == 1
+    assert gifts[0]["request_id"] == "gift-ttl-3a32"
+    assert gifts[0]["credits"] == 10
+    assert len(welcomes) == 1
+    assert db.gib_wallets.docs["comp_parent"]["balance"] == gib_credits.WELCOME_CREDITS + 10
+
+
 def test_database_is_read_only(gap, monkeypatch):
     client, db = gap
     monkeypatch.setattr(db_relocate, "current_settings", lambda: {

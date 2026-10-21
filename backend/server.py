@@ -409,6 +409,14 @@ async def startup_event():
                 await gib_credits.ensure_consume_index(db)
             except Exception:
                 logger.warning("gib_credit_ledger consume index skipped")
+            try:
+                await gib_credits.ensure_welcome_index(db)
+            except Exception:
+                logger.warning("gib_credit_ledger welcome index skipped")
+            try:
+                await gib_credits.ensure_gift_request_index(db)
+            except Exception:
+                logger.warning("gib_credit_ledger gift request index skipped")
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
