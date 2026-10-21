@@ -38,6 +38,7 @@ STARTUP_INDEXES = (
     {"collection": "orders", "name": "company_id_channel_order_number", "fields": ("company_id", "channel", "order_number"), "unique": True},
     {"collection": "purchase_orders", "name": "order_number", "fields": ("order_number",), "unique": False},
     {"collection": "login_attempts", "name": "identifier", "fields": ("identifier",), "unique": False},
+    {"collection": "b2b_identities", "name": "email", "fields": ("email",), "unique": True},
     {"collection": "help_articles", "name": "slug", "fields": ("slug",), "unique": True},
 )
 
@@ -797,6 +798,24 @@ COLLECTIONS = {
         "description": "Expo push ticket id'leri; receipt kontrolü ve 24 saat TTL.",
         "keys": ("_id", "ticket_id", "token", "created_at", "expires_at"),
         "refs": ("push_tokens.token",),
+    },
+    "b2b_identities": {
+        "scope": SCOPE_PLATFORM,
+        "description": "B2B kimliği: küçük harf e-posta benzersiz, şifre hash'i tedarikçiler arasında ortaktır.",
+        "keys": ("_id", "email", "password_hash", "email_verified_at", "is_active", "created_at", "last_login_at"),
+        "refs": (),
+    },
+    "b2b_sessions": {
+        "scope": SCOPE_PLATFORM,
+        "description": "B2B seçim oturumu. 15 dakika geçerli, tek kullanımlık değil; httpOnly çerez yok.",
+        "keys": ("_id", "identity_id", "expires_at", "created_at", "contact_ids"),
+        "refs": ("b2b_identities._id",),
+    },
+    "b2b_email_verifications": {
+        "scope": SCOPE_PLATFORM,
+        "description": "B2B kimlik e-posta doğrulama bağlantıları.",
+        "keys": ("_id", "identity_id", "email", "expires_at", "used_at", "created_at"),
+        "refs": ("b2b_identities._id",),
     },
     "b2b_password_resets": {
         "scope": SCOPE_TENANT,
