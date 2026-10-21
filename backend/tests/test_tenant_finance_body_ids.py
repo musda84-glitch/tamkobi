@@ -571,25 +571,28 @@ def test_same_company_flows_keep_current_results():
         _restore(prev)
 
 
-def test_legacy_queue_without_company_id_still_executes():
-    """company_id'siz eski kuyruk kaydı ortağı bugünkü gibi _id ile bulur."""
+def test_legacy_queue_without_company_id_does_not_execute():
+    """company_id'siz payload ortak aramaz ve hiçbir satıra yazmaz."""
     db, prev = _bind()
 
     async def run():
         await _seed(db)
-        out = await server._execute_partner_tx({
-            "partner_id": "partner_a",
-            "type": "withdrawal",
-            "amount": 12,
-            "account_id": "acc_a",
-            "description": "eski kuyruk",
-        })
-        assert out["company_id"] == CO_A
-        assert out["partner_id"] == "partner_a"
-        assert _acc(db, "acc_a")["current_balance"] == pytest.approx(988)
-        assert _partner(db, "partner_a")["balance"] == pytest.approx(-12)
-        assert _acc(db, "acc_b")["current_balance"] == pytest.approx(1000)
-        assert _partner(db, "partner_b")["balance"] == pytest.approx(0)
+        before = _snap_b(db)
+        tx_count = len(db.partner_transactions.docs)
+        with pytest.raises(HTTPException) as exc:
+            await server._execute_partner_tx({
+                "partner_id": "partner_a",
+                "type": "withdrawal",
+                "amount": 12,
+                "account_id": "acc_a",
+                "description": "eski kuyruk",
+            })
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Ortak bulunamadı."
+        assert _acc(db, "acc_a")["current_balance"] == pytest.approx(1000)
+        assert _partner(db, "partner_a")["balance"] == pytest.approx(0)
+        assert len(db.partner_transactions.docs) == tx_count
+        assert _snap_b(db) == before
 
     try:
         _run(run())

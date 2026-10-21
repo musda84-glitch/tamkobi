@@ -13589,6 +13589,7 @@ async def _execute_virman(req: Dict[str, Any]):
         ptx = await _execute_partner_tx({
             "partner_id": t_id, "type": "withdrawal", "amount": amount,
             "account_id": s_id, "description": desc, "date": today,
+            "company_id": company_id,
         })
         return {"status": "success", "message": f"{amount:,.2f} TL virman tamamlandı (hesap → ortak).", "partner_tx": ptx}
     if s_kind == "partner" and t_kind == "account":
@@ -13596,6 +13597,7 @@ async def _execute_virman(req: Dict[str, Any]):
         ptx = await _execute_partner_tx({
             "partner_id": s_id, "type": "capital_in", "amount": amount,
             "account_id": t_id, "description": desc, "date": today,
+            "company_id": company_id,
         })
         return {"status": "success", "message": f"{amount:,.2f} TL virman tamamlandı (ortak → hesap).", "partner_tx": ptx}
     if s_kind == "partner" and t_kind == "partner":
@@ -13747,18 +13749,18 @@ async def recalculate_partners(company_id: Optional[str] = None, user: dict = De
 @api_router.get("/banking/partners/{partner_id}/ledger")
 async def partner_ledger_check(partner_id: str, user: dict = Depends(get_current_user)):
     """Kart bakiyesi ile hareket toplamını karşılaştır; sapmayı onar."""
-    await tenant_access.get_tenant_doc(db, "partners", partner_id, user, not_found="Ortak bulunamadı.")
+    p = await tenant_access.get_tenant_doc(db, "partners", partner_id, user, not_found="Ortak bulunamadı.")
     meta = await partner_pay.sync_partner_from_ledger(db, partner_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-    txs = await db.partner_transactions.find({"partner_id": partner_id}).sort("date", -1).to_list(5000)
+    txs = await db.partner_transactions.find({"partner_id": partner_id, "company_id": p["company_id"]}).sort("date", -1).to_list(5000)
     by_type: Dict[str, float] = {}
     for tx in txs:
         key = tx.get("type") or "other"
         if key == "profit_share":
             key = "profit_paid" if tx.get("is_paid") else "profit_accrual"
         by_type[key] = round(by_type.get(key, 0) + float(tx.get("amount") or 0), 2)
-    partner = await db.partners.find_one({"_id": partner_id})
+    partner = await db.partners.find_one({"_id": partner_id, "company_id": p["company_id"]})
     return {
         "partner_id": partner_id,
         "partner_name": (partner or {}).get("name"),
@@ -13785,12 +13787,12 @@ async def create_partner(partner: Partner, user: dict = Depends(get_current_user
         raise HTTPException(status_code=400, detail="Toplam ortaklık payı %100'ü aşamaz.")
     doc = partner.to_mongo()
     partner_pay.prepare_partner_salary(doc)
-    await db.partners.insert_one(doc)
+    await db.partners.insert_one({**doc, "company_id": partner.company_id})
     if float(doc.get("monthly_salary") or 0) > 0:
         await partner_pay.accrue_monthly_salaries(
             db, partner.company_id, partner_id=doc["_id"]
         )
-        doc = await db.partners.find_one({"_id": doc["_id"]}) or doc
+        doc = await db.partners.find_one({"_id": doc["_id"], "company_id": partner.company_id}) or doc
     return clean_doc(doc)
 
 @api_router.put("/banking/partners/{partner_id}")
@@ -13816,8 +13818,8 @@ async def update_partner(partner_id: str, updated: Dict[str, Any], user: dict = 
             allowed["share_percent"] = float(allowed["share_percent"] or 0)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Ortaklık payı geçersiz.")
-    await db.partners.update_one({"_id": partner_id}, {"$set": allowed})
-    res = await db.partners.find_one({"_id": partner_id})
+    await db.partners.update_one({"_id": partner_id, "company_id": existing["company_id"]}, {"$set": allowed})
+    res = await db.partners.find_one({"_id": partner_id, "company_id": existing["company_id"]})
     if not res:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     out = clean_doc(res)
@@ -13825,7 +13827,7 @@ async def update_partner(partner_id: str, updated: Dict[str, Any], user: dict = 
         out["salary_accrual"] = await partner_pay.accrue_monthly_salaries(
             db, res.get("company_id") or "", partner_id=partner_id
         )
-        refreshed = await db.partners.find_one({"_id": partner_id})
+        refreshed = await db.partners.find_one({"_id": partner_id, "company_id": existing["company_id"]})
         if refreshed:
             out = {**clean_doc(refreshed), "salary_accrual": out["salary_accrual"]}
     return out
@@ -13835,7 +13837,7 @@ async def delete_partner(partner_id: str, user: dict = Depends(get_current_user)
     p = await tenant_access.get_tenant_doc(db, "partners", partner_id, user, not_found="Ortak bulunamadı.")
     if abs(p.get("balance", 0)) > 0.01:
         raise HTTPException(status_code=400, detail="Bakiyesi sıfır olmayan ortak silinemez.")
-    orphan_txs = await db.partner_transactions.find({"partner_id": partner_id}).to_list(20000)
+    orphan_txs = await db.partner_transactions.find({"partner_id": partner_id, "company_id": p["company_id"]}).to_list(20000)
     await trash.soft_delete(
         "partners",
         p,
@@ -13924,26 +13926,37 @@ def _partner_tx_touches_cash(tx: dict) -> bool:
 
 async def _reverse_partner_tx(tx: dict):
     """Undo balance + bank movement + cari effects of a partner transaction."""
+    cid = str(tx.get("company_id") or "").strip()
+    if not cid:
+        logger.warning("Ortak hareketi geri alınamadı.")
+        return
     amount = float(tx.get("amount", 0))
     t = tx.get("type")
     if t in PARTNER_MUTABLE_TYPES:
         inc = partner_pay.posting_inc(tx)
-        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {k: -v for k, v in inc.items()}})
+        await db.partners.update_one({"_id": tx["partner_id"], "company_id": cid}, {"$inc": {k: -v for k, v in inc.items()}})
     elif t == "profit_share":
         # Tahakkuk silinince bakiyeyi düş; peşin ödemede bakiye hiç artmamıştı.
         await db.partners.update_one(
-            {"_id": tx["partner_id"]},
+            {"_id": tx["partner_id"], "company_id": cid},
             {"$inc": partner_pay.profit_share_inc(amount, bool(tx.get("is_paid")), applying=False)},
         )
     contact_delta = _contact_balance_delta_for_partner_tx(tx)
     if contact_delta:
-        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -contact_delta}})
+        await db.contacts.update_one({"_id": tx["contact_id"], "company_id": cid}, {"$inc": {"balance": -contact_delta}})
     if _partner_tx_touches_cash(tx):
-        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"]}) or await db.bank_transactions.find_one({"source": "partner", "account_id": tx["account_id"], "amount": amount, "date": tx.get("date"), "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"}})
+        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"], "company_id": cid}) or await db.bank_transactions.find_one({
+            "source": "partner",
+            "account_id": tx["account_id"],
+            "amount": amount,
+            "date": tx.get("date"),
+            "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"},
+            "company_id": cid,
+        })
         if bt:
             inflow = bt.get("type") == "inflow"
-            await db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": -amount if inflow else amount}})
-            await db.bank_transactions.delete_one({"_id": bt["_id"]})
+            await db.bank_accounts.update_one({"_id": bt["account_id"], "company_id": cid}, {"$inc": {"current_balance": -amount if inflow else amount}})
+            await db.bank_transactions.delete_one({"_id": bt["_id"], "company_id": cid})
 
 @api_router.put("/banking/partners/transactions/{tx_id}")
 async def update_partner_transaction(tx_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -13969,18 +13982,18 @@ async def update_partner_transaction(tx_id: str, req: Dict[str, Any], user: dict
         account_id = req.get("account_id") or tx.get("account_id")
         account_name = await _post_partner_cash_movement(tx["company_id"], account_id, tx["type"], amount, tx["partner_name"], description, date, partner_tx_id=tx_id)
         patch.update({"account_id": account_id, "account_name": account_name})
-    await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": partner_pay.posting_inc({**tx, "amount": amount})})
+    await db.partners.update_one({"_id": tx["partner_id"], "company_id": tx["company_id"]}, {"$inc": partner_pay.posting_inc({**tx, "amount": amount})})
     # Cari bağlı ortak ödemesi / tahsilatı: yeni tutarı cari bakiyesine yeniden yaz.
     if tx.get("contact_id") and tx["type"] in ("withdrawal", "capital_in"):
         new_delta = -amount if tx["type"] == "withdrawal" else amount
-        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": new_delta}})
+        await db.contacts.update_one({"_id": tx["contact_id"], "company_id": tx["company_id"]}, {"$inc": {"balance": new_delta}})
         patch["contact_id"] = tx["contact_id"]
         if tx.get("contact_name"):
             patch["contact_name"] = tx["contact_name"]
         if tx.get("related_invoice_id"):
             patch["related_invoice_id"] = tx["related_invoice_id"]
-    await db.partner_transactions.update_one({"_id": tx_id}, {"$set": patch})
-    return clean_doc(await db.partner_transactions.find_one({"_id": tx_id}))
+    await db.partner_transactions.update_one({"_id": tx_id, "company_id": tx["company_id"]}, {"$set": patch})
+    return clean_doc(await db.partner_transactions.find_one({"_id": tx_id, "company_id": tx["company_id"]}))
 
 @api_router.delete("/banking/partners/transactions/{tx_id}")
 async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_current_user)):
@@ -14019,11 +14032,9 @@ async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_curren
 
 async def _execute_partner_tx(req: Dict[str, Any]):
     company_id = str(req.get("company_id") or "").strip()
-    if company_id:
-        partner = await db.partners.find_one({"_id": req.get("partner_id"), "company_id": company_id})
-    else:
-        # company_id'siz eski onay kuyruğu: kayıt approve sırasında şirket kontrolünden geçmişti.
-        partner = await db.partners.find_one({"_id": req.get("partner_id")})
+    if not company_id:
+        raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+    partner = await db.partners.find_one({"_id": req.get("partner_id"), "company_id": company_id})
     if not partner:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     tx_type = req.get("type")
@@ -14047,8 +14058,8 @@ async def _execute_partner_tx(req: Dict[str, Any]):
         account_name = await _post_partner_cash_movement(partner["company_id"], account_id, tx_type, amount, partner["name"], description, date, partner_tx_id=doc["_id"])
         doc["account_name"] = account_name
 
-    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": partner_pay.posting_inc(doc)})
-    await db.partner_transactions.insert_one(doc)
+    await db.partners.update_one({"_id": partner["_id"], "company_id": partner["company_id"]}, {"$inc": partner_pay.posting_inc(doc)})
+    await db.partner_transactions.insert_one({**doc, "company_id": partner["company_id"]})
     await partner_pay.repair_company_partner_moves(db, partner.get("company_id") or "")
     return clean_doc(doc)
 
@@ -14106,7 +14117,7 @@ async def _execute_distribute_profit(req: Dict[str, Any]):
     period = req.get("period") or datetime.now(timezone.utc).strftime("%Y-%m")
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if pay_now:
-        acc = await db.bank_accounts.find_one({"_id": account_id})
+        acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": company_id})
         if not acc:
             raise HTTPException(status_code=404, detail="Kaynak hesap bulunamadı.")
         await bank_guard.assert_manual_allowed(db, account_id)
@@ -14120,13 +14131,13 @@ async def _execute_distribute_profit(req: Dict[str, Any]):
         account_name = None
         if pay_now:
             account_name = await _post_partner_cash_movement(company_id, account_id, "profit_share", share, p["name"], description, date)
-            await db.partners.update_one({"_id": p["_id"]}, {"$inc": {"total_profit_share": share}})
+            await db.partners.update_one({"_id": p["_id"], "company_id": company_id}, {"$inc": {"total_profit_share": share}})
         else:
-            await db.partners.update_one({"_id": p["_id"]}, {"$inc": {"balance": share, "total_profit_share": share}})
+            await db.partners.update_one({"_id": p["_id"], "company_id": company_id}, {"$inc": {"balance": share, "total_profit_share": share}})
         tx = PartnerTransaction(company_id=company_id, partner_id=p["_id"], partner_name=p["name"], type="profit_share", amount=share,
                                 account_id=account_id if pay_now else None, account_name=account_name, is_paid=pay_now, description=description, date=date)
         doc = tx.to_mongo()
-        await db.partner_transactions.insert_one(doc)
+        await db.partner_transactions.insert_one({**doc, "company_id": company_id})
         results.append({"partner_name": p["name"], "share_percent": p.get("share_percent"), "amount": share})
     return {"status": "success", "period": period, "total_profit": total_profit, "pay_now": pay_now, "distribution": results,
             "message": f"{total_profit:,.2f} ₺ kâr {len(partners)} ortağa {'ödendi' if pay_now else 'tahakkuk ettirildi'}."}
@@ -14203,7 +14214,9 @@ async def approve_cash_request(req_id: str, request: Request):
     })
     try:
         try:
-            result = await executor(doc.get("payload") or {})
+            payload = doc.get("payload") or {}
+            payload = {**payload, "company_id": doc["company_id"]}
+            result = await executor(payload)
         except Exception:
             await db.cash_approval_requests.update_one({"_id": req_id}, {"$set": {"status": "pending", "approved_by": None, "approved_by_name": None, "approved_at": None}})
             raise
