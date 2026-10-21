@@ -8,7 +8,8 @@ import {
 describe("bankMatchModes", () => {
   test("does not include Cari + Fatura (invoice)", () => {
     const keys = BANK_MATCH_MODES.map(([k]) => k);
-    expect(keys).toEqual(["contact", "transfer", "category", "expense"]);
+    expect(keys).toEqual(["contact", "transfer", "category", "expense", "pos_settlement"]);
+    expect(BANK_MATCH_MODES[BANK_MATCH_MODES.length - 1]).toEqual(["pos_settlement", "POS bloke çözümü"]);
     expect(keys).not.toContain("invoice");
     expect(BANK_MATCH_MODES.map(([, l]) => l)).not.toContain("Cari + Fatura");
   });

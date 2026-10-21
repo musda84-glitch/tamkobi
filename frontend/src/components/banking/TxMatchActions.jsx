@@ -1,6 +1,26 @@
 import React, { useState } from "react";
 import { BankMatchModal } from "../BankMatchModal";
+import { formatTrAmount } from "../../utils/money";
 import { confirmAndUnmatch, freshMatchSession, replaceMatchSession } from "./txMatchSession";
+
+export function PosSettlementRowMark({ tx }) {
+  if (tx?.match_kind !== "pos_settlement") return null;
+  const txId = tx.id || tx._id;
+  const name = tx.target_account_name || "";
+  const number = tx.expense_number || "";
+  const amount = formatTrAmount(tx.pos_commission || 0);
+  return (
+    <div className="mt-0.5 space-y-0.5" data-testid={`tx-pos-settlement-${txId}`}>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-[9px] px-1 rounded font-bold bg-amber-100 text-amber-800" data-testid={`tx-pos-chip-${txId}`}>POS bloke</span>
+        {name ? <span className="text-[10px] text-slate-500" data-testid={`tx-pos-from-${txId}`}>← {name}</span> : null}
+      </div>
+      <div className="text-[10px] text-slate-500" data-testid={`tx-pos-expense-${txId}`}>
+        ↳ Masraf · POS komisyonu{number ? ` (${number})` : ""}{"  "}{amount}
+      </div>
+    </div>
+  );
+}
 
 const LABEL = {
   compact: { match: "Eşleştir", rematch: "Değiştir", unmatch: "Kaldır" },
@@ -93,6 +113,7 @@ export function TxMatchActions({
 
   return (
     <>
+      {variant === "full" ? <PosSettlementRowMark tx={tx} /> : null}
       {controls ? (
         <span className={`inline-flex items-center gap-1 ${compact ? "shrink-0 whitespace-nowrap" : ""}`} data-testid={`tx-match-actions-${txId}`} onClick={(e) => e.stopPropagation()}>
           {controls}

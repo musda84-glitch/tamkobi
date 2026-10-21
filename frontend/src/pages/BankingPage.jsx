@@ -55,7 +55,7 @@ import { BankSummaryStrip } from "../components/banking/BankSummaryStrip";
 import { BankAccountList, accountMonogram } from "../components/banking/BankAccountList";
 import { TR_BANKS, bankCodeFromIban, bankLogoInfo, displayBankLogoSrc } from "../utils/bankLogo";
 import { BankAccountDetailHeader, countOrDash } from "../components/banking/BankAccountDetailHeader";
-import { TxMatchActions } from "../components/banking/TxMatchActions";
+import { PosSettlementRowMark, TxMatchActions } from "../components/banking/TxMatchActions";
 import { TxDetailPanel } from "../components/banking/TxDetailPanel";
 
 const TABS = [
@@ -1122,14 +1122,17 @@ export default function BankingPage() {
                 return bits.filter(Boolean).join(" · ");
               };
               const bankExtra = (tx, prefix) => (
-                <div className="flex flex-wrap gap-1">
-                  {tx.customer_card && <span className="text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`${prefix}tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
-                  {tx.source === "bank_sync" && <span className={`text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
-                  {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`${prefix}tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
-                  {tx.source === "bank_sync" && tx.match_status === "rematching" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">Eşleştiriliyor…</span>}
-                  {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
-                  {tx.source === "bank_match" && <span className="text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
-                </div>
+                <>
+                  <div className="flex flex-wrap gap-1">
+                    {tx.customer_card && <span className="text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`${prefix}tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
+                    {tx.source === "bank_sync" && <span className={`text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
+                    {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`${prefix}tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
+                    {tx.source === "bank_sync" && tx.match_status === "rematching" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">Eşleştiriliyor…</span>}
+                    {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
+                    {tx.source === "bank_match" && <span className="text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
+                  </div>
+                  <PosSettlementRowMark tx={tx} />
+                </>
               );
               const rowActions = (tx) => (
                 <>
@@ -1245,6 +1248,7 @@ export default function BankingPage() {
                               {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
                               {tx.source === "bank_match" && <span className="shrink-0 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
                             </div>
+                            <PosSettlementRowMark tx={tx} />
                           </td>
                           <td className={`px-2 py-1.5 text-slate-600 whitespace-normal break-words ${userCellCls}`} data-testid={`tx-actor-${id}`} title={userFull || undefined}>
                             {txUserColumnLabel(tx) || <span className="text-slate-300">—</span>}

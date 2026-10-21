@@ -12960,6 +12960,8 @@ async def list_bank_transactions(company_id: Optional[str] = None, account_id: O
     if account_id:
         query["$or"] = [{"account_id": account_id}, {"target_account_id": account_id}]
     txs = await db.bank_transactions.find(query).sort("date", -1).to_list(2000)
+    import pos_settlement
+    txs = await pos_settlement.annotate(db, cid, txs)
     annotated = [account_balance.annotate_bank_tx(t, account_id) for t in txs]
     return clean_docs(annotated)
 
@@ -14700,6 +14702,8 @@ async def sync_all_connections(company_id: Optional[str] = None, user: dict = De
 async def list_unmatched_transactions(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
     txs = await db.bank_transactions.find({"company_id": cid, "source": "bank_sync", "match_status": "unmatched"}).sort("date", -1).to_list(500)
+    import pos_settlement
+    txs = await pos_settlement.annotate(db, cid, txs)
     return clean_docs(txs)
 
 def _match_pattern(text: str) -> str:
@@ -14718,7 +14722,7 @@ async def _find_rule(company_id: str, description: str):
             return r
     return None
 
-async def _learn_rule(company_id: str, description: str, contact_id: Optional[str], contact_name: Optional[str], category: Optional[str], target_account_id: Optional[str] = None, target_account_name: Optional[str] = None):
+async def _learn_rule(company_id: str, description: str, contact_id: Optional[str], contact_name: Optional[str], category: Optional[str], target_account_id: Optional[str] = None, target_account_name: Optional[str] = None, extra: Optional[dict] = None):
     pattern = _match_pattern(description)
     if not pattern or not (contact_id or category or target_account_id):
         return None
@@ -14731,6 +14735,13 @@ async def _learn_rule(company_id: str, description: str, contact_id: Optional[st
     # Personel eşleşmesi yalnız kategori öğrenir; employee_id kurala yazılmaz (otomatik personel ödemesi yok).
     if category and re.search(r"personel", str(category), re.I):
         update["$unset"] = {"employee_id": "", "employee_name": "", "personnel_pay_kind": ""}
+    if extra:
+        update["$set"].update(extra)
+    else:
+        # Tür değişince eski POS oranı kalmasın.
+        update.setdefault("$unset", {})
+        update["$unset"]["match_kind"] = ""
+        update["$unset"]["pos_commission_rate"] = ""
     await db.bank_match_rules.update_one(
         {"company_id": company_id, "pattern": pattern},
         update,
@@ -14872,7 +14883,7 @@ async def _apply_personnel_reimburse_match(tx: dict, emp: dict, amount: float, u
     return "Personel Masraf İadesi"
 
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None, personnel_pay_kind: Optional[str] = None, link_existing_id: Optional[str] = None, expense_id: Optional[str] = None) -> dict:
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None, personnel_pay_kind: Optional[str] = None, link_existing_id: Optional[str] = None, expense_id: Optional[str] = None, mode: Optional[str] = None, pos_gross: Optional[float] = None, pos_commission: Optional[float] = None) -> dict:
     from bank_auto_match import match_actor_fields
     from bank_match_desc import append_match_suffix, match_phrase, strip_match_suffix
     update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
@@ -14894,6 +14905,57 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
         and not link_existing_id
     ):
         raise HTTPException(status_code=400, detail="Personel ödemesi için 'Masraf' modunda personel seçin.")
+    if (mode or "") == "pos_settlement":
+        if not is_inflow:
+            raise HTTPException(status_code=400, detail="POS bloke çözümü yalnızca giriş hareketlerinde yapılabilir.")
+        if contact_id or invoice_id or as_expense or link_existing_id:
+            raise HTTPException(status_code=400, detail="POS bloke çözümü cari, fatura veya masraf ile birlikte seçilemez.")
+        import pos_settlement
+        fields = await pos_settlement.apply(
+            db, tx,
+            pos_account_id=target_account_id,
+            gross=pos_gross,
+            commission=pos_commission,
+            category=category,
+            actor=actor,
+        )
+        update.update(fields)
+        category = update.get("category") or category
+        contact_id = None
+        contact_name = None
+        target_account_id = update.get("target_account_id")
+        target_name = update.get("target_account_name")
+        phrase = match_phrase(
+            contact_name=contact_name,
+            invoice_number=None,
+            target_account_name=target_name,
+            category=category,
+        )
+        base_desc = strip_match_suffix(tx.get("description") or "")
+        update["description"] = append_match_suffix(base_desc, phrase)
+        await db.bank_transactions.update_one(
+            {"_id": tx["_id"], "company_id": tx.get("company_id")},
+            {"$set": update},
+        )
+        if learn:
+            rate_extra = {"match_kind": "pos_settlement"}
+            try:
+                gross_v = float(update.get("pos_gross") or 0)
+                comm_v = float(update.get("pos_commission") or 0)
+                if gross_v > 0:
+                    rate_extra["pos_commission_rate"] = round(comm_v / gross_v, 6)
+            except (TypeError, ValueError):
+                pass
+            learned_id = await _learn_rule(
+                tx["company_id"], base_desc, contact_id, contact_name, category,
+                target_account_id, target_name, extra=rate_extra,
+            )
+            if learned_id:
+                await db.bank_transactions.update_one(
+                    {"_id": tx["_id"], "company_id": tx.get("company_id")},
+                    {"$set": {"learned_rule_id": learned_id}},
+                )
+        return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": tx.get("company_id")}))
     if as_expense:
         if is_inflow:
             raise HTTPException(status_code=400, detail="Masraf eşleştirmesi yalnızca çıkış (ödeme) hareketlerinde yapılabilir.")
@@ -15050,7 +15112,7 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
     if learn:
         # Kural öğrenmede orijinal banka açıklaması (Eşleşti eki olmadan)
-        learned_id = await _learn_rule(tx["company_id"], base_desc, contact_id, contact_name, category, target_account_id, target_name)
+        learned_id = await _learn_rule(tx["company_id"], base_desc, contact_id, contact_name, category, target_account_id, target_name, extra=None)
         if learned_id:
             await db.bank_transactions.update_one(
                 {"_id": tx["_id"], "company_id": tx.get("company_id")},
@@ -15198,6 +15260,10 @@ async def _release_rule_for_tx(tx: dict, actor: Optional[dict] = None) -> str:
 
 async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
     from bank_match_desc import strip_match_suffix, strip_trailing_actor
+    pos_settlement_match = tx.get("match_kind") == "pos_settlement"
+    if pos_settlement_match:
+        import pos_settlement
+        await pos_settlement.reverse(db, tx)
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
     if tx.get("contact_id"):
@@ -15208,7 +15274,7 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
             new_paid = round(max(0.0, inv.get("paid_amount", 0) - amount), 2)
             ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
             await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
-    if tx.get("target_account_id"):
+    if tx.get("target_account_id") and not pos_settlement_match:
         t_kind, _t_id = _virman_endpoint(tx.get("target_account_id"))
         if t_kind == "partner":
             from bank_match_target import reverse_partner_match
@@ -15220,7 +15286,7 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
                 await db.bank_transactions.delete_one({"_id": counter["_id"]})
     # Eşleştirmeden oluşan masrafı / personel ödemesini kaldır (banka bakiyesine tekrar dokunma)
     eid = tx.get("expense_id")
-    if eid:
+    if eid and not pos_settlement_match:
         exp = await db.expenses.find_one({"_id": eid})
         if exp and (exp.get("source") == "bank_match" or exp.get("bank_transaction_id") == tx.get("_id")):
             await db.expenses.delete_one({"_id": eid})
@@ -15256,7 +15322,7 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
             "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
             "description": cleaned_desc,
         },
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "personnel_movement_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": ""}})
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "expense_number": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "personnel_movement_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": "", "match_kind": "", "pos_gross": "", "pos_commission": ""}})
     rule_action = "none"
     try:
         rule_action = await _release_rule_for_tx(tx, actor=actor) or "none"
@@ -15283,6 +15349,8 @@ async def _prior_match_from_history(company_id: str, description: str, skip_id: 
         if skip_id and t.get("_id") == skip_id:
             continue
         if _match_pattern(strip_match_suffix(t.get("description", ""))) != pattern:
+            continue
+        if t.get("match_kind") == "pos_settlement":
             continue
         if t.get("contact_id") or t.get("target_account_id") or t.get("category"):
             return t
@@ -15481,6 +15549,8 @@ async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule", ac
         target_id = payload.get("target_account_id") if source != "cari" else None
         learn = source != "rule"
         applied_via = via if source == "rule" else source
+        if payload.get("match_kind") == "pos_settlement":
+            continue
         try:
             # Personel kategorili kural personel defterine yazmaz; as_expense ve employee gönderilmez.
             await _apply_match(tx, contact_id, None, category, learn=learn, target_account_id=target_id, via=applied_via, actor=actor)
@@ -15510,12 +15580,14 @@ async def _prior_match_lookup(company_id: str) -> Dict[str, dict]:
     """Aynı açıklama kalıbıyla daha önce eşleştirilmiş hareketlerden tutarlı hedef haritası."""
     matched_txs = await db.bank_transactions.find(
         {"company_id": company_id, "source": "bank_sync", "match_status": "matched"},
-        {"description": 1, "contact_id": 1, "contact_name": 1, "target_account_id": 1, "target_account_name": 1, "category": 1},
+        {"description": 1, "contact_id": 1, "contact_name": 1, "target_account_id": 1, "target_account_name": 1, "category": 1, "match_kind": 1},
     ).to_list(3000)
     groups: Dict[str, dict] = {}
     for t in matched_txs:
         p = _match_pattern(t.get("description", ""))
         if not p:
+            continue
+        if t.get("match_kind") == "pos_settlement":
             continue
         key = (t.get("contact_id") or "", t.get("target_account_id") or "", t.get("category") or "")
         if not (key[0] or key[1] or key[2]):
@@ -15557,6 +15629,8 @@ async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto
             continue
         pattern = _match_pattern(tx.get("description", ""))
         prior_hit = prior.get(pattern) if pattern else None
+        if prior_hit and prior_hit.get("match_kind") == "pos_settlement":
+            continue
         if prior_hit and (prior_hit.get("contact_id") or prior_hit.get("target_account_id") or prior_hit.get("category")):
             try:
                 await _apply_match(
@@ -15640,6 +15714,9 @@ async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, An
         personnel_pay_kind=req.get("personnel_pay_kind") or None,
         link_existing_id=req.get("link_existing_id") or req.get("existing_tx_id") or None,
         expense_id=req.get("expense_id") or None,
+        mode=req.get("mode") or None,
+        pos_gross=req.get("pos_gross"),
+        pos_commission=req.get("pos_commission"),
     )
 
 @api_router.post("/banking/transactions/{tx_id}/unmatch")
