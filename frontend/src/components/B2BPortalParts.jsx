@@ -1,8 +1,8 @@
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer, LogOut } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer, LogOut, Check, FileText } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
@@ -19,7 +19,8 @@ import { DocumentFormModal } from "./DocumentFormModal";
 import { B2BCardPay } from "./B2BCardPay";
 import { StatementTxList } from "./StatementTxList";
 import { StatementPrint } from "./StatementShare";
-import { logoutB2B } from "../utils/b2bSession";
+import { logoutB2B, supplierInitials } from "../utils/b2bSession";
+import { useIsNarrow } from "../hooks/useIsNarrow";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -125,13 +126,125 @@ export const b2bOrderGross = (o) => {
 };
 
 
-export const B2BHeader = ({ company, contact, token, onPasswordChanged, switcher = null }) => {
-  const bal = contact.balance || 0;
-  const [open, setOpen] = useState(false);
-  const hasPassword = contact.has_password !== false;
+const B2B_HEADER_NARROW = 1023;
+const LEGAL_NAME_TOKENS = new Set(["a.ş", "a.s", "aş", "as", "ltd", "şti", "sti", "san", "tic", "ve", "co", "inc", "limited", "anonim", "şirketi"]);
+
+function b2bShortPartyName(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const kept = [];
+  for (const part of parts) {
+    const key = part.toLocaleLowerCase("tr-TR").replace(/[.\u00b7]+/g, "");
+    if (LEGAL_NAME_TOKENS.has(key)) continue;
+    kept.push(part);
+    if (kept.length >= 2) break;
+  }
+  return kept.join(" ") || String(name || "").trim();
+}
+
+function findCurrentSupplier(suppliers, company, contact) {
+  const list = suppliers || [];
+  const companyName = String(company?.name || "");
+  const contactName = String(contact?.name || "");
+  return list.find((row) => String(row.company_name || "") === companyName && String(row.contact_name || "") === contactName)
+    || list.find((row) => companyName && String(row.company_name || "") === companyName)
+    || null;
+}
+
+function supplierReach(row, company, current) {
+  const isCurrent = !!current && (row === current || (row?.contact_id && row.contact_id === current.contact_id));
+  const phone = String(row?.phone || (isCurrent ? company?.phone : "") || "").trim();
+  const email = String(row?.email || (isCurrent ? company?.email : "") || "").trim();
+  return { phone, email };
+}
+
+function balanceTone(bal) {
+  if (bal > 0) {
+    return { card: "border-rose-200 bg-rose-50", amount: "text-rose-700", pill: "bg-rose-600 text-white", label: "BORÇ", rule: "border-rose-200" };
+  }
+  if (bal < 0) {
+    return { card: "border-emerald-200 bg-emerald-50", amount: "text-emerald-700", pill: "bg-emerald-600 text-white", label: "ALACAK", rule: "border-emerald-200" };
+  }
+  return { card: "border-slate-200 bg-white", amount: "text-slate-800", pill: "", label: "", rule: "border-slate-200" };
+}
+
+function SupplierMark({ name, logoUrl, className = "w-9 h-9" }) {
+  if (logoUrl) {
+    return <img src={resolveImageUrl(logoUrl)} alt="" className={`${className} rounded-lg object-contain bg-white border border-slate-200 shrink-0`} />;
+  }
+  if (!String(name || "").trim()) {
+    return (
+      <span className={`${className} rounded-lg bg-slate-800 text-white inline-flex items-center justify-center shrink-0`}>
+        <Building2 className="w-4 h-4" />
+      </span>
+    );
+  }
+  return (
+    <span className={`${className} rounded-lg bg-slate-800 text-white inline-flex items-center justify-center font-bold text-[11px] shrink-0`}>
+      {supplierInitials(name)}
+    </span>
+  );
+}
+
+function BalanceCard({ bal, showStatement, onSelectTab, wide }) {
+  const tone = balanceTone(bal);
+  return (
+    <div data-testid="b2b-balance-card" className={`border-2 rounded-xl ${tone.card} ${wide ? "w-full px-3.5 py-2.5" : "shrink-0 px-3.5 py-1.5"}`}>
+      <div className={`flex min-w-0 ${wide ? "items-center justify-between gap-3" : "items-center gap-3"}`}>
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold tracking-wider text-slate-500">BAKİYE</div>
+          <div data-testid="b2b-balance" className={`${wide ? "text-[24px]" : "text-[20px]"} font-extrabold leading-tight mt-0.5 ${tone.amount}`}>{fmt(Math.abs(bal))}</div>
+        </div>
+        <div className={`flex shrink-0 ${wide ? "flex-col items-end gap-1" : "items-center gap-3"}`}>
+          {tone.label ? <span className={`text-[11px] font-bold rounded-full px-2 py-0.5 ${tone.pill}`} data-testid="b2b-balance-pill">{tone.label}</span> : null}
+          {showStatement ? (
+            <button type="button" data-testid="b2b-balance-statement" onClick={() => onSelectTab?.("statement")} className={`text-xs font-semibold text-emerald-700 whitespace-nowrap ${wide ? "min-h-10 inline-flex items-center" : `border-l pl-3 ${tone.rule}`}`}>
+              Ekstre →
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export const B2BHeader = ({
+  company,
+  contact,
+  token,
+  onPasswordChanged,
+  suppliers = [],
+  busyId = "",
+  switchError = "",
+  onPick,
+  allowOrders = false,
+  showStatement = false,
+  cartCount = 0,
+  onSelectTab,
+}) => {
+  const narrow = useIsNarrow(B2B_HEADER_NARROW);
+  const rawBal = Number(contact?.balance);
+  const bal = Number.isFinite(rawBal) ? rawBal : 0;
+  const discount = Number(contact?.discount) || 0;
+  const [menu, setMenu] = useState(null);
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const hasPassword = contact?.has_password !== false;
   const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });
   const [busy, setBusy] = useState(false);
-  const close = () => { setOpen(false); setF({ current_password: "", new_password: "", new_password2: "" }); };
+  const barRef = useRef(null);
+  const supplierRef = useRef(null);
+  const supplierMenuRef = useRef(null);
+  const accountRef = useRef(null);
+  const accountMenuRef = useRef(null);
+  const list = suppliers || [];
+  const canSwitch = list.length > 1;
+  const current = findCurrentSupplier(list, company, contact);
+  const supplierCount = Math.max(list.length, 1);
+  const supplierName = company?.name || current?.company_name || "Tedarikçi";
+  const shortName = b2bShortPartyName(contact?.name);
+  const initials = supplierInitials(contact?.name);
+  const accountHint = discount > 0 ? `Bayi hesabı · %${discount} size özel indirim` : "Bayi hesabı";
+  const closePwd = () => { setPwdOpen(false); setF({ current_password: "", new_password: "", new_password2: "" }); };
+  const toggleMenu = (name) => setMenu((cur) => (cur === name ? null : name));
   const submit = async (e) => {
     e.preventDefault();
     if (f.new_password !== f.new_password2) { toast.error("Yeni şifreler eşleşmiyor."); return; }
@@ -139,47 +252,199 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged, switcher
     try {
       await axios.post(`${API_URL}/public/b2b/${token}/change-password`, { current_password: f.current_password, new_password: f.new_password });
       toast.success("Şifreniz güncellendi.");
-      close();
+      closePwd();
       onPasswordChanged?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Şifre değiştirilemedi."); } finally { setBusy(false); }
   };
-  return (
-    <header className="bg-slate-900 text-white" data-testid="b2b-header">
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          {company.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" className="h-9 sm:h-10 w-9 sm:w-auto bg-white rounded-lg p-1 object-contain shrink-0" /> : <Building2 className="w-7 h-7 text-slate-400 shrink-0" />}
-          <div className="min-w-0"><div className="font-bold leading-tight text-sm sm:text-base truncate">{company.name} <span className="text-[10px] bg-emerald-600 rounded px-1.5 py-0.5 ml-1 align-middle">B2B</span></div><div className="text-[11px] sm:text-xs text-slate-400 truncate">{[company.phone, company.email].filter(Boolean).join(" • ")}</div></div>
-        </div>
-        {switcher}
-        <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs min-w-0 w-full sm:w-auto">
-          <div className="min-w-0">
-            <div className="font-bold text-sm truncate" data-testid="b2b-contact-name">{contact.name}</div>
-            {token && (
-              <button type="button" onClick={() => setOpen(true)} className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-slate-300 hover:text-white underline decoration-dotted" data-testid="b2b-change-password-btn">
-                <KeyRound className="w-3 h-3" /> Şifre değiştir
+  useEscape(() => setMenu(null));
+  useEffect(() => {
+    if (!menu) return undefined;
+    const onDoc = (event) => {
+      const target = event.target;
+      const inside = [supplierRef, supplierMenuRef, accountRef, accountMenuRef].some((ref) => ref.current && ref.current.contains(target));
+      if (!inside) setMenu(null);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menu]);
+
+  const menuTop = narrow ? { top: (barRef.current?.offsetHeight || 56) + 8 } : undefined;
+  const supplierMenu = menu === "supplier" ? (
+    <div
+      ref={supplierMenuRef}
+      role="menu"
+      data-testid="b2b-switch-menu"
+      style={menuTop}
+      className={`z-40 bg-white text-slate-900 border border-slate-200 rounded-xl shadow-xl overflow-hidden ${narrow ? "absolute inset-x-2" : "absolute left-0 top-[calc(100%+8px)] w-[22rem] max-w-[calc(100vw-1.5rem)]"}`}
+    >
+      <div className="px-3 pt-3 pb-1 text-[10px] font-bold tracking-wider text-slate-400">TEDARİKÇİ SEÇİN</div>
+      <ul className="max-h-[70vh] overflow-y-auto py-1">
+        {list.map((row) => {
+          const active = !!current && ((row.contact_id && row.contact_id === current.contact_id) || row === current);
+          const reach = supplierReach(row, company, current);
+          return (
+            <li key={row.contact_id || row.company_name}>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!!busyId}
+                onClick={() => { setMenu(null); onPick?.(row); }}
+                className={`w-full min-h-10 flex items-start gap-2.5 px-3 py-2 text-left disabled:opacity-60 ${active ? "bg-emerald-50" : "hover:bg-slate-50"}`}
+                data-testid={`b2b-switch-item-${row.contact_id}`}
+              >
+                <SupplierMark name={row.company_name} logoUrl={row.logo_url} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-900 break-words">{row.company_name}</span>
+                  {(reach.phone || reach.email) ? (
+                    <span className="block text-[11px] text-slate-500 break-words">{[reach.phone, reach.email].filter(Boolean).join(" · ")}</span>
+                  ) : null}
+                </span>
+                {active ? <Check className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" aria-label="Seçili" /> : null}
               </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="text-right shrink-0"><div className="text-slate-400">Bakiye</div><div className={`font-bold ${bal > 0 ? "text-rose-300" : "text-emerald-300"}`} data-testid="b2b-balance">{fmt(Math.abs(bal))} {bal > 0 ? "borç" : bal < 0 ? "alacak" : ""}</div>{contact.discount > 0 && <span className="inline-block mt-0.5 bg-emerald-600/30 text-emerald-200 rounded px-1.5 text-[10px]">Size özel %{contact.discount} indirim</span>}</div>
-            <button
-              type="button"
-              onClick={logoutB2B}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 px-3 py-1.5 min-h-9 text-xs font-bold text-white hover:bg-white/10 whitespace-nowrap shrink-0"
-              data-testid="b2b-header-logout"
-              aria-label="Çıkış"
-            >
-              <LogOut className="w-3.5 h-3.5" /> Çıkış
-            </button>
-          </div>
+            </li>
+          );
+        })}
+      </ul>
+      {switchError ? <p className="px-3 pb-2 text-[11px] font-medium text-rose-600" data-testid="b2b-switch-error">{switchError}</p> : null}
+    </div>
+  ) : null;
+
+  const accountMenu = menu === "account" ? (
+    <div
+      ref={accountMenuRef}
+      role="menu"
+      data-testid="b2b-account-menu"
+      style={menuTop}
+      className={`z-40 bg-white text-slate-900 border border-slate-200 rounded-xl shadow-xl p-2 ${narrow ? "absolute inset-x-2" : "absolute right-0 top-[calc(100%+8px)] w-[300px] max-w-[calc(100vw-1.5rem)]"}`}
+    >
+      <div className="flex items-start gap-2.5 px-2 py-2 border-b border-slate-100 mb-1">
+        <span className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 font-extrabold text-sm inline-flex items-center justify-center shrink-0">{initials}</span>
+        <div className="min-w-0">
+          <div className="font-bold text-sm leading-snug break-words" data-testid="b2b-account-fullname">{contact?.name}</div>
+          <div className="text-xs text-slate-500 mt-0.5" data-testid="b2b-account-hint">{accountHint}</div>
         </div>
       </div>
-      {open && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(close)} data-testid="b2b-change-password-overlay">
+      {token ? (
+        <button type="button" data-testid="b2b-change-password-btn" onClick={() => { setMenu(null); setPwdOpen(true); }} className="w-full min-h-10 rounded-xl px-2.5 text-left text-sm font-medium inline-flex items-center gap-2 hover:bg-slate-50">
+          <KeyRound className="w-4 h-4 text-slate-500" /> Şifre değiştir
+        </button>
+      ) : null}
+      {showStatement ? (
+        <button type="button" data-testid="b2b-account-statement" onClick={() => { setMenu(null); onSelectTab?.("statement"); }} className="w-full min-h-10 rounded-xl px-2.5 text-left text-sm font-medium inline-flex items-center gap-2 hover:bg-slate-50">
+          <FileText className="w-4 h-4 text-slate-500" /> Hesap ekstresi
+        </button>
+      ) : null}
+      <div className="border-t border-slate-100 my-1" />
+      <button
+        type="button"
+        onClick={logoutB2B}
+        className="w-full min-h-10 whitespace-nowrap rounded-xl px-2.5 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50 inline-flex items-center gap-2"
+        data-testid="b2b-header-logout"
+        aria-label="Çıkış"
+      >
+        <LogOut className="w-4 h-4" /> Çıkış
+      </button>
+    </div>
+  ) : null;
+
+  const supplierTrigger = (
+    <div ref={supplierRef} className={`relative min-w-0 ${narrow ? "flex-1" : "max-w-md"}`}>
+      {canSwitch ? (
+        <button
+          type="button"
+          data-testid="b2b-switch-supplier"
+          aria-haspopup="menu"
+          aria-expanded={menu === "supplier"}
+          onClick={() => toggleMenu("supplier")}
+          className="w-full min-w-0 min-h-10 flex items-center gap-2.5 rounded-xl px-1.5 text-left hover:bg-slate-50"
+        >
+          <SupplierMark name={supplierName} logoUrl={company?.logo_url || current?.logo_url} />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center min-w-0">
+              <span className="font-bold text-sm text-slate-900 truncate">{supplierName}</span>
+              {narrow ? null : <span className="ml-1.5 shrink-0 text-[10px] font-bold bg-emerald-600 text-white rounded px-1 py-0.5">B2B</span>}
+            </span>
+            {narrow ? null : <span className="block text-[11px] text-slate-500 truncate">Tedarikçi · {supplierCount} tedarikçi</span>}
+          </span>
+          <ChevronDown data-testid="b2b-supplier-chevron" className={`w-4 h-4 shrink-0 text-slate-500 ${menu === "supplier" ? "rotate-180" : ""}`} />
+        </button>
+      ) : (
+        <div data-testid="b2b-supplier-static" className="w-full min-w-0 min-h-10 flex items-center gap-2.5 rounded-xl px-1.5">
+          <SupplierMark name={supplierName} logoUrl={company?.logo_url || current?.logo_url} />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center min-w-0">
+              <span className="font-bold text-sm text-slate-900 truncate">{supplierName}</span>
+              {narrow ? null : <span className="ml-1.5 shrink-0 text-[10px] font-bold bg-emerald-600 text-white rounded px-1 py-0.5">B2B</span>}
+            </span>
+            {narrow ? null : <span className="block text-[11px] text-slate-500 truncate">Tedarikçi · {supplierCount} tedarikçi</span>}
+          </span>
+        </div>
+      )}
+      {switchError && menu !== "supplier" ? <p className="px-1.5 text-[11px] font-medium text-rose-600" data-testid="b2b-switch-error">{switchError}</p> : null}
+      {menu === "supplier" && !narrow ? supplierMenu : null}
+    </div>
+  );
+
+  return (
+    <header className="relative bg-white text-slate-900 border-b border-slate-200" data-testid="b2b-header">
+      <div ref={barRef} data-testid="b2b-header-bar" className={`flex items-center min-w-0 ${narrow ? "gap-2 px-3 py-2" : "gap-4 px-6 py-2.5"}`}>
+        {narrow ? null : (
+          <div className="flex items-center gap-2 shrink-0 pr-4 border-r border-slate-200">
+            <img src="/brand/tamkobi-mark.svg" alt="TamKobi" className="h-7 w-7" data-testid="b2b-brand-logo" />
+            <span className="font-extrabold text-[15px] text-emerald-600">TamKobi</span>
+            <span className="text-sm font-medium text-slate-500">Bayi Portalı</span>
+          </div>
+        )}
+        {supplierTrigger}
+        {narrow ? null : <div className="flex-1" />}
+        {narrow ? null : <BalanceCard bal={bal} showStatement={showStatement} onSelectTab={onSelectTab} />}
+        {allowOrders ? (
+          <button
+            type="button"
+            onClick={() => onSelectTab?.("cart")}
+            data-testid="b2b-header-cart"
+            aria-label="Sepet"
+            className={`relative shrink-0 inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl min-h-10 ${narrow ? "min-w-10 px-0" : "px-4"}`}
+          >
+            <ShoppingCart className="w-4 h-4" />
+            {narrow ? null : <span>Sepet</span>}
+            {Number(cartCount) > 0 ? (
+              <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-rose-600 text-white text-[11px] font-bold border-2 border-white inline-flex items-center justify-center" data-testid="b2b-cart-badge" aria-label={`Sepette ${cartCount} kalem`}>
+                {cartCount}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
+        <div ref={accountRef} className="relative shrink-0">
+          <button
+            type="button"
+            data-testid="b2b-account-trigger"
+            aria-haspopup="menu"
+            aria-expanded={menu === "account"}
+            aria-label={contact?.name || "Hesap"}
+            onClick={() => toggleMenu("account")}
+            className={`inline-flex items-center gap-2 rounded-xl min-h-10 hover:bg-slate-100 ${narrow ? "min-w-10 justify-center px-1" : "px-1.5"}`}
+          >
+            <span data-testid="b2b-account-avatar" className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 font-extrabold text-sm inline-flex items-center justify-center">{initials}</span>
+            <span data-testid="b2b-contact-name" className={narrow ? "sr-only" : "font-semibold text-sm truncate max-w-[11rem]"}>{shortName}</span>
+            {narrow ? null : <ChevronDown className={`w-4 h-4 text-slate-500 ${menu === "account" ? "rotate-180" : ""}`} />}
+          </button>
+          {menu === "account" && !narrow ? accountMenu : null}
+        </div>
+      </div>
+      {narrow ? (
+        <div data-testid="b2b-header-balance" className="px-3 pb-3 w-full">
+          <BalanceCard bal={bal} showStatement={showStatement} onSelectTab={onSelectTab} wide />
+        </div>
+      ) : null}
+      {narrow && menu === "supplier" ? supplierMenu : null}
+      {narrow && menu === "account" ? accountMenu : null}
+      {pwdOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(closePwd)} data-testid="b2b-change-password-overlay">
           <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="bg-white text-slate-900 w-full max-w-md rounded-2xl p-5 space-y-3 shadow-2xl" data-testid="b2b-change-password-modal">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-emerald-600" /> Şifre değiştir</h3>
-              <button type="button" onClick={close} className="p-1.5 text-slate-400 hover:text-slate-700" aria-label="Kapat" data-testid="b2b-change-password-close"><X className="w-5 h-5" /></button>
+              <button type="button" onClick={closePwd} className="p-1.5 text-slate-400 hover:text-slate-700" aria-label="Kapat" data-testid="b2b-change-password-close"><X className="w-5 h-5" /></button>
             </div>
             <p className="text-[11px] text-slate-500">{hasPassword ? "Mevcut şifrenizi doğrulayın; yeni şifre en az 6 karakter olmalıdır." : "Bu hesap için ilk şifrenizi belirleyin (en az 6 karakter)."}</p>
             {hasPassword && <div><label className="block text-xs font-semibold mb-1">Mevcut şifre</label><input type="password" required value={f.current_password} onChange={(e) => setF({ ...f, current_password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="b2b-chg-current-password" autoComplete="current-password" /></div>}

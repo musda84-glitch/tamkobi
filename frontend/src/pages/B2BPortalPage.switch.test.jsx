@@ -83,6 +83,10 @@ function installGets(suppliers) {
   });
 }
 
+async function openAccount() {
+  await act(async () => { host.querySelector("[data-testid='b2b-account-trigger']").click(); });
+}
+
 async function show(entry = "/portal/tok-a") {
   root = createRoot(host);
   await act(async () => {
@@ -111,6 +115,14 @@ beforeEach(() => {
   toast.error.mockReset();
   goSpy = jest.spyOn(b2bNav, "go").mockImplementation(() => {});
   window.scrollTo = jest.fn();
+  window.matchMedia = jest.fn().mockImplementation((query) => ({
+    matches: false,
+    media: query,
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+  }));
   global.IntersectionObserver = class {
     observe() {}
     disconnect() {}
@@ -146,7 +158,8 @@ test("tedarikçi değiştir yalnız liste birden fazlaysa görünür", async () 
   await show();
   const button = host.querySelector('[data-testid="b2b-switch-supplier"]');
   expect(button).not.toBeNull();
-  expect(button.textContent).toContain("Tedarikçi değiştir");
+  expect(button.textContent).toContain("Tedarikçi · 2 tedarikçi");
+  expect(button.querySelector("[data-testid='b2b-supplier-chevron']")).not.toBeNull();
   const listCall = axios.get.mock.calls.find((call) => String(call[0]).includes("/suppliers"));
   expect(listCall[0]).toBe("/api/public/b2b/suppliers");
   expect(String(listCall[0])).not.toContain("select-secret");
@@ -202,20 +215,23 @@ test("portalda 403 seçim hatasını gösterir ve sepeti taşımaz", async () =>
   expect(localStorage.getItem("b2b_cart_tok-b")).toBeNull();
 });
 
-test("tek tedarikçi ve eski portal bağlantısında başlıkta çıkış görünür", async () => {
+test("tek tedarikçi ve eski portal bağlantısında hesap menüsünde çıkış görünür", async () => {
   installGets([TWO[0]]);
   await show();
+  expect(host.querySelector('[data-testid="b2b-switch-supplier"]')).toBeNull();
+  expect(host.querySelector("[data-testid='b2b-supplier-chevron']")).toBeNull();
+  await openAccount();
   const bare = host.querySelector('[data-testid="b2b-header-logout"]');
   expect(bare).not.toBeNull();
   expect(bare.textContent).toContain("Çıkış");
   expect(bare.getAttribute("aria-label")).toBe("Çıkış");
-  expect(host.querySelector('[data-testid="b2b-switch-supplier"]')).toBeNull();
 
   sessionStorage.setItem("b2b_session", "select-secret");
   if (root) act(() => root.unmount());
   await show();
-  expect(host.querySelector('[data-testid="b2b-header-logout"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="b2b-switch-supplier"]')).toBeNull();
+  await openAccount();
+  expect(host.querySelector('[data-testid="b2b-header-logout"]')).not.toBeNull();
 });
 
 test("çok tedarikçide başlık ve menü aynı çıkış fonksiyonunu kullanır", async () => {
@@ -224,10 +240,10 @@ test("çok tedarikçide başlık ve menü aynı çıkış fonksiyonunu kullanır
   installGets(TWO);
   axios.post.mockResolvedValue({ data: { status: "success" } });
   await show();
-  expect(host.querySelector('[data-testid="b2b-header-logout"]')).not.toBeNull();
-  await act(async () => { host.querySelector('[data-testid="b2b-switch-supplier"]').click(); });
-  const menuLogout = host.querySelector('[data-testid="b2b-portal-logout"]');
+  await openAccount();
+  const menuLogout = host.querySelector('[data-testid="b2b-header-logout"]');
   expect(menuLogout).not.toBeNull();
+  expect(menuLogout.textContent).toContain("Çıkış");
   await act(async () => { menuLogout.click(); });
   expect(axios.post).toHaveBeenCalledWith(
     "/api/public/b2b/logout",
@@ -250,6 +266,7 @@ test("çıkış ucu hata verse de oturumu siler, sepeti ve panel anahtarını b�
   installGets([TWO[0]]);
   axios.post.mockRejectedValue(new Error("logout down"));
   await show();
+  await openAccount();
   await act(async () => { host.querySelector('[data-testid="b2b-header-logout"]').click(); });
   expect(axios.post).toHaveBeenCalledWith(
     "/api/public/b2b/logout",
@@ -269,18 +286,35 @@ test("çıkış ucu hata verse de oturumu siler, sepeti ve panel anahtarını b�
   expect(toast.message).toHaveBeenCalledWith("Sepetiniz bu cihazda saklandı.");
 });
 
-test("390px başlık çıkışı sağda, metin taşmadan durur", async () => {
+test("390px başlık tek satırda seçici, sepet ikonu ve avatar, altında tam genişlik bakiye", async () => {
   host.style.width = "390px";
   window.innerWidth = 390;
+  window.matchMedia = jest.fn().mockImplementation((query) => ({
+    matches: true,
+    media: query,
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+  }));
   installGets([]);
   await show();
+  const bar = host.querySelector('[data-testid="b2b-header-bar"]');
+  expect(bar).not.toBeNull();
+  expect(bar.textContent).toContain("Anadolu Gıda");
+  expect(bar.textContent).not.toContain("Bayi Portalı");
+  expect(bar.textContent).not.toContain("Sepet");
+  expect(bar.textContent).not.toContain("B2B");
+  expect(host.querySelector('[data-testid="b2b-header-cart"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="b2b-account-trigger"]')).not.toBeNull();
+  const balance = host.querySelector('[data-testid="b2b-header-balance"]');
+  expect(balance).not.toBeNull();
+  expect(balance.className).toMatch(/w-full/);
+  expect(bar.contains(balance)).toBe(false);
+  await openAccount();
   const button = host.querySelector('[data-testid="b2b-header-logout"]');
-  expect(button).not.toBeNull();
   expect(button.textContent.replace(/\s+/g, " ").trim()).toBe("Çıkış");
   expect(button.className).toMatch(/whitespace-nowrap/);
-  expect(button.className).toMatch(/min-h-9/);
+  expect(button.className).toMatch(/min-h-10/);
   expect(button.className).toMatch(/rounded-xl/);
-  const row = button.closest(".border-t");
-  expect(row).not.toBeNull();
-  expect(row.className).toMatch(/justify-between/);
 });
