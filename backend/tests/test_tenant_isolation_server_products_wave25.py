@@ -457,7 +457,7 @@ def test_serve_file_uses_storage_path_and_leaves_other_company(monkeypatch):
     prev = _use(db, monkeypatch)
     try:
         before = _digest(db, CO_B)
-        res = _run(server.serve_file("products/a.jpg", _request()))
+        res = _run(server.serve_file("products/a.jpg", _request(), w=None, fmt=None, t=None))
         assert res.media_type == "image/jpeg"
         assert _row(db, "files", CO_B, FILE)["content_type"] == "application/pdf"
         assert _row(db, "files", CO_B, FILE)["note"] == SECRET_NOTE
@@ -923,7 +923,7 @@ def test_finance_block_unlink_and_soft_delete_ignore_other_company(monkeypatch):
         assert _row(db, "orders", CO_B, "ord-b")["is_invoiced"] is True
         assert _row(db, "orders", CO_B, "ord-b")["invoice_id"] == DISP
         assert _row(db, "orders", CO_B, "ord-b")["tag"] == SECRET_NOTE
-        assert _row(db, "orders", CO_A, "ord-a")["invoice_id"] in (None, "")
+        assert _row(db, "orders", CO_A, "ord-a").get("invoice_id") in (None, "")
         assert _row(db, "invoices", CO_B, "sales-b")["dispatch_id"] == DISP
         assert _row(db, "invoices", CO_A, "sales-a").get("dispatch_id") in (None, "")
         assert _row(db, "installments", CO_B, "inst-b")["status"] == "paid"
