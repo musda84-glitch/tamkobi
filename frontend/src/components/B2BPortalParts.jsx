@@ -305,7 +305,7 @@ export const B2BHeader = ({
           );
         })}
       </ul>
-      {switchError ? <p className="px-3 pb-2 text-[11px] font-medium text-rose-600" data-testid="b2b-switch-error">{switchError}</p> : null}
+      {switchError ? <p className="px-3 pb-2 text-[11px] font-medium text-rose-600" data-testid="b2b-switch-error-menu">{switchError}</p> : null}
     </div>
   ) : null;
 
