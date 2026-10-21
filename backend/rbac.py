@@ -624,6 +624,9 @@ PUBLIC_API_ALLOWLIST = (
     "/api/mobile/manifest",
     "/api/platform/notices",
     "/api/platform/v1/",
+    # HMAC admin-v1. Sondaki / önek sınırıdır: /api/platform/admin-v1/… eşleşir,
+    # /api/platform/admin-v1-… ve /api/platform/admin-v10 eşleşmez.
+    "/api/platform/admin-v1/",
     "/api/webhook/",
     "/api/payments/paytr/callback",
     "/api/vpos/callback/",
