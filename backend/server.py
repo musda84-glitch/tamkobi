@@ -5232,7 +5232,10 @@ async def get_contact_statement(contact_id: str, user: dict = Depends(get_curren
     cid = contact["company_id"]
     invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
     payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
-    
+    payments = await cheques.payments_with_endorsement_virtuals(
+        db, payments, contact_id=contact_id, company_id=cid,
+    )
+
     return {
         "contact": clean_doc(contact),
         "invoices": clean_docs(invoices),
@@ -5246,6 +5249,11 @@ async def _statement_bundle(contact_id: str):
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
     invoices = await db.invoices.find({"contact_id": contact_id}).to_list(200)
     payments = await db.bank_transactions.find({"contact_id": contact_id}).to_list(200)
+    bundle_cid = str(contact.get("company_id") or "").strip()
+    if bundle_cid:
+        payments = await cheques.payments_with_endorsement_virtuals(
+            db, payments, contact_id=contact_id, company_id=bundle_cid,
+        )
     company = await db.companies.find_one({"_id": contact.get("company_id")}) or {}
     rows = statement_share.statement_rows(invoices, payments)
     return contact, statement_share.public_statement_view(contact, company, rows)
@@ -7410,6 +7418,9 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         expense_bank_txs=expense_txs,
         invoices=invoices,
     )
+    payments = await cheques.payments_with_endorsement_virtuals(
+        db, payments, contact_id=contact_id, company_id=cid,
+    )
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({
         "company_id": contact["company_id"],
@@ -7429,8 +7440,9 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
     wa = await db.whatsapp_logs.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     quotes = await db.quotes.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"company_id": cid, "contact_id": contact_id}).sort("due_date", 1).to_list(200)]
-    live_cheque = cheques.open_portfolio_balance(cheques_rows)
+    cheque_today = cheques._today()
+    cheques_rows = await cheques.fetch_contact_cheques(db, contact_id, cid)
+    live_cheque = cheques.open_portfolio_balance(cheques_rows, cheque_today)
     if abs(float(contact.get("cheque_bond_balance") or 0) - live_cheque) > 0.005:
         # BizimHesap chequeandbond snapshot'ı (ör. ERSAY 177.924,83) gerçek portföy değilse sıfırla.
         await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": {"cheque_bond_balance": live_cheque}})
@@ -12274,11 +12286,14 @@ async def get_report(kind: str, company_id: Optional[str] = None, date_from: Opt
             if date_to:
                 rng["$lte"] = date_to
             txq["date"] = rng
-        txs = await db.bank_transactions.find(txq, {"date": 1, "type": 1, "amount": 1, "category": 1}).to_list(50000)
+        txs = await db.bank_transactions.find(txq, {
+            "date": 1, "type": 1, "amount": 1, "category": 1,
+            "account_id": 1, "source": 1, "cheque_kind": 1, "account_name": 1,
+        }).to_list(50000)
         months: Dict[str, Dict[str, Any]] = {}
         cats: Dict[str, Dict[str, Any]] = {}
         for t in txs:
-            if not t.get("date"):
+            if not t.get("date") or cheques.is_noncash_cheque_movement(t):
                 continue
             m = months.setdefault(t["date"][:7], {"name": t["date"][:7], "inflow": 0.0, "outflow": 0.0, "net": 0.0})
             c = cats.setdefault(t.get("category") or "Diğer", {"name": t.get("category") or "Diğer", "inflow": 0.0, "outflow": 0.0, "net": 0.0})
@@ -18812,7 +18827,10 @@ async def accountant_summary(company_id: Optional[str] = None, month: Optional[s
         db.invoices.find({"company_id": cid, "issue_date": {"$regex": f"^{month}"}},
                          {"invoice_type": 1, "status": 1, "e_type": 1, "invoice_number": 1, "issue_date": 1, "contact_name": 1,
                           "subtotal": 1, "vat_total": 1, "grand_total": 1, "paid_amount": 1, "payment_status": 1, "gib_status": 1, "items": 1}).to_list(5000),
-        db.bank_transactions.find({"company_id": cid, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
+        db.bank_transactions.find(
+            {"company_id": cid, "date": {"$regex": f"^{month}"}},
+            {"type": 1, "amount": 1, "account_id": 1, "source": 1, "cheque_kind": 1, "account_name": 1, "category": 1},
+        ).to_list(5000),
         db.payrolls.find({"company_id": cid, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
         db.tax_obligations.find({"company_id": cid, "period": month}).to_list(2000),
         db.tax_documents.find({"company_id": cid, "period": month}).to_list(200),
@@ -18828,12 +18846,13 @@ async def accountant_summary(company_id: Optional[str] = None, month: Optional[s
             by_vat.setdefault(r, {"rate": r, "sales_base": 0, "sales_vat": 0, "purchase_base": 0, "purchase_vat": 0})
             by_vat[r][f"{k}_base"] += base; by_vat[r][f"{k}_vat"] += vat
     calc_vat = sum(i.get("vat_total", 0) for i in sales); ded_vat = sum(i.get("vat_total", 0) for i in purchases)
+    cash_txs = [t for t in txs if not cheques.is_noncash_cheque_movement(t)]
     slim = [{k: i.get(k) for k in ("invoice_number", "issue_date", "invoice_type", "e_type", "contact_name", "subtotal", "vat_total", "grand_total", "gib_status")} | {"id": i.get("_id") or i.get("id")} for i in sorted(invs, key=lambda x: x.get("issue_date", ""), reverse=True)]
     return {"month": month,
             "sales": {"count": len(sales), "subtotal": sum(i.get("subtotal", 0) for i in sales), "vat": calc_vat, "total": sum(i.get("grand_total", 0) for i in sales), "unpaid": sum(i.get("grand_total", 0) - i.get("paid_amount", 0) for i in sales if i.get("payment_status") != "paid")},
             "purchases": {"count": len(purchases), "subtotal": sum(i.get("subtotal", 0) for i in purchases), "vat": ded_vat, "total": sum(i.get("grand_total", 0) for i in purchases)},
             "vat": {"calculated": calc_vat, "deductible": ded_vat, "payable": max(0.0, calc_vat - ded_vat), "carryover": max(0.0, ded_vat - calc_vat), "by_rate": sorted(by_vat.values(), key=lambda x: -float(x["rate"]))},
-            "cash": {"inflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "outflow"), "count": len(txs)},
+            "cash": {"inflow": sum(t.get("amount", 0) for t in cash_txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in cash_txs if t.get("type") == "outflow"), "count": len(cash_txs)},
             "payroll": tax_obligations.payroll_from_documents(tax_docs) or {"count": len(payrolls), "gross": sum(p.get("gross_salary", 0) for p in payrolls), "net": sum(p.get("net_salary", 0) for p in payrolls), "employer_cost": sum(p.get("total_employer_cost", p.get("gross_salary", 0)) for p in payrolls), "source": "personnel"},
             "tax_payables": tax_obligations.month_summary(tax_obs),
             "e_docs": {"gib_sent": sum(1 for i in invs if i.get("status") == "sent"), "draft": sum(1 for i in invs if i.get("status") == "draft"), "dispatch": sum(1 for i in invs if i.get("invoice_type") == "dispatch")},

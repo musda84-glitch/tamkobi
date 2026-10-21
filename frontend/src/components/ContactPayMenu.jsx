@@ -39,11 +39,18 @@ export function ContactPayMenu({ onSelect, disabled = false }) {
                 <DropdownMenuItem
                   key={item.id}
                   onSelect={() => onSelect?.(item)}
-                  className="gap-2.5 text-xs text-slate-800 cursor-pointer rounded-md px-2.5 py-2 focus:bg-slate-50"
+                  className={`gap-2.5 text-xs text-slate-800 cursor-pointer rounded-md px-2.5 py-2 focus:bg-slate-50 ${item.hint ? "items-start" : ""}`}
                   data-testid={`detail-collect-${item.id}`}
                 >
-                  <Icon className={`w-4 h-4 shrink-0 ${item.iconClass || "text-slate-500"}`} />
-                  <span className="flex-1 truncate font-medium">{item.label}</span>
+                  <Icon className={`w-4 h-4 shrink-0 ${item.iconClass || "text-slate-500"} ${item.hint ? "mt-0.5" : ""}`} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate font-medium">{item.label}</span>
+                    {item.hint ? (
+                      <span className="block text-[10px] font-normal leading-snug text-slate-500" data-testid={`detail-collect-hint-${item.id}`}>
+                        {item.hint}
+                      </span>
+                    ) : null}
+                  </span>
                   {item.badge ? (
                     <span className="shrink-0 rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
                       {item.badge}

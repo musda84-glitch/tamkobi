@@ -17,6 +17,7 @@ test("tahsilat menu matches Bizim Hesap sections and labels", () => {
     "Nakit - Kredi Kartı - Banka",
     "Temassız Kredi Kartı",
     "Çek",
+    "Çek cirola",
     "Müşteriden Senet Al",
     "Müşteriye Senet Ver",
     "Bakiye düzelt",
@@ -28,6 +29,14 @@ test("tahsilat menu matches Bizim Hesap sections and labels", () => {
     badge: "yeni",
   });
   expect(CONTACT_PAY_MENU_ITEMS.find((i) => i.id === "cash").preset.menuId).toBe("cash");
+  const endorse = CONTACT_PAY_MENU_ITEMS.find((i) => i.id === "cheque_endorse");
+  const chequeIndex = CONTACT_PAY_MENU_ITEMS.findIndex((i) => i.id === "cheque");
+  expect(CONTACT_PAY_MENU_ITEMS[chequeIndex + 1].id).toBe("cheque_endorse");
+  expect(endorse).toMatchObject({
+    badge: "yeni",
+    hint: "Portföydeki alınan çeki bu cariye ver",
+    preset: { menuId: "cheque_endorse", method: "cheque_endorse", type: "outflow" },
+  });
 });
 
 test("buildContactPayForm presets cash, cheque, promissory and ledger", () => {
@@ -55,6 +64,10 @@ test("buildContactPayForm presets cash, cheque, promissory and ledger", () => {
 
   const ledger = buildContactPayForm({ balance: 5 }, accounts, { method: "ledger", menuId: "ledger_slips" });
   expect(ledger).toMatchObject({ method: "ledger", slip: "debit", description: "Borç fişi" });
+
+  const endorse = buildContactPayForm({ balance: -80 }, accounts, { method: "cheque_endorse", type: "outflow", menuId: "cheque_endorse" });
+  expect(endorse).toMatchObject({ method: "cheque_endorse", type: "outflow", description: "Çek cirosu", menuId: "cheque_endorse" });
+  expect(endorse.endorse_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 });
 
 test("bakiye düzelt chooses slip and amount from contact balance", () => {
@@ -103,6 +116,13 @@ test("contactPayModalMeta locks fields per menu item", () => {
     showTypeToggle: true,
   });
   expect(contactPayModalMeta({})).toMatchObject({ showMethodTabs: true });
+  expect(contactPayModalMeta({ menuId: "cheque_endorse" })).toMatchObject({
+    title: "Çek cirola",
+    showMethodTabs: false,
+    showTypeToggle: false,
+    lockType: true,
+    showSlipToggle: false,
+  });
 });
 
 test("ledger_slips Tahsilat/Ödeme switches to cash with account target", () => {
