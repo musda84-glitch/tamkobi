@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, Request
 
+import account_balance
 import bank_guard
 import employee_pay
 import finance_txn
@@ -745,13 +746,15 @@ async def _cash_out(
         return f"{name} (Ortak)"
     aid = ln.get("account_id")
     await bank_guard.assert_manual_allowed(db, aid)
-    res = await db.bank_accounts.update_one({"_id": aid, "company_id": cid}, {"$inc": {"current_balance": -amount}})
-    if _matched(res) == 0:
-        raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
+    posted = await account_balance.apply_balance_delta(db, aid, -float(amount), company_id=cid)
+    if posted != "integrated":
+        exists = await db.bank_accounts.find_one({"_id": aid, "company_id": cid})
+        if not exists:
+            raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
     cx.push(
         "acc",
-        lambda aid=aid, amount=amount, cid=cid: db.bank_accounts.update_one(
-            {"_id": aid, "company_id": cid}, {"$inc": {"current_balance": amount}},
+        lambda aid=aid, amount=amount, cid=cid: account_balance.apply_balance_delta(
+            db, aid, float(amount), company_id=cid,
         ),
     )
     acc_name = (acc or {}).get("account_name") or "Hesap"

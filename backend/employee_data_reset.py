@@ -57,13 +57,17 @@ async def _delete_emp(coll, emp_id: str) -> int:
     return int(getattr(res, "deleted_count", 0) or 0)
 
 
-async def _inc_balance(db, account_id: Optional[str], amount: float) -> None:
+async def _inc_balance(db, account_id: Optional[str], amount: float, company_id: Optional[str] = None) -> None:
     if not account_id or amount == 0:
         return
-    coll = getattr(db, "bank_accounts", None)
-    if coll is None:
+    cid = str(company_id or "").strip()
+    if not cid:
+        import account_balance
+        cid = await account_balance._lookup_company_id(db, str(account_id))
+    if not cid:
         return
-    await coll.update_one({"_id": account_id}, {"$inc": {"current_balance": amount}})
+    import account_balance
+    await account_balance.apply_balance_delta(db, account_id, amount, company_id=cid)
 
 
 async def _reverse_partner(db, query: dict) -> None:
@@ -90,7 +94,7 @@ async def reverse_paid_payroll(db, row: dict) -> None:
     if row.get("partner_id"):
         await _reverse_partner(db, {"payroll_id": pid})
     elif row.get("account_id"):
-        await _inc_balance(db, row.get("account_id"), amount)
+        await _inc_balance(db, row.get("account_id"), amount, company_id=row.get("company_id"))
     if pid:
         await _delete_bank_tx(db, {"payroll_id": pid})
 
@@ -103,7 +107,7 @@ async def reverse_paid_bonus(db, row: dict) -> None:
     if row.get("partner_id"):
         await _reverse_partner(db, {"bonus_id": bid})
     elif row.get("account_id"):
-        await _inc_balance(db, row.get("account_id"), amount)
+        await _inc_balance(db, row.get("account_id"), amount, company_id=row.get("company_id"))
     if bid:
         await _delete_bank_tx(db, {"bonus_id": bid})
 
@@ -118,7 +122,7 @@ async def reverse_paid_expense(db, row: dict) -> None:
     if row.get("partner_id"):
         await _reverse_partner(db, {"expense_id": eid})
     elif row.get("account_id"):
-        await _inc_balance(db, row.get("account_id"), amount)
+        await _inc_balance(db, row.get("account_id"), amount, company_id=row.get("company_id"))
     if eid:
         await _delete_bank_tx(db, {"expense_id": eid})
 

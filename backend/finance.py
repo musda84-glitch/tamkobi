@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+import account_balance
 from bank_guard import assert_manual_allowed
 from ai_service import make_chat
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -267,7 +268,7 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
     })
     if not is_card:
         change = -abs_amt if outflow else abs_amt
-        await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$inc": {"current_balance": change}})
+        await account_balance.apply_balance_delta(_db, account_id, change, company_id=cid)
     created: Dict[str, Any] = {"tx_id": tx_id, "kind": kind}
     if kind == "cari_odeme" and contact:
         c_change = abs_amt if outflow else -abs_amt
@@ -350,7 +351,9 @@ async def create_loan(req: Dict[str, Any], user: dict = Depends(_user_dep)):
             acc = await _db.bank_accounts.find_one({"_id": account_id, "company_id": company_id})
             if acc:
                 await assert_manual_allowed(_db, acc["_id"])
-                await _db.bank_accounts.update_one({"_id": acc["_id"], "company_id": company_id}, {"$inc": {"current_balance": doc["principal"]}})
+                await account_balance.apply_balance_delta(
+                    _db, acc["_id"], doc["principal"], company_id=company_id,
+                )
                 tx_doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Kredi Kullanımı", "amount": doc["principal"], "currency": "TRY", "description": f"{doc['name']} anapara girişi", "date": doc["start_date"], "created_at": _now()}
                 tx_doc.update(link)
                 await _db.bank_transactions.insert_one(tx_doc)
@@ -389,7 +392,9 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
         if not acc:
             raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
         await assert_manual_allowed(_db, account_id)
-        await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$inc": {"current_balance": -ins["amount"]}})
+        await account_balance.apply_balance_delta(
+            _db, account_id, -float(ins["amount"]), company_id=cid,
+        )
         tx_doc = {"_id": str(uuid.uuid4()), "company_id": cid, "account_id": account_id, "account_name": acc.get("account_name"), "type": "outflow", "category": "Kredi Taksiti", "amount": ins["amount"], "currency": "TRY", "description": f"{loan['name']} {no}. taksit", "date": pay_date, "created_at": _now()}
         tx_doc.update(link)
         await _db.bank_transactions.insert_one(tx_doc)
@@ -409,8 +414,7 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
         cost = round(float(ins.get("interest") or 0) + float(ins.get("kkdf_bsmv") or 0), 2)
         await _db.expenses.insert_one({"_id": str(uuid.uuid4()), "company_id": cid, "expense_number": f"KRD-{loan_id[:4].upper()}-{no:02d}", "date": pay_date, "category": "Kredi Faizi / Finansman", "description": f"{loan['name']} {no}. taksit faiz+KKDF/BSMV", "amount": cost, "vat_rate": 0, "vat_amount": 0, "total": cost, "currency": "TRY", "payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": paid_name, "paid_date": pay_date, "loan_id": loan_id, "notes": "Kredi modülünden otomatik", "is_recurring": False, "created_at": _now()})
     try:
-        if account_id:
-            import account_balance
+        if account_id and not await account_balance.account_is_integrated(_db, account_id, company_id=cid):
             bal = await account_balance.recalc_account_balance(_db, account_id, company_id=cid)
             await _db.bank_accounts.update_one({"_id": account_id, "company_id": cid}, {"$set": {"current_balance": bal}})
     except Exception:
