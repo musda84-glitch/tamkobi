@@ -223,7 +223,7 @@ Kapsam: `admin.platform_users:read` (şirket personeli için olan `admin.users:r
 
 Kapsam: `admin.sms:read`. `platform_sms._public_view(await load_settings())` — `/system/sms` ile aynı gövde. `password_enc` yok. `has_password` ve `password_unreadable` boolean kalır. Bu uç şifreyi yanıta koymaz.
 
-Bakiye ucu yoktur. `/system/sms/balance` kayıtlı şifreyi çözüp sağlayıcıya dış istek atar; admin-v1 bunu çağırmaz. SMS kredisi bu API’de yalnızca `sms/logs` yanıtındaki `summary` sayılarıdır.
+Bu GET bakiye sormaz. Kayıtlı şifreyi çözüp sağlayıcıya giden bakiye, doğrulama ve test SMS’i A6’daki `POST /sms/balance`, `POST /sms/verify` ve `POST /sms/send-test` uçlarındadır (`admin.sms:write`). `sms/logs` yanıtındaki `summary` sayıları değişmez.
 
 ```json
 {"item": {"provider": "netgsm", "usercode": "user1", "msgheader": "TAMKOBI", "is_active": true, "has_password": true, "password_unreadable": false}}
@@ -376,17 +376,14 @@ Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.product.create` ve `st
 
 Doğrudan `DELETE` yoktur. Paket silme `plan.delete`, entegratör ürünü silme `product.delete` action’ı olarak A5b’dedir.
 
-Bu yazma yüzeyinde yoktur:
+Bu A4 yüzeyinde yoktur; sonraki bölümlerdedir:
 
-- kimliğe bürünme — aşağıdaki A5a bölümü (bu yazma modülünde yok)
-- şirket, kullanıcı veya anahtar silme (şirket ve kullanıcı silme A5b’de)
-- şifre sıfırlama gönderimi, şifre ve 2FA sıfırlama
-- kullanıcı oluşturma ve düzenleme
-- API anahtarı oluşturma, döndürme ve iptal
-- `ip_allowlist` düzenleme
-- SMS ve mail ayarları ile şifreleri
-- e-fatura kullanıcı adı, şifre ve API anahtarı yazma
-- alt şirket bağını koparma (`/system`de de yok)
+- kimliğe bürünme — A5a
+- şirket silme, kullanıcı veri silme (`user.erase`), şifre sıfırlama, 2FA sıfırlama — A5b
+- panel yöneticisi silme (`user.delete`), anahtar iptali (`key.revoke`), bakım açma, eşik üstü kontör, alt şirket koparma — A5b
+- kota, depolama, panel kullanıcısı, API anahtarı yaşam döngüsü — A6
+- e-fatura kimliği, SMS, AI, PayTR, SMTP/IMAP, platform ayarları — A6
+- CMS, yardım, bakım metni, XSLT, kontör (eşik altı), veritabanı özeti, destek eki — A6
 
 ## admin-v1 impersonation (A5a)
 
@@ -431,7 +428,7 @@ Base path `/api/platform/admin-v1/danger/{action}/`. Kapsam `admin.dangerous`. B
 
 İki adımdır. prepare hiçbir iş verisi yazmaz, silmez ve e-posta göndermez. confirm, token’ı işlemden önce atomik tüketir. Süre `created_at` + 5 dakikadır. Token düz metin olarak saklanmaz; `platform_danger_confirmations` koleksiyonunda `_id` sha256 özetidir. Ayrı bir şema migration’ı gerekmez.
 
-`confirm_text`: `company.*` için şirket adı, `plan.delete` için paket adı, `product.delete` için ürün adı (trim, birebir); `user.*` ve `superadmin.*` için hedef e-posta (trim, küçük harf). Uyuşmazsa **400** ve token tüketilmez. `confirm_phrase`: `company.reset_data` için `VERİLERİ SIFIRLA`, `user.erase` için `VERİLERİ SİL`; diğer işlemlerde gönderilirse **400**. `operator_otp`, operatörün 6 haneli güncel TOTP kodudur. Operatörde 2FA yoksa **403** `Operatör 2FA kurulu değil.`; kod hatalı veya sayaç yeniden kullanıldıysa **403** `Doğrulama kodu hatalı.` ve deneme `2fa:<uid>` kilidine yazılır. Kilitliyken **429**. Şifre alanı kabul edilmez. Bilinmeyen action **404** `İşlem bulunamadı.`. Bilinmeyen alan **400** `Desteklenmeyen alan: <ad>`.
+`confirm_text`: `company.*` ve `gib.gift` için şirket adı, `plan.delete` için paket adı, `product.delete` için ürün adı, `key.revoke` için anahtar adı, `maintenance.enable` için bakım başlığı (trim, birebir); `user.*` ve `superadmin.*` için hedef e-posta (trim, küçük harf). Uyuşmazsa **400** ve token tüketilmez. `confirm_phrase`: `company.reset_data` için `VERİLERİ SIFIRLA`, `user.erase` için `VERİLERİ SİL`, `maintenance.enable` için `BAKIMI AÇ`, `gib.gift` için `KONTÖR YÜKLE`; diğer işlemlerde gönderilirse **400**. `operator_otp`, operatörün 6 haneli güncel TOTP kodudur. Operatörde 2FA yoksa **403** `Operatör 2FA kurulu değil.`; kod hatalı veya sayaç yeniden kullanıldıysa **403** `Doğrulama kodu hatalı.` ve deneme `2fa:<uid>` kilidine yazılır. Kilitliyken **429**. Şifre alanı kabul edilmez. Bilinmeyen action **404** `İşlem bulunamadı.`. Bilinmeyen alan **400** `Desteklenmeyen alan: <ad>`.
 
 Token yok, süresi dolmuş, kullanılmış, başka `key_id` veya URL’deki action ile farklıysa hepsi **400** `Onay kodu geçersiz veya süresi dolmuş.` Hedef prepare ile confirm arasında değişirse **409** `Hedef değişti, yeniden hazırlayın.` ve token tüketilmiş kalır. İşlem hata verirse token da tüketilmiş kalır; yeniden prepare gerekir.
 
@@ -444,12 +441,19 @@ Token yok, süresi dolmuş, kullanılmış, başka `key_id` veya URL’deki acti
 | `superadmin.2fa_reset` | user_id, `is_super_admin=True` | yok | `superadmin_2fa.reset_user_totp` |
 | `plan.delete` | plan_id | yok | `saas.apply_delete_plan` |
 | `product.delete` | product_id | yok | `store.delete_product` |
+| `company.detach` | company_id | yok | `saas.apply_detach_subsidiary` |
+| `user.delete` | süper admin user_id | yok | `saas.system_delete_user` |
+| `key.revoke` | api key id | yok | `store.revoke_api_key` |
+| `maintenance.enable` | `target_id` = `platform` | `BAKIMI AÇ` | `platform_notices.system_put_maintenance` (`enabled=true`) |
+| `gib.gift` | company_id; `credits` > 1000 | `KONTÖR YÜKLE` | `gib_credits.gift` |
 
 Kullanımda olan paket prepare’de **400** `Bu paketi kullanan N şirket var; önce paketlerini değiştirin.`. `plan_custom` **400** `Özel paket silinemez.`. Olmayan paket **404** `Paket bulunamadı.`. `tamkobi` ürünü **400** `tamkobi ürünü silinemez`. Olmayan ürün **404** `Ürün bulunamadı`. Bu iki action başka şirketi, başka paketi ve kardeş ürünü silmez. `activity_logs.company_id` şirket olmayan hedeflerde `platform` kalır.
 
 Korumalı şirketler (`PROTECTED_COMPANY_IDS`) reset ve delete için **400** `Platform demo şirketleri silinemez.` Platform gönderici şirketi delete için **400** `Platform gönderici şirketi silinemez. Önce ayarlardan başka bir gönderici seçin.` Kendi 2FA sıfırlama **400** `Kendi 2FA'nızı bu yolla sıfırlayamazsınız.` Süper admin olmayan 2FA hedefi **404** `Panel yöneticisi bulunamadı.`
 
-Audit: `admin_v1.danger.<action>.prepare` ve `admin_v1.danger.<action>.confirm`. `target_type` company, user, plan veya product. `details` yalnız `operator`, `reason`, `action`, preview özeti veya sonuç sayıları, `scopes`. Token, token özeti, `operator_otp`, `confirm_text`, imza, nonce, Idempotency-Key, secret ve sıfırlama bağlantısı girmez. `activity_logs` ve applog satırında `operator_email` ve `via=api` görünür.
+`company.detach` üstü olmayan şirkette **400** `Bu şirket bir üst şirkete bağlı değil.`. Paylaşılan lisanstayken `saas.apply_detach_subsidiary` çocuğa kendi lisans kopyasını açar; üst lisans silinmez. `user.delete` panel yöneticisi (`is_super_admin`) siler; kendi hesabı ve son süper admin **400**. Kiracı veri silme `user.erase` olarak kalır. `key.revoke` isteği atan anahtarın kendisini iptal edemez (**400** `Bu istekte kullanılan anahtar iptal edilemez.`); zaten iptal edilmiş anahtar **400**. `maintenance.enable` için `target_id` `platform` olmalıdır. `gib.gift` tutarı `gib_credits.GIFT_DIRECT_MAX` (1000) ve altındaysa **400** `1000 ve altı doğrudan yüklenebilir.`; üstü bu danger action’dadır. Doğrudan `POST .../gib-credits/gift` tersini uygular.
+
+Audit: `admin_v1.danger.<action>.prepare` ve `admin_v1.danger.<action>.confirm`. `target_type` company, user, plan, product, api_key veya maintenance. `details` yalnız `operator`, `reason`, `action`, preview özeti veya sonuç sayıları, `scopes`. Token, token özeti, `operator_otp`, `confirm_text`, imza, nonce, Idempotency-Key, secret ve sıfırlama bağlantısı girmez. `activity_logs` ve applog satırında `operator_email` ve `via=api` görünür.
 
 ### POST `/api/platform/admin-v1/danger/{action}/prepare`
 
@@ -458,6 +462,120 @@ Gövde: `target_id`, `reason` (A5a, 10..500), `operator_email` (A5a). Action’a
 ### POST `/api/platform/admin-v1/danger/{action}/confirm`
 
 Gövde: `confirmation_token`, `confirm_text`, `operator_otp`, phrase isteyen işlemlerde `confirm_phrase`. Başarıda `/system` ile aynı gövde `{"item": …}` zarfında döner. `user.password_reset` e-postayı SMTP ile göndermez; tek `notify_outbox` kaydı yazar. SMS yoktur.
+
+## admin-v1 eski /sistem yüzeyi (A6)
+
+`/sistem` modüllerinin admin-v1’de eksik kalan yazma ve okuma uçları. Kimlik doğrulama, `kind=platform_admin`, boş `instance_id`, Idempotency-Key ve audit kuralları A4 ile aynıdır. Yazma audit’i `admin_v1.write.<op>`. Yanıt zarfı `{"item": …}` (liste okumaları düz nesne). `_redact` parola, `api_key`, `secret`, `token` ve `iban_enc` alanlarını düşürür. Tek seferlik şirket/platform anahtar sırrı bu yüzden `credential` adıyla döner; sonraki `GET /api-keys` onu içermez. Aynı Idempotency-Key tekrarı ilk yanıttaki `credential` değerini geri verir.
+
+Sır taşıyan gövde alanları (`password`, `api_key`, `merchant_key`, `merchant_salt`, `legal_iban`, `clear_key: true`) özellik yazma kapsamına ek olarak `admin.secrets:write` ister. Eksikse **403** `Kapsam yetersiz` ve kayıt yazılmaz. Okuma `configured` / `has_*` ve maskeli ipucu döner; düz sır dönmez. Audit `details.fields` bu alan adlarını listelemez.
+
+`is_public` paket bayrağı A4’teki `POST/PUT /plans` üzerindedir (`saas.apply_create_plan` / `apply_update_plan`). Ayrı uç yoktur.
+
+Yeni kapsamlar `ADMIN_SCOPES` içindedir. Bir `:write` diğerini kapsamaz. `admin.secrets:write` tek başına özellik ucunu açmaz.
+
+| kapsam | eski /sistem |
+|--------|----------------|
+| `admin.quotas:write` | kotalar |
+| `admin.settings:read` / `admin.settings:write` | ayarlar, PayTR, SMTP/IMAP, eklenti varsayılanı |
+| `admin.secrets:write` | parola ve API anahtarı yazma (ek kapsam) |
+| `admin.storage:read` / `admin.storage:write` | depolama |
+| `admin.users:write` | panel kullanıcıları (oluşturma, düzenleme) |
+| `admin.keys:write` | API anahtarı oluşturma, kapsam, döndürme |
+| `admin.einvoice:read` / `admin.einvoice:write` | e-fatura kimliği, İşNet çıkış IP, XSLT |
+| `admin.sms:write` | SMS kayıt, doğrulama, bakiye, test (`admin.sms:read` GET’te kalır) |
+| `admin.ai:read` / `admin.ai:write` | AI sağlayıcı |
+| `admin.cms:read` / `admin.cms:write` | site ve yardım merkezi |
+| `admin.maintenance:read` / `admin.maintenance:write` | bakım metni ve duyuru (açma danger) |
+| `admin.db:read` | veritabanı paneli, salt okunur |
+| `admin.licenses:write` | eşik altı kontör hediyesi (mevcut lisans kapsamı) |
+| `admin.support:read` | destek eki indirme (mevcut) |
+| `admin.dangerous` | koparma, kullanıcı silme, anahtar iptali, bakım açma, eşik üstü kontör |
+
+### Kota, eklenti, depolama
+
+| uç | kapsam | iş |
+|----|--------|-----|
+| `PUT /companies/{company_id}/quotas` | `admin.quotas:write` | `saas.apply_license_update`. Alanlar `user_limit`, `company_limit`, `product_limit`, `contact_limit`, `storage_limit_mb`. `null` override’ı siler. Negatif veya bool **400**. Audit `quota.update`. |
+| `GET /addons` | `admin.settings:read` | `addons._list_addons` |
+| `PUT /addons` | `admin.settings:write` | `{"defaults": {anahtar: bool\|null}}`. Bilinmeyen anahtar **400**. Audit `addon.defaults`. Şirket eklenti aç/kapa A4’te `admin.licenses:write` olarak kalır. |
+| `GET /storage` | `admin.storage:read` | `storage_manager.list_accounts_storage` |
+| `GET /companies/{company_id}/storage` | `admin.storage:read` | `account_storage_summary` + `saas.effective` kota |
+| `GET /companies/{company_id}/storage/folders/{area_key}/files` | `admin.storage:read` | `list_folder_files` |
+| `POST /companies/{company_id}/storage/ensure` | `admin.storage:write` | `ensure_account_folders`. Audit `storage.ensure`. |
+| `POST /companies/{company_id}/storage/folders` | `admin.storage:write` | `{"label"}`. Audit `storage.folder`. |
+| `POST /storage/ensure-all` | `admin.storage:write` | her şirket için `ensure_account_folders`. Audit `storage.ensure_all`. |
+
+### Panel kullanıcısı ve API anahtarı
+
+`/sistem/kullanicilar` süper adminleridir. Kiracı kullanıcı CRUD’u bu uçlarda yoktur.
+
+| uç | kapsam | iş |
+|----|--------|-----|
+| `POST /platform-users` | `admin.users:write` | `saas.system_create_user`. `name`, `email`, `password` zorunlu. `password` için `admin.secrets:write`. Audit `platform_user.create`. Yanıtta parola yoktur. |
+| `PUT /platform-users/{user_id}` | `admin.users:write` | `saas.system_update_user`. `name`, `email`, `phone`, `is_active`, `password`. Silme yoktur. |
+| `POST /api-keys` | `admin.keys:write` | `store.create_api_key`. `kind=product` için `instance_id` zorunlu ve şirket olmalıdır. `platform_admin` `instance_id` alamaz. `admin.*` şirket anahtarına **400**. Yanıt `item` + bir kez `credential`. Audit `api_key.create`. |
+| `PUT /api-keys/{key_id}/scopes` | `admin.keys:write` | `store.update_api_key_scopes`. Sır dönmez. Audit `api_key.scopes`. |
+| `POST /api-keys/{key_id}/rotate` | `admin.keys:write` | `store.rotate_api_key`. Yeni `credential` bir kez. Audit `api_key.rotate`. |
+
+İptal yalnız `key.revoke`. `DELETE` yoktur. Eski `/platform/admin` ve `/system` anahtar uçları durur.
+
+### E-fatura, SMS, AI, PayTR, ayar, posta
+
+| uç | kapsam | iş |
+|----|--------|-----|
+| `GET /companies/{company_id}/einvoice` | `admin.einvoice:read` | `server._einvoice_view` maskeli. `username` yerine `username_configured` ve `username_hint`. `has_password`, `has_api_key`. `mode` İşNet SOAP ortamıdır (`test` \| `live`). `despatch_defaults` e-irsaliye varsayılanıdır. |
+| `PUT /companies/{company_id}/einvoice/credentials` | `admin.einvoice:write` | `server.save_einvoice_settings`. Sağlayıcı önceden atanmış olmalıdır. `password` ve `api_key` için `admin.secrets:write`. Audit `einvoice.credentials`. |
+| `GET /einvoice/isnet/egress` | `admin.einvoice:read` | `isnet.isnet_ip_registration_info` (çıkış IP). |
+| `PUT /sms/settings` | `admin.sms:write` | `platform_sms.save_platform_sms`. Parola için `admin.secrets:write`. `msgheader` 3–11 karakter. Audit `sms.save`. |
+| `POST /sms/verify` | `admin.sms:write` | `verify_platform_sms`. Audit `sms.verify`. |
+| `POST /sms/balance` | `admin.sms:write` | `platform_sms_balance`. Audit `sms.balance`. |
+| `POST /sms/send-test` | `admin.sms:write` | `phone` zorunlu. Audit `sms.send_test`. |
+| `GET /ai` | `admin.ai:read` | `saas_extras._system_ai_public` (`has_key`, `key_hint`). |
+| `PUT /ai` | `admin.ai:write` | `put_system_ai`. `api_key` ve `clear_key: true` için `admin.secrets:write`. Audit `ai.save`. |
+| `POST /ai/test` | `admin.ai:write` | `test_system_ai`. Audit `ai.test`. |
+| `GET /paytr` | `admin.settings:read` | `_paytr_public` (`has_key`, `has_salt`, `merchant_id`). |
+| `PUT /paytr` | `admin.settings:write` | `put_paytr`. `merchant_key` ve `merchant_salt` için `admin.secrets:write`. Audit `paytr.save`. |
+| `POST /paytr/test` | `admin.settings:write` | `test_paytr`. Audit `paytr.test`. |
+| `GET /settings` | `admin.settings:read` | `saas_billing.settings` maskeli. `legal_iban` yerine `legal_iban_configured` ve `legal_iban_hint`. `ai` ve `paytr` bu gövdede yoktur. |
+| `PUT /settings` | `admin.settings:write` | `saas_billing.put_settings`. `legal_iban` için `admin.secrets:write`. Audit `settings.save`. |
+| `GET /mail` | `admin.settings:read` | `platform_mail.mail_overview`. `has_password`; `password_enc` yok. Gelen kutusu okuma bu API’de yoktur. |
+| `POST /mail/servers` | `admin.settings:write` | `create_server`. Parola zorunlu ve `admin.secrets:write`. Audit `mail.server.create`. |
+| `PUT /mail/servers/{server_id}` | `admin.settings:write` | `update_server`. Audit `mail.server.update`. |
+| `POST /mail/servers/{server_id}/delete` | `admin.settings:write` | `delete_server`. Audit `mail.server.delete`. |
+| `POST /mail/servers/{server_id}/test` | `admin.settings:write` | `test_server`. Audit `mail.server.test`. |
+| `POST /mail/mailboxes` | `admin.settings:write` | `create_mailbox`. Audit `mail.mailbox.create`. |
+| `PUT /mail/mailboxes/{box_id}` | `admin.settings:write` | `update_mailbox`. Audit `mail.mailbox.update`. |
+| `POST /mail/mailboxes/{box_id}/delete` | `admin.settings:write` | `delete_mailbox`. Audit `mail.mailbox.delete`. |
+
+### CMS, yardım, bakım, XSLT, kontör, veritabanı, ek
+
+| uç | kapsam | iş |
+|----|--------|-----|
+| `GET /maintenance` | `admin.maintenance:read` | `platform_notices.get_maintenance` |
+| `PUT /maintenance` | `admin.maintenance:write` | `system_put_maintenance`. `enabled: true` şu an kapalıyken **400** `Bakım modunu açmak için danger akışını kullanın.` Kapatma ve açıkken metin düzenleme normal yazmadır. Audit `maintenance.save`. |
+| `GET /announcements` | `admin.maintenance:read` | `system_list_announcements` |
+| `POST /announcements` | `admin.maintenance:write` | `system_create_announcement`. Audit `announcement.create`. |
+| `PUT /announcements/{announce_id}` | `admin.maintenance:write` | `system_update_announcement`. Audit `announcement.update`. |
+| `POST /announcements/{announce_id}/delete` | `admin.maintenance:write` | `system_delete_announcement`. Audit `announcement.delete`. |
+| `GET /sites` | `admin.cms:read` | `public_sites.list_sites` |
+| `GET /sites/{slug}` | `admin.cms:read` | `get_site` |
+| `PUT /sites/{slug}` | `admin.cms:write` | `update_site`. Audit `site.update`. |
+| `PUT /sites/{slug}/content` | `admin.cms:write` | `update_content`. Audit `site.content`. |
+| `GET /sites/{slug}/inquiries` | `admin.cms:read` | `list_inquiries` |
+| `GET /help/articles` | `admin.cms:read` | `help_center.system_help_list` |
+| `POST /help/articles` | `admin.cms:write` | `system_help_create`. Audit `help.create`. |
+| `PUT /help/articles/{article_id}` | `admin.cms:write` | `system_help_update`. Audit `help.update`. |
+| `POST /help/articles/{article_id}/delete` | `admin.cms:write` | `system_help_delete`. Audit `help.delete`. |
+| `GET /einvoice-designs` | `admin.einvoice:read` | `einvoice_designs._list` |
+| `POST /einvoice-designs` | `admin.einvoice:write` | `_create_design_impl`. Audit `einvoice_design.create`. |
+| `PUT /einvoice-designs/{design_id}` | `admin.einvoice:write` | `_update_scoped` veya `_update_design_impl`. Audit `einvoice_design.update`. |
+| `POST /einvoice-designs/{design_id}/select` | `admin.einvoice:write` | `_select_scoped`. Audit `einvoice_design.select`. |
+| `POST /einvoice-designs/{design_id}/delete` | `admin.einvoice:write` | `_delete_scoped`. Audit `einvoice_design.delete`. |
+| `GET /einvoice-designs/settings/embed` | `admin.einvoice:read` | `get_xslt_embed_mode` |
+| `PUT /einvoice-designs/settings/embed` | `admin.einvoice:write` | `set_xslt_embed_mode` (`base64` \| `gzip_base64`). Audit `einvoice_design.embed`. |
+| `POST /companies/{company_id}/gib-credits/gift` | `admin.licenses:write` | `gib_credits.gift`. `credits` 1..1000. Üstü **400** `Bu tutar danger akışı gerektirir.` Audit `gib.gift`. |
+| `GET /database` | `admin.db:read` | `db_relocate.public_view` + `whitelisted_table_counts`. Yalnız `KNOWN_TABLES` (`docs`, `meta_indexes`, `system_logs`). Parola, kullanıcı, `ssl_ca` ve serbest SQL yok. `has_password` bool. Taşıma ve bağlantı denemesi bu API’de yoktur. |
+| `GET /support/tickets/{ticket_id}/attachments/{message_id}/{index}` | `admin.support:read` | Ek `url` `/api/files/` ile başlar. Gövde dosya baytıdır, JSON değildir. |
 
 ## Python
 
