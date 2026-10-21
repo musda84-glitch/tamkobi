@@ -257,6 +257,7 @@ test("çek cirola seçimsiz kapalı, arama süzer, kayıt endorse çağırır", 
   await flush(6);
   const modal = host.querySelector("[data-testid=collect-modal]");
   expect(modal.getAttribute("data-layout")).toBe("dialog");
+  expect(modal.querySelector("[data-testid=endorse-pick-card-CEK-2026-0004]")).toBeNull();
   expect(modal.querySelector("[data-testid=collect-modal-title]").textContent).toBe("Çek cirola");
   expect(modal.querySelector("[data-testid=endorse-table]")).toBeTruthy();
   expect(modal.querySelector("[data-testid=endorse-cards]")).toBeNull();
@@ -302,5 +303,7 @@ test("390px çek cirola alt sayfa kart listesi, tablo yok", async () => {
   expect(modal.querySelector("table")).toBeNull();
   expect(modal.querySelector("[data-testid=endorse-cards]")).toBeTruthy();
   expect(modal.querySelector("[data-testid=endorse-card-CEK-2026-0004]").textContent).toContain("Asıl cari:");
+  expect(modal.querySelector("[data-testid=endorse-pick-CEK-2026-0004]")).toBeNull();
+  expect(modal.querySelector("[data-testid=endorse-pick-card-CEK-2026-0004]")).toBeTruthy();
   expect(modal.querySelector("[data-testid=endorse-save-btn]").disabled).toBe(true);
 });

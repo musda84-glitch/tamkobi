@@ -87,7 +87,7 @@ export function ChequeEndorseFields({ form, onChange, narrow = false, onCancel, 
               <label key={row.id} className={`block rounded-lg border p-2 ${row.on ? "bg-emerald-50 border-emerald-200" : "border-slate-200"}`} data-testid={`endorse-card-${row.number}`}>
                 <div className="flex items-start justify-between gap-2">
                   <span className="flex items-center gap-2 min-w-0">
-                    <input type="checkbox" checked={row.on} onChange={() => toggle(row.id)} data-testid={`endorse-pick-${row.number}`} />
+                    <input type="checkbox" checked={row.on} onChange={() => toggle(row.id)} data-testid={`endorse-pick-card-${row.number}`} />
                     <span className="font-mono font-semibold truncate">{row.number}</span>
                   </span>
                   <span className="font-bold shrink-0">{row.amount}</span>

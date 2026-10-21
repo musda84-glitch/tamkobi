@@ -281,6 +281,18 @@ def test_historical_virtual_then_backfill_once(db, monkeypatch):
     assert after["contact"]["balance"] == pytest.approx(120000)
 
 
+def _codes(results):
+    codes = []
+    for item in results:
+        if isinstance(item, HTTPException):
+            codes.append(item.status_code)
+        elif isinstance(item, Exception):
+            raise item
+        else:
+            codes.append(200)
+    return codes
+
+
 def test_concurrent_endorse_is_single_winner(db):
     _run(_contacts(db))
     saved = _run(_receive(db, amount=80, due="2026-12-01"))
@@ -292,20 +304,52 @@ def test_concurrent_endorse_is_single_winner(db):
             return_exceptions=True,
         )
 
-    results = _run(race())
-    codes = []
-    for item in results:
-        if isinstance(item, HTTPException):
-            codes.append(item.status_code)
-        elif isinstance(item, Exception):
-            raise item
-        else:
-            codes.append(200)
-    assert sorted(codes) == [200, 409]
+    assert sorted(_codes(_run(race()))) == [200, 409]
     assert _balance(db, "nur") == pytest.approx(80)
     assert len(_endorsement_txs(db, saved["id"])) == 1
     status = next(doc for doc in db.cheques.docs if doc["_id"] == saved["id"])["status"]
     assert status == "endorsed"
+
+
+def test_overlapping_endorse_only_atomic_winner_posts(db):
+    """İlk istek kilit satırında beklerken ikincisi geçişi alır. Kaybeden bakiye ve satır yazmaz."""
+    _run(_contacts(db))
+    saved = _run(_receive(db, amount=80, due="2026-12-01"))
+    real = db.cheques.update_one_atomic
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = {"n": 0}
+
+    async def wrapped(query, update):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            started.set()
+            await release.wait()
+        return await real(query, update)
+
+    db.cheques.update_one_atomic = wrapped
+
+    async def race():
+        first = asyncio.create_task(cheques.endorse_cheque(saved["id"], {"contact_id": "nur"}, _user()))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        second = await cheques.endorse_cheque(saved["id"], {"contact_id": "nur"}, _user())
+        release.set()
+        try:
+            first_result = await first
+        except HTTPException as exc:
+            first_result = exc
+        return first_result, second
+
+    first_result, second = _run(race())
+    assert calls["n"] == 2
+    assert isinstance(first_result, HTTPException)
+    assert first_result.status_code == 409
+    assert second["status"] == "endorsed"
+    assert _balance(db, "nur") == pytest.approx(80)
+    assert len(_endorsement_txs(db, saved["id"])) == 1
+    doc = next(row for row in db.cheques.docs if row["_id"] == saved["id"])
+    assert doc["status"] == "endorsed"
+    assert len([ev for ev in doc.get("events") or [] if ev.get("action") == "endorsed"]) == 1
 
 
 def test_bounce_reverses_target_once_and_skips_cash(db):
@@ -505,3 +549,186 @@ def test_validation_stays_400(db):
         _run(cheques.endorse_cheque(issued["id"], {"contact_id": "nur"}, _user()))
     assert wrong.value.status_code == 400
     assert next(doc for doc in db.cheques.docs if doc["_id"] == saved["id"])["status"] == "open"
+
+
+def test_source_guard_rejects_portfolio_and_endorsement(db, monkeypatch):
+    import linked_moves
+    import server
+
+    _run(_contacts(db))
+    monkeypatch.setattr(server, "db", db)
+    saved = _run(_receive(db, amount=25, due="2099-01-01"))
+    portfolio = next(tx for tx in db.bank_transactions.docs if tx.get("cheque_kind") == "portfolio")
+    portfolio_detail = linked_moves.source_guard_detail(portfolio)
+    assert portfolio_detail
+    assert "portföy" in portfolio_detail
+    assert "/cheques" in portfolio_detail
+    with pytest.raises(HTTPException) as portfolio_edit:
+        _run(server.update_bank_transaction(portfolio["_id"], {"amount": 1}, _user()))
+    assert portfolio_edit.value.status_code == 400
+    assert "portföy" in portfolio_edit.value.detail
+    with pytest.raises(HTTPException) as portfolio_delete:
+        _run(server.delete_bank_transaction(portfolio["_id"], _user()))
+    assert portfolio_delete.value.status_code == 400
+    assert next(tx for tx in db.bank_transactions.docs if tx["_id"] == portfolio["_id"])["amount"] == pytest.approx(25)
+
+    _run(cheques.endorse_cheque(saved["id"], {"contact_id": "nur"}, _user()))
+    endorsement = _endorsement_txs(db, saved["id"])[0]
+    endorsement_detail = linked_moves.source_guard_detail(endorsement)
+    assert endorsement_detail
+    assert "ciro" in endorsement_detail
+    assert saved["id"] in endorsement_detail
+    with pytest.raises(HTTPException) as edited:
+        _run(server.update_bank_transaction(endorsement["_id"], {"amount": 1, "description": "değişti"}, _user()))
+    assert edited.value.status_code == 400
+    assert "ciro" in edited.value.detail
+    with pytest.raises(HTTPException) as deleted:
+        _run(server.delete_bank_transaction(endorsement["_id"], _user()))
+    assert deleted.value.status_code == 400
+    assert _endorsement_txs(db, saved["id"])[0]["amount"] == pytest.approx(25)
+
+    bank_row = {
+        "source": "cheque_bank",
+        "cheque_id": saved["id"],
+        "cheque_kind": "bank",
+        "account_id": "acc-real",
+        "account_name": "Kasa",
+        "amount": 25,
+    }
+    assert linked_moves.source_guard_detail(bank_row) is None
+    linked_moves.assert_not_source_linked({"amount": 5, "source": "manual"})
+
+
+def test_cashflow_and_accountant_skip_accountless_cheque_rows(db, monkeypatch):
+    import server
+
+    _run(_contacts(db))
+    monkeypatch.setattr(server, "db", db)
+    _run(db.bank_accounts.insert_one({
+        "_id": "acc-cashflow",
+        "company_id": CO,
+        "type": "bank",
+        "account_name": "Vadesiz",
+        "current_balance": 1000,
+    }))
+    saved = _run(_receive(db, amount=250, due="2099-01-01"))
+    for tx in db.bank_transactions.docs:
+        if tx.get("cheque_kind") == "portfolio":
+            tx["date"] = "2026-10-05"
+    _run(cheques.endorse_cheque(saved["id"], {"contact_id": "nur", "date": "2026-10-21"}, _user()))
+    _run(db.bank_transactions.insert_one({
+        "_id": "tx-bank-in",
+        "company_id": CO,
+        "account_id": "acc-cashflow",
+        "account_name": "Vadesiz",
+        "type": "inflow",
+        "amount": 500,
+        "source": "manual",
+        "category": "Tahsilat",
+        "date": "2026-10-10",
+    }))
+    _run(db.bank_transactions.insert_one({
+        "_id": "tx-cheque-bank",
+        "company_id": CO,
+        "account_id": "acc-cashflow",
+        "account_name": "Vadesiz",
+        "type": "inflow",
+        "amount": 80,
+        "source": "cheque_bank",
+        "cheque_kind": "bank",
+        "cheque_id": saved["id"],
+        "category": "Çek Tahsilatı",
+        "date": "2026-10-11",
+    }))
+    _run(db.bank_transactions.insert_one({
+        "_id": "tx-slip",
+        "company_id": CO,
+        "account_id": None,
+        "type": "outflow",
+        "amount": 20,
+        "source": "manual",
+        "category": "Cari fiş",
+        "date": "2026-10-12",
+    }))
+
+    report = _run(server.get_report(
+        "cashflow", company_id=CO, date_from="2026-10-01", date_to="2026-10-31", user=_user(),
+    ))
+    assert report["totals"]["inflow"] == pytest.approx(580)
+    assert report["totals"]["outflow"] == pytest.approx(20)
+    names = {row["name"] for row in report["categories"]}
+    assert "Ciro edilen çek" not in names
+    assert "Alınan Çek" not in names
+
+    summary = _run(server.accountant_summary(company_id=CO, month="2026-10", user=_user()))
+    assert summary["cash"]["inflow"] == pytest.approx(580)
+    assert summary["cash"]["outflow"] == pytest.approx(20)
+    assert summary["cash"]["count"] == 3
+
+
+def _backfill_script():
+    import importlib.util
+
+    path = _BACKEND / "scripts" / "backfill_cheque_endorsements.py"
+    spec = importlib.util.spec_from_file_location("backfill_cheque_endorsements", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_backfill_cli_requires_company_and_explicit_connection(monkeypatch):
+    module = _backfill_script()
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "load_dotenv" not in source
+    assert "MySQLClient" not in source
+    monkeypatch.setenv("MYSQL_HOST", "live.internal")
+    monkeypatch.setenv("MYSQL_PASSWORD", "from-env")
+    monkeypatch.setenv("MONGO_URL", "mongodb://live.internal/tamkobi")
+
+    with pytest.raises(SystemExit) as missing_company:
+        module.resolve_request([])
+    assert "company" in str(missing_company.value).lower() or "--company" in str(missing_company.value)
+
+    with pytest.raises(SystemExit) as both:
+        module.resolve_request(["--company", "c1", "--all-companies", "--mysql-url", "mysql://u@h/db"])
+    assert "Yalnızca" in str(both.value)
+
+    with pytest.raises(SystemExit) as no_dsn:
+        module.resolve_request(["--company", "c1"])
+    assert ".env" in str(no_dsn.value)
+
+    with pytest.raises(SystemExit) as apply_without_dsn:
+        module.resolve_request(["--all-companies", "--apply"])
+    assert ".env" in str(apply_without_dsn.value)
+
+    with pytest.raises(SystemExit):
+        module.resolve_request(["--company", "c1", "--mysql-url", "mysql://u@h/db", "--dry-run"])
+
+    with pytest.raises(SystemExit) as mongo:
+        module.resolve_request(["--company", "c1", "--mongo-url", "mongodb://localhost/tamkobi"])
+    assert "mysql://" in str(mongo.value)
+
+    dry = module.resolve_request(["--company", "c1", "--mysql-url", "mysql://user:secret@db.example:3307/tamkobi_test"])
+    assert dry["company_id"] == "c1"
+    assert dry["all_companies"] is False
+    assert dry["apply"] is False
+    assert dry["settings"]["host"] == "db.example"
+    assert dry["settings"]["port"] == 3307
+    assert dry["settings"]["user"] == "user"
+    assert dry["settings"]["password"] == "secret"
+    assert dry["settings"]["db"] == "tamkobi_test"
+    assert dry["settings"]["host"] != "live.internal"
+
+    flagged = module.resolve_request([
+        "--all-companies", "--apply",
+        "--mysql-host", "explicit.db", "--mysql-user", "cli", "--mysql-db", "tam",
+        "--mysql-password", "cli-secret", "--mysql-port", "3308",
+    ])
+    assert flagged["company_id"] is None
+    assert flagged["all_companies"] is True
+    assert flagged["apply"] is True
+    assert flagged["settings"]["host"] == "explicit.db"
+    assert flagged["settings"]["password"] == "cli-secret"
+    assert flagged["settings"]["password"] != "from-env"
+    assert flagged["settings"]["db"] == "tam"
+    assert flagged["settings"]["port"] == 3308

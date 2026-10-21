@@ -239,6 +239,54 @@ def endorsement_category(doc: dict) -> str:
     return "Ciro edilen senet" if (doc or {}).get("instrument") == "promissory" else "Ciro edilen çek"
 
 
+def is_noncash_cheque_movement(tx: Optional[dict]) -> bool:
+    """Banka veya kasa hesabı olmayan portföy/ciro satırı nakit akışına girmez.
+
+    Hesabı olan tahsil/ödeme (cheque_bank) nakit kalır. Hesapsız diğer
+    hareketler (cari fişi vb.) bu elemenin dışındadır.
+    """
+    if not tx or str(tx.get("account_id") or "").strip():
+        return False
+    kind = str(tx.get("cheque_kind") or "")
+    if kind in ("portfolio", "endorsement"):
+        return True
+    if str(tx.get("source") or "") == "cheque":
+        return True
+    if str(tx.get("account_name") or "") == "Çek Portföyü":
+        return True
+    if str(tx.get("category") or "").startswith("Ciro edilen"):
+        return True
+    return False
+
+
+def cheque_ledger_lock_detail(tx: Optional[dict]) -> Optional[str]:
+    """Kasa ekranından değiştirilemeyen ciro ve Çek Portföyü satırı.
+
+    cheque_id taşıyan ciro reddedilir. Çek Portföyü / portfolio satırları da
+    reddedilir. Hesaba işlenmiş cheque_bank tahsil/ödeme bu kilitte değildir.
+    """
+    if not tx:
+        return None
+    cheque_id = str(tx.get("cheque_id") or "").strip()
+    kind = str(tx.get("cheque_kind") or "")
+    category = str(tx.get("category") or "")
+    source = str(tx.get("source") or "")
+    account_name = str(tx.get("account_name") or "")
+    has_account = bool(str(tx.get("account_id") or "").strip())
+    endorsement = bool(cheque_id) and (kind == "endorsement" or category.startswith("Ciro edilen"))
+    portfolio = (
+        kind == "portfolio"
+        or (not has_account and account_name == "Çek Portföyü")
+        or (not has_account and source == "cheque" and kind not in ("bank", "endorsement") and bool(cheque_id))
+    )
+    if endorsement:
+        return f"Kaynak kayıttan geri alın (çek/senet ciro). Kaynak: /cheques · id={cheque_id}"
+    if portfolio:
+        ident = f" · id={cheque_id}" if cheque_id else ""
+        return f"Kaynak kayıttan geri alın (çek portföyü). Kaynak: /cheques{ident}"
+    return None
+
+
 def endorsement_tx_body(doc: dict, target: dict, pay_date: str) -> dict:
     """Görünürlük satırı. account_id daima None; bakiyeye ayrıca $inc yapılmaz."""
     return {
@@ -979,7 +1027,8 @@ async def endorse_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depen
         raise HTTPException(status_code=400, detail="Aynı cariye ciro edilemez.")
     pay_date = _pay_day(req.get("date")) or _today()
     note = str(req.get("description") or req.get("note") or "").strip() or f"Ciro → {target.get('name')}"
-    updated = await _db.cheques.find_one_and_update(
+    # SELECT … FOR UPDATE. Yalnızca open→endorsed geçişini kazanan istek bakiye ve satır yazar.
+    claim = await _db.cheques.update_one_atomic(
         {"_id": cheque_id, "company_id": cid, "status": "open", "direction": "received"},
         {"$set": {
             "status": "endorsed",
@@ -989,14 +1038,17 @@ async def endorse_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depen
             "updated_at": _now(),
         }, "$push": {"events": {"at": _now(), "action": "endorsed", "note": note}}},
     )
-    if not updated:
+    if not getattr(claim, "matched_count", 0):
         raise HTTPException(status_code=409, detail="Bu çek/senet artık açık değil; ciro edilemedi.")
-    amount = float(updated.get("amount") or 0)
+    fresh = await _db.cheques.find_one({"_id": cheque_id, "company_id": cid})
+    if not fresh or fresh.get("status") != "endorsed":
+        raise HTTPException(status_code=409, detail="Bu çek/senet artık açık değil; ciro edilemedi.")
+    amount = float(fresh.get("amount") or 0)
     await _apply_contact(target["_id"], amount, company_id=cid)
-    await _post_endorsement_payment(updated, target, pay_date)
+    await _post_endorsement_payment(fresh, target, pay_date)
     await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
     await _refresh_contact_cheque(target["_id"], company_id=cid)
-    return _annotate(dict(updated), _today())
+    return _annotate(fresh, _today())
 
 
 @router.post("/cheques/{cheque_id}/bounce")
