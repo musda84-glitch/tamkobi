@@ -139,6 +139,24 @@ class MemColl:
         self.docs.extend(copied)
         return SimpleNamespace(inserted_ids=[doc.get("_id") for doc in copied])
 
+    async def update_one_atomic(self, query, update):
+        """update_one ile aynı sorgu. Eşleşmeyen koşulda modified 0; belge değişmez."""
+        tenant_scope.check(self.name, "update_one_atomic", query=query, update=update)
+        query = _split_field_ops(query or {})
+        for i, doc in enumerate(self.docs):
+            if not match_query(doc, query):
+                continue
+            new_doc = apply_update(doc, update, query)
+            changed = new_doc != doc
+            if changed:
+                self.docs[i] = new_doc
+            return SimpleNamespace(
+                modified_count=1 if changed else 0,
+                matched_count=1,
+                upserted_id=None,
+            )
+        return SimpleNamespace(modified_count=0, matched_count=0, upserted_id=None)
+
     async def update_one(self, query, update, upsert=False):
         tenant_scope.check(self.name, "update_one", query=query, update=update, upsert=upsert)
         query = _split_field_ops(query or {})

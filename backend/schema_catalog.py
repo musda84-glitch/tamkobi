@@ -38,6 +38,9 @@ STARTUP_INDEXES = (
     {"collection": "orders", "name": "company_id_channel_order_number", "fields": ("company_id", "channel", "order_number"), "unique": True},
     {"collection": "purchase_orders", "name": "order_number", "fields": ("order_number",), "unique": False},
     {"collection": "login_attempts", "name": "identifier", "fields": ("identifier",), "unique": False},
+    {"collection": "b2b_identities", "name": "email", "fields": ("email",), "unique": True},
+    {"collection": "b2b_link_acceptances", "name": "token_hash", "fields": ("token_hash",), "unique": False},
+    {"collection": "b2b_sessions", "name": "identity_id", "fields": ("identity_id",), "unique": False},
     {"collection": "help_articles", "name": "slug", "fields": ("slug",), "unique": True},
 )
 
@@ -798,9 +801,33 @@ COLLECTIONS = {
         "keys": ("_id", "ticket_id", "token", "created_at", "expires_at"),
         "refs": ("push_tokens.token",),
     },
+    "b2b_identities": {
+        "scope": SCOPE_PLATFORM,
+        "description": "B2B kimliği: küçük harf e-posta benzersiz, şifre hash'i tedarikçiler arasında ortaktır.",
+        "keys": ("_id", "email", "password_hash", "email_verified_at", "is_active", "created_at", "last_login_at"),
+        "refs": (),
+    },
+    "b2b_sessions": {
+        "scope": SCOPE_PLATFORM,
+        "description": "B2B seçim oturumu. _id select_token'ın SHA-256 özeti. 15 dakika, tek kullanımlık değil; httpOnly çerez yok.",
+        "keys": ("_id", "identity_id", "email", "expires_at", "created_at", "contact_ids"),
+        "refs": ("b2b_identities._id",),
+    },
+    "b2b_link_acceptances": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Tedarikçi cari bağının müşteri onayı. accepted_at doluysa doğrulanmış kimlik listeler. Onay token'ı 72 saat, tek kullanımlık; token_hash SHA-256.",
+        "keys": ("_id", "email", "contact_id", "company_id", "accepted_at", "token_hash", "token_used_at", "expires_at", "created_at"),
+        "refs": ("b2b_identities.email", "contacts._id"),
+    },
+    "b2b_email_verifications": {
+        "scope": SCOPE_PLATFORM,
+        "description": "B2B kimlik e-posta doğrulama bağlantıları. _id ham token'ın SHA-256 özeti.",
+        "keys": ("_id", "identity_id", "email", "expires_at", "used_at", "created_at"),
+        "refs": ("b2b_identities._id",),
+    },
     "b2b_password_resets": {
         "scope": SCOPE_TENANT,
-        "description": "B2B portal şifre sıfırlama tokenları.",
+        "description": "B2B portal şifre sıfırlama tokenları. _id ham token'ın SHA-256 özeti.",
         "keys": ("_id", "contact_id", "used_at"),
         "refs": ("contacts._id",),
     },

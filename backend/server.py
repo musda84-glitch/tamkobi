@@ -208,6 +208,7 @@ import gib_credits
 import order_pick
 import platform_mail
 import platform_sms
+import b2b_identity
 import einvoice_designs
 import applog
 import mail_tracking
@@ -375,6 +376,9 @@ async def startup_event():
             await db.work_orders.create_index([("order_id", 1), ("step_no", 1)])
             await db.recipes.create_index([("company_id", 1), ("created_at", -1)])
             await db.login_attempts.create_index("identifier")
+            await db.b2b_identities.create_index("email", unique=True)
+            await db.b2b_link_acceptances.create_index("token_hash")
+            await db.b2b_sessions.create_index("identity_id")
             await company_audit.ensure_indexes(db)
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
@@ -5200,6 +5204,9 @@ async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = 
         updated["b2b_password_hash"] = hash_password(str(updated.pop("b2b_password")))
     else:
         updated.pop("b2b_password", None)
+    if "b2b_login_email" in updated:
+        updated["b2b_login_email"] = str(updated.get("b2b_login_email") or "").strip().lower()
+    await b2b_identity.consider_link_notice(db, doc, {**doc, **updated}, updated)
     await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": updated})
     res = await db.contacts.find_one({"_id": contact_id, "company_id": cid})
     return clean_doc(res)
@@ -5403,6 +5410,7 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
 @api_router.post("/contacts/{contact_id}/b2b-access")
 async def contact_b2b_access(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    cid = c.get("company_id")
     token = c.get("b2b_token") or uuid.uuid4().hex
     upd = {"b2b_token": token, "b2b_enabled": bool(req.get("enabled", True)), "b2b_discount": float(req.get("discount", c.get("b2b_discount", 0)) or 0)}
     if req.get("regenerate"):
@@ -5415,9 +5423,10 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any], user: dict = 
         upd["b2b_login_email"] = str(req["login_email"]).strip().lower()
     if isinstance(req.get("settings"), dict):
         upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
-    await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
+    await b2b_identity.consider_link_notice(db, c, {**c, **upd}, upd)
+    await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": upd})
     base = (req.get("base_url") or "").rstrip("/")
-    refreshed = await db.contacts.find_one({"_id": contact_id}) or {**c, **upd}
+    refreshed = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) or {**c, **upd}
     company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
     view = contact_b2b_portal_view(refreshed, company)
     return {
@@ -5440,6 +5449,7 @@ async def get_contact_b2b_portal(contact_id: str, user: dict = Depends(get_curre
 async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Cari kartından B2B portal erişimi + özellik ayarları."""
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
+    cid = c.get("company_id")
     token = c.get("b2b_token") or uuid.uuid4().hex
     upd: Dict[str, Any] = {"b2b_token": token}
     if "enabled" in req:
@@ -5456,8 +5466,9 @@ async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dic
         upd["b2b_token"] = token = uuid.uuid4().hex
     if isinstance(req.get("settings"), dict):
         upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
-    await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
-    refreshed = await db.contacts.find_one({"_id": contact_id}) or {**c, **upd}
+    await b2b_identity.consider_link_notice(db, c, {**c, **upd}, upd)
+    await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": upd})
+    refreshed = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) or {**c, **upd}
     company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
     base = (req.get("base_url") or "").rstrip("/")
     view = contact_b2b_portal_view(refreshed, company)
@@ -5471,10 +5482,8 @@ async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dic
 
 
 async def _b2b_find_contact(ident: str) -> Optional[dict]:
-    ident = (ident or "").strip().lower()
-    if not ident:
-        return None
-    return await db.contacts.find_one({"b2b_enabled": True, "$or": [{"b2b_login_email": ident}, {"email": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}}, {"tax_number_or_id": ident}]})
+    """Şifre sıfırlama cari araması. Kimlik bağı contacts.email ve VKN ile kurulmaz."""
+    return await b2b_identity.find_legacy_contact(db, ident)
 
 
 async def _public_base_url(request: Request, explicit: str = "", *, context: str = "app") -> str:
@@ -5483,35 +5492,6 @@ async def _public_base_url(request: Request, explicit: str = "", *, context: str
     return await pu.public_base_url_for(
         db, context, explicit=explicit or "", request=request,
     )
-
-
-@api_router.post("/public/b2b/login")
-async def b2b_login(req: Dict[str, Any], request: Request):
-    ident = (req.get("email") or "").strip().lower(); pwd = req.get("password") or ""
-    if not ident or not pwd:
-        raise HTTPException(status_code=400, detail="E-posta / VKN ve şifre gerekli.")
-    c = await _b2b_find_contact(ident)
-    if not c or not c.get("b2b_password_hash") or not verify_password(pwd, c["b2b_password_hash"]):
-        applog.log_auth("b2b_login_failed", ident, email=ident, ip=applog.client_ip(request), user_email=ident)
-        raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
-    if c.get("is_active") is False:
-        raise HTTPException(status_code=403, detail="Cari hesap pasif. B2B girişi kapalı.")
-    company = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    bs = resolve_b2b_settings(company, c)
-    if not bs.get("enabled", True):
-        raise HTTPException(status_code=403, detail="B2B portalı şu an kapalı.")
-    if bs.get("login_method") == "link":
-        raise HTTPException(status_code=403, detail="Bu portal yalnızca kişiye özel link ile açılır.")
-    if not c.get("b2b_token"):
-        await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_token": uuid.uuid4().hex}})
-        c = await db.contacts.find_one({"_id": c["_id"]})
-    await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_last_login": datetime.now(timezone.utc).isoformat()}})
-    applog.log_auth(
-        "b2b_login_success", ident,
-        email=ident, user_email=ident, user_id=str(c.get("_id")),
-        company_id=c.get("company_id"), ip=applog.client_ip(request),
-    )
-    return {"token": c["b2b_token"], "name": c.get("name"), "redirect": f"/portal/{c['b2b_token']}"}
 
 
 FORGOT_MSG = "Eşleşen bir B2B hesabı varsa şifre sıfırlama bağlantısı e-posta adresine gönderildi."
@@ -5525,60 +5505,14 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
     if not ready["ok"]:
         return password_reset.forgot_mail_unavailable_response()
     c = await _b2b_find_contact(ident)
-    if not c or not c.get("b2b_password_hash"):
-        return out
-    to = (c.get("b2b_login_email") or c.get("email") or "").strip().lower()
-    if not to or "@" not in to:
-        return out
-    token = secrets.token_urlsafe(32)
-    now = datetime.now(timezone.utc)
-    await db.b2b_password_resets.update_many({"contact_id": c["_id"], "used_at": None}, {"$set": {"used_at": now.isoformat(), "revoked": True}})
-    await db.b2b_password_resets.insert_one({
-        "_id": token, "contact_id": c["_id"], "company_id": c["company_id"], "email": to,
-        "expires_at": (now + timedelta(hours=1)).isoformat(), "used_at": None, "created_at": now.isoformat(),
-    })
-    import public_url as pu
-    link = await pu.public_link(db, f"/b2b/sifre/{token}", context="b2b", request=request)
-    company = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    mail_status, mail_detail = "failed", "Gönderilemedi."
-    try:
-        subject = f"{company.get('name') or 'Tedarikçiniz'} B2B şifre sıfırlama"
-        body = f"Merhaba {c.get('name') or ''},\nB2B portal şifrenizi sıfırlamak için bu bağlantıyı 1 saat içinde kullanın:\n{link}\nBu isteği siz yapmadıysanız bu e-postayı yok sayın."
-        html = f"<p>Merhaba {c.get('name') or ''},</p><p>B2B portal şifrenizi sıfırlamak için aşağıdaki düğmeye tıklayın. Bağlantı 1 saat geçerlidir.</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
-        sent = await platform_mail.dispatch_password_reset_mail(
-            ready["sender"],
-            to=[to],
-            subject=subject,
-            body=body,
-            html=html,
-            context="b2b_reset",
-            company_id=c.get("company_id"),
-        )
-        if not sent.get("ok"):
-            raise HTTPException(status_code=424, detail=str(sent.get("error") or "Gönderilemedi.")[:140])
-        mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
-    except HTTPException as e:
-        mail_status, mail_detail = "failed", str(e.detail)[:140]
-    except Exception as e:
-        mail_status, mail_detail = "failed", str(e)[:140]
-    if mail_status != "sent":
-        await db.b2b_password_resets.update_one(
-            {"_id": token},
-            {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True, "mail_error": mail_detail[:200]}},
-        )
-        logger.warning("b2b forgot-password mail %s to=%s: %s", mail_status, to, mail_detail)
-    return password_reset.finalize_forgot_mail_result(
-        {**out, "message": FORGOT_MSG},
-        mail_status=mail_status,
-        mail_detail=mail_detail,
-    )
+    return await b2b_identity.finish_b2b_forgot(db, ident, request, ready, out, c)
 
 
 @api_router.get("/public/b2b/reset/{token}")
 async def b2b_reset_get(token: str):
     row = await _b2b_reset_doc(token)
-    c = await db.contacts.find_one({"_id": row["contact_id"]}) or {}
-    email = row.get("email") or c.get("b2b_login_email") or c.get("email") or ""
+    c = await db.contacts.find_one({"_id": row["contact_id"], "company_id": row.get("company_id")}) or {}
+    email = row.get("email") or c.get("b2b_login_email") or ""
     masked = (email[:2] + "•••@" + email.split("@", 1)[-1]) if "@" in email else ""
     return {"valid": True, "name": c.get("name"), "email_masked": masked}
 
@@ -5589,19 +5523,26 @@ async def b2b_reset_post(token: str, req: Dict[str, Any]):
     pwd = str(req.get("password") or "")
     if len(pwd) < 6:
         raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
-    c = await db.contacts.find_one({"_id": row["contact_id"]})
+    c = await db.contacts.find_one({"_id": row["contact_id"], "company_id": row.get("company_id")})
     if not c or not c.get("b2b_enabled"):
         raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
     if not c.get("b2b_token"):
-        await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_token": uuid.uuid4().hex}})
-        c = await db.contacts.find_one({"_id": c["_id"]})
-    await db.contacts.update_one({"_id": c["_id"]}, {"$set": {"b2b_password_hash": hash_password(pwd)}})
-    await db.b2b_password_resets.update_one({"_id": token}, {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}})
+        portal = uuid.uuid4().hex
+        await db.contacts.update_one(
+            {"_id": c["_id"], "company_id": c.get("company_id")},
+            {"$set": {"b2b_token": portal}},
+        )
+        c["b2b_token"] = portal
+    await b2b_identity.apply_password_reset(db, c, pwd, email=row.get("email"))
+    await db.b2b_password_resets.update_one(
+        {"_id": b2b_identity.token_digest(token)},
+        {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}},
+    )
     return {"status": "success", "message": "Şifreniz güncellendi.", "redirect": f"/portal/{c['b2b_token']}", "token": c["b2b_token"], "name": c.get("name")}
 
 
 async def _b2b_reset_doc(token: str) -> dict:
-    row = await db.b2b_password_resets.find_one({"_id": token})
+    row = await db.b2b_password_resets.find_one({"_id": b2b_identity.token_digest(token)})
     if not row:
         raise HTTPException(status_code=404, detail="Sıfırlama bağlantısı geçersiz.")
     if row.get("used_at"):
@@ -6702,16 +6643,15 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
     new_pw = str(req.get("new_password") or "").strip()
     if len(new_pw) < 6:
         raise HTTPException(status_code=400, detail="Yeni şifre en az 6 karakter olmalı.")
-    stored = c.get("b2b_password_hash") or ""
-    if stored:
-        if not current or not verify_password(current, stored):
-            raise HTTPException(status_code=400, detail="Mevcut şifre hatalı.")
-        if verify_password(new_pw, stored):
-            raise HTTPException(status_code=400, detail="Yeni şifre mevcut şifreyle aynı olamaz.")
+    blocked = await b2b_identity.portal_current_password_error(db, c, current, new_pw)
+    if blocked:
+        raise HTTPException(status_code=400, detail=blocked)
+    new_hash = hash_password(new_pw)
     await db.contacts.update_one(
         {"_id": c["_id"]},
-        {"$set": {"b2b_password_hash": hash_password(new_pw), "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"b2b_password_hash": new_hash, "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
+    await b2b_identity.change_own_password(db, c, new_hash, current_plain=current)
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
 def _decorate_b2b_held_order(o: Dict[str, Any]) -> Dict[str, Any]:
@@ -27268,6 +27208,7 @@ async def _restore_assigned_task(doc, _related):
 for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("payroll", _restore_payroll), ("loan", _restore_loan), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice), ("assigned_task", _restore_assigned_task)):
     trash.register_hook(_t, _fn)
 
+app.include_router(b2b_identity.router)
 app.include_router(api_router)
 app.include_router(company_events.router)
 app.include_router(setup_install.router)
