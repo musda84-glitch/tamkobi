@@ -32,7 +32,8 @@ import { submitMatch, unmatchTx } from "../utils/bankMatchActions";
 import { txUserColumnLabel } from "../utils/bankMatchLabel";
 import type { BankAccount, ExpenseCategory, Partner } from "../utils/finance";
 import type { Employee } from "../utils/personnel";
-import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { fmtDate, fmtMoney, formatTrAmount, idOf } from "../utils/money";
+import { formatSummary, isPosAccount } from "../utils/posSettlement";
 
 export function BankingMatchPanel({
   accounts,
@@ -60,6 +61,7 @@ export function BankingMatchPanel({
   const [showMatched, setShowMatched] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [active, setActive] = useState<BankMatchTx | null>(null);
+  const [posDone, setPosDone] = useState<{ tx: BankMatchTx; summary: string } | null>(null);
   const [draft, setDraft] = useState<MatchDraft>(emptyMatchDraft());
   const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "", target_account_id: "" });
   const [ruleContactLabel, setRuleContactLabel] = useState("");
@@ -110,9 +112,16 @@ export function BankingMatchPanel({
   }, [ready, focusTxId, unmatched]);
 
   const openMatch = (tx: BankMatchTx) => {
+    setPosDone(null);
     setActive(tx);
     setDraft(emptyMatchDraft(tx));
-    setContactLabel(tx.suggested_contact_name || "");
+    setContactLabel(tx.type === "inflow" && tx.suggested_match_kind === "pos_settlement" ? "" : (tx.suggested_contact_name || ""));
+  };
+
+  const posBalanceOf = (accountId: string) => {
+    const account = (accounts || []).find((row) => idOf(row) === accountId && isPosAccount(row));
+    if (!account || account.current_balance == null) return null;
+    return account.current_balance;
   };
 
   const run = async (key: string, fn: () => Promise<void>, ok?: string) => {
@@ -165,13 +174,23 @@ export function BankingMatchPanel({
   });
 
   const saveMatch = () => {
-    if (!active || !canSubmitMatch(draft)) return;
+    if (!active || !canSubmitMatch(draft, active, draft.mode === "pos_settlement" ? posBalanceOf(draft.target_account_id) : null)) return;
     const personnel = draft.mode === "expense" && isPersonnelExpenseCategory(draft.category);
     const employee = employees.find((e) => idOf(e) === draft.employee_id) as { full_name?: string; name?: string } | undefined;
     const employeeName = employee?.full_name || employee?.name || "";
     const kindLabel = PERSONNEL_PAY_KINDS.find((k) => k.key === draft.personnel_pay_kind)?.label || "";
+    const posMode = draft.mode === "pos_settlement";
+    const posAccount = posMode ? (accounts || []).find((row) => idOf(row) === draft.target_account_id) : undefined;
+    const summary = posMode
+      ? formatSummary({ posName: posAccount?.account_name, gross: draft.pos_gross, net: active.amount })
+      : "";
     run("match", async () => {
       await submitMatch(client, active, draft);
+      if (posMode) {
+        setPosDone({ tx: active, summary });
+        setActive(null);
+        return;
+      }
       setActive(null);
       if (personnel) {
         const learned = draft.learn ? " ve kural olarak öğrenildi" : "";
@@ -186,6 +205,8 @@ export function BankingMatchPanel({
     confirmAction("Eşleşmeyi geri al", "Eşleşme geri alınsın mı? Cari/fatura/kasa etkileri iptal edilir.", () => {
       run(`unmatch-${idOf(tx)}`, async () => {
         await unmatchTx(client, tx);
+        setPosDone(null);
+        setActive(null);
         setMessage("Eşleşme geri alındı.");
       });
     });
@@ -314,22 +335,37 @@ export function BankingMatchPanel({
       {showMatched ? (
         <Card testID="matched-list">
           <Text style={{ fontWeight: "800", color: colors.text }}>Son eşleşenler</Text>
-          {!matched.length ? <Muted>Henüz eşleştirilmiş hareket yok.</Muted> : matched.map((t) => (
-            <ListRow
-              key={idOf(t)}
-              testID={`matched-tx-${idOf(t)}`}
-              title={t.description || "Hareket"}
-              subtitle={[
-                fmtDate(t.date),
-                matchResultLabel(t),
-                matchedViaTr(t.matched_via),
-                txUserColumnLabel({ ...t, match_status: "matched" }),
-              ].filter(Boolean).join(" · ")}
-              right={`${t.type === "inflow" ? "+" : "-"}${fmtMoney(t.amount)}`}
-              rightSub={canEdit ? "Geri al" : undefined}
-              onPress={canEdit ? () => unmatch(t) : undefined}
-            />
-          ))}
+          {!matched.length ? <Muted>Henüz eşleştirilmiş hareket yok.</Muted> : matched.map((t) => {
+            const matchedId = idOf(t);
+            const expenseNo = String(t.expense_number || "").trim();
+            return (
+              <View key={matchedId}>
+                <ListRow
+                  testID={`matched-tx-${matchedId}`}
+                  title={t.description || "Hareket"}
+                  subtitle={[
+                    fmtDate(t.date),
+                    matchResultLabel(t),
+                    matchedViaTr(t.matched_via),
+                    txUserColumnLabel({ ...t, match_status: "matched" }),
+                  ].filter(Boolean).join(" · ")}
+                  right={`${t.type === "inflow" ? "+" : "-"}${fmtMoney(t.amount)}`}
+                  rightSub={canEdit ? "Geri al" : undefined}
+                  onPress={canEdit ? () => unmatch(t) : undefined}
+                />
+                {t.match_kind === "pos_settlement" ? (
+                  <View testID={`matched-pos-${matchedId}`} style={{ marginTop: -4, marginBottom: 8, gap: 2 }}>
+                    <View style={{ alignSelf: "flex-start", backgroundColor: colors.amber50, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
+                      <Text testID={`matched-pos-chip-${matchedId}`} style={{ color: "#92400E", fontSize: 11, fontWeight: "800" }}>POS bloke</Text>
+                    </View>
+                    <Text testID={`matched-pos-expense-${matchedId}`} style={{ color: colors.muted, fontSize: 12 }}>
+                      {`↳ Masraf · POS komisyonu${expenseNo ? ` (${expenseNo})` : ""}  ${formatTrAmount(t.pos_commission || 0)}`}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
         </Card>
       ) : null}
 
@@ -409,18 +445,50 @@ export function BankingMatchPanel({
             rightSubColor={colors.indigo}
             onPress={canEdit ? () => openMatch(t) : undefined}
           />
+          {inflow && t.suggested_match_kind === "pos_settlement" ? (
+            <Pressable
+              testID={`unmatched-pos-chip-${id}`}
+              onPress={canEdit ? () => openMatch(t) : undefined}
+              style={{
+                alignSelf: "flex-start",
+                marginTop: -4,
+                marginBottom: 8,
+                backgroundColor: colors.amber50,
+                borderRadius: 999,
+                paddingHorizontal: 8,
+                paddingVertical: 4,
+              }}
+            >
+              <Text style={{ color: "#92400E", fontSize: 11, fontWeight: "800" }}>
+                {`POS bloke çözümü önerisi${t.suggested_target_account_name ? ` · ${t.suggested_target_account_name}` : ""}`}
+              </Text>
+            </Pressable>
+          ) : null}
           </View>
         );
       })}
 
       <B2BSheet
-        visible={!!active}
-        title="Hareketi eşleştir"
+        visible={!!active || !!posDone}
+        title={posDone ? "POS bloke çözümü" : "Hareketi eşleştir"}
         subtitle={active ? `${active.description || ""} · ${active.type === "inflow" ? "+" : "-"}${fmtMoney(active.amount)}` : undefined}
-        onClose={() => setActive(null)}
+        onClose={() => { setActive(null); setPosDone(null); }}
         testID="bank-match-sheet"
       >
-        {active ? (
+        {posDone ? (
+          <View testID="pos-settlement-done" style={{ gap: 12 }}>
+            <Text testID="pos-settlement-summary" style={{ fontWeight: "800", color: colors.text, fontSize: 15 }}>
+              {posDone.summary}
+            </Text>
+            <PrimaryButton title="Tamam" testID="pos-settlement-ok" color={colors.primary} onPress={() => setPosDone(null)} />
+            <PrimaryButton
+              title="Eşleşmeyi geri al"
+              testID="pos-settlement-unmatch"
+              color={colors.danger}
+              onPress={() => unmatch(posDone.tx)}
+            />
+          </View>
+        ) : active ? (
           <BankMatchForm
             tx={active}
             draft={draft}

@@ -14,6 +14,42 @@ beforeEach(() => {
 });
 
 describe("submitMatch", () => {
+  it("posts the POS bloke çözümü body and adds replace only when asked", async () => {
+    const draft = {
+      ...emptyMatchDraft(),
+      mode: "pos_settlement" as const,
+      target_account_id: "pos-1",
+      category: "POS Komisyonu",
+      pos_gross: "49000",
+      pos_commission: "1831.62",
+      learn: false,
+      contact_id: "c-no",
+      invoice_id: "inv-no",
+    };
+    await submitMatch(client, tx, draft);
+    const body = (post as unknown as jest.Mock).mock.calls[0][2];
+    expect((post as unknown as jest.Mock).mock.calls[0][1]).toBe("/banking/transactions/tx-9/match");
+    expect(body).toEqual({
+      mode: "pos_settlement",
+      target_account_id: "pos-1",
+      pos_gross: 49000,
+      pos_commission: 1831.62,
+      category: "POS Komisyonu",
+      learn: false,
+    });
+    expect(body).not.toHaveProperty("contact_id");
+    expect(body).not.toHaveProperty("invoice_id");
+    expect(body).not.toHaveProperty("as_expense");
+    expect(body).not.toHaveProperty("link_existing_id");
+    expect(body).not.toHaveProperty("replace");
+
+    await submitMatch(client, tx, draft, { replace: true });
+    const replaced = (post as unknown as jest.Mock).mock.calls[1][2];
+    expect(replaced).toMatchObject({ mode: "pos_settlement", target_account_id: "pos-1", replace: true });
+    expect(replaced).not.toHaveProperty("contact_id");
+    expect(replaced).not.toHaveProperty("as_expense");
+  });
+
   it("omits replace when replace is false", async () => {
     const draft = emptyMatchDraft({ suggested_contact_id: "c1" });
     await submitMatch(client, tx, draft, { replace: false });
@@ -109,6 +145,33 @@ describe("replaceMatchDraft", () => {
     expect(fromFlag.contact_id).toBe("c-sug");
     expect(fromFlag.category).toBe("Ofis");
     expect(fromFlag.target_account_id).toBe("");
+  });
+
+  it("opens a POS bloke çözümü match with gross, commission and the POS account", () => {
+    const draft = replaceMatchDraft({
+      id: "tx-pos",
+      type: "inflow",
+      amount: 47168.38,
+      match_status: "matched",
+      match_kind: "pos_settlement",
+      target_account_id: "pos-1",
+      target_account_name: "Sanal POS",
+      category: "POS Komisyonu",
+      pos_gross: 49000,
+      pos_commission: 1831.62,
+      expense_id: "exp-9",
+      expense_number: "MSR-1",
+      contact_id: "c-ignore",
+      suggested_pos_commission_rate: 0.03738,
+      suggested_pos_gross: 50000,
+    });
+    expect(draft.mode).toBe("pos_settlement");
+    expect(draft.target_account_id).toBe("pos-1");
+    expect(draft.pos_gross).toBe("49000");
+    expect(draft.pos_commission).toBe("1831.62");
+    expect(draft.category).toBe("POS Komisyonu");
+    expect(draft.contact_id).toBe("");
+    expect(draft.expense_id).toBe("");
   });
 });
 

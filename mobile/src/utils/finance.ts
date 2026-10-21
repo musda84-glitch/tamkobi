@@ -107,11 +107,20 @@ export type BankTx = {
   suggested_target_account_id?: string;
   suggested_target_account_name?: string;
   suggested_category?: string;
+  suggested_match_kind?: string;
+  suggested_pos_commission_rate?: number;
+  suggested_pos_gross?: number;
   counterparty?: string;
   related_invoice_id?: string;
   related_invoice_number?: string;
   target_account_id?: string;
   target_account_name?: string;
+  match_kind?: string;
+  pos_gross?: number;
+  pos_commission?: number;
+  expense_id?: string;
+  expense_number?: string;
+  as_expense?: boolean;
 };
 
 export type ContactLite = {
