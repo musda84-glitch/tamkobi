@@ -1489,7 +1489,8 @@ async def api_integrator_credits(company_id: Optional[str] = None, user: dict = 
     cid = tenant_access.resolve_company_id(user, company_id)
     settings = (await _db.einvoice_settings.find_one({"company_id": cid}) if _db else None) or {}
     provider = (settings.get("provider") or "").strip()
-    if settings.get("status") != "configured" or provider not in ("isnet", "isnet_portal", "n11faturam"):
+    # SOAP/portal yalnız configured_real_integrator ve sorgulanabilir sağlayıcıda.
+    if not configured_real_integrator(settings) or provider not in ("isnet", "isnet_portal", "n11faturam"):
         return {
             "company_id": cid,
             "provider": provider or None,

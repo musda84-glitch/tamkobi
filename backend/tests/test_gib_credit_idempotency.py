@@ -427,6 +427,37 @@ def test_integrator_credits_portal_uses_get_kontor():
     assert TAX not in json.dumps(out)
 
 
+def test_unconfigured_integrator_credits_does_not_call_isnet():
+    cid, user = _credit_user()
+    cases = (
+        {},
+        {"provider": "isnet", "status": "simulated", "mode": "test", "company_tax_id": TAX, "password_enc": SECRET},
+        {"provider": "isnet_portal", "status": "error", "password_enc": SECRET},
+        {"status": "configured"},
+    )
+    for settings in cases:
+        assert e_invoice.configured_real_integrator(settings) is False
+        _credit_db(settings)
+
+        async def go():
+            with patch.object(
+                e_invoice.isnet, "get_company_balance", AsyncMock(side_effect=AssertionError("soap yok"))
+            ) as soap, patch.object(
+                e_invoice.isnet_portal, "IsnetPortalClient", side_effect=AssertionError("portal yok")
+            ):
+                out = await e_invoice.api_integrator_credits(cid, user=user)
+            return out, soap
+
+        out, soap = _run(go())
+        soap.assert_not_called()
+        assert out["balance"] is None
+        assert out["source"] == "none"
+        assert out["message"] == "Entegratör yapılandırılmamış — kontör bilgisi alınamadı."
+        blob = json.dumps(out)
+        assert SECRET not in blob
+        assert TAX not in blob
+
+
 class _ScriptColl:
     def __init__(self, docs):
         self.docs = [dict(row) for row in docs]

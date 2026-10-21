@@ -68,11 +68,13 @@ beforeEach(() => {
 
 test("enforced false shows integrator notice and balance, dims platform wallet", async () => {
   const { host, cleanup } = await renderPanel(
-    wallet({ enforced: false, integrator_provider: "isnet", balance: 0 }),
+    wallet({ enforced: false, integrator_configured: true, integrator_provider: "isnet", balance: 0 }),
     { balance: 42, provider: "isnet", message: "İşNet SOAP kontör bakiyesi" },
   );
   const notice = host.querySelector('[data-testid="gib-integrator-notice"]');
+  expect(notice?.getAttribute("data-state")).toBe("configured");
   expect(notice?.textContent).toMatch(/e-Belgeleriniz İşNet üzerinden gönderiliyor/);
+  expect(notice?.textContent).not.toMatch(/Entegratör bağlı değil/);
   expect(notice?.textContent).toMatch(/kontör entegratörünüzden düşer/);
   expect(notice?.textContent).toMatch(/TamKobi kontörü yalnız simüle\/platform gönderiminde kullanılır/);
   const integ = host.querySelector('[data-testid="gib-integrator-balance"]');
@@ -93,7 +95,7 @@ test("enforced false shows integrator error message when the balance cannot load
   const err = new Error("fail");
   err.response = { data: { detail: "Entegratör kontör sorgusu başarısız." } };
   const { host, cleanup } = await renderPanel(
-    wallet({ enforced: false, integrator_provider: "isnet", balance: 0 }),
+    wallet({ enforced: false, integrator_configured: true, integrator_provider: "isnet", balance: 0 }),
     err,
   );
   expect(host.querySelector('[data-testid="gib-integrator-balance-error"]')?.textContent)
@@ -109,7 +111,7 @@ test("integrator credit error shows the backend detail", async () => {
     data: { detail: "Sunucu IP'si İşNet'te bu VKN için tanımlı değil olabilir" },
   };
   const { host, cleanup } = await renderPanel(
-    wallet({ enforced: false, integrator_provider: "isnet", balance: 0 }),
+    wallet({ enforced: false, integrator_configured: true, integrator_provider: "isnet", balance: 0 }),
     err,
   );
   expect(host.querySelector('[data-testid="gib-integrator-balance-error"]')?.textContent)
@@ -118,14 +120,37 @@ test("integrator credit error shows the backend detail", async () => {
 });
 
 test("enforced true keeps the platform wallet view and skips integrator credits", async () => {
-  const { host, cleanup } = await renderPanel(wallet({ enforced: true, balance: 7 }), { balance: 99 });
-  expect(host.querySelector('[data-testid="gib-integrator-notice"]')).toBeNull();
+  const { host, cleanup } = await renderPanel(wallet({ enforced: true, integrator_configured: false, balance: 7 }), { balance: 99 });
+  const notice = host.querySelector('[data-testid="gib-integrator-notice"]');
+  expect(notice?.getAttribute("data-state")).toBe("unconfigured");
+  expect(notice?.textContent).toBe("Entegratör bağlı değil, gönderimler TamKobi kontöründen düşer");
+  expect(host.textContent).not.toMatch(/İşNet üzerinden gönderiliyor/);
+  expect(host.textContent).not.toMatch(/SOAP/);
   expect(host.querySelector('[data-testid="gib-platform-label"]')?.textContent).toBe("GİB e-Fatura / e-Arşiv kontörü");
   expect(host.querySelector('[data-testid="gib-platform-wallet"]')?.className).not.toMatch(/opacity-60/);
   expect(host.querySelector('[data-testid="gib-balance"]')?.textContent).toMatch(/7/);
   expect(host.textContent).toMatch(/Her e-fatura veya e-arşiv gönderimi 1 kontör düşer/);
   expect(host.querySelector('[data-testid="gib-led-led1"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="gib-pack-gib_100"]')).not.toBeNull();
+  const integCalls = axios.get.mock.calls.filter((c) => String(c[0]).includes("/e-invoice/integrator-credits"));
+  expect(integCalls).toEqual([]);
+  cleanup();
+});
+
+test("unconfigured isnet does not query credits and explains TamKobi deduction", async () => {
+  const err = new Error("soap");
+  err.response = { data: { detail: "İşNet SOAP kontör sorgusu başarısız" } };
+  const { host, cleanup } = await renderPanel(
+    wallet({ enforced: true, integrator_configured: false, integrator_provider: "isnet", balance: 4 }),
+    err,
+  );
+  const notice = host.querySelector('[data-testid="gib-integrator-notice"]');
+  expect(notice?.textContent).toBe("Entegratör bağlı değil, gönderimler TamKobi kontöründen düşer");
+  expect(host.textContent).not.toMatch(/e-Belgeleriniz İşNet üzerinden gönderiliyor/);
+  expect(host.textContent).not.toMatch(/İşNet SOAP kontör sorgusu başarısız/);
+  expect(host.querySelector('[data-testid="gib-integrator-balance-error"]')).toBeNull();
+  expect(host.querySelector('[data-testid="gib-platform-wallet"]')?.className).not.toMatch(/opacity-60/);
+  expect(host.querySelector('[data-testid="gib-balance"]')?.textContent).toMatch(/4/);
   const integCalls = axios.get.mock.calls.filter((c) => String(c[0]).includes("/e-invoice/integrator-credits"));
   expect(integCalls).toEqual([]);
   cleanup();

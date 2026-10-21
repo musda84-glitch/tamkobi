@@ -304,6 +304,7 @@ async def account_credits(company_id: Optional[str] = None, user: dict = Depends
     # issue_invoice ile aynı karar: yapılandırılmış gerçek entegratör cüzdanı düşürmez.
     from e_invoice import configured_real_integrator
     raw_provider = settings.get("provider")
+    integrator_configured = configured_real_integrator(settings)
     return {
         "company_id": cid,
         "wallet_id": w["_id"],
@@ -312,7 +313,8 @@ async def account_credits(company_id: Optional[str] = None, user: dict = Depends
         "packs": await packs() if selling else [],
         "ledger": led,
         "integrator_provider": raw_provider if raw_provider else None,
-        "enforced": not configured_real_integrator(settings),
+        "integrator_configured": integrator_configured,
+        "enforced": not integrator_configured,
     }
 
 
