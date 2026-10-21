@@ -8,6 +8,7 @@ import { get, put } from "../api/client";
 import {
   buildProductLabel,
   buildShipmentBatch,
+  buildTemplateLabel,
   buildTestLabel,
   buildWorkOrderLabel,
   clampCopies,
@@ -16,6 +17,8 @@ import {
   type LabelSize,
   type ProductLabelInput,
   type ShipmentLabelInput,
+  type TemplateLabelProduct,
+  type TemplateLabelTpl,
   type TsplJob,
   type WorkOrderLabelInput,
 } from "./tspl";
@@ -374,6 +377,32 @@ export async function printProductLabel(opts: {
     ...opts.product,
     copies: clampCopies(opts.copies),
     size: labelSizeOf(opts.settings),
+    textMode: opts.settings.textMode,
+  });
+  return printTsplJob(job, opts.settings, opts.connect);
+}
+
+/** Şablonun eni, boyu ve öğeleriyle TSPL basar. Host/port/dpi/textMode yazıcı ayarından gelir. */
+export async function printTemplateLabel(opts: {
+  settings: LabelPrinterSettings;
+  product: TemplateLabelProduct;
+  tpl?: TemplateLabelTpl | null;
+  companyName?: string | null;
+  copies?: number;
+  connect?: TcpConnect;
+}): Promise<{ bytes: number }> {
+  const pageGap = opts.tpl?.page?.gap_mm;
+  const job = buildTemplateLabel({
+    product: opts.product,
+    companyName: opts.companyName,
+    tpl: opts.tpl,
+    copies: clampCopies(opts.copies),
+    size: {
+      widthMm: Number(opts.tpl?.width_mm) || opts.settings.widthMm,
+      heightMm: Number(opts.tpl?.height_mm) || opts.settings.heightMm,
+      gapMm: pageGap == null ? opts.settings.gapMm : pageGap,
+      dpi: opts.settings.dpi,
+    },
     textMode: opts.settings.textMode,
   });
   return printTsplJob(job, opts.settings, opts.connect);
