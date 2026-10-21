@@ -226,13 +226,20 @@ async def _write(
     idem_key = idempotency.header_key(request)
     if not idem_key:
         raise HTTPException(status_code=400, detail="Idempotency-Key gerekli")
-    changed = await prepare(payload)
     endpoint = _endpoint_of(request, payload)
     db = store._db
     ns = f"platform_admin:{key_id}"
     existing = await db.idempotency_keys.find_one({"_id": f"{ns}:{idem_key}"})
     if existing and str(existing.get("endpoint") or "") != endpoint:
         raise HTTPException(status_code=409, detail="Idempotency-Key farklı istekle kullanıldı")
+    if (
+        existing
+        and existing.get("status") == "completed"
+        and existing.get("response") is not None
+        and str(existing.get("endpoint") or "") == endpoint
+    ):
+        return existing["response"]
+    changed = await prepare(payload)
 
     async def run_fn():
         outcome = await fn(payload, key_doc)
