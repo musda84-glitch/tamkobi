@@ -285,6 +285,7 @@ def _open_for_offset(inv: dict) -> bool:
 
 
 def _offset_direction(inv: dict) -> str:
+    """Satış alacak (+). Satış iadesi bakiyeyi düşürür; alış ile aynı borç yönü."""
     return "receivable" if inv.get("invoice_type") == "sales" else "payable"
 
 

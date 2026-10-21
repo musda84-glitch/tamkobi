@@ -4,7 +4,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, canFaturalastirDraftInvoice, draftInvoiceApproveConfirmText, canRunInvoiceIssueFlow, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount, invoiceDeleteConfirmMessage, invoicesBulkDeleteConfirmMessage, isManualPurchaseStockInvoice, manualPurchasePostsStock, ManualPurchaseStockBadge } from "../components/InvoiceContextMenu";
 import { COMMERCIAL_BADGE_CLASS, incomingCommercialStatusLabel } from "../utils/edocInbox";
 import { DraftInvoiceFaturalastirButton } from "../components/DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "../components/IncomingInvoiceFaturalastirButton";
@@ -550,6 +550,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
 
   // New Invoice Form
+  const [formNarrow, setFormNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 480);
+  useEffect(() => {
+    const sync = () => setFormNarrow(window.innerWidth < 480);
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
   const [formData, setFormData] = useState(() => {
     const now = nowIssueDateTime();
     return {
@@ -605,6 +612,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       ...fd,
       invoice_type: newParam === "purchase" ? "purchase" : "sales",
       e_type: newParam === "purchase" ? "paper" : "e_archive",
+      post_stock: newParam === "purchase" ? true : fd.post_stock,
       contact_id: c?.id || fd.contact_id || "",
       contact_name: c?.name || fd.contact_name || "",
       contact_tax_id: c?.tax_number_or_id || fd.contact_tax_id || "",
@@ -898,6 +906,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         bl_awb: source.bl_awb || "",
         certificate: source.certificate || "",
         trade_file_number: source.trade_file_number || "",
+        post_stock: isManualPurchaseStockInvoice(source) ? manualPurchasePostsStock(source) : undefined,
         items: (source.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
       }));
       setShowNewModal(true);
@@ -957,16 +966,25 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editParam]);
 
+  const approvingDraftRef = useRef(new Set());
+  const [approvingDraftId, setApprovingDraftId] = useState(null);
   const handleApproveDraft = async (inv) => {
     if (!inv) return;
-    const no = inv.invoice_number || "Belge";
-    if (!window.confirm(`${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`)) return;
+    const id = inv.id || inv._id;
+    if (!id || approvingDraftRef.current.has(id)) return;
+    if (!window.confirm(draftInvoiceApproveConfirmText(inv))) return;
+    if (approvingDraftRef.current.has(id)) return;
+    approvingDraftRef.current.add(id);
+    setApprovingDraftId(id);
     try {
-      const res = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+      const res = await axios.post(`${API_URL}/invoices/${id}/approve`);
       toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    } finally {
+      approvingDraftRef.current.delete(id);
+      setApprovingDraftId((cur) => (cur === id ? null : cur));
     }
   };
   const handleDeleteInvoice = async (inv) => {
@@ -1069,6 +1087,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         status: formData.invoice_type === "dispatch" ? "draft" : (formData.status || "draft"),
         gib_status: (formData.status || "draft") === "draft" ? "Taslak" : "Onaylandı"
       };
+      const postStockLocked = Boolean(editingInvoice) && ["approved", "sent_to_gib", "cancelled", "paid"].includes(editingInvoice.status);
+      if (!postStockLocked && isManualPurchaseStockInvoice(formData)) payload.post_stock = formData.post_stock !== false;
+      else delete payload.post_stock;
+      if (!postStockLocked && isManualPurchaseStockInvoice(formData) && payload.status === "approved") {
+        const no = editingInvoice?.invoice_number || formData.invoice_number || "Belge";
+        if (!window.confirm(draftInvoiceApproveConfirmText({ ...payload, invoice_number: no, post_stock: payload.post_stock }))) return;
+      }
       let saved = null;
       if (editingInvoice) {
         const { company_id, invoice_type, gib_status, ...upd } = payload;
@@ -1167,6 +1192,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
   const handleIssueFromMenu = (inv, eType) => {
+    if (inv?.status === "draft" && canFaturalastirDraftInvoice(inv)) {
+      return handleApproveDraft(inv);
+    }
     if (eType === "e_dispatch" || inv?.invoice_type === "dispatch" || inv?.e_type === "e_dispatch") {
       openDespatchSend(inv);
       return;
@@ -1793,6 +1821,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
                               {invoiceETypeLabel(inv)}
                             </span>
+                            <ManualPurchaseStockBadge inv={inv} testId={`inv-stock-badge-${inv.invoice_number}`} />
                             {(() => {
                               const commercial = incomingCommercialStatusLabel(inv);
                               if (!commercial) return null;
@@ -1873,6 +1902,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <span className={`inline-block text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                         isCancelledInvoice(inv)
                           ? "bg-rose-100 text-rose-800"
+                          : inv.status === "draft"
+                          ? "bg-slate-100 text-slate-600"
                           : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "bg-amber-100 text-amber-800"
                           : (inv.payment_status === "paid" || contactPaymentSettled(inv))
@@ -1883,6 +1914,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       }`} data-testid={`inv-pay-${inv.invoice_number}`}>
                         {isCancelledInvoice(inv)
                           ? "İptal"
+                          : inv.status === "draft"
+                          ? "Taslak"
                           : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "İşlenmedi"
                           : (inv.payment_status === "paid" || contactPaymentSettled(inv)) ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
@@ -1987,6 +2020,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           <DraftInvoiceFaturalastirButton
                             inv={inv}
                             onApprove={handleApproveDraft}
+                            disabled={approvingDraftId === (inv.id || inv._id)}
                             testId={`draft-faturalastir-btn-${inv.invoice_number}`}
                           />
                         ) : null}
@@ -2444,7 +2478,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Fatura Türü</label>
                   <select
                     value={formData.invoice_type}
-                    onChange={(e) => setFormData({ ...formData, invoice_type: e.target.value })}
+                    onChange={(e) => {
+                      const invoice_type = e.target.value;
+                      const next = { ...formData, invoice_type };
+                      if (invoice_type === "purchase" && formData.post_stock == null) next.post_stock = true;
+                      setFormData(next);
+                    }}
                     className="w-full h-8 bg-white border border-slate-200 rounded-md px-2 text-xs font-medium"
                     data-testid="inv-type-select"
                   >
@@ -2506,6 +2545,37 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     {[["draft", "Taslak"], ["approved", "Onaylı"]].map(([m, l]) => <button type="button" key={m} title={m === "approved" ? "Onaylı (cariye işle)" : "Taslak"} onClick={() => setFormData({ ...formData, status: m })} className={`px-2 ${(formData.status || "draft") === m ? (m === "draft" ? "bg-amber-500 text-white" : "bg-emerald-600 text-white") : "bg-white text-slate-500"}`} data-testid={`inv-status-${m}`}>{l}</button>)}
                   </div>
                 </div>
+                {isManualPurchaseStockInvoice(formData) && (
+                  <div
+                    className={formNarrow ? "w-full basis-full max-w-full" : "w-auto max-w-full"}
+                    data-testid="inv-post-stock-row"
+                    data-layout={formNarrow ? "full" : "inline"}
+                  >
+                    <label className="block text-[10px] leading-tight font-semibold text-slate-500 mb-0.5">Stok</label>
+                    <div className="flex items-center gap-2 min-w-0 max-w-full">
+                      <label className={`h-8 inline-flex items-center gap-1.5 px-2 border rounded-md text-[11px] font-bold max-w-full ${formData.post_stock !== false ? "bg-emerald-50 border-emerald-500 text-emerald-800" : "bg-white border-slate-200 text-slate-700"} ${["approved", "sent_to_gib", "cancelled", "paid"].includes(editingInvoice?.status) ? "opacity-80" : ""}`}>
+                        <input
+                          type="checkbox"
+                          className="rounded border-slate-300"
+                          checked={formData.post_stock !== false}
+                          disabled={["approved", "sent_to_gib", "cancelled", "paid"].includes(editingInvoice?.status)}
+                          onChange={(e) => {
+                            if (["approved", "sent_to_gib", "cancelled", "paid"].includes(editingInvoice?.status)) return;
+                            setFormData({ ...formData, post_stock: e.target.checked });
+                          }}
+                          data-testid="inv-post-stock"
+                        />
+                        Stoğa işle
+                      </label>
+                      {["approved", "sent_to_gib", "cancelled", "paid"].includes(editingInvoice?.status) && (
+                        <span className="text-[10px] text-slate-500 leading-tight whitespace-normal" data-testid="inv-post-stock-lock">🔒 Onaylı faturada değiştirilemez. Değiştirmek için faturayı iptal edip yeniden girin.</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {isManualPurchaseStockInvoice(formData) && (
+                  <p className="w-full basis-full max-w-full text-[10px] text-slate-500 whitespace-normal break-words" data-testid="inv-post-stock-hint">İşaretliyse onayda kalemler depoya girer. İşaretsizse yalnız cari bakiyesi işlenir. Onaydan sonra değiştirilemez.</p>
+                )}
                 <button
                   type="button"
                   className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 shrink-0"

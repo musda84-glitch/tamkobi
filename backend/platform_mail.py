@@ -468,11 +468,24 @@ async def update_server(server_id: str, req: Dict[str, Any], _: dict = Depends(s
         upd["smtp_port"] = int(req["smtp_port"] or 587)
     if "is_active" in req:
         upd["is_active"] = bool(req["is_active"])
+    host_changed = "smtp_host" in upd and upd["smtp_host"] != str(cur.get("smtp_host") or "").strip()
+    user_changed = "smtp_user" in upd and upd["smtp_user"] != str(cur.get("smtp_user") or "").strip()
+    port_changed = "smtp_port" in upd and int(upd["smtp_port"]) != int(cur.get("smtp_port") or 587)
     pwd = (req.get("password") or "").strip()
+    unset = None
     if pwd:
         upd["password_enc"] = comm_service.encrypt(pwd)
-    await _db.platform_mail_servers.update_one({"_id": server_id}, {"$set": upd})
-    return _public_server({**cur, **upd})
+    elif host_changed or user_changed or port_changed:
+        # Kayıtlı SMTP şifresi yeni hosta, kapıya veya kullanıcıya gitmez.
+        unset = {"password_enc": ""}
+    write: Dict[str, Any] = {"$set": upd}
+    if unset:
+        write["$unset"] = unset
+    await _db.platform_mail_servers.update_one({"_id": server_id}, write)
+    merged = {**cur, **upd}
+    if unset:
+        merged.pop("password_enc", None)
+    return _public_server(merged)
 
 
 @router.delete("/system/mail/servers/{server_id}")
@@ -582,16 +595,29 @@ async def update_mailbox(box_id: str, req: Dict[str, Any], _: dict = Depends(saa
         upd["allow_all_admins"] = False
     if "is_active" in req:
         upd["is_active"] = bool(req["is_active"])
+    email_changed = "email" in upd and upd["email"] != _norm_email(str(cur.get("email") or ""))
+    user_changed = "smtp_user" in upd and upd["smtp_user"] != str(cur.get("smtp_user") or "").strip()
+    server_changed = "server_id" in upd and upd["server_id"] != str(cur.get("server_id") or "").strip()
     pwd = (req.get("password") or "").strip()
+    unset = None
     if pwd:
         upd["password_enc"] = comm_service.encrypt(pwd)
+    elif email_changed or user_changed or server_changed:
+        # Kutu şifresi yeni IMAP kullanıcısına, SMTP kullanıcısına veya sunucuya gitmez.
+        unset = {"password_enc": ""}
     if req.get("is_default"):
         await _clear_default_flags(except_id=box_id)
         upd["is_default"] = True
     elif "is_default" in req:
         upd["is_default"] = False
-    await _db.platform_mailboxes.update_one({"_id": box_id}, {"$set": upd})
-    return _public_box({**cur, **upd})
+    write: Dict[str, Any] = {"$set": upd}
+    if unset:
+        write["$unset"] = unset
+    await _db.platform_mailboxes.update_one({"_id": box_id}, write)
+    merged = {**cur, **upd}
+    if unset:
+        merged.pop("password_enc", None)
+    return _public_box(merged)
 
 
 @router.delete("/system/mail/mailboxes/{box_id}")

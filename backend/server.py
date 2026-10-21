@@ -5140,6 +5140,9 @@ async def create_contact(contact: Contact, user: dict = Depends(get_current_user
     contact.company_id = cid
     await saas.check_contact_limit(cid)
     doc = contact.to_mongo()
+    if "b2b_login_email" in doc:
+        doc["b2b_login_email"] = b2b_identity.canonical_b2b_login(doc.get("b2b_login_email"))
+    doc["tax_norm"] = b2b_identity.normalize_tax(doc.get("tax_number_or_id"))
     if doc.get("kvkk_accepted") and not doc.get("kvkk_accepted_at"):
         doc["kvkk_accepted_at"] = datetime.now(timezone.utc).isoformat()
     await db.contacts.insert_one(doc)
@@ -5189,7 +5192,9 @@ async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = 
     else:
         updated.pop("b2b_password", None)
     if "b2b_login_email" in updated:
-        updated["b2b_login_email"] = str(updated.get("b2b_login_email") or "").strip().lower()
+        updated["b2b_login_email"] = b2b_identity.canonical_b2b_login(updated.get("b2b_login_email"))
+    if "tax_number_or_id" in updated:
+        updated["tax_norm"] = b2b_identity.normalize_tax(updated.get("tax_number_or_id"))
     await b2b_identity.consider_link_notice(db, doc, {**doc, **updated}, updated)
     await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": updated})
     res = await db.contacts.find_one({"_id": contact_id, "company_id": cid})
@@ -5211,7 +5216,10 @@ async def get_contact_statement(contact_id: str, user: dict = Depends(get_curren
     cid = contact["company_id"]
     invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
     payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
-    
+    payments = await cheques.payments_with_endorsement_virtuals(
+        db, payments, contact_id=contact_id, company_id=cid,
+    )
+
     return {
         "contact": clean_doc(contact),
         "invoices": clean_docs(invoices),
@@ -5237,6 +5245,10 @@ async def _statement_bundle(contact_id: str):
     cid = str(contact.get("company_id") or "").strip()
     invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id}).to_list(200)
     payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(200)
+    if cid:
+        payments = await cheques.payments_with_endorsement_virtuals(
+            db, payments, contact_id=contact_id, company_id=cid,
+        )
     company = await db.companies.find_one({"_id": contact.get("company_id")}) or {}
     payments = list(payments) + await _partner_statement_payments(contact_id, cid)
     rows = statement_share.statement_rows(invoices, payments)
@@ -5417,7 +5429,7 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any], user: dict = 
             raise HTTPException(status_code=400, detail="B2B şifresi en az 6 karakter olmalı.")
         upd["b2b_password_hash"] = hash_password(str(req["password"]))
     if req.get("login_email"):
-        upd["b2b_login_email"] = str(req["login_email"]).strip().lower()
+        upd["b2b_login_email"] = b2b_identity.canonical_b2b_login(req.get("login_email"))
     if isinstance(req.get("settings"), dict):
         upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
     await b2b_identity.consider_link_notice(db, c, {**c, **upd}, upd)
@@ -5458,7 +5470,7 @@ async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dic
             raise HTTPException(status_code=400, detail="B2B şifresi en az 6 karakter olmalı.")
         upd["b2b_password_hash"] = hash_password(str(req["password"]))
     if "login_email" in req:
-        upd["b2b_login_email"] = str(req.get("login_email") or "").strip().lower()
+        upd["b2b_login_email"] = b2b_identity.canonical_b2b_login(req.get("login_email"))
     if req.get("regenerate"):
         upd["b2b_token"] = token = uuid.uuid4().hex
     if isinstance(req.get("settings"), dict):
@@ -7406,6 +7418,9 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         expense_bank_txs=expense_txs,
         invoices=invoices,
     )
+    payments = await cheques.payments_with_endorsement_virtuals(
+        db, payments, contact_id=contact_id, company_id=cid,
+    )
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({
         "company_id": contact["company_id"],
@@ -7425,8 +7440,9 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
     wa = await db.whatsapp_logs.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     quotes = await db.quotes.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"company_id": cid, "contact_id": contact_id}).sort("due_date", 1).to_list(200)]
-    live_cheque = cheques.open_portfolio_balance(cheques_rows)
+    cheque_today = cheques._today()
+    cheques_rows = await cheques.fetch_contact_cheques(db, contact_id, cid)
+    live_cheque = cheques.open_portfolio_balance(cheques_rows, cheque_today)
     if abs(float(contact.get("cheque_bond_balance") or 0) - live_cheque) > 0.005:
         # BizimHesap chequeandbond snapshot'ı (ör. ERSAY 177.924,83) gerçek portföy değilse sıfırla.
         await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": {"cheque_bond_balance": live_cheque}})
@@ -10188,7 +10204,10 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     doc = invoice.to_mongo()
     if invoice.invoice_type == "purchase" and (invoice.e_type == "e_invoice" or invoice.direction == "incoming" or invoice.source == "edoc_inbox" or invoice.edoc_id):
         doc["direction"] = "incoming"
+    if not _is_manual_purchase_stock_target(doc):
+        doc.pop("post_stock", None)
     if invoice.status in ["approved", "sent_to_gib"]:
+        _prepare_manual_purchase_stock(doc)
         await _apply_invoice_effects(doc)
         doc["effects_applied"] = True
     doc["company_id"] = invoice.company_id
@@ -10294,6 +10313,59 @@ _INVOICE_EFFECT_KEYS = frozenset({
 })
 
 
+_POST_STOCK_LOCK_STATUSES = ("approved", "sent_to_gib", "cancelled", "paid")
+_POST_STOCK_LOCK_DETAIL = "Onaylı faturada 'Stoğa işle' değiştirilemez."
+
+
+def _coerce_post_stock(value):
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return None
+
+
+def _is_manual_purchase_stock_target(inv: dict) -> bool:
+    """Elle alış: gelen e-fatura, gider pusulası ve irsaliye değil."""
+    if not inv or inv.get("invoice_type") != "purchase":
+        return False
+    if inv.get("e_type") in ("expense_slip", "e_dispatch"):
+        return False
+    if inv.get("invoice_type") == "dispatch":
+        return False
+    return not _is_incoming_purchase_invoice(inv)
+
+
+def _prepare_manual_purchase_stock(inv: dict) -> None:
+    """Onaydan hemen önce elle alışın stok kararını yazar.
+
+    Alan yoksa True. True ise stock_effects_applied=False (stok uygulanacak).
+    False ya da irsaliye stoğu zaten girdiyse bayrak silinir, stock_skipped=True
+    kalır; _purchase_tracks_stock False döner ve stok girmez.
+    Stok daha önce girdiyse (bayrak True) belgeye dokunulmaz.
+    """
+    if not _is_manual_purchase_stock_target(inv):
+        return
+    if inv.get("stock_effects_applied") is True:
+        return
+    if inv.get("post_stock") is None:
+        inv["post_stock"] = True
+    else:
+        inv["post_stock"] = bool(inv.get("post_stock"))
+    skip = (not inv.get("post_stock")) or bool(inv.get("stock_effects_from_dispatch"))
+    if skip:
+        inv.pop("stock_effects_applied", None)
+        inv["stock_skipped"] = True
+        return
+    inv.pop("stock_skipped", None)
+    inv["stock_effects_applied"] = False
+
+
 def _purchase_tracks_stock(inv: dict) -> bool:
     """Alış stok takibi: gelen e-belge veya stock_effects_applied bayrağı olan faturalar."""
     if inv.get("invoice_type") != "purchase":
@@ -10319,7 +10391,7 @@ async def _apply_invoice_effects(inv: dict):
             if pid:
                 await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
             await _apply_lot_delta(item, -1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv):
+    elif _purchase_tracks_stock(inv) and not skip_stock:
         # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
         if inv.get("stock_effects_applied") is False:
             for item in inv.get("items", []):
@@ -10347,7 +10419,7 @@ async def _reverse_invoice_effects(inv: dict):
             if pid:
                 await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
             await _apply_lot_delta(item, +1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv) and inv.get("stock_effects_applied") is not False:
+    elif _purchase_tracks_stock(inv) and not skip_stock and inv.get("stock_effects_applied") is not False:
         for item in inv.get("items", []):
             pid, qty = _invoice_item_pid_qty(item)
             if pid:
@@ -10541,6 +10613,8 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
             raise HTTPException(status_code=409, detail=_INVOICE_APPROVE_BUSY)
         return await _approve_invoice_already_ok(fresh)
     try:
+        # Gelen e-fatura bu dala girmez; _post_incoming_purchase_invoice kendi girişini yapar.
+        _prepare_manual_purchase_stock(inv)
         await _apply_invoice_effects(inv)
         issued_notes = ubl_export.strip_issued_invoice_note(inv.get("notes"))
         approved_set = {
@@ -10549,12 +10623,21 @@ async def approve_invoice(invoice_id: str, user: dict = Depends(get_current_user
             "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"),
             "approved_at": datetime.now(timezone.utc).isoformat(),
         }
+        approved_unset = {"approving_at": ""}
+        if _is_manual_purchase_stock_target(inv) and inv.get("post_stock") is not None:
+            approved_set["post_stock"] = bool(inv.get("post_stock"))
+            if inv.get("stock_skipped"):
+                approved_set["stock_skipped"] = True
+                approved_unset["stock_effects_applied"] = ""
+            elif inv.get("stock_effects_applied") is True:
+                approved_set["stock_effects_applied"] = True
+                approved_unset["stock_skipped"] = ""
         if issued_notes != (inv.get("notes") or ""):
             approved_set["notes"] = issued_notes
             inv["notes"] = issued_notes
         await db.invoices.update_one(
             {"_id": invoice_id, "company_id": company_id},
-            {"$set": approved_set, "$unset": {"approving_at": ""}},
+            {"$set": approved_set, "$unset": approved_unset},
         )
         inv = await db.invoices.find_one({"_id": invoice_id, "company_id": company_id}) or inv
         await _mark_order_invoiced_from_invoice(inv)
@@ -10696,6 +10779,17 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
 
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     cid = str(inv.get("company_id") or "").strip()
+    if "post_stock" in req and not _is_manual_purchase_stock_target(inv):
+        req = {k: v for k, v in req.items() if k != "post_stock"}
+    if "post_stock" in req and inv.get("status") in _POST_STOCK_LOCK_STATUSES:
+        new_stock = _coerce_post_stock(req.get("post_stock"))
+        old_stock = inv.get("post_stock")
+        old_norm = None if old_stock is None else bool(old_stock)
+        if new_stock != old_norm:
+            raise HTTPException(status_code=409, detail=_POST_STOCK_LOCK_DETAIL)
+        req = {k: v for k, v in req.items() if k != "post_stock"}
+        if not req:
+            return clean_doc(dict(inv))
     if inv.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
     if inv.get("status") == "cancelling":
@@ -10713,10 +10807,12 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id, "company_id": cid}))
-    editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}
+    editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code", "post_stock"}
     if _is_dispatch_doc(inv):
         editable = editable | _DESPATCH_EDIT_KEYS
     allowed = {k: v for k, v in req.items() if k in editable}
+    if "post_stock" in allowed:
+        allowed["post_stock"] = bool(_coerce_post_stock(allowed.get("post_stock")))
     reapply_effects = bool(inv.get("effects_applied")) and bool(set(allowed.keys()) & _INVOICE_EFFECT_KEYS)
     if "contact_id" in allowed and allowed.get("contact_id"):
         _c = await db.contacts.find_one({"_id": allowed["contact_id"], "company_id": cid})
@@ -12191,11 +12287,14 @@ async def get_report(kind: str, company_id: Optional[str] = None, date_from: Opt
             if date_to:
                 rng["$lte"] = date_to
             txq["date"] = rng
-        txs = await db.bank_transactions.find(txq, {"date": 1, "type": 1, "amount": 1, "category": 1}).to_list(50000)
+        txs = await db.bank_transactions.find(txq, {
+            "date": 1, "type": 1, "amount": 1, "category": 1,
+            "account_id": 1, "source": 1, "cheque_kind": 1, "account_name": 1,
+        }).to_list(50000)
         months: Dict[str, Dict[str, Any]] = {}
         cats: Dict[str, Dict[str, Any]] = {}
         for t in txs:
-            if not t.get("date"):
+            if not t.get("date") or cheques.is_noncash_cheque_movement(t):
                 continue
             m = months.setdefault(t["date"][:7], {"name": t["date"][:7], "inflow": 0.0, "outflow": 0.0, "net": 0.0})
             c = cats.setdefault(t.get("category") or "Diğer", {"name": t.get("category") or "Diğer", "inflow": 0.0, "outflow": 0.0, "net": 0.0})
@@ -17781,6 +17880,12 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "customer_order_number": order.get("customer_order_number") or order.get("po_number") or "",
         "created_at": now.isoformat(),
     }
+    pay_method = str(order.get("payment_method") or "").strip()
+    pay_kind = str(order.get("payment_type") or "").strip()
+    if pay_method:
+        doc["payment_method"] = pay_method
+    if pay_kind:
+        doc["payment_type"] = pay_kind
     await db.invoices.insert_one(doc)
     await db.orders.update_one(
         {"_id": order["_id"]},
@@ -18729,7 +18834,10 @@ async def accountant_summary(company_id: Optional[str] = None, month: Optional[s
         db.invoices.find({"company_id": cid, "issue_date": {"$regex": f"^{month}"}},
                          {"invoice_type": 1, "status": 1, "e_type": 1, "invoice_number": 1, "issue_date": 1, "contact_name": 1,
                           "subtotal": 1, "vat_total": 1, "grand_total": 1, "paid_amount": 1, "payment_status": 1, "gib_status": 1, "items": 1}).to_list(5000),
-        db.bank_transactions.find({"company_id": cid, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
+        db.bank_transactions.find(
+            {"company_id": cid, "date": {"$regex": f"^{month}"}},
+            {"type": 1, "amount": 1, "account_id": 1, "source": 1, "cheque_kind": 1, "account_name": 1, "category": 1},
+        ).to_list(5000),
         db.payrolls.find({"company_id": cid, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
         db.tax_obligations.find({"company_id": cid, "period": month}).to_list(2000),
         db.tax_documents.find({"company_id": cid, "period": month}).to_list(200),
@@ -18745,12 +18853,13 @@ async def accountant_summary(company_id: Optional[str] = None, month: Optional[s
             by_vat.setdefault(r, {"rate": r, "sales_base": 0, "sales_vat": 0, "purchase_base": 0, "purchase_vat": 0})
             by_vat[r][f"{k}_base"] += base; by_vat[r][f"{k}_vat"] += vat
     calc_vat = sum(i.get("vat_total", 0) for i in sales); ded_vat = sum(i.get("vat_total", 0) for i in purchases)
+    cash_txs = [t for t in txs if not cheques.is_noncash_cheque_movement(t)]
     slim = [{k: i.get(k) for k in ("invoice_number", "issue_date", "invoice_type", "e_type", "contact_name", "subtotal", "vat_total", "grand_total", "gib_status")} | {"id": i.get("_id") or i.get("id")} for i in sorted(invs, key=lambda x: x.get("issue_date", ""), reverse=True)]
     return {"month": month,
             "sales": {"count": len(sales), "subtotal": sum(i.get("subtotal", 0) for i in sales), "vat": calc_vat, "total": sum(i.get("grand_total", 0) for i in sales), "unpaid": sum(i.get("grand_total", 0) - i.get("paid_amount", 0) for i in sales if i.get("payment_status") != "paid")},
             "purchases": {"count": len(purchases), "subtotal": sum(i.get("subtotal", 0) for i in purchases), "vat": ded_vat, "total": sum(i.get("grand_total", 0) for i in purchases)},
             "vat": {"calculated": calc_vat, "deductible": ded_vat, "payable": max(0.0, calc_vat - ded_vat), "carryover": max(0.0, ded_vat - calc_vat), "by_rate": sorted(by_vat.values(), key=lambda x: -float(x["rate"]))},
-            "cash": {"inflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "outflow"), "count": len(txs)},
+            "cash": {"inflow": sum(t.get("amount", 0) for t in cash_txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in cash_txs if t.get("type") == "outflow"), "count": len(cash_txs)},
             "payroll": tax_obligations.payroll_from_documents(tax_docs) or {"count": len(payrolls), "gross": sum(p.get("gross_salary", 0) for p in payrolls), "net": sum(p.get("net_salary", 0) for p in payrolls), "employer_cost": sum(p.get("total_employer_cost", p.get("gross_salary", 0)) for p in payrolls), "source": "personnel"},
             "tax_payables": tax_obligations.month_summary(tax_obs),
             "e_docs": {"gib_sent": sum(1 for i in invs if i.get("status") == "sent"), "draft": sum(1 for i in invs if i.get("status") == "draft"), "dispatch": sum(1 for i in invs if i.get("invoice_type") == "dispatch")},
@@ -22116,6 +22225,12 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         "order_number": order.get("order_number"),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
+    pay_method = str(order.get("payment_method") or "").strip()
+    pay_kind = str(order.get("payment_type") or "").strip()
+    if pay_method:
+        new_invoice["payment_method"] = pay_method
+    if pay_kind:
+        new_invoice["payment_type"] = pay_kind
     if draft_inv and draft_inv.get("status") == "draft":
         inv_id = draft_inv["_id"]
         invoice_number = draft_inv.get("invoice_number") or invoice_number
@@ -27114,6 +27229,8 @@ import platform_admin_v1
 import platform_admin_v1_write
 import platform_admin_v1_danger
 import platform_admin_v1_ops
+import platform_admin_v1_accounts
+import platform_admin_v1_integrations
 platform_admin.init(db)
 platform_v1.init(db)
 import user_erase
@@ -27388,6 +27505,8 @@ app.include_router(platform_admin_v1.router)
 app.include_router(platform_admin_v1_write.router)
 app.include_router(platform_admin_v1_danger.router)
 app.include_router(platform_admin_v1_ops.router)
+app.include_router(platform_admin_v1_accounts.router)
+app.include_router(platform_admin_v1_integrations.router)
 app.include_router(user_erase.router)
 app.include_router(company_reset.router)
 app.include_router(storage_manager.router)

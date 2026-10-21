@@ -21,6 +21,15 @@ export const CONTACT_PAY_MENU_SECTIONS = [
       { id: "cash", label: "Nakit - Kredi Kartı - Banka", icon: Banknote, iconClass: "text-emerald-600", preset: { menuId: "cash", method: "cash" } },
       { id: "contactless", label: "Temassız Kredi Kartı", icon: Nfc, iconClass: "text-amber-700", preset: { menuId: "contactless", method: "cash", preferPos: true } },
       { id: "cheque", label: "Çek", icon: CreditCard, iconClass: "text-sky-600", preset: { menuId: "cheque", method: "cheque", type: "inflow" } },
+      {
+        id: "cheque_endorse",
+        label: "Çek cirola",
+        icon: ArrowLeftRight,
+        iconClass: "text-indigo-600",
+        hint: "Portföydeki alınan çeki bu cariye ver",
+        badge: "yeni",
+        preset: { menuId: "cheque_endorse", method: "cheque_endorse", type: "outflow" },
+      },
       { id: "promissory_in", label: "Müşteriden Senet Al", icon: FileSpreadsheet, iconClass: "text-rose-600", preset: { menuId: "promissory_in", method: "promissory", type: "inflow" } },
       { id: "promissory_out", label: "Müşteriye Senet Ver", icon: ScrollText, iconClass: "text-amber-800", preset: { menuId: "promissory_out", method: "promissory", type: "outflow" } },
     ],
@@ -48,6 +57,7 @@ const MENU_TITLES = {
   cash: "Nakit / Kredi Kartı / Banka",
   contactless: "Temassız Kredi Kartı",
   cheque: "Çek",
+  cheque_endorse: "Çek cirola",
   promissory_in: "Müşteriden Senet Al",
   promissory_out: "Müşteriye Senet Ver",
   balance_fix: "Bakiye düzelt",
@@ -61,6 +71,7 @@ export function contactPayModalMeta(formOrOpts = {}) {
     cash: "cash",
     contactless: "cash",
     cheque: "cheque",
+    cheque_endorse: "cheque_endorse",
     promissory_in: "promissory",
     promissory_out: "promissory",
     balance_fix: "ledger",
@@ -76,7 +87,7 @@ export function contactPayModalMeta(formOrOpts = {}) {
     menuId,
     title,
     lockMethod: locked,
-    lockType: menuId === "promissory_in" || menuId === "promissory_out" || menuId === "balance_fix" || menuId === "contactless",
+    lockType: menuId === "promissory_in" || menuId === "promissory_out" || menuId === "balance_fix" || menuId === "contactless" || menuId === "cheque_endorse",
     lockSlip: false,
     showTypeToggle: !locked || (menuId === "cash" || menuId === "cheque" || hybridLedger),
     showMethodTabs: !locked,
@@ -140,6 +151,7 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
   if (menuId === "contactless") type = "inflow";
   if (menuId === "promissory_in") type = "inflow";
   if (menuId === "promissory_out") type = "outflow";
+  if (menuId === "cheque_endorse") type = "outflow";
   const method = opts.method || "cash";
   const balanceFix = !!opts.balanceFix || menuId === "balance_fix";
   let amount = Math.max(0, balance).toFixed(2);
@@ -148,6 +160,7 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
     type === "inflow" ? "Cari tahsilat" : "Cari ödeme";
 
   if (method === "cheque") description = type === "inflow" ? "Alınan çek" : "Verilen çek";
+  if (method === "cheque_endorse" || menuId === "cheque_endorse") description = "Çek cirosu";
   if (method === "promissory") description = type === "inflow" ? "Alınan senet" : "Verilen senet";
   if (method === "ledger") {
     description = slip === "credit" ? "Alacak fişi" : "Borç fişi";
@@ -178,7 +191,15 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
     slip,
     preferPos: !!opts.preferPos || menuId === "contactless",
     balanceFix,
+    endorse_date: opts.endorse_date || new Date().toISOString().slice(0, 10),
+    selectedEndorseIds: [],
+    portfolioCheques: [],
+    endorseQuery: "",
   };
+}
+
+export function isChequeEndorsePay(form) {
+  return form?.menuId === "cheque_endorse" || form?.method === "cheque_endorse";
 }
 
 /** Ledger / bakiye düzeltme fişi mi? (kasa hareketi değil) */

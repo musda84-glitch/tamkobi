@@ -749,6 +749,176 @@ def test_build_structured_invoice_return_is_iade():
     assert sales_return["InvoiceType"] == "IADE"
 
 
+def test_build_structured_invoice_document_discount_matches_line_sums():
+    """Belge iskontosu: satır neti iskonto öncesi, KDV iskonto sonrası; toplamlar tutar."""
+    inv = {
+        "invoice_number": "TA202600000100",
+        "issue_date": "2026-10-20",
+        "e_type": "e_archive",
+        "items": [{
+            "name": "Ürün",
+            "quantity": 1,
+            "unit": "Adet",
+            "unit_price": 9999.17,
+            "vat_rate": 20,
+            "total": 9999.17,
+            "vat_amount": 1999.83,
+            "total_incl": 11999.00,
+        }],
+        "subtotal": 9599.20,
+        "vat_total": 1919.84,
+        "discount_total": 399.97,
+        "general_discount_amount": 399.97,
+        "grand_total": 11519.04,
+    }
+    payload = isnet.build_structured_invoice(
+        inv,
+        {"tax_number": "4810173324"},
+        {"name": "Alıcı", "tax_number_or_id": "11111111111"},
+        is_earchive=True,
+    )
+    details = payload["InvoiceDetails"]
+    assert payload["TotalDiscountAmount"] == pytest.approx(399.97)
+    assert payload["TotalLineExtensionAmount"] == pytest.approx(sum(d["LineExtensionAmount"] for d in details))
+    assert payload["TotalLineExtensionAmount"] == pytest.approx(9999.17)
+    assert payload["TotalVATAmount"] == pytest.approx(sum(d["VATAmount"] for d in details))
+    assert payload["TotalVATAmount"] == pytest.approx(1919.84)
+    assert details[0]["VATAmount"] == pytest.approx(1919.84)
+    assert details[0]["Product"]["UnitPrice"] == pytest.approx(9999.17)
+    assert payload["TotalPayableAmount"] == pytest.approx(11519.04)
+    assert details[0]["DiscountAmount"] is None
+
+    mixed = {
+        "invoice_number": "TA202600000101",
+        "issue_date": "2026-10-20",
+        "items": [
+            {"name": "A", "quantity": 1, "unit_price": 100, "vat_rate": 20, "total": 100, "vat_amount": 20},
+            {"name": "B", "quantity": 1, "unit_price": 100, "vat_rate": 10, "total": 100, "vat_amount": 10},
+        ],
+        "subtotal": 180,
+        "vat_total": 27,
+        "discount_total": 20,
+        "general_discount_amount": 20,
+        "grand_total": 207,
+    }
+    mixed_payload = isnet.build_structured_invoice(
+        mixed,
+        {"tax_number": "4810173324"},
+        {"name": "Alıcı", "tax_number_or_id": "11111111111"},
+        is_earchive=True,
+    )
+    rows = mixed_payload["InvoiceDetails"]
+    assert mixed_payload["TotalDiscountAmount"] == pytest.approx(20)
+    assert mixed_payload["TotalLineExtensionAmount"] == pytest.approx(sum(d["LineExtensionAmount"] for d in rows))
+    assert mixed_payload["TotalVATAmount"] == pytest.approx(sum(d["VATAmount"] for d in rows))
+    assert mixed_payload["TotalVATAmount"] == pytest.approx(27)
+
+
+def test_build_structured_invoice_inv_01_line_discount_matches_main():
+    """inv_01 ve gider pusulası kopyası: satır iskontosu belge iskontosu değildir."""
+    import importlib.util
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    raw = subprocess.check_output(["git", "show", "main:backend/isnet.py"], cwd=repo)
+    path = Path(tempfile.mkdtemp()) / "isnet_main_inv01.py"
+    path.write_bytes(raw)
+    spec = importlib.util.spec_from_file_location("isnet_main_inv01", path)
+    main = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(main)
+
+    items = [
+        {
+            "product_id": "prod_01",
+            "name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)",
+            "quantity": 25,
+            "unit": "Adet",
+            "unit_price": 1899.0,
+            "vat_rate": 20,
+            "total": 45101.25,
+        },
+        {
+            "product_id": "prod_02",
+            "name": "TamKobi RGB Mekanik Gaming Klavye (Blue Switch)",
+            "quantity": 10,
+            "unit": "Adet",
+            "unit_price": 1450.0,
+            "vat_rate": 20,
+            "total": 14500.0,
+        },
+    ]
+    company = {"tax_number": "4810173324"}
+    contact = {"name": "Trend Mağazacılık", "tax_number_or_id": "8710293841"}
+    cases = (
+        {
+            "_id": "inv_01",
+            "invoice_type": "sales",
+            "e_type": "e_invoice",
+            "invoice_number": "NX202600000104",
+            "issue_date": "2026-10-21",
+            "gib_uuid": "11111111-1111-4111-8111-111111111111",
+            "gib_scenario": "TICARIFATURA",
+            "items": items,
+            "subtotal": 59601.25,
+            "vat_total": 11920.25,
+            "discount_total": 2373.75,
+            "grand_total": 71521.50,
+            "notes": "Vade: 15 gün. E-Fatura GİB portalı onaylıdır.",
+            "source_channel": "manual",
+        },
+        {
+            "_id": "gp_01",
+            "invoice_type": "purchase",
+            "e_type": "expense_slip",
+            "invoice_number": "GP202600000001",
+            "issue_date": "2026-10-21",
+            "gib_uuid": "22222222-2222-4222-8222-222222222222",
+            "items": items,
+            "subtotal": 59601.25,
+            "vat_total": 11920.25,
+            "discount_total": 2373.75,
+            "grand_total": 71521.50,
+            "notes": "Gider pusulası · kaynak fatura NX202600000104",
+        },
+    )
+    for inv in cases:
+        current = isnet.build_structured_invoice(inv, company, contact, is_earchive=False)
+        baseline = main.build_structured_invoice(inv, company, contact, is_earchive=False)
+        assert current == baseline
+        assert current["TotalDiscountAmount"] == pytest.approx(2373.75)
+        assert current["TotalLineExtensionAmount"] == pytest.approx(59601.25)
+        assert current["InvoiceDetails"][0]["LineExtensionAmount"] == pytest.approx(47475.0)
+        assert current["InvoiceDetails"][0]["VATAmount"] == pytest.approx(9495.0)
+        assert current["InvoiceDetails"][1]["LineExtensionAmount"] == pytest.approx(14500.0)
+        assert current["InvoiceDetails"][1]["VATAmount"] == pytest.approx(2900.0)
+
+
+def test_build_structured_invoice_without_discount_keeps_line_vat():
+    inv = {
+        "invoice_number": "TA2026000000130",
+        "issue_date": "2026-10-01",
+        "items": [{"name": "Kalem", "quantity": 2, "unit_price": 50, "vat_rate": 20}],
+        "subtotal": 100,
+        "vat_total": 20,
+        "grand_total": 120,
+        "gib_scenario": "TICARIFATURA",
+    }
+    payload = isnet.build_structured_invoice(
+        inv,
+        {"tax_number": "4810173324"},
+        {"name": "Alıcı", "tax_number_or_id": "1234567890"},
+        is_earchive=False,
+        receiver_alias="urn:mail:pk@x.com",
+    )
+    assert payload["TotalDiscountAmount"] is None
+    assert payload["TotalLineExtensionAmount"] == pytest.approx(100)
+    assert payload["InvoiceDetails"][0]["LineExtensionAmount"] == pytest.approx(100)
+    assert payload["InvoiceDetails"][0]["VATAmount"] == pytest.approx(20)
+    assert payload["TotalVATAmount"] == pytest.approx(20)
+
+
 def test_build_structured_invoice_withholding_is_tevkifat():
     """Tevkifat seçili satış → İşNet InvoiceType TEVKIFAT."""
     inv = {

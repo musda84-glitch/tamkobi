@@ -15,6 +15,7 @@ sys.path.insert(0, str(_BACKEND))
 sys.path.insert(0, str(_BACKEND / "tests"))
 sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 
+import contact_balance  # noqa: E402
 import contact_list_page as page  # noqa: E402
 import invoice_list_page  # noqa: E402
 import statement_share  # noqa: E402
@@ -59,6 +60,15 @@ def _purchase(iid, total, due, *, paid=0, contact=CT, company=CO):
 def _sales(iid, total, due, *, contact=CT, company=CO):
     doc = _purchase(iid, total, due, contact=contact, company=company)
     doc["invoice_type"] = "sales"
+    doc["payment_status"] = "unpaid"
+    doc["paid_amount"] = 0
+    return doc
+
+
+def _sales_return(iid, total, due, *, contact=CT, company=CO):
+    """Açık satış iadesi. POS kasa iadesi değil: paid_amount 0, bakiye düşer."""
+    doc = _purchase(iid, total, due, contact=contact, company=company)
+    doc["invoice_type"] = "sales_return"
     doc["payment_status"] = "unpaid"
     doc["paid_amount"] = 0
     return doc
@@ -117,6 +127,55 @@ def test_fifo_offset_covers_oldest_and_skips_linked_payment():
     assert page.overdue_totals([sale], 40000, balance_known=True, today=TODAY) == (40000, 1)
     # Cari kaydı yoksa eski kalan durur.
     assert page.overdue_totals([sale], 0, balance_known=False, today=TODAY) == (70000, 1)
+
+
+def test_fifo_sales_return_stays_on_payable_side():
+    """Satış iadesi bakiyeyi düşürür; FIFO'da alış ile aynı borç yönündedir.
+
+    Alacak havuzuna yazılırsa en eski satışın kalanı şişer ve iade ayrıca açık kalır.
+    """
+    sale = _sales("sale", 70000, "2020-01-01")
+    ret = _sales_return("iade", 20000, "2020-03-01")
+    assert contact_balance.invoice_balance_delta(sale) == 70000
+    assert contact_balance.invoice_balance_delta(ret) == -20000
+
+    # Satış 70.000 − iade 20.000 = bakiye +50.000. İade kapanır, satışta 50.000 kalır.
+    opened = page.effective_open_map([sale, ret], 50000, balance_known=True)
+    assert opened["sale"] == 50000
+    assert opened["iade"] == 0
+    assert page.overdue_totals([sale, ret], 50000, balance_known=True, today=TODAY) == (50000, 1)
+
+    # İade satışı aşınca borç iade belgesinde kalır, satış kapanır.
+    big = _sales_return("iade-buyuk", 70000, "2020-03-01")
+    small = _sales("sale-kucuk", 20000, "2020-01-01")
+    opened = page.effective_open_map([small, big], -50000, balance_known=True)
+    assert opened["sale-kucuk"] == 0
+    assert opened["iade-buyuk"] == 50000
+    assert page.overdue_totals([small, big], -50000, balance_known=True, today=TODAY) == (50000, 1)
+
+    # Borç yönünde en eski vade önce kapanır: alış, sonraki satış iadesinden önce.
+    purchase = _purchase("alis", 40000, "2020-01-01")
+    later = _sales_return("iade-yeni", 30000, "2020-06-01")
+    assert contact_balance.invoice_balance_delta(purchase) == -40000
+    opened = page.effective_open_map([later, purchase], -30000, balance_known=True)
+    assert opened["alis"] == 0
+    assert opened["iade-yeni"] == 30000
+    assert page.overdue_totals([later, purchase], -30000, balance_known=True, today=TODAY) == (30000, 1)
+
+    old_ret = _sales_return("iade-eski", 40000, "2020-01-01")
+    new_ret = _sales_return("iade-sonra", 30000, "2020-06-01")
+    opened = page.effective_open_map([new_ret, old_ret], -30000, balance_known=True)
+    assert opened["iade-eski"] == 0
+    assert opened["iade-sonra"] == 30000
+
+    # Bakiye kapalıysa her iki yön de 0. Kasa iadesi (paid_amount dolu) havuza girmez.
+    assert page.effective_open_map([sale, ret], 0, balance_known=True) == {"sale": 0.0, "iade": 0.0}
+    settled = _sales_return("pos", 20000, "2020-02-01")
+    settled["payment_status"] = "refunded"
+    settled["paid_amount"] = 20000
+    opened = page.effective_open_map([purchase, settled], -40000, balance_known=True)
+    assert opened == {"alis": 40000}
+    assert page.overdue_totals([purchase, settled], -40000, balance_known=True, today=TODAY) == (40000, 1)
 
 
 def test_partner_name_statement_and_flags_match(monkeypatch):

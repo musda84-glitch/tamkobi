@@ -12,7 +12,7 @@ import { MoneyInput } from "./MoneyInput";
 import { accountDisplayLabel } from "../utils/accountLabel";
 import { replaceMatchSession } from "./banking/txMatchSession";
 
-export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
+export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match", "cheque"]);
 
 export function isLockedTx(tx) {
   // Simüle banka hareketleri demo veridir; silme/düzenlemeye açıktır.
@@ -21,6 +21,7 @@ export function isLockedTx(tx) {
 }
 
 function lockedTxHint(tx) {
+  if (tx?.source === "cheque") return "Çek/Senet modülünden yönetilir.";
   if (tx?.source === "partner") return "Ortak nakit hareketi Ortaklar sekmesinden düzenlenir/silinir.";
   if (tx?.source === "bank_match") return "Eşleştirilmiş banka hareketi — önce eşleşmeyi düzeltin.";
   return "Banka entegrasyonundan gelen hareketler buradan düzenlenemez.";
@@ -204,7 +205,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
             disabled={locked}
             className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-700"
             data-testid={`tx-edit-btn-${txId}`}
-            title={locked ? "Banka/ortak hareketleri düzenlenemez" : "Düzenle"}
+            title={locked ? (tx?.source === "cheque" ? lockedTxHint(tx) : "Banka/ortak hareketleri düzenlenemez") : "Düzenle"}
           >
             {locked ? <Lock className="w-4 h-4 shrink-0" /> : <Pencil className="w-4 h-4 shrink-0" />} Düzenle
           </button>
@@ -214,7 +215,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
             disabled={locked}
             className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:text-slate-500"
             data-testid={`tx-delete-btn-${txId}`}
-            title={locked ? "Banka/ortak hareketleri silinemez" : "Sil"}
+            title={locked ? (tx?.source === "cheque" ? lockedTxHint(tx) : "Banka/ortak hareketleri silinemez") : "Sil"}
           >
             {locked ? <Lock className="w-4 h-4 shrink-0" /> : <Trash2 className="w-4 h-4 shrink-0" />} Sil
           </button>

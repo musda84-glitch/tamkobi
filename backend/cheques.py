@@ -140,30 +140,327 @@ async def _next_number(company_id: str, instrument: str) -> str:
     return f"{prefix}-{year}-{seq:04d}"
 
 
-def open_portfolio_balance(rows) -> float:
-    """Açık alınan çek/senet eksi açık verilen. BizimHesap snapshot'ı yok sayılır."""
+def _due_passed(row: dict, today: str) -> bool:
+    due = str((row or {}).get("due_date") or "")
+    return bool(due) and due < str(today or "")
+
+
+def open_portfolio_balance(rows, today: Optional[str] = None) -> float:
+    """Açık alınan − açık verilen + ciro ile gelen (vadesi gelmemiş).
+
+    role=endorsee satırlar yalnız hedef (alan) cariye aittir ve pozitif eklenir.
+    İlk carinin ciro edilmiş çeki açık alınandan çıkar; kartına ikinci kez yazılmaz.
+    BizimHesap snapshot'ı yok sayılır.
+    """
+    day = today or _today()
     received = 0.0
     issued = 0.0
+    endorsed_in = 0.0
     for r in rows or []:
+        amt = float(r.get("amount") or 0)
+        if r.get("role") == "endorsee":
+            if (r.get("status") or "") == "endorsed" and not _due_passed(r, day):
+                endorsed_in += amt
+            continue
         if (r.get("status") or "open") != "open":
             continue
-        amt = float(r.get("amount") or 0)
         if r.get("direction") == "received":
             received += amt
         elif r.get("direction") == "issued":
             issued += amt
-    return round(received - issued, 2)
+    return round(received - issued + endorsed_in, 2)
+
+
+def annotate_contact_cheques(rows, contact_id: str, today: Optional[str] = None) -> list:
+    """Cariye ait çekler. Başkasına ait olup bu cariye ciro edilenler role=endorsee."""
+    day = today or _today()
+    cid = str(contact_id or "")
+    out = []
+    for raw in rows or []:
+        row = dict(raw or {})
+        if str(row.get("endorsed_to_contact_id") or "") == cid and str(row.get("contact_id") or "") != cid:
+            row["role"] = "endorsee"
+        out.append(_annotate(row, day))
+    return out
+
+
+async def fetch_contact_cheques(db, contact_id: str, company_id: str):
+    """Kendi çekleri ve bu cariye ciro edilmiş (endorsed) çekler. Şirket filtresi zorunlu."""
+    cid = str(company_id or "").strip()
+    if not contact_id or not cid or db is None:
+        return []
+    rows = await db.cheques.find({
+        "company_id": cid,
+        "$or": [
+            {"contact_id": contact_id},
+            {"endorsed_to_contact_id": contact_id, "status": "endorsed"},
+        ],
+    }).sort("due_date", 1).to_list(2000)
+    return annotate_contact_cheques(rows, contact_id, _today())
+
+
+def _tr_date(value) -> str:
+    text = str(value or "")[:10]
+    parts = text.split("-")
+    if len(parts) == 3 and len(parts[0]) == 4 and all(part.isdigit() for part in parts):
+        return f"{parts[2]}.{parts[1]}.{parts[0]}"
+    return text
+
+
+def _pay_day(value, fallback: str = "") -> str:
+    text = str(value or "").strip()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10]
+    return fallback
+
+
+def endorsement_description(doc: dict) -> str:
+    """Ödemeler açıklaması: no · vade · banka seri · asıl cari."""
+    number = str((doc or {}).get("number") or "").strip()
+    due = _tr_date((doc or {}).get("due_date"))
+    bank = " ".join(
+        part for part in (
+            str((doc or {}).get("bank_name") or "").strip(),
+            str((doc or {}).get("serial_no") or "").strip(),
+        ) if part
+    )
+    drawer = str((doc or {}).get("drawer_name") or (doc or {}).get("contact_name") or "").strip()
+    parts = [number]
+    if due:
+        parts.append(f"vade {due}")
+    if bank:
+        parts.append(bank)
+    if drawer:
+        parts.append(f"asıl cari {drawer}")
+    return " · ".join(part for part in parts if part)
+
+
+def endorsement_category(doc: dict) -> str:
+    return "Ciro edilen senet" if (doc or {}).get("instrument") == "promissory" else "Ciro edilen çek"
+
+
+def is_noncash_cheque_movement(tx: Optional[dict]) -> bool:
+    """Banka veya kasa hesabı olmayan portföy/ciro satırı nakit akışına girmez.
+
+    Hesabı olan tahsil/ödeme (cheque_bank) nakit kalır. Hesapsız diğer
+    hareketler (cari fişi vb.) bu elemenin dışındadır.
+    """
+    if not tx or str(tx.get("account_id") or "").strip():
+        return False
+    kind = str(tx.get("cheque_kind") or "")
+    if kind in ("portfolio", "endorsement"):
+        return True
+    if str(tx.get("source") or "") == "cheque":
+        return True
+    if str(tx.get("account_name") or "") == "Çek Portföyü":
+        return True
+    if str(tx.get("category") or "").startswith("Ciro edilen") and (
+        str(tx.get("source") or "") == "cheque" or str(tx.get("cheque_id") or "").strip()
+    ):
+        return True
+    return False
+
+
+def cheque_ledger_lock_detail(tx: Optional[dict]) -> Optional[str]:
+    """Kasa ekranından değiştirilemeyen ciro ve Çek Portföyü satırı.
+
+    cheque_id taşıyan ciro reddedilir. Çek Portföyü / portfolio satırları da
+    reddedilir. Hesaba işlenmiş cheque_bank tahsil/ödeme bu kilitte değildir.
+    """
+    if not tx:
+        return None
+    cheque_id = str(tx.get("cheque_id") or "").strip()
+    kind = str(tx.get("cheque_kind") or "")
+    category = str(tx.get("category") or "")
+    source = str(tx.get("source") or "")
+    account_name = str(tx.get("account_name") or "")
+    has_account = bool(str(tx.get("account_id") or "").strip())
+    endorsement = bool(cheque_id) and (kind == "endorsement" or category.startswith("Ciro edilen"))
+    portfolio = not has_account and (
+        kind == "portfolio"
+        or account_name == "Çek Portföyü"
+        or (source == "cheque" and kind not in ("bank", "endorsement") and bool(cheque_id))
+    )
+    if endorsement:
+        return f"Kaynak kayıttan geri alın (çek/senet ciro). Kaynak: /cheques · id={cheque_id}"
+    if portfolio:
+        ident = f" · id={cheque_id}" if cheque_id else ""
+        return f"Kaynak kayıttan geri alın (çek portföyü). Kaynak: /cheques{ident}"
+    return None
+
+
+def endorsement_tx_body(doc: dict, target: dict, pay_date: str) -> dict:
+    """Görünürlük satırı. account_id daima None; bakiyeye ayrıca $inc yapılmaz."""
+    return {
+        "_id": str(uuid.uuid4()),
+        "company_id": doc.get("company_id"),
+        "account_id": None,
+        "account_name": "Çek Portföyü",
+        "type": "outflow",
+        "category": endorsement_category(doc),
+        "amount": float(doc.get("amount") or 0),
+        "currency": doc.get("currency") or "TRY",
+        "description": endorsement_description(doc),
+        "contact_id": (target or {}).get("_id") or doc.get("endorsed_to_contact_id"),
+        "contact_name": (target or {}).get("name") or doc.get("endorsed_to_name"),
+        "source": "cheque",
+        "cheque_id": doc.get("_id") or doc.get("id"),
+        "cheque_kind": "endorsement",
+        "date": pay_date,
+        "created_at": _now(),
+    }
+
+
+def _payment_has_endorsement(payments, cheque_id: str) -> bool:
+    cid = str(cheque_id or "")
+    if not cid:
+        return False
+    for pay in payments or []:
+        if str((pay or {}).get("cheque_id") or "") != cid:
+            continue
+        if (pay or {}).get("cheque_kind") == "endorsement":
+            return True
+        if str((pay or {}).get("category") or "").startswith("Ciro edilen"):
+            return True
+    return False
+
+
+def append_endorsement_virtuals(payments, cheques_rows, contact_id: str) -> list:
+    """Endorsement satırı yoksa sanal satır. Bakiyeye yazılmaz."""
+    out = list(payments or [])
+    cid = str(contact_id or "")
+    for ch in cheques_rows or []:
+        if str(ch.get("endorsed_to_contact_id") or "") != cid:
+            continue
+        if ch.get("status") != "endorsed":
+            continue
+        cheque_id = ch.get("_id") or ch.get("id")
+        if _payment_has_endorsement(out, cheque_id):
+            continue
+        pay_date = _pay_day(ch.get("settled_at")) or _pay_day(ch.get("updated_at")) or _today()
+        row = endorsement_tx_body(
+            ch,
+            {"_id": cid, "name": ch.get("endorsed_to_name")},
+            pay_date,
+        )
+        row["_id"] = f"cheque-endorse-virt-{cheque_id}"
+        row["virtual"] = True
+        row["contact_id"] = cid
+        out.append(row)
+    return out
+
+
+async def payments_with_endorsement_virtuals(db, payments, *, contact_id: str, company_id: str):
+    cid = str(company_id or "").strip()
+    if not cid or not contact_id or db is None:
+        return list(payments or [])
+    rows = await db.cheques.find({
+        "company_id": cid,
+        "endorsed_to_contact_id": contact_id,
+        "status": "endorsed",
+    }).to_list(500)
+    return append_endorsement_virtuals(payments, rows, contact_id)
+
+
+async def missing_endorsement_movements(db, contact_id: str, company_id: str, bank_txs) -> list:
+    """Satırı olmayan geçmiş ciro. Yalnız hesap; veritabanına yazılmaz."""
+    cid = str(company_id or "").strip()
+    if not cid or not contact_id or db is None:
+        return []
+    have = set()
+    for tx in bank_txs or []:
+        cheque_id = str((tx or {}).get("cheque_id") or "")
+        if not cheque_id:
+            continue
+        if (tx or {}).get("cheque_kind") == "endorsement" or str((tx or {}).get("category") or "").startswith("Ciro edilen"):
+            have.add(cheque_id)
+    rows = await db.cheques.find({
+        "company_id": cid,
+        "endorsed_to_contact_id": contact_id,
+        "status": "endorsed",
+    }).to_list(5000)
+    out = []
+    for ch in rows or []:
+        cheque_id = str(ch.get("_id") or "")
+        if not cheque_id or cheque_id in have:
+            continue
+        out.append({
+            "contact_id": contact_id,
+            "type": "outflow",
+            "amount": float(ch.get("amount") or 0),
+            "source": "cheque",
+            "cheque_kind": "endorsement",
+        })
+    return out
 
 
 async def _refresh_contact_cheque(contact_id: str, *, company_id: str):
     cid = str(company_id or "").strip()
     if not contact_id or not cid:
         return
-    rows = await _db.cheques.find({"contact_id": contact_id, "status": "open", "company_id": cid}).to_list(5000)
+    rows = await fetch_contact_cheques(_db, contact_id, cid)
     await _db.contacts.update_one(
         {"_id": contact_id, "company_id": cid},
-        {"$set": {"cheque_bond_balance": open_portfolio_balance(rows)}},
+        {"$set": {"cheque_bond_balance": open_portfolio_balance(rows, _today())}},
     )
+
+
+async def _insert_endorsement_tx(db, doc: dict, target: dict, pay_date: str):
+    """Hedef cari görünürlük satırı. İkinci bakiye $inc yok."""
+    body = endorsement_tx_body(doc, target, pay_date)
+    body["company_id"] = doc.get("company_id")
+    await db.bank_transactions.insert_one(body)
+    return body
+
+
+async def _post_endorsement_payment(doc: dict, target: dict, pay_date: str):
+    return await _insert_endorsement_tx(_db, doc, target, pay_date)
+
+
+async def backfill_endorsement_rows(db, *, company_id: str, apply: bool = False) -> dict:
+    """Eksik ciro satırını ekler. Dry-run varsayılan. Bakiyeye $inc yapmaz. İkinci tur 0 yazar."""
+    cid = str(company_id or "").strip()
+    if not cid or db is None:
+        return {"dry_run": not apply, "company_id": cid, "candidates": 0, "inserted": 0, "skipped": 0}
+    rows = await db.cheques.find({
+        "company_id": cid,
+        "status": "endorsed",
+    }).to_list(5000)
+    inserted = 0
+    skipped = 0
+    candidates = 0
+    for ch in rows or []:
+        if not ch.get("endorsed_to_contact_id"):
+            skipped += 1
+            continue
+        existing = await db.bank_transactions.find_one({
+            "company_id": cid,
+            "cheque_id": ch.get("_id"),
+            "cheque_kind": "endorsement",
+        })
+        if existing:
+            skipped += 1
+            continue
+        candidates += 1
+        if not apply:
+            continue
+        target = await db.contacts.find_one({
+            "_id": ch.get("endorsed_to_contact_id"),
+            "company_id": cid,
+        })
+        pay_date = _pay_day(ch.get("settled_at")) or _today()
+        await _insert_endorsement_tx(db, ch, target or {
+            "_id": ch.get("endorsed_to_contact_id"),
+            "name": ch.get("endorsed_to_name"),
+        }, pay_date)
+        inserted += 1
+    return {
+        "dry_run": not apply,
+        "company_id": cid,
+        "candidates": candidates,
+        "inserted": inserted,
+        "skipped": skipped,
+    }
 
 
 def _contact_delta_on_create(direction: str, amount: float) -> float:
@@ -357,7 +654,8 @@ async def _unwind_bank(cheque_id: str, *, company_id: str):
     txs = await _db.bank_transactions.find({"cheque_id": cheque_id, "company_id": cid}).to_list(50)
     for tx in txs:
         amt = float(tx.get("amount") or 0)
-        if tx.get("account_id") and amt and tx.get("cheque_kind") != "portfolio":
+        kind = tx.get("cheque_kind")
+        if tx.get("account_id") and amt and kind not in ("portfolio", "endorsement"):
             change = -amt if tx.get("type") == "inflow" else amt
             await account_balance.apply_balance_delta(
                 _db, tx["account_id"], change, company_id=cid,
@@ -719,26 +1017,40 @@ async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any], user: dict = De
 async def endorse_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     cid = _doc_cid(doc)
-    _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Ciro yalnızca alınan çek/senet için.")
-    if not req.get("contact_id"):
+    contact_id = req.get("contact_id")
+    if not contact_id:
         raise HTTPException(status_code=400, detail="Ciro edilecek cariyi seçin.")
-    target = await _db.contacts.find_one({"_id": req.get("contact_id"), "company_id": cid})
+    target = await _db.contacts.find_one({"_id": contact_id, "company_id": cid})
     if not target:
         raise HTTPException(status_code=404, detail="Cari bulunamadı.")
     if target["_id"] == doc.get("contact_id"):
         raise HTTPException(status_code=400, detail="Aynı cariye ciro edilemez.")
-    amount = float(doc["amount"])
+    pay_date = _pay_day(req.get("date")) or _today()
+    note = str(req.get("description") or req.get("note") or "").strip() or f"Ciro → {target.get('name')}"
+    # SELECT … FOR UPDATE. Yalnızca open→endorsed geçişini kazanan istek bakiye ve satır yazar.
+    claim = await _db.cheques.update_one_atomic(
+        {"_id": cheque_id, "company_id": cid, "status": "open", "direction": "received"},
+        {"$set": {
+            "status": "endorsed",
+            "endorsed_to_contact_id": target["_id"],
+            "endorsed_to_name": target.get("name"),
+            "settled_at": pay_date,
+            "updated_at": _now(),
+        }, "$push": {"events": {"at": _now(), "action": "endorsed", "note": note}}},
+    )
+    if not getattr(claim, "matched_count", 0):
+        raise HTTPException(status_code=409, detail="Bu çek/senet artık açık değil; ciro edilemedi.")
+    fresh = await _db.cheques.find_one({"_id": cheque_id, "company_id": cid})
+    if not fresh or fresh.get("status") != "endorsed":
+        raise HTTPException(status_code=409, detail="Bu çek/senet artık açık değil; ciro edilemedi.")
+    amount = float(fresh.get("amount") or 0)
     await _apply_contact(target["_id"], amount, company_id=cid)
-    await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {
-        "status": "endorsed", "endorsed_to_contact_id": target["_id"], "endorsed_to_name": target.get("name"),
-        "settled_at": req.get("date") or _today(), "updated_at": _now(),
-    }})
-    await _append_event(cheque_id, "endorsed", f"Ciro → {target.get('name')}", company_id=cid)
+    await _post_endorsement_payment(fresh, target, pay_date)
     await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
     await _refresh_contact_cheque(target["_id"], company_id=cid)
-    return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
+    return _annotate(fresh, _today())
 
 
 @router.post("/cheques/{cheque_id}/bounce")
@@ -751,13 +1063,15 @@ async def bounce_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
     amount = float(doc["amount"])
     # Portföy (cari Ödemeler) + varsa tahsil/ödeme kasa hareketlerini geri al.
     await _unwind_bank(cheque_id, company_id=cid)
-    if st == "endorsed" and doc.get("endorsed_to_contact_id"):
-        await _apply_contact(doc["endorsed_to_contact_id"], -amount, company_id=cid)
-        await _refresh_contact_cheque(doc["endorsed_to_contact_id"], company_id=cid)
+    endorsed_to = doc.get("endorsed_to_contact_id") if st == "endorsed" else None
+    if endorsed_to:
+        await _apply_contact(endorsed_to, -amount, company_id=cid)
     await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], amount), company_id=cid)
     reason = (req.get("reason") or "Karşılıksız").strip()
     await _db.cheques.update_one({"_id": cheque_id, "company_id": cid}, {"$set": {"status": "bounced", "bounce_reason": reason, "settled_at": req.get("date") or _today(), "updated_at": _now()}})
     await _append_event(cheque_id, "bounced", reason, company_id=cid)
+    if endorsed_to:
+        await _refresh_contact_cheque(endorsed_to, company_id=cid)
     await _refresh_contact_cheque(doc.get("contact_id"), company_id=cid)
     return _annotate(await _db.cheques.find_one({"_id": cheque_id, "company_id": cid}), _today())
 

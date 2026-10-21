@@ -1,6 +1,7 @@
 import axios from "axios";
+import { toast } from "sonner";
 import { API_URL } from "../api/client";
-import { parseStoredCart } from "./b2bCart";
+import { parseHeldCarts, parseStoredCart } from "./b2bCart";
 
 /** sessionStorage anahtarı. Değer ham select_token; adreste ve çerezde durmaz. */
 export const B2B_SESSION_KEY = "b2b_session";
@@ -63,8 +64,40 @@ export const b2bNav = {
   },
 };
 
+function hasStoredB2BCart() {
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i) || "";
+      if (key.startsWith("b2b_cart_")) {
+        const cart = parseStoredCart(localStorage.getItem(key) || "{}");
+        if (Object.values(cart).some((row) => (Number(row?.qty) || 0) > 0)) return true;
+      } else if (key.startsWith("b2b_held_carts_")) {
+        if (parseHeldCarts(localStorage.getItem(key) || "[]").length) return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/** Oturumu kapatır. Sepet anahtarlarına ve panel oturumuna dokunmaz. */
 export function logoutB2B() {
+  const token = readB2BSession();
+  const keepCartNotice = hasStoredB2BCart();
+  if (token) {
+    try {
+      const pending = axios.post(`${API_URL}/public/b2b/logout`, { select_token: token }, {
+        headers: { Authorization: `B2BSession ${token}` },
+      });
+      if (pending && typeof pending.then === "function") pending.catch(() => {});
+    } catch { /* uç hata verse de yerel çıkış sürer */ }
+  }
   clearB2BSession();
+  try { localStorage.removeItem(B2B_PORTAL_MAP_KEY); } catch { /* gizli mod */ }
+  if (keepCartNotice) {
+    try { toast.message("Sepetiniz bu cihazda saklandı."); } catch { /* toast yok */ }
+  }
   b2bNav.go("/b2b/giris");
 }
 

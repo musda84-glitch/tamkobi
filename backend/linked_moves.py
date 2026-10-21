@@ -588,6 +588,10 @@ def source_guard_detail(tx: dict) -> Optional[str]:
     st = tx.get("source_type") or ""
     if st in SPECIALTY and tx.get("source_id"):
         return f"Kaynak kayıttan geri alın ({SOURCE_LABELS.get(st, st)}). id={tx.get('source_id')}"
+    import cheques
+    locked = cheques.cheque_ledger_lock_detail(tx)
+    if locked:
+        return locked
     return None
 
 

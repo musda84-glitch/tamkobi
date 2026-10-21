@@ -16,7 +16,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice, invoiceDeleteConfirmMessage } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, incomingPurchaseLedgerPosted, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument, canFaturalastirDraftInvoice, draftInvoiceApproveConfirmText, invoiceDeleteConfirmMessage, ManualPurchaseStockBadge } from "./InvoiceContextMenu";
 import { invoiceCancelConfirmText } from "../utils/invoiceBulkActions";
 import { DraftInvoiceFaturalastirButton } from "./DraftInvoiceFaturalastirButton";
 import { IncomingInvoiceFaturalastirButton } from "./IncomingInvoiceFaturalastirButton";
@@ -32,6 +32,7 @@ import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableCol
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { ContactPayMenu } from "./ContactPayMenu";
+import { ChequeEndorseFields, bankSerialLabel } from "./ChequeEndorseFields";
 import { classifyTestPayment, navigation, postBankForm } from "./VposSettingsPanel";
 import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
@@ -44,13 +45,15 @@ import {
   contactPayLedgerSlipPatch,
   contactPaymentDocLabel,
   contactPayModalMeta,
+  isChequeEndorsePay,
   isContactBalanceFixPay,
   isContactLedgerPay,
 } from "../utils/contactPayMenu";
-import { isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
+import { isEndorsementPayment, isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
 import { contactPaymentSettled } from "../utils/invoiceStatus";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
-import { openChequeBalance } from "../utils/chequeBalance";
+import { endorsedIncomingOpen, openChequeBalance } from "../utils/chequeBalance";
+import { useIsNarrow } from "../hooks/useIsNarrow";
 import { statusTr, channelTr } from "../utils/labels";
 import { orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
 import { useNavigate } from "react-router-dom";
@@ -152,6 +155,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("invoices");
   const [busy, setBusy] = useState(null);
+  const approvingDraftRef = useRef(new Set());
   const [editContactOpen, setEditContactOpen] = useState(false);
   const [orderDetail, setOrderDetail] = useState(null);
   const [editOrder, setEditOrder] = useState(null);
@@ -163,6 +167,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [cardCollect, setCardCollect] = useState(null);
   const [cardBusy, setCardBusy] = useState(false);
   const navigate = useNavigate();
+  const narrowPay = useIsNarrow(639);
   const { activeCompany, can } = useAuth();
   const canIssueInv = can("/invoices", "edit");
 
@@ -348,9 +353,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   // Ortaklar hesabı cari ödemeleri düzenlenebilir/silinebilir; banka senkron ve çek kilitli kalır.
   const isLockedTx = isLockedContactPay;
   const isPartnerPay = isPartnerContactPay;
-  const lockedTxLabel = (p) => (p.source === "cheque" || p.virtual ? "Çek" : "Banka");
+  const lockedTxLabel = (p) => (isEndorsementPayment(p) ? "Çek/Senet" : (p.source === "cheque" || p.virtual ? "Çek" : "Banka"));
   const lockedTxTitle = lockedContactPayTitle;
   const deletePay = async (p) => {
+    if (isEndorsementPayment(p)) {
+      toast.error(lockedContactPayTitle(p));
+      return;
+    }
     const chequeId = p.cheque_id;
     const label = isContactLedgerPay(p)
       ? (isContactBalanceFixPay(p) ? "cari bakiye düzeltme fişi" : "borç/alacak fişi")
@@ -381,6 +390,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const openEditPay = async (p) => {
+    if (isEndorsementPayment(p)) {
+      toast.error(lockedContactPayTitle(p));
+      return;
+    }
     if (p.cheque_id) {
       try {
         const r = await axios.get(`${API_URL}/cheques/${p.cheque_id}`);
@@ -542,7 +555,22 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     try {
       const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`);
       setAccounts(r.data);
-      setPayForm(withChequeRows(buildContactPayForm(c, r.data, opts)));
+      const form = withChequeRows(buildContactPayForm(c, r.data, opts));
+      if (isChequeEndorsePay({ ...form, ...opts, menuId: opts.menuId || form.menuId })) {
+        const cq = await axios.get(`${API_URL}/cheques`, {
+          params: { company_id: c.company_id, direction: "received", status: "open" },
+        });
+        const payload = cq.data;
+        const rows = Array.isArray(payload) ? payload : (payload?.cheques || payload?.items || []);
+        const mine = c.id || c._id;
+        form.portfolioCheques = rows.filter((ch) => String(ch?.contact_id || "") !== String(mine || ""));
+        form.selectedEndorseIds = [];
+        form.endorseQuery = "";
+        form.method = "cheque_endorse";
+        form.type = "outflow";
+        form.menuId = "cheque_endorse";
+      }
+      setPayForm(form);
     } catch { toast.error("Hesaplar yüklenemedi."); }
   };
   const onCollectMenuSelect = (item) => {
@@ -590,6 +618,22 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const savePay = async (e) => {
     e.preventDefault();
     try {
+      if (isChequeEndorsePay(payForm)) {
+        const ids = payForm.selectedEndorseIds || [];
+        if (!ids.length) { toast.error("Ciro için en az bir çek seçin."); return; }
+        for (const id of ids) {
+          await axios.post(`${API_URL}/cheques/${id}/endorse`, {
+            contact_id: c.id,
+            date: payForm.endorse_date,
+            description: payForm.description,
+          });
+        }
+        toast.success(ids.length > 1 ? "Çekler ciro edildi." : "Çek ciro edildi.");
+        setPayForm(null);
+        await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+        load();
+        return;
+      }
       const chequePay = payForm.method === "cheque" || payForm.method === "promissory";
       const chequeRows = chequePay ? ensureChequeRows(payForm) : [];
       const amount = chequePay ? chequeRowsTotal(chequeRows) : Number(payForm.amount);
@@ -750,16 +794,20 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
   const approveDraftInvoice = async (inv) => {
     if (!inv) return;
-    const no = inv.invoice_number || "Belge";
-    if (!window.confirm(`${no} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek. E-belge gönderimi ayrı adımdır.`)) return;
-    setBusy(inv.id || inv._id);
+    const id = inv.id || inv._id;
+    if (!id || approvingDraftRef.current.has(id)) return;
+    if (!window.confirm(draftInvoiceApproveConfirmText(inv))) return;
+    if (approvingDraftRef.current.has(id)) return;
+    approvingDraftRef.current.add(id);
+    setBusy(id);
     try {
-      const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+      const r = await axios.post(`${API_URL}/invoices/${id}/approve`);
       toast.success(r.data?.message || "Faturalaştı — cari bakiyesi işlendi.");
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
     } finally {
+      approvingDraftRef.current.delete(id);
       setBusy(null);
     }
   };
@@ -890,6 +938,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const summaryDiverge = Math.abs(Math.abs(bal) - Math.abs(open)) > 0.5;
   const openingBal = Number(s.opening_balance ?? c.opening_balance) || 0;
   const chequeBal = openChequeBalance(data.cheques);
+  const endorsedOpen = endorsedIncomingOpen(data.cheques);
+  const endorsedNoun = endorsedOpen.length && endorsedOpen.every((row) => row.instrument === "promissory") ? "senet" : "çek";
   const clearOpeningBalance = async () => {
     if (!window.confirm("Açılış / aktarım bakiyesi sıfırlansın mı? Fatura ve kasa hareketleri kalır; yalnızca devir tutarı silinir.")) return;
     try {
@@ -906,7 +956,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     { key: "invoiced", label: "Satış faturaları", hint: "Onaylı satışların toplamı", badge: null, value: invoiced, cls: "text-slate-900", title: "Taslaklar hariç kesilmiş satış faturalarının tutarı." },
     { key: "paid", label: "Tahsil edilen", hint: "Bu faturalara yazılan tahsilat", badge: null, value: paid, cls: "text-emerald-700", title: "Satış faturalarına işlenmiş tahsilat. Kasa hareketi faturaya bağlanmadıysa cari hesaba yansır, buraya yansımaz." },
     { key: "open", label: "Kalan alacak", hint: "Fatura − tahsilat", badge: open > 0 ? "Açık" : "Kapalı", value: open, cls: open > 0 ? "text-rose-700" : "text-slate-800", title: "Satış faturası toplamı eksi tahsilat. Cari hesaptan farklı olabilir (alış faturası veya bağlanmamış ödeme)." },
-    { key: "cheques", label: "Çek / senet", hint: "Açık alınan − verilen", badge: chequeBal !== 0 ? "Portföy" : null, value: chequeBal, cls: "text-indigo-700", title: "Açık alınan çek/senet eksi açık verilen. Tahsil, ciro veya ödeme sonrası düşer. BizimHesap aktarım bakiyesi sayılmaz." },
+    { key: "cheques", label: "Çek / senet", hint: endorsedOpen.length ? `Açık alınan − verilen · ciro ile gelen ${endorsedOpen.length} ${endorsedNoun} (vadesi gelmemiş)` : "Açık alınan − verilen", badge: endorsedOpen.length ? "Ciro ile gelen" : (chequeBal !== 0 ? "Portföy" : null), badgeClass: endorsedOpen.length ? "text-indigo-600" : "text-slate-400", value: chequeBal, cls: "text-indigo-700", title: "Açık alınan çek/senet eksi açık verilen, artı vadesi gelmemiş ciro ile gelenler. Tahsil, ciro veya ödeme sonrası düşer. BizimHesap aktarım bakiyesi sayılmaz." },
   ];
 
   return (
@@ -955,7 +1005,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{card.label}</div>
                   <Info className="w-3 h-3 text-slate-300 shrink-0" aria-hidden="true" />
                 </div>
-                <div className={`font-bold text-sm mt-0.5 ${card.cls}`}>{fmt(card.value)}{card.badge ? <span className="ml-1.5 text-[10px] font-semibold text-slate-400">{card.badge}</span> : null}</div>
+                <div className={`font-bold text-sm mt-0.5 ${card.cls}`}>{fmt(card.value)}{card.badge ? <span className={`ml-1.5 text-[10px] font-semibold ${card.badgeClass || "text-slate-400"}`} data-testid={`detail-summary-${card.key}-badge`}>{card.badge}</span> : null}</div>
                 <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">{card.hint}</div>
               </div>
             ))}
@@ -1015,13 +1065,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <SortableHeader {...colState} leading={<th className="py-2 w-8" aria-hidden="true" />} />
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={detailInvColSpan} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
+                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const payDraft = !isDisp && inv.status === "draft"; const paySettled = !isDisp && !payDraft && (inv.payment_status === "paid" || contactPaymentSettled(inv)); const payLabel = isDisp ? "Bakiye yok" : payDraft ? "Taslak" : paySettled ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"; const payCls = isDisp || payDraft ? "bg-slate-100 text-slate-600" : paySettled ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"; const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => openEditInvoice(inv)} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
-                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
+                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span> <ManualPurchaseStockBadge inv={inv} testId={`detail-inv-stock-badge-${inv.invoice_number}`} /></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" || isDisp ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{isDisp ? <div className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide" data-testid={`detail-inv-dispatch-nobal-${inv.invoice_number}`}>İrsaliye · bakiye dışı{(inv.invoice_ref_number || inv.converted_invoice_number) ? ` · fatura ${inv.invoice_ref_number || inv.converted_invoice_number}` : ""}</div> : inv.status === "draft" ? <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div> : null}</td>,
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
-                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDisp ? "bg-slate-100 text-slate-600" : (inv.payment_status === "paid" || contactPaymentSettled(inv)) ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{isDisp ? "Bakiye yok" : (inv.payment_status === "paid" || contactPaymentSettled(inv)) ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
+                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${payCls}`} data-testid={`detail-inv-pay-${inv.invoice_number}`}>{payLabel}</span></td>,
                   }; return (
                   <React.Fragment key={inv.id || inv.invoice_number}>
                   <tr className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
@@ -1108,37 +1158,63 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2 w-8"></th><th className="py-2">No</th><th className="py-2">Yön</th><th className="py-2">Vade</th><th className="py-2">Durum</th><th className="py-2 text-right">Tutar</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {!(data.cheques || []).length && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Bu cariye ait çek/senet yok. <button onClick={() => navigate("/cheques")} className="text-teal-700 underline">Çek / Senet modülü</button></td></tr>}
-                {(data.cheques || []).map((ch) => (
-                  <tr key={ch.id} data-testid={`detail-cheque-${ch.number}`}>
+                {(data.cheques || []).map((ch) => {
+                  const incoming = ch.role === "endorsee";
+                  const subParts = [];
+                  const bankLine = bankSerialLabel(ch);
+                  if (incoming && bankLine && bankLine !== "—") subParts.push(bankLine);
+                  const drawer = ch.drawer_name || ch.contact_name;
+                  if (incoming && drawer) subParts.push(`asıl cari ${drawer}`);
+                  return (
+                  <tr key={ch.id || ch._id} data-testid={`detail-cheque-${ch.number}`}>
                     <td className="py-2">
                       <input type="checkbox" checked={selectedChequeIds.includes(ch.id || ch._id)} onChange={() => toggleChequeSelect(ch.id || ch._id)} aria-label={`${ch.number || "Evrak"} seç`} data-testid={`detail-cheque-select-${ch.number}`} />
                     </td>
-                    <td className="py-2 font-mono font-semibold">{ch.number}</td>
-                    <td className="py-2">{ch.direction === "received" ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}</td>
+                    <td className="py-2 font-mono font-semibold">
+                      {ch.number}
+                      {incoming && subParts.length ? <div className="font-sans font-normal text-[10px] text-slate-500" data-testid={`detail-cheque-sub-${ch.number}`}>{subParts.join(" · ")}</div> : null}
+                    </td>
+                    <td className="py-2">{ch.direction === "received" || incoming ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}{incoming ? <span className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700" data-testid={`detail-cheque-incoming-${ch.number}`}>Ciro ile gelen</span> : null}</td>
                     <td className="py-2 font-mono">{fmtDate(ch.due_date)}</td>
-                    <td className="py-2"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100">{ch.status_label || ch.status}</span></td>
+                    <td className="py-2"><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${incoming ? "bg-indigo-50 text-indigo-700" : "bg-slate-100"}`}>{ch.status_label || ch.status}</span></td>
                     <td className="py-2 text-right font-bold">{fmt(ch.amount)}</td>
                     <td className="py-2 text-right">
                       <div className="flex justify-end gap-1">
                         <button type="button" onClick={() => setReceipt(chequesReceipt([ch]))} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-cheque-receipt-${ch.number}`}>Makbuz</button>
-                        <button type="button" onClick={() => openEditPay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`detail-cheque-edit-${ch.number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
-                        <button type="button" onClick={() => deletePay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-cheque-delete-${ch.number}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                        {incoming ? (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-1 text-[10px] font-semibold text-slate-400" title="Çek/Senet modülünden yönetilir." data-testid={`detail-cheque-lock-${ch.number}`}><Lock className="w-3 h-3" /> Çek/Senet</span>
+                        ) : (
+                          <>
+                            <button type="button" onClick={() => openEditPay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`detail-cheque-edit-${ch.number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                            <button type="button" onClick={() => deletePay({ cheque_id: ch.id, amount: ch.amount, type: ch.direction === "received" ? "inflow" : "outflow" })} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-cheque-delete-${ch.number}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             </div>
           )}
           {tab === "payments" && (() => {
             const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : (isPartnerPay(p) && p.partner_name ? `Ortaklar Hesabı · ${p.partner_name}` : p.account_name));
-            const payDesc = (p) => (isContactLedgerPay(p) ? (p.description || p.category) : `${p.category || ""} • ${p.description || ""}`.replace(/^ • | • $/g, ""));
+            const endorseBadge = (p) => (isEndorsementPayment(p) ? (
+              <span className="ml-1 inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700" data-testid={`endorse-badge-${p.id}`}>
+                {String(p.category || "").startsWith("Ciro edilen") ? p.category : "Ciro edilen çek"}
+              </span>
+            ) : null);
+            const payDesc = (p) => (isEndorsementPayment(p) ? (p.description || "") : (isContactLedgerPay(p) ? (p.description || p.category) : `${p.category || ""} • ${p.description || ""}`.replace(/^ • | • $/g, "")));
             const payActions = (p, prefix) => (
               <div className="flex flex-wrap justify-end gap-1">
                 <button type="button" onClick={() => openPaymentReceipt(p)} className="px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`${prefix}receipt-btn-${p.id}`}>Makbuz</button>
-                <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`${prefix}pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
-                <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`${prefix}pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                {!isEndorsementPayment(p) && (
+                  <>
+                    <button type="button" onClick={() => openEditPay(p)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold text-slate-700 hover:bg-slate-50" data-testid={`${prefix}pay-edit-btn-${p.id}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                    <button type="button" onClick={() => deletePay(p)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`${prefix}pay-delete-btn-${p.id}`}><Trash2 className="w-3 h-3" /> Sil</button>
+                  </>
+                )}
               </div>
             );
             const cards = data.payments.length === 0 ? (
@@ -1149,7 +1225,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   key={`card-${p.id}`}
                   testId={`detail-pay-card-${p.id}`}
                   date={p.date}
-                  party={payParty(p)}
+                  party={<span>{payParty(p)}{endorseBadge(p)}</span>}
                   badge={(
                     <>
                       <TxTypeBadge label={p.type === "inflow" ? "Giriş" : "Çıkış"} kind={p.type} />
@@ -1172,7 +1248,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {data.payments.map((p) => (
                   <tr key={p.id} data-testid={`detail-pay-${p.id}`}>
                     <td className="py-2 font-mono text-slate-500">{p.date}</td>
-                    <td className={`py-2 font-semibold ${TX_WRAP_CLASS}`}>{payParty(p)} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
+                    <td className={`py-2 font-semibold ${TX_WRAP_CLASS}`}>{payParty(p)}{endorseBadge(p)} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
                     <td className={`py-2 text-slate-600 ${TX_WRAP_CLASS}`}>{payDesc(p)}</td>
                     <td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)}</td>
                     <td className="py-2 text-right">
@@ -1184,12 +1260,17 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </table>
             );
             return (
+              <>
               <TxResponsiveList
                 cards={cards}
                 table={table}
                 cardsTestId="detail-pay-cards"
                 tableWrapTestId="detail-pay-table-wrap"
               />
+              {data.payments.some(isEndorsementPayment) ? (
+                <p className="mt-2 text-[11px] text-slate-500" data-testid="endorse-pay-note">Ciro satırları Çek/Senet modülünden yönetilir; buradan düzenlenemez veya silinemez.</p>
+              ) : null}
+              </>
             );
           })()}
           {tab === "b2b" && (
@@ -1556,9 +1637,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         )}
         {payForm && (() => {
           const meta = contactPayModalMeta(payForm);
+          const endorseMode = isChequeEndorsePay(payForm);
+          const sheet = endorseMode && narrowPay;
           return (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); })}>
-            <form onSubmit={savePay} className={`bg-white rounded-2xl w-full p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto ${payForm.method === "cheque" || payForm.method === "promissory" ? "max-w-lg" : "max-w-md"}`} onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""}>
+          <div className={sheet ? "fixed inset-0 z-[60] bg-slate-900/50 flex items-end" : "fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4"} {...backdropDismissProps(() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); })}>
+            <form onSubmit={savePay} className={sheet ? "bg-white rounded-t-2xl w-full p-5 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" : `bg-white rounded-2xl w-full p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto ${endorseMode ? "max-w-xl" : (payForm.method === "cheque" || payForm.method === "promissory" ? "max-w-lg" : "max-w-md")}`} onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""} data-layout={endorseMode ? (sheet ? "sheet" : "dialog") : undefined}>
               <div className="flex justify-between border-b pb-2">
                 <div>
                   <h3 className="text-sm font-bold" data-testid="collect-modal-title">{meta.title}</h3>
@@ -1566,6 +1649,16 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 </div>
                 <button type="button" onClick={() => setPayForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
               </div>
+              {endorseMode ? (
+                <ChequeEndorseFields
+                  form={payForm}
+                  onChange={setPayForm}
+                  narrow={narrowPay}
+                  contactId={c.id || c._id}
+                  onCancel={() => setPayForm(null)}
+                />
+              ) : (
+              <>
               {meta.showTypeToggle && (
                 <div className="grid grid-cols-2 gap-2">
                   <button type="button" onClick={() => setPayForm({ ...payForm, ...contactPayCashTypePatch(payForm, "inflow", accounts) })} className={`p-2 rounded-lg border font-semibold ${payForm.method !== "ledger" && payForm.type === "inflow" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="collect-type-in">Tahsilat (Müşteriden)</button>
@@ -1677,6 +1770,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               )}
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-desc-input" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">{payForm.method === "ledger" ? "Fişi Kaydet" : "Kaydet"}</button></div>
+              </>
+              )}
             </form>
           </div>
           );
