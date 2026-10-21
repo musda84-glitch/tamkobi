@@ -149,7 +149,8 @@ export default function TradePage() {
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr>
             <th className="px-4 py-2 text-left">Dosya</th><th className="px-4 py-2 text-left">Cari / Ülke</th><th className="px-4 py-2 text-left">Teslim / Rejim</th>
             <th className="px-4 py-2 text-right">Döviz</th><th className="px-4 py-2 text-right">Maliyet (₺)</th><th className="px-4 py-2 text-left">Durum</th><th className="px-4 py-2"></th>
@@ -176,6 +177,7 @@ export default function TradePage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {form && (
@@ -219,15 +221,15 @@ export default function TradePage() {
             <div className="space-y-2">
               <div className="flex justify-between font-bold"><span>Kalemler (GTIP)</span><button type="button" onClick={() => setForm((s) => ({ ...s, items: [...s.items, emptyItem()] }))} className="text-sky-700" data-testid="trade-add-item">+ Kalem</button></div>
               {form.items.map((it, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center" data-testid={`trade-item-${i}`}>
-                  <div className="col-span-3"><SearchSelect value={it.product_id} options={products} getLabel={(p) => p.name} getSub={(p) => `${p.sku || ""} ${p.gtip ? "GTIP " + p.gtip : ""}`} placeholder="Ürün" onChange={(id) => pickProduct(i, id)} testId={`trade-item-prod-${i}`} /></div>
-                  <input value={it.gtip} onChange={(e) => setItem(i, "gtip", e.target.value)} placeholder="GTIP" className="col-span-2 border rounded-lg p-2 font-mono" data-testid={`trade-item-gtip-${i}`} />
-                  <input value={it.origin_country || ""} onChange={(e) => setItem(i, "origin_country", e.target.value)} placeholder="Menşe" className="col-span-1 border rounded-lg p-2" data-testid={`trade-item-origin-${i}`} />
-                  <input type="number" value={it.net_weight || ""} onChange={(e) => setItem(i, "net_weight", e.target.value)} placeholder="Kg" className="col-span-1 border rounded-lg p-2" data-testid={`trade-item-weight-${i}`} />
-                  <QuantityInput value={it.quantity} onChange={(n) => setItem(i, "quantity", n ?? "")} className="col-span-1 border rounded-lg p-2 text-center" />
-                  <MoneyInput value={it.unit_price_fx} onChange={(n) => setItem(i, "unit_price_fx", n ?? "")} className="col-span-1 border rounded-lg p-2 text-right" data-testid={`trade-item-price-${i}`} />
-                  <div className="col-span-1 text-right font-semibold">{fmtMoney((Number(it.quantity) || 0) * (Number(it.unit_price_fx) || 0), form.currency)}</div>
-                  <button type="button" onClick={() => setForm((s) => ({ ...s, items: s.items.filter((_, k) => k !== i) }))} className="col-span-1 text-rose-500"><X className="w-4 h-4" /></button>
+                <div key={i} className="grid grid-cols-2 md:grid-cols-12 gap-2 items-center" data-testid={`trade-item-${i}`}>
+                  <div className="col-span-2 md:col-span-3"><SearchSelect value={it.product_id} options={products} getLabel={(p) => p.name} getSub={(p) => `${p.sku || ""} ${p.gtip ? "GTIP " + p.gtip : ""}`} placeholder="Ürün" onChange={(id) => pickProduct(i, id)} testId={`trade-item-prod-${i}`} /></div>
+                  <input value={it.gtip} onChange={(e) => setItem(i, "gtip", e.target.value)} placeholder="GTIP" className="md:col-span-2 border rounded-lg p-2 font-mono" data-testid={`trade-item-gtip-${i}`} />
+                  <input value={it.origin_country || ""} onChange={(e) => setItem(i, "origin_country", e.target.value)} placeholder="Menşe" className="md:col-span-1 border rounded-lg p-2" data-testid={`trade-item-origin-${i}`} />
+                  <input type="number" value={it.net_weight || ""} onChange={(e) => setItem(i, "net_weight", e.target.value)} placeholder="Kg" className="md:col-span-1 border rounded-lg p-2" data-testid={`trade-item-weight-${i}`} />
+                  <QuantityInput value={it.quantity} onChange={(n) => setItem(i, "quantity", n ?? "")} className="md:col-span-1 border rounded-lg p-2 text-center" />
+                  <MoneyInput value={it.unit_price_fx} onChange={(n) => setItem(i, "unit_price_fx", n ?? "")} className="md:col-span-1 border rounded-lg p-2 text-right" data-testid={`trade-item-price-${i}`} />
+                  <div className="md:col-span-1 text-right font-semibold">{fmtMoney((Number(it.quantity) || 0) * (Number(it.unit_price_fx) || 0), form.currency)}</div>
+                  <button type="button" onClick={() => setForm((s) => ({ ...s, items: s.items.filter((_, k) => k !== i) }))} className="md:col-span-1 text-rose-500"><X className="w-4 h-4" /></button>
                 </div>
               ))}
             </div>
