@@ -17,6 +17,7 @@ import help_center
 import platform_notices
 import platform_store as store
 import public_sites
+import rbac
 import saas
 import storage_service
 import support_tickets
@@ -421,6 +422,13 @@ async def admin_v1_database(request: Request):
     })
 
 
+def _attachment_filename(name: Any) -> str:
+    text = str(name or "ek").replace("\\", "/").split("/")[-1]
+    cleaned = "".join(ch for ch in text if ch.isprintable() and ch not in '"\r\n;')
+    cleaned = cleaned.strip().strip(".")
+    return (cleaned or "ek")[:180]
+
+
 def _attachment_at(ticket: dict, message_id: str, index: int) -> dict:
     messages = ticket.get("messages") or []
     message = next((m for m in messages if str(m.get("id") or m.get("_id") or "") == message_id), None)
@@ -449,15 +457,34 @@ async def admin_v1_support_attachment(ticket_id: str, message_id: str, index: in
     url = str(item.get("url") or "")
     if not url.startswith("/api/files/"):
         raise HTTPException(status_code=404, detail="Ek bulunamadı.")
-    path = url.split("?", 1)[0][len("/api/files/"):]
+    path = rbac.normalized_file_storage_path(url)
+    if not path:
+        raise HTTPException(status_code=404, detail="Ek bulunamadı.")
+    company_id = str(ticket.get("company_id") or "").strip()
+    if not company_id:
+        raise HTTPException(status_code=404, detail="Ek bulunamadı.")
+    # files kiracı koleksiyonudur; talep şirketiyle eşleşmeyen satır okunmaz.
+    record = await support_tickets._db.files.find_one({
+        "storage_path": path,
+        "company_id": company_id,
+        "is_deleted": False,
+    })
+    if record is None:
+        raise HTTPException(status_code=404, detail="Ek bulunamadı.")
     try:
         data, content_type = storage_service.get_object(path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Ek dosyası bulunamadı.") from None
-    filename = str(item.get("filename") or "ek")[:180]
-    media = content_type or item.get("content_type") or "application/octet-stream"
+    head = data[:240].lstrip().lower()
+    if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    filename = _attachment_filename(item.get("filename"))
+    media = (record.get("content_type") or content_type or item.get("content_type") or "application/octet-stream")
     return Response(
         content=data,
         media_type=media,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )

@@ -197,6 +197,13 @@ def gap(monkeypatch):
                 }],
             }],
         })
+        await fake.files.insert_one({
+            "_id": "file_t1",
+            "company_id": "comp_parent",
+            "storage_path": "support/t1/a.pdf",
+            "is_deleted": False,
+            "content_type": "application/pdf",
+        })
 
     asyncio.run(seed())
     router = server.app.router
@@ -656,3 +663,7 @@ def test_storage_help_announcement_embed_and_attachment(gap, monkeypatch):
     )
     assert attachment.status_code == 200, attachment.text
     assert attachment.content.startswith(b"%PDF")
+    disposition = attachment.headers.get("content-disposition") or ""
+    assert disposition.startswith("attachment;")
+    assert "inline" not in disposition.lower()
+    assert attachment.headers.get("x-content-type-options") == "nosniff"
