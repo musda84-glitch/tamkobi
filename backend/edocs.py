@@ -16,6 +16,7 @@ import rbac
 import saas
 import tenant_access
 from auth_utils import session_token
+from contact_match import find_contact_by_party_name
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -310,14 +311,27 @@ def apply_meta(parsed: Dict[str, Any], meta: Optional[Dict[str, Any]]) -> Dict[s
     return parsed
 
 
+def _contact_label(contact: Optional[dict]) -> Optional[str]:
+    if not contact:
+        return None
+    return contact.get("name") or contact.get("company_title") or None
+
+
+async def _match_supplier_contact(company_id: str, tax_id: str = "", name: str = ""):
+    """VKN tam, yoksa ad veya ticari ünvan (prefix regex, sonra fold edilmiş güvenli eşik)."""
+    if tax_id:
+        found = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tax_id})
+        if found:
+            return found
+    if name:
+        return await find_contact_by_party_name(_db, company_id, name)
+    return None
+
+
 async def _enrich(doc: dict, company_id: str):
     sup = doc["supplier"]
-    c = None
-    if sup.get("tax_id"):
-        c = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": sup["tax_id"]})
-    if not c and sup.get("name"):
-        c = await _db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(sup['name'][:60])}", "$options": "i"}})
-    doc["contact_id"], doc["contact_name"] = (c["_id"], c["name"]) if c else (None, None)
+    c = await _match_supplier_contact(company_id, sup.get("tax_id") or "", sup.get("name") or "")
+    doc["contact_id"], doc["contact_name"] = (c["_id"], _contact_label(c)) if c else (None, None)
     products = await _db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "barcode": 1, "marketplace_aliases": 1, "supplier_codes": 1}).to_list(20000)
     idx = {}
     for p in products:
@@ -910,11 +924,7 @@ async def ensure_supplier(doc: dict, overrides: Optional[Dict[str, Any]] = None)
     company_id = str(doc.get("company_id") or "").strip()
     if not company_id:
         raise HTTPException(status_code=404, detail="E-belge bulunamadı.")
-    c = None
-    if s.get("tax_id"):
-        c = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": s["tax_id"]})
-    if not c and s.get("name"):
-        c = await _db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(s['name'][:60])}", "$options": "i"}})
+    c = await _match_supplier_contact(company_id, s.get("tax_id") or "", s.get("name") or "")
     if not c:
         if not s.get("name"):
             raise HTTPException(status_code=400, detail="Tedarikçi adı okunamadı; manuel eşleştirin veya belgeyi yeniden çekin.")
@@ -923,8 +933,9 @@ async def ensure_supplier(doc: dict, overrides: Optional[Dict[str, Any]] = None)
              "balance": 0.0, "credit_limit": 0.0, "category": "Tedarikçi", "is_e_invoice_user": doc.get("source") in ("ubl_xml", "n11faturam"), "payment_term_days": 0, "late_fee_rate": 0.0, "b2b_enabled": False, "b2b_discount": 0.0, "source": "edoc_inbox", "created_at": _now()}
         await _db.contacts.insert_one(created)
         c = created
-    await _db.incoming_edocs.update_one({"_id": doc["_id"], "company_id": company_id}, {"$set": {"contact_id": c["_id"], "contact_name": c["name"]}})
-    doc["contact_id"], doc["contact_name"] = c["_id"], c["name"]
+    label = _contact_label(c)
+    await _db.incoming_edocs.update_one({"_id": doc["_id"], "company_id": company_id}, {"$set": {"contact_id": c["_id"], "contact_name": label}})
+    doc["contact_id"], doc["contact_name"] = c["_id"], label
     return doc
 
 

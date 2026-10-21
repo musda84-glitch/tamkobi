@@ -48,24 +48,38 @@ def fold_text(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").translate(_TR_FOLD).lower()).strip()
 
 
+def _has_word(token: str, hay: str) -> bool:
+    """Katlanmış metin, açıklamada tam kelime (veya ardışık kelimeler) olarak geçmeli."""
+    if not token:
+        return False
+    return re.search(rf"(?:^| ){re.escape(token)}(?: |$)", hay) is not None
+
+
+def _label_score(label: str, hay: str) -> int:
+    folded = fold_text(label)
+    if folded and len(folded) >= 4 and _has_word(folded, hay):
+        return 100 + len(folded)
+    tokens = [t for t in folded.split() if len(t) >= 4 and t not in _NAME_SKIP]
+    if tokens and all(_has_word(t, hay) for t in tokens[:2]):
+        return 50 + sum(len(t) for t in tokens[:2])
+    return 0
+
+
 def match_statement_contact(description: str, contacts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     hay = fold_text(description)
     if len(hay) < 3 or not contacts:
         return None
     best, best_score = None, 0
     for c in contacts:
-        name = (c.get("name") or c.get("company_title") or "").strip()
-        folded = fold_text(name)
         tax = re.sub(r"\D", "", str(c.get("tax_number_or_id") or ""))
-        score = 0
         if tax and len(tax) >= 10 and tax in re.sub(r"\D", "", description or ""):
             score = 1000 + len(tax)
-        elif folded and len(folded) >= 4 and folded in hay:
-            score = 100 + len(folded)
         else:
-            tokens = [t for t in folded.split() if len(t) >= 4 and t not in _NAME_SKIP]
-            if tokens and all(t in hay for t in tokens[:2]):
-                score = 50 + sum(len(t) for t in tokens[:2])
+            # Ad ve ticari ünvan ayrı skorlanır; tek alan fallback'i ikisini de dolu olan cariyi kaçırır.
+            score = max(
+                _label_score(c.get("name") or "", hay),
+                _label_score(c.get("company_title") or "", hay),
+            )
         if score > best_score:
             best, best_score = c, score
     return best if best_score >= 50 else None

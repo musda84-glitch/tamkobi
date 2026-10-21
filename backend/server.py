@@ -53,6 +53,7 @@ from order_list_filter import (
 )
 from b2b_catalog import b2b_catalog_mongo_filter
 from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
+from contact_match import order_identity_ors, pick_bank_contact
 from contact_tax import contact_tax_patch
 from buyer_tax import buyer_tax_choice, invoice_contact_tax_id
 
@@ -350,6 +351,10 @@ async def startup_event():
             await db.products.create_index("sku")
             await db.products.create_index("barcode")
             await db.contacts.create_index("tax_number_or_id")
+            try:
+                await db.contacts.create_index([("company_id", 1), ("company_title", 1)])
+            except Exception:
+                logger.warning("contacts (company_id, company_title) index skipped")
             await db.invoices.create_index("invoice_number")
             await db.orders.create_index("order_number")
             try:
@@ -5136,10 +5141,17 @@ async def global_search(q: str, company_id: Optional[str] = None, user: dict = D
     if len(q) < 2:
         return {"contacts": [], "products": [], "orders": [], "invoices": []}
     rx = {"$regex": re.escape(q), "$options": "i"}
-    contacts = await db.contacts.find({"company_id": company_id, "$or": [{"name": rx}, {"tax_number_or_id": rx}, {"phone": rx}, {"email": rx}]}, {"name": 1, "tax_number_or_id": 1, "balance": 1, "type": 1}).limit(6).to_list(6)
+    contacts = await db.contacts.find({"company_id": company_id, "$or": [{"name": rx}, {"company_title": rx}, {"tax_number_or_id": rx}, {"phone": rx}, {"email": rx}]}, {"name": 1, "company_title": 1, "tax_number_or_id": 1, "balance": 1, "type": 1}).limit(6).to_list(6)
     products = await db.products.find({"company_id": company_id, "$or": [{"name": rx}, {"sku": rx}, {"barcode": rx}]}, {"name": 1, "sku": 1, "stock_quantity": 1, "sale_price": 1}).limit(6).to_list(6)
-    orders = await db.orders.find({"company_id": company_id, "$or": [{"order_number": rx}, {"customer_name": rx}, {"cargo_tracking_number": rx}]}, {"order_number": 1, "customer_name": 1, "total_amount": 1, "order_status": 1}).sort("order_date", -1).limit(6).to_list(6)
-    invoices = await db.invoices.find({"company_id": company_id, "$or": [{"invoice_number": rx}, {"contact_name": rx}]}, {"invoice_number": 1, "contact_name": 1, "grand_total": 1, "invoice_type": 1}).sort("issue_date", -1).limit(6).to_list(6)
+    titled = await db.contacts.find({"company_id": company_id, "company_title": rx}, {"_id": 1}).limit(50).to_list(50)
+    title_ids = [row.get("_id") for row in titled if row.get("_id")]
+    order_or = [{"order_number": rx}, {"customer_name": rx}, {"cargo_tracking_number": rx}]
+    invoice_or = [{"invoice_number": rx}, {"contact_name": rx}]
+    if title_ids:
+        order_or.append({"contact_id": {"$in": title_ids}})
+        invoice_or.append({"contact_id": {"$in": title_ids}})
+    orders = await db.orders.find({"company_id": company_id, "$or": order_or}, {"order_number": 1, "customer_name": 1, "total_amount": 1, "order_status": 1}).sort("order_date", -1).limit(6).to_list(6)
+    invoices = await db.invoices.find({"company_id": company_id, "$or": invoice_or}, {"invoice_number": 1, "contact_name": 1, "grand_total": 1, "invoice_type": 1}).sort("issue_date", -1).limit(6).to_list(6)
     return {"contacts": clean_docs(contacts), "products": clean_docs(products), "orders": clean_docs(orders), "invoices": clean_docs(invoices)}
 
 @api_router.get("/contacts/flags")
@@ -14591,12 +14603,11 @@ async def _suggest_contact(company_id: str, counterparty: str, description: str)
             return c
     if not counterparty and not description:
         return None
-    from bank_auto_match import contact_matches_text
-    contacts = await db.contacts.find({"company_id": company_id}).to_list(10000)
-    for c in contacts:
-        if contact_matches_text(c.get("name") or "", counterparty, description):
-            return c
-    return None
+    contacts = await db.contacts.find(
+        {"company_id": company_id},
+        {"name": 1, "company_title": 1, "tax_number_or_id": 1},
+    ).to_list(10000)
+    return pick_bank_contact(contacts, counterparty, description)
 
 async def _sync_bank_connection_core(
     conn_id: str,
@@ -19167,7 +19178,7 @@ async def _ensure_order_contact(o: dict) -> Optional[dict]:
     name = (o.get("customer_name") or "").strip()
     if not name:
         return None
-    ors: List[Dict[str, Any]] = [{"name": name}]
+    ors: List[Dict[str, Any]] = order_identity_ors(name, o.get("customer_company"))
     digits = re.sub(r"\D", "", o.get("customer_phone") or "")[-10:]
     if len(digits) == 10:
         ors.append({"phone": {"$regex": f"{digits}$"}})
@@ -19461,6 +19472,8 @@ async def _ensure_marketplace_contact(company_id: str, channel: str) -> Optional
         c = await db.contacts.find_one({"company_id": company_id, "name": name, "category": "Pazaryeri"})
     if not c:
         c = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+    if not c:
+        c = await db.contacts.find_one({"company_id": company_id, "company_title": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
     if c:
         return c
     try:
@@ -26134,7 +26147,8 @@ async def ai_order_extract(
     for o in parsed["orders"]:
         c = None
         if o.get("customer_name"):
-            c = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": f"^{re.escape(o['customer_name'][:40])}", "$options": "i"}})
+            prefix = {"$regex": f"^{re.escape(o['customer_name'][:40])}", "$options": "i"}
+            c = await db.contacts.find_one({"company_id": company_id, "$or": [{"name": prefix}, {"company_title": prefix}]})
         o["contact_id"] = c["_id"] if c else None
         o["contact_match"] = c.get("name") if c else None
         for it in o["items"]:
