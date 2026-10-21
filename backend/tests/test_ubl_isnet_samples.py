@@ -388,3 +388,302 @@ def test_builder_send_ready_fills_missing_buyer_identity():
     # Boş Contact düğümü yok
     contact = buyer.find(f"{CAC}Contact")
     assert contact is None or list(contact)
+
+
+def _money(el) -> float:
+    assert el is not None and el.text
+    return float(el.text)
+
+
+def _child_names(el):
+    return [c.tag.split("}")[-1] for c in list(el)]
+
+
+SELLER = {"name": "Satıcı", "tax_number": "4810173324", "tax_office": "Tuzla", "iban": "TR330006100519786457841326"}
+BUYER = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
+
+
+def _havale_invoice(**overrides):
+    from line_totals import invoice_document_totals
+
+    items = [{
+        "name": "Ürün",
+        "quantity": 1,
+        "unit": "Adet",
+        "unit_price": 9999.17,
+        "vat_rate": 20,
+        "total": 9999.17,
+        "vat_amount": 1999.83,
+        "total_incl": 11999.00,
+    }]
+    totals = invoice_document_totals(items, 0, 399.97)
+    inv = {
+        "_id": "inv_havale",
+        "invoice_number": "TA202600000100",
+        "invoice_type": "sales",
+        "e_type": "e_archive",
+        "gib_scenario": "EARSIVFATURA",
+        "issue_date": "2026-10-20",
+        "source_channel": "shopphp",
+        "payment_type": "transfer",
+        "payment_method": "Havale",
+        "items": items,
+        "subtotal": totals["subtotal"],
+        "vat_total": totals["vat_total"],
+        "discount_total": totals["discount_total"],
+        "general_discount_amount": totals["general_discount_amount"],
+        "grand_total": totals["grand_total"],
+        "currency": "TRY",
+    }
+    inv.update(overrides)
+    return inv
+
+
+def test_ubl_havale_discount_allowance_and_tax_base():
+    """Belge iskontosu AllowanceCharge; vergi matrahı iskonto sonrası, satır birim fiyatı liste."""
+    inv = _havale_invoice()
+    root = ET.fromstring(ubl_export.build_invoice_ubl(inv, SELLER, BUYER))
+    names = _child_names(root)
+    assert names.index("PaymentMeans") < names.index("AllowanceCharge") < names.index("TaxTotal")
+    assert names.index("TaxTotal") < names.index("LegalMonetaryTotal")
+    ac = root.find(f"{CAC}AllowanceCharge")
+    assert _child_names(ac)[:5] == [
+        "ChargeIndicator", "AllowanceChargeReason", "MultiplierFactorNumeric", "Amount", "BaseAmount",
+    ]
+    assert ac.find(f"{CBC}ChargeIndicator").text == "false"
+    assert ac.find(f"{CBC}AllowanceChargeReason").text == "Havale indirimi"
+    assert abs(_money(ac.find(f"{CBC}Amount")) - 399.97) < 0.001
+    assert abs(_money(ac.find(f"{CBC}BaseAmount")) - 9999.17) < 0.001
+    factor = float(ac.find(f"{CBC}MultiplierFactorNumeric").text)
+    assert abs(factor - (399.97 / 9999.17)) < 1e-6
+
+    tax_total = root.find(f"{CAC}TaxTotal")
+    header_vat = _money(tax_total.find(f"{CBC}TaxAmount"))
+    subs = tax_total.findall(f"{CAC}TaxSubtotal")
+    assert abs(sum(_money(s.find(f"{CBC}TaxAmount")) for s in subs) - header_vat) < 0.001
+    assert abs(header_vat - inv["vat_total"]) < 0.001
+    assert abs(_money(subs[0].find(f"{CBC}TaxableAmount")) - 9599.20) < 0.001
+    assert abs(_money(subs[0].find(f"{CBC}TaxAmount")) - 1919.84) < 0.001
+
+    lines = root.findall(f"{CAC}InvoiceLine")
+    line_ext = sum(_money(ln.find(f"{CBC}LineExtensionAmount")) for ln in lines)
+    line_vat = sum(_money(ln.find(f"{CAC}TaxTotal/{CBC}TaxAmount")) for ln in lines)
+    legal = root.find(f"{CAC}LegalMonetaryTotal")
+    assert abs(line_ext - _money(legal.find(f"{CBC}LineExtensionAmount"))) < 0.001
+    assert abs(line_ext - 9999.17) < 0.001
+    assert abs(line_vat - header_vat) < 0.001
+    assert abs(_money(lines[0].find(f"{CAC}TaxTotal/{CAC}TaxSubtotal/{CBC}TaxableAmount")) - 9599.20) < 0.001
+    assert abs(_money(lines[0].find(f"{CAC}Price/{CBC}PriceAmount")) - 9999.17) < 0.001
+    tax_exclusive = _money(legal.find(f"{CBC}TaxExclusiveAmount"))
+    allowance = _money(legal.find(f"{CBC}AllowanceTotalAmount"))
+    assert abs(tax_exclusive - (line_ext - allowance)) < 0.001
+    assert abs(_money(legal.find(f"{CBC}PayableAmount")) - inv["grand_total"]) < 0.001
+    assert abs(_money(legal.find(f"{CBC}TaxInclusiveAmount")) - (tax_exclusive + header_vat)) < 0.001
+
+
+def test_ubl_shopphp_coupon_discount_is_genel_iskonto():
+    """ShopPHP kanalı ve nottaki havale kelimesi etiketi belirlemez; ödeme yöntemi belirler."""
+    coupon = _havale_invoice(
+        payment_type="card",
+        payment_method="Kupon",
+        notes="havale yazsa da kupon indirimi",
+        source_channel="shopphp",
+    )
+    root = ET.fromstring(ubl_export.build_invoice_ubl(coupon, SELLER, BUYER))
+    assert root.find(f"{CAC}AllowanceCharge/{CBC}AllowanceChargeReason").text == "Genel iskonto"
+
+    eft = _havale_invoice(payment_type="", payment_method="EFT")
+    eft_root = ET.fromstring(ubl_export.build_invoice_ubl(eft, SELLER, BUYER))
+    assert eft_root.find(f"{CAC}AllowanceCharge/{CBC}AllowanceChargeReason").text == "Havale indirimi"
+
+
+def test_ubl_multi_rate_discount_tax_subtotals_sum_to_header():
+    from line_totals import invoice_document_totals
+
+    items = [
+        {"name": "A", "quantity": 1, "unit": "Adet", "unit_price": 100, "vat_rate": 20, "total": 100},
+        {"name": "B", "quantity": 1, "unit": "Adet", "unit_price": 100, "vat_rate": 10, "total": 100},
+    ]
+    totals = invoice_document_totals(items, general_discount_rate=10)
+    inv = {
+        "_id": "inv_multi",
+        "invoice_number": "TA202600000101",
+        "invoice_type": "sales",
+        "e_type": "e_archive",
+        "issue_date": "2026-10-20",
+        "items": items,
+        "subtotal": totals["subtotal"],
+        "vat_total": totals["vat_total"],
+        "discount_total": totals["discount_total"],
+        "general_discount_amount": totals["general_discount_amount"],
+        "grand_total": totals["grand_total"],
+    }
+    root = ET.fromstring(ubl_export.build_invoice_ubl(inv, SELLER, BUYER))
+    assert root.find(f"{CAC}AllowanceCharge/{CBC}AllowanceChargeReason").text == "Genel iskonto"
+    subs = root.findall(f"{CAC}TaxTotal/{CAC}TaxSubtotal")
+    assert len(subs) == 2
+    header_vat = _money(root.find(f"{CAC}TaxTotal/{CBC}TaxAmount"))
+    assert abs(sum(_money(s.find(f"{CBC}TaxAmount")) for s in subs) - header_vat) < 0.001
+    assert abs(sum(_money(s.find(f"{CBC}TaxableAmount")) for s in subs) - totals["subtotal"]) < 0.001
+    lines = root.findall(f"{CAC}InvoiceLine")
+    legal = root.find(f"{CAC}LegalMonetaryTotal")
+    line_ext = sum(_money(ln.find(f"{CBC}LineExtensionAmount")) for ln in lines)
+    assert abs(line_ext - _money(legal.find(f"{CBC}LineExtensionAmount"))) < 0.001
+    assert abs(_money(legal.find(f"{CBC}TaxExclusiveAmount")) - (line_ext - _money(legal.find(f"{CBC}AllowanceTotalAmount")))) < 0.001
+    assert abs(_money(legal.find(f"{CBC}PayableAmount")) - totals["grand_total"]) < 0.001
+    assert abs(_money(lines[0].find(f"{CAC}Price/{CBC}PriceAmount")) - 100) < 0.001
+
+
+def test_ubl_without_discount_keeps_line_tax_and_omits_allowance():
+    """İskontosuz çok oranlı faturada AllowanceCharge yok; matrah satır neti."""
+    items = [
+        {"name": "A", "quantity": 1, "unit": "Adet", "unit_price": 100, "vat_rate": 20, "total": 100},
+        {"name": "B", "quantity": 1, "unit": "Adet", "unit_price": 80, "vat_rate": 10, "total": 80},
+    ]
+    inv = {
+        "_id": "inv_plain",
+        "invoice_number": "TA202600000102",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TICARIFATURA",
+        "issue_date": "2026-10-20",
+        "items": items,
+        "subtotal": 180,
+        "vat_total": 28,
+        "grand_total": 208,
+    }
+    root = ET.fromstring(ubl_export.build_invoice_ubl(inv, {"name": "S", "tax_number": "4810173324"}, BUYER))
+    assert root.find(f"{CAC}AllowanceCharge") is None
+    lines = root.findall(f"{CAC}InvoiceLine")
+    assert abs(_money(lines[0].find(f"{CAC}TaxTotal/{CAC}TaxSubtotal/{CBC}TaxableAmount")) - 100) < 0.001
+    assert abs(_money(lines[0].find(f"{CAC}TaxTotal/{CBC}TaxAmount")) - 20) < 0.001
+    assert abs(_money(lines[1].find(f"{CAC}TaxTotal/{CAC}TaxSubtotal/{CBC}TaxableAmount")) - 80) < 0.001
+    assert abs(_money(lines[1].find(f"{CAC}TaxTotal/{CBC}TaxAmount")) - 8) < 0.001
+    subs = {s.find(f"{CBC}Percent").text: s for s in root.findall(f"{CAC}TaxTotal/{CAC}TaxSubtotal")}
+    assert abs(_money(subs["20"].find(f"{CBC}TaxableAmount")) - 100) < 0.001
+    assert abs(_money(subs["20"].find(f"{CBC}TaxAmount")) - 20) < 0.001
+    assert abs(_money(subs["10"].find(f"{CBC}TaxableAmount")) - 80) < 0.001
+    assert abs(_money(subs["10"].find(f"{CBC}TaxAmount")) - 8) < 0.001
+    legal = root.find(f"{CAC}LegalMonetaryTotal")
+    assert abs(_money(legal.find(f"{CBC}LineExtensionAmount")) - 180) < 0.001
+    assert abs(_money(legal.find(f"{CBC}PayableAmount")) - 208) < 0.001
+
+
+def test_ubl_discount_keeps_return_billing_reference_and_withholding():
+    inv = {
+        "_id": "inv_iade_disc",
+        "invoice_number": "TA202600000103",
+        "invoice_type": "return",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-20",
+        "original_invoice_number": "GHJ2026000002586",
+        "original_issue_date": "2026-09-29",
+        "withholding_rate": 0.5,
+        "withholding_code": "603",
+        "withholding_amount": 9.0,
+        "items": [{"name": "İade", "quantity": 1, "unit": "Adet", "unit_price": 100, "vat_rate": 20, "total": 100}],
+        "discount_total": 10,
+        "general_discount_amount": 10,
+        "subtotal": 90,
+        "vat_total": 18,
+        "grand_total": 99,
+    }
+    root = ET.fromstring(ubl_export.build_invoice_ubl(inv, SELLER, BUYER))
+    names = _child_names(root)
+    assert _txt(root, "InvoiceTypeCode") == "TEVKIFATIADE"
+    assert _txt(root, "ProfileID") == "TEMELFATURA"
+    assert root.find(f"{CAC}BillingReference/{CAC}InvoiceDocumentReference/{CBC}ID").text == "GHJ2026000002586"
+    assert names.index("AllowanceCharge") < names.index("TaxTotal") < names.index("WithholdingTaxTotal")
+    assert root.find(f"{CAC}WithholdingTaxTotal/{CBC}TaxAmount").text.startswith("9")
+
+
+def _load_main_module(relpath: str, module_name: str):
+    """main dalındaki dosyayı ayrı modül olarak yükle. Çıktı karşılaştırması için."""
+    import importlib.util
+    import subprocess
+    import tempfile
+
+    repo = Path(__file__).resolve().parents[2]
+    raw = subprocess.check_output(["git", "show", f"main:{relpath}"], cwd=repo)
+    path = Path(tempfile.mkdtemp()) / f"{module_name}.py"
+    path.write_bytes(raw)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _inv_01_like(**overrides):
+    """seed_data inv_01: discount_total satır iskontosu, satır tutarından düşülmüş."""
+    inv = {
+        "_id": "inv_01",
+        "id": "inv_01",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TICARIFATURA",
+        "invoice_number": "NX202600000104",
+        "issue_date": "2026-10-21",
+        "issue_time": "12:00:00",
+        "gib_uuid": "11111111-1111-4111-8111-111111111111",
+        "items": [
+            {
+                "product_id": "prod_01",
+                "name": "TamKobi Akıllı Bluetooth Kulaklık Pro Max (ANC)",
+                "quantity": 25,
+                "unit": "Adet",
+                "unit_price": 1899.0,
+                "vat_rate": 20,
+                "discount_percent": 5.0,
+                "total": 45101.25,
+            },
+            {
+                "product_id": "prod_02",
+                "name": "TamKobi RGB Mekanik Gaming Klavye (Blue Switch)",
+                "quantity": 10,
+                "unit": "Adet",
+                "unit_price": 1450.0,
+                "vat_rate": 20,
+                "discount_percent": 0.0,
+                "total": 14500.0,
+            },
+        ],
+        "subtotal": 59601.25,
+        "vat_total": 11920.25,
+        "discount_total": 2373.75,
+        "grand_total": 71521.50,
+        "currency": "TRY",
+        "notes": "Vade: 15 gün. E-Fatura GİB portalı onaylıdır.",
+        "gib_tracking_id": "GIB-20260601-9872134",
+        "source_channel": "manual",
+    }
+    inv.update(overrides)
+    return inv
+
+
+_PLAIN_SELLER = {"name": "Satıcı", "tax_number": "4810173324", "tax_office": "Tuzla"}
+_INV01_BUYER = {"name": "Trend Mağazacılık ve Perakende A.Ş.", "tax_number_or_id": "8710293841"}
+
+
+def test_ubl_inv_01_line_discount_matches_main_bytes():
+    """Satır iskontosu belge AllowanceCharge olmaz; XML main ile bayt bayt aynıdır."""
+    main = _load_main_module("backend/ubl_export.py", "ubl_export_main_inv01")
+    cases = (
+        _inv_01_like(),
+        _inv_01_like(general_discount_amount=2373.75),
+        _inv_01_like(invoice_type="purchase", e_type="expense_slip", invoice_number="GP202600000001"),
+    )
+    for inv in cases:
+        current = ubl_export.build_invoice_ubl(inv, _PLAIN_SELLER, _INV01_BUYER)
+        baseline = main.build_invoice_ubl(inv, _PLAIN_SELLER, _INV01_BUYER)
+        root = ET.fromstring(current)
+        assert root.find(f"{CAC}AllowanceCharge") is None
+        lines = root.findall(f"{CAC}InvoiceLine")
+        assert abs(_money(lines[0].find(f"{CAC}TaxTotal/{CBC}TaxAmount")) - 9020.25) < 0.001
+        assert abs(_money(lines[1].find(f"{CAC}TaxTotal/{CBC}TaxAmount")) - 2900.00) < 0.001
+        assert abs(_money(lines[1].find(f"{CAC}TaxTotal/{CAC}TaxSubtotal/{CBC}TaxableAmount")) - 14500.00) < 0.001
+        legal = root.find(f"{CAC}LegalMonetaryTotal")
+        assert abs(_money(legal.find(f"{CBC}LineExtensionAmount")) - 61975.00) < 0.001
+        assert abs(_money(legal.find(f"{CBC}TaxExclusiveAmount")) - 59601.25) < 0.001
+        assert abs(_money(legal.find(f"{CBC}AllowanceTotalAmount")) - 2373.75) < 0.001
+        assert current == baseline

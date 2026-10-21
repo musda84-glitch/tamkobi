@@ -178,6 +178,135 @@ def invoice_document_totals(
     }
 
 
+def _snap_last_amount(lines: List[Dict[str, float]], key: str, target: float) -> None:
+    """Kuruş farkını son satıra yükle; toplam hedefe kuruşu kuruşuna eşitlensin."""
+    if not lines:
+        return
+    current = round(sum(line[key] for line in lines), 2)
+    gap = round(float(target) - current, 2)
+    if abs(gap) < 0.001:
+        return
+    lines[-1][key] = round(lines[-1][key] + gap, 2)
+
+
+# sum(satır neti) − belge iskontosu ile kayıtlı ara toplam arasındaki kuruş payı.
+_DOCUMENT_DISCOUNT_TOLERANCE = 0.05
+_WIRE_HINTS = ("havale", "eft", "wire transfer", "banka havalesi")
+_EXPLICIT_NON_WIRE = frozenset({"card", "cash", "credit", "other", "mixed"})
+_TR_FOLD = str.maketrans({
+    "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    "â": "a", "î": "i", "û": "u",
+})
+
+
+def _fold_payment_text(value: Any) -> str:
+    text = str(value or "").replace("İ", "i").replace("I", "ı")
+    text = text.lower().replace("i\u0307", "i")
+    return " ".join(text.translate(_TR_FOLD).split())
+
+
+def wire_transfer_payment(inv: Mapping[str, Any]) -> bool:
+    """Havale/EFT etiketi yalnız ödeme yöntemi havale veya EFT ise.
+
+    ``payment_type=transfer`` yeter. Kart, nakit, veresiye ve diğer açık
+    türler notu ve kanalı yok sayar. Banka adı ve ShopPHP kanalı tek başına
+    havale sayılmaz.
+    """
+    if not isinstance(inv, Mapping):
+        return False
+    kind = str(inv.get("payment_type") or "").strip().lower()
+    if kind == "transfer":
+        return True
+    if kind in _EXPLICIT_NON_WIRE:
+        return False
+    blob = _fold_payment_text(f"{inv.get('payment_method') or ''} {inv.get('odeme_sekli') or ''}")
+    return any(hint in blob for hint in _WIRE_HINTS)
+
+
+def document_general_discount(inv: Mapping[str, Any], items: Iterable[Mapping[str, Any]] = None) -> float:
+    """Belge iskontosu: yalnız ``general_discount_amount``, satır netinden düşülmemişse.
+
+    Eski ve içe aktarılmış faturalarda ``discount_total`` satır iskontolarının
+    toplamıdır ve bu tutar ``item.total`` içinden zaten düşülmüştür. O belgelerde
+    0 döner. Tutar varsa, kayıtlı ara toplam ``sum(item.total) − tutar`` ile
+    kuruş payı içinde örtüşmelidir; örtüşmezse belge iskontosu uygulanmaz.
+    """
+    if not isinstance(inv, Mapping):
+        return 0.0
+    gd = round(_f(inv.get("general_discount_amount")), 2)
+    if gd <= 0.004:
+        return 0.0
+    source = items if items is not None else (inv.get("items") or [])
+    rows = [i for i in source if isinstance(i, Mapping)]
+    items_sum = round(sum(_f(i.get("total")) for i in rows), 2)
+    if items_sum <= 0 or gd > items_sum + 0.001:
+        return 0.0
+    raw_sub = inv.get("subtotal")
+    if raw_sub in (None, ""):
+        return gd
+    if abs(round(items_sum - gd, 2) - round(_f(raw_sub), 2)) > _DOCUMENT_DISCOUNT_TOLERANCE:
+        return 0.0
+    return gd
+
+
+def general_discount_tax_bases(
+    items: Iterable[Mapping[str, Any]],
+    general_discount_rate: Any = 0,
+    general_discount_amount: Any = 0,
+    *,
+    subtotal: Any = None,
+    vat_total: Any = None,
+) -> Dict[str, Any]:
+    """Belge iskontosu sonrası satır ve KDV oranı bazında matrah / KDV.
+
+    Matrah ``round(total * factor, 2)``, KDV ``_line_vat_after_factor`` ile
+    ``invoice_document_totals`` ile aynı kuruştur. Satır birim fiyatı ve
+    ``total`` değişmez. Oran grupları ile satırların toplamı belge ara toplamı
+    ve KDV'sine eşittir; kuruş farkı son satıra yazılır. ``subtotal`` /
+    ``vat_total`` verilirse aynı satır bir kez daha kayıtlı belge toplamına
+    çekilir ve oran grupları bundan sonra kurulur.
+    """
+    rows = [i for i in (items or []) if isinstance(i, Mapping)]
+    items_sum = sum(_f(i.get("total")) for i in rows)
+    gd_rate = _f(general_discount_rate)
+    gd_amt = _f(general_discount_amount)
+    gd = gd_amt if gd_amt else items_sum * gd_rate / 100.0
+    gd = round(min(max(gd, 0.0), items_sum), 2)
+    factor = (items_sum - gd) / items_sum if items_sum else 1.0
+    totals = invoice_document_totals(rows, general_discount_rate, general_discount_amount)
+    lines: List[Dict[str, float]] = []
+    for item in rows:
+        lines.append({
+            "rate": _f(item.get("vat_rate")),
+            "taxable": round(_f(item.get("total")) * factor, 2),
+            "vat": _line_vat_after_factor(item, factor),
+            "extension": round(_f(item.get("total")), 2),
+        })
+    _snap_last_amount(lines, "vat", totals["vat_total"])
+    _snap_last_amount(lines, "taxable", totals["subtotal"])
+    if vat_total not in (None, ""):
+        _snap_last_amount(lines, "vat", _f(vat_total))
+    if subtotal not in (None, ""):
+        _snap_last_amount(lines, "taxable", _f(subtotal))
+    by_rate: Dict[float, Dict[str, float]] = {}
+    for line in lines:
+        bucket = by_rate.setdefault(line["rate"], {"rate": line["rate"], "taxable": 0.0, "vat": 0.0})
+        bucket["taxable"] = round(bucket["taxable"] + line["taxable"], 2)
+        bucket["vat"] = round(bucket["vat"] + line["vat"], 2)
+    stored_sub = totals["subtotal"] if subtotal in (None, "") else round(_f(subtotal), 2)
+    stored_vat = totals["vat_total"] if vat_total in (None, "") else round(_f(vat_total), 2)
+    return {
+        "factor": factor,
+        "discount": totals["general_discount_amount"],
+        "line_extension": round(items_sum, 2),
+        "subtotal": stored_sub,
+        "vat_total": stored_vat,
+        "grand_total": totals["grand_total"],
+        "lines": lines,
+        "by_rate": [by_rate[rate] for rate in sorted(by_rate, reverse=True)],
+    }
+
+
 def net_general_discount_for_payable(items: Iterable[Mapping[str, Any]], payable_incl: Any) -> float:
     """KDV hariç genel iskonto: invoice_document_totals grand_total ödenen brüte gelsin.
 

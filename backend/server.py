@@ -17879,6 +17879,12 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "customer_order_number": order.get("customer_order_number") or order.get("po_number") or "",
         "created_at": now.isoformat(),
     }
+    pay_method = str(order.get("payment_method") or "").strip()
+    pay_kind = str(order.get("payment_type") or "").strip()
+    if pay_method:
+        doc["payment_method"] = pay_method
+    if pay_kind:
+        doc["payment_type"] = pay_kind
     await db.invoices.insert_one(doc)
     await db.orders.update_one(
         {"_id": order["_id"]},
@@ -22218,6 +22224,12 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         "order_number": order.get("order_number"),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
+    pay_method = str(order.get("payment_method") or "").strip()
+    pay_kind = str(order.get("payment_type") or "").strip()
+    if pay_method:
+        new_invoice["payment_method"] = pay_method
+    if pay_kind:
+        new_invoice["payment_type"] = pay_kind
     if draft_inv and draft_inv.get("status") == "draft":
         inv_id = draft_inv["_id"]
         invoice_number = draft_inv.get("invoice_number") or invoice_number

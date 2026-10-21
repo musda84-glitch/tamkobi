@@ -1,5 +1,19 @@
 """Unit tests for shared order/invoice line totals (no live API)."""
-from line_totals import drop_stale_inclusive_markup, enrich_items, enrich_line, invoice_document_totals, order_document_totals, quote_line_price_mode, unit_excl_from_incl, unit_incl_from_excl
+from line_totals import (
+    _line_vat_after_factor,
+    document_general_discount,
+    drop_stale_inclusive_markup,
+    enrich_items,
+    enrich_line,
+    general_discount_tax_bases,
+    invoice_document_totals,
+    net_general_discount_for_payable,
+    order_document_totals,
+    quote_line_price_mode,
+    unit_excl_from_incl,
+    unit_incl_from_excl,
+    wire_transfer_payment,
+)
 
 
 def test_unit_price_roundtrip():
@@ -56,6 +70,83 @@ def test_invoice_totals_round_inclusive_260_lines_to_520():
     assert t["subtotal"] == 472.72
     assert t["vat_total"] == 47.28
     assert t["grand_total"] == 520.0
+
+
+def test_havale_net_9999_17_discount_bases_match_document_totals():
+    """9.999,17 net, %20, ödenen 11.519,04 → iskonto sonrası toplamlar kuruşu kuruşuna."""
+    items = [{"name": "Ürün", "quantity": 1, "unit_price": 9999.17, "vat_rate": 20, "total": 9999.17}]
+    gd = net_general_discount_for_payable(items, 11519.04)
+    assert abs(gd - 399.97) < 0.001
+    totals = invoice_document_totals(items, 0, gd)
+    assert abs(totals["general_discount_amount"] - 399.97) < 0.001
+    assert abs(totals["subtotal"] - 9599.20) < 0.001
+    assert abs(totals["vat_total"] - 1919.84) < 0.001
+    assert abs(totals["grand_total"] - 11519.04) < 0.001
+    bases = general_discount_tax_bases(items, 0, gd)
+    assert abs(sum(row["taxable"] for row in bases["by_rate"]) - totals["subtotal"]) < 0.001
+    assert abs(sum(row["vat"] for row in bases["by_rate"]) - totals["vat_total"]) < 0.001
+    assert abs(sum(row["taxable"] for row in bases["lines"]) - totals["subtotal"]) < 0.001
+    assert abs(sum(row["vat"] for row in bases["lines"]) - totals["vat_total"]) < 0.001
+    assert abs(bases["lines"][0]["taxable"] - 9599.20) < 0.001
+    assert abs(bases["lines"][0]["vat"] - 1919.84) < 0.001
+    assert abs(bases["lines"][0]["extension"] - 9999.17) < 0.001
+
+
+def test_general_discount_tax_bases_multi_rate_matches_document():
+    items = [
+        {"name": "A", "total": 100.0, "vat_rate": 20},
+        {"name": "B", "total": 50.33, "vat_rate": 10},
+        {"name": "C", "total": 80.07, "vat_rate": 20},
+    ]
+    gd = 23.45
+    totals = invoice_document_totals(items, 0, gd)
+    bases = general_discount_tax_bases(items, 0, gd)
+    assert abs(sum(row["vat"] for row in bases["by_rate"]) - totals["vat_total"]) < 0.001
+    assert abs(sum(row["taxable"] for row in bases["by_rate"]) - totals["subtotal"]) < 0.001
+    assert abs(sum(row["vat"] for row in bases["lines"]) - totals["vat_total"]) < 0.001
+    assert abs(bases["grand_total"] - totals["grand_total"]) < 0.001
+    factor = bases["factor"]
+    for item, line in zip(items, bases["lines"][:-1]):
+        assert abs(line["vat"] - _line_vat_after_factor(item, factor)) < 0.001
+    rates = {row["rate"] for row in bases["by_rate"]}
+    assert rates == {20.0, 10.0}
+
+
+def test_document_general_discount_ignores_line_discount_total():
+    """inv_01: discount_total satır iskontosu, satır netinden düşülmüş. Belge iskontosu yok."""
+    items = [
+        {"quantity": 25, "unit_price": 1899.0, "vat_rate": 20, "total": 45101.25},
+        {"quantity": 10, "unit_price": 1450.0, "vat_rate": 20, "total": 14500.0},
+    ]
+    inv = {"items": items, "subtotal": 59601.25, "discount_total": 2373.75}
+    assert document_general_discount(inv, items) == 0.0
+    mismatched = {**inv, "general_discount_amount": 2373.75}
+    assert document_general_discount(mismatched, items) == 0.0
+    havale = {
+        "items": [{"total": 9999.17, "vat_rate": 20}],
+        "subtotal": 9599.20,
+        "discount_total": 399.97,
+        "general_discount_amount": 399.97,
+    }
+    assert abs(document_general_discount(havale) - 399.97) < 0.001
+
+
+def test_wire_transfer_payment_requires_method_not_channel():
+    assert wire_transfer_payment({"payment_type": "transfer", "source_channel": "manual"}) is True
+    assert wire_transfer_payment({"payment_method": "Havale / EFT"}) is True
+    assert wire_transfer_payment({"odeme_sekli": "EFT"}) is True
+    assert wire_transfer_payment({"source_channel": "shopphp", "notes": "havale kampanyası"}) is False
+    assert wire_transfer_payment({"payment_type": "card", "payment_method": "Havale", "notes": "havale"}) is False
+    assert wire_transfer_payment({"payment_method": "Kupon", "bank_name": "Ziraat Bankası"}) is False
+
+
+def test_general_discount_tax_bases_snaps_stored_totals_once():
+    items = [{"total": 100.0, "vat_rate": 20}, {"total": 100.0, "vat_rate": 10}]
+    bases = general_discount_tax_bases(items, 0, 20, subtotal=180, vat_total=27.05)
+    assert abs(sum(row["vat"] for row in bases["lines"]) - 27.05) < 0.001
+    assert abs(sum(row["taxable"] for row in bases["lines"]) - 180) < 0.001
+    assert abs(sum(row["vat"] for row in bases["by_rate"]) - 27.05) < 0.001
+    assert abs(bases["lines"][-1]["vat"] - (_line_vat_after_factor(items[-1], bases["factor"]) + 0.05)) < 0.001
 
 
 def test_invoice_totals_with_general_discount():
