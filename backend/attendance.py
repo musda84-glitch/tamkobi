@@ -413,7 +413,9 @@ async def sync_employee_presence_from_attendance(
     if day != today:
         return None
     patch = presence_patch_from_attendance(rec)
-    await _db.employees.update_one({"_id": emp["_id"]}, {"$set": patch})
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
+    if cid:
+        await _db.employees.update_one({"_id": emp["_id"], "company_id": cid}, {"$set": patch})
     return patch
 
 
@@ -528,9 +530,11 @@ def apply_time_edit_decision(rec: Optional[dict], decision: str, now: str) -> di
     }
 
 
-async def mark_employee_location_signal(emp_id: str, ok: bool) -> dict:
+async def mark_employee_location_signal(emp_id: str, ok: bool, company_id: Optional[str] = None) -> dict:
+    cid = str(company_id or "").strip()
     patch = {"location_last_ok": bool(ok), "location_last_at": _now()}
-    await _db.employees.update_one({"_id": emp_id}, {"$set": patch})
+    if cid:
+        await _db.employees.update_one({"_id": emp_id, "company_id": cid}, {"$set": patch})
     return location_consent.location_signal_view(patch)
 
 
@@ -1434,7 +1438,13 @@ def overtime_rate(schedule: dict, employee: dict) -> dict:
 
 async def overtime_pay_for_period(company: dict, employee: dict, period: str) -> dict:
     schedule = merge_schedule(company, employee)
-    rows = await _db.attendance.find({"employee_id": employee["_id"], "date": {"$regex": f"^{period}"}, "status": "present"}).to_list(100)
+    cid = str((employee or {}).get("company_id") or (company or {}).get("_id") or "").strip()
+    rows = await _db.attendance.find({
+        "employee_id": employee["_id"],
+        "date": {"$regex": f"^{period}"},
+        "status": "present",
+        "company_id": cid,
+    }).to_list(100)
     weekday_h = round(sum(r.get("overtime_hours", 0) for r in rows if not r.get("is_off_day")), 2)
     holiday_h = round(sum(r.get("overtime_hours", 0) for r in rows if r.get("is_off_day")), 2)
     rate = overtime_rate(schedule, employee)
@@ -1930,7 +1940,10 @@ async def workplaces_by_employee(company_id: str, emp_ids: list, today: str, com
     by_emp = {eid: [] for eid in idset}
     duty_by = {eid: {} for eid in idset}
     if idset and _db is not None:
-        async for emp in _db.employees.find({"_id": {"$in": list(idset)}}, {"active_duty": 1}):
+        async for emp in _db.employees.find(
+            {"_id": {"$in": list(idset)}, "company_id": company_id},
+            {"active_duty": 1},
+        ):
             duty_by[str(emp.get("_id"))] = active_duty_of(emp)
         async for proj in _db.projects.find(
             {"company_id": company_id, "tasks.assignee_id": {"$in": list(idset)}},
@@ -1950,13 +1963,24 @@ async def workplaces_by_employee(company_id: str, emp_ids: list, today: str, com
 
 async def employee_for_user(user: dict):
     uid = str(user.get("_id", user.get("id")))
-    return await _db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": uid}]})
+    ident = {"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": uid}]}
+    cid = ""
+    try:
+        cid = str(tenant_access.resolve_company_id(user) or "").strip()
+    except HTTPException:
+        cid = ""
+    owned = await _db.employees.find_one({**ident, "company_id": cid})
+    if owned or not cid:
+        return owned
+    # Eski kartta company_id boş kalır. Aynı _id başka şirketteyse o satır seçilmez.
+    return await _db.employees.find_one({**ident, "company_id": None})
 
 
 async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: str = "manual", confirmed: Optional[bool] = None) -> dict:
-    company = await _db.companies.find_one({"_id": employee["company_id"]}) or {}
+    cid = str((employee or {}).get("company_id") or "").strip()
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, employee)
-    existing = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date}) or {}
+    existing = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid}) or {}
     if "assigned_overtime_hours" in patch:
         assigned_ot = max(0.0, _as_float(patch.get("assigned_overtime_hours"), 0.0))
     else:
@@ -1967,7 +1991,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
         next_in = None
     if isinstance(next_out, str) and not next_out.strip():
         next_out = None
-    rec = {"company_id": employee["company_id"], "employee_id": employee["_id"], "employee_name": employee["full_name"], "date": date,
+    rec = {"company_id": cid, "employee_id": employee["_id"], "employee_name": employee["full_name"], "date": date,
            "status": patch.get("status") or ("present" if (next_in or next_out) else existing.get("status")) or "present",
            "check_in": next_in, "check_out": next_out,
            "note": patch.get("note", existing.get("note", "")), "source": source,
@@ -1979,7 +2003,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
             rec[k] = patch[k]
         elif existing.get(k) is not None:
             rec[k] = existing[k]
-    plan = await _db.shift_plans.find_one({"employee_id": employee["_id"], "date": date})
+    plan = await _db.shift_plans.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
     rec.update(compute_day(rec, schedule, plan))
     try:
         _wd = datetime.strptime(date, "%Y-%m-%d").weekday()
@@ -2004,8 +2028,12 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
     rec["updated_at"] = _now()
     if existing.get("location_moves"):
         rec["location_moves"] = existing["location_moves"]
-    await _db.attendance.update_one({"employee_id": employee["_id"], "date": date}, {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
-    saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date})
+    await _db.attendance.update_one(
+        {"employee_id": employee["_id"], "date": date, "company_id": cid},
+        {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}},
+        upsert=True,
+    )
+    saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
     if saved:
         saved["id"] = saved.get("_id")
         if patch.get("check_in") and not existing.get("check_in"):
@@ -2022,7 +2050,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
                 source=source,
                 official=True,
             ))
-        saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date})
+        saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
     final = saved or rec
     # Çıkış saati yazılınca/silinince sistem çıkış yapmış / yapmamış gibi işlesin.
     if (
@@ -2462,9 +2490,10 @@ async def rehome_early_checkout(emp: dict, today: str, schedule: Optional[dict] 
     emp_id = (emp or {}).get("_id")
     if not emp_id:
         return False
+    cid = str((emp or {}).get("company_id") or "").strip()
     ydate = previous_ymd(today)
-    today_rec = await _db.attendance.find_one({"employee_id": emp_id, "date": today}) or {}
-    yest = await _db.attendance.find_one({"employee_id": emp_id, "date": ydate}) or {}
+    today_rec = await _db.attendance.find_one({"employee_id": emp_id, "date": today, "company_id": cid}) or {}
+    yest = await _db.attendance.find_one({"employee_id": emp_id, "date": ydate, "company_id": cid}) or {}
     out = str(today_rec.get("check_out") or "")[:5]
     inn = today_rec.get("check_in")
     gcr = _pending_overnight_checkout(today_rec, schedule, today)
@@ -2481,7 +2510,7 @@ async def rehome_early_checkout(emp: dict, today: str, schedule: Optional[dict] 
     if gcr and (proposed_in or is_overnight_pair(inn, gcr.get("proposed_time") or out, schedule, today)):
         if today_rec.get("_id"):
             await _db.attendance.update_one(
-                {"_id": today_rec["_id"]},
+                {"_id": today_rec["_id"], "company_id": cid},
                 {"$unset": {"geo_confirm_request": ""}, "$set": {"updated_at": _now()}},
             )
             return True
@@ -2524,7 +2553,10 @@ async def rehome_early_checkouts_for_company(company: dict, today: str) -> int:
     if not today_rows:
         return 0
     n = 0
-    emps = {e["_id"]: e for e in await _db.employees.find({"_id": {"$in": list({r["employee_id"] for r in today_rows})}}).to_list(500)}
+    emps = {e["_id"]: e for e in await _db.employees.find({
+        "_id": {"$in": list({r["employee_id"] for r in today_rows})},
+        "company_id": company_id,
+    }).to_list(500)}
     for rec in today_rows:
         emp = emps.get(rec["employee_id"])
         if not emp:
@@ -2537,9 +2569,10 @@ async def rehome_early_checkouts_for_company(company: dict, today: str) -> int:
 async def punch_date_for_action(emp: dict, schedule: dict, action: str, clock: str, today: str) -> str:
     proposed_in = clock if action == "check_in" else None
     await rehome_early_checkout(emp, today, schedule, proposed_in=proposed_in)
-    today_rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    cid = str((emp or {}).get("company_id") or "").strip()
+    today_rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
     ydate = previous_ymd(today)
-    yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+    yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate, "company_id": cid}) or {}
     if action == "check_out" and should_close_previous_day(clock, schedule, today_rec, yest, today):
         return ydate
     return today
@@ -2555,13 +2588,19 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
             status_code=404,
             detail="Personel kartınız bu kullanıcıya bağlı değil. Personel kartından sistem kullanıcısını eşleştirin.",
         )
-    company = await _db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(
+            status_code=404,
+            detail="Personel kartınız bu kullanıcıya bağlı değil. Personel kartından sistem kullanıcısını eşleştirin.",
+        )
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     month = month or _today(schedule)[:7]
     today_s = _today(schedule)
     now_s = now_hm(schedule)
     await rehome_early_checkout(emp, today_s, schedule)
-    today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
+    today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s, "company_id": cid})
     if today and today.get("check_in"):
         today["id"] = today.get("_id") or today.get("id")
         auto_ot = await process_auto_exit_overtime(
@@ -2569,8 +2608,8 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
         )
         if auto_ot.get("record"):
             today = auto_ot["record"]
-    rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(100)
-    plans = {p["date"]: p for p in await _db.shift_plans.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).to_list(100)}
+    rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}, "company_id": cid}).sort("date", -1).to_list(100)
+    plans = {p["date"]: p for p in await _db.shift_plans.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}, "company_id": cid}).to_list(100)}
     enriched = []
     for r in rows:
         e = enrich_attendance_row(r, schedule, plans.get(r.get("date")))
@@ -2716,7 +2755,7 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if geo:
         extra[f"geo_{action}"] = geo
         rec[f"geo_{action}"] = geo
-        await mark_employee_location_signal(emp["_id"], True)
+        await mark_employee_location_signal(emp["_id"], True, cid)
     if extra:
         await _db.attendance.update_one({"_id": rec["id"], "company_id": cid}, {"$set": extra})
     msg = f"Giriş {clock} olarak kaydedildi."
@@ -2787,6 +2826,7 @@ async def open_geo_confirm_request(
     overnight: bool = False,
 ) -> dict:
     """Çıkışta konum kapalı veya iş yerinde değil; kayıtlı saat düzeltmesi yönetici teyidine düşer."""
+    cid = str((emp or {}).get("company_id") or "").strip()
     reason = reason or verdict.get("verdict") or "location_off"
     gcr = build_geo_confirm_request(
         action=action,
@@ -2806,13 +2846,12 @@ async def open_geo_confirm_request(
     if workplace:
         extra["workplace"] = workplace
     if existing.get("_id"):
-        await _db.attendance.update_one({"_id": existing["_id"]}, {"$set": extra})
-        rec = _clean(await _db.attendance.find_one({"_id": existing["_id"]}))
+        await _db.attendance.update_one({"_id": existing["_id"], "company_id": cid}, {"$set": extra})
+        rec = _clean(await _db.attendance.find_one({"_id": existing["_id"], "company_id": cid}))
     else:
         doc_id = str(uuid.uuid4())
         stub = {
             "_id": doc_id,
-            "company_id": emp["company_id"],
             "employee_id": emp["_id"],
             "employee_name": emp["full_name"],
             "date": today,
@@ -2823,11 +2862,12 @@ async def open_geo_confirm_request(
             "employee_confirmed": False,
             "created_at": _now(),
             **extra,
+            "company_id": cid,
         }
         await _db.attendance.insert_one(stub)
-        rec = _clean(await _db.attendance.find_one({"_id": doc_id}))
+        rec = _clean(await _db.attendance.find_one({"_id": doc_id, "company_id": cid}))
     if reason == "location_off":
-        await mark_employee_location_signal(emp["_id"], False)
+        await mark_employee_location_signal(emp["_id"], False, cid)
     label = geo_confirm_action_tr(action)
     why = geo_confirm_reason_tr(reason)
     dist_bit = f" · {int(gcr['distance_m'])} m" if gcr.get("distance_m") is not None else ""
@@ -2947,8 +2987,12 @@ async def ensure_location_moves(rec: dict) -> list:
         return stored
     moves = synthesize_location_moves(rec)
     att_id = rec.get("id") or rec.get("_id")
-    if moves and att_id:
-        await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_moves": moves, "updated_at": _now()}})
+    cid = str((rec or {}).get("company_id") or "").strip()
+    if moves and att_id and cid:
+        await _db.attendance.update_one(
+            {"_id": att_id, "company_id": cid},
+            {"$set": {"location_moves": moves, "updated_at": _now()}},
+        )
         rec["location_moves"] = moves
     return moves
 
@@ -2985,6 +3029,7 @@ async def maybe_open_location_exit(
     att_id = rec.get("id") or rec.get("_id")
     if not att_id:
         return None
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
     radius = float(loc.get("radius_m") or 300)
     outside = dist > radius
@@ -2993,11 +3038,11 @@ async def maybe_open_location_exit(
     first_left = rec.get("location_left_at") or (existing or {}).get("left_at")
     if outside and not first_left:
         first_left = now
-        await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_left_at": first_left, "updated_at": now}})
+        await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": {"location_left_at": first_left, "updated_at": now}})
         rec["location_left_at"] = first_left
     if not outside:
         if rec.get("location_left_at"):
-            await _db.attendance.update_one({"_id": att_id}, {"$unset": {"location_left_at": ""}})
+            await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$unset": {"location_left_at": ""}})
             rec.pop("location_left_at", None)
         return None
     if not location_exit_should_notify(
@@ -3015,7 +3060,7 @@ async def maybe_open_location_exit(
         workplace=workplace or loc,
         now=now,
     )
-    await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_exit_request": req, "updated_at": now}})
+    await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": {"location_exit_request": req, "updated_at": now}})
     rec["location_exit_request"] = req
     await notify_managers(
         emp["company_id"],
@@ -3045,6 +3090,7 @@ async def maybe_retract_auto_checkout(
     clock = now_s or now_hm(schedule)
     if not should_retract_auto_checkout(rec, end_hm=end_hm, now_hm=clock):
         return None
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     saved = await apply_day(
         emp,
         day,
@@ -3053,13 +3099,13 @@ async def maybe_retract_auto_checkout(
         confirmed=True,
     )
     await _db.attendance.update_one(
-        {"employee_id": emp["_id"], "date": day},
+        {"employee_id": emp["_id"], "date": day, "company_id": cid},
         {
             "$set": {"updated_at": _now()},
             "$unset": {"auto_checkout": "", "auto_checkout_at": "", "auto_checkout_end": ""},
         },
     )
-    saved = _clean(await _db.attendance.find_one({"employee_id": emp["_id"], "date": day}) or saved)
+    saved = _clean(await _db.attendance.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid}) or saved)
     if saved:
         saved.pop("auto_checkout", None)
         saved.pop("auto_checkout_at", None)
@@ -3090,9 +3136,10 @@ async def maybe_auto_checkout(
         "auto_checkout_at": _now(),
         "auto_checkout_end": end_hm,
     }
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     saved = await apply_day(emp, day, patch, source="auto", confirmed=True)
     await _db.attendance.update_one(
-        {"employee_id": emp["_id"], "date": day},
+        {"employee_id": emp["_id"], "date": day, "company_id": cid},
         {"$set": {"auto_checkout": True, "auto_checkout_at": patch["auto_checkout_at"], "auto_checkout_end": end_hm}},
     )
     saved["auto_checkout"] = True
@@ -3140,8 +3187,9 @@ async def maybe_open_overtime_confirm(
         tolerance_minutes=exit_tol_m,
     )
     now = _now()
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     await _db.attendance.update_one(
-        {"_id": att_id},
+        {"_id": att_id, "company_id": cid},
         {"$set": {"overtime_confirm_request": req, "updated_at": now}},
     )
     rec["overtime_confirm_request"] = req
@@ -3175,8 +3223,9 @@ async def process_auto_exit_overtime(
 ) -> dict:
     """Mesai bitişinde otomatik çıkış + (konum varsa) tolerans sonrası fazla mesai onayı."""
     day = date or _today(schedule)
-    plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": day})
-    row = rec or await _db.attendance.find_one({"employee_id": emp["_id"], "date": day}) or {}
+    cid = str((emp or {}).get("company_id") or (company or {}).get("_id") or "").strip()
+    plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid})
+    row = rec or await _db.attendance.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid}) or {}
     if row:
         row["id"] = row.get("_id") or row.get("id")
     clock = now_s or now_hm(schedule)
@@ -3338,7 +3387,7 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
             await save_location_move(rec, build_location_move(kind="enter", at=now_iso, place=place, ignorable=True))
         elif (not inside) and logged_inside:
             await save_location_move(rec, build_location_move(kind="leave", at=now_iso, place=place, ignorable=True))
-    signal = await mark_employee_location_signal(emp["_id"], True)
+    signal = await mark_employee_location_signal(emp["_id"], True, cid)
     emp["location_last_ok"] = True
     emp["location_last_at"] = signal.get("at") or _now()
     auto_ot = {"auto_checkout": False, "overtime_confirm": None}
@@ -3383,6 +3432,9 @@ async def self_task_site_presence(req: Dict[str, Any], request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
     if not location_consent.location_consent_accepted(emp):
         raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
     task_id = str(req.get("task_id") or "").strip()
@@ -3395,7 +3447,7 @@ async def self_task_site_presence(req: Dict[str, Any], request: Request):
     match = next((a for a in assignments if str(a.get("id") or "") == task_id and task_is_field(a)), None)
     if not match:
         raise HTTPException(status_code=404, detail="Dış görev bulunamadı.")
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    company = await _db.companies.find_one({"_id": cid}) or {}
     workplace = workplace_payload(company.get("location"), match)
     loc = geo_target(workplace)
     if not loc:
@@ -3413,7 +3465,7 @@ async def self_task_site_presence(req: Dict[str, Any], request: Request):
     onsite = verdict.get("verdict") == "onsite"
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
-    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
     if rec:
         rec["id"] = rec.get("_id") or rec.get("id")
     recorded = False
@@ -3434,7 +3486,7 @@ async def self_task_site_presence(req: Dict[str, Any], request: Request):
             rec = await apply_day(emp, today, {"status": "present"}, source="task_site", confirmed=None)
         att_id = rec.get("id") or rec.get("_id")
         await _db.attendance.update_one(
-            {"_id": att_id},
+            {"_id": att_id, "company_id": cid},
             {"$set": {
                 "task_site_presence": presence,
                 "location_inside_at": now_iso,
@@ -3443,8 +3495,9 @@ async def self_task_site_presence(req: Dict[str, Any], request: Request):
         )
         rec["task_site_presence"] = presence
         rec["location_inside_at"] = now_iso
+        rec["company_id"] = cid
         await _db.employees.update_one(
-            {"_id": emp["_id"]},
+            {"_id": emp["_id"], "company_id": cid},
             {"$set": {"location_last_inside": True, "location_inside_at": now_iso}},
         )
         await save_location_move(
@@ -3465,7 +3518,7 @@ async def self_task_site_presence(req: Dict[str, Any], request: Request):
         except Exception:
             pass
         recorded = True
-    signal = await mark_employee_location_signal(emp["_id"], True)
+    signal = await mark_employee_location_signal(emp["_id"], True, cid)
     return {
         "status": "success",
         "onsite": onsite,
@@ -3485,17 +3538,20 @@ async def self_location_unavailable(req: Dict[str, Any], request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
     if not location_consent.location_consent_accepted(emp):
         raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
     reason = (req.get("reason") or "Konum izni kapalı veya GPS alınamadı.").strip()[:200]
-    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
     if rec:
         rec["id"] = rec.get("_id")
         await save_location_move(rec, build_location_move(kind="lost", source="unavailable", ignorable=True, place=""))
-    signal = await mark_employee_location_signal(emp["_id"], False)
+    signal = await mark_employee_location_signal(emp["_id"], False, cid)
     note = await notify_managers(
         emp["company_id"],
         "location_unavailable",
@@ -3514,11 +3570,14 @@ async def accept_location_consent(req: Dict[str, Any], request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
     invalid = location_consent.validate_location_consent(req)
     if invalid:
         raise HTTPException(status_code=400, detail=invalid)
     stored = location_consent.location_consent_store(req, _now())
-    await _db.employees.update_one({"_id": emp["_id"]}, {"$set": {"location_consent": stored}})
+    await _db.employees.update_one({"_id": emp["_id"], "company_id": cid}, {"$set": {"location_consent": stored}})
     return {
         "status": "success",
         "message": "Sözleşmeler kabul edildi. Personel paneli kullanıma açıldı.",
@@ -3558,9 +3617,10 @@ async def apply_location_exit_wage_deduction(emp: dict, rec: dict, ler: dict) ->
     if amount <= 0:
         return ler
     att_id = rec.get("id") or rec.get("_id")
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     existing_id = ler.get("deduction_bonus_id")
     if existing_id:
-        existing = await _db.bonus_payments.find_one({"_id": existing_id})
+        existing = await _db.bonus_payments.find_one({"_id": existing_id, "company_id": cid})
         if existing:
             return ler
     date = rec.get("date") or _today()
@@ -3568,7 +3628,7 @@ async def apply_location_exit_wage_deduction(emp: dict, rec: dict, ler: dict) ->
     bonus_id = str(uuid.uuid4())
     doc = {
         "_id": bonus_id,
-        "company_id": emp["company_id"],
+        "company_id": cid,
         "employee_id": emp["_id"],
         "employee_name": emp.get("full_name") or rec.get("employee_name"),
         "type": "borc",
@@ -3740,7 +3800,10 @@ async def list_employee_location_moves(emp_id: str, period: str = "30d", month: 
     self_emp = await employee_for_user(user)
     if user.get("role") not in ("admin", "manager", "accountant") and not (self_emp and self_emp.get("_id") == emp_id):
         raise HTTPException(status_code=403, detail="Konum hareketlerini görmek için yetki gerekir.")
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
     period_s = str(period or "30d").strip().lower()
@@ -3748,7 +3811,7 @@ async def list_employee_location_moves(emp_id: str, period: str = "30d", month: 
         period_s = "30d"
     month_s = str(month or today)[:7]
     rows = await _db.attendance.find(
-        {"employee_id": emp_id, **location_moves_date_query(period_s, month_s, today)}
+        {"employee_id": emp_id, **location_moves_date_query(period_s, month_s, today), "company_id": cid}
     ).sort("date", -1).to_list(400)
     items = []
     for rec in rows:
@@ -3769,7 +3832,10 @@ async def list_employee_overtime_moves(emp_id: str, period: str = "30d", month: 
     self_emp = await employee_for_user(user)
     if user.get("role") not in ("admin", "manager", "accountant") and not (self_emp and self_emp.get("_id") == emp_id):
         raise HTTPException(status_code=403, detail="Mesai hareketlerini görmek için yetki gerekir.")
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
     period_s = str(period or "30d").strip().lower()
@@ -3777,7 +3843,7 @@ async def list_employee_overtime_moves(emp_id: str, period: str = "30d", month: 
         period_s = "30d"
     month_s = str(month or today)[:7]
     rows = await _db.attendance.find(
-        {"employee_id": emp_id, **location_moves_date_query(period_s, month_s, today)}
+        {"employee_id": emp_id, **location_moves_date_query(period_s, month_s, today), "company_id": cid}
     ).sort("date", -1).to_list(400)
     items = []
     for rec in rows:
@@ -3791,6 +3857,9 @@ async def list_employee_overtime_moves(emp_id: str, period: str = "30d", month: 
 async def ignore_employee_location_move(att_id: str, move_id: str, user: dict = Depends(_user_dep)):
     """Gün içi konum kaybı / giriş-çıkış telafisi: görmezden gel (kesinti yok)."""
     rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
+    cid = str(rec.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Konum hareketini görmezden gelmek için yönetici yetkisi gerekir.")
     rec["id"] = rec.get("_id")
@@ -3813,7 +3882,7 @@ async def ignore_employee_location_move(att_id: str, move_id: str, user: dict = 
             "decided_by": str(user.get("_id") or user.get("id") or ""),
             "decision_note": "görmezden gel",
         }
-    await _db.attendance.update_one({"_id": att_id}, {"$set": patch})
+    await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": patch})
     return {
         "status": "success",
         "message": "Konum kaybı görmezden gelindi.",
@@ -3832,22 +3901,26 @@ async def accrue_task_yevmiye(emp: dict, rec: dict, workplace: Optional[dict], s
         return None
     att_id = rec.get("id") or rec.get("_id")
     date = rec.get("date")
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     if rec.get("yevmiye_bonus_id"):
-        existing = await _db.bonus_payments.find_one({"_id": rec["yevmiye_bonus_id"]})
+        existing = await _db.bonus_payments.find_one({"_id": rec["yevmiye_bonus_id"], "company_id": cid})
         if existing:
             return existing
     if date:
         existing = await _db.bonus_payments.find_one({
-            "employee_id": emp["_id"], "type": "yevmiye", "source": "attendance", "date": date,
+            "employee_id": emp["_id"], "type": "yevmiye", "source": "attendance", "date": date, "company_id": cid,
         })
         if existing:
-            await _db.attendance.update_one({"_id": att_id}, {"$set": {"yevmiye_bonus_id": existing["_id"], "yevmiye_full_amount": existing.get("daily_wage") or existing.get("amount")}})
+            await _db.attendance.update_one(
+                {"_id": att_id, "company_id": cid},
+                {"$set": {"yevmiye_bonus_id": existing["_id"], "yevmiye_full_amount": existing.get("daily_wage") or existing.get("amount")}},
+            )
             return existing
     bonus_id = str(uuid.uuid4())
     period = (date or "")[:7] or datetime.now(timezone.utc).strftime("%Y-%m")
     doc = {
         "_id": bonus_id,
-        "company_id": emp["company_id"],
+        "company_id": cid,
         "employee_id": emp["_id"],
         "employee_name": emp.get("full_name"),
         "type": "yevmiye",
@@ -3865,7 +3938,10 @@ async def accrue_task_yevmiye(emp: dict, rec: dict, workplace: Optional[dict], s
         "created_at": _now(),
     }
     await _db.bonus_payments.insert_one(doc)
-    await _db.attendance.update_one({"_id": att_id}, {"$set": {"yevmiye_bonus_id": bonus_id, "yevmiye_full_amount": wage}})
+    await _db.attendance.update_one(
+        {"_id": att_id, "company_id": cid},
+        {"$set": {"yevmiye_bonus_id": bonus_id, "yevmiye_full_amount": wage}},
+    )
     rec["yevmiye_bonus_id"] = bonus_id
     rec["yevmiye_full_amount"] = wage
     return doc
@@ -3876,7 +3952,8 @@ async def sync_yevmiye_adjustment(emp: dict, rec: dict, schedule: dict) -> Optio
     bid = rec.get("yevmiye_bonus_id")
     if not bid:
         return None
-    bonus = await _db.bonus_payments.find_one({"_id": bid})
+    cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
+    bonus = await _db.bonus_payments.find_one({"_id": bid, "company_id": cid})
     if not bonus or bonus.get("status") == "paid":
         return bonus
     wage = float(rec.get("yevmiye_full_amount") or bonus.get("daily_wage") or personnel_wage.reference_daily_wage(emp) or 0)
@@ -3902,7 +3979,10 @@ async def sync_yevmiye_adjustment(emp: dict, rec: dict, schedule: dict) -> Optio
         "early_leave_minutes": early,
         "requested_at": prev.get("requested_at") or _now(),
     }
-    await _db.attendance.update_one({"_id": rec.get("id") or rec.get("_id")}, {"$set": {"yevmiye_adjustment_request": req}})
+    await _db.attendance.update_one(
+        {"_id": rec.get("id") or rec.get("_id"), "company_id": cid},
+        {"$set": {"yevmiye_adjustment_request": req}},
+    )
     rec["yevmiye_adjustment_request"] = req
     await notify_managers(
         emp["company_id"],
@@ -4054,13 +4134,19 @@ async def cancel_early_leave_request(request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Personel kartı bulunamadı.")
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="İptal edilecek bekleyen talep yok.")
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
-    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
     if not existing or (existing.get("early_leave_request") or {}).get("status") != "pending":
         raise HTTPException(status_code=404, detail="İptal edilecek bekleyen talep yok.")
-    await _db.attendance.update_one({"_id": existing["_id"]}, {"$unset": {"early_leave_request": ""}, "$set": {"updated_at": _now()}})
+    await _db.attendance.update_one(
+        {"_id": existing["_id"], "company_id": cid},
+        {"$unset": {"early_leave_request": ""}, "$set": {"updated_at": _now()}},
+    )
     return {"status": "success", "message": "Erken çıkış talebi iptal edildi."}
 
 
@@ -4202,14 +4288,17 @@ async def cancel_intraday_leave_request(request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Personel kartı bulunamadı.")
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="İptal edilecek bekleyen talep yok.")
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
-    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
     if not existing or (existing.get("intraday_leave_request") or {}).get("status") != "pending":
         raise HTTPException(status_code=404, detail="İptal edilecek bekleyen talep yok.")
     await _db.attendance.update_one(
-        {"_id": existing["_id"]},
+        {"_id": existing["_id"], "company_id": cid},
         {"$unset": {"intraday_leave_request": ""}, "$set": {"intraday_leave_approved": False, "updated_at": _now()}},
     )
     return {"status": "success", "message": "Gün içi izin talebi iptal edildi."}
@@ -4337,6 +4426,9 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
 @router.post("/personnel/attendance/{att_id}/confirm")
 async def confirm_attendance(att_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
     rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
+    cid = str(rec.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     emp = await employee_for_user(user)
     if user.get("role") != "admin" and (not emp or emp["_id"] != rec["employee_id"]):
         raise HTTPException(status_code=403, detail="Yalnızca kendi puantaj kaydınızı onaylayabilirsiniz.")
@@ -4355,8 +4447,8 @@ async def confirm_attendance(att_id: str, req: Dict[str, Any] = None, user: dict
         upd["dispute_resolution"] = "employee_confirmed"
         upd["dispute_resolved_at"] = _now()
         upd["dispute_resolved_by"] = str(user.get("_id") or user.get("id") or "")
-    await _db.attendance.update_one({"_id": att_id}, {"$set": upd})
-    return _clean(await _db.attendance.find_one({"_id": att_id}))
+    await _db.attendance.update_one({"_id": att_id, "company_id": cid}, {"$set": upd})
+    return _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
 
 
 @router.post("/personnel/attendance/{att_id}/time-edit-decision")
@@ -4381,6 +4473,9 @@ async def decide_time_edit(att_id: str, req: Dict[str, Any], user: dict = Depend
 @router.post("/personnel/attendance/{att_id}/dispute")
 async def dispute_attendance(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
+    cid = str(rec.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     emp = await employee_for_user(user)
     if not emp or emp["_id"] != rec["employee_id"]:
         raise HTTPException(status_code=403, detail="Yalnızca kendi kaydınıza itiraz edebilirsiniz.")
@@ -4388,7 +4483,7 @@ async def dispute_attendance(att_id: str, req: Dict[str, Any], user: dict = Depe
     if not note:
         raise HTTPException(status_code=400, detail="İtiraz açıklaması gerekli.")
     await _db.attendance.update_one(
-        {"_id": att_id},
+        {"_id": att_id, "company_id": cid},
         {
             "$set": {
                 "employee_confirmed": False,
@@ -4405,7 +4500,7 @@ async def dispute_attendance(att_id: str, req: Dict[str, Any], user: dict = Depe
     import notify as _notify
     await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": rec["company_id"], "type": "attendance_dispute", "title": "Puantaj itirazı",
                                         "message": f"{rec.get('employee_name')} {rec.get('date')} kaydına itiraz etti: {note[:120]}", "link": "/personnel?tab=attendance", "is_read": False, "created_at": _now()})
-    return _clean(await _db.attendance.find_one({"_id": att_id}))
+    return _clean(await _db.attendance.find_one({"_id": att_id, "company_id": cid}))
 
 
 @router.post("/personnel/attendance/{att_id}/dispute-decision")
@@ -4522,7 +4617,7 @@ def approval_notify_link(ntype: str, ref_id: str = "", link: str = "") -> str:
 
 async def notify_managers(company_id: str, ntype: str, title: str, message: str, link: str = "/personnel?tab=attendance", dedupe_key: Optional[str] = None, ref_id: Optional[str] = None, ref_type: Optional[str] = None) -> dict:
     if dedupe_key:
-        if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}"}):
+        if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id}):
             return {"status": "duplicate", "mail": {"status": "skipped"}}
         await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
     import notify as _notify
@@ -4561,8 +4656,15 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
     return {"status": "sent", "mail": mail}
 
 
-async def _on_leave_today(emp_id: str, date: str) -> bool:
-    return bool(await _db.leave_requests.find_one({"employee_id": emp_id, "status": "approved", "start_date": {"$lte": date}, "end_date": {"$gte": date}}))
+async def _on_leave_today(emp_id: str, date: str, company_id: str) -> bool:
+    cid = str(company_id or "").strip()
+    return bool(await _db.leave_requests.find_one({
+        "employee_id": emp_id,
+        "company_id": cid,
+        "status": "approved",
+        "start_date": {"$lte": date},
+        "end_date": {"$gte": date},
+    }))
 
 
 async def run_missing_checkin_check(company_id: Optional[str] = None, force: bool = False) -> list:
@@ -4600,7 +4702,7 @@ async def run_missing_checkin_check(company_id: Optional[str] = None, force: boo
             rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
             if rec and (rec.get("check_in") or rec.get("status") in ("leave", "absent")):
                 continue
-            if await _on_leave_today(emp["_id"], today):
+            if await _on_leave_today(emp["_id"], today, cid):
                 continue
             missing.append(emp["full_name"])
         if missing:
@@ -4637,7 +4739,7 @@ async def run_auto_checkout_ot_check(company_id: Optional[str] = None) -> list:
             needs_retract = should_retract_auto_checkout(rec, end_hm=end_hm, now_hm=now_s)
             if not past_end and not needs_retract:
                 continue
-            if await _on_leave_today(emp["_id"], today):
+            if await _on_leave_today(emp["_id"], today, cid):
                 continue
             workplace = await workplace_for_employee(emp, company)
             lt = normalize_location_tracking(emp.get("location_tracking"))
@@ -4735,14 +4837,17 @@ async def put_reminder_prefs(req: Dict[str, Any], request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
     upd = {}
     for key in ("notify_checkin_reminder", "notify_checkout_reminder"):
         if key in (req or {}):
             upd[key] = attendance_security.optional_bool(req.get(key))
     if upd:
-        await _db.employees.update_one({"_id": emp["_id"]}, {"$set": upd})
+        await _db.employees.update_one({"_id": emp["_id"], "company_id": cid}, {"$set": upd})
         emp = {**emp, **upd}
-    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    company = await _db.companies.find_one({"_id": cid}) or {}
     return {"status": "success", **attendance_security.prefs_view(merge_schedule(company, emp), emp)}
 
 
@@ -4760,11 +4865,13 @@ async def approve_attendance_device(row_id: str, request: Request):
     user = await _current_user(request)
     if not attendance_security.manager_user(user):
         raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
-    row = await _db.attendance_devices.find_one({"_id": row_id}) or {}
-    company_id = tenant_access.resolve_company_id(user, row.get("company_id"))
-    if row and row.get("company_id") != company_id:
+    cid = str(tenant_access.resolve_company_id(user) or "").strip()
+    if not cid:
         raise HTTPException(status_code=404, detail="Cihaz kaydı bulunamadı.")
-    result = await attendance_security.approve_device(_db, company_id, row_id, user.get("_id") or user.get("id") or "")
+    row = await _db.attendance_devices.find_one({"_id": row_id, "company_id": cid}) or {}
+    if not row or row.get("company_id") != cid:
+        raise HTTPException(status_code=404, detail="Cihaz kaydı bulunamadı.")
+    result = await attendance_security.approve_device(_db, cid, row_id, user.get("_id") or user.get("id") or "")
     if not result["ok"]:
         raise HTTPException(status_code=result["status"], detail=result["detail"])
     return {"status": "success", "message": result["detail"]}
@@ -4855,11 +4962,17 @@ async def put_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     saved = 0
     warnings = []
     for it in items:
-        emp = await _db.employees.find_one({"_id": it.get("employee_id")})
+        emp = await _db.employees.find_one({"_id": it.get("employee_id"), "company_id": company_id})
         if not emp:
             raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
         if not it.get("off") and it.get("date"):
-            lv = await _db.leave_requests.find_one({"employee_id": emp["_id"], "status": "approved", "start_date": {"$lte": it["date"]}, "end_date": {"$gte": it["date"]}})
+            lv = await _db.leave_requests.find_one({
+                "employee_id": emp["_id"],
+                "company_id": company_id,
+                "status": "approved",
+                "start_date": {"$lte": it["date"]},
+                "end_date": {"$gte": it["date"]},
+            })
             if lv:
                 warnings.append(f"{emp['full_name']} {it['date']} tarihinde onaylı {LEAVE_TYPES.get(lv.get('type'), '')} izinli — vardiya çakışıyor.")
         try:
@@ -4876,7 +4989,11 @@ async def put_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep)):
             doc["break_minutes"] = max(0, int(it.get("break_minutes") if it.get("break_minutes") not in (None, "") else 60))
         else:
             doc.update({"start": None, "end": None, "break_minutes": 0})
-        await _db.shift_plans.update_one({"employee_id": emp["_id"], "date": it["date"]}, {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
+        await _db.shift_plans.update_one(
+            {"employee_id": emp["_id"], "date": it["date"], "company_id": company_id},
+            {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}},
+            upsert=True,
+        )
         saved += 1
     return {"status": "success", "saved": saved, "warnings": warnings, "message": f"{saved} vardiya kaydedildi." + (f" Uyarı: {warnings[0]}" if warnings else "")}
 
@@ -4900,7 +5017,11 @@ async def copy_week(req: Dict[str, Any], user: dict = Depends(_user_dep)):
         nd = dst[src.index(p["date"])]
         doc = {k: v for k, v in p.items() if k not in ("_id", "created_at")}
         doc.update({"date": nd, "updated_at": _now()})
-        await _db.shift_plans.update_one({"employee_id": p["employee_id"], "date": nd}, {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
+        await _db.shift_plans.update_one(
+            {"employee_id": p["employee_id"], "date": nd, "company_id": company_id},
+            {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}},
+            upsert=True,
+        )
         n += 1
     return {"status": "success", "copied": n, "message": f"{n} vardiya {dst[0]} haftasına kopyalandı."}
 
@@ -4912,25 +5033,29 @@ async def copy_week(req: Dict[str, Any], user: dict = Depends(_user_dep)):
 async def employee_puantaj(emp_id: str, month: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Personel kartı Puantaj sekmesi: ay günleri (giriş/çıkış/mesai/izin) + özet + izin yılı."""
     emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
-    company = await _db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, emp)
     month = (month or _today(schedule))[:7]
     if len(month) != 7 or month[4] != "-":
         raise HTTPException(status_code=400, detail="Ay YYYY-AA formatında olmalı.")
-    rows = await _db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
+    rows = await _db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}, "company_id": cid}).to_list(100)
     leaves = await _db.leave_requests.find({
         "employee_id": emp_id,
+        "company_id": cid,
         "status": "approved",
         "start_date": {"$lte": f"{month}-31"},
         "end_date": {"$gte": f"{month}-01"},
     }).to_list(200)
     days = build_employee_month_days(month, rows, leaves, schedule, emp.get("start_date"), emp.get("end_date"))
     wage_info = enrich_puantaj_day_wages(days, rows, emp, schedule)
-    all_leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
+    all_leaves = await _db.leave_requests.find({"employee_id": emp_id, "company_id": cid}).to_list(500)
     bal = compute_leave_balance(emp, all_leaves)
     if abs(float(emp.get("used_leave_days") or 0) - float(bal["used"])) > 0.001:
-        await _db.employees.update_one({"_id": emp_id}, {"$set": {"used_leave_days": bal["used"]}})
-    archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(20)
+        await _db.employees.update_one({"_id": emp_id, "company_id": cid}, {"$set": {"used_leave_days": bal["used"]}})
+    archives = await _db.leave_year_archives.find({"employee_id": emp_id, "company_id": cid}).sort("year", -1).to_list(20)
     # Giriş/çıkış dışı personelde özet, sanal planlanan günlerden hesaplanır.
     summary_rows = rows
     if employee_skips_check_in(emp):
@@ -4964,8 +5089,11 @@ async def employee_puantaj(emp_id: str, month: Optional[str] = None, user: dict 
 @router.get("/personnel/employees/{emp_id}/leave-years")
 async def list_leave_years(emp_id: str, user: dict = Depends(_user_dep)):
     emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
-    leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
-    archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(50)
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    leaves = await _db.leave_requests.find({"employee_id": emp_id, "company_id": cid}).to_list(500)
+    archives = await _db.leave_year_archives.find({"employee_id": emp_id, "company_id": cid}).sort("year", -1).to_list(50)
     return {"current": compute_leave_balance(emp, leaves), "archives": [_clean(a) for a in archives]}
 
 
@@ -5030,7 +5158,10 @@ async def my_leaves(request: Request):
     emp = await employee_for_user(user)
     if not emp:
         return {"employee": None, "leaves": [], "balance": None}
-    leaves = await _db.leave_requests.find({"employee_id": emp["_id"]}).sort("created_at", -1).to_list(100)
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
+        return {"employee": None, "leaves": [], "balance": None}
+    leaves = await _db.leave_requests.find({"employee_id": emp["_id"], "company_id": cid}).sort("created_at", -1).to_list(100)
     bal = compute_leave_balance(emp, leaves)
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"]}, "leaves": [_clean(l) for l in leaves], "types": LEAVE_TYPES,
             "balance": bal}
@@ -5118,7 +5249,10 @@ async def cancel_my_advance(bonus_id: str, user: dict = Depends(_user_dep)):
         raise HTTPException(status_code=404, detail="Avans talebi bulunamadı.")
     if rec.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Yalnızca bekleyen talepler iptal edilebilir.")
-    await _db.bonus_payments.delete_one({"_id": bonus_id})
+    cid = str(rec.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="Avans talebi bulunamadı.")
+    await _db.bonus_payments.delete_one({"_id": bonus_id, "company_id": cid})
     return {"status": "success", "message": "Avans talebi iptal edildi."}
 
 
@@ -5127,6 +5261,9 @@ async def create_my_leave(req: Dict[str, Any], request: Request):
     user = await _current_user(request)
     emp = await employee_for_user(user)
     if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
+    cid = str(emp.get("company_id") or "").strip()
+    if not cid:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil.")
     try:
         start = datetime.strptime(req.get("start_date") or "", "%Y-%m-%d")
@@ -5141,11 +5278,17 @@ async def create_my_leave(req: Dict[str, Any], request: Request):
     days = float(req.get("days") or ((end - start).days + 1))
     if days <= 0:
         raise HTTPException(status_code=400, detail="Gün sayısı sıfırdan büyük olmalı.")
-    overlap = await _db.leave_requests.find_one({"employee_id": emp["_id"], "status": {"$in": ["pending", "approved"]}, "start_date": {"$lte": req["end_date"]}, "end_date": {"$gte": req["start_date"]}})
+    overlap = await _db.leave_requests.find_one({
+        "employee_id": emp["_id"],
+        "company_id": cid,
+        "status": {"$in": ["pending", "approved"]},
+        "start_date": {"$lte": req["end_date"]},
+        "end_date": {"$gte": req["start_date"]},
+    })
     if overlap:
         raise HTTPException(status_code=400, detail=f"Bu tarihlerle çakışan bir izin talebiniz var ({overlap['start_date']} → {overlap['end_date']}).")
     if leave_type == "annual":
-        existing = await _db.leave_requests.find({"employee_id": emp["_id"]}).to_list(500)
+        existing = await _db.leave_requests.find({"employee_id": emp["_id"], "company_id": cid}).to_list(500)
         bal = compute_leave_balance(emp, existing)
         if days > bal["available"] + 1e-9:
             raise HTTPException(
@@ -5153,11 +5296,11 @@ async def create_my_leave(req: Dict[str, Any], request: Request):
                 detail=f"Yetersiz yıllık izin bakiyesi. Kullanılabilir: {bal['available']:g} gün"
                 + (" (bekleyen talepler düşülmüştür)." if bal["pending_days"] else "."),
             )
-    doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": leave_type,
+    doc = {"_id": str(uuid.uuid4()), "company_id": cid, "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": leave_type,
            "start_date": req["start_date"], "end_date": req["end_date"], "days": days, "reason": (req.get("reason") or "")[:300], "status": "pending", "source": "self",
            "decided_at": None, "created_at": _now()}
     await _db.leave_requests.insert_one(doc)
-    await notify_managers(emp["company_id"], "leave_request", f"İzin talebi: {emp['full_name']}", f"{emp['full_name']} {LEAVE_TYPES[leave_type].lower()} izin talep etti: {req['start_date']} → {req['end_date']} ({days:g} gün). {doc['reason']}".strip(), link=f"/personnel?tab=leaves&leave={doc['_id']}", ref_id=doc["_id"], ref_type="leave_request")
+    await notify_managers(cid, "leave_request", f"İzin talebi: {emp['full_name']}", f"{emp['full_name']} {LEAVE_TYPES[leave_type].lower()} izin talep etti: {req['start_date']} → {req['end_date']} ({days:g} gün). {doc['reason']}".strip(), link=f"/personnel?tab=leaves&leave={doc['_id']}", ref_id=doc["_id"], ref_type="leave_request")
     return _clean(doc)
 
 
@@ -5169,7 +5312,10 @@ async def cancel_my_leave(leave_id: str, user: dict = Depends(_user_dep)):
         raise HTTPException(status_code=404, detail="İzin talebi bulunamadı.")
     if leave.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Yalnızca bekleyen talepler iptal edilebilir.")
-    await _db.leave_requests.delete_one({"_id": leave_id})
+    cid = str(leave.get("company_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=404, detail="İzin talebi bulunamadı.")
+    await _db.leave_requests.delete_one({"_id": leave_id, "company_id": cid})
     return {"status": "success"}
 
 
@@ -5223,7 +5369,7 @@ async def bulk_assign_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep
     """Bir şablonu departmanın (veya seçili personelin) tüm haftasına tek seferde uygula."""
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     dates = _week_dates(req.get("week_start") or _today())
-    days = _clean_template_days(req.get("days") or (await _db.shift_templates.find_one({"_id": req.get("template_id")}) or {}).get("days"))
+    days = _clean_template_days(req.get("days") or (await _db.shift_templates.find_one({"_id": req.get("template_id"), "company_id": company_id}) or {}).get("days"))
     q: Dict[str, Any] = {"company_id": company_id, "status": "active"}
     if req.get("employee_ids"):
         q["_id"] = {"$in": list(req["employee_ids"])}
@@ -5240,11 +5386,17 @@ async def bulk_assign_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep
             tpl = days.get(str(i))
             if not tpl:
                 continue
-            existing = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": d})
+            existing = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": d, "company_id": company_id})
             if existing and not overwrite:
                 skipped_existing += 1
                 continue
-            lv = await _db.leave_requests.find_one({"employee_id": emp["_id"], "status": "approved", "start_date": {"$lte": d}, "end_date": {"$gte": d}})
+            lv = await _db.leave_requests.find_one({
+                "employee_id": emp["_id"],
+                "company_id": company_id,
+                "status": "approved",
+                "start_date": {"$lte": d},
+                "end_date": {"$gte": d},
+            })
             if lv and not tpl.get("off"):
                 if skip_leave:
                     skipped_leave += 1
@@ -5253,7 +5405,11 @@ async def bulk_assign_shifts(req: Dict[str, Any], user: dict = Depends(_user_dep
             doc = {"company_id": company_id, "employee_id": emp["_id"], "employee_name": emp["full_name"], "date": d, "off": bool(tpl.get("off")),
                    "start": None if tpl.get("off") else tpl["start"], "end": None if tpl.get("off") else tpl["end"], "break_minutes": 0 if tpl.get("off") else tpl["break_minutes"],
                    "note": (req.get("note") or "")[:200], "source": "bulk", "updated_at": _now()}
-            await _db.shift_plans.update_one({"employee_id": emp["_id"], "date": d}, {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
+            await _db.shift_plans.update_one(
+                {"employee_id": emp["_id"], "date": d, "company_id": company_id},
+                {"$set": doc, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}},
+                upsert=True,
+            )
             saved += 1
     msg = f"{len(emps)} personel için {saved} vardiya atandı."
     if skipped_leave:
