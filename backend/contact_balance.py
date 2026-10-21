@@ -147,11 +147,14 @@ async def sync_contact_balance(db, contact_id: str, *, company_id: str) -> Tuple
     invoices = await db.invoices.find({"company_id": company_id, "contact_id": contact_id}).to_list(5000)
     bank_txs = await db.bank_transactions.find({"company_id": company_id, "contact_id": contact_id}).to_list(5000)
     partner_txs = await db.partner_transactions.find({"company_id": company_id, "contact_id": contact_id}).to_list(2000)
+    # Satırı olmayan geçmiş ciro, önceden yazılmış $inc ile aynı işaret. Veritabanına yazılmaz.
+    implied = await _implied_endorsement_movements(db, contact_id, company_id, bank_txs)
+    counted_txs = list(bank_txs or []) + list(implied or [])
 
     movement = compute_contact_balance(
         opening_balance=0.0,
         invoices=invoices,
-        bank_txs=bank_txs,
+        bank_txs=counted_txs,
         partner_txs=partner_txs,
     )
     stored = _num(contact.get("balance"))
@@ -167,7 +170,7 @@ async def sync_contact_balance(db, contact_id: str, *, company_id: str) -> Tuple
     live = compute_contact_balance(
         opening_balance=opening,
         invoices=invoices,
-        bank_txs=bank_txs,
+        bank_txs=counted_txs,
         partner_txs=partner_txs,
     )
     meta = {
@@ -184,3 +187,10 @@ async def sync_contact_balance(db, contact_id: str, *, company_id: str) -> Tuple
             {"$set": {"balance": live, "balance_synced_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}},
         )
     return live, meta
+
+
+async def _implied_endorsement_movements(db, contact_id: str, company_id: str, bank_txs):
+    """Eksik ciro satırını yalnız bakiyede say. Kayıt eklemez."""
+    import cheques
+
+    return await cheques.missing_endorsement_movements(db, contact_id, company_id, bank_txs)

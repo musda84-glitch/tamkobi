@@ -5227,7 +5227,10 @@ async def get_contact_statement(contact_id: str, user: dict = Depends(get_curren
     cid = contact["company_id"]
     invoices = await db.invoices.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
     payments = await db.bank_transactions.find({"company_id": cid, "contact_id": contact_id}).to_list(100)
-    
+    payments = await cheques.payments_with_endorsement_virtuals(
+        db, payments, contact_id=contact_id, company_id=cid,
+    )
+
     return {
         "contact": clean_doc(contact),
         "invoices": clean_docs(invoices),
@@ -5241,6 +5244,11 @@ async def _statement_bundle(contact_id: str):
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
     invoices = await db.invoices.find({"contact_id": contact_id}).to_list(200)
     payments = await db.bank_transactions.find({"contact_id": contact_id}).to_list(200)
+    bundle_cid = str(contact.get("company_id") or "").strip()
+    if bundle_cid:
+        payments = await cheques.payments_with_endorsement_virtuals(
+            db, payments, contact_id=contact_id, company_id=bundle_cid,
+        )
     company = await db.companies.find_one({"_id": contact.get("company_id")}) or {}
     rows = statement_share.statement_rows(invoices, payments)
     return contact, statement_share.public_statement_view(contact, company, rows)
@@ -7405,6 +7413,9 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
         expense_bank_txs=expense_txs,
         invoices=invoices,
     )
+    payments = await cheques.payments_with_endorsement_virtuals(
+        db, payments, contact_id=contact_id, company_id=cid,
+    )
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
     orders = await db.orders.find({
         "company_id": contact["company_id"],
@@ -7424,8 +7435,9 @@ async def get_contact_overview(contact_id: str, user: dict = Depends(get_current
     wa = await db.whatsapp_logs.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     quotes = await db.quotes.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"company_id": cid, "contact_id": contact_id}).sort("created_at", -1).to_list(100)
-    cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"company_id": cid, "contact_id": contact_id}).sort("due_date", 1).to_list(200)]
-    live_cheque = cheques.open_portfolio_balance(cheques_rows)
+    cheque_today = cheques._today()
+    cheques_rows = await cheques.fetch_contact_cheques(db, contact_id, cid)
+    live_cheque = cheques.open_portfolio_balance(cheques_rows, cheque_today)
     if abs(float(contact.get("cheque_bond_balance") or 0) - live_cheque) > 0.005:
         # BizimHesap chequeandbond snapshot'ı (ör. ERSAY 177.924,83) gerçek portföy değilse sıfırla.
         await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": {"cheque_bond_balance": live_cheque}})
