@@ -196,6 +196,23 @@ async def pause_policy_for_employee(
     return resolve_pause_phase(schedule=sch, rec=rec, date=day, plan=plan, now_hm=now_hm)
 
 
+def work_order_matches_employee(row, emp) -> bool:
+    """Önce operator_employee_id. Yoksa operatör veya atanan ad.
+
+    Başka personelin employee_id'si yazılıysa aynı isim eşleşmez.
+    """
+    eid = str((emp or {}).get("_id") or "").strip()
+    name = str((emp or {}).get("full_name") or "").strip()
+    row_eid = str((row or {}).get("operator_employee_id") or "").strip()
+    if row_eid:
+        return bool(eid) and row_eid == eid
+    if not name:
+        return False
+    if str((row or {}).get("operator_name") or "").strip() == name:
+        return True
+    return str((row or {}).get("assigned_name") or "").strip() == name
+
+
 async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
     """Mesai bitiş + çıkış toleransı geçen operatörlerin devam eden iş emirlerini duraklat."""
     from datetime import datetime, timezone
@@ -223,15 +240,21 @@ async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
             if not should_auto_pause_now(schedule=sch, rec=rec, date=today, plan=plan, now_hm=now_s):
                 continue
             name = str(emp.get("full_name") or "").strip()
-            if not name:
+            eid = str(emp.get("_id") or "").strip()
+            if not name and not eid:
                 continue
             wos = await db.work_orders.find(
                 {
                     "company_id": company["_id"],
                     "status": "in_progress",
-                    "$or": [{"operator_name": name}, {"assigned_name": name}],
+                    "$or": [
+                        {"operator_employee_id": eid},
+                        {"operator_name": name},
+                        {"assigned_name": name},
+                    ],
                 }
             ).to_list(200)
+            wos = [row for row in wos if work_order_matches_employee(row, emp)]
             if not wos:
                 continue
             now_iso = datetime.now(timezone.utc).isoformat()

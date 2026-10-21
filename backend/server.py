@@ -110,6 +110,13 @@ import tenant_access
 import shopfloor_accounts
 import shopfloor_pin
 import shopfloor_devices
+import shopfloor_settings
+import shopfloor_takeover
+import shopfloor_scrap
+import shopfloor_undo
+import shopfloor_partial
+import shopfloor_queue
+import shopfloor_drawing
 from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
@@ -23540,8 +23547,15 @@ async def shopfloor_unlock(req: Dict[str, Any], user: dict = Depends(get_current
 @api_router.get("/production/work-orders/shopfloor-settings")
 async def get_shopfloor_settings(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
-    c = await db.companies.find_one({"_id": cid}, {"shopfloor_group_same_station": 1}) or {}
-    return {"group_same_station": bool(c.get("shopfloor_group_same_station"))}
+    c = await db.companies.find_one({"_id": cid}, {
+        "shopfloor_group_same_station": 1,
+        "shopfloor_idle_lock_minutes": 1,
+        "shopfloor_undo_finish_minutes": 1,
+        "shopfloor_scrap_reasons": 1,
+        "shopfloor_scrap_reason_required": 1,
+        "shopfloor_takeover_confirm": 1,
+    }) or {}
+    return shopfloor_settings.public_from_company(c)
 
 
 async def _apply_shopfloor_station_grouping(company_id: str, enabled: bool) -> int:
@@ -23586,15 +23600,27 @@ async def put_shopfloor_settings(req: Dict[str, Any] = None, user: Any = Depends
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     enabled = bool(req.get("group_same_station"))
+    try:
+        extra = shopfloor_settings.parse_updates(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    sets = {"shopfloor_group_same_station": enabled}
+    sets.update(extra)
     await db.companies.update_one(
         {"_id": company_id},
-        {"$set": {"shopfloor_group_same_station": enabled}},
+        {"$set": sets},
     )
     regrouped = await _apply_shopfloor_station_grouping(company_id, enabled)
+    screen = shopfloor_settings.public_from_company({**c, **sets})
     return {
         "status": "success",
         "group_same_station": enabled,
         "regrouped_orders": regrouped,
+        "idle_lock_minutes": screen["idle_lock_minutes"],
+        "undo_finish_minutes": screen["undo_finish_minutes"],
+        "scrap_reasons": screen["scrap_reasons"],
+        "scrap_reason_required": screen["scrap_reason_required"],
+        "takeover_confirm": screen["takeover_confirm"],
         "message": (
             "Peşi sıra istasyon sıralaması açıldı." if enabled else "Peşi sıra istasyon sıralaması kapatıldı."
         ) + (f" {regrouped} üretim emrinde kalan adımlar güncellendi." if regrouped else ""),
@@ -23650,19 +23676,29 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None, request: Requ
         raise HTTPException(status_code=400, detail="Operatör seçin.")
     # Başlatan personel bitirmeden/duraklatmadan başka istasyonda iş açamaz; başka personel serbest.
     import shopfloor_operators as sfo
+    active_or = [{"operator_name": str(who)}]
+    active_eid = shopfloor_takeover.employee_id_of(who)
+    if active_eid:
+        active_or.append({"operator_employee_id": active_eid})
     active = await db.work_orders.find(
         {
             "company_id": w.get("company_id"),
-            "operator_name": who,
             "status": "in_progress",
             "_id": {"$ne": wo_id},
+            "$or": active_or,
         },
-        {"station": 1, "order_code": 1, "step_no": 1, "operator_name": 1, "status": 1},
+        {"station": 1, "order_code": 1, "step_no": 1, "operator_name": 1, "operator_employee_id": 1, "status": 1},
     ).to_list(50)
-    blocker = sfo.operator_active_station_blocker(active, who, w.get("station"), exclude_wo_id=wo_id)
+    blocker = sfo.operator_active_station_blocker(
+        active, who, w.get("station"), exclude_wo_id=wo_id,
+        operator_employee_id=shopfloor_takeover.employee_id_of(who),
+    )
     if blocker:
         raise HTTPException(status_code=400, detail=sfo.operator_station_lock_detail(blocker, who))
+    decision = await shopfloor_takeover.decide(db, w, who, req, user)
+    shopfloor_takeover.raise_if_blocked(decision)
     upd: Dict[str, Any] = {"status": "in_progress", "operator_name": who}
+    upd.update(shopfloor_takeover.operator_patch(who))
     if w["status"] in ("ready", "waiting"):
         upd["started_at"] = datetime.now(timezone.utc).isoformat()
         log_action = "start"
@@ -23671,19 +23707,31 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None, request: Requ
         upd["paused_at"] = None
         log_action = "resume"
     cid = str(w.get("company_id") or "").strip()
-    await db.work_orders.update_one({"_id": wo_id, "company_id": cid}, {"$set": upd, "$push": {"logs": _log(w, log_action, who)}})
+    start_note = shopfloor_takeover.log_note(decision, who, user) if decision.get("record") else ""
+    await db.work_orders.update_one({"_id": wo_id, "company_id": cid}, {"$set": upd, "$push": {"logs": _log(w, log_action, who, start_note)}})
+    if decision.get("record"):
+        await db.work_orders.update_one(
+            {"_id": wo_id, "company_id": cid},
+            {"$push": {"logs": _log(w, "takeover", who, start_note)}},
+        )
+        await shopfloor_takeover.audit(cid, w, who, decision, user)
     await shopfloor_pin.record_wo_action(user, w, who)
     await db.production_orders.update_one({"_id": w["order_id"], "status": "planned", "company_id": cid}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     refreshed = await db.work_orders.find_one({"_id": wo_id, "company_id": cid})
     out: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} başlatıldı."}
+    if decision.get("flag"):
+        out["takeover"] = True
+        out["previous_operator"] = decision.get("previous_operator")
+        out["last_action_at"] = decision.get("last_action_at")
     if refreshed:
         out["work_order"] = clean_doc(refreshed)
     return out
 
-async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] = None) -> Dict[str, Any]:
-    """Operatör adına göre mesai/mola/OT Duraklat politikası."""
+async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] = None, employee_id: Optional[str] = None) -> Dict[str, Any]:
+    """Operatör employee_id, yoksa adına göre mesai/mola/OT Duraklat politikası."""
     name = str(operator_name or "").strip()
-    if not name:
+    eid = str(employee_id or "").strip()
+    if not name and not eid:
         return {
             "allowed": False,
             "phase": "outside",
@@ -23691,9 +23739,15 @@ async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] 
             "operator_name": None,
         }
     company = await db.companies.find_one({"_id": company_id}) or {}
-    emp = await db.employees.find_one({"company_id": company_id, "full_name": name, "status": "active"})
-    if not emp:
-        emp = await db.employees.find_one({"company_id": company_id, "full_name": name})
+    emp = None
+    if eid:
+        emp = await db.employees.find_one({"_id": eid, "company_id": company_id, "status": "active"})
+        if not emp:
+            emp = await db.employees.find_one({"_id": eid, "company_id": company_id})
+    if not emp and name:
+        emp = await db.employees.find_one({"company_id": company_id, "full_name": name, "status": "active"})
+        if not emp:
+            emp = await db.employees.find_one({"company_id": company_id, "full_name": name})
     if emp:
         policy = await sfp.pause_policy_for_employee(emp, company)
     else:
@@ -23714,7 +23768,8 @@ async def get_pause_policy(company_id: Optional[str] = None, operator_name: Opti
         who = await shopfloor_pin.caller_display_name(user)
     else:
         who = str(operator_name or "").strip()
-    policy = await _shopfloor_pause_policy(cid, who)
+    policy_eid = shopfloor_takeover.employee_id_of(who)
+    policy = await _shopfloor_pause_policy(cid, str(who or ""), policy_eid)
     if not shopfloor_accounts.is_atolye_user(user):
         return policy
     operator = str(who or "").strip()
@@ -23747,13 +23802,15 @@ async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, request: Requ
     _pause_cid = str(w.get("company_id") or "").strip()
     if not _pause_cid:
         raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
-    policy = await _shopfloor_pause_policy(_pause_cid, who)
+    policy = await _shopfloor_pause_policy(_pause_cid, who, shopfloor_takeover.employee_id_of(who))
     if not policy.get("allowed"):
         raise HTTPException(status_code=400, detail=policy.get("reason") or sfp.PAUSE_OUTSIDE_DETAIL)
+    pause_set = {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat(), "auto_paused": False}
+    pause_set.update(shopfloor_takeover.operator_patch(who))
     await db.work_orders.update_one(
         {"_id": wo_id, "company_id": _pause_cid},
         {
-            "$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat(), "auto_paused": False},
+            "$set": pause_set,
             "$push": {"logs": _log(w, "pause", who, req.get("reason", ""))},
         },
     )
@@ -23776,6 +23833,8 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
         }
     if w["status"] not in ("in_progress", "paused"):
         raise HTTPException(status_code=400, detail="Sadece başlatılmış adım bitirilebilir.")
+    undo_before = shopfloor_undo.capture_before(w)
+    finish_movements: list = []
     cid = str(w.get("company_id") or "").strip()
     # DB satırında materials yok; reçeteden kalem ihtiyacını yükle (16 Metre vb.).
     finish_mats = list(w.get("materials") or [])
@@ -23822,7 +23881,13 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
     finish_plan = pwo.resolve_work_order_finish_plan(w, finish_mats)
     default_qty = finish_plan["qty"] if finish_plan["qty"] else float(w.get("planned_quantity", 0) or 0)
     finish_unit = str(finish_plan.get("unit") or w.get("unit") or "Adet").strip() or "Adet"
-    produced = float(req.get("produced_qty") if req.get("produced_qty") is not None else default_qty)
+    partial_total = shopfloor_partial.total_of(w)
+    if req.get("produced_qty") is not None:
+        produced = float(req.get("produced_qty"))
+    elif partial_total > 0:
+        produced = partial_total
+    else:
+        produced = float(default_qty)
     scrap = float(req.get("scrap_qty") or 0)
     if produced < 0 or scrap < 0:
         raise HTTPException(status_code=400, detail="Miktar negatif olamaz.")
@@ -23830,6 +23895,14 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
     if pwo.is_discrete_unit(finish_unit):
         produced = pwo.round_needed_qty(produced, finish_unit)
         scrap = pwo.round_needed_qty(scrap, finish_unit) if scrap else 0.0
+    scrap_info = await shopfloor_scrap.enforce(db, cid, req, scrap, user)
+    if scrap_info.get("scrap_reason_code"):
+        req = {
+            **req,
+            "scrap_reason_code": scrap_info.get("scrap_reason_code") or "",
+            "scrap_reason_label": scrap_info.get("scrap_reason_label") or "",
+            "scrap_reason_note": scrap_info.get("scrap_reason_note") or "",
+        }
     planned_q = float(finish_plan["qty"] or w.get("planned_quantity", 0) or 0)
     is_material_step = bool(finish_plan.get("is_material"))
     over = planned_q > 0 and produced + scrap > planned_q + 1e-9
@@ -23872,7 +23945,8 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
     if is_material_step and mat_pid and mat_consume > 0:
         mat_prod = await db.products.find_one({"_id": mat_pid, "company_id": cid}, {"name": 1, "company_id": 1}) or {}
         await db.products.update_one({"_id": mat_pid, "company_id": cid}, {"$inc": {"stock_quantity": -mat_consume}})
-        await db.stock_movements.insert_one({
+        material_move = {
+            **shopfloor_scrap.movement_fields(req),
             "_id": str(uuid.uuid4()),
             "company_id": mat_prod.get("company_id") or w.get("company_id"),
             "product_id": mat_pid,
@@ -23882,7 +23956,9 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
             "date": datetime.now(timezone.utc).isoformat(),
             "work_order_id": wo_id,
             "order_id": w.get("order_id"),
-        })
+        }
+        finish_movements.append(material_move)
+        await db.stock_movements.insert_one(material_move)
         wo_patch["material_stock_deducted"] = True
         wo_patch["material_stock_qty"] = mat_consume
         wo_patch["material_stock_product_id"] = mat_pid
@@ -23893,8 +23969,12 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
         log_extra = " (plan altı)"
     if mat_consume > 0:
         log_extra += f"; stok -{mat_consume:g} {finish_unit}"
-    if str(who or "").strip():
-        wo_patch["operator_name"] = str(who).strip()
+    if scrap_info.get("scrap_reason_label"):
+        log_extra += f"; fire {scrap_info['scrap_reason_label']}"
+    if scrap_info:
+        wo_patch.update(scrap_info)
+    wo_patch.update(shopfloor_takeover.operator_patch(who))
+    wo_patch["finish_undo_snapshot"] = shopfloor_undo.build(undo_before, finish_movements)
     await db.work_orders.update_one(
         {"_id": wo_id, "company_id": cid},
         {"$set": wo_patch, "$push": {"logs": _log(w, "finish", who, f"{produced:g} üretildi, {scrap:g} fire{log_extra}")}},
@@ -23908,7 +23988,15 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
         msg_bits.append("Plan altı üretim kaydedildi.")
     if mat_consume > 0:
         msg_bits.append(f"Hammadde stoktan {mat_consume:g} {finish_unit} düşüldü.")
-    result: Dict[str, Any] = {"status": "success", "message": " ".join(msg_bits)}
+    result: Dict[str, Any] = {"status": "success", "message": " ".join(msg_bits), "suggested_good_qty": partial_total}
+    next_before = None
+    next_touched = False
+    order_before = None
+    order_touched = False
+    cost_updated = False
+    previous_purchase_price = None
+    finished_product_id = ""
+    recipe_deleted = False
     if nxt:
         nxt_status = str(nxt.get("status") or "")
         nxt_patch: Dict[str, Any] = {}
@@ -23919,6 +24007,12 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
             # Sonraki adımlar da fiili mamul miktarına hizalansın
             nxt_patch["planned_quantity"] = produced + scrap
         if nxt_patch:
+            next_before = {
+                "_id": nxt.get("_id"),
+                "status": nxt.get("status"),
+                "planned_quantity": nxt.get("planned_quantity"),
+            }
+            next_touched = True
             await db.work_orders.update_one({"_id": nxt["_id"], "company_id": cid}, {"$set": nxt_patch})
         if nxt_patch.get("status") == "ready":
             result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
@@ -23929,23 +24023,53 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
             # Mamul adımında girilen üretilen (+fire hammaddede tüketilir) stoğa yazılır.
             stock_qty = float(o.get("planned_quantity") or 0) if is_material_step else produced
             stock_scrap = 0.0 if is_material_step else scrap
-            try:
-                r = await _complete_production_order_core(
-                    w["order_id"],
-                    {
-                        "quantity": stock_qty,
-                        "scrap_qty": stock_scrap,
-                        "update_cost": bool(req.get("update_cost", False)),
-                        "allow_over": True,
-                        "force_close": True,
-                        "allow_zero": stock_qty <= 0,
-                    },
-                    user=user,
+            order_before = o
+            order_touched = True
+            finished_product_id = str(o.get("finished_product_id") or "")
+            cost_updated = bool(req.get("update_cost", False))
+            if cost_updated and finished_product_id:
+                prev_prod = await db.products.find_one(
+                    {"_id": finished_product_id, "company_id": cid},
+                    {"purchase_price": 1},
                 )
+                if isinstance(prev_prod, dict) and "purchase_price" in prev_prod:
+                    previous_purchase_price = prev_prod.get("purchase_price")
+            try:
+                core_req = {
+                    "quantity": stock_qty,
+                    "scrap_qty": stock_scrap,
+                    "update_cost": cost_updated,
+                    "allow_over": True,
+                    "force_close": True,
+                    "allow_zero": stock_qty <= 0,
+                }
+                if req.get("scrap_reason_code"):
+                    core_req["scrap_reason_code"] = req.get("scrap_reason_code")
+                    core_req["scrap_reason_label"] = req.get("scrap_reason_label") or ""
+                    core_req["scrap_reason_note"] = req.get("scrap_reason_note") or ""
+                r = await _complete_production_order_core(w["order_id"], core_req, user=user)
+                finish_movements.extend(r.get("stock_movements") or [])
+                recipe_deleted = bool(r.get("recipe_deleted"))
                 result["message"] += " " + r["message"]
                 result["order_completed"] = r["finished"]
             except HTTPException as e:
                 result["message"] += f" (Stok işlenemedi: {e.detail})"
+    sealed = shopfloor_undo.build(
+        undo_before,
+        finish_movements,
+        order_before=order_before,
+        order_touched=order_touched,
+        next_before=next_before,
+        next_touched=next_touched,
+        update_cost=cost_updated,
+        previous_purchase_price=previous_purchase_price,
+        finished_product_id=finished_product_id,
+        recipe_deleted=recipe_deleted,
+    )
+    await db.work_orders.update_one(
+        {"_id": wo_id, "company_id": cid},
+        {"$set": {"finish_undo_snapshot": sealed}},
+    )
     updated = await db.work_orders.find_one({"_id": wo_id, "company_id": cid})
     if updated:
         result["work_order"] = clean_doc(updated)
@@ -24360,6 +24484,7 @@ async def cancel_production_order(order_id: str, user: dict = Depends(get_curren
 
 async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = None, user: dict = None):
     req = req or {}
+    stock_rows: list = []
     p_order = await tenant_access.get_tenant_doc(db, "production_orders", order_id, user, not_found="Üretim emri bulunamadı.")
     if p_order.get("status") in ("completed", "cancelled"):
         raise HTTPException(status_code=400, detail="Bu üretim emri zaten kapanmış.")
@@ -24409,7 +24534,8 @@ async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = N
             if needed <= 0 or not pid:
                 continue
             await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -needed}})
-            await db.stock_movements.insert_one({
+            consume_move = {
+                **shopfloor_scrap.movement_fields(req),
                 "_id": str(uuid.uuid4()),
                 "company_id": p_order.get("company_id"),
                 "product_id": pid,
@@ -24418,14 +24544,17 @@ async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = N
                 "reason": f"Üretim tüketim: {p_order.get('order_code') or order_id}",
                 "date": datetime.now(timezone.utc).isoformat(),
                 "order_id": order_id,
-            })
+            }
+            stock_rows.append(consume_move)
+            await db.stock_movements.insert_one(consume_move)
             consumed.append({"product_name": row["product_name"], "quantity": needed, "unit": row["unit"]})
         unit_cost = _recipe_costs(recipe)["unit_cost"]
         if unit_cost and req.get("update_cost", False):
             await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$set": {"purchase_price": unit_cost}})
     if qty > 0 and p_order.get("finished_product_id"):
         await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$inc": {"stock_quantity": qty}})
-        await db.stock_movements.insert_one({
+        finished_move = {
+            **shopfloor_scrap.movement_fields(req),
             "_id": str(uuid.uuid4()),
             "company_id": p_order.get("company_id"),
             "product_id": p_order.get("finished_product_id"),
@@ -24434,7 +24563,9 @@ async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = N
             "reason": f"Üretim mamul: {p_order.get('order_code') or order_id}",
             "date": datetime.now(timezone.utc).isoformat(),
             "order_id": order_id,
-        })
+        }
+        stock_rows.append(finished_move)
+        await db.stock_movements.insert_one(finished_move)
     new_done = round(done_before + qty, 3)
     finished = force_close or new_done >= planned - 1e-9
     po_set: Dict[str, Any] = {
@@ -24470,7 +24601,14 @@ async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = N
     msg = f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}{under_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")
     if recipe_deleted:
         msg += " Tek seferlik reçete silindi."
-    return {"status": "success", "finished": finished, "consumed": consumed, "recipe_deleted": recipe_deleted, "message": msg}
+    return {
+        "status": "success",
+        "finished": finished,
+        "consumed": consumed,
+        "recipe_deleted": recipe_deleted,
+        "message": msg,
+        "stock_movements": stock_rows,
+    }
 
 @api_router.post("/production/orders/{order_id}/complete")
 async def complete_production_order(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
@@ -26783,6 +26921,10 @@ rbac.init(db, _mail_account, get_current_user)
 shopfloor_accounts.init(db, get_current_user)
 shopfloor_pin.init(db, get_current_user)
 shopfloor_devices.init(db, get_current_user)
+shopfloor_queue.init(db, get_current_user)
+shopfloor_partial.init(db, get_current_user)
+shopfloor_undo.init(db, get_current_user)
+shopfloor_drawing.init(db, get_current_user)
 mesaim_gate.init(db)
 company_audit.init(db, get_current_user)
 import tenant_db
@@ -27043,6 +27185,10 @@ app.include_router(rbac.router)
 app.include_router(shopfloor_accounts.router)
 app.include_router(shopfloor_pin.router)
 app.include_router(shopfloor_devices.router)
+app.include_router(shopfloor_queue.router)
+app.include_router(shopfloor_partial.router)
+app.include_router(shopfloor_undo.router)
+app.include_router(shopfloor_drawing.router)
 app.include_router(company_audit.router)
 app.include_router(pos_cashier.router)
 app.include_router(desktop_release.router)
