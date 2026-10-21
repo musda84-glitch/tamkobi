@@ -26,7 +26,6 @@ ALLOWED_TYPES = frozenset({
     "image/png",
     "image/jpeg",
     "image/webp",
-    "image/svg+xml",
 })
 _EXT = {
     "pdf": "application/pdf",
@@ -34,7 +33,6 @@ _EXT = {
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
     "webp": "image/webp",
-    "svg": "image/svg+xml",
 }
 
 
@@ -80,6 +78,32 @@ def safe_storage_path(path: Any) -> str:
     if not norm or ".." in norm.split("/"):
         return ""
     return norm
+
+
+def is_active_svg(media: Any, path: Any, data: Any = None) -> bool:
+    """SVG, tarayıcıda betik çalıştırabilir. İmzalı indirmede etkin içerik sayılmaz."""
+    ctype = str(media or "").split(";")[0].strip().lower()
+    if ctype == "image/svg+xml":
+        return True
+    clean = str(path or "").split("?", 1)[0].strip().lower()
+    if clean.endswith(".svg"):
+        return True
+    blob = bytes(data[:800]) if isinstance(data, (bytes, bytearray)) else b""
+    head = blob.lstrip().lower()
+    if head.startswith(b"<svg"):
+        return True
+    if head.startswith(b"<?xml") and b"<svg" in head:
+        return True
+    return False
+
+
+def signed_svg_response_headers() -> dict:
+    return {
+        "Content-Disposition": "attachment",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox",
+        "Cache-Control": "private, no-store",
+    }
 
 
 def content_type_of(record: Optional[dict]) -> str:

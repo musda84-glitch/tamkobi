@@ -6,6 +6,7 @@ PIN ve operatör token'ı loglanmaz.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import sys
 from datetime import datetime, timedelta, timezone
@@ -276,7 +277,8 @@ def test_queue_station_modes_sort_and_tenant(mem, monkeypatch):
     assert [row["id"] for row in filtered] == ["montaj"]
 
 
-def test_partial_accumulates_rejects_and_replays(mem, caplog):
+def test_partial_accumulates_rejects_and_replays(mem, caplog, monkeypatch):
+    _clock(monkeypatch, BASE)
     caplog.set_level(logging.DEBUG)
     _seed_emp(mem)
     mem.work_orders.docs.append(_wo())
@@ -609,3 +611,317 @@ def test_settings_reject_invalid_idle_before_write(mem):
     assert saved["undo_finish_minutes"] == 8
     assert saved["group_same_station"] is True
     assert mem.companies.docs[0]["shopfloor_idle_lock_minutes"] == 45
+
+
+def _gate_first_reads(coll, match):
+    """İki eşzamanlı okuma, yazmadan önceki aynı satırı görsün."""
+    orig = coll.find_one
+    state = {"n": 0, "event": asyncio.Event(), "snap": None}
+
+    async def wrapped(query=None, projection=None):
+        if match(query or {}) and state["n"] < 2:
+            state["n"] += 1
+            if state["n"] == 2:
+                state["snap"] = await orig(query, projection)
+                state["event"].set()
+            await state["event"].wait()
+            return copy.deepcopy(state["snap"])
+        return await orig(query, projection)
+
+    coll.find_one = wrapped
+    return state
+
+
+def _done_row(**extra):
+    row = _wo(
+        status="done",
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        operator_employee_id="e1",
+        operator_name="Ali",
+        finish_undo_snapshot={
+            "wo_before": {"status": "in_progress", "produced_qty": 0},
+            "movements": [{
+                "_id": extra.pop("movement_id", "m-undo"),
+                "company_id": CID,
+                "product_id": "p1",
+                "change": extra.pop("change", 5),
+            }],
+        },
+    )
+    row.update(extra)
+    return row
+
+
+def test_second_finish_clears_previous_undo(mem, monkeypatch):
+    _clock(monkeypatch, BASE)
+    _seed_emp(mem)
+    mem.products.docs.append({"_id": "p1", "company_id": CID, "name": "Dolap", "stock_quantity": 10, "purchase_price": 4})
+    mem.production_orders.docs.append(_order())
+    mem.work_orders.docs.append(_wo(
+        status="in_progress",
+        planned_quantity=2,
+        materials=[{"product_id": "a", "needed": 0}, {"product_id": "b", "needed": 0}],
+        material_product_id="none",
+        operator_name="Ali",
+        operator_employee_id="e1",
+        undo_id="stale",
+        undone_at=(BASE - timedelta(hours=1)).isoformat(),
+        undo_response={"status": "success", "undo_id": "stale"},
+        undo_lock="stuck",
+    ))
+    user = _user("admin1", CID, name="Ali", role="admin", employee_id="e1")
+    asyncio.run(server.finish_work_order("wo1", {"produced_qty": 2, "scrap_qty": 0}, user=user))
+    first = asyncio.run(shopfloor_undo.apply("wo1", {}, user))
+    assert mem.products.docs[0]["stock_quantity"] == 10
+    asyncio.run(server.finish_work_order("wo1", {"produced_qty": 2, "scrap_qty": 0}, user=user))
+    row = mem.work_orders.docs[0]
+    assert row["status"] == "done"
+    assert "undo_id" not in row
+    assert "undone_at" not in row
+    assert "undo_response" not in row
+    assert "undo_lock" not in row
+    assert shopfloor_undo._stored({
+        "undo_id": "stale",
+        "undone_at": (BASE - timedelta(hours=1)).isoformat(),
+        "finished_at": row["finished_at"],
+        "undo_response": {"undo_id": "stale", "status": "success"},
+        "status": "done",
+    }) is None
+    second = asyncio.run(shopfloor_undo.apply("wo1", {}, user))
+    assert second["undo_id"] != first["undo_id"]
+    assert mem.products.docs[0]["stock_quantity"] == 10
+    assert len([item for item in mem.stock_movements.docs if item.get("reverses")]) == 2
+
+
+def test_undo_claim_is_single_and_releases_on_error(mem, monkeypatch):
+    _seed_emp(mem)
+    mem.products.docs.append({"_id": "p1", "company_id": CID, "name": "Dolap", "stock_quantity": 20})
+    mem.stock_movements.docs.append({
+        "_id": "m-race", "company_id": CID, "product_id": "p1", "change": 5,
+    })
+    mem.work_orders.docs.append(_done_row(_id="wo-race", order_id="po-race", movement_id="m-race", change=5))
+    user = _user("admin1", CID, name="Ali", role="admin", employee_id="e1")
+    _gate_first_reads(mem.work_orders, lambda query: query.get("_id") == "wo-race")
+
+    async def _both():
+        return await asyncio.gather(
+            shopfloor_undo.apply("wo-race", {}, user),
+            shopfloor_undo.apply("wo-race", {}, user),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(_both())
+    successes = [item for item in results if isinstance(item, dict)]
+    denied = [item for item in results if isinstance(item, HTTPException)]
+    assert len(successes) == 1
+    assert len(denied) == 1
+    assert denied[0].status_code == 409
+    assert denied[0].detail["code"] == "undo_in_progress"
+    assert mem.products.docs[0]["stock_quantity"] == 15
+    assert len([item for item in mem.stock_movements.docs if item.get("reverses")]) == 1
+    assert "undo_lock" not in mem.work_orders.docs[0]
+
+    mem.products.docs.append({"_id": "p2", "company_id": CID, "name": "Raf", "stock_quantity": 8})
+    mem.stock_movements.docs.append({"_id": "m-one", "company_id": CID, "product_id": "p2", "change": 3})
+    _gate_first_reads(mem.stock_movements, lambda query: query.get("_id") == "m-one")
+
+    async def _reverse():
+        return await asyncio.gather(
+            shopfloor_undo._reverse_one(CID, {"_id": "m-one", "change": 3, "product_id": "p2"}, "u-a"),
+            shopfloor_undo._reverse_one(CID, {"_id": "m-one", "change": 3, "product_id": "p2"}, "u-b"),
+        )
+
+    flags = asyncio.run(_reverse())
+    assert sorted(flags) == [False, True]
+    assert mem.products.docs[1]["stock_quantity"] == 5
+    assert len([item for item in mem.stock_movements.docs if item.get("reverses") == "m-one"]) == 1
+
+    mem.work_orders.docs.append(_done_row(_id="wo-fail", order_id="po-fail", movement_id="m-fail", change=1))
+    mem.stock_movements.docs.append({"_id": "m-fail", "company_id": CID, "product_id": "p1", "change": 1})
+    stock = mem.products.docs[0]["stock_quantity"]
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("stok yazılamadı")
+
+    monkeypatch.setattr(shopfloor_undo, "_reverse_one", _boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(shopfloor_undo.apply("wo-fail", {}, user))
+    failed = next(row for row in mem.work_orders.docs if row["_id"] == "wo-fail")
+    assert failed["status"] == "done"
+    assert "undo_lock" not in failed
+    assert mem.products.docs[0]["stock_quantity"] == stock
+
+
+def test_partial_count_race_increments_once(mem):
+    user = _user("admin1", CID, name="Ali", role="admin", employee_id="e1")
+    mem.work_orders.docs.append(_wo(_id="wo-cap", planned_quantity=10))
+    _gate_first_reads(mem.work_orders, lambda query: query.get("_id") == "wo-cap")
+
+    async def _over():
+        return await asyncio.gather(
+            shopfloor_partial.apply("wo-cap", {"qty": 6}, user, _Req("key-a")),
+            shopfloor_partial.apply("wo-cap", {"qty": 6}, user, _Req("key-b")),
+            return_exceptions=True,
+        )
+
+    over = asyncio.run(_over())
+    assert len([item for item in over if isinstance(item, dict)]) == 1
+    conflict = [item for item in over if isinstance(item, HTTPException)]
+    assert len(conflict) == 1
+    assert conflict[0].status_code == 409
+    assert conflict[0].detail["code"] == "partial_count_conflict"
+    capped = next(row for row in mem.work_orders.docs if row["_id"] == "wo-cap")
+    assert capped["partial_qty_total"] == 6
+    assert len(capped["partial_counts"]) == 1
+
+    mem.work_orders.docs.append(_wo(_id="wo-key", planned_quantity=10))
+    _gate_first_reads(mem.work_orders, lambda query: query.get("_id") == "wo-key")
+
+    async def _same():
+        return await asyncio.gather(
+            shopfloor_partial.apply("wo-key", {"qty": 2}, user, _Req("same-key")),
+            shopfloor_partial.apply("wo-key", {"qty": 2}, user, _Req("same-key")),
+            return_exceptions=True,
+        )
+
+    same = asyncio.run(_same())
+    assert all(isinstance(item, dict) for item in same)
+    assert sorted(item["replay"] for item in same) == [False, True]
+    keyed = next(row for row in mem.work_orders.docs if row["_id"] == "wo-key")
+    assert keyed["partial_qty_total"] == 2
+    assert len(keyed["partial_counts"]) == 1
+
+
+def test_svg_drawing_rejected_and_signed_file_is_attachment(mem, monkeypatch):
+    svg = b"<?xml version='1.0'?><svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+    mem.work_orders.docs.append(_wo(drawing_file_id="f-svg"))
+    mem.files.docs.append({
+        "_id": "f-svg",
+        "company_id": CID,
+        "storage_path": "drawings/plan.svg",
+        "original_filename": "plan.svg",
+        "content_type": "image/svg+xml",
+        "is_deleted": False,
+    })
+    admin = _user("admin1", CID, role="admin")
+    signed = {"n": 0}
+
+    def _boom(*_args, **_kwargs):
+        signed["n"] += 1
+        raise AssertionError("svg imzalanmamalı")
+
+    monkeypatch.setattr(signed_links, "make_doc_share_token", _boom)
+    with pytest.raises(HTTPException) as rejected:
+        asyncio.run(shopfloor_drawing.load_for_user("wo1", admin))
+    assert rejected.value.status_code == 400
+    assert rejected.value.detail["code"] == "drawing_type_rejected"
+    assert signed["n"] == 0
+
+    monkeypatch.setattr(server, "get_object", lambda _path: (svg, "image/svg+xml"))
+    mem.files.docs.append({
+        "_id": "f-serve",
+        "company_id": CID,
+        "storage_path": "drawings/plan.svg",
+        "content_type": "image/svg+xml",
+        "is_deleted": False,
+    })
+    plain = asyncio.run(server.serve_file("drawings/plan.svg", _Req(), w=None, fmt=None, t=None))
+    assert plain.media_type == "image/svg+xml"
+    assert "content-security-policy" not in plain.headers
+
+    signed_resp = asyncio.run(server.serve_file("drawings/plan.svg", _Req(), w=None, fmt=None, t="signed-token"))
+    assert signed_resp.media_type == "application/octet-stream"
+    assert signed_resp.headers["content-disposition"] == "attachment"
+    assert signed_resp.headers["x-content-type-options"] == "nosniff"
+    assert signed_resp.headers["content-security-policy"] == "sandbox"
+
+    monkeypatch.setattr(server, "get_object", lambda _path: (b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "image/png"))
+    sniffed = asyncio.run(server.serve_file("drawings/photo.png", _Req(), w=None, fmt=None, t="signed-token"))
+    assert sniffed.media_type == "application/octet-stream"
+    assert sniffed.headers["content-disposition"] == "attachment"
+    open_png = asyncio.run(server.serve_file("drawings/photo.png", _Req(), w=None, fmt=None, t=None))
+    assert open_png.media_type == "image/png"
+
+
+def test_atolye_session_cannot_undo_as_admin(mem):
+    _seed_emp(mem)
+    _seed_emp(mem, "e2", "Veli")
+    mem.products.docs.append({"_id": "p1", "company_id": CID, "name": "Dolap", "stock_quantity": 9})
+    mem.stock_movements.docs.append({"_id": "m-admin", "company_id": CID, "product_id": "p1", "change": 4})
+    mem.work_orders.docs.append(_done_row(movement_id="m-admin", change=4))
+    kiosk = _device(["CNC"])
+    kiosk["role"] = "owner"
+    kiosk["is_super_admin"] = True
+    assert shopfloor_undo._is_admin(kiosk) is False
+    token = _token(datetime.now(timezone.utc), oid="e2", name="Veli")
+    with pytest.raises(HTTPException) as device_denied:
+        asyncio.run(shopfloor_undo.apply("wo1", {"operator_token": token}, kiosk))
+    assert device_denied.value.status_code == 403
+    assert mem.products.docs[0]["stock_quantity"] == 9
+
+    mail = _user("atolye1", CID, name="Usta", role="admin", account_type="atolye", stations=["CNC"])
+    mail["is_super_admin"] = True
+    assert shopfloor_undo._is_admin(mail) is False
+    mail_token = _token(datetime.now(timezone.utc), oid="e2", name="Veli", aid="atolye1")
+    with pytest.raises(HTTPException) as mail_denied:
+        asyncio.run(shopfloor_undo.apply("wo1", {"operator_token": mail_token}, mail))
+    assert mail_denied.value.status_code == 403
+    assert mem.products.docs[0]["stock_quantity"] == 9
+    assert not any(item.get("reverses") for item in mem.stock_movements.docs)
+
+    boss = _user("boss", CID, name="Patron", role="admin")
+    assert shopfloor_undo._is_admin(boss) is True
+    allowed = asyncio.run(shopfloor_undo.apply("wo1", {}, boss))
+    assert allowed["undo_id"]
+    assert mem.products.docs[0]["stock_quantity"] == 5
+
+
+def test_finish_without_produced_qty_keeps_planned_quantity(mem):
+    mem.products.docs.append({"_id": "p1", "company_id": CID, "name": "Dolap", "stock_quantity": 0, "purchase_price": 4})
+    mem.production_orders.docs.append(_order(planned_quantity=10))
+    mem.work_orders.docs.append(_wo(
+        planned_quantity=10,
+        partial_qty_total=4,
+        partial_counts=[{"id": "c1", "qty": 4, "idempotency_key": "old"}],
+        materials=[{"product_id": "a", "needed": 0}, {"product_id": "b", "needed": 0}],
+        material_product_id="none",
+    ))
+    user = _user("admin1", CID, name="Ali", role="admin", employee_id="e1")
+    omitted = asyncio.run(server.finish_work_order("wo1", {"scrap_qty": 0}, user=user))
+    assert omitted["suggested_good_qty"] == 4
+    assert mem.work_orders.docs[0]["produced_qty"] == 10
+    assert mem.products.docs[0]["stock_quantity"] == 10
+
+    mem.production_orders.docs.append(_order(_id="po-part", planned_quantity=10))
+    mem.work_orders.docs.append(_wo(
+        _id="wo-part",
+        order_id="po-part",
+        planned_quantity=10,
+        partial_qty_total=4,
+        materials=[{"product_id": "a", "needed": 0}, {"product_id": "b", "needed": 0}],
+        material_product_id="none",
+    ))
+    opted = asyncio.run(server.finish_work_order(
+        "wo-part",
+        {"scrap_qty": 0, "use_partial_total": True},
+        user=user,
+    ))
+    assert opted["suggested_good_qty"] == 4
+    assert next(row for row in mem.work_orders.docs if row["_id"] == "wo-part")["produced_qty"] == 4
+
+    mem.production_orders.docs.append(_order(_id="po-zero", planned_quantity=8))
+    mem.work_orders.docs.append(_wo(
+        _id="wo-zero",
+        order_id="po-zero",
+        planned_quantity=8,
+        partial_qty_total=0,
+        materials=[{"product_id": "a", "needed": 0}, {"product_id": "b", "needed": 0}],
+        material_product_id="none",
+    ))
+    fallback = asyncio.run(server.finish_work_order(
+        "wo-zero",
+        {"scrap_qty": 0, "use_partial_total": "false"},
+        user=user,
+    ))
+    assert fallback["suggested_good_qty"] == 0
+    assert next(row for row in mem.work_orders.docs if row["_id"] == "wo-zero")["produced_qty"] == 8

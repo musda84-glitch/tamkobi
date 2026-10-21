@@ -99,6 +99,15 @@ class MemColl:
         self.docs.append(created)
         return type("R", (), {"matched_count": 0, "modified_count": 0, "upserted_id": created.get("_id")})()
 
+    async def find_one_and_update(self, query, update, upsert=False, return_document=True, projection=None):
+        for i, doc in enumerate(self.docs):
+            if not match_query(doc, query or {}):
+                continue
+            old = copy.deepcopy(doc)
+            self.docs[i] = apply_update(doc, update, query)
+            return copy.deepcopy(self.docs[i] if return_document else old)
+        return None
+
     async def update_many(self, query, update):
         n = 0
         for i, doc in enumerate(self.docs):

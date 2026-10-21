@@ -26,6 +26,7 @@ NOT_RUNNING = "Sadece devam eden işte ara sayım girilir."
 NOT_POSITIVE = "Miktar sıfırdan büyük olmalı."
 NEGATIVE = "Miktar negatif olamaz."
 OVER = "Miktar planı aşamaz."
+CONFLICT = "partial_count_conflict"
 
 
 class _LiveDB:
@@ -148,16 +149,52 @@ async def apply(wo_id: str, req: Optional[dict], user: dict, request: Optional[R
         "device_id": shopfloor_takeover.device_id_of(user),
         "idempotency_key": key,
     }
-    await _db.work_orders.update_one(
-        {"_id": wo_id, "company_id": cid},
+    query = {
+        "_id": wo_id,
+        "company_id": cid,
+        "status": "in_progress",
+    }
+    guards = []
+    if key:
+        guards.append({"partial_counts.idempotency_key": {"$ne": key}})
+        guards.append({
+            "$or": [
+                {"partial_counts": {"$exists": False}},
+                {"partial_counts": {"$not": {"$elemMatch": {"idempotency_key": key}}}},
+            ],
+        })
+    if planned > 0:
+        guards.append({
+            "$or": [
+                {"partial_qty_total": {"$exists": False}},
+                {"partial_qty_total": {"$lte": planned - qty}},
+            ],
+        })
+    if guards:
+        query["$and"] = guards
+    result = await _db.work_orders.update_one(
+        query,
         {
-            "$set": {"partial_qty_total": new_total, "company_id": cid},
+            "$set": {"company_id": cid},
+            "$inc": {"partial_qty_total": qty},
             "$push": {
                 "partial_counts": entry,
                 "logs": _log(row, who, f"+{qty:g} toplam {new_total:g}"),
             },
         },
     )
+    if int(getattr(result, "modified_count", 0) or 0) != 1:
+        fresh = await _db.work_orders.find_one({"_id": wo_id, "company_id": cid})
+        if not fresh:
+            raise HTTPException(status_code=404, detail="İş emri bulunamadı.")
+        if key:
+            for saved in fresh.get("partial_counts") or []:
+                if isinstance(saved, dict) and str(saved.get("idempotency_key") or "") == key:
+                    return _response(fresh, saved, replay=True)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": CONFLICT, "message": "Ara sayım çakıştı."},
+        )
     await shopfloor_pin.record_wo_action(user, row, who)
     await company_audit.write(
         _db,

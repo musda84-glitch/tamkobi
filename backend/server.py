@@ -9453,6 +9453,12 @@ async def serve_file(
                     "X-Image-Cache": "miss",
                 },
             )
+    if t and shopfloor_drawing.is_active_svg(media, path, data):
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers=shopfloor_drawing.signed_svg_response_headers(),
+        )
     return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
 
 class VariantsUpdateRequest(BaseModel):
@@ -23884,7 +23890,7 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
     partial_total = shopfloor_partial.total_of(w)
     if req.get("produced_qty") is not None:
         produced = float(req.get("produced_qty"))
-    elif partial_total > 0:
+    elif shopfloor_settings.as_bool(req.get("use_partial_total")) and partial_total > 0:
         produced = partial_total
     else:
         produced = float(default_qty)
@@ -23977,7 +23983,16 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
     wo_patch["finish_undo_snapshot"] = shopfloor_undo.build(undo_before, finish_movements)
     await db.work_orders.update_one(
         {"_id": wo_id, "company_id": cid},
-        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", who, f"{produced:g} üretildi, {scrap:g} fire{log_extra}")}},
+        {
+            "$set": wo_patch,
+            "$unset": {
+                "undo_id": "",
+                "undone_at": "",
+                "undo_response": "",
+                "undo_lock": "",
+            },
+            "$push": {"logs": _log(w, "finish", who, f"{produced:g} üretildi, {scrap:g} fire{log_extra}")},
+        },
     )
     await shopfloor_pin.record_wo_action(user, w, who)
     nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1, "company_id": cid})

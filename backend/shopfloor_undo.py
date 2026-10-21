@@ -27,6 +27,7 @@ WINDOW = "undo_window_expired"
 NEXT_STEP = "undo_next_step_started"
 NOT_DONE = "Bitirme geri alınamaz."
 FORBIDDEN = "Bu bitirmeyi yalnız aynı operatör veya yönetici geri alabilir."
+IN_PROGRESS = "undo_in_progress"
 RECIPE = "Tek seferlik reçete silindiği için geri alma kapalı."
 COST = "Maliyet güncellemesi geri alınamadığı için bitirme geri alınamaz."
 _STARTED = frozenset({"in_progress", "paused", "done"})
@@ -146,6 +147,9 @@ def build(
 def _is_admin(user: Any) -> bool:
     if not isinstance(user, dict):
         return False
+    # Cihaz ve atölye oturumu, rol veya süper admin bayrağı taşısa da yönetici değildir.
+    if shopfloor_accounts.is_atolye_user(user):
+        return False
     if user.get("is_super_admin"):
         return True
     role = str(user.get("role") or "").strip().lower()
@@ -164,6 +168,10 @@ def _same_operator(who: Any, work_order: dict) -> bool:
 
 def _stored(work_order: dict) -> Optional[dict]:
     if not work_order.get("undo_id") or not work_order.get("undone_at"):
+        return None
+    undone = shopfloor_pin._parse_dt(work_order.get("undone_at"))
+    finished = shopfloor_pin._parse_dt(work_order.get("finished_at"))
+    if undone is not None and finished is not None and undone < finished:
         return None
     saved = work_order.get("undo_response")
     if isinstance(saved, dict) and saved.get("undo_id"):
@@ -188,6 +196,12 @@ async def _reverse_one(company_id: str, movement: dict, undo_id: str) -> bool:
     except (TypeError, ValueError):
         change = 0.0
     rev_id = str(uuid.uuid4())
+    claimed = await _db.stock_movements.update_one(
+        {"_id": mid, "company_id": company_id, "reversed_by": {"$exists": False}},
+        {"$set": {"reversed_by": rev_id, "undo_id": undo_id}},
+    )
+    if int(getattr(claimed, "modified_count", 0) or 0) != 1:
+        return False
     now = utcnow().isoformat()
     await _db.stock_movements.insert_one({
         "_id": rev_id,
@@ -202,10 +216,6 @@ async def _reverse_one(company_id: str, movement: dict, undo_id: str) -> bool:
         "reverses": mid,
         "undo_id": undo_id,
     })
-    await _db.stock_movements.update_one(
-        {"_id": mid, "company_id": company_id},
-        {"$set": {"reversed_by": rev_id, "undo_id": undo_id}},
-    )
     product_id = str(current.get("product_id") or movement.get("product_id") or "")
     if product_id:
         await _db.products.update_one(
@@ -250,68 +260,90 @@ async def apply(wo_id: str, req: Optional[dict], user: dict, request: Optional[R
             detail={"code": NEXT_STEP, "message": "Sonraki adım başladığı için geri alınamaz."},
         )
     undo_id = str(uuid.uuid4())
-    for movement in snap.get("movements") or []:
-        if isinstance(movement, dict):
-            await _reverse_one(cid, movement, undo_id)
-    next_before = snap.get("next_before") if isinstance(snap.get("next_before"), dict) else None
-    if snap.get("next_touched") and next_before and next_before.get("_id"):
-        await _db.work_orders.update_one(
-            {"_id": next_before.get("_id"), "company_id": cid},
-            {"$set": {
-                "status": next_before.get("status"),
-                "planned_quantity": next_before.get("planned_quantity"),
-            }},
-        )
-    if snap.get("order_touched") and isinstance(snap.get("order_before"), dict) and row.get("order_id"):
-        await _db.production_orders.update_one(
-            {"_id": row.get("order_id"), "company_id": cid},
-            {"$set": dict(snap.get("order_before") or {})},
-        )
-    if snap.get("update_cost") and snap.get("finished_product_id"):
-        await _db.products.update_one(
-            {"_id": snap.get("finished_product_id"), "company_id": cid},
-            {"$set": {"purchase_price": snap.get("previous_purchase_price")}},
-        )
-    before = snap.get("wo_before") if isinstance(snap.get("wo_before"), dict) else {}
-    restored = str(before.get("status") or "in_progress")
-    now = utcnow().isoformat()
-    response = {
-        "status": "success",
-        "undo_id": undo_id,
-        "message": "Bitirme geri alındı.",
-        "work_order_status": restored,
-    }
-    patch = {key: before.get(key) for key in _BEFORE_KEYS}
-    patch["status"] = restored
-    patch["undone_at"] = now
-    patch["undo_id"] = undo_id
-    patch["undo_response"] = response
-    await _db.work_orders.update_one(
-        {"_id": wo_id, "company_id": cid},
+    claimed = await _db.work_orders.find_one_and_update(
         {
-            "$set": patch,
-            "$push": {"logs": {
-                "at": now,
-                "action": "undo_finish",
-                "by": str(who or ""),
-                "note": f"geri alma {undo_id}",
-            }},
+            "_id": wo_id,
+            "company_id": cid,
+            "status": "done",
+            "undo_lock": {"$exists": False},
         },
+        {"$set": {"undo_lock": undo_id}},
     )
-    await shopfloor_pin.record_wo_action(user, row, who)
-    await company_audit.write(
-        _db,
-        company_id=cid,
-        user=user if isinstance(user, dict) else None,
-        module="/atolye",
-        action="restore",
-        record_id=wo_id,
-        record_label=str(row.get("step_name") or ""),
-        record_no=str(row.get("order_code") or ""),
-        summary="Bitirme geri alındı",
-        path=f"/api/production/work-orders/{wo_id}/undo-finish",
-    )
-    return response
+    if not claimed:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": IN_PROGRESS, "message": "Geri alma sürüyor."},
+        )
+    try:
+        for movement in snap.get("movements") or []:
+            if isinstance(movement, dict):
+                await _reverse_one(cid, movement, undo_id)
+        next_before = snap.get("next_before") if isinstance(snap.get("next_before"), dict) else None
+        if snap.get("next_touched") and next_before and next_before.get("_id"):
+            await _db.work_orders.update_one(
+                {"_id": next_before.get("_id"), "company_id": cid},
+                {"$set": {
+                    "status": next_before.get("status"),
+                    "planned_quantity": next_before.get("planned_quantity"),
+                }},
+            )
+        if snap.get("order_touched") and isinstance(snap.get("order_before"), dict) and row.get("order_id"):
+            await _db.production_orders.update_one(
+                {"_id": row.get("order_id"), "company_id": cid},
+                {"$set": dict(snap.get("order_before") or {})},
+            )
+        if snap.get("update_cost") and snap.get("finished_product_id"):
+            await _db.products.update_one(
+                {"_id": snap.get("finished_product_id"), "company_id": cid},
+                {"$set": {"purchase_price": snap.get("previous_purchase_price")}},
+            )
+        before = snap.get("wo_before") if isinstance(snap.get("wo_before"), dict) else {}
+        restored = str(before.get("status") or "in_progress")
+        now = utcnow().isoformat()
+        response = {
+            "status": "success",
+            "undo_id": undo_id,
+            "message": "Bitirme geri alındı.",
+            "work_order_status": restored,
+        }
+        patch = {key: before.get(key) for key in _BEFORE_KEYS}
+        patch["status"] = restored
+        patch["undone_at"] = now
+        patch["undo_id"] = undo_id
+        patch["undo_response"] = response
+        await _db.work_orders.update_one(
+            {"_id": wo_id, "company_id": cid},
+            {
+                "$set": patch,
+                "$unset": {"undo_lock": ""},
+                "$push": {"logs": {
+                    "at": now,
+                    "action": "undo_finish",
+                    "by": str(who or ""),
+                    "note": f"geri alma {undo_id}",
+                }},
+            },
+        )
+        await shopfloor_pin.record_wo_action(user, row, who)
+        await company_audit.write(
+            _db,
+            company_id=cid,
+            user=user if isinstance(user, dict) else None,
+            module="/atolye",
+            action="restore",
+            record_id=wo_id,
+            record_label=str(row.get("step_name") or ""),
+            record_no=str(row.get("order_code") or ""),
+            summary="Bitirme geri alındı",
+            path=f"/api/production/work-orders/{wo_id}/undo-finish",
+        )
+        return response
+    except Exception:
+        await _db.work_orders.update_one(
+            {"_id": wo_id, "company_id": cid, "undo_lock": undo_id},
+            {"$unset": {"undo_lock": ""}},
+        )
+        raise
 
 
 @router.post("/production/work-orders/{wo_id}/undo-finish")
