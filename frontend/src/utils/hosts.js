@@ -162,7 +162,7 @@ export const HOST_ROUTE_RULES = {
     /^\/sso(\/|$)/,
     /^\/yardim(\/|$)/,
   ],
-  b2b: [/^\/$/, /^\/b2b(\/|$)/, /^\/portal(\/|$)/],
+  b2b: [/^\/$/, /^\/b2b(\/|$)/, /^\/b2b\/tedarikci\/?$/, /^\/portal(\/|$)/],
   ik: [
     /^\/$/,
     /^\/personelim(\/|$)/,

@@ -15,6 +15,15 @@ import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "../utils/b2bCatalogWindow";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { classifyTestPayment, navigation, postBankForm } from "../components/VposSettingsPanel";
+import B2BSupplierSwitch from "../components/B2BSupplierSwitch";
+import {
+  b2bNav,
+  b2bSessionHeaders,
+  readB2BSession,
+  rememberContactPortal,
+  selectB2BSupplier,
+  supplierErrorMessage,
+} from "../utils/b2bSession";
 
 const ALL_TABS = [
   { id: "catalog", label: "Ürünler", Icon: Package },
@@ -69,6 +78,9 @@ export default function B2BPortalPage() {
   const [sheet, setSheet] = useState(false);
   const [cardFrame, setCardFrame] = useState("");
   const [visibleCount, setVisibleCount] = useState(B2B_CATALOG_PAGE);
+  const [suppliers, setSuppliers] = useState([]);
+  const [switchBusy, setSwitchBusy] = useState("");
+  const [switchErr, setSwitchErr] = useState("");
   const loadMoreRef = useRef(null);
   const deferredQ = useDeferredValue(q);
 
@@ -79,6 +91,24 @@ export default function B2BPortalPage() {
     [token],
   );
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const selectToken = readB2BSession();
+    if (!selectToken) return undefined;
+    let cancelled = false;
+    axios.get(`${API_URL}/public/b2b/suppliers`, { headers: b2bSessionHeaders(selectToken) })
+      .then((res) => {
+        if (cancelled) return;
+        const list = Array.isArray(res.data?.suppliers) ? res.data.suppliers : [];
+        const companyName = data?.company?.name || "";
+        const contactName = data?.contact?.name || "";
+        const match = list.find((row) => String(row.company_name || "") === String(companyName) && String(row.contact_name || "") === String(contactName))
+          || list.find((row) => companyName && String(row.company_name || "") === String(companyName));
+        if (match?.contact_id) rememberContactPortal(match.contact_id, token);
+        setSuppliers(list);
+      })
+      .catch(() => { if (!cancelled) setSuppliers([]); });
+    return () => { cancelled = true; };
+  }, [token, data?.company?.name, data?.contact?.name]);
   useEffect(() => {
     if (!data?.company) return undefined;
     const prev = getPriceDecimals();
@@ -156,6 +186,22 @@ export default function B2BPortalPage() {
     navigate(portalHome, { replace: true });
     setTab("catalog");
   }, [data, onCartPath, allowOrders, navigate, portalHome]);
+
+  const pickSupplier = async (row) => {
+    if (!row?.contact_id || switchBusy) return;
+    setSwitchBusy(row.contact_id);
+    setSwitchErr("");
+    try {
+      const path = await selectB2BSupplier(row.contact_id);
+      b2bNav.go(path);
+    } catch (error) {
+      const message = supplierErrorMessage(error, "Tedarikçi seçilemedi.");
+      setSwitchErr(message);
+      toast.error(message);
+    } finally {
+      setSwitchBusy("");
+    }
+  };
 
   const addWithQty = useCallback((p, qty, lineNote) => {
     if (!allowOrders) return;
@@ -405,7 +451,22 @@ export default function B2BPortalPage() {
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
       <div className="relative">
-        <B2BHeader company={data.company} contact={data.contact} token={token} onPasswordChanged={load} />
+        <B2BHeader
+          company={data.company}
+          contact={data.contact}
+          token={token}
+          onPasswordChanged={load}
+          switcher={suppliers.length > 1 ? (
+            <B2BSupplierSwitch
+              suppliers={suppliers}
+              currentCompany={data.company?.name}
+              currentContact={data.contact?.name}
+              busyId={switchBusy}
+              error={switchErr}
+              onPick={pickSupplier}
+            />
+          ) : null}
+        />
         {allowOrders && (
           <div className="bg-slate-900">
             <div className="max-w-7xl mx-auto px-3 sm:px-4 pb-3 flex justify-end">
