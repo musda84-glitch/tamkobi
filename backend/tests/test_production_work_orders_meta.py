@@ -362,3 +362,34 @@ def test_production_order_trash_block_and_label():
         {"order_code": "URT-9", "finished_product_name": "Dolap"},
         {"product_name": "X"},
     ) == "URT-9 · Dolap"
+
+
+def test_enrich_fills_order_links_without_overwriting():
+    from production_work_orders import match_work_order_link_filter, order_link_meta, shopfloor_filter_catalog
+
+    meta = order_link_meta(
+        {
+            "recipe_id": "rec-1",
+            "project_id": "prj-1",
+            "sales_order_id": "ord-1",
+            "sales_order_no": "SP-1",
+            "customer_id": "cus-1",
+            "customer_name": "Ayşe",
+        },
+        {"_id": "prj-1", "name": "Örnek Otel", "project_number": "PRJ-0001"},
+    )
+    row = {"customer_name": "Eski", "station": "CNC"}
+    enrich_work_order_row(row, meta)
+    assert row["customer_name"] == "Eski"
+    assert row["project_id"] == "prj-1"
+    assert row["project_name"] == "Örnek Otel"
+    assert row["project_number"] == "PRJ-0001"
+    assert row["sales_order_no"] == "SP-1"
+    assert row["recipe_id"] == "rec-1"
+    assert match_work_order_link_filter(row, project_id="prj-1", recipe_id="rec-1")
+    assert match_work_order_link_filter({"station": "CNC"}, project_id="none")
+    assert not match_work_order_link_filter(row, project_id="none")
+    catalog = shopfloor_filter_catalog([row, {"station": "CNC", "recipe_id": "rec-1", "recipe_name": "Dolap"}])
+    assert catalog["projects"][-1]["project_id"] == "none"
+    assert catalog["projects"][-1]["job_count"] == 1
+    assert catalog["recipes"][0]["job_count"] == 2

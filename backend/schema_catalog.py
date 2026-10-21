@@ -632,14 +632,14 @@ COLLECTIONS = {
     "production_orders": {
         "scope": SCOPE_TENANT,
         "description": "Üretim emirleri.",
-        "keys": ("_id", "company_id", "order_code", "recipe_id", "finished_product_id", "status"),
-        "refs": ("recipes._id", "products._id", "warehouses._id"),
+        "keys": ("_id", "company_id", "order_code", "recipe_id", "finished_product_id", "status", "project_id", "sales_order_id", "customer_id"),
+        "refs": ("recipes._id", "products._id", "warehouses._id", "projects._id", "orders._id"),
     },
     "work_orders": {
         "scope": SCOPE_TENANT,
         "description": "İş emri / istasyon adımları.",
-        "keys": ("_id", "company_id", "order_id", "station", "status", "assigned_to", "operator_employee_id", "partial_qty_total", "scrap_reason_code", "drawing_file_id", "job_file_name", "recipe_name"),
-        "refs": ("production_orders._id", "employees._id"),
+        "keys": ("_id", "company_id", "order_id", "station", "status", "assigned_to", "operator_employee_id", "partial_qty_total", "scrap_reason_code", "drawing_file_id", "job_file_name", "recipe_name", "recipe_id", "project_id", "sales_order_no", "customer_name"),
+        "refs": ("production_orders._id", "employees._id", "projects._id", "orders._id", "recipes._id"),
     },
     # --- Entegrasyon / iletişim ---
     "integration_configs": {

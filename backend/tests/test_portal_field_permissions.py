@@ -137,6 +137,7 @@ def test_portal_rule_matches_field_ops_only():
     assert rbac.portal_rule_for_path("/api/production/work-orders/stations", "GET")[1] == "portal_atolye"
     assert rbac.portal_rule_for_path("/api/production/work-orders/performance", "GET")[1] == "portal_atolye"
     assert rbac.portal_rule_for_path("/api/production/work-orders/shopfloor-settings", "GET")[1] == "portal_atolye"
+    assert rbac.portal_rule_for_path("/api/production/work-orders/shopfloor-filters", "GET")[1] == "portal_atolye"
     assert rbac.portal_rule_for_path("/api/order-picks/o1/scan", "POST")[1] == "portal_pick"
     assert rbac.portal_rule_for_path("/api/warehouses/stock-counts/c1", "GET")[1] == "portal_sayim"
     assert rbac.portal_rule_for_path("/api/vehicles/v1", "GET")[1] == "portal_vehicles"
@@ -186,6 +187,7 @@ _FIELD_OPS = (
     ("POST", "/api/production/work-orders/wo_1/pause"),
     ("POST", "/api/production/work-orders/wo_1/finish"),
     ("GET", "/api/production/work-orders/shopfloor-next"),
+    ("GET", "/api/production/work-orders/shopfloor-filters"),
     ("POST", "/api/production/work-orders/wo_1/partial-count"),
     ("POST", "/api/production/work-orders/wo_1/undo-finish"),
     ("GET", "/api/production/work-orders/wo_1/drawing"),

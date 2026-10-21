@@ -195,6 +195,7 @@ PORTAL_API_RULES = (
     ("POST", "/api/production/work-orders/{id}/pause", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/finish", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/shopfloor-next", "portal_atolye", "/atolye"),
+    ("GET", "/api/production/work-orders/shopfloor-filters", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/partial-count", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/undo-finish", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/{id}/drawing", "portal_atolye", "/atolye"),
