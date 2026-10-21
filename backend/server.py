@@ -194,6 +194,7 @@ import qnb_efinans
 import e_invoice
 import saas
 import user_numbers
+import company_numbers
 import saas_billing
 import saas_extras
 import saas_docs
@@ -387,6 +388,13 @@ async def startup_event():
             filled = await user_numbers.backfill_missing_user_numbers(db)
             if filled:
                 logger.info("Assigned user_number to %s existing users", filled)
+            try:
+                await db.companies.create_index("company_no", unique=True, sparse=True)
+            except Exception:
+                logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
+            filled_companies = await company_numbers.backfill_missing_company_numbers(db)
+            if filled_companies:
+                logger.info("Assigned company_no to %s existing companies", filled_companies)
             try:
                 import phone_norm as _phone_norm
                 await _phone_norm.backfill_phone_norm(db)
@@ -1132,6 +1140,7 @@ def clamp_price_decimals(value, default=2):
 @api_router.put("/companies/{company_id}")
 async def update_company(company_id: str, req: Dict[str, Any]):
     allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry", "price_decimals"}}
+    # company_no ve id salt okunur; istemci Şirket ID yazamaz.
     if "price_decimals" in allowed:
         allowed["price_decimals"] = clamp_price_decimals(allowed["price_decimals"])
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
@@ -3591,6 +3600,7 @@ async def register(req: RegisterRequest, request: Request, response: Response):
     mongo = new_company.to_mongo()
     mongo["license_id"] = company_id
     mongo["allow_platform_access"] = False
+    mongo["company_no"] = await company_numbers.next_company_no(db)
     await db.companies.insert_one(mongo)
 
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
@@ -3762,6 +3772,7 @@ async def _google_create_company_user(
         "currency": "TRY",
         "source": "google_signup",
         "license_id": cid,
+        "company_no": await company_numbers.next_company_no(db),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "allow_platform_access": False,
     })
