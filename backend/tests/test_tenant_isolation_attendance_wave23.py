@@ -306,7 +306,7 @@ def _bind(db, monkeypatch, user=None):
     attendance._current_user = _current
     event_notify._db = db
     monkeypatch.setattr(tenant_access, "get_tenant_doc", _own)
-    monkeypatch.setattr(MemColl, "delete_one", _delete_one)
+    monkeypatch.setattr(MemColl, "delete_one", _delete_one, raising=False)
     monkeypatch.setattr(notify, "insert_notification", _noop)
     monkeypatch.setattr(notify, "dispatch_push", _noop)
     monkeypatch.setattr(event_notify, "inapp_enabled", _inapp)
@@ -411,12 +411,14 @@ def test_apply_rehome_and_punch_date_ignore_other_company(monkeypatch):
         punch = _run(attendance.punch_date_for_action(emp, _schedule(), "check_out", "07:30", DAY))
         assert punch == DAY
         assert _row(db, "attendance", CO_B, "att-y-b")["check_out"] in (None, "")
+        assert _digest(db, CO_B) == before
 
         gcr = {"status": "pending", "action": "check_out", "proposed_time": "07:00"}
         _row(db, "attendance", CO_A, ATT)["geo_confirm_request"] = dict(gcr)
         _row(db, "attendance", CO_A, ATT)["check_out"] = "18:00"
         _row(db, "attendance", CO_B, ATT)["geo_confirm_request"] = {"status": "pending", "action": "check_out", "proposed_time": "07:00", "place": SECRET}
         _row(db, "attendance", CO_B, ATT)["check_out"] = "18:00"
+        before = _digest(db, CO_B)
         moved = _run(attendance.rehome_early_checkout(emp, DAY, _schedule(), proposed_in="09:30"))
         assert moved is True
         assert "geo_confirm_request" not in _row(db, "attendance", CO_A, ATT)
@@ -538,7 +540,10 @@ def test_location_moves_and_yevmiye_stay_inside_company(monkeypatch):
         assert _row(db, "attendance", CO_B, ATT)["location_moves"][0]["place"] == SECRET
         assert _row(db, "attendance", CO_A, ATT)["location_moves"]
 
-        workplace = {"kind": "task", "latitude": 41.015, "longitude": 28.979, "radius_m": 80, "label": "SahaA"}
+        workplace = {
+            "kind": "task", "has_coords": True,
+            "latitude": 41.015, "longitude": 28.979, "radius_m": 80, "label": "SahaA",
+        }
         opened = _run(attendance.maybe_open_location_exit(
             emp, dict(_row(db, "attendance", CO_A, ATT)), workplace, workplace,
             {"enabled": True, "exit_tolerance_hours": 0}, 39.0, 32.0,
@@ -571,12 +576,12 @@ def test_location_moves_and_yevmiye_stay_inside_company(monkeypatch):
         assert _row(db, "bonus_payments", CO_B, "bon-shared")["note"] == SECRET_NOTE
 
         _add(db, "bonus_payments", {
-            "_id": "bon-shared", "company_id": CO_A, "employee_id": EMP, "type": "yevmiye",
+            "_id": "bon-adj", "company_id": CO_A, "employee_id": EMP, "type": "yevmiye",
             "source": "attendance", "status": "pending", "amount": 100, "daily_wage": 100, "date": DAY,
         })
         rec = dict(_row(db, "attendance", CO_A, ATT))
         rec["id"] = ATT
-        rec["yevmiye_bonus_id"] = "bon-shared"
+        rec["yevmiye_bonus_id"] = "bon-adj"
         rec["yevmiye_full_amount"] = 100
         rec["late_minutes"] = 60
         _run(attendance.sync_yevmiye_adjustment(emp, rec, _schedule()))
@@ -603,7 +608,7 @@ def test_self_service_reads_and_writes_stay_inside_company(monkeypatch):
         early_leave_request={"status": "pending", "reason": "doktor"},
         intraday_leave_request={"status": "pending", "reason": "banka", "out_time": "13:00", "return_time": "14:00"},
     ))
-    _row_b = _attendance(CO_B, note=SECRET_NOTE)
+    _row_b = _attendance(CO_B, note=SECRET_NOTE, location_moves=[_move("mv-b", SECRET)])
     _row_b["early_leave_request"] = {"status": "pending", "reason": SECRET}
     _row_b["intraday_leave_request"] = {"status": "pending", "reason": SECRET}
     db.attendance.docs[0] = _row_b
@@ -708,6 +713,7 @@ def test_confirm_dispute_notify_and_device_stay_inside_company(monkeypatch):
 
         on_leave = _run(attendance._on_leave_today(EMP, DAY, CO_A))
         assert on_leave is False
+        assert _digest(db, CO_B) == before
         _add(db, "leave_requests", {
             "_id": "lv-b", "company_id": CO_B, "employee_id": EMP, "status": "approved", "type": "annual",
             "start_date": DAY, "end_date": DAY, "days": 5, "reason": SECRET,
@@ -719,6 +725,7 @@ def test_confirm_dispute_notify_and_device_stay_inside_company(monkeypatch):
         })
         assert _run(attendance._on_leave_today(EMP, DAY, CO_A)) is True
         assert _row(db, "leave_requests", CO_B, "lv-b")["days"] == 5
+        before = _digest(db, CO_B)
 
         approved = _run(attendance.approve_attendance_device("dev-shared", None))
         assert approved["status"] == "success"
@@ -750,11 +757,11 @@ def test_shifts_leaves_and_puantaj_stay_inside_company(monkeypatch):
     })
     _add(db, "shift_plans", _shift(CO_B, DAY, _id="shift-shared", start="23:00", end="23:59", note=SECRET_NOTE))
     _add(db, "shift_plans", _shift(CO_A, DAY, _id="shift-shared", start="01:00", end="02:00", note=""))
-    _add(db, "shift_plans", _shift(CO_A, MON, _id="shift-src", start="08:00", end="17:00", note=""))
     _add(db, "shift_plans", _shift(CO_B, NEXT_MON, _id="shift-dst", start="23:00", end="23:59", note=SECRET_NOTE))
     _add(db, "shift_plans", _shift(CO_A, NEXT_MON, _id="shift-dst", start="01:00", end="02:00", note=""))
     _add(db, "shift_plans", _shift(CO_B, MON, _id="shift-mon", start="23:00", end="23:59", note=SECRET_NOTE))
     _add(db, "shift_plans", _shift(CO_A, MON, _id="shift-mon", start="01:00", end="02:00", note=""))
+    _add(db, "shift_plans", _shift(CO_A, MON, _id="shift-src", start="08:00", end="17:00", note=""))
     _add(db, "shift_templates", {
         "_id": "tpl-shared", "company_id": CO_B, "name": SECRET,
         "days": {"0": {"off": True}},
