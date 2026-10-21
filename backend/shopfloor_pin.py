@@ -824,6 +824,8 @@ async def resolve_operator(req: Any, user: Any, w: Optional[dict] = None, *, fal
             raise HTTPException(status_code=exc.status_code, detail=TOKEN_DETAIL) from None
         if not await _pin_ver_matches(payload, cid):
             raise HTTPException(status_code=401, detail=TOKEN_DETAIL)
+        import shopfloor_idle
+        await shopfloor_idle.enforce(_db, payload, cid)
         return OperatorName(str(payload.get("oname") or "").strip(), str(payload.get("otype") or ""), str(payload.get("oid") or ""))
     return await caller_display_name(user)
 

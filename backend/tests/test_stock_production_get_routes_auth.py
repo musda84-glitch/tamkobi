@@ -791,7 +791,13 @@ def test_own_company_returns_only_own_records(api, monkeypatch):
     _no_foreign(stations.text)
 
     settings = client.get("/api/production/work-orders/shopfloor-settings", params={"company_id": COMP_A}, headers=headers)
-    assert settings.json() == {"group_same_station": True}
+    settings_body = settings.json()
+    assert settings_body["group_same_station"] is True
+    assert settings_body["idle_lock_minutes"] == 30
+    assert settings_body["undo_finish_minutes"] == 5
+    assert settings_body["takeover_confirm"] == "device"
+    assert settings_body["scrap_reason_required"] is False
+    assert any(item.get("code") == "other" for item in settings_body["scrap_reasons"])
 
     # Duraklat penceresi Europe/Istanbul 09:00-18:00. Giriş yapmış kullanıcıda
     # operatör, sorgu parametresi değil çağıranın adıdır (2b90a6fa). Saat

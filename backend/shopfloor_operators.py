@@ -9,22 +9,40 @@ def station_key(station) -> str:
     return str(station or "").strip().casefold()
 
 
-def operator_active_station_blocker(rows, operator_name, target_station, exclude_wo_id=None):
+def _row_is_operator(row, operator_name, operator_employee_id=None):
+    """employee_id varsa o kart. Aynı isimli diğer personel eşleşmez.
+
+    Satırda employee_id yoksa isim yedeği kalır.
+    """
+    eid = str(operator_employee_id or "").strip()
+    row_eid = str((row or {}).get("operator_employee_id") or "").strip()
+    name = str(operator_name or "").strip()
+    row_name = str((row or {}).get("operator_name") or "").strip()
+    if eid and row_eid:
+        return row_eid == eid
+    if not name:
+        return False
+    return row_name == name
+
+
+def operator_active_station_blocker(rows, operator_name, target_station, exclude_wo_id=None, operator_employee_id=None):
     """Operatörün *in_progress* işi farklı istasyondaysa engelleyen satırı döndür.
 
     - Yalnızca status=in_progress kilitler (paused/done serbest bırakır).
     - Aynı istasyonda ikinci işe izin verilir.
     - Başka personelin işi bu operatörü engellemez.
+    - operator_employee_id aynı isimli iki personeli ayırır.
     """
     who = str(operator_name or "").strip()
-    if not who:
+    eid = str(operator_employee_id or "").strip()
+    if not who and not eid:
         return None
     target = station_key(target_station)
     ex = str(exclude_wo_id or "").strip()
     for w in rows or []:
         if str(w.get("status") or "") != "in_progress":
             continue
-        if str(w.get("operator_name") or "").strip() != who:
+        if not _row_is_operator(w, who, eid):
             continue
         wid = str(w.get("_id") or w.get("id") or "").strip()
         if ex and wid == ex:
