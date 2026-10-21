@@ -49,7 +49,7 @@ Anahtar belgesinde `kind` alanı vardır: `product` (varsayılan) veya `platform
 | `kind` | Kural |
 |--------|--------|
 | `product` | v1 kapsamları (`license:verify`, `heartbeat`, `usage:write`, `platform:all`, `help:read`, …). `admin.` ile başlayan kapsam **verilemez**. |
-| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`, `admin.impersonate`, `admin.dangerous`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. `:read` ve `:write` kapsamları `admin.impersonate` ve `admin.dangerous` kapsamlarını kapsamaz. `admin.impersonate` ve `admin.dangerous` birbirini ve diğer kapsamları kapsamaz. `admin.dangerous` yalnızca anahtara açıkça yazıldıysa geçerlidir. |
+| `platform_admin` | Yalnızca TamKobi ürünü ve `instance_id` boş. Kapsamlar yalnızca yönetim kümesinden seçilir (`admin.companies:read`, `admin.users:read`, `admin.licenses:read`, `admin.keys:read`, `admin.integrators:read`, `admin.audit:read`, `admin.mail:read`, `admin.system:read`, `admin.overview:read`, `admin.quotas:read`, `admin.requests:read`, `admin.payments:read`, `admin.platform_users:read`, `admin.sms:read`, `admin.support:read`, `admin.notifications:read`, `admin.licenses:write`, `admin.requests:write`, `admin.integrators:write`, `admin.support:write`, `admin.notifications:write`, `admin.impersonate`, `admin.dangerous`). `platform:all` ve v1 kapsamlarıyla karıştırılamaz. `:read` kapsamı yazma ucunu kapsamaz. `:read` ve `:write` kapsamları `admin.impersonate` ve `admin.dangerous` kapsamlarını kapsamaz. `admin.impersonate` ve `admin.dangerous` birbirini ve diğer kapsamları kapsamaz. `admin.dangerous` yalnızca anahtara açıkça yazıldıysa geçerlidir. |
 
 `admin.*` kapsamı şirket anahtarına (plan D dahil) oluşturulurken de istek anında da reddedilir. Doğrudan veritabanına yazılmış `kind=product` + `admin.*` anahtarı admin-v1’de **403** döner.
 
@@ -271,6 +271,18 @@ Kapsam: `admin.support:read`. `find_one` + `public_ticket(doc, staff=true)` — 
 {"id": "stk_…", "status": "open", "messages": [{"body": "…", "attachments": [{"url": "/api/files/shot", "filename": "ekran.png", "content_type": "image/png", "size": 1200}]}]}
 ```
 
+### GET `/api/platform/admin-v1/companies/{company_id}/notify-prefs`
+
+Kapsam: `admin.notifications:read`. `admin.notifications:write` bu ucu açmaz. Idempotency-Key yoktur; tekrar okuma yazmaz. Şirket yoksa **404** `Şirket bulunamadı.`. Gövde `event_notify.present_prefs(..., with_usage=true)` ve `{"item": …}` zarfıdır. `extra_emails` düzenleyicinin aynı adresi geri yazabilmesi için maskelenmez. Şifre ve SMTP alanı yoktur.
+
+### GET `/api/platform/admin-v1/companies/{company_id}/notify-mail-log`
+
+Kapsam: `admin.notifications:read`. Parametre: `limit` (`1..200`, varsayılan 50). `event_notify.company_notify_mail_log` ile aynı pencere (`sent`, `deferred`). `/saas/companies/{id}/notify-mail-log` ham alıcı döndürmeye devam eder. Bu uçta `to` ve `recipients` `password_reset.mask_email` / `mask_phone` ile maskelenir. Şirket yoksa **404** `Şirket bulunamadı.`. Başka şirketin satırı dönmez. Idempotency-Key yoktur.
+
+```json
+{"sent": [{"id": "nl_…", "to": ["ad•••@example.com"], "recipients": "ad•••@example.com", "subject": "Sipariş", "status": "sent"}], "deferred": []}
+```
+
 ## admin-v1 yazma (A4)
 
 Base path salt okunur uçlarla aynıdır: `/api/platform/admin-v1/`. Kimlik doğrulama `platform_auth.authenticate(..., audit_prefix="admin_v1")` sırasıdır; ardından `kind=platform_admin` ve boş `instance_id` gerekir. `:read` anahtarı yazma ucunda **403** `Kapsam yetersiz` döner. Yanlış `:write` kapsamı da **403** döner. Mail ve SMS gönderilmez.
@@ -310,19 +322,69 @@ Kapsam: `admin.requests:write`. Audit: `admin_v1.write.upgrade_request.resolve`.
 
 Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.product.update`. İzinli alanlar: `name` (boş olmayan metin, en çok 200), `status`, `base_url` (`http`/`https`, en çok 500 karakter). `code` ve `kind` **400** `Desteklenmeyen alan`. Ürün kodu değişikliği ve tamkobi kuralı `/platform/admin` ucunda kalır. Ürün yoksa **404** `Ürün bulunamadı`. `store.update_product` `actor_id` olarak anahtar kimliğini kullanır.
 
+### POST `/api/platform/admin-v1/companies`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.create`, `target_id` yeni şirket. İzinli alanlar: `name`, `admin_email`, `admin_password` (zorunlu; şifre en az 6), `tax_number`, `tax_office`, `address`, `city`, `phone`, `admin_name`, `plan_id`, `trial_days` (tamsayı `0..3650`), `expires_at` (ISO veya yok), `billing_period` (`monthly`|`yearly`), `notes`. İş `saas.validate_new_company` + `saas.apply_create_company`. `/system/companies` aynı yardımcıları çağırır ve gevşek gövdeyi kabul etmeye devam eder. Yanıt `{"item": _company_row}`. `admin_password` ve `password_hash` yanıtta ve audit `fields` listesinde yoktur. E-posta zaten varsa **400** `Bu e-posta ile kullanıcı zaten var.`. Paket yoksa **400** `Geçersiz paket.`.
+
+### POST `/api/platform/admin-v1/companies/{company_id}/companies`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.child.create`. Üst şirket yoksa **404** `Şirket bulunamadı.`. İş `saas.validate_licensed_company` + `saas.add_licensed_company`. Kota `check_company_limit` ile aynıdır. Ayrı giriş için `admin_email` ve `admin_password` (en az 6) birlikte gerekir; `separate_login` gerçek boolean olmalıdır. Şifre yanıtta ve audit alan adlarında yoktur. Başka şirketin kaydı değişmez. `/system` aynı yardımcıları çağırır.
+
+### PUT `/api/platform/admin-v1/companies/{company_id}/parent`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.parent`. Gövde yalnız `parent_company_id`. İş `saas.prepare_company_parent` + `saas.apply_set_company_parent`. Kendine bağlama, döngü ve dolu alt lisans `/system` ile aynı metinleri döner. Üst şirket yoksa **404** `Üst şirket bulunamadı.`. Bağı koparan ayrı uç yoktur; `/system`de de yoktur.
+
+### PUT `/api/platform/admin-v1/companies/{company_id}/einvoice`
+
+Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.company.einvoice`. Gövde yalnız `provider` (metin). Boş değer atamayı kaldırır. Bilinmeyen kod **400** `Desteklenmeyen entegratör.`. İş `einvoice_assign.assign_company_provider` — `/system/companies/{id}/einvoice` aynı fonksiyonu çağırır ve tam `_einvoice_view` döndürmeye devam eder. Bu uç `public_assignment` döner: `company_id`, `provider`, `provider_name`, `assigned`, `status`, `has_password`, `has_api_key`. Kullanıcı adı, VKN, URL, `password_enc` ve `api_key_enc` yoktur. Sağlayıcı değişince şifreli alanlar silinir. Şifre veya API anahtarı yazmak bu uçta yoktur.
+
+### PUT `/api/platform/admin-v1/companies/{company_id}/notify-prefs`
+
+Kapsam: `admin.notifications:write`. Audit: `admin_v1.write.notify.prefs` ve mevcut `company_audit` tercih farkı. İzinli alanlar: `events` (nesne), `extra_emails` (en çok 30 metin), `email_from` (`platform`|`company`), `gib_credits_threshold` (tamsayı `1..10000`), `daily_email_cap` (tamsayı `1..100000` veya `null`). `company_id` gövdede **400**. İş `event_notify.save_prefs`. `/saas` ucu süper admin oturumuyla aynı yazmayı yapar. Yanıt `present_prefs(..., with_usage=true)`. `extra_emails` geri yazılabilmesi için maskelenmez.
+
+### POST `/api/platform/admin-v1/companies/{company_id}/addons/{addon_key}`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.addon.toggle`. Bilinmeyen anahtar **400** `Bilinmeyen araç.`. Şirket yoksa **404**. `inherit: true` override’ı kaldırır ve `enabled` ile birlikte gönderilemez. Aksi halde `enabled` gerçek boolean zorunludur (`bool()` yok). İş `addons.apply_company_addon`. `/system` ucu `bool()` ile dönüştürür ve şirket aramaz.
+
+### POST `/api/platform/admin-v1/plans`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.plan.create`, `target_id` yeni paket. `name` zorunlu. `code` varsa `^[a-z0-9][a-z0-9_-]{0,39}$` (küçük harfe çevrilir). `modules` içindeki her öğe `saas._ALL` içinde olmalıdır; değilse **400** `Bilinmeyen modül.`. Sayılar negatif olamaz. `is_public` ve `is_popular` gerçek boolean. İş `saas.apply_create_plan`. `/system/plans` aynı yardımcıyı gevşek gövdeyle çağırır.
+
+### PUT `/api/platform/admin-v1/plans/{plan_id}`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.plan.update`. `code` bu uçta yoktur. Paket yoksa **404** `Paket bulunamadı.`. `plan_custom` için `apply_update_plan` `is_public=false` ve `modules=[]` zorlar. İş `saas.apply_update_plan`.
+
+### PUT `/api/platform/admin-v1/modules/prices`
+
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.module.prices`. Gövde yalnız `{"prices": {modül: sayı}}`. Bilinmeyen modül veya negatif değer **400**; `/system/modules/prices` bilinmeyen anahtarı atlamaya devam eder. İş `saas.write_module_prices`. Kayıt, `/system` ile aynı şekilde `platform_settings.module_prices` belgesinin tamamını verilen haritayla değiştirir.
+
+### POST `/api/platform/admin-v1/support/tickets/{ticket_id}/messages`
+
+Kapsam: `admin.support:write`. `admin.support:read` yetmez. Audit: `admin_v1.write.support.reply`. `operator_email` zorunlu ve aktif süper admindir; değilse **403** `Operatör yetkili değil.`. `body` en çok `MAX_BODY`. `is_internal` gerçek boolean. `status` verilirse `support_tickets.STATUSES` içinde olmalıdır; `/system` bilinmeyen durumu yok sayar. Ekler `sanitize_attachments`. İş `apply_staff_reply`. Bildirim yalnız uygulama içidir. Talep yoksa **404** `Destek talebi bulunamadı.`.
+
+### POST `/api/platform/admin-v1/support/tickets/{ticket_id}/status`
+
+Kapsam: `admin.support:write`. Audit: `admin_v1.write.support.status`. `status` zorunlu ve `STATUSES` içinde; değilse **400** `Geçersiz durum.`. `operator_email` yanıt ucuyla aynı kuraldadır. İş `apply_staff_status`.
+
+### POST `/api/platform/admin-v1/integrators/products`
+
+Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.product.create` ve `store.create_product` içindeki `product.create`. `code` zorunlu, plan kodu ile aynı desen, küçük harf. `kind` verilirse `erp` | `ecommerce` | `other`; sessizce `other` yapılmaz. `base_url` doluysa `http`/`https`. Aynı kod **400** `Bu ürün kodu zaten var`. Silme bu uçta yoktur.
+
 ### A5'e kalanlar
+
+Doğrudan `DELETE` yoktur. Paket silme `plan.delete`, entegratör ürünü silme `product.delete` action’ı olarak A5b’dedir.
 
 Bu yazma yüzeyinde yoktur:
 
 - kimliğe bürünme — aşağıdaki A5a bölümü (bu yazma modülünde yok)
-- şirket, kullanıcı, ürün veya anahtar silme
+- şirket, kullanıcı veya anahtar silme (şirket ve kullanıcı silme A5b’de)
 - şifre sıfırlama gönderimi, şifre ve 2FA sıfırlama
 - kullanıcı oluşturma ve düzenleme
 - API anahtarı oluşturma, döndürme ve iptal
 - `ip_allowlist` düzenleme
 - SMS ve mail ayarları ile şifreleri
-- plan oluşturma, plan düzenleme ve modül fiyatları
-- şirket oluşturma ve üst şirket (parent) değişikliği
+- e-fatura kullanıcı adı, şifre ve API anahtarı yazma
+- alt şirket bağını koparma (`/system`de de yok)
 
 ## admin-v1 impersonation (A5a)
 
@@ -367,7 +429,7 @@ Base path `/api/platform/admin-v1/danger/{action}/`. Kapsam `admin.dangerous`. B
 
 İki adımdır. prepare hiçbir iş verisi yazmaz, silmez ve e-posta göndermez. confirm, token’ı işlemden önce atomik tüketir. Süre `created_at` + 5 dakikadır. Token düz metin olarak saklanmaz; `platform_danger_confirmations` koleksiyonunda `_id` sha256 özetidir. Ayrı bir şema migration’ı gerekmez.
 
-`confirm_text`: `company.*` için şirket adı (trim, birebir); `user.*` ve `superadmin.*` için hedef e-posta (trim, küçük harf). Uyuşmazsa **400** ve token tüketilmez. `confirm_phrase`: `company.reset_data` için `VERİLERİ SIFIRLA`, `user.erase` için `VERİLERİ SİL`; diğer işlemlerde gönderilirse **400**. `operator_otp`, operatörün 6 haneli güncel TOTP kodudur. Operatörde 2FA yoksa **403** `Operatör 2FA kurulu değil.`; kod hatalı veya sayaç yeniden kullanıldıysa **403** `Doğrulama kodu hatalı.` ve deneme `2fa:<uid>` kilidine yazılır. Kilitliyken **429**. Şifre alanı kabul edilmez. Bilinmeyen action **404** `İşlem bulunamadı.`. Bilinmeyen alan **400** `Desteklenmeyen alan: <ad>`.
+`confirm_text`: `company.*` için şirket adı, `plan.delete` için paket adı, `product.delete` için ürün adı (trim, birebir); `user.*` ve `superadmin.*` için hedef e-posta (trim, küçük harf). Uyuşmazsa **400** ve token tüketilmez. `confirm_phrase`: `company.reset_data` için `VERİLERİ SIFIRLA`, `user.erase` için `VERİLERİ SİL`; diğer işlemlerde gönderilirse **400**. `operator_otp`, operatörün 6 haneli güncel TOTP kodudur. Operatörde 2FA yoksa **403** `Operatör 2FA kurulu değil.`; kod hatalı veya sayaç yeniden kullanıldıysa **403** `Doğrulama kodu hatalı.` ve deneme `2fa:<uid>` kilidine yazılır. Kilitliyken **429**. Şifre alanı kabul edilmez. Bilinmeyen action **404** `İşlem bulunamadı.`. Bilinmeyen alan **400** `Desteklenmeyen alan: <ad>`.
 
 Token yok, süresi dolmuş, kullanılmış, başka `key_id` veya URL’deki action ile farklıysa hepsi **400** `Onay kodu geçersiz veya süresi dolmuş.` Hedef prepare ile confirm arasında değişirse **409** `Hedef değişti, yeniden hazırlayın.` ve token tüketilmiş kalır. İşlem hata verirse token da tüketilmiş kalır; yeniden prepare gerekir.
 
@@ -378,10 +440,14 @@ Token yok, süresi dolmuş, kullanılmış, başka `key_id` veya URL’deki acti
 | `user.erase` | user_id | `VERİLERİ SİL` | `user_erase.apply_erase` |
 | `user.password_reset` | company_id; opsiyonel `user_id`, `email` | yok | `saas.send_password_reset_for` (`notify_outbox`) |
 | `superadmin.2fa_reset` | user_id, `is_super_admin=True` | yok | `superadmin_2fa.reset_user_totp` |
+| `plan.delete` | plan_id | yok | `saas.apply_delete_plan` |
+| `product.delete` | product_id | yok | `store.delete_product` |
+
+Kullanımda olan paket prepare’de **400** `Bu paketi kullanan N şirket var; önce paketlerini değiştirin.`. `plan_custom` **400** `Özel paket silinemez.`. Olmayan paket **404** `Paket bulunamadı.`. `tamkobi` ürünü **400** `tamkobi ürünü silinemez`. Olmayan ürün **404** `Ürün bulunamadı`. Bu iki action başka şirketi, başka paketi ve kardeş ürünü silmez. `activity_logs.company_id` şirket olmayan hedeflerde `platform` kalır.
 
 Korumalı şirketler (`PROTECTED_COMPANY_IDS`) reset ve delete için **400** `Platform demo şirketleri silinemez.` Platform gönderici şirketi delete için **400** `Platform gönderici şirketi silinemez. Önce ayarlardan başka bir gönderici seçin.` Kendi 2FA sıfırlama **400** `Kendi 2FA'nızı bu yolla sıfırlayamazsınız.` Süper admin olmayan 2FA hedefi **404** `Panel yöneticisi bulunamadı.`
 
-Audit: `admin_v1.danger.<action>.prepare` ve `admin_v1.danger.<action>.confirm`. `target_type` company veya user. `details` yalnız `operator`, `reason`, `action`, preview özeti veya sonuç sayıları, `scopes`. Token, token özeti, `operator_otp`, `confirm_text`, imza, nonce, Idempotency-Key, secret ve sıfırlama bağlantısı girmez. `activity_logs` ve applog satırında `operator_email` ve `via=api` görünür.
+Audit: `admin_v1.danger.<action>.prepare` ve `admin_v1.danger.<action>.confirm`. `target_type` company, user, plan veya product. `details` yalnız `operator`, `reason`, `action`, preview özeti veya sonuç sayıları, `scopes`. Token, token özeti, `operator_otp`, `confirm_text`, imza, nonce, Idempotency-Key, secret ve sıfırlama bağlantısı girmez. `activity_logs` ve applog satırında `operator_email` ve `via=api` görünür.
 
 ### POST `/api/platform/admin-v1/danger/{action}/prepare`
 

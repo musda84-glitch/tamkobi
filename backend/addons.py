@@ -206,8 +206,7 @@ async def put_defaults(req: Dict[str, Any], _: dict = Depends(_admin)):
     return await _list_addons()
 
 
-@router.post("/system/companies/{company_id}/addons/{addon_key}")
-async def toggle_company_addon(company_id: str, addon_key: str, req: Dict[str, Any], _: dict = Depends(_admin)):
+async def apply_company_addon(company_id: str, addon_key: str, req: Dict[str, Any]) -> dict:
     if addon_key not in ADDON_KEYS:
         raise HTTPException(status_code=400, detail="Bilinmeyen araç.")
     import saas
@@ -237,3 +236,8 @@ async def toggle_company_addon(company_id: str, addon_key: str, req: Dict[str, A
     )
     saas.invalidate(lid)
     return await saas.effective(company_id)
+
+
+@router.post("/system/companies/{company_id}/addons/{addon_key}")
+async def toggle_company_addon(company_id: str, addon_key: str, req: Dict[str, Any], _: dict = Depends(_admin)):
+    return await apply_company_addon(company_id, addon_key, req)

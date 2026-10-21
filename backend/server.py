@@ -1635,6 +1635,9 @@ EINVOICE_PROVIDERS = {
     "other": {"name": "Diğer Entegratör", "fields": ["api_url", "username", "password", "api_key"], "docs": ""},
 }
 
+import einvoice_assign
+einvoice_assign.register_providers(EINVOICE_PROVIDERS)
+
 def _despatch_defaults_view(s: Optional[dict] = None) -> Dict[str, str]:
     """İşNet e-İrsaliye varsayılanları (plaka / sürücü / taşıyıcı) — ayrı SOAP bağlantısı değil."""
     s = s or {}
@@ -1814,31 +1817,7 @@ async def save_einvoice_settings(req: Dict[str, Any], user: Any = Depends(get_cu
 
 @api_router.put("/system/companies/{company_id}/einvoice")
 async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
-    if not await db.companies.find_one({"_id": company_id}):
-        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    provider = (req.get("provider") or "").strip()
-    if provider and provider not in EINVOICE_PROVIDERS:
-        raise HTTPException(status_code=400, detail="Desteklenmeyen entegratör.")
-    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
-    now = datetime.now(timezone.utc).isoformat()
-    update = {"provider": provider, "updated_at": now, "assigned_at": now}
-    unset = {}
-    if provider != (existing.get("provider") or ""):
-        update["username"] = ""
-        update["api_url"] = ""
-        update["corporate_code"] = ""
-        update["erp_code"] = ""
-        update["efatura_url"] = ""
-        update["earsiv_url"] = ""
-        update["status"] = "simulated"
-        unset["password_enc"] = ""
-        unset["api_key_enc"] = ""
-    if not provider:
-        update["status"] = "simulated"
-    ops = {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "mode": existing.get("mode") or "test", "alias": existing.get("alias") or ""}}
-    if unset:
-        ops["$unset"] = unset
-    await db.einvoice_settings.update_one({"company_id": company_id}, ops, upsert=True)
+    await einvoice_assign.assign_company_provider(db, company_id, (req.get("provider") or ""))
     return await _einvoice_settings_payload(company_id)
 
 
@@ -26789,6 +26768,7 @@ import platform_v1
 import platform_admin_v1
 import platform_admin_v1_write
 import platform_admin_v1_danger
+import platform_admin_v1_ops
 platform_admin.init(db)
 platform_v1.init(db)
 import user_erase
@@ -27056,6 +27036,7 @@ app.include_router(platform_v1.router)
 app.include_router(platform_admin_v1.router)
 app.include_router(platform_admin_v1_write.router)
 app.include_router(platform_admin_v1_danger.router)
+app.include_router(platform_admin_v1_ops.router)
 app.include_router(user_erase.router)
 app.include_router(company_reset.router)
 app.include_router(storage_manager.router)

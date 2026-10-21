@@ -12,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from build_stamp import read_stamp
 import company_sms
+import event_notify
+import password_reset
 import platform_auth
 import platform_mail
 import platform_sms
@@ -479,6 +481,56 @@ async def admin_v1_support_tickets(
         "open_count": open_count,
         **support_tickets.meta(),
     })
+
+
+def _mask_address(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "@" in text:
+        return password_reset.mask_email(text)
+    return password_reset.mask_phone(text)
+
+
+def _mask_mail_log(payload: dict) -> dict:
+    sent = []
+    for row in payload.get("sent") or []:
+        item = dict(row)
+        masked = [_mask_address(addr) for addr in (item.get("to") or [])]
+        item["to"] = masked
+        item["recipients"] = ", ".join(part for part in masked if part)
+        sent.append(item)
+    deferred = []
+    for row in payload.get("deferred") or []:
+        item = dict(row)
+        raw = str(item.get("recipients") or "")
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        item["recipients"] = ", ".join(_mask_address(part) for part in parts)
+        deferred.append(item)
+    return {"sent": sent, "deferred": deferred}
+
+
+@router.get("/platform/admin-v1/companies/{company_id}/notify-prefs")
+async def admin_v1_notify_prefs_read(company_id: str, request: Request):
+    """Bildirim tercihleri. Yazmaz. extra_emails düzenleme için açık döner."""
+    await _auth(request, store.SCOPE_ADMIN_NOTIFICATIONS_READ)
+    await event_notify._require_existing_company(company_id)
+    prefs = await event_notify.present_prefs(
+        await event_notify.get_prefs(company_id), with_usage=True,
+    )
+    return _item(prefs)
+
+
+@router.get("/platform/admin-v1/companies/{company_id}/notify-mail-log")
+async def admin_v1_notify_mail_log(
+    company_id: str,
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Posta günlüğü. Alıcılar maskelenir. Idempotency-Key yok."""
+    await _auth(request, store.SCOPE_ADMIN_NOTIFICATIONS_READ)
+    log = await event_notify.company_notify_mail_log(company_id, limit)
+    return _redact(_mask_mail_log(log))
 
 
 @router.get("/platform/admin-v1/support/tickets/{ticket_id}")

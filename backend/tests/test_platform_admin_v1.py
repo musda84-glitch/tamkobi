@@ -118,8 +118,26 @@ class FakeColl:
         if "$inc" in upd:
             for key, value in upd["$inc"].items():
                 doc[key] = int(doc.get(key) or 0) + int(value)
+        if "$unset" in upd:
+            for key in upd["$unset"]:
+                doc.pop(key, None)
+        if "$addToSet" in upd:
+            for key, value in upd["$addToSet"].items():
+                cur = doc.get(key)
+                if not isinstance(cur, list):
+                    cur = [] if cur is None else [cur]
+                if value not in cur:
+                    cur = [*cur, value]
+                doc[key] = cur
         self.docs[doc["_id"]] = doc
         return SimpleNamespace(matched_count=1, modified_count=1)
+
+    async def insert_many(self, docs):
+        ids = []
+        for doc in docs:
+            await self.insert_one(doc)
+            ids.append(doc["_id"])
+        return SimpleNamespace(inserted_ids=ids)
 
     async def find_one_and_update(self, q, upd, upsert=False, return_document=True, projection=None):
         self.updates += 1

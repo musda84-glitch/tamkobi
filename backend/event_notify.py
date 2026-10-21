@@ -3092,12 +3092,7 @@ def _clamp_mail_log_limit(limit) -> int:
     return min(max(lim, 1), NOTIFY_MAIL_LOG_LIMIT_MAX)
 
 
-@router.get("/saas/companies/{company_id}/notify-mail-log")
-async def get_saas_notify_mail_log(
-    company_id: str,
-    limit: int = 50,
-    _: dict = Depends(saas.require_super_admin),
-):
+async def company_notify_mail_log(company_id: str, limit: int = 50) -> dict:
     cid = await _require_existing_company(company_id)
     lim = _clamp_mail_log_limit(limit)
     try:
@@ -3148,3 +3143,12 @@ async def get_saas_notify_mail_log(
             "recipients": "",
         })
     return {"sent": sent, "deferred": deferred}
+
+
+@router.get("/saas/companies/{company_id}/notify-mail-log")
+async def get_saas_notify_mail_log(
+    company_id: str,
+    limit: int = 50,
+    _: dict = Depends(saas.require_super_admin),
+):
+    return await company_notify_mail_log(company_id, limit)
