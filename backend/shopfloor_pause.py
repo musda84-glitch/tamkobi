@@ -186,8 +186,13 @@ async def pause_policy_for_employee(
     rec = None
     db = att._db
     if db is not None:
-        plan = await db.shift_plans.find_one({"employee_id": emp.get("_id") or emp.get("id"), "date": day})
-        rec = await db.attendance.find_one({"employee_id": emp.get("_id") or emp.get("id"), "date": day}) or {}
+        cid = str(emp.get("company_id") or "").strip()
+        if not cid:
+            rec = {}
+        else:
+            eid = emp.get("_id") or emp.get("id")
+            plan = await db.shift_plans.find_one({"employee_id": eid, "date": day, "company_id": cid})
+            rec = await db.attendance.find_one({"employee_id": eid, "date": day, "company_id": cid}) or {}
     return resolve_pause_phase(schedule=sch, rec=rec, date=day, plan=plan, now_hm=now_hm)
 
 
@@ -208,8 +213,13 @@ async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
         emps = await db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(500)
         for emp in emps:
             sch = att.merge_schedule(company, emp)
-            plan = await db.shift_plans.find_one({"employee_id": emp["_id"], "date": today})
-            rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+            cid = company["_id"]
+            if cid:
+                plan = await db.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
+                rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
+            else:
+                plan = None
+                rec = {}
             if not should_auto_pause_now(schedule=sch, rec=rec, date=today, plan=plan, now_hm=now_s):
                 continue
             name = str(emp.get("full_name") or "").strip()
@@ -227,7 +237,7 @@ async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
             now_iso = datetime.now(timezone.utc).isoformat()
             ids = [w["_id"] for w in wos]
             await db.work_orders.update_many(
-                {"_id": {"$in": ids}},
+                {"_id": {"$in": ids}, "company_id": company["_id"]},
                 {
                     "$set": {"status": "paused", "paused_at": now_iso, "auto_paused": True},
                     "$push": {
