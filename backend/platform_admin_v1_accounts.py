@@ -222,6 +222,42 @@ async def admin_v1_storage_ensure_all(request: Request):
 
 _USER_CREATE = ("name", "email", "password", "is_active")
 _USER_UPDATE = ("name", "email", "phone", "is_active", "password")
+_SCOPE_OUTSIDE = "İstenen kapsam çağıran anahtarın kapsamının dışında."
+_DANGER_CREATE_DETAIL = "platform_admin anahtarı danger/key.admin_create ile oluşturulur."
+_DANGER_SCOPES_DETAIL = "platform_admin anahtarının kapsamı danger/key.admin_scopes ile değişir."
+
+
+def _reject_blank_password(payload: Dict[str, Any]) -> None:
+    """Boş veya yalnızca boşluk şifre yazılmaz. Sır kapsamı bu kontrolden önce aranır."""
+    if "password" not in payload:
+        return
+    password = payload.get("password")
+    if isinstance(password, str) and not password.strip():
+        raise HTTPException(status_code=400, detail="Şifre boş olamaz.")
+
+
+def scope_set(scopes: Any) -> set:
+    if isinstance(scopes, str) or not isinstance(scopes, (list, tuple)):
+        return set()
+    return {str(item).strip() for item in scopes if str(item).strip()}
+
+
+def assert_scope_subset(requested: Any, caller_scopes: Any) -> None:
+    if scope_set(requested) - scope_set(caller_scopes):
+        raise HTTPException(status_code=403, detail=_SCOPE_OUTSIDE)
+
+
+def assert_caller_has_keys_write(doc: dict) -> None:
+    if store.SCOPE_ADMIN_KEYS_WRITE not in scope_set((doc or {}).get("scopes")):
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+
+
+async def caller_key_doc(request: Request) -> dict:
+    key_id = (request.headers.get("X-Platform-Key") or "").strip()
+    doc = await store._db.platform_api_keys.find_one({"_id": key_id}) if key_id else None
+    if not doc or doc.get("revoked_at"):
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+    return doc
 
 
 @router.post("/platform/admin-v1/platform-users")
@@ -230,6 +266,7 @@ async def admin_v1_create_platform_user(request: Request):
         _reject_unknown(payload, _USER_CREATE)
         if body_has_secret(payload):
             await require_secret_scope(request)
+        _reject_blank_password(payload)
         for field in ("name", "email", "password"):
             if not isinstance(payload.get(field), str) or not str(payload.get(field)).strip():
                 raise HTTPException(status_code=400, detail=f"{field} zorunlu.")
@@ -260,6 +297,7 @@ async def admin_v1_update_platform_user(user_id: str, request: Request):
             raise HTTPException(status_code=400, detail="Gövde boş olamaz.")
         if body_has_secret(payload):
             await require_secret_scope(request)
+        _reject_blank_password(payload)
         if "is_active" in payload:
             _require_bool(payload, "is_active")
         for field in ("name", "email", "phone", "password"):
@@ -290,13 +328,18 @@ _KEY_CREATE = ("product_id", "name", "scopes", "instance_id", "kind", "expires_a
 
 @router.post("/platform/admin-v1/api-keys")
 async def admin_v1_create_api_key(request: Request):
-    """Şirket anahtarı (kind=product) ve platform anahtarı. credential yalnız bu yanıtta bir kez döner."""
+    """Şirket anahtarı (kind=product). credential yalnız bu yanıtta bir kez döner.
+
+    platform_admin anahtarı burada oluşmaz; danger/key.admin_create ister.
+    """
 
     async def prepare(payload: Dict[str, Any]) -> List[str]:
         _reject_unknown(payload, _KEY_CREATE)
         kind = payload.get("kind") or store.KEY_KIND_PRODUCT
         if kind not in (store.KEY_KIND_PRODUCT, store.KEY_KIND_PLATFORM_ADMIN):
             raise HTTPException(status_code=400, detail="kind product veya platform_admin olmalı.")
+        if kind == store.KEY_KIND_PLATFORM_ADMIN:
+            raise HTTPException(status_code=400, detail=_DANGER_CREATE_DETAIL)
         if not isinstance(payload.get("name"), str) or not payload["name"].strip():
             raise HTTPException(status_code=400, detail="name zorunlu.")
         if not isinstance(payload.get("product_id"), str) or not payload["product_id"].strip():
@@ -311,8 +354,6 @@ async def admin_v1_create_api_key(request: Request):
                 raise HTTPException(status_code=400, detail="Şirket anahtarı instance_id ister.")
             if not await saas._db.companies.find_one({"_id": instance_id.strip()}):
                 raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-        elif payload.get("instance_id"):
-            raise HTTPException(status_code=400, detail="platform_admin anahtarı bir instance'a bağlanamaz")
         if "expires_at" in payload and payload["expires_at"] is not None and not isinstance(payload["expires_at"], str):
             raise HTTPException(status_code=400, detail="expires_at metin ya da null olmalı.")
         if "ip_allowlist" in payload and not isinstance(payload["ip_allowlist"], list):
@@ -355,8 +396,11 @@ async def admin_v1_api_key_scopes(key_id: str, request: Request):
         scopes = payload.get("scopes")
         if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s.strip() for s in scopes):
             raise HTTPException(status_code=400, detail="scopes metin listesi olmalı.")
-        if not await store._db.platform_api_keys.find_one({"_id": key_id}):
+        existing = await store._db.platform_api_keys.find_one({"_id": key_id})
+        if not existing:
             raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
+        if (existing.get("kind") or store.KEY_KIND_PRODUCT) == store.KEY_KIND_PLATFORM_ADMIN:
+            raise HTTPException(status_code=400, detail=_DANGER_SCOPES_DETAIL)
         return ["scopes"]
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
@@ -388,8 +432,12 @@ async def admin_v1_api_key_scopes(key_id: str, request: Request):
 async def admin_v1_rotate_api_key(key_id: str, request: Request):
     async def prepare(payload: Dict[str, Any]) -> List[str]:
         _reject_unknown(payload, ())
-        if not await store._db.platform_api_keys.find_one({"_id": key_id}):
+        existing = await store._db.platform_api_keys.find_one({"_id": key_id})
+        if not existing:
             raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
+        if (existing.get("kind") or store.KEY_KIND_PRODUCT) == store.KEY_KIND_PLATFORM_ADMIN:
+            caller = await caller_key_doc(request)
+            assert_scope_subset(existing.get("scopes") or [], caller.get("scopes") or [])
         return ["rotate"]
 
     async def apply(payload: Dict[str, Any], key_doc: dict):

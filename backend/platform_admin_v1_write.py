@@ -87,10 +87,14 @@ _AUDIT_BLOCK = ("password", "secret", "api_key", "merchant_key", "merchant_salt"
 
 
 def body_has_secret(payload: Dict[str, Any]) -> bool:
+    """Gövde sır alanı taşıyor mu. Alanın varlığı yeter; boş ve yalnızca boşluk da sırdır.
+
+    clear_key yalnız True iken sırdır. false mevcut sırrı silmez.
+    """
     if payload.get("clear_key") is True:
         return True
     for key in _SECRET_BODY_KEYS:
-        if key in payload and str(payload.get(key) or "").strip():
+        if key in payload:
             return True
     return False
 

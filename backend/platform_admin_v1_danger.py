@@ -8,7 +8,7 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -242,6 +242,8 @@ _ACTIONS = (
     "plan.delete",
     "product.delete",
     "key.revoke",
+    "key.admin_create",
+    "key.admin_scopes",
     "maintenance.enable",
     "gib.gift",
 )
@@ -257,6 +259,8 @@ _PREPARE_EXTRA = {
     "plan.delete": (),
     "product.delete": (),
     "key.revoke": (),
+    "key.admin_create": ("name", "product_id", "scopes", "expires_at", "ip_allowlist"),
+    "key.admin_scopes": ("scopes",),
     "maintenance.enable": (
         "title", "body", "starts_at", "ends_at", "notify_popup", "notify_sms",
         "audience", "company_ids", "support_email", "support_phone",
@@ -292,7 +296,7 @@ def _target_type(action: str) -> str:
         return "plan"
     if action == "product.delete":
         return "product"
-    if action == "key.revoke":
+    if action in ("key.revoke", "key.admin_create", "key.admin_scopes"):
         return "api_key"
     if action == "maintenance.enable":
         return "maintenance"
@@ -318,7 +322,7 @@ def _hint_for(action: str) -> str:
         return _PLAN_HINT
     if action == "product.delete":
         return _PRODUCT_HINT
-    if action == "key.revoke":
+    if action in ("key.revoke", "key.admin_create", "key.admin_scopes"):
         return _KEY_HINT
     if action == "maintenance.enable":
         return _MAINTENANCE_HINT
@@ -332,7 +336,7 @@ def _text_error(action: str) -> str:
         return _PLAN_TEXT_ERROR
     if action == "product.delete":
         return _PRODUCT_TEXT_ERROR
-    if action == "key.revoke":
+    if action in ("key.revoke", "key.admin_create", "key.admin_scopes"):
         return _KEY_TEXT_ERROR
     if action == "maintenance.enable":
         return _MAINTENANCE_TEXT_ERROR
@@ -390,6 +394,8 @@ def _preview_summary(action: str, preview: Dict[str, Any]) -> Dict[str, Any]:
         return {"parent_company_id": preview.get("parent_company_id")}
     if action == "key.revoke":
         return {"name": preview.get("name"), "kind": preview.get("kind")}
+    if action in ("key.admin_create", "key.admin_scopes"):
+        return {"name": preview.get("name"), "scopes": list(preview.get("scopes") or [])}
     if action == "maintenance.enable":
         return {"title": preview.get("title")}
     if action == "gib.gift":
@@ -416,6 +422,8 @@ def _result_summary(action: str, result: Dict[str, Any]) -> Dict[str, Any]:
         return {"parent_company_id": result.get("parent_company_id")}
     if action == "key.revoke":
         return {"id": result.get("id"), "revoked_at": result.get("revoked_at")}
+    if action in ("key.admin_create", "key.admin_scopes"):
+        return {"id": result.get("id"), "scopes": list(result.get("scopes") or [])}
     if action == "maintenance.enable":
         return {"enabled": result.get("enabled")}
     if action == "gib.gift":
@@ -579,6 +587,106 @@ async def _validate_key_revoke(key_id: str, caller_key_id: str) -> dict:
     }
 
 
+def _scope_list_or_400(scopes: Any) -> List[str]:
+    if not isinstance(scopes, list) or not scopes or not all(isinstance(item, str) and item.strip() for item in scopes):
+        raise HTTPException(status_code=400, detail="scopes metin listesi olmalı.")
+    return [item.strip() for item in scopes]
+
+
+async def _caller_for_key_admin(caller_key_id: str) -> dict:
+    from platform_admin_v1_accounts import assert_caller_has_keys_write
+
+    doc = await store._db.platform_api_keys.find_one({"_id": caller_key_id}) if caller_key_id else None
+    if not doc or doc.get("revoked_at"):
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+    assert_caller_has_keys_write(doc)
+    return doc
+
+
+def _caller_scope_fp(doc: dict) -> List[str]:
+    from platform_admin_v1_accounts import scope_set
+
+    return sorted(scope_set(doc.get("scopes")))
+
+
+async def _validate_key_admin_create(params: Dict[str, Any]) -> dict:
+    from platform_admin_v1_accounts import assert_scope_subset
+    from platform_auth import normalize_ip_allowlist
+
+    caller = await _caller_for_key_admin(str(params.get("_caller_key_id") or ""))
+    raw_scopes = _scope_list_or_400(params.get("scopes"))
+    try:
+        normalized = store._normalize_scopes(raw_scopes, kind=store.KEY_KIND_PLATFORM_ADMIN)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    assert_scope_subset(normalized, caller.get("scopes") or [])
+    params["scopes"] = normalized
+    product_id = str(params.get("product_id") or "").strip()
+    prod = await store._get_product_doc(product_id)
+    if not prod:
+        raise HTTPException(status_code=400, detail="Ürün bulunamadı")
+    if prod.get("code") != store.PRODUCT_TAMKOBI:
+        raise HTTPException(status_code=400, detail="platform_admin anahtarı yalnızca TamKobi ürününe verilebilir")
+    name = str(params.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name zorunlu.")
+    params["name"] = name
+    params["product_id"] = str(prod.get("_id") or product_id)
+    try:
+        allow = normalize_ip_allowlist(params.get("ip_allowlist"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    expires_at = params.get("expires_at")
+    return {
+        "label": name,
+        "fp": _fp({
+            "name": name,
+            "product_id": params["product_id"],
+            "scopes": normalized,
+            "expires_at": expires_at,
+            "ip_allowlist": allow,
+            "caller_scopes": _caller_scope_fp(caller),
+        }),
+        "preview": {"name": name, "scopes": normalized},
+        "scopes": normalized,
+    }
+
+
+async def _validate_key_admin_scopes(key_id: str, params: Dict[str, Any]) -> dict:
+    from platform_admin_v1_accounts import assert_scope_subset
+
+    caller = await _caller_for_key_admin(str(params.get("_caller_key_id") or ""))
+    doc = await store._db.platform_api_keys.find_one({"_id": key_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
+    if doc.get("revoked_at"):
+        raise HTTPException(status_code=400, detail="İptal edilmiş anahtarın kapsamı değişmez")
+    if (doc.get("kind") or store.KEY_KIND_PRODUCT) != store.KEY_KIND_PLATFORM_ADMIN:
+        raise HTTPException(status_code=400, detail="Bu işlem yalnız platform_admin anahtarı içindir.")
+    raw_scopes = _scope_list_or_400(params.get("scopes"))
+    try:
+        normalized = store._normalize_scopes(raw_scopes, kind=store.KEY_KIND_PLATFORM_ADMIN)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    assert_scope_subset(normalized, caller.get("scopes") or [])
+    params["scopes"] = normalized
+    label = (doc.get("name") or key_id).strip()
+    current = list(doc.get("scopes") or [])
+    return {
+        "label": label,
+        "fp": _fp({
+            "id": key_id,
+            "name": label,
+            "current_scopes": current,
+            "scopes": normalized,
+            "caller_scopes": _caller_scope_fp(caller),
+            "revoked_at": None,
+        }),
+        "preview": {"name": label, "scopes": normalized, "kind": store.KEY_KIND_PLATFORM_ADMIN},
+        "scopes": normalized,
+    }
+
+
 async def _validate_maintenance(params: Dict[str, Any]) -> dict:
     import platform_notices
     title = str(params.get("title") or "").strip()
@@ -638,6 +746,10 @@ async def _validate_action(action: str, target_id: str, operator_email: str, par
         return await _validate_product(target_id)
     if action == "key.revoke":
         return await _validate_key_revoke(target_id, str(params.get("_caller_key_id") or ""))
+    if action == "key.admin_create":
+        return await _validate_key_admin_create(params)
+    if action == "key.admin_scopes":
+        return await _validate_key_admin_scopes(target_id, params)
     if action == "maintenance.enable":
         return await _validate_maintenance(params)
     if action == "gib.gift":
@@ -649,7 +761,8 @@ def _text_matches(action: str, label: str, text: Any) -> bool:
     if not isinstance(text, str):
         return False
     if action.startswith("company.") or action in (
-        "plan.delete", "product.delete", "key.revoke", "maintenance.enable", "gib.gift",
+        "plan.delete", "product.delete", "key.revoke", "key.admin_create", "key.admin_scopes",
+        "maintenance.enable", "gib.gift",
     ):
         return text.strip() == (label or "").strip()
     return text.strip().lower() == (label or "").strip().lower()
@@ -771,6 +884,46 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
             return await store.revoke_api_key(target_id, actor_id=str(actor.get("_id") or ""), ip=ip)
         except LookupError:
             raise HTTPException(status_code=409, detail=_TARGET_CHANGED) from None
+    if action == "key.admin_create":
+        try:
+            pub, secret = await store.create_api_key(
+                product_id=str(params.get("product_id") or ""),
+                name=str(params.get("name") or ""),
+                scopes=list(params.get("scopes") or []),
+                instance_id=None,
+                expires_at=params.get("expires_at"),
+                ip_allowlist=params.get("ip_allowlist"),
+                actor_id=str(actor.get("_id") or ""),
+                ip=ip,
+                kind=store.KEY_KIND_PLATFORM_ADMIN,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {
+            "id": pub["id"],
+            "name": pub.get("name"),
+            "kind": pub.get("kind"),
+            "scopes": list(pub.get("scopes") or []),
+            "credential": secret,
+        }
+    if action == "key.admin_scopes":
+        try:
+            pub = await store.update_api_key_scopes(
+                target_id,
+                list(params.get("scopes") or []),
+                actor_id=str(actor.get("_id") or ""),
+                ip=ip,
+            )
+        except LookupError:
+            raise HTTPException(status_code=409, detail=_TARGET_CHANGED) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {
+            "id": pub["id"],
+            "name": pub.get("name"),
+            "kind": pub.get("kind"),
+            "scopes": list(pub.get("scopes") or []),
+        }
     if action == "maintenance.enable":
         import platform_notices
         body = {k: v for k, v in params.items() if not str(k).startswith("_")}
@@ -868,6 +1021,30 @@ async def admin_v1_danger_prepare(action: str, request: Request):
                     raise HTTPException(status_code=400, detail="email metin olmalı.")
                 params["email"] = payload["email"]
         if action == "key.revoke":
+            params["_caller_key_id"] = (request.headers.get("X-Platform-Key") or "").strip()
+        if action == "key.admin_create":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            name = payload.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise HTTPException(status_code=400, detail="name zorunlu.")
+            product_id = payload.get("product_id")
+            if not isinstance(product_id, str) or not product_id.strip():
+                raise HTTPException(status_code=400, detail="product_id zorunlu.")
+            params["name"] = name.strip()
+            params["product_id"] = product_id.strip()
+            params["scopes"] = _scope_list_or_400(payload.get("scopes"))
+            params["_caller_key_id"] = (request.headers.get("X-Platform-Key") or "").strip()
+            if "expires_at" in payload:
+                if payload["expires_at"] is not None and not isinstance(payload["expires_at"], str):
+                    raise HTTPException(status_code=400, detail="expires_at metin ya da null olmalı.")
+                params["expires_at"] = payload["expires_at"]
+            if "ip_allowlist" in payload:
+                if not isinstance(payload["ip_allowlist"], list):
+                    raise HTTPException(status_code=400, detail="ip_allowlist liste olmalı.")
+                params["ip_allowlist"] = payload["ip_allowlist"]
+        if action == "key.admin_scopes":
+            params["scopes"] = _scope_list_or_400(payload.get("scopes"))
             params["_caller_key_id"] = (request.headers.get("X-Platform-Key") or "").strip()
         if action == "gib.gift":
             credits = payload.get("credits")
