@@ -108,8 +108,23 @@ def test_two_suppliers_hide_closed_link_email_and_vkn_only(client):
     ):
         assert secret not in text
     row = body["suppliers"][0]
-    assert set(row) == {"contact_id", "company_id", "company_name", "logo_url", "contact_name"}
+    assert set(row) == {"contact_id", "company_id", "company_name", "logo_url", "contact_name", "phone", "email"}
     assert row["logo_url"] in ("/logo-a.png", "/logo-b.png")
+    assert row["phone"] == ""
+    assert row["email"] == ""
+
+
+def test_supplier_list_exposes_company_phone_and_email_not_login(client, db):
+    db.companies.docs[0]["phone"] = "0216 555 12 34"
+    db.companies.docs[0]["email"] = "siparis@firma-a.test"
+    res = _login(client)
+    assert res.status_code == 200, res.text
+    row = next(item for item in res.json()["suppliers"] if item["company_name"] == "Firma A")
+    assert row["phone"] == "0216 555 12 34"
+    assert row["email"] == "siparis@firma-a.test"
+    assert row["email"] != "ali@example.com"
+    for secret in ("portal-secret-a", "portal-secret-b", HASH, "424242"):
+        assert secret not in res.text
 
 
 def test_select_supplier_rejects_foreign_and_expired_and_hides_other_token(client, db):

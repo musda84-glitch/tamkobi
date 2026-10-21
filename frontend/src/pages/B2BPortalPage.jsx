@@ -15,7 +15,6 @@ import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "../utils/b2bCatalogWindow";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { classifyTestPayment, navigation, postBankForm } from "../components/VposSettingsPanel";
-import B2BSupplierSwitch from "../components/B2BSupplierSwitch";
 import {
   b2bNav,
   b2bSessionHeaders,
@@ -450,41 +449,20 @@ export default function B2BPortalPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
-      <div className="relative">
-        <B2BHeader
-          company={data.company}
-          contact={data.contact}
-          token={token}
-          onPasswordChanged={load}
-          switcher={suppliers.length > 1 ? (
-            <B2BSupplierSwitch
-              suppliers={suppliers}
-              currentCompany={data.company?.name}
-              currentContact={data.contact?.name}
-              busyId={switchBusy}
-              error={switchErr}
-              onPick={pickSupplier}
-            />
-          ) : null}
-        />
-        {allowOrders && (
-          <div className="bg-slate-900">
-            <div className="max-w-7xl mx-auto px-3 sm:px-4 pb-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => selectTab("cart")}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white text-slate-900 px-3 py-1.5 text-xs font-bold"
-                data-testid="b2b-header-cart"
-                aria-label="Sepet"
-              >
-                <ShoppingCart className="w-4 h-4" />
-                Sepet
-                <CartCountBadge count={lines.length} />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      <B2BHeader
+        company={data.company}
+        contact={data.contact}
+        token={token}
+        onPasswordChanged={load}
+        suppliers={suppliers}
+        busyId={switchBusy}
+        switchError={switchErr}
+        onPick={pickSupplier}
+        allowOrders={allowOrders}
+        showStatement={settings.show_statement !== false}
+        cartCount={lines.length}
+        onSelectTab={selectTab}
+      />
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4">
         {settings.welcome_note ? (
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-3 py-2.5 text-xs sm:text-sm" data-testid="b2b-welcome-note">

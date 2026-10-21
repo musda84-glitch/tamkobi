@@ -49,7 +49,7 @@ _SESSION_EXPIRED = "Oturum süresi doldu. Yeniden giriş yapın."
 _NOT_LINKED = "Bu cari bu oturuma bağlı değil."
 _LOGIN_BAD = "Portal girişi geçerli bir e-posta ya da 10/11 haneli VKN/TCKN olmalıdır."
 
-_PUBLIC_KEYS = ("contact_id", "company_id", "company_name", "logo_url", "contact_name")
+_PUBLIC_KEYS = ("contact_id", "company_id", "company_name", "logo_url", "contact_name", "phone", "email")
 _DIRECT_EVENTS = ("b2b_link_notice", "b2b_verify_email", "b2b_password_reset")
 
 # Bilinmeyen hesapta gerçek bcrypt süresi. Düz metin bir sır değildir.
@@ -459,6 +459,9 @@ async def _describe_contact(db, identity: dict, contact: dict, accepted: set) ->
             "company_name": company.get("name") or "",
             "logo_url": company.get("logo_url") or "",
             "contact_name": contact.get("name") or "",
+            # Portal başlığındaki tedarikçi menüsü. Cari giriş e-postası değil, firmanın iletişim alanları.
+            "phone": str(company.get("phone") or ""),
+            "email": str(company.get("email") or ""),
         }
     return {"meta": meta, "link": link}
 
