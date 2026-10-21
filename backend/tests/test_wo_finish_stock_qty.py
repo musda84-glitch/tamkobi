@@ -51,7 +51,7 @@ def test_finish_material_step_deducts_entered_stock():
     assert "stoktan" in out["message"].lower()
     fake_db.products.update_one.assert_awaited()
     args = fake_db.products.update_one.await_args.args
-    assert args[0] == {"_id": "mat1"}
+    assert args[0] == {"_id": "mat1", "company_id": "c1"}
     assert args[1] == {"$inc": {"stock_quantity": -5.0}}
     wo_set = fake_db.work_orders.update_one.await_args_list[0].args[1]["$set"]
     assert wo_set["material_stock_deducted"] is True

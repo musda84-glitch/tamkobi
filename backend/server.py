@@ -23139,7 +23139,8 @@ async def assign_work_order(wo_id: str, req: Dict[str, Any], request: Request = 
     who = await shopfloor_pin.resolve_operator(
         req, user, w, fallback=str(req.get("assigned_name") or ""), request=request, prefer_body=False,
     )
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"assigned_to": req.get("assigned_to"), "assigned_name": req.get("assigned_name")}, "$push": {"logs": _log(w, "assigned", who)}})
+    cid = str(w.get("company_id") or "").strip()
+    await db.work_orders.update_one({"_id": wo_id, "company_id": cid}, {"$set": {"assigned_to": req.get("assigned_to"), "assigned_name": req.get("assigned_name")}, "$push": {"logs": _log(w, "assigned", who)}})
     await shopfloor_pin.record_wo_action(user, w, who)
     return {"status": "success"}
 
@@ -23178,10 +23179,11 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None, request: Requ
         upd["paused_seconds"] = w.get("paused_seconds", 0) + (datetime.now(timezone.utc) - datetime.fromisoformat(w["paused_at"])).total_seconds()
         upd["paused_at"] = None
         log_action = "resume"
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": upd, "$push": {"logs": _log(w, log_action, who)}})
+    cid = str(w.get("company_id") or "").strip()
+    await db.work_orders.update_one({"_id": wo_id, "company_id": cid}, {"$set": upd, "$push": {"logs": _log(w, log_action, who)}})
     await shopfloor_pin.record_wo_action(user, w, who)
-    await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
-    refreshed = await db.work_orders.find_one({"_id": wo_id})
+    await db.production_orders.update_one({"_id": w["order_id"], "status": "planned", "company_id": cid}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
+    refreshed = await db.work_orders.find_one({"_id": wo_id, "company_id": cid})
     out: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} başlatıldı."}
     if refreshed:
         out["work_order"] = clean_doc(refreshed)
@@ -23258,7 +23260,7 @@ async def pause_work_order(wo_id: str, req: Dict[str, Any] = None, request: Requ
     if not policy.get("allowed"):
         raise HTTPException(status_code=400, detail=policy.get("reason") or sfp.PAUSE_OUTSIDE_DETAIL)
     await db.work_orders.update_one(
-        {"_id": wo_id},
+        {"_id": wo_id, "company_id": _pause_cid},
         {
             "$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat(), "auto_paused": False},
             "$push": {"logs": _log(w, "pause", who, req.get("reason", ""))},
@@ -23283,13 +23285,17 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
         }
     if w["status"] not in ("in_progress", "paused"):
         raise HTTPException(status_code=400, detail="Sadece başlatılmış adım bitirilebilir.")
+    cid = str(w.get("company_id") or "").strip()
     # DB satırında materials yok; reçeteden kalem ihtiyacını yükle (16 Metre vb.).
     finish_mats = list(w.get("materials") or [])
     if not finish_mats or not (w.get("material_product_id") or w.get("material_name")):
-        o = await db.production_orders.find_one({"_id": w.get("order_id")}, {"recipe_id": 1, "planned_quantity": 1}) or {}
+        o = await db.production_orders.find_one(
+            {"_id": w.get("order_id"), "company_id": cid},
+            {"recipe_id": 1, "planned_quantity": 1},
+        ) or {}
         recipe = (
             await db.recipes.find_one(
-                {"_id": o.get("recipe_id")},
+                {"_id": o.get("recipe_id"), "company_id": cid},
                 {"materials": 1, "steps": 1, "target_quantity": 1, "group_same_station": 1},
             )
             if o.get("recipe_id")
@@ -23310,7 +23316,7 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
             ]
             mat_prods = (
                 await db.products.find(
-                    {"_id": {"$in": mat_pids}},
+                    {"_id": {"$in": mat_pids}, "company_id": cid},
                     {"unit": 1, "unit_content_qty": 1, "unit_content_unit": 1, "name": 1},
                 ).to_list(len(mat_pids) or 1)
                 if mat_pids
@@ -23373,8 +23379,8 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
         mat_pid = str((finish_mats[0] or {}).get("product_id") or "").strip()
     mat_consume = pwo.round_needed_qty(produced + scrap, finish_unit) if is_material_step else 0.0
     if is_material_step and mat_pid and mat_consume > 0:
-        mat_prod = await db.products.find_one({"_id": mat_pid}, {"name": 1, "company_id": 1}) or {}
-        await db.products.update_one({"_id": mat_pid}, {"$inc": {"stock_quantity": -mat_consume}})
+        mat_prod = await db.products.find_one({"_id": mat_pid, "company_id": cid}, {"name": 1, "company_id": 1}) or {}
+        await db.products.update_one({"_id": mat_pid, "company_id": cid}, {"$inc": {"stock_quantity": -mat_consume}})
         await db.stock_movements.insert_one({
             "_id": str(uuid.uuid4()),
             "company_id": mat_prod.get("company_id") or w.get("company_id"),
@@ -23399,11 +23405,11 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
     if str(who or "").strip():
         wo_patch["operator_name"] = str(who).strip()
     await db.work_orders.update_one(
-        {"_id": wo_id},
+        {"_id": wo_id, "company_id": cid},
         {"$set": wo_patch, "$push": {"logs": _log(w, "finish", who, f"{produced:g} üretildi, {scrap:g} fire{log_extra}")}},
     )
     await shopfloor_pin.record_wo_action(user, w, who)
-    nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1})
+    nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1, "company_id": cid})
     msg_bits = [f"{w['step_name']} tamamlandı."]
     if over and not is_material_step:
         msg_bits.append("Plan üstü üretim kaydedildi.")
@@ -23422,11 +23428,11 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
             # Sonraki adımlar da fiili mamul miktarına hizalansın
             nxt_patch["planned_quantity"] = produced + scrap
         if nxt_patch:
-            await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": nxt_patch})
+            await db.work_orders.update_one({"_id": nxt["_id"], "company_id": cid}, {"$set": nxt_patch})
         if nxt_patch.get("status") == "ready":
             result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
     else:
-        o = await db.production_orders.find_one({"_id": w["order_id"]})
+        o = await db.production_orders.find_one({"_id": w["order_id"], "company_id": cid})
         if o and o.get("status") == "in_production":
             # Hammadde adımında stoka mamul plan miktarı yazılır (16 Metre ≠ 16 dolap).
             # Mamul adımında girilen üretilen (+fire hammaddede tüketilir) stoğa yazılır.
@@ -23449,7 +23455,7 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, request: Req
                 result["order_completed"] = r["finished"]
             except HTTPException as e:
                 result["message"] += f" (Stok işlenemedi: {e.detail})"
-    updated = await db.work_orders.find_one({"_id": wo_id})
+    updated = await db.work_orders.find_one({"_id": wo_id, "company_id": cid})
     if updated:
         result["work_order"] = clean_doc(updated)
     return result
@@ -23559,7 +23565,7 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, reque
     if not who:
         raise HTTPException(status_code=400, detail="Silme talebi için operatör seçin.")
     existing = await db.work_order_trash_requests.find_one(
-        {"work_order_id": wo_id, "status": "pending"}
+        {"work_order_id": wo_id, "status": "pending", "company_id": company_id}
     )
     if existing:
         return {
@@ -23571,7 +23577,7 @@ async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None, reque
     # Üretim emri silinemeyecek durumdaysa talebi erken reddet
     order_id = w.get("order_id")
     if order_id:
-        order = await db.production_orders.find_one({"_id": order_id})
+        order = await db.production_orders.find_one({"_id": order_id, "company_id": company_id})
         if order:
             block = pwo.production_order_trash_block_reason(order)
             if block:
@@ -23609,17 +23615,18 @@ async def decide_trash_work_order(req_id: str, req: Dict[str, Any] = None, user:
     if row.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen silme talebi bulunamadı.")
     now_iso = datetime.now(timezone.utc).isoformat()
+    cid = str(row.get("company_id") or "").strip()
     decider = user.get("name") or user.get("email") or user.get("_id") or "yönetici"
     if status_val == "rejected":
         await db.work_order_trash_requests.update_one(
-            {"_id": req_id},
+            {"_id": req_id, "company_id": cid},
             {"$set": {"status": "rejected", "decided_at": now_iso, "decided_by": decider, "decision_note": req.get("note", "")}},
         )
         return {"status": "success", "message": "Silme talebi reddedildi."}
-    w = await db.work_orders.find_one({"_id": row.get("work_order_id")})
+    w = await db.work_orders.find_one({"_id": row.get("work_order_id"), "company_id": cid})
     if not w:
         await db.work_order_trash_requests.update_one(
-            {"_id": req_id},
+            {"_id": req_id, "company_id": cid},
             {"$set": {"status": "approved", "decided_at": now_iso, "decided_by": decider, "decision_note": "İş emri zaten yok"}},
         )
         return {"status": "success", "message": "İş emri bulunamadı; talep kapatıldı.", "trashed_work_orders": 0}
@@ -23628,7 +23635,7 @@ async def decide_trash_work_order(req_id: str, req: Dict[str, Any] = None, user:
     )
     # Aynı üretim emrine bağlı diğer bekleyen talepleri kapat
     order_id = row.get("order_id") or w.get("order_id")
-    close_q: Dict[str, Any] = {"status": "pending"}
+    close_q: Dict[str, Any] = {"status": "pending", "company_id": cid}
     if order_id:
         close_q["order_id"] = order_id
     else:
@@ -23742,7 +23749,8 @@ async def delete_production_order(order_id: str, user: dict = Depends(get_curren
     block = pwo.production_order_trash_block_reason(o)
     if block:
         raise HTTPException(status_code=400, detail=block + " İptal edin.")
-    wos = await db.work_orders.find({"order_id": order_id}).to_list(500)
+    cid = str(o.get("company_id") or "").strip()
+    wos = await db.work_orders.find({"order_id": order_id, "company_id": cid}).to_list(500)
     label = pwo.production_order_trash_label(o)
     await trash.soft_delete(
         "production_orders",
@@ -23759,7 +23767,8 @@ async def start_production_order(order_id: str, user: dict = Depends(get_current
     o = await tenant_access.get_tenant_doc(db, "production_orders", order_id, user, not_found="Üretim emri bulunamadı.")
     if o.get("status") != "planned":
         raise HTTPException(status_code=400, detail="Sadece planlanan emirler başlatılabilir.")
-    await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
+    cid = str(o.get("company_id") or "").strip()
+    await db.production_orders.update_one({"_id": order_id, "company_id": cid}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     return {"status": "success", "message": "Üretim başlatıldı."}
 
 
@@ -23836,9 +23845,10 @@ async def cancel_production_order(order_id: str, user: dict = Depends(get_curren
     o = await tenant_access.get_tenant_doc(db, "production_orders", order_id, user, not_found="Üretim emri bulunamadı.")
     if o.get("status") == "completed":
         raise HTTPException(status_code=400, detail="Tamamlanmış emir iptal edilemez.")
-    await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "cancelled"}})
+    cid = str(o.get("company_id") or "").strip()
+    await db.production_orders.update_one({"_id": order_id, "company_id": cid}, {"$set": {"status": "cancelled"}})
     # Atölye ekranı iptal edilen emrin iş emirlerini göstermesin
-    wos = await db.work_orders.find({"order_id": order_id}).to_list(500)
+    wos = await db.work_orders.find({"order_id": order_id, "company_id": cid}).to_list(500)
     for w in wos:
         note = pwo.work_order_trash_note(w)
         if note:
