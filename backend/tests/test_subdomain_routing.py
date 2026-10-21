@@ -305,6 +305,126 @@ class _HandoffDb:
         return None
 
 
+def test_sso_handoff_concurrent_consume_is_single_winner():
+    auth_handoff.reset_table_ready_for_tests()
+    db = _HandoffDb()
+
+    async def run():
+        code = await auth_handoff.create_handoff(db, "jwt-once", purpose="impersonate")
+
+        async def take():
+            return await auth_handoff.consume_handoff(db, code)
+
+        results = await asyncio.gather(take(), take(), return_exceptions=True)
+        won = [item for item in results if item == "jwt-once"]
+        lost = [item for item in results if isinstance(item, HTTPException)]
+        assert len(won) == 1
+        assert len(lost) == 1
+        assert lost[0].status_code == 401
+        again = await asyncio.gather(take(), return_exceptions=True)
+        assert isinstance(again[0], HTTPException)
+        assert again[0].status_code == 401
+
+    asyncio.run(run())
+
+
+def test_sso_get_is_public_303_and_single_use():
+    import server
+    import sso_public
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    auth_handoff.reset_table_ready_for_tests()
+    db = _HandoffDb()
+
+    async def find_one(query=None, *args, **kwargs):
+        query = query or {}
+        if query.get("_id") == "u1" or query.get("email") == "ada@example.com":
+            return {
+                "_id": "u1",
+                "email": "ada@example.com",
+                "role": "admin",
+                "is_active": True,
+                "is_super_admin": False,
+            }
+        return None
+
+    db.users = SimpleNamespace(find_one=find_one)
+    app = FastAPI()
+    sso_public.mount_public_sso(app)
+    route = app.routes[0]
+    assert route.path == "/sso"
+    assert route.dependant.dependencies == []
+
+    async def mint(blob_extra=""):
+        token = auth_utils.create_access_token("u1", "ada@example.com", "admin", aud="app")
+        blob = json.dumps({"access_token": token, "sa_return": blob_extra})
+        return await auth_handoff.create_handoff(db, blob, purpose="impersonate")
+
+    code = asyncio.run(mint("sa-cookie"))
+    evil_code = asyncio.run(mint(""))
+    with patch.object(server, "db", db):
+        client = TestClient(app, base_url="https://app.tamkobi.com")
+        missing = client.get("/sso")
+        assert missing.status_code == 400
+        assert missing.json()["detail"] == "Handoff kodu gerekli"
+        first = client.get(f"/sso?code={code}&next=/invoices", follow_redirects=False)
+        second = client.get(f"/sso?code={code}", follow_redirects=False)
+        evil = client.get(
+            f"/sso?code={evil_code}&next=https://evil.example/phish",
+            follow_redirects=False,
+        )
+        slash = asyncio.run(mint(""))
+        proto = client.get(f"/sso?code={slash}&next=//evil.example", follow_redirects=False)
+    assert first.status_code == 303
+    assert first.headers["location"].endswith("/invoices")
+    assert "evil" not in first.headers["location"]
+    cookies = ",".join(first.headers.get_list("set-cookie"))
+    assert "access_token=" in cookies
+    assert "sa_return=" in cookies
+    assert "httponly" in cookies.lower()
+    assert "domain=" not in cookies.lower()
+    assert first.headers["cache-control"] == "no-store"
+    assert second.status_code == 401
+    assert "kullan" in second.json()["detail"].lower() or "geçersiz" in second.json()["detail"].lower()
+    assert evil.status_code == 303
+    assert evil.headers["location"].endswith("/panel")
+    assert "evil" not in evil.headers["location"]
+    assert proto.status_code == 303
+    assert proto.headers["location"].endswith("/panel")
+
+
+def test_server_mounts_sso_publicly_ahead_of_catch_all():
+    import server
+    from fastapi.testclient import TestClient
+
+    route = server.app.routes[0]
+    assert getattr(route, "path", None) == "/sso"
+    assert "GET" in route.methods
+    assert route.dependant.dependencies == []
+    root_catch = {
+        "/{path:path}",
+        "/{full_path:path}",
+        "/{rest:path}",
+    }
+    for later in server.app.routes[1:]:
+        assert str(getattr(later, "path", "") or "") not in root_catch
+    router = server.app.router
+    saved_up = list(router.on_startup)
+    saved_down = list(router.on_shutdown)
+    router.on_startup.clear()
+    router.on_shutdown.clear()
+    try:
+        client = TestClient(server.app)
+        response = client.get("/sso")
+    finally:
+        router.on_startup[:] = saved_up
+        router.on_shutdown[:] = saved_down
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Handoff kodu gerekli"
+    assert "Giriş yapmanız gerekiyor" not in response.text
+
+
 def test_sso_handoff_one_time_and_expired():
     auth_handoff.reset_table_ready_for_tests()
     db = _HandoffDb()
@@ -324,6 +444,52 @@ def test_sso_handoff_one_time_and_expired():
         assert ei2.value.status_code == 401
 
     asyncio.run(run())
+
+
+def test_sso_b2b_and_unknown_host_reject_without_cookie_or_consume():
+    """b2b and any non app/ik/ynt/site kind must not mint a cookie or burn the code."""
+    import server
+    import sso_public
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    auth_handoff.reset_table_ready_for_tests()
+    db = _HandoffDb()
+
+    async def find_one(query=None, *args, **kwargs):
+        return None
+
+    db.users = SimpleNamespace(find_one=find_one)
+    app = FastAPI()
+    sso_public.mount_public_sso(app)
+
+    async def mint():
+        token = auth_utils.create_access_token("u1", "ada@example.com", "admin", aud="app")
+        blob = json.dumps({"access_token": token, "sa_return": ""})
+        return await auth_handoff.create_handoff(db, blob, purpose="impersonate")
+
+    b2b_code = asyncio.run(mint())
+    unknown_code = asyncio.run(mint())
+    with patch.object(server, "db", db):
+        b2b = TestClient(app, base_url="https://b2b.tamkobi.com")
+        denied = b2b.get(f"/sso?code={b2b_code}", follow_redirects=False)
+        with patch.object(sso_public.ha, "host_kind", return_value="unknown"):
+            mystery = TestClient(app, base_url="https://app.tamkobi.com")
+            unknown = mystery.get(f"/sso?code={unknown_code}", follow_redirects=False)
+
+    for response in (denied, unknown):
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Handoff bu host için geçerli değil"
+        cookies = ",".join(response.headers.get_list("set-cookie")).lower()
+        assert "access_token=" not in cookies
+        assert "sa_return=" not in cookies
+
+    assert db._pool.store[b2b_code]["used_at"] is None
+    assert db._pool.store[unknown_code]["used_at"] is None
+    redeemed = asyncio.run(auth_handoff.consume_handoff(db, b2b_code))
+    assert json.loads(redeemed)["access_token"]
+    assert db._pool.store[b2b_code]["used_at"] is not None
+    assert db._pool.store[unknown_code]["used_at"] is None
 
 
 def test_sso_exchange_rejects_aud_host_mismatch():

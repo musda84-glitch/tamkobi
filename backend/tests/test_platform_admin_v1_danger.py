@@ -703,6 +703,91 @@ def test_idempotency_replay_and_conflict(db):
     assert end_clash.status_code == 409
 
 
+def test_operator_email_lookup_is_one_lower_query(monkeypatch):
+    """Karışık harf, users tablosunu taramadan tek LOWER sorgusuyla bulunur."""
+    import mysql_store
+
+    coll = mysql_store.MySQLCollection(SimpleNamespace(), "users")
+    calls = []
+
+    async def load_sql(sql, params):
+        calls.append((" ".join(sql.split()), list(params)))
+        return [{
+            "_id": "usr_mix",
+            "email": "Mix@Example.com",
+            "is_super_admin": 1,
+            "is_active": True,
+        }]
+
+    async def find(*_args, **_kwargs):
+        raise AssertionError("users.find tablo taraması olmamalı")
+
+    async def find_one(*_args, **_kwargs):
+        raise AssertionError("ikinci sorgu olmamalı")
+
+    coll._load_sql = load_sql
+    coll.find = find
+    coll.find_one = find_one
+    monkeypatch.setattr(platform_admin_v1_danger.saas, "_db", SimpleNamespace(users=coll))
+
+    user = asyncio.run(platform_admin_v1_danger._find_user_by_email("  MIX@example.com "))
+    assert user["email"] == "Mix@Example.com"
+    assert len(calls) == 1
+    sql, params = calls[0]
+    assert "LOWER(" in sql.upper()
+    assert params == ["users", "mix@example.com"]
+    assert asyncio.run(platform_admin_v1_danger._find_user_by_email("   ")) is None
+    assert calls == [(sql, params)]
+
+
+def test_mixed_case_truthy_super_admin_passes_and_keeps_stored_email(db):
+    """Giriş strip().lower() kullanır. Karışık kayıt ve truthy is_super_admin geçer.
+
+    Dönüş, belgedeki e-postadır; sonraki OTP find_one({"email": ...}) onu bulur.
+    """
+    _seed(db)
+
+    async def plant():
+        await db.users.insert_one({
+            "_id": "usr_mix",
+            "name": "Karışık",
+            "email": "Mix@Example.com",
+            "role": "admin",
+            "company_ids": [],
+            "is_super_admin": 1,
+            "is_active": True,
+            "password_hash": "hash-mix",
+        })
+
+    asyncio.run(plant())
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_IMPERSONATE], name="mix")
+    client = _client()
+    response, _, _ = _send(
+        client, secret, pub["id"], "POST", _START,
+        _body(operator_email="  MIX@example.com "), idem="mix",
+    )
+    assert response.status_code == 200, response.text
+    session = db.support_sessions.docs[response.json()["item"]["session_id"]]
+    assert session["by_email"] == "Mix@Example.com"
+    stored = asyncio.run(db.users.find_one({"email": session["by_email"]}))
+    assert stored["_id"] == "usr_mix"
+    assert asyncio.run(db.users.find_one({"email": "mix@example.com"})) is None
+
+
+def test_mixed_case_non_super_admin_still_forbidden(db):
+    _seed(db)
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_IMPERSONATE], name="mix-no")
+    client = _client()
+    before = _quiet_before(db)
+    response, _, _ = _send(
+        client, secret, pub["id"], "POST", _START,
+        _body(operator_email="  Ada@Example.COM "), idem="mix-no",
+    )
+    assert response.status_code == 403
+    assert _detail(response) == "Operatör yetkili değil."
+    _business_quiet(db, before)
+
+
 def test_inactive_operator_is_forbidden(db):
     _seed(db)
 
