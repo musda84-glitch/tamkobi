@@ -1963,15 +1963,17 @@ async def workplaces_by_employee(company_id: str, emp_ids: list, today: str, com
 
 async def employee_for_user(user: dict):
     uid = str(user.get("_id", user.get("id")))
+    ident = {"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": uid}]}
     cid = ""
     try:
         cid = str(tenant_access.resolve_company_id(user) or "").strip()
     except HTTPException:
         cid = ""
-    return await _db.employees.find_one({
-        "$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": uid}],
-        "company_id": cid,
-    })
+    owned = await _db.employees.find_one({**ident, "company_id": cid})
+    if owned or not cid:
+        return owned
+    # Eski kartta company_id boş kalır. Aynı _id başka şirketteyse o satır seçilmez.
+    return await _db.employees.find_one({**ident, "company_id": None})
 
 
 async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: str = "manual", confirmed: Optional[bool] = None) -> dict:
