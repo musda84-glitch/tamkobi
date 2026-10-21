@@ -112,15 +112,26 @@ def _admin_work_order_denied(method: str, path: str) -> bool:
     return False
 
 
-def atolye_path_allowed(method: str, path: str) -> bool:
+def _device_auth_allowed(method: str, path: str) -> bool:
+    """Cihaz oturumu /api/auth altında yalnız oturum okuma ve çıkış yapar."""
+    if path == "/api/auth/me" and method in ("GET", "HEAD"):
+        return True
+    return path == "/api/auth/logout" and method == "POST"
+
+
+def atolye_path_allowed(method: str, path: str, user: Any = None) -> bool:
     """Atölye hesabının girebildiği /api yolları.
 
-    /api/auth/*, GET /api/personnel/employees ve /api/production/work-orders/*
-    (yönetici ayarı, çöp tamamlama, karar ve admin-trash hariç).
+    E-posta hesabı /api/auth/* kullanır. Cihaz yalnız GET /api/auth/me ve
+    POST /api/auth/logout. İkisi de GET /api/personnel/employees ve
+    /api/production/work-orders/* (yönetici ayarı, çöp tamamlama, karar ve
+    admin-trash hariç).
     """
     method_u = str(method or "GET").upper()
     p = _norm_path(path)
     if p == "/api/auth" or p.startswith("/api/auth/"):
+        if is_device_user(user):
+            return _device_auth_allowed(method_u, p)
         return True
     if method_u in ("GET", "HEAD") and p == "/api/personnel/employees":
         return True

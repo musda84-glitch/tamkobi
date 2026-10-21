@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -93,6 +94,15 @@ class MemColl:
             created = new_upsert_doc(update, query)
             self.docs.append(created)
             return type("R", (), {"matched_count": 0, "modified_count": 0, "upserted_id": created.get("_id")})()
+        return type("R", (), {"matched_count": 0, "modified_count": 0, "upserted_id": None})()
+
+    async def update_one_atomic(self, query, update):
+        for i, doc in enumerate(self.docs):
+            if match_query(doc, query or {}):
+                updated = apply_update(doc, update, query)
+                changed = updated != doc
+                self.docs[i] = updated
+                return type("R", (), {"matched_count": 1, "modified_count": 1 if changed else 0, "upserted_id": None})()
         return type("R", (), {"matched_count": 0, "modified_count": 0, "upserted_id": None})()
 
     async def find_one_and_update(self, query, update, upsert=False, return_document=True, projection=None):
@@ -276,7 +286,8 @@ def test_pair_happy_path_stores_only_hashes(api):
     assert sfd.CODE_RE.fullmatch(code)
     assert code not in _dump(db)
     code_row = db.shopfloor_device_codes.docs[0]
-    assert code_row["code_hash"] == sec.hash_device_token(code)
+    assert code_row["code_hash"] == sfd.hash_pairing_code(code)
+    assert code_row["code_hash"] != hashlib.sha256(code.encode("utf-8")).hexdigest()
     assert "code" not in code_row
 
     paired = _pair(client, code)
@@ -293,6 +304,7 @@ def test_pair_happy_path_stores_only_hashes(api):
     stored_code = db.shopfloor_device_codes.docs[0]
     assert stored_code["consumed_at"]
     assert stored_code["device_id"] == device_id
+    assert device["_id"] == stored_code["_id"]
     assert sec.device_token_matches(token, device["token_hash"])
 
     stations = client.get(
@@ -529,3 +541,227 @@ def test_non_admin_and_atolye_cannot_manage_devices(api):
         assert edited.status_code == 403, edited.text
         revoked = client.post(f"/api/shopfloor/devices/{device_id}/revoke", headers=headers)
         assert revoked.status_code == 403, revoked.text
+
+
+class _Req:
+    def __init__(self, ip):
+        self.headers = {}
+        self.client = type("C", (), {"host": ip})()
+
+
+def _call_pair(ip, code):
+    try:
+        return asyncio.run(sfd.pair_device(_Req(ip), {"code": code}))
+    except HTTPException as exc:
+        return exc
+
+
+def test_pairing_code_hash_uses_server_secret(api, monkeypatch):
+    _client, db, _clock = api
+    created = _issue(api[0])
+    code = created.json()["code"]
+    stored = db.shopfloor_device_codes.docs[0]["code_hash"]
+    assert stored == sfd.hash_pairing_code(code)
+    assert stored != hashlib.sha256(code.encode("utf-8")).hexdigest()
+    monkeypatch.setattr(sfd, "get_jwt_secret", lambda: "baska-sunucu-sirri")
+    assert sfd.hash_pairing_code(code) != stored
+    assert code not in json.dumps(db.shopfloor_device_codes.docs)
+
+
+def test_concurrent_pair_cannot_mint_two_devices(api):
+    client, db, _clock = api
+    created = _issue(client)
+    code = created.json()["code"]
+
+    class _RaceCodes:
+        def __init__(self, docs):
+            self.docs = docs
+            self.reads = 0
+            self._go = asyncio.Event()
+            self._lock = asyncio.Lock()
+            self.atomic_calls = 0
+
+        async def find_one(self, query=None, projection=None):
+            if isinstance(query, dict) and "code_hash" in query:
+                snap = None
+                for doc in self.docs:
+                    if match_query(doc, query):
+                        snap = copy.deepcopy(doc)
+                        break
+                self.reads += 1
+                if self.reads == 1:
+                    await self._go.wait()
+                else:
+                    self._go.set()
+                return snap
+            for doc in self.docs:
+                if match_query(doc, query or {}):
+                    return copy.deepcopy(doc)
+            return None
+
+        async def update_one_atomic(self, query, update):
+            self.atomic_calls += 1
+            async with self._lock:
+                for i, doc in enumerate(self.docs):
+                    if match_query(doc, query or {}):
+                        updated = apply_update(doc, update, query)
+                        changed = updated != doc
+                        self.docs[i] = updated
+                        return type("R", (), {"matched_count": 1, "modified_count": 1 if changed else 0})()
+                return type("R", (), {"matched_count": 0, "modified_count": 0})()
+
+        async def update_one(self, query, update, upsert=False):
+            idx = None
+            snap = None
+            for i, doc in enumerate(self.docs):
+                if match_query(doc, query or {}):
+                    idx = i
+                    snap = copy.deepcopy(doc)
+                    break
+            await asyncio.sleep(0)
+            if idx is None:
+                return type("R", (), {"matched_count": 0, "modified_count": 0})()
+            self.docs[idx] = apply_update(snap, update, query)
+            return type("R", (), {"matched_count": 1, "modified_count": 1})()
+
+    db.shopfloor_device_codes = _RaceCodes(db.shopfloor_device_codes.docs)
+
+    async def both():
+        return await asyncio.gather(
+            sfd.pair_device(_Req("198.51.100.21"), {"code": code}),
+            sfd.pair_device(_Req("198.51.100.22"), {"code": code}),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(both())
+    ok = [row for row in results if isinstance(row, dict) and row.get("token")]
+    denied = [row for row in results if isinstance(row, HTTPException)]
+    assert len(ok) == 1
+    assert len(denied) == 1 and denied[0].status_code == 400
+    assert len(db.shopfloor_devices.docs) == 1
+    assert db.shopfloor_devices.docs[0]["_id"] == db.shopfloor_device_codes.docs[0]["_id"]
+    assert db.shopfloor_device_codes.atomic_calls == 2
+    assert code not in _dump(db)
+    assert ok[0]["token"] not in _dump(db)
+
+
+def test_pair_ip_global_and_failure_limits(api, monkeypatch):
+    client, db, clock = api
+    monkeypatch.setattr(sfd, "PAIR_IP_MAX", 3)
+    monkeypatch.setattr(sfd, "PAIR_GLOBAL_MAX", 100)
+    monkeypatch.setattr(sfd, "PAIR_FAIL_MAX", 100)
+    bad = "AAAAAA"
+    for _ in range(3):
+        res = _call_pair("198.51.100.8", bad)
+        assert isinstance(res, HTTPException) and res.status_code == 400
+    blocked = _call_pair("198.51.100.8", bad)
+    assert isinstance(blocked, HTTPException) and blocked.status_code == 429
+    assert bad not in str(blocked.detail)
+    other = _call_pair("198.51.100.9", bad)
+    assert isinstance(other, HTTPException) and other.status_code == 400
+    assert bad not in _dump(db)
+    assert bad not in json.dumps(db.login_attempts.docs, default=str)
+
+    monkeypatch.setattr(sfd, "PAIR_IP_MAX", 100)
+    monkeypatch.setattr(sfd, "PAIR_GLOBAL_MAX", 2)
+    monkeypatch.setattr(sfd, "PAIR_FAIL_MAX", 100)
+    clock["now"] = T0 + timedelta(minutes=11)
+    first = _call_pair("203.0.113.1", bad)
+    second = _call_pair("203.0.113.2", bad)
+    assert first.status_code == 400 and second.status_code == 400
+    global_block = _call_pair("203.0.113.3", bad)
+    assert global_block.status_code == 429
+
+    monkeypatch.setattr(sfd, "PAIR_IP_MAX", 100)
+    monkeypatch.setattr(sfd, "PAIR_GLOBAL_MAX", 100)
+    monkeypatch.setattr(sfd, "PAIR_FAIL_MAX", 2)
+    clock["now"] = T0 + timedelta(minutes=22)
+    fail_ip = "203.0.113.40"
+    assert _call_pair(fail_ip, bad).status_code == 400
+    assert _call_pair(fail_ip, bad).status_code == 400
+    assert _call_pair(fail_ip, bad).status_code == 429
+    fail_row = next(row for row in db.login_attempts.docs if row.get("identifier") == f"shopfloor_pair:fail:{fail_ip}")
+    assert int(fail_row["fails"]) == 2
+    clock["now"] = T0 + timedelta(minutes=33)
+    assert _call_pair(fail_ip, bad).status_code == 400
+
+
+def test_device_role_and_auth_me_are_not_admin(api):
+    client, _db, _clock = api
+    paired = _pair(client, _issue(client).json()["code"])
+    token = paired.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    principal = asyncio.run(sfd.principal_from_token(token, server.db))
+    assert principal["role"] == "atolye_device"
+    role = asyncio.run(rbac.role_for(principal))
+    assert role["code"] == "atolye_device"
+    assert role["permissions"]["/atolye"] == "edit"
+    assert role["permissions"]["/settings"] == "none"
+    assert role["permissions"]["/invoices"] == "none"
+    feats = rbac.role_features(role)
+    assert feats["portal_atolye"] is True
+    assert feats["account_companies"] is False
+    assert feats["view_prices"] is False
+    assert set(feats.values()) <= {False, True}
+    assert sum(1 for value in feats.values() if value) == 1
+
+    stations = client.get("/api/production/work-orders/stations", params={"company_id": COMP_A}, headers=headers)
+    assert stations.status_code == 200, stations.text
+    me = client.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200, me.text
+    body = me.json()["user"]
+    assert body["role"] == "atolye_device"
+    assert body["is_super_admin"] is False
+    assert body["permissions"]["/atolye"] == "edit"
+    assert body["permissions"]["/settings"] == "none"
+    assert set(body["permissions"].values()) <= {"none", "edit"}
+    assert body["features"]["portal_atolye"] is True
+    assert body["features"]["account_companies"] is False
+    assert body["features"]["view_prices"] is False
+    logout = client.post("/api/auth/logout", headers=headers)
+    assert logout.status_code == 200, logout.text
+    password = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "eski", "new_password": "yeni-sifre"},
+        headers=headers,
+    )
+    assert password.status_code == 403, password.text
+    device = {"account_type": "atolye_device"}
+    assert sfa.atolye_path_allowed("GET", "/api/auth/me", device) is True
+    assert sfa.atolye_path_allowed("POST", "/api/auth/logout", device) is True
+    assert sfa.atolye_path_allowed("PUT", "/api/auth/me") is True
+    assert sfa.atolye_path_allowed("POST", "/api/auth/switch-company", device) is False
+    assert sfa.atolye_path_allowed("PUT", "/api/auth/me", device) is False
+    assert sfa.atolye_path_allowed("POST", "/api/auth/change-password", device) is False
+
+
+def test_switch_company_rejects_device_blank_email(api):
+    client, db, _clock = api
+    db.users.docs.append({
+        "_id": "blank-email",
+        "email": "",
+        "name": "Boş",
+        "role": "admin",
+        "active_company_id": "elsewhere",
+        "company_ids": [COMP_A, "elsewhere"],
+        "is_active": True,
+    })
+    paired = _pair(client, _issue(client).json()["code"])
+    headers = {"Authorization": f"Bearer {paired.json()['token']}"}
+    res = client.post("/api/auth/switch-company", json={"company_id": COMP_A}, headers=headers)
+    assert res.status_code == 403, res.text
+    blank = next(row for row in db.users.docs if row["_id"] == "blank-email")
+    assert blank["active_company_id"] == "elsewhere"
+    user = {
+        "_id": paired.json()["device_id"],
+        "account_type": "atolye_device",
+        "email": "",
+        "role": "atolye_device",
+        "company_ids": [COMP_A],
+        "active_company_id": COMP_A,
+    }
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(server.switch_company({"company_id": COMP_A}, user))
+    assert exc.value.status_code == 403
+    blank = next(row for row in db.users.docs if row["_id"] == "blank-email")
+    assert blank["active_company_id"] == "elsewhere"

@@ -555,7 +555,7 @@ class _ShopfloorAccountGuard(BaseHTTPMiddleware):
             return await call_next(request)
         if not shopfloor_accounts.is_atolye_user(user):
             return await call_next(request)
-        if shopfloor_accounts.atolye_path_allowed(request.method, path):
+        if shopfloor_accounts.atolye_path_allowed(request.method, path, user):
             return await call_next(request)
         shopfloor_accounts.log_denied(user)
         return JSONResponse(status_code=403, content={"detail": shopfloor_accounts.PATH_DENIED})
@@ -3967,6 +3967,8 @@ async def get_me(request: Request):
 
 @api_router.post("/auth/switch-company")
 async def switch_company(req: Dict[str, str], user: dict = Depends(get_current_user)):
+    if shopfloor_accounts.is_device_user(user) or not str(user.get("email") or "").strip():
+        raise HTTPException(status_code=403, detail="Bu oturum şirket değiştiremez.")
     new_comp_id = req.get("company_id")
     if not new_comp_id:
         raise HTTPException(status_code=400, detail="Şirket ID gereklidir.")

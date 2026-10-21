@@ -6,6 +6,8 @@ Cihaz oturumu, shopfloor_accounts'ın anladığı atolye_device principal'idir.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import secrets
 import uuid
@@ -19,6 +21,8 @@ import shopfloor_accounts
 import shopfloor_pin
 import tenant_access
 from attendance_security import clean_device_token, device_token_matches, hash_device_token, new_device_token
+from auth_utils import get_jwt_secret
+from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
 _current_user = None
@@ -28,6 +32,10 @@ STATION_MODES = frozenset({"one", "many", "all"})
 CODE_TTL = timedelta(minutes=10)
 CODE_RATE_MAX = 10
 CODE_RATE_WINDOW = timedelta(minutes=10)
+PAIR_IP_MAX = 30
+PAIR_GLOBAL_MAX = 300
+PAIR_FAIL_MAX = 15
+PAIR_RATE_WINDOW = timedelta(minutes=10)
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 CODE_RE = re.compile(rf"^[{CODE_ALPHABET}]{{6}}$")
 PAIR_DETAIL = "Eşleştirme kodu geçersiz veya süresi dolmuş."
@@ -104,6 +112,12 @@ def _clean_code(raw: Any) -> str:
     if CODE_RE.fullmatch(text) is None:
         return ""
     return text
+
+
+def hash_pairing_code(code: str) -> str:
+    """Eşleştirme kodu HMAC-SHA256. Anahtar JWT_SECRET; düz kod ve sır loglanmaz."""
+    key = get_jwt_secret().encode("utf-8")
+    return hmac.new(key, str(code or "").encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _clean_label(raw: Any) -> str:
@@ -251,7 +265,7 @@ def _principal(row: dict, stations: list) -> dict:
         "active_company_id": company_id,
         "shopfloor_stations": list(stations),
         "station_mode": row.get("station_mode"),
-        "role": "admin",
+        "role": ACCOUNT_TYPE,
         "name": label,
         "email": "",
         "is_active": True,
@@ -307,7 +321,7 @@ async def create_pairing_code(req: Optional[dict] = None, user: dict = Depends(_
         raise HTTPException(status_code=429, detail=shopfloor_pin.RATE_DETAIL)
     await _save_rate(cid, _rate_mark(state, now))
     code = _new_code()
-    code_hash = hash_device_token(code)
+    code_hash = hash_pairing_code(code)
     expires = now + CODE_TTL
     await _db.shopfloor_device_codes.insert_one({
         "_id": str(uuid.uuid4()),
@@ -393,33 +407,153 @@ async def revoke_device(
     return {"status": "success", "device_status": "revoked", "id": row["_id"]}
 
 
+def _pair_ip(request: Request) -> str:
+    try:
+        ip = request_ip(request)
+    except Exception:
+        ip = ""
+    return str(ip or "").strip() or "unknown"
+
+
+def _counter_id(kind: str, ip: str = "") -> str:
+    if kind == "global":
+        return "shopfloor_pair:global"
+    if kind == "fail":
+        return f"shopfloor_pair:fail:{ip}"
+    return f"shopfloor_pair:ip:{ip}"
+
+
+def _counter_fresh(state: Optional[dict], now: datetime) -> bool:
+    if not state:
+        return False
+    start = shopfloor_pin._parse_dt(state.get("window_start"))
+    if start is None:
+        return False
+    return _aware(now) - start <= PAIR_RATE_WINDOW
+
+
+def _counter_value(state: Optional[dict], now: datetime, field: str) -> int:
+    if not _counter_fresh(state, now):
+        return 0
+    return int((state or {}).get(field) or 0)
+
+
+async def _load_pair_counter(identifier: str) -> Optional[dict]:
+    return await _db.login_attempts.find_one({"identifier": identifier})
+
+
+async def _bump_pair_counter(identifier: str, now: datetime, field: str) -> None:
+    state = await _load_pair_counter(identifier)
+    now = _aware(now)
+    if _counter_fresh(state, now):
+        count = int((state or {}).get("count") or 0)
+        fails = int((state or {}).get("fails") or 0)
+        start = shopfloor_pin._parse_dt((state or {}).get("window_start")) or now
+    else:
+        count = 0
+        fails = 0
+        start = now
+    if field == "fails":
+        fails += 1
+    else:
+        count += 1
+    await _db.login_attempts.update_one(
+        {"identifier": identifier},
+        {"$set": {
+            "identifier": identifier,
+            "count": count,
+            "fails": fails,
+            "window_start": _iso(start),
+            "last_attempt": _iso(now),
+        }},
+        upsert=True,
+    )
+
+
+async def _pair_limited(ip: str, now: datetime) -> bool:
+    ip_state = await _load_pair_counter(_counter_id("ip", ip))
+    global_state = await _load_pair_counter(_counter_id("global"))
+    fail_state = await _load_pair_counter(_counter_id("fail", ip))
+    if _counter_value(ip_state, now, "count") >= PAIR_IP_MAX:
+        return True
+    if _counter_value(global_state, now, "count") >= PAIR_GLOBAL_MAX:
+        return True
+    return _counter_value(fail_state, now, "fails") >= PAIR_FAIL_MAX
+
+
+async def _note_pair_attempt(ip: str, now: datetime) -> None:
+    await _bump_pair_counter(_counter_id("ip", ip), now, "count")
+    await _bump_pair_counter(_counter_id("global"), now, "count")
+
+
+async def _note_pair_failure(ip: str, now: datetime) -> None:
+    await _bump_pair_counter(_counter_id("fail", ip), now, "fails")
+
+
+async def _claim_pairing_code(digest: str, now_iso: str) -> Optional[dict]:
+    """Kodu koşullu yazmayla tüket. modified_count 1 değilse cihaz üretilmez.
+
+    Cihaz kimliği kod belgesinin _id'sidir; ikinci kazanan aynı kimliği yazamaz.
+    """
+    coll = _db.shopfloor_device_codes
+    # tenant-ok: eşleştirme kodu hash'i şirket taşımaz; şirket tüketilen belgeden okunur
+    row = await coll.find_one({
+        "code_hash": digest,
+        "consumed_at": None,
+        "expires_at": {"$gt": now_iso},
+    })
+    if not row or not row.get("_id"):
+        return None
+    code_id = row["_id"]
+    device_id = str(code_id)
+    query = {
+        "_id": code_id,
+        "consumed_at": None,
+        "expires_at": {"$gt": now_iso},
+    }
+    update = {"$set": {"consumed_at": now_iso, "device_id": device_id}}
+    atomic = getattr(coll, "update_one_atomic", None)
+    if callable(atomic):
+        # tenant-ok: koşullu tüketim kod _id kilidiyle yapılır; company_id kod belgesindedir
+        result = await atomic(query, update)
+    else:
+        # tenant-ok: koşullu update consumed_at boş filtresiyle; modified_count 1 şart
+        result = await coll.update_one(query, update)
+    if int(getattr(result, "modified_count", 0) or 0) != 1:
+        return None
+    # tenant-ok: tüketilen kodun şirketi bu _id ile okunur, istemciden alınmaz
+    fresh = await coll.find_one({"_id": code_id})
+    if not fresh:
+        return None
+    fresh["device_id"] = device_id
+    return fresh
+
+
 @router.post("/shopfloor/devices/pair")
-async def pair_device(req: Optional[dict] = None):
+async def pair_device(request: Request, req: Optional[dict] = None):
     """Herkese açık eşleştirme. Geçerli kodu uzun ömürlü cihaz token'ına çevirir.
 
     İstekteki company_id yok sayılır; cihaz kodun şirketine yazılır.
     """
+    ip = _pair_ip(request)
+    now = utcnow()
+    if await _pair_limited(ip, now):
+        raise HTTPException(status_code=429, detail=shopfloor_pin.RATE_DETAIL)
+    await _note_pair_attempt(ip, now)
     body = req or {}
     code = _clean_code(body.get("code"))
     if not code:
+        await _note_pair_failure(ip, now)
         raise HTTPException(status_code=400, detail=PAIR_DETAIL)
-    now = utcnow()
     now_iso = _iso(now)
-    digest = hash_device_token(code)
-    device_id = str(uuid.uuid4())
-    # tenant-ok: eşleştirme kodu hash'i tek kullanımlık anahtardır; şirket kod belgesinden çözülür, cihaz yalnız o şirkete yazılır
-    consumed = await _db.shopfloor_device_codes.find_one_and_update(
-        {
-            "code_hash": digest,
-            "consumed_at": None,
-            "expires_at": {"$gt": now_iso},
-        },
-        {"$set": {"consumed_at": now_iso, "device_id": device_id}},
-    )
+    digest = hash_pairing_code(code)
+    consumed = await _claim_pairing_code(digest, now_iso)
     if not consumed:
+        await _note_pair_failure(ip, now)
         raise HTTPException(status_code=400, detail=PAIR_DETAIL)
     cid = str(consumed.get("company_id") or "").strip()
-    if not cid:
+    device_id = str(consumed.get("device_id") or consumed.get("_id") or "").strip()
+    if not cid or not device_id:
         raise HTTPException(status_code=400, detail=PAIR_DETAIL)
     token, token_hash = _bearer(cid)
     if not device_token_matches(token, token_hash):

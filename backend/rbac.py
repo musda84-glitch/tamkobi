@@ -872,7 +872,24 @@ async def ensure_roles(company_id: str):
             await _db.roles.update_one({"_id": cur["_id"]}, {"$set": {**upd, "updated_at": _now()}})
 
 
+def device_role_document() -> Dict[str, Any]:
+    """Atölye cihazı. Yönetici değildir; yalnız atölye modülü ve portal_atolye açıktır."""
+    perms = {module: "none" for module, _label in MODULES}
+    perms["/atolye"] = "edit"
+    features = {key: False for key, _label, _help in FEATURES}
+    features["portal_atolye"] = True
+    return {
+        "code": "atolye_device",
+        "name": "Atölye cihazı",
+        "is_system": False,
+        "permissions": perms,
+        "features": features,
+    }
+
+
 async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, Any]:
+    if str((user or {}).get("account_type") or "").strip().casefold() == "atolye_device":
+        return device_role_document()
     code = normalize_role_code(user.get("role", "admin"))
     cid = company_id or user.get("active_company_id") or "comp_nexus_main_01"
     await ensure_roles(cid)
