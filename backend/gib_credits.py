@@ -8,6 +8,20 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 import saas
 import tenant_access
+from mysql_store import DuplicateKeyError as MysqlDuplicateKeyError
+
+try:
+    from pymongo.errors import DuplicateKeyError as PyMongoDuplicateKeyError
+except Exception:
+    PyMongoDuplicateKeyError = None
+
+_DUP_ERRORS = (MysqlDuplicateKeyError,)
+if PyMongoDuplicateKeyError is not None:
+    _DUP_ERRORS = (MysqlDuplicateKeyError, PyMongoDuplicateKeyError)
+
+CONSUME_INDEX_KEYS = [("company_id", 1), ("invoice_id", 1), ("type", 1)]
+CONSUME_INDEX_FILTER = {"type": "consume", "invoice_id": {"$gt": ""}}
+_consume_index_state = "pending"
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger("TamKobiERP")
@@ -131,11 +145,105 @@ async def apply_purchase(tx: dict) -> int:
     return credits
 
 
+def _is_dup_error(exc: BaseException) -> bool:
+    if isinstance(exc, _DUP_ERRORS):
+        return True
+    if type(exc).__name__ == "DuplicateKeyError":
+        return True
+    text = str(exc).lower()
+    return "duplicate" in text or "e11000" in text
+
+
+async def _cursor_rows(cursor, limit: int = 100000) -> list:
+    if cursor is None:
+        return []
+    to_list = getattr(cursor, "to_list", None)
+    if to_list is None:
+        return []
+    rows = to_list(limit)
+    if hasattr(rows, "__await__"):
+        rows = await rows
+    return list(rows or [])
+
+
+async def count_duplicate_consume_groups(db) -> int:
+    """type=consume ve dolu invoice_id gruplarından birden fazla kaydı olanların sayısı."""
+    cursor = db.gib_credit_ledger.find(
+        {"type": "consume"},
+        {"company_id": 1, "invoice_id": 1},
+    )
+    groups: Dict[tuple, int] = {}
+    for row in await _cursor_rows(cursor):
+        if not isinstance(row, dict):
+            continue
+        invoice_id = str(row.get("invoice_id") or "").strip()
+        company_id = str(row.get("company_id") or "").strip()
+        if not invoice_id or not company_id:
+            continue
+        key = (company_id, invoice_id)
+        groups[key] = groups.get(key, 0) + 1
+    return sum(1 for count in groups.values() if count > 1)
+
+
+async def ensure_consume_index(db=None) -> None:
+    """Kısmi unique index. Mükerrer varsa yalnız sayıyı logla, index kurma."""
+    global _consume_index_state
+    if _consume_index_state != "pending":
+        return
+    database = db if db is not None else _db
+    if database is None:
+        return
+    try:
+        duplicates = await count_duplicate_consume_groups(database)
+        if duplicates:
+            logger.warning(
+                "gib_credit_ledger consume unique index skipped duplicate_groups=%s",
+                duplicates,
+            )
+            _consume_index_state = "skipped"
+            return
+        await database.gib_credit_ledger.create_index(
+            CONSUME_INDEX_KEYS,
+            unique=True,
+            name="uniq_gib_consume_company_invoice",
+            partialFilterExpression=dict(CONSUME_INDEX_FILTER),
+        )
+        _consume_index_state = "ready"
+    except Exception as exc:
+        duplicates = 0
+        if _is_dup_error(exc):
+            try:
+                duplicates = await count_duplicate_consume_groups(database)
+            except Exception:
+                duplicates = 0
+        logger.warning(
+            "gib_credit_ledger consume unique index skipped duplicate_groups=%s",
+            duplicates,
+        )
+        _consume_index_state = "skipped"
+
+
+async def _existing_consume(company_id: str, invoice_id: str):
+    try:
+        row = await _db.gib_credit_ledger.find_one({
+            "company_id": company_id,
+            "invoice_id": invoice_id,
+            "type": "consume",
+        })
+    except Exception:
+        return None
+    return row if isinstance(row, dict) else None
+
+
 async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str] = None, note: str = "") -> int:
     if credits <= 0:
         return 0
+    await ensure_consume_index()
     w = await get_wallet(company_id)
     bal = int(w.get("balance") or 0)
+    invoice_key = str(invoice_id or "").strip()
+    if invoice_key and await _existing_consume(company_id, invoice_key):
+        return bal
     if bal < credits:
         if await sales_enabled():
             hint = "Hesap → GİB Kontör ekranından paket satın alın."
@@ -145,11 +253,26 @@ async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str
             status_code=402,
             detail=f"GİB kontörünüz yetersiz ({bal} kalan, {credits} gerekli). {hint}",
         )
-    await _db.gib_wallets.update_one({"_id": w["_id"]}, {"$inc": {"balance": -credits}, "$set": {"updated_at": _now()}})
-    await _db.gib_credit_ledger.insert_one({
-        "_id": str(uuid.uuid4()), "wallet_id": w["_id"], "company_id": company_id, "type": "consume",
-        "credits": -credits, "invoice_id": invoice_id, "note": note or "e-Belge gönderimi", "created_at": _now(),
-    })
+    ledger = {
+        "_id": str(uuid.uuid4()),
+        "wallet_id": w["_id"],
+        "company_id": company_id,
+        "type": "consume",
+        "credits": -credits,
+        "note": note or "e-Belge gönderimi",
+        "created_at": _now(),
+    }
+    if invoice_key:
+        ledger["invoice_id"] = invoice_key
+    try:
+        await _db.gib_credit_ledger.insert_one(ledger)
+    except _DUP_ERRORS:
+        fresh = await get_wallet(company_id)
+        return int(fresh.get("balance") or 0)
+    await _db.gib_wallets.update_one(
+        {"_id": w["_id"]},
+        {"$inc": {"balance": -credits}, "$set": {"updated_at": _now()}},
+    )
     remaining = bal - credits
     try:
         import event_notify

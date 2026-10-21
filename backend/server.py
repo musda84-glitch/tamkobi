@@ -405,6 +405,10 @@ async def startup_event():
                 await _einv.migrate_mislabelled_paper_invoices(db)
             except Exception as _paper_exc:
                 logger.warning("paper einvoice_state migration skipped: %s", _paper_exc)
+            try:
+                await gib_credits.ensure_consume_index(db)
+            except Exception:
+                logger.warning("gib_credit_ledger consume index skipped")
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:

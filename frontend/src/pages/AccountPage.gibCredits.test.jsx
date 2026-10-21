@@ -102,6 +102,21 @@ test("enforced false shows integrator error message when the balance cannot load
   cleanup();
 });
 
+test("integrator credit error shows the backend detail", async () => {
+  const err = new Error("fail");
+  err.response = {
+    status: 403,
+    data: { detail: "Sunucu IP'si İşNet'te bu VKN için tanımlı değil olabilir" },
+  };
+  const { host, cleanup } = await renderPanel(
+    wallet({ enforced: false, integrator_provider: "isnet", balance: 0 }),
+    err,
+  );
+  expect(host.querySelector('[data-testid="gib-integrator-balance-error"]')?.textContent)
+    .toBe("Sunucu IP'si İşNet'te bu VKN için tanımlı değil olabilir");
+  cleanup();
+});
+
 test("enforced true keeps the platform wallet view and skips integrator credits", async () => {
   const { host, cleanup } = await renderPanel(wallet({ enforced: true, balance: 7 }), { balance: 99 });
   expect(host.querySelector('[data-testid="gib-integrator-notice"]')).toBeNull();

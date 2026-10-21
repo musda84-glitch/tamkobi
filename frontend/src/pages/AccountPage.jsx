@@ -444,7 +444,11 @@ export const GibCreditsPanel = ({ companyId }) => {
       })
       .catch((err) => {
         if (cancelled) return;
-        setInteg({ loading: false, balance: null, message: integratorCreditMessage(err), error: true });
+        const detail = err?.response?.data?.detail;
+        const message = typeof detail === "string" && detail.trim()
+          ? detail.trim()
+          : integratorCreditMessage(err);
+        setInteg({ loading: false, balance: null, message, error: true });
       });
     return () => { cancelled = true; };
   }, [companyId, enforcedOff]);

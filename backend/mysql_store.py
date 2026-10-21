@@ -169,9 +169,23 @@ def chunk_list(items: Optional[Sequence[Any]], size: int = REPLACE_BATCH) -> Lis
     return [seq[i:i + n] for i in range(0, len(seq), n)]
 
 
+def index_spec_parts(item):
+    """(fields, unique, partialFilterExpression or None)."""
+    if not isinstance(item, (list, tuple)) or not item:
+        return (), False, None
+    fields = item[0] if isinstance(item[0], (list, tuple)) else (item[0],)
+    unique = bool(item[1]) if len(item) > 1 else False
+    partial = item[2] if len(item) > 2 and isinstance(item[2], dict) and item[2] else None
+    return fields, unique, partial
+
+
 def has_unique_index(indexes) -> bool:
     """True when any stored index spec is unique (sku/barcode on products are not)."""
-    return any(bool(unique) for _spec, unique in (indexes or []))
+    for item in indexes or []:
+        _fields, unique, _partial = index_spec_parts(item)
+        if unique:
+            return True
+    return False
 
 
 _SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -1045,6 +1059,27 @@ def eval_expr(doc: dict, expr):
     return expr
 
 
+def unique_conflict(doc: dict, others, indexes, collection: str = "") -> None:
+    """Raise DuplicateKeyError when doc hits a unique index already held by others.
+
+    partialFilterExpression (Mongo partial index) dışındaki belgeler anahtara girmez.
+    """
+    for item in indexes or []:
+        spec, unique, partial = index_spec_parts(item)
+        if not unique or not spec:
+            continue
+        if partial and not match_query(doc, partial):
+            continue
+        key = tuple(scalar_at(doc, f) for f in spec)
+        if not all(v is not MISSING for v in key):
+            continue
+        for other in others or []:
+            if partial and not match_query(other, partial):
+                continue
+            if tuple(scalar_at(other, f) for f in spec) == key:
+                raise DuplicateKeyError(f"duplicate key {spec}={key} on {collection}")
+
+
 def match_query(doc: dict, query: Optional[dict]) -> bool:
     if not query:
         return True
@@ -1590,13 +1625,7 @@ class MySQLCollection:
         if not has_unique_index(indexes):
             return
         others = [d for d in await self._load_all() if d.get("_id") != exclude_id and d.get("_id") != doc.get("_id")]
-        for spec, unique in indexes:
-            if not unique:
-                continue
-            key = tuple(scalar_at(doc, f) for f in spec)
-            for o in others:
-                if tuple(scalar_at(o, f) for f in spec) == key and all(v is not MISSING for v in key):
-                    raise DuplicateKeyError(f"duplicate key {spec}={key} on {self.name}")
+        unique_conflict(doc, others, indexes, self.name)
 
     async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None, sort=None, skip=0):
         _guard(self.name, "find_one", query=query)
@@ -1908,23 +1937,29 @@ class MySQLCollection:
                     seen.append(v)
         return seen
 
-    async def create_index(self, keys, unique: bool = False, **_kwargs):
+    async def create_index(self, keys, unique: bool = False, **kwargs):
         if isinstance(keys, str):
             fields = [keys]
             name = keys
         else:
             fields = [k[0] if isinstance(k, (list, tuple)) else k for k in keys]
             name = "_".join(fields)
+        partial = kwargs.get("partialFilterExpression")
+        if not isinstance(partial, dict) or not partial:
+            partial = None
         self._db._indexes.setdefault(self.name, [])
-        spec = (tuple(fields), bool(unique))
+        spec = (tuple(fields), bool(unique), partial) if partial else (tuple(fields), bool(unique))
         if spec not in self._db._indexes[self.name]:
             self._db._indexes[self.name].append(spec)
         await self._db._ensure()
+        payload = {"fields": fields}
+        if partial:
+            payload["partialFilterExpression"] = partial
         async with self._db._pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "REPLACE INTO meta_indexes (collection, name, spec, unique_index) VALUES (%s,%s,%s,%s)",
-                    (self.name, name, dumps({"fields": fields}), 1 if unique else 0),
+                    (self.name, name, dumps(payload), 1 if unique else 0),
                 )
         return name
 
@@ -1972,9 +2007,16 @@ class MySQLDatabase:
                         pass
                     await cur.execute("SELECT collection, spec, unique_index FROM meta_indexes")
                     for coll, spec, uniq in await cur.fetchall():
-                        fields = tuple(loads(spec).get("fields") or [])
+                        parsed = loads(spec) if isinstance(spec, str) else (spec or {})
+                        if not isinstance(parsed, dict):
+                            parsed = {}
+                        fields = tuple(parsed.get("fields") or [])
+                        partial = parsed.get("partialFilterExpression")
                         self._indexes.setdefault(coll, [])
-                        item = (fields, bool(uniq))
+                        if isinstance(partial, dict) and partial:
+                            item = (fields, bool(uniq), partial)
+                        else:
+                            item = (fields, bool(uniq))
                         if item not in self._indexes[coll]:
                             self._indexes[coll].append(item)
 
