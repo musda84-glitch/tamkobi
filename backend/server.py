@@ -26648,6 +26648,11 @@ async def ai_order_confirm(req: Dict[str, Any], user: dict = Depends(get_current
         items = _order_item_models(rows)
         if not items or not o.get("customer_name"):
             continue
+        contact_id = o.get("contact_id")
+        if contact_id:
+            existing = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+            if not existing:
+                raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         channel = (o.get("channel") or "manual").lower()
         num = (o.get("order_number") or "").strip()
         if not num or await db.orders.find_one({"company_id": company_id, "order_number": num}):
@@ -26660,7 +26665,7 @@ async def ai_order_confirm(req: Dict[str, Any], user: dict = Depends(get_current
         await db.orders.insert_one(doc)
         await _ensure_order_contact(doc)
         await _attach_draft_invoice_on_intake(doc, source="import")
-        refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+        refreshed = await db.orders.find_one({"_id": doc["_id"], "company_id": company_id}) or doc
         created.append(clean_doc(refreshed))
     return {"status": "success", "created": len(created), "orders": created, "message": f"{len(created)} sipariş oluşturuldu."}
 
@@ -27120,7 +27125,7 @@ async def ai_invoice_confirm(req: Dict[str, Any], user: dict = Depends(get_curre
         )
         cd = c.to_mongo(); await db.contacts.insert_one(cd); contact_id = cd["_id"]; contact_name = c.name
     else:
-        cc = await db.contacts.find_one({"_id": contact_id})
+        cc = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
         if not cc:
             raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         contact_name = cc["name"]
@@ -27155,7 +27160,7 @@ async def ai_invoice_confirm(req: Dict[str, Any], user: dict = Depends(get_curre
     elif inv_type == "sales" and d.get("invoice_number"):
         extra["external_invoice_number"] = d.get("invoice_number")
     if extra:
-        await db.invoices.update_one({"_id": created["id"]}, {"$set": extra})
+        await db.invoices.update_one({"_id": created["id"], "company_id": company_id}, {"$set": extra})
     label = "satış" if inv_type == "sales" else "alış"
     return {"status": "success", "invoice": created, "contact_id": contact_id, "message": f"Taslak {label} faturası oluşturuldu: {created['invoice_number']}"}
 
