@@ -115,15 +115,29 @@ export function pickVisibleNotice(payload, storage = localStorage) {
   return null;
 }
 
-/** 502/503 veya ağ kopması → güncelleme mesajı mı? */
-export function isUpdateTransportError(err) {
+/** Axios iptali. Sayfa kapanırken düşen istekler çoğu zaman buna benzer. */
+export function isCanceledTransportError(err) {
   if (!err) return false;
-  const status = err.response?.status || err.status;
-  if (status === 502 || status === 503 || status === 504) return true;
-  if (!err.response && (err.code === "ERR_NETWORK" || /network|failed to fetch/i.test(String(err.message || "")))) {
-    return true;
-  }
-  return false;
+  return !!(err.__CANCEL__ || err.code === "ERR_CANCELED" || err.name === "CanceledError");
+}
+
+/** 502/503/504 — sunucu gerçekten kesinti yanıtı verdi. */
+export function isGatewayTransportError(err) {
+  const status = err?.response?.status || err?.status;
+  return status === 502 || status === 503 || status === 504;
+}
+
+/** HTTP yanıtı yok: ERR_NETWORK veya failed to fetch. */
+export function isUnansweredNetworkError(err) {
+  if (!err || err.response || isCanceledTransportError(err)) return false;
+  return err.code === "ERR_NETWORK" || /network|failed to fetch/i.test(String(err.message || ""));
+}
+
+/** 502/503/504 veya yanıtsız ağ kopması. İptal edilmiş istek sayılmaz. */
+export function isUpdateTransportError(err) {
+  if (!err || isCanceledTransportError(err)) return false;
+  if (isGatewayTransportError(err)) return true;
+  return isUnansweredNetworkError(err);
 }
 
 export const UPDATE_FALLBACK_NOTICE = {
